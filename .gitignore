@@ -1,0 +1,19 @@
+# This directory is a working area full of clones, logs, and scratch.
+# Track ONLY the issue→PR cron's own config. Ignore everything else by default.
+/*
+
+# ...but keep the cron config + its docs:
+!/.gitignore
+!/README.md
+!/campaign-run.sh
+!/campaign-prompt.txt
+!/campaign-settings.json
+!/cron.env.example
+
+# NEVER track the real deployment env (it holds the account handle / box-specific values):
+/cron.env
+
+# Explicitly NOT tracked (transient/operational/scratch), even if patterns change:
+#   campaign.log, runs/, close-candidates.jsonl, DISABLED, *.lock  (runtime state)
+#   WORKLOG.md, PRECOMPACT-SNAPSHOT.md                              (assistant scratch)
+#   <repo> clones, ci-*/ rt-*/ fix-*/ etc.                          (work dirs)
