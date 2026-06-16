@@ -20,9 +20,16 @@ DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 # --- environment: cron starts bare. Derive HOME for the invoking user, then nix + PATH. ---
 : "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"
 export HOME
+# cron's env lacks USER/LOGNAME; nix.sh and some tools reference them, and under `set -u`
+# an unbound USER aborts the run before anything logs. Derive them explicitly.
+: "${USER:=$(id -un)}"; export USER
+: "${LOGNAME:=$USER}"; export LOGNAME
 export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# nix.sh is third-party and references unbound vars; relax `set -u` only around it.
 # shellcheck disable=SC1091
+set +u
 [ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
+set -u
 
 # --- deployment config (defaults here; override in ./cron.env) ---
 WORK_DIR="$HOME/code"          # where issue clones are made
