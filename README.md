@@ -46,8 +46,8 @@ placeholders that the runner substitutes at run time.
 
 ## Schedule & controls
 
-- **crontab:** `17 */4 * * * <install-dir>/campaign-run.sh`
-  (every 4h at :17 UTC).
+- **crontab:** `0 1,5,9,13,17,21 * * * <install-dir>/campaign-run.sh`
+  (every 4h).
 - **Pause:** `touch DISABLED`  ·  **Resume:** `rm DISABLED`
 - **Watch:** `tail -f campaign.log`  ·  **Run now:** run `campaign-run.sh` directly.
 
