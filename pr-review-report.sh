@@ -54,26 +54,28 @@ fi
 # pipeline:  unreviewed -> AI-vetted -> you approve -> merge
 bucket() {
   local v="$1" src="$2" rev="$3" merg="$4" ci="$5" draft="$6"
-  # AI/human flagged a problem -> blocks merge regardless of CI
+  # AI/human flagged a disposition -> that IS the action, regardless of CI.
   case "$v" in close) echo CLOSE; return;; reject) echo REJECT; return;; relink) echo RELINK; return;; esac
   [ "$rev" = CHANGES_REQUESTED ] && { echo REJECT; return; }
+  [ "$draft" = DRAFT ] && { echo DRAFT; return; }
+  # A REAL red is the PRODUCER's work to drive green -> it is NOT a terminal "blocked"
+  # state and NOT a human action. Surface it independently of review status: the red has
+  # to be fixed before vet/approve/merge matter again.
+  [ "$ci" = RED ] && { echo PRODUCER_FIX; return; }
+  [ "$merg" = CONFLICTING ] && { echo CONFLICTING; return; }
+  [ "$ci" = PENDING ] && { echo PENDING; return; }
+  # green / nochecks + mergeable -> bucket by review state
   local approved=0 aivet=0
   # human approval = a GitHub APPROVED review, or a verdict you set with source=human
   { [ "$rev" = APPROVED ] || { [ "$v" = ready ] && [ "$src" = human ]; }; } && approved=1
-  # AI-vetted = the review campaign passed it (source=ai-campaign), but you have NOT approved
+  # AI-vetted = the review campaign passed it (source=ai-campaign), not yet human-approved
   { [ "$approved" = 0 ] && [ "$v" = ready ] && [ "$src" = ai-campaign ]; } && aivet=1
-  if [ "$approved" = 1 ] || [ "$aivet" = 1 ]; then
-    [ "$draft" = DRAFT ] && { echo DRAFT; return; }
-    if [ "$merg" = MERGEABLE ] && { [ "$ci" = GREEN ] || [ "$ci" = NOCHECKS ]; }; then
-      [ "$approved" = 1 ] && echo APPROVED || echo AIVET; return
-    fi
-    echo VETTED_BLOCKED; return   # vetted/approved but red/pending/conflicting
+  if [ "$merg" = MERGEABLE ] && { [ "$ci" = GREEN ] || [ "$ci" = NOCHECKS ]; }; then
+    [ "$approved" = 1 ] && { echo APPROVED; return; }
+    [ "$aivet" = 1 ]   && { echo AIVET; return; }
+    echo UNREVIEWED; return
   fi
-  # not reviewed at all
-  [ "$draft" = DRAFT ] && { echo DRAFT; return; }
-  [ "$merg" = CONFLICTING ] && { echo CONFLICTING; return; }
-  case "$ci" in RED) echo RED; return;; PENDING) echo PENDING; return;; GREEN|NOCHECKS) [ "$merg" = MERGEABLE ] && { echo UNREVIEWED; return; }; echo PENDING; return;; esac
-  echo OTHER
+  echo PENDING   # mergeability still resolving (mergeable=UNKNOWN)
 }
 
 echo "PR review report — $ORG, author $AUTHOR — $(date -u +%FT%TZ)"
@@ -104,14 +106,13 @@ emit() { # bucket-key  title
 emit APPROVED        "✅ APPROVED BY YOU — ready to merge (GitHub approval / verdict you set)"
 [ "$ONLY" = "--ready" ] && { rm -f "$TMP" "$BKT"; exit 0; }
 emit AIVET           "🤖 AI-VETTED — awaiting YOUR approval (passed the automated review; NOT human-reviewed yet)"
-emit VETTED_BLOCKED  "🟢 AI-vetted/approved but BLOCKED — CI red/pending or conflicting (not mergeable yet)"
+emit PRODUCER_FIX    "🔴 RED — NEEDS A PRODUCER FIX (CI failing; the producer cron diagnoses it and pushes a fix to drive it green — producer work, NOT 'blocked', NOT your action)"
 emit RELINK          "🔧 AI-flagged — relink Closes→Refs before merge (else it auto-closes a live issue)"
 emit REJECT          "❌ AI-flagged / you requested changes — rework or close"
 emit CLOSE           "🗑️  AI-flagged — close (duplicate / superseded)"
 emit UNREVIEWED      "🟦 NOT YET REVIEWED — green + mergeable, awaiting AI review + your approval"
-emit CONFLICTING     "⚠️  CONFLICTING (unreviewed) — rebase or close"
-emit RED             "🔴 RED (unreviewed) — fix or judgment"
-emit PENDING         "🟡 PENDING — CI/mergeability still resolving"
+emit CONFLICTING     "⚠️  CONFLICTING — needs a rebase onto current main (producer work)"
+emit PENDING         "🟡 PENDING — CI / mergeability still resolving (no action; just wait)"
 emit DRAFT           "📝 DRAFTS — intentionally not ready"
 
 if [ -s "$CLOSE_CANDIDATES" ]; then

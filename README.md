@@ -9,8 +9,10 @@ issues → [producer] → PRs → [vetter] → AI verdict → YOU approve → [m
 ```
 
 - **Producer** (`campaign-run.sh`, every 4h at :00 of 1,5,9,13,17,21 UTC) — opens
-  one fix PR per tractable, uncovered issue, audit-backlog first. Only org-mutating
-  action: `gh pr create`. Never merges/closes/deploys. Skips issues with a `reject`
+  one fix PR per tractable, uncovered issue (audit-backlog first) AND drives its
+  OWN red PRs green with non-force fix commits. Org-mutating actions: `gh pr create`,
+  `gh pr comment` (screenshots), and non-force `git push` to its own PR branches.
+  Never merges/closes/deploys/force-pushes. Skips issues with a `reject`
   verdict (parked for a human, so a rejected fix isn't re-attempted into dead PRs).
 - **Vetter** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) — AI-reviews
   open PRs and records a verdict (`ready`/`relink`/`reject`/`close`, `source: ai-campaign`)
@@ -24,8 +26,9 @@ issues → [producer] → PRs → [vetter] → AI verdict → YOU approve → [m
 
 ## Scope — read this first
 
-**The ONLY org-mutating action this routine takes is `gh pr create`** (plus
-`gh pr comment` to attach a UI screenshot). It **never** merges, deploys, or
+**The org-mutating actions this routine takes are `gh pr create`, `gh pr comment`
+(UI screenshots), and a non-force `git push` of fix commits to its OWN open red
+PR branches (to drive them green).** It **never** merges, deploys, force-pushes, or
 closes/edits/comments-on issues. If it believes an issue should be closed
 (already fixed, invalid, duplicate) it records a *close-candidate* — it never
 acts on it. A human reviews and disposes. This is enforced two ways: the
@@ -46,7 +49,7 @@ permission deny-list in `campaign-settings.json` and the rules in
 | `merge-prompt.txt` | The merge instructions: only human-approved PRs, read every failing check before admin-merge-over-env-reds, never deploy/force-push/touch-issues. |
 | `merge-settings.json` | Tool allow/deny for the merge cron — allows `gh pr merge`/`comment`, denies deploy/force-push/issue-ops/other mutations. |
 | `cron.env.example` | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit. |
-| `pr-review-report.sh` | Reports every open PR by its pipeline stage (AI-vetted / approved / relink / reject / close / unreviewed), respecting `review-verdicts.jsonl` + GitHub approvals, as clickable URLs. |
+| `pr-review-report.sh` | Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / relink / reject / close / unreviewed / pending / draft), respecting `review-verdicts.jsonl` + GitHub approvals, as clickable URLs. |
 
 ## Configuration
 
@@ -76,11 +79,11 @@ A PR moves through two distinct gates before it merges:
 `./pr-review-report.sh` prints every open PR bucketed by where it sits in that
 pipeline, all as clickable URLs:
 **✅ approved by you** (ready to merge) · **🤖 AI-vetted — awaiting your approval** ·
-**🟢 vetted but blocked** (CI/conflict) · **🔧 AI-flagged: relink** · **❌ reject /
-changes-requested** · **🗑️ close (dup/superseded)** · **🟦 not yet reviewed** ·
-**⚠️ conflicting** · **🔴 red** · **🟡 pending** · **📝 drafts** · plus the
-issue **close-candidates** the cron logged. `--ready` prints only the
-approved-by-you set.
+**🔴 needs a producer fix** (CI red — the producer drives it green) · **🔧 AI-flagged:
+relink** · **❌ reject / changes-requested** · **🗑️ close (dup/superseded)** ·
+**🟦 not yet reviewed** · **⚠️ conflicting** (needs rebase) · **🟡 pending** ·
+**📝 drafts** · plus the issue **close-candidates** the cron logged. `--ready`
+prints only the approved-by-you set.
 
 `review-verdicts.jsonl` (gitignored, local — like `close-candidates.jsonl`) is the
 review ledger; one JSON object per line:
