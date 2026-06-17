@@ -24,6 +24,9 @@ export HOME
 # an unbound USER aborts the run before anything logs. Derive them explicitly.
 : "${USER:=$(id -un)}"; export USER
 : "${LOGNAME:=$USER}"; export LOGNAME
+# Flag this as a cron run so the block-nix-wrap-gh PreToolUse hook enforces bare gh
+# (gh is on PATH below) and closes the deny-list nix-wrap bypass — cron-scoped only.
+export RAINIX_CRON_HOOK=1
 export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # nix.sh is third-party and references unbound vars; relax `set -u` only around it.
 # shellcheck disable=SC1091

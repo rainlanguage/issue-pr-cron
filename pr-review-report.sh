@@ -24,11 +24,11 @@ if ! command -v gh >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
   echo "error: need gh + jq on PATH (or nix available)" >&2; exit 1
 fi
 
-# per-PR: repo<TAB>num<TAB>mergeable<TAB>ci<TAB>draft<TAB>reviewDecision<TAB>url
+# per-PR: repo<TAB>num<TAB>mergeable<TAB>ci<TAB>draft<TAB>reviewDecision<TAB>url<TAB>headoid
 classify_one() {
-  local repo="$1" num="$2" org="$3" j url merg draft rev fail pend tot ci
-  j=$(gh pr view "$num" -R "$org/$repo" --json url,mergeable,isDraft,reviewDecision,statusCheckRollup 2>/dev/null) \
-    || { printf '%s\t%s\t?\t?\t?\t?\t-\n' "$repo" "$num"; return; }
+  local repo="$1" num="$2" org="$3" j url merg draft rev fail pend tot ci headoid
+  j=$(gh pr view "$num" -R "$org/$repo" --json url,mergeable,isDraft,reviewDecision,statusCheckRollup,headRefOid 2>/dev/null) \
+    || { printf '%s\t%s\t?\t?\t?\t?\t-\t-\n' "$repo" "$num"; return; }
   url=$(printf '%s' "$j" | jq -r '.url')
   merg=$(printf '%s' "$j" | jq -r '.mergeable')
   draft=$(printf '%s' "$j" | jq -r 'if .isDraft then "DRAFT" else "-" end')
@@ -40,20 +40,21 @@ classify_one() {
   elif [ "${pend:-0}" -gt 0 ]; then ci="PENDING"
   elif [ "${tot:-0}" -eq 0 ];  then ci="NOCHECKS"
   else ci="GREEN"; fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$num" "$merg" "$ci" "$draft" "$rev" "$url"
+  headoid=$(printf '%s' "$j" | jq -r '.headRefOid // "-"')
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$num" "$merg" "$ci" "$draft" "$rev" "$url" "$headoid"
 }
 export -f classify_one
 
-# verdict lookup: VKEY["repo/num"]=verdict
-declare -A VERD SRC
+# verdict lookup: VERD/SRC/SHA["repo/num"] from the ledger (last matching line wins)
+declare -A VERD SRC SHA
 if [ -s "$REVIEW_VERDICTS" ]; then
-  while IFS=$'\t' read -r k v s; do VERD["$k"]="$v"; SRC["$k"]="${s:-ai-campaign}"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict+"\t"+(.source//"ai-campaign")' "$REVIEW_VERDICTS" 2>/dev/null)
+  while IFS=$'\t' read -r k v s sha; do VERD["$k"]="$v"; SRC["$k"]="${s:-ai-campaign}"; SHA["$k"]="$sha"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict+"\t"+(.source//"ai-campaign")+"\t"+(.sha//"")' "$REVIEW_VERDICTS" 2>/dev/null)
 fi
 
 # bucket(verdict, reviewDecision, mergeable, ci, draft) -> bucket key
 # pipeline:  unreviewed -> AI-vetted -> you approve -> merge
 bucket() {
-  local v="$1" src="$2" rev="$3" merg="$4" ci="$5" draft="$6"
+  local v="$1" src="$2" rev="$3" merg="$4" ci="$5" draft="$6" vsha="$7" headsha="$8"
   # AI/human flagged a disposition -> that IS the action, regardless of CI.
   case "$v" in close) echo CLOSE; return;; reject) echo REJECT; return;; relink) echo RELINK; return;; esac
   [ "$rev" = CHANGES_REQUESTED ] && { echo REJECT; return; }
@@ -71,6 +72,9 @@ bucket() {
   # AI-vetted = the review campaign passed it (source=ai-campaign), not yet human-approved
   { [ "$approved" = 0 ] && [ "$v" = ready ] && [ "$src" = ai-campaign ]; } && aivet=1
   if [ "$merg" = MERGEABLE ] && { [ "$ci" = GREEN ] || [ "$ci" = NOCHECKS ]; }; then
+    # a ready/approved verdict pinned to an OLD head sha is STALE — the head moved
+    # (e.g. a producer step-3b fix) after it was vetted; re-vet before it can merge.
+    if { [ "$approved" = 1 ] || [ "$aivet" = 1 ]; } && [ -n "$vsha" ] && [ "$vsha" != "-" ] && [ -n "$headsha" ] && [ "$headsha" != "-" ] && [ "$vsha" != "$headsha" ]; then echo STALE_VET; return; fi
     [ "$approved" = 1 ] && { echo APPROVED; return; }
     [ "$aivet" = 1 ]   && { echo AIVET; return; }
     echo UNREVIEWED; return
@@ -88,11 +92,12 @@ gh search prs --owner "$ORG" --author "$AUTHOR" --state open --limit 300 --json 
   --jq '.[]|.repository.name+" "+(.number|tostring)' 2>/dev/null \
   | xargs -P12 -n2 bash -c 'classify_one "$1" "$2" "'"$ORG"'"' _ > "$TMP" 2>/dev/null
 
-while IFS=$'\t' read -r repo num merg ci draft rev url; do
+while IFS=$'\t' read -r repo num merg ci draft rev url headoid; do
   [ -z "$repo" ] && continue
   v="${VERD[$repo/$num]:-}"
   s="${SRC[$repo/$num]:-ai-campaign}"
-  b=$(bucket "$v" "$s" "$rev" "$merg" "$ci" "$draft")
+  vsha="${SHA[$repo/$num]:-}"
+  b=$(bucket "$v" "$s" "$rev" "$merg" "$ci" "$draft" "$vsha" "$headoid")
   printf '%s\t%s\t%s\n' "$b" "$url" "$v" >> "$BKT"
 done < "$TMP"
 
@@ -106,6 +111,7 @@ emit() { # bucket-key  title
 emit APPROVED        "✅ APPROVED BY YOU — ready to merge (GitHub approval / verdict you set)"
 [ "$ONLY" = "--ready" ] && { rm -f "$TMP" "$BKT"; exit 0; }
 emit AIVET           "🤖 AI-VETTED — awaiting YOUR approval (passed the automated review; NOT human-reviewed yet)"
+emit STALE_VET       "🔄 RE-VET PENDING — head moved since the recorded verdict (e.g. a producer step-3b fix); the vetter re-reviews the new commit before this can merge"
 emit PRODUCER_FIX    "🔴 RED — NEEDS A PRODUCER FIX (CI failing; the producer cron diagnoses it and pushes a fix to drive it green — producer work, NOT 'blocked', NOT your action)"
 emit RELINK          "🔧 AI-flagged — relink Closes→Refs before merge (else it auto-closes a live issue)"
 emit REJECT          "❌ AI-flagged / you requested changes — rework or close"
