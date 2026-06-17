@@ -13,6 +13,9 @@
 !/review-run.sh
 !/review-prompt.txt
 !/review-settings.json
+!/merge-run.sh
+!/merge-prompt.txt
+!/merge-settings.json
 
 # NEVER track the real deployment env (it holds the account handle / box-specific values):
 /cron.env

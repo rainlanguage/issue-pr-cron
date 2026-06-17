@@ -5,17 +5,22 @@ rainlanguage GitHub org. State lives entirely in GitHub + small local ledgers.
 The pipeline has two automated stages and one human gate:
 
 ```
-issues  →  [producer cron]  →  open PRs  →  [vetting cron]  →  AI verdict  →  you approve  →  merge
+issues → [producer] → PRs → [vetter] → AI verdict → YOU approve → [merge cron] → merged
 ```
 
 - **Producer** (`campaign-run.sh`, every 4h at :00 of 1,5,9,13,17,21 UTC) — opens
   one fix PR per tractable, uncovered issue, audit-backlog first. Only org-mutating
-  action: `gh pr create`. Never merges/closes/deploys.
-- **Vetting** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) — AI-reviews
+  action: `gh pr create`. Never merges/closes/deploys. Skips issues with a `reject`
+  verdict (parked for a human, so a rejected fix isn't re-attempted into dead PRs).
+- **Vetter** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) — AI-reviews
   open PRs and records a verdict (`ready`/`relink`/`reject`/`close`, `source: ai-campaign`)
-  in `review-verdicts.jsonl`. **Read-only on GitHub** — it never approves/merges/comments;
-  approval is the human's gate.
-- **Human approval + merge** — you review (`pr-review-report.sh`), approve, and merge.
+  in `review-verdicts.jsonl`. **Read-only on GitHub** — approval is the human's gate.
+- **You approve** — review with `pr-review-report.sh`; approving records a
+  `source: human`, `verdict: ready` line (only these are mergeable).
+- **Merge cron** (`merge-run.sh`, every 4h at :00 of 0,4,8,12,16,20 UTC) — merges
+  ONLY human-approved PRs (effective `source: human`/`ready`), reading every failing
+  check before any admin-merge-over-env-reds. **Defaults to dry-run** (`MERGE_DRY_RUN=1`
+  — reports what it would merge); set `MERGE_DRY_RUN=0` in `cron.env` to go live.
 
 ## Scope — read this first
 
@@ -37,6 +42,9 @@ permission deny-list in `campaign-settings.json` and the rules in
 | `review-run.sh` | Vetting runner (same hardened pattern as `campaign-run.sh`): reviews open PRs, appends verdicts to `review-verdicts.jsonl`, logs to `review.log`. Read-only on GitHub. Kill-switch `review-DISABLED`. |
 | `review-prompt.txt` | The AI-vetting instructions fed to the model. |
 | `review-settings.json` | Tool allow/deny for the vetter — every GitHub write (incl. `gh pr review`/approve, `gh api`) is denied; the only write is the local verdict ledger. |
+| `merge-run.sh` | Merge runner — drives human-approved PRs to merge. Dry-run by default (`MERGE_DRY_RUN`). Logs to `merge.log`. Kill-switch `merge-DISABLED`. |
+| `merge-prompt.txt` | The merge instructions: only human-approved PRs, read every failing check before admin-merge-over-env-reds, never deploy/force-push/touch-issues. |
+| `merge-settings.json` | Tool allow/deny for the merge cron — allows `gh pr merge`/`comment`, denies deploy/force-push/issue-ops/other mutations. |
 | `cron.env.example` | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit. |
 | `pr-review-report.sh` | Reports every open PR by its pipeline stage (AI-vetted / approved / relink / reject / close / unreviewed), respecting `review-verdicts.jsonl` + GitHub approvals, as clickable URLs. |
 

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh:*)",
+      "Bash(jq:*)", "Bash(nix:*)",
+      "Bash(rg:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(cut:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(tr:*)", "Bash(comm:*)", "Bash(tee:*)", "Bash(xargs:*)",
+      "Bash(cat:*)", "Bash(echo:*)", "Bash(printf:*)", "Bash(ls:*)", "Bash(test:*)", "Bash(date:*)", "Bash(mktemp:*)", "Bash(cd:*)", "Bash(pwd:*)", "Bash(basename:*)", "Bash(dirname:*)", "Bash(env:*)", "Bash(which:*)", "Bash(command:*)", "Bash(true:*)", "Bash(false:*)", "Bash(sleep:*)", "Bash(timeout:*)", "Bash(flock:*)",
+      "Read", "Glob", "Grep", "TodoWrite"
+    ],
+    "deny": [
+      "Bash(sudo:*)", "Bash(su:*)", "Bash(doas:*)",
+      "Bash(shutdown:*)", "Bash(reboot:*)", "Bash(systemctl:*)", "Bash(mkfs:*)", "Bash(dd:*)",
+      "Bash(rm -rf /:*)", "Bash(rm -rf ~:*)", "Bash(rm -rf /*)",
+      "Bash(gh pr close:*)", "Bash(gh pr edit:*)", "Bash(gh pr review:*)", "Bash(gh pr ready:*)",
+      "Bash(gh issue close:*)", "Bash(gh issue comment:*)", "Bash(gh issue edit:*)", "Bash(gh issue reopen:*)", "Bash(gh issue create:*)", "Bash(gh issue delete:*)",
+      "Bash(gh workflow run:*)", "Bash(gh run rerun:*)", "Bash(gh release:*)", "Bash(gh repo:*)", "Bash(gh secret:*)", "Bash(gh api:*)",
+      "Bash(git push:*)", "Bash(git commit:*)", "Bash(git reset:*)", "Bash(git clone:*)",
+      "Bash(crontab:*)"
+    ]
+  }
+}
