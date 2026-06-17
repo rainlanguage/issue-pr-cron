@@ -77,8 +77,12 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 echo "=================================================================" >> "$LOG"
 echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(hostname)) trace=$RUNLOG" >> "$LOG"
 
+# Run claude with gh + jq ON PATH (via nix shell) so the model invokes them DIRECTLY:
+#   - bare `gh ...` is subject to campaign-settings.json's deny-list (nix-wrapped gh bypasses it),
+#   - bare `jq` means dedup is one jq pass, not the byte-grep pathology that stalls runs,
+#   - no nix git-hooks WARNING banner leaking into close-candidates.jsonl.
 # Stream every event as JSON. tee keeps the full trace even if the jq distiller is missing/errors.
-timeout "$MAXTIME" claude --print "$PROMPT" \
+timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq --command claude --print "$PROMPT" \
   --model "$MODEL" \
   --settings "$DIR/campaign-settings.json" \
   --permission-mode default \
