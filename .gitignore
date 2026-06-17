@@ -9,6 +9,7 @@
 !/campaign-prompt.txt
 !/campaign-settings.json
 !/cron.env.example
+!/pr-review-report.sh
 
 # NEVER track the real deployment env (it holds the account handle / box-specific values):
 /cron.env

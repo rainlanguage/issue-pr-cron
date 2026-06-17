@@ -22,6 +22,7 @@ permission deny-list in `campaign-settings.json` and the rules in
 | `campaign-prompt.txt` | The campaign instructions fed to the model. |
 | `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails). |
 | `cron.env.example` | Template for deployment-specific values (PR assignee, work dir, model, run caps). Copy to `cron.env` (gitignored) and edit. |
+| `pr-review-report.sh` | Reports every open PR + logged close-candidate that needs a human decision, bucketed by action (merge / resolve-conflict / fix-or-judge / close), as clickable URLs. |
 
 ## Configuration
 
@@ -32,6 +33,16 @@ defaults and may be overridden there. The runner self-locates its install dir
 and rebuilds `PATH`/nix from `$HOME`, so there are no machine paths in the repo;
 `campaign-prompt.txt` uses `{{WORK_DIR}}` / `{{CLOSE_CANDIDATES}}` / `{{ASSIGNEE}}`
 placeholders that the runner substitutes at run time.
+
+## Reviewing the output
+
+`./pr-review-report.sh` prints what's waiting on you, bucketed by the action it
+needs — **✅ ready to merge**, **⚠️ conflicting** (rebase or close), **🔴 red CI**
+(fix or judgment), **🟡 pending**, **📝 drafts**, and **🗑️ close-candidates** (the
+already-fixed issues + duplicate PRs the cron logged, never closed) — all as full
+clickable URLs. Run `./pr-review-report.sh --ready` for just the merge-ready set.
+It self-provisions `gh`+`jq` via nix if they aren't on PATH, and reads `cron.env`
+for `ORG` / `PR_ASSIGNEE` / `CLOSE_CANDIDATES`.
 
 ## Runtime state (NOT tracked — see `.gitignore`)
 
