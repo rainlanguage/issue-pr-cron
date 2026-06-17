@@ -37,12 +37,23 @@ placeholders that the runner substitutes at run time.
 ## Reviewing the output
 
 `./pr-review-report.sh` prints what's waiting on you, bucketed by the action it
-needs — **✅ ready to merge**, **⚠️ conflicting** (rebase or close), **🔴 red CI**
-(fix or judgment), **🟡 pending**, **📝 drafts**, and **🗑️ close-candidates** (the
-already-fixed issues + duplicate PRs the cron logged, never closed) — all as full
-clickable URLs. Run `./pr-review-report.sh --ready` for just the merge-ready set.
+needs, all as full clickable URLs. **It respects reviews already done** — it
+overlays (a) recorded verdicts in `review-verdicts.jsonl` and (b) GitHub's own
+review state (`APPROVED` / `CHANGES_REQUESTED`) on top of CI/mergeability, so a
+PR reviewed as reject/dup/relink is NOT shown as "ready to merge". Buckets:
+**✅ reviewed & ready**, **🟢 reviewed-ok but CI not green / conflicting**,
+**🔧 relink before merge**, **❌ reject / changes-requested**, **🗑️ close**,
+**🟦 unreviewed green** (needs a review), **⚠️ conflicting**, **🔴 red**,
+**🟡 pending**, **📝 drafts**, plus **issue close-candidates** the cron logged.
+`--ready` prints just the reviewed-&-ready set.
+
+`review-verdicts.jsonl` (gitignored, local — like `close-candidates.jsonl`) is
+your editable review ledger; one JSON object per line:
+`{"repo":"rain.flare","pr":129,"verdict":"reject","note":"..."}` where verdict is
+`ready` | `relink` | `reject` | `close`. Add/adjust lines as you review.
+
 It self-provisions `gh`+`jq` via nix if they aren't on PATH, and reads `cron.env`
-for `ORG` / `PR_ASSIGNEE` / `CLOSE_CANDIDATES`.
+for `ORG` / `PR_ASSIGNEE` / `CLOSE_CANDIDATES` / `REVIEW_VERDICTS`.
 
 ## Runtime state (NOT tracked — see `.gitignore`)
 
