@@ -45,21 +45,31 @@ classify_one() {
 export -f classify_one
 
 # verdict lookup: VKEY["repo/num"]=verdict
-declare -A VERD
+declare -A VERD SRC
 if [ -s "$REVIEW_VERDICTS" ]; then
-  while IFS=$'\t' read -r k v; do VERD["$k"]="$v"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict' "$REVIEW_VERDICTS" 2>/dev/null)
+  while IFS=$'\t' read -r k v s; do VERD["$k"]="$v"; SRC["$k"]="${s:-ai-campaign}"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict+"\t"+(.source//"ai-campaign")' "$REVIEW_VERDICTS" 2>/dev/null)
 fi
 
 # bucket(verdict, reviewDecision, mergeable, ci, draft) -> bucket key
+# pipeline:  unreviewed -> AI-vetted -> you approve -> merge
 bucket() {
-  local v="$1" rev="$2" merg="$3" ci="$4" draft="$5"
+  local v="$1" src="$2" rev="$3" merg="$4" ci="$5" draft="$6"
+  # AI/human flagged a problem -> blocks merge regardless of CI
   case "$v" in close) echo CLOSE; return;; reject) echo REJECT; return;; relink) echo RELINK; return;; esac
   [ "$rev" = CHANGES_REQUESTED ] && { echo REJECT; return; }
-  if [ "$v" = ready ] || [ "$rev" = APPROVED ]; then
+  local approved=0 aivet=0
+  # human approval = a GitHub APPROVED review, or a verdict you set with source=human
+  { [ "$rev" = APPROVED ] || { [ "$v" = ready ] && [ "$src" = human ]; }; } && approved=1
+  # AI-vetted = the review campaign passed it (source=ai-campaign), but you have NOT approved
+  { [ "$approved" = 0 ] && [ "$v" = ready ] && [ "$src" = ai-campaign ]; } && aivet=1
+  if [ "$approved" = 1 ] || [ "$aivet" = 1 ]; then
     [ "$draft" = DRAFT ] && { echo DRAFT; return; }
-    [ "$merg" = CONFLICTING ] && { echo OK_CONFLICT; return; }
-    case "$ci" in GREEN|NOCHECKS) [ "$merg" = MERGEABLE ] && { echo READY; return; }; echo OK_PENDING; return;; RED) echo OK_RED; return;; *) echo OK_PENDING; return;; esac
+    if [ "$merg" = MERGEABLE ] && { [ "$ci" = GREEN ] || [ "$ci" = NOCHECKS ]; }; then
+      [ "$approved" = 1 ] && echo APPROVED || echo AIVET; return
+    fi
+    echo VETTED_BLOCKED; return   # vetted/approved but red/pending/conflicting
   fi
+  # not reviewed at all
   [ "$draft" = DRAFT ] && { echo DRAFT; return; }
   [ "$merg" = CONFLICTING ] && { echo CONFLICTING; return; }
   case "$ci" in RED) echo RED; return;; PENDING) echo PENDING; return;; GREEN|NOCHECKS) [ "$merg" = MERGEABLE ] && { echo UNREVIEWED; return; }; echo PENDING; return;; esac
@@ -67,7 +77,8 @@ bucket() {
 }
 
 echo "PR review report — $ORG, author $AUTHOR — $(date -u +%FT%TZ)"
-echo "(respects review-verdicts.jsonl [$( [ -s "$REVIEW_VERDICTS" ] && jq -s length "$REVIEW_VERDICTS" 2>/dev/null || echo 0 ) verdicts] + GitHub review state)"
+echo "pipeline:  🟦 unreviewed  →  🤖 AI-vetted  →  ✅ you approve  →  merge"
+echo "(AI verdicts: review-verdicts.jsonl · your sign-off: a GitHub approval, or a verdict with source=human)"
 echo "================================================================"
 
 TMP=$(mktemp); BKT=$(mktemp)
@@ -78,7 +89,8 @@ gh search prs --owner "$ORG" --author "$AUTHOR" --state open --limit 300 --json 
 while IFS=$'\t' read -r repo num merg ci draft rev url; do
   [ -z "$repo" ] && continue
   v="${VERD[$repo/$num]:-}"
-  b=$(bucket "$v" "$rev" "$merg" "$ci" "$draft")
+  s="${SRC[$repo/$num]:-ai-campaign}"
+  b=$(bucket "$v" "$s" "$rev" "$merg" "$ci" "$draft")
   printf '%s\t%s\t%s\n' "$b" "$url" "$v" >> "$BKT"
 done < "$TMP"
 
@@ -89,19 +101,18 @@ emit() { # bucket-key  title
   awk -F'\t' -v b="$1" '$1==b {print "  "$2}' "$BKT" | sort
 }
 
-emit READY        "✅ REVIEWED & READY TO MERGE — your merge go-ahead"
+emit APPROVED        "✅ APPROVED BY YOU — ready to merge (GitHub approval / verdict you set)"
 [ "$ONLY" = "--ready" ] && { rm -f "$TMP" "$BKT"; exit 0; }
-emit OK_RED       "🟢 REVIEWED-OK, but CI not green yet — fix pushed / re-running"
-emit OK_PENDING   "🟢 REVIEWED-OK, CI pending"
-emit OK_CONFLICT  "🟢 REVIEWED-OK, but CONFLICTING — needs rebase"
-emit RELINK       "🔧 REVIEWED — relink Closes→Refs before merge (would auto-close a live issue)"
-emit REJECT       "❌ REVIEWED — reject / changes-requested (rework or close)"
-emit CLOSE        "🗑️  REVIEWED — close (duplicate / superseded)"
-emit UNREVIEWED   "🟦 UNREVIEWED — green + mergeable, needs a review"
-emit CONFLICTING  "⚠️  CONFLICTING (unreviewed) — rebase or close"
-emit RED          "🔴 RED (unreviewed) — fix or judgment"
-emit PENDING      "🟡 PENDING — CI/mergeability still resolving"
-emit DRAFT        "📝 DRAFTS — intentionally not ready"
+emit AIVET           "🤖 AI-VETTED — awaiting YOUR approval (passed the automated review; NOT human-reviewed yet)"
+emit VETTED_BLOCKED  "🟢 AI-vetted/approved but BLOCKED — CI red/pending or conflicting (not mergeable yet)"
+emit RELINK          "🔧 AI-flagged — relink Closes→Refs before merge (else it auto-closes a live issue)"
+emit REJECT          "❌ AI-flagged / you requested changes — rework or close"
+emit CLOSE           "🗑️  AI-flagged — close (duplicate / superseded)"
+emit UNREVIEWED      "🟦 NOT YET REVIEWED — green + mergeable, awaiting AI review + your approval"
+emit CONFLICTING     "⚠️  CONFLICTING (unreviewed) — rebase or close"
+emit RED             "🔴 RED (unreviewed) — fix or judgment"
+emit PENDING         "🟡 PENDING — CI/mergeability still resolving"
+emit DRAFT           "📝 DRAFTS — intentionally not ready"
 
 if [ -s "$CLOSE_CANDIDATES" ]; then
   echo; echo "🗑️  ISSUE CLOSE-CANDIDATES — cron logged already-fixed/invalid issues (never closed)"

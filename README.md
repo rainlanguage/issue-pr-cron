@@ -34,26 +34,37 @@ and rebuilds `PATH`/nix from `$HOME`, so there are no machine paths in the repo;
 `campaign-prompt.txt` uses `{{WORK_DIR}}` / `{{CLOSE_CANDIDATES}}` / `{{ASSIGNEE}}`
 placeholders that the runner substitutes at run time.
 
-## Reviewing the output
+## Reviewing the output — the merge pipeline
 
-`./pr-review-report.sh` prints what's waiting on you, bucketed by the action it
-needs, all as full clickable URLs. **It respects reviews already done** — it
-overlays (a) recorded verdicts in `review-verdicts.jsonl` and (b) GitHub's own
-review state (`APPROVED` / `CHANGES_REQUESTED`) on top of CI/mergeability, so a
-PR reviewed as reject/dup/relink is NOT shown as "ready to merge". Buckets:
-**✅ reviewed & ready**, **🟢 reviewed-ok but CI not green / conflicting**,
-**🔧 relink before merge**, **❌ reject / changes-requested**, **🗑️ close**,
-**🟦 unreviewed green** (needs a review), **⚠️ conflicting**, **🔴 red**,
-**🟡 pending**, **📝 drafts**, plus **issue close-candidates** the cron logged.
-`--ready` prints just the reviewed-&-ready set.
+A PR moves through two distinct gates before it merges:
 
-`review-verdicts.jsonl` (gitignored, local — like `close-candidates.jsonl`) is
-your editable review ledger; one JSON object per line:
-`{"repo":"rain.flare","pr":129,"verdict":"reject","note":"..."}` where verdict is
-`ready` | `relink` | `reject` | `close`. Add/adjust lines as you review.
+```
+🟦 unreviewed  →  🤖 AI-vetted  →  ✅ you approve  →  merge
+```
 
-It self-provisions `gh`+`jq` via nix if they aren't on PATH, and reads `cron.env`
-for `ORG` / `PR_ASSIGNEE` / `CLOSE_CANDIDATES` / `REVIEW_VERDICTS`.
+- **AI review** is the automated pass (the review campaign): it records a verdict
+  in `review-verdicts.jsonl` with `source: ai-campaign`. An AI `ready` verdict
+  means "passed automated review" — it is **NOT** a human sign-off.
+- **Human approval** is *your* gate: a GitHub `APPROVED` review, or a verdict you
+  set with `source: human`. **Only an approved PR is "ready to merge"**, and the
+  merge is only ever performed on your explicit go-ahead.
+
+`./pr-review-report.sh` prints every open PR bucketed by where it sits in that
+pipeline, all as clickable URLs:
+**✅ approved by you** (ready to merge) · **🤖 AI-vetted — awaiting your approval** ·
+**🟢 vetted but blocked** (CI/conflict) · **🔧 AI-flagged: relink** · **❌ reject /
+changes-requested** · **🗑️ close (dup/superseded)** · **🟦 not yet reviewed** ·
+**⚠️ conflicting** · **🔴 red** · **🟡 pending** · **📝 drafts** · plus the
+issue **close-candidates** the cron logged. `--ready` prints only the
+approved-by-you set.
+
+`review-verdicts.jsonl` (gitignored, local — like `close-candidates.jsonl`) is the
+review ledger; one JSON object per line:
+`{"repo":"rain.flare","pr":129,"verdict":"reject","source":"ai-campaign","note":"..."}`
+— `verdict` ∈ `ready`|`relink`|`reject`|`close`, `source` ∈ `ai-campaign`|`human`.
+To approve a PR, either approve it on GitHub or add a `source: human`, `verdict:
+ready` line. It self-provisions `gh`+`jq` via nix, and reads `cron.env` for
+`ORG` / `PR_ASSIGNEE` / `CLOSE_CANDIDATES` / `REVIEW_VERDICTS`.
 
 ## Runtime state (NOT tracked — see `.gitignore`)
 
