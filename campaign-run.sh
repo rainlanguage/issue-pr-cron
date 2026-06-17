@@ -44,6 +44,7 @@ LOG="$DIR/campaign.log"
 LOCK="$DIR/campaign.lock"
 RUNDIR="$DIR/runs"
 CLOSE_CANDIDATES="$DIR/close-candidates.jsonl"
+REVIEW_VERDICTS="$DIR/review-verdicts.jsonl"
 
 # --- kill switch ---
 if [ -f "$DIR/DISABLED" ]; then
@@ -71,6 +72,7 @@ ERRLOG="$RUNDIR/$TS.err"
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{CLOSE_CANDIDATES}}#$CLOSE_CANDIDATES#g" \
+              -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               "$DIR/campaign-prompt.txt")"
 
