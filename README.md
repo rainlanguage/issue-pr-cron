@@ -1,8 +1,21 @@
-# rainlanguage org issue→PR cron
+# rainlanguage org issue→PR pipeline
 
-A local, autonomous routine that opens fix PRs for open issues across the
-rainlanguage GitHub org. Runs on a persistent box via cron; recovers all state
-from GitHub each run (no server-side memory).
+Local, autonomous cron jobs that drive issues to merge-ready PRs across the
+rainlanguage GitHub org. State lives entirely in GitHub + small local ledgers.
+The pipeline has two automated stages and one human gate:
+
+```
+issues  →  [producer cron]  →  open PRs  →  [vetting cron]  →  AI verdict  →  you approve  →  merge
+```
+
+- **Producer** (`campaign-run.sh`, every 4h at :00 of 1,5,9,13,17,21 UTC) — opens
+  one fix PR per tractable, uncovered issue, audit-backlog first. Only org-mutating
+  action: `gh pr create`. Never merges/closes/deploys.
+- **Vetting** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) — AI-reviews
+  open PRs and records a verdict (`ready`/`relink`/`reject`/`close`, `source: ai-campaign`)
+  in `review-verdicts.jsonl`. **Read-only on GitHub** — it never approves/merges/comments;
+  approval is the human's gate.
+- **Human approval + merge** — you review (`pr-review-report.sh`), approve, and merge.
 
 ## Scope — read this first
 
@@ -21,8 +34,11 @@ permission deny-list in `campaign-settings.json` and the rules in
 | `campaign-run.sh` | Durable runner: `flock` single-run lock, `DISABLED` kill-switch, `timeout`, bakes PATH+nix, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). |
 | `campaign-prompt.txt` | The campaign instructions fed to the model. |
 | `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails). |
-| `cron.env.example` | Template for deployment-specific values (PR assignee, work dir, model, run caps). Copy to `cron.env` (gitignored) and edit. |
-| `pr-review-report.sh` | Reports every open PR + logged close-candidate that needs a human decision, bucketed by action (merge / resolve-conflict / fix-or-judge / close), as clickable URLs. |
+| `review-run.sh` | Vetting runner (same hardened pattern as `campaign-run.sh`): reviews open PRs, appends verdicts to `review-verdicts.jsonl`, logs to `review.log`. Read-only on GitHub. Kill-switch `review-DISABLED`. |
+| `review-prompt.txt` | The AI-vetting instructions fed to the model. |
+| `review-settings.json` | Tool allow/deny for the vetter — every GitHub write (incl. `gh pr review`/approve, `gh api`) is denied; the only write is the local verdict ledger. |
+| `cron.env.example` | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit. |
+| `pr-review-report.sh` | Reports every open PR by its pipeline stage (AI-vetted / approved / relink / reject / close / unreviewed), respecting `review-verdicts.jsonl` + GitHub approvals, as clickable URLs. |
 
 ## Configuration
 

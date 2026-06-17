@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Durable local runner for the AI PR-VETTING cron (the "AI review" stage of the merge pipeline).
+# Sibling to campaign-run.sh. It reviews open PRs and appends verdicts to review-verdicts.jsonl;
+# it NEVER mutates GitHub (read-only gh + write only the local ledger — enforced by review-settings.json).
+#
+# Controls (run from the install dir):
+#   DISABLE:  touch review-DISABLED        (independent of the producer cron's DISABLED)
+#   WATCH:    tail -f review.log
+#   RUN NOW:  ./review-run.sh
+# Deployment values come from ./cron.env (PR_ASSIGNEE, optional REVIEW_MODEL/REVIEW_MAXTIME/REVIEW_KEEP_RUNS).
+
+set -uo pipefail
+
+DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+# --- environment: cron's env is bare. Derive HOME/USER, then nix + PATH (same fix as campaign-run.sh). ---
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"
+export HOME
+: "${USER:=$(id -un)}"; export USER
+: "${LOGNAME:=$USER}"; export LOGNAME
+export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# shellcheck disable=SC1091
+set +u
+[ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
+set -u
+
+# --- deployment config (defaults; override in ./cron.env) ---
+PR_ASSIGNEE=""
+REVIEW_MODEL="claude-sonnet-4-6"   # bump to claude-opus-4-8 in cron.env for max review rigor
+REVIEW_MAXTIME="2h"
+REVIEW_KEEP_RUNS=20
+# shellcheck disable=SC1091
+[ -f "$DIR/cron.env" ] && . "$DIR/cron.env"
+
+LOG="$DIR/review.log"
+LOCK="$DIR/review.lock"
+RUNDIR="$DIR/review-runs"
+REVIEW_VERDICTS="$DIR/review-verdicts.jsonl"
+
+# --- kill switch (independent of the producer cron) ---
+if [ -f "$DIR/review-DISABLED" ]; then
+  echo "$(date -u +%FT%TZ) SKIP: review-DISABLED flag present" >> "$LOG"; exit 0
+fi
+
+# --- single-run lock (non-blocking) ---
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "$(date -u +%FT%TZ) SKIP: previous review run still holding the lock" >> "$LOG"; exit 0
+fi
+
+mkdir -p "$RUNDIR"
+touch "$REVIEW_VERDICTS"
+cd "$DIR" || exit 1
+
+# rotate per-run traces
+ls -1t "$RUNDIR"/*.jsonl 2>/dev/null | tail -n +$((REVIEW_KEEP_RUNS+1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+RUNLOG="$RUNDIR/$TS.jsonl"
+ERRLOG="$RUNDIR/$TS.err"
+
+# substitute deployment values into the prompt template
+PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
+              -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
+              "$DIR/review-prompt.txt")"
+
+echo "=================================================================" >> "$LOG"
+echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(hostname)) trace=$RUNLOG" >> "$LOG"
+
+# gh + jq on PATH (via nix shell) so the model uses BARE gh -> the read-only deny-list applies.
+timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq --command claude --print "$PROMPT" \
+  --model "$REVIEW_MODEL" \
+  --settings "$DIR/review-settings.json" \
+  --permission-mode default \
+  --verbose --output-format stream-json \
+  --add-dir "$DIR" \
+  2>"$ERRLOG" \
+  | tee "$RUNLOG" \
+  | { nix shell nixpkgs#jq --command jq --unbuffered -rc '
+        if .type=="assistant" then
+          (.message.content[]?
+            | if .type=="tool_use" then "  ▸ "+.name+"  "+(((.input.command // .input.description // (.input|tostring)))|tostring|gsub("\n";" ")|.[0:200])
+              elif .type=="text" then "  · "+((.text|gsub("\n";" "))|.[0:200])
+              else empty end)
+        elif .type=="result" then "  ⟹ "+(((.subtype//"done"))|ascii_upcase)+": "+(((.result//"")|gsub("\n";" "))|.[0:800])
+        else empty end
+      ' 2>/dev/null || cat >/dev/null ; } >> "$LOG"
+rc=${PIPESTATUS[0]}
+
+if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
+  echo "  !! no event stream — likely auth/startup failure; stderr:" >> "$LOG"
+  tail -5 "$ERRLOG" | sed 's/^/    /' >> "$LOG"
+fi
+
+echo "$(date -u +%FT%TZ) review run END (exit=$rc, verdicts now=$(wc -l < "$REVIEW_VERDICTS" 2>/dev/null), trace=$RUNLOG)" >> "$LOG"
+exit 0
