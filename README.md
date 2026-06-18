@@ -7,7 +7,7 @@ The pipeline has two automated stages and one human gate:
 ```mermaid
 flowchart LR
     ISS([📥 open issues])
-    PROD["🤖 PRODUCER · campaign-run.sh<br/>@ :00 of 01·05·09·13·17·21 UTC<br/>opens 1 fix PR per uncovered issue<br/>(audit backlog first) + greens<br/>its OWN red PRs (step 3b)"]
+    PROD["🤖 PRODUCER · campaign-run.sh<br/>@ :00 of 01·05·09·13·17·21 UTC<br/>greens its OWN red PRs FIRST (step 3b),<br/>then opens 1 fix PR per uncovered<br/>issue (audit backlog first)"]
     PRS([📤 open PRs])
     VET["🔍 VETTER · review-run.sh<br/>@ :00 of 03·07·11·15·19·23 UTC<br/>AI-reviews each PR's CODE into a<br/>verdict: ready / relink / reject / close<br/>read-only · re-vets on head-move"]
     HUM{"👤 YOU<br/>pr-review-report.sh<br/>approve = merge gate"}
@@ -30,7 +30,7 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 
 ```
    :00  ✅ MERGE     lands the PRs you approved last cycle
-   :01  🤖 PRODUCER  opens new fix PRs + greens its own red ones
+   :01  🤖 PRODUCER  greens its own red PRs FIRST, then opens new fix PRs
    :03  🔍 VETTER    AI-reviews the fresh PRs → records verdicts
         👤  ……  you approve anytime  ·  pr-review-report.sh --ready
    :04  ✅ MERGE     (next cycle) lands what you just approved … ⟳
@@ -40,8 +40,8 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 ```
 
 - **Producer** (`campaign-run.sh`, every 4h at :00 of 1,5,9,13,17,21 UTC) — opens
-  one fix PR per tractable, uncovered issue (audit-backlog first) AND drives its
-  OWN red PRs green with non-force fix commits. Org-mutating actions: `gh pr create`,
+  drives its OWN red PRs green FIRST (existing in-flight work, non-force commits),
+  THEN opens one fix PR per tractable, uncovered issue (audit-backlog first). Org-mutating actions: `gh pr create`,
   `gh pr comment` (screenshots), and non-force `git push` to its own PR branches.
   Never merges/closes/deploys/force-pushes. Skips issues with a `reject`
   verdict (parked for a human, so a rejected fix isn't re-attempted into dead PRs).
