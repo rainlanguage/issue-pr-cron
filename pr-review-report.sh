@@ -41,7 +41,7 @@ classify_one() {
   elif [ "${tot:-0}" -eq 0 ];  then ci="NOCHECKS"
   else ci="GREEN"; fi
   headoid=$(printf '%s' "$j" | jq -r '.headRefOid // "-"')
-  title=$(printf '%s' "$j" | jq -r '.title // ""' | tr '\t\n' '  ' | cut -c1-100)
+  title=$(printf '%s' "$j" | jq -r '(.title // "")|gsub("\t";" ")|gsub("\n";" ")|gsub("\r";" ")|.[0:100]')
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$num" "$merg" "$ci" "$draft" "$rev" "$url" "$headoid" "$title"
 }
 export -f classify_one
@@ -49,7 +49,7 @@ export -f classify_one
 # verdict lookup: VERD/SRC/SHA["repo/num"] from the ledger (last matching line wins)
 declare -A VERD SRC SHA NOTE
 if [ -s "$REVIEW_VERDICTS" ]; then
-  while IFS=$'\t' read -r k v s sha note; do VERD["$k"]="$v"; SRC["$k"]="${s:-ai-campaign}"; SHA["$k"]="$sha"; NOTE["$k"]="$note"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict+"\t"+(.source//"ai-campaign")+"\t"+(.sha//"")+"\t"+((.note//"")|gsub("\t";" ")|gsub("\n";" "))' "$REVIEW_VERDICTS" 2>/dev/null)
+  while IFS=$'\t' read -r k v s sha note; do VERD["$k"]="$v"; SRC["$k"]="${s:-ai-campaign}"; SHA["$k"]="$sha"; NOTE["$k"]="$note"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict+"\t"+(.source//"ai-campaign")+"\t"+(.sha//"")+"\t"+((.note//"")|gsub("\t";" ")|gsub("\n";" ")|gsub("\r";" ")|.[0:100])' "$REVIEW_VERDICTS" 2>/dev/null)
 fi
 
 # bucket(verdict, reviewDecision, mergeable, ci, draft) -> bucket key
@@ -101,12 +101,12 @@ while IFS=$'\t' read -r repo num merg ci draft rev url headoid title; do
   note="${NOTE[$repo/$num]:-}"
   b=$(bucket "$v" "$s" "$rev" "$merg" "$ci" "$draft" "$vsha" "$headoid")
   # one-liner per PR: the vetter's verdict note when it's descriptive, else the PR title
+  # (note + title are already sanitized + truncated to 100 codepoints at their source)
   oneliner="$note"; case "$oneliner" in ""|"approved by user") oneliner="${title:-?}";; esac
-  oneliner=$(printf '%s' "$oneliner" | cut -c1-100)
   printf '%s\t%s\t%s\n' "$b" "$url" "$oneliner" >> "$BKT"
 done < "$TMP"
 
-emit() { # bucket-key  title
+emit() { # bucket-key  section-header
   local n; n=$(awk -F'\t' -v b="$1" '$1==b' "$BKT" | wc -l)
   [ "$n" -eq 0 ] && return
   echo; echo "$2  ($n)"
