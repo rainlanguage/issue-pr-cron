@@ -4,8 +4,39 @@ Local, autonomous cron jobs that drive issues to merge-ready PRs across the
 rainlanguage GitHub org. State lives entirely in GitHub + small local ledgers.
 The pipeline has two automated stages and one human gate:
 
+```mermaid
+flowchart LR
+    ISS([📥 open issues])
+    PROD["🤖 PRODUCER · campaign-run.sh<br/>@ :00 of 01·05·09·13·17·21 UTC<br/>opens 1 fix PR per uncovered issue<br/>(audit backlog first) + greens<br/>its OWN red PRs (step 3b)"]
+    PRS([📤 open PRs])
+    VET["🔍 VETTER · review-run.sh<br/>@ :00 of 03·07·11·15·19·23 UTC<br/>AI-reviews each PR's CODE into a<br/>verdict: ready / relink / reject / close<br/>read-only · re-vets on head-move"]
+    HUM{"👤 YOU<br/>pr-review-report.sh<br/>approve = merge gate"}
+    MERGE["✅ MERGE · merge-run.sh<br/>@ :00 of 00·04·08·12·16·20 UTC<br/>merges ONLY human-approved + GREEN<br/>never deploys / force-pushes / touches issues"]
+    DONE([🎉 merged])
+
+    ISS --> PROD --> PRS --> VET --> HUM
+    HUM -->|approved| MERGE --> DONE
+
+    class PROD,VET,MERGE cron
+    class ISS,PRS,DONE data
+    class HUM human
+    classDef cron fill:#0d1b2a,stroke:#4ea1ff,color:#e6edf3
+    classDef data fill:#0b0f14,stroke:#30363d,color:#9da7b1
+    classDef human fill:#2d1b3d,stroke:#bb86fc,color:#f3e8ff
 ```
-issues → [producer] → PRs → [vetter] → AI verdict → YOU approve → [merge cron] → merged
+
+The three crons are **staggered by 2 h** so work flows downstream within each
+4-hour cycle (all times UTC):
+
+```
+   :00  ✅ MERGE     lands the PRs you approved last cycle
+   :01  🤖 PRODUCER  opens new fix PRs + greens its own red ones
+   :03  🔍 VETTER    AI-reviews the fresh PRs → records verdicts
+        👤  ……  you approve anytime  ·  pr-review-report.sh --ready
+   :04  ✅ MERGE     (next cycle) lands what you just approved … ⟳
+
+   6 cycles/day. A PR opened at :01 is vetted by :03; once you approve,
+   the next :00/:04/:08… merge run lands it — hours end-to-end, hands-off.
 ```
 
 - **Producer** (`campaign-run.sh`, every 4h at :00 of 1,5,9,13,17,21 UTC) — opens
