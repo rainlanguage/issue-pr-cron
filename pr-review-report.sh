@@ -24,11 +24,11 @@ if ! command -v gh >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
   echo "error: need gh + jq on PATH (or nix available)" >&2; exit 1
 fi
 
-# per-PR: repo<TAB>num<TAB>mergeable<TAB>ci<TAB>draft<TAB>reviewDecision<TAB>url<TAB>headoid
+# per-PR: repo<TAB>num<TAB>mergeable<TAB>ci<TAB>draft<TAB>reviewDecision<TAB>url<TAB>headoid<TAB>title
 classify_one() {
-  local repo="$1" num="$2" org="$3" j url merg draft rev fail pend tot ci headoid
-  j=$(gh pr view "$num" -R "$org/$repo" --json url,mergeable,isDraft,reviewDecision,statusCheckRollup,headRefOid 2>/dev/null) \
-    || { printf '%s\t%s\t?\t?\t?\t?\t-\t-\n' "$repo" "$num"; return; }
+  local repo="$1" num="$2" org="$3" j url merg draft rev fail pend tot ci headoid title
+  j=$(gh pr view "$num" -R "$org/$repo" --json url,mergeable,isDraft,reviewDecision,statusCheckRollup,headRefOid,title 2>/dev/null) \
+    || { printf '%s\t%s\t?\t?\t?\t?\t-\t-\t-\n' "$repo" "$num"; return; }
   url=$(printf '%s' "$j" | jq -r '.url')
   merg=$(printf '%s' "$j" | jq -r '.mergeable')
   draft=$(printf '%s' "$j" | jq -r 'if .isDraft then "DRAFT" else "-" end')
@@ -41,14 +41,15 @@ classify_one() {
   elif [ "${tot:-0}" -eq 0 ];  then ci="NOCHECKS"
   else ci="GREEN"; fi
   headoid=$(printf '%s' "$j" | jq -r '.headRefOid // "-"')
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$num" "$merg" "$ci" "$draft" "$rev" "$url" "$headoid"
+  title=$(printf '%s' "$j" | jq -r '.title // ""' | tr '\t\n' '  ' | cut -c1-100)
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$num" "$merg" "$ci" "$draft" "$rev" "$url" "$headoid" "$title"
 }
 export -f classify_one
 
 # verdict lookup: VERD/SRC/SHA["repo/num"] from the ledger (last matching line wins)
-declare -A VERD SRC SHA
+declare -A VERD SRC SHA NOTE
 if [ -s "$REVIEW_VERDICTS" ]; then
-  while IFS=$'\t' read -r k v s sha; do VERD["$k"]="$v"; SRC["$k"]="${s:-ai-campaign}"; SHA["$k"]="$sha"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict+"\t"+(.source//"ai-campaign")+"\t"+(.sha//"")' "$REVIEW_VERDICTS" 2>/dev/null)
+  while IFS=$'\t' read -r k v s sha note; do VERD["$k"]="$v"; SRC["$k"]="${s:-ai-campaign}"; SHA["$k"]="$sha"; NOTE["$k"]="$note"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict+"\t"+(.source//"ai-campaign")+"\t"+(.sha//"")+"\t"+((.note//"")|gsub("\t";" ")|gsub("\n";" "))' "$REVIEW_VERDICTS" 2>/dev/null)
 fi
 
 # bucket(verdict, reviewDecision, mergeable, ci, draft) -> bucket key
@@ -92,20 +93,24 @@ gh search prs --owner "$ORG" --author "$AUTHOR" --state open --limit 300 --json 
   --jq '.[]|.repository.name+" "+(.number|tostring)' 2>/dev/null \
   | xargs -P12 -n2 bash -c 'classify_one "$1" "$2" "'"$ORG"'"' _ > "$TMP" 2>/dev/null
 
-while IFS=$'\t' read -r repo num merg ci draft rev url headoid; do
+while IFS=$'\t' read -r repo num merg ci draft rev url headoid title; do
   [ -z "$repo" ] && continue
   v="${VERD[$repo/$num]:-}"
   s="${SRC[$repo/$num]:-ai-campaign}"
   vsha="${SHA[$repo/$num]:-}"
+  note="${NOTE[$repo/$num]:-}"
   b=$(bucket "$v" "$s" "$rev" "$merg" "$ci" "$draft" "$vsha" "$headoid")
-  printf '%s\t%s\t%s\n' "$b" "$url" "$v" >> "$BKT"
+  # one-liner per PR: the vetter's verdict note when it's descriptive, else the PR title
+  oneliner="$note"; case "$oneliner" in ""|"approved by user") oneliner="${title:-?}";; esac
+  oneliner=$(printf '%s' "$oneliner" | cut -c1-100)
+  printf '%s\t%s\t%s\n' "$b" "$url" "$oneliner" >> "$BKT"
 done < "$TMP"
 
 emit() { # bucket-key  title
   local n; n=$(awk -F'\t' -v b="$1" '$1==b' "$BKT" | wc -l)
   [ "$n" -eq 0 ] && return
   echo; echo "$2  ($n)"
-  awk -F'\t' -v b="$1" '$1==b {print "  "$2}' "$BKT" | sort
+  awk -F'\t' -v b="$1" '$1==b {printf "  %s  —  %s\n", $2, $3}' "$BKT" | sort
 }
 
 emit APPROVED        "✅ APPROVED BY YOU — ready to merge (GitHub approval / verdict you set)"
