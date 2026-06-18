@@ -16,9 +16,10 @@
 !/merge-run.sh
 !/merge-prompt.txt
 !/merge-settings.json
-# PreToolUse hook (deploy to the box's claude hooks dir + wire in settings.json):
+# PreToolUse hooks (deploy to the box's claude hooks dir + wire in settings.json):
 !/hooks/
 !/hooks/block-nix-wrap-gh.sh
+!/hooks/block-cron-git-bypass.sh
 
 # NEVER track the real deployment env (it holds the account handle / box-specific values):
 /cron.env
