@@ -1,156 +1,28 @@
 #!/usr/bin/env bash
-# pr-review-report.sh — report every open PR (and logged close-candidate) that needs a HUMAN decision,
-# RESPECTING reviews already done: it overlays (a) recorded review verdicts in review-verdicts.jsonl and
-# (b) GitHub's own review state (APPROVED / CHANGES_REQUESTED) on top of the CI/mergeability signal, so a
-# reviewed-as-reject/dup/relink PR is NOT shown as "ready to merge". Everything prints as full clickable URLs.
+# pr-review-report.sh — report every open PR (and logged close-candidate) that needs a HUMAN
+# decision, overlaying recorded review verdicts (review-verdicts.jsonl) and GitHub's own review
+# state on top of the CI/mergeability signal. Delegates to the Rust implementation in
+# pr-review-report-rs/. Everything prints as full clickable URLs.
 #
 # Usage:   ./pr-review-report.sh            # all buckets
 #          ./pr-review-report.sh --ready    # only the reviewed-&-ready-to-merge bucket
-# review-verdicts.jsonl lines: {"repo","pr","verdict":"ready|relink|reject|close","note"}  (edit freely).
-# Config from ./cron.env if present (ORG, PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS).
+# Config from ./cron.env (ORG, PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS), read by the binary.
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-# shellcheck disable=SC1091
-[ -f "$DIR/cron.env" ] && . "$DIR/cron.env" 2>/dev/null || true
-ORG="${ORG:-rainlanguage}"
-AUTHOR="${PR_ASSIGNEE:-thedavidmeister}"
-CLOSE_CANDIDATES="${CLOSE_CANDIDATES:-$DIR/close-candidates.jsonl}"
-REVIEW_VERDICTS="${REVIEW_VERDICTS:-$DIR/review-verdicts.jsonl}"
-ONLY="${1:-}"
+cd "$DIR"                       # the binary reads cron.env + ledgers from this dir
+BIN="$DIR/pr-review-report-rs/target/release/pr-review-report"
 
-if ! command -v gh >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-  if command -v nix >/dev/null 2>&1; then exec nix shell nixpkgs#gh nixpkgs#jq --command "$0" "$@"; fi
-  echo "error: need gh + jq on PATH (or nix available)" >&2; exit 1
+# gh is required at runtime; re-exec under nix if it isn't already on PATH.
+if ! command -v gh >/dev/null 2>&1 && command -v nix >/dev/null 2>&1; then
+  exec nix shell nixpkgs#gh --command "$0" "$@"
 fi
 
-# per-PR: repo<TAB>num<TAB>mergeable<TAB>ci<TAB>draft<TAB>reviewDecision<TAB>url<TAB>headoid<TAB>title
-classify_one() {
-  local repo="$1" num="$2" org="$3" j url merg draft rev fail pend tot ci headoid title
-  j=$(gh pr view "$num" -R "$org/$repo" --json url,mergeable,isDraft,reviewDecision,statusCheckRollup,headRefOid,title 2>/dev/null) \
-    || { printf '%s\t%s\t?\t?\t?\t?\t-\t-\t-\n' "$repo" "$num"; return; }
-  url=$(printf '%s' "$j" | jq -r '.url')
-  merg=$(printf '%s' "$j" | jq -r '.mergeable')
-  draft=$(printf '%s' "$j" | jq -r 'if .isDraft then "DRAFT" else "-" end')
-  rev=$(printf '%s' "$j" | jq -r 'if (.reviewDecision // "") == "" then "-" else .reviewDecision end')
-  fail=$(printf '%s' "$j" | jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE" or .conclusion=="TIMED_OUT" or .conclusion=="CANCELLED" or .conclusion=="ACTION_REQUIRED" or .conclusion=="STARTUP_FAILURE" or .state=="FAILURE" or .state=="ERROR")]|length')
-  pend=$(printf '%s' "$j" | jq '[.statusCheckRollup[]?|select(.status=="IN_PROGRESS" or .status=="QUEUED" or .status=="PENDING" or .state=="PENDING")]|length')
-  tot=$(printf '%s' "$j" | jq '[.statusCheckRollup[]?]|length')
-  if   [ "${fail:-0}" -gt 0 ]; then ci="RED"
-  elif [ "${pend:-0}" -gt 0 ]; then ci="PENDING"
-  elif [ "${tot:-0}" -eq 0 ];  then ci="NOCHECKS"
-  else ci="GREEN"; fi
-  headoid=$(printf '%s' "$j" | jq -r '.headRefOid // "-"')
-  title=$(printf '%s' "$j" | jq -r '(.title // "")|gsub("\t";" ")|gsub("\n";" ")|gsub("\r";" ")|.[0:100]')
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$num" "$merg" "$ci" "$draft" "$rev" "$url" "$headoid" "$title"
-}
-export -f classify_one
-
-# verdict lookup: VERD/SRC/SHA["repo/num"] from the ledger (last matching line wins)
-declare -A VERD SRC SHA NOTE
-if [ -s "$REVIEW_VERDICTS" ]; then
-  while IFS=$'\t' read -r k v s sha note; do VERD["$k"]="$v"; SRC["$k"]="${s:-ai-campaign}"; SHA["$k"]="$sha"; NOTE["$k"]="$note"; done < <(jq -r 'select(type=="object")|.repo+"/"+(.pr|tostring)+"\t"+.verdict+"\t"+(.source//"ai-campaign")+"\t"+(.sha//"")+"\t"+((.note//"")|gsub("\t";" ")|gsub("\n";" ")|gsub("\r";" ")|.[0:100])' "$REVIEW_VERDICTS" 2>/dev/null)
+if [ ! -x "$BIN" ]; then
+  echo "pr-review-report: Rust binary not built; building it now…" >&2
+  ( cd "$DIR/pr-review-report-rs" \
+      && nix shell nixpkgs#cargo nixpkgs#rustc --command cargo build --release >&2 ) \
+    || { echo "pr-review-report: build failed; run: (cd pr-review-report-rs && cargo build --release)" >&2; exit 1; }
 fi
 
-# bucket(verdict, reviewDecision, mergeable, ci, draft) -> bucket key
-# pipeline:  unreviewed -> AI-vetted -> you approve -> merge
-bucket() {
-  local v="$1" src="$2" rev="$3" merg="$4" ci="$5" draft="$6" vsha="$7" headsha="$8"
-  # AI/human flagged a disposition -> that IS the action, regardless of CI.
-  case "$v" in close) echo CLOSE; return;; reject) echo REJECT; return;; relink) echo RELINK; return;; esac
-  [ "$rev" = CHANGES_REQUESTED ] && { echo REJECT; return; }
-  [ "$draft" = DRAFT ] && { echo DRAFT; return; }
-  # A REAL red is the PRODUCER's work to drive green -> it is NOT a terminal "blocked"
-  # state and NOT a human action. Surface it independently of review status: the red has
-  # to be fixed before vet/approve/merge matter again.
-  [ "$ci" = RED ] && { echo PRODUCER_FIX; return; }
-  [ "$merg" = CONFLICTING ] && { echo CONFLICTING; return; }
-  [ "$ci" = PENDING ] && { echo PENDING; return; }
-  # green / nochecks + mergeable -> bucket by review state
-  local approved=0 aivet=0
-  # human approval = a GitHub APPROVED review, or a verdict you set with source=human
-  { [ "$rev" = APPROVED ] || { [ "$v" = ready ] && [ "$src" = human ]; }; } && approved=1
-  # AI-vetted = the review campaign passed it (source=ai-campaign), not yet human-approved
-  { [ "$approved" = 0 ] && [ "$v" = ready ] && [ "$src" = ai-campaign ]; } && aivet=1
-  if [ "$merg" = MERGEABLE ] && { [ "$ci" = GREEN ] || [ "$ci" = NOCHECKS ]; }; then
-    # a ready/approved verdict pinned to an OLD head sha is STALE — the head moved
-    # (e.g. a producer step-3b fix) after it was vetted; re-vet before it can merge.
-    if { [ "$approved" = 1 ] || [ "$aivet" = 1 ]; } && [ -n "$vsha" ] && [ "$vsha" != "-" ] && [ -n "$headsha" ] && [ "$headsha" != "-" ] && [ "$vsha" != "$headsha" ]; then echo STALE_VET; return; fi
-    [ "$approved" = 1 ] && { echo APPROVED; return; }
-    [ "$aivet" = 1 ]   && { echo AIVET; return; }
-    echo UNREVIEWED; return
-  fi
-  echo PENDING   # mergeability still resolving (mergeable=UNKNOWN)
-}
-
-echo "PR review report — $ORG, author $AUTHOR — $(date -u +%FT%TZ)"
-echo "pipeline:  🟦 unreviewed  →  🤖 AI-vetted  →  ✅ you approve  →  merge"
-echo "(AI verdicts: review-verdicts.jsonl · your sign-off: a GitHub approval, or a verdict with source=human)"
-echo "================================================================"
-
-TMP=$(mktemp); BKT=$(mktemp)
-gh search prs --owner "$ORG" --author "$AUTHOR" --state open --limit 300 --json repository,number \
-  --jq '.[]|.repository.name+" "+(.number|tostring)' 2>/dev/null \
-  | xargs -P12 -n2 bash -c 'classify_one "$1" "$2" "'"$ORG"'"' _ > "$TMP" 2>/dev/null
-
-while IFS=$'\t' read -r repo num merg ci draft rev url headoid title; do
-  [ -z "$repo" ] && continue
-  v="${VERD[$repo/$num]:-}"
-  s="${SRC[$repo/$num]:-ai-campaign}"
-  vsha="${SHA[$repo/$num]:-}"
-  note="${NOTE[$repo/$num]:-}"
-  b=$(bucket "$v" "$s" "$rev" "$merg" "$ci" "$draft" "$vsha" "$headoid")
-  # one-liner per PR: the vetter's verdict note when it's descriptive, else the PR title
-  # (note + title are already sanitized + truncated to 100 codepoints at their source)
-  oneliner="$note"; case "$oneliner" in ""|"approved by user") oneliner="${title:-?}";; esac
-  printf '%s\t%s\t%s\n' "$b" "$url" "$oneliner" >> "$BKT"
-done < "$TMP"
-
-emit() { # bucket-key  section-header
-  local n; n=$(awk -F'\t' -v b="$1" '$1==b' "$BKT" | wc -l)
-  [ "$n" -eq 0 ] && return
-  echo; echo "$2  ($n)"
-  awk -F'\t' -v b="$1" '$1==b {printf "  %s  —  %s\n", $2, $3}' "$BKT" | sort
-}
-
-emit APPROVED        "✅ APPROVED BY YOU — ready to merge (GitHub approval / verdict you set)"
-[ "$ONLY" = "--ready" ] && { rm -f "$TMP" "$BKT"; exit 0; }
-emit AIVET           "🤖 AI-VETTED — awaiting YOUR approval (passed the automated review; NOT human-reviewed yet)"
-emit STALE_VET       "🔄 RE-VET PENDING — head moved since the recorded verdict (e.g. a producer step-3b fix); the vetter re-reviews the new commit before this can merge"
-emit PRODUCER_FIX    "🔴 RED — NEEDS A PRODUCER FIX (CI failing; the producer cron diagnoses it and pushes a fix to drive it green — producer work, NOT 'blocked', NOT your action)"
-emit RELINK          "🔧 AI-flagged — relink Closes→Refs before merge (else it auto-closes a live issue)"
-emit REJECT          "❌ AI-flagged / you requested changes — rework or close"
-emit CLOSE           "🗑️  AI-flagged — close (duplicate / superseded)"
-emit UNREVIEWED      "🟦 NOT YET REVIEWED — green + mergeable, awaiting AI review + your approval"
-emit CONFLICTING     "⚠️  CONFLICTING — needs a rebase onto current main (producer work)"
-emit PENDING         "🟡 PENDING — CI / mergeability still resolving (no action; just wait)"
-emit DRAFT           "📝 DRAFTS — intentionally not ready"
-
-if [ -s "$CLOSE_CANDIDATES" ]; then
-  # Dedup to the latest entry per issue-url, then SHOW ONLY issues still OPEN on
-  # GitHub — close-candidates.jsonl is append-only, so already-closed issues stay
-  # logged forever; querying live state stops the report listing closed ones.
-  cand=$(jq -r --arg org "$ORG" 'select(type=="object" and (.issue!=null)) | [
-      (if (.repo|test("/")) then .repo else $org+"/"+.repo end),
-      (.issue|tostring),
-      (.url // ("https://github.com/"+(if (.repo|test("/")) then .repo else $org+"/"+.repo end)+"/issues/"+(.issue|tostring))),
-      ((.reason//.note//"")|gsub("[\\t\\n\\r]";" ")|.[0:80])
-    ] | @tsv' "$CLOSE_CANDIDATES" 2>/dev/null | awk -F'\t' '{last[$3]=$0} END{for(u in last) print last[u]}')
-  total=0; openrows=""
-  while IFS=$'\t' read -r repo issue url reason; do
-    [ -z "$issue" ] && continue
-    total=$((total+1))
-    [ "$(gh issue view "$issue" -R "$repo" --json state --jq '.state' 2>/dev/null)" = "OPEN" ] \
-      && openrows="${openrows}  ${url}  — ${reason}"$'\n'
-  done <<< "$cand"
-  openc=$(printf '%s' "$openrows" | grep -c .)
-  if [ "$openc" -gt 0 ]; then
-    echo; echo "🗑️  ISSUE CLOSE-CANDIDATES — cron-logged already-fixed/invalid issues, STILL OPEN ($openc of $total logged; $((total-openc)) already closed, hidden)"
-    printf '%s' "$openrows" | sort -u
-  fi
-fi
-
-echo; echo "----------------------------------------------------------------"
-echo "totals: $(wc -l < "$TMP") open PRs by $AUTHOR  ·  buckets:"
-awk -F'\t' '{print $1}' "$BKT" | sort | uniq -c | sort -rn | sed 's/^/   /'
-rm -f "$TMP" "$BKT"
+exec "$BIN" "$@"
