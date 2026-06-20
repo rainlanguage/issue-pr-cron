@@ -374,8 +374,20 @@ fn close_candidates_section(org: &str, path: &str) {
     let mut open_c = 0usize;
     let mut closed_c = 0usize;
     let mut unknown_c = 0usize;
+    let mut excluded_c = 0usize;
     let mut rows: Vec<String> = Vec::new();
     for (url, (full, issue, reason)) in items {
+        // An issue "covered / made-moot by an OPEN pr" (or any non-landed reason) is NOT closeable:
+        // the fix has not merged, so it may never land; it self-closes via `Closes #N` when that PR
+        // merges, or stays open. Only surface candidates whose resolution has GENUINELY LANDED —
+        // fix already on main / invalid / duplicate / won't-fix. Everything else is excluded.
+        let rl = reason.trim().to_lowercase();
+        let landed = rl.starts_with("already-fixed-on-main")
+            || rl.starts_with("already-addressed-by-ci")
+            || rl.starts_with("invalid")
+            || rl.starts_with("duplicate")
+            || rl.starts_with("wont-fix") || rl.starts_with("won't-fix") || rl.starts_with("wontfix");
+        if !landed { excluded_c += 1; continue; }
         let st = gh_json(&["issue", "view", &issue, "-R", &full, "--json", "state"])
             .and_then(|j| j.get("state").and_then(|x| x.as_str()).map(|s| s.to_string()));
         match st.as_deref() {
@@ -389,8 +401,8 @@ fn close_candidates_section(org: &str, path: &str) {
         rows.dedup();
         println!();
         println!(
-            "🗑️  ISSUE CLOSE-CANDIDATES — cron-logged already-fixed/invalid issues ({} open, {} unverified shown; {} already closed, hidden)",
-            open_c, unknown_c, closed_c
+            "🗑️  ISSUE CLOSE-CANDIDATES — cron-logged landed-fix/invalid issues still OPEN ({} open, {} unverified shown; {} already closed, hidden; {} not-landed/open-pr-covered, excluded)",
+            open_c, unknown_c, closed_c, excluded_c
         );
         for r in &rows { println!("{}", r); }
     }
