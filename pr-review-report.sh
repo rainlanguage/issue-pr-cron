@@ -127,8 +127,27 @@ emit PENDING         "🟡 PENDING — CI / mergeability still resolving (no act
 emit DRAFT           "📝 DRAFTS — intentionally not ready"
 
 if [ -s "$CLOSE_CANDIDATES" ]; then
-  echo; echo "🗑️  ISSUE CLOSE-CANDIDATES — cron logged already-fixed/invalid issues (never closed)"
-  jq -r --arg org "$ORG" 'select(type=="object" and (.issue!=null)) | "  "+(.url // ("https://github.com/"+(if (.repo|test("/")) then .repo else $org+"/"+.repo end)+"/issues/"+(.issue|tostring)))+"  — "+((.reason//.note//"")[0:80])' "$CLOSE_CANDIDATES" 2>/dev/null | sort -u
+  # Dedup to the latest entry per issue-url, then SHOW ONLY issues still OPEN on
+  # GitHub — close-candidates.jsonl is append-only, so already-closed issues stay
+  # logged forever; querying live state stops the report listing closed ones.
+  cand=$(jq -r --arg org "$ORG" 'select(type=="object" and (.issue!=null)) | [
+      (if (.repo|test("/")) then .repo else $org+"/"+.repo end),
+      (.issue|tostring),
+      (.url // ("https://github.com/"+(if (.repo|test("/")) then .repo else $org+"/"+.repo end)+"/issues/"+(.issue|tostring))),
+      ((.reason//.note//"")|gsub("[\\t\\n\\r]";" ")|.[0:80])
+    ] | @tsv' "$CLOSE_CANDIDATES" 2>/dev/null | awk -F'\t' '{last[$3]=$0} END{for(u in last) print last[u]}')
+  total=0; openrows=""
+  while IFS=$'\t' read -r repo issue url reason; do
+    [ -z "$issue" ] && continue
+    total=$((total+1))
+    [ "$(gh issue view "$issue" -R "$repo" --json state --jq '.state' 2>/dev/null)" = "OPEN" ] \
+      && openrows="${openrows}  ${url}  — ${reason}"$'\n'
+  done <<< "$cand"
+  openc=$(printf '%s' "$openrows" | grep -c .)
+  if [ "$openc" -gt 0 ]; then
+    echo; echo "🗑️  ISSUE CLOSE-CANDIDATES — cron-logged already-fixed/invalid issues, STILL OPEN ($openc of $total logged; $((total-openc)) already closed, hidden)"
+    printf '%s' "$openrows" | sort -u
+  fi
 fi
 
 echo; echo "----------------------------------------------------------------"
