@@ -1,0 +1,15 @@
+[package]
+name = "pr-review-report"
+version = "0.1.0"
+edition = "2021"
+description = "Report every open rainlanguage PR (and logged close-candidate) that needs a human decision. Rust rewrite of pr-review-report.sh, fixing the 16 reviewed bugs."
+
+[[bin]]
+name = "pr-review-report"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 2

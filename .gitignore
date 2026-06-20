@@ -10,6 +10,8 @@
 !/campaign-settings.json
 !/cron.env.example
 !/pr-review-report.sh
+# Rust rewrite of pr-review-report.sh (target/ ignored by the project's own .gitignore):
+!/pr-review-report-rs/
 !/review-run.sh
 !/review-prompt.txt
 !/review-settings.json
