@@ -126,7 +126,8 @@ fn classify_ci(rollup: &Value) -> Ci {
         } else if let Some(s) = state {
             !matches!(s, "SUCCESS" | "FAILURE" | "ERROR")
         } else {
-            false
+            // FIX(rs-bug 3): a check with neither status nor state is unconfirmed → pending, never green.
+            true
         };
         if is_pend { pend += 1; }
     }
@@ -166,9 +167,8 @@ fn classify_one(org: &str, repo: &str, num: u64) -> PrRow {
 
 #[allow(clippy::too_many_arguments)]
 fn bucket_of(e: Option<&VEntry>, rev: Option<&str>, merge: Merge, ci: Ci, draft: bool, headoid: &str, fetch_error: bool) -> Bucket {
-    if fetch_error { return Bucket::FetchError; }
     let verdict = e.and_then(|x| x.verdict);
-    // An AI/human-flagged disposition IS the action, regardless of CI.
+    // An AI/human-flagged disposition IS the action, regardless of CI or fetch state.
     match verdict {
         Some(Verdict::Close) => return Bucket::Close,
         Some(Verdict::Reject) => return Bucket::Reject,
@@ -176,6 +176,9 @@ fn bucket_of(e: Option<&VEntry>, rev: Option<&str>, merge: Merge, ci: Ci, draft:
         Some(Verdict::Unknown) => return Bucket::UnknownVerdict, // FIX(bug 6,7): surface, don't silently UNREVIEWED
         _ => {}
     }
+    // FIX(rs-bug 1): a transient fetch failure masks only state-dependent buckets, AFTER the
+    // state-independent verdict disposition above (matches the original bash precedence).
+    if fetch_error { return Bucket::FetchError; }
     if rev == Some("CHANGES_REQUESTED") { return Bucket::Reject; }
     if draft { return Bucket::Draft; }
     if ci == Ci::Red { return Bucket::ProducerFix; }
@@ -187,7 +190,9 @@ fn bucket_of(e: Option<&VEntry>, rev: Option<&str>, merge: Merge, ci: Ci, draft:
     let aivet = !approved && is_ready && src == Some(Source::AiCampaign);
     if merge == Merge::Mergeable && (ci == Ci::Green || ci == Ci::NoChecks) {
         let vsha = e.map(|x| x.sha.as_str()).unwrap_or("");
-        if (approved || aivet) && !vsha.is_empty() && vsha != "-" && !headoid.is_empty() && headoid != "-" && vsha != headoid {
+        // FIX(rs-bug 2): a recorded verdict with a real sha is STALE whenever the live head can't be
+        // confirmed equal — including a missing/unknown head ("-") — not only on an explicit mismatch.
+        if (approved || aivet) && !vsha.is_empty() && vsha != "-" && (headoid.is_empty() || headoid == "-" || vsha != headoid) {
             return Bucket::StaleVet;
         }
         if approved { return Bucket::Approved; }
@@ -200,34 +205,69 @@ fn bucket_of(e: Option<&VEntry>, rev: Option<&str>, merge: Merge, ci: Ci, draft:
 struct OutRow { bucket: Bucket, url: String, oneliner: String }
 
 fn cfg(cron: &HashMap<String, String>, env_key: &str, def: &str) -> String {
+    // FIX(rs-bug 5): a set-but-EMPTY env OR cron.env value falls back to the default (bash ${VAR:-def}).
     std::env::var(env_key).ok().filter(|s| !s.is_empty())
-        .or_else(|| cron.get(env_key).cloned())
+        .or_else(|| cron.get(env_key).cloned().filter(|s| !s.is_empty()))
         .unwrap_or_else(|| def.to_string())
 }
 
+/// FIX(rs-bug 6): resolve the base dir (where the ledgers live) like bash's $DIR, so the binary finds
+/// them regardless of CWD: RAINIX_BATCH_DIR env, else walk up from the exe to the first dir holding a
+/// ledger / cron.env, else ".".
+fn base_dir() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("RAINIX_BATCH_DIR") {
+        if !d.is_empty() { return std::path::PathBuf::from(d); }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        for _ in 0..6 {
+            let Some(d) = dir else { break };
+            if d.join("review-verdicts.jsonl").exists() || d.join("cron.env").exists() || d.join("close-candidates.jsonl").exists() {
+                return d;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+    std::path::PathBuf::from(".")
+}
+
 fn main() {
-    // Parse cron.env (KEY=VALUE) from CWD if present; env vars override it; then defaults.
+    let base = base_dir();
+    // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
     let mut cron: HashMap<String, String> = HashMap::new();
-    if let Ok(c) = std::fs::read_to_string("cron.env") {
+    if let Ok(c) = std::fs::read_to_string(base.join("cron.env")) {
         for line in c.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') { continue; }
             let line = line.strip_prefix("export ").unwrap_or(line);
-            if let Some((k, v)) = line.split_once('=') {
-                let v = v.trim().trim_matches('"').trim_matches('\'');
-                cron.insert(k.trim().to_string(), v.to_string());
+            if let Some((k, v0)) = line.split_once('=') {
+                let v0 = v0.trim_start();
+                // FIX(rs-bug 7): honour quotes; strip a trailing unquoted ` #...` comment; expand $HOME/~.
+                let val = if let Some(rest) = v0.strip_prefix('"') {
+                    rest.split_once('"').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
+                } else if let Some(rest) = v0.strip_prefix('\'') {
+                    rest.split_once('\'').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
+                } else {
+                    let cut = v0.find(" #").or_else(|| v0.find("\t#")).unwrap_or(v0.len());
+                    v0[..cut].trim().to_string()
+                };
+                let val = if let Some(rest) = val.strip_prefix("$HOME") {
+                    format!("{}{}", std::env::var("HOME").unwrap_or_default(), rest)
+                } else if let Some(rest) = val.strip_prefix("~/") {
+                    format!("{}/{}", std::env::var("HOME").unwrap_or_default(), rest)
+                } else { val };
+                cron.insert(k.trim().to_string(), val);
             }
         }
     }
     let org = cfg(&cron, "ORG", "rainlanguage");
-    let author = {
-        // PR_ASSIGNEE is the documented key for the author.
-        std::env::var("PR_ASSIGNEE").ok().filter(|s| !s.is_empty())
-            .or_else(|| cron.get("PR_ASSIGNEE").cloned())
-            .unwrap_or_else(|| "thedavidmeister".to_string())
-    };
-    let close_candidates = cfg(&cron, "CLOSE_CANDIDATES", "close-candidates.jsonl");
-    let review_verdicts = cfg(&cron, "REVIEW_VERDICTS", "review-verdicts.jsonl");
+    // FIX(rs-bug 5): PR_ASSIGNEE via cfg() so a set-but-empty value also falls back to the default.
+    let author = cfg(&cron, "PR_ASSIGNEE", "thedavidmeister");
+    // FIX(rs-bug 6): default the ledgers to the base dir (found regardless of CWD).
+    let cc_def = base.join("close-candidates.jsonl").to_string_lossy().into_owned();
+    let rv_def = base.join("review-verdicts.jsonl").to_string_lossy().into_owned();
+    let close_candidates = cfg(&cron, "CLOSE_CANDIDATES", &cc_def);
+    let review_verdicts = cfg(&cron, "REVIEW_VERDICTS", &rv_def);
     let only_ready = std::env::args().nth(1).as_deref() == Some("--ready");
 
     let now = Command::new("date").args(["-u", "+%FT%TZ"]).output().ok()
@@ -256,13 +296,20 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let prs: Vec<(String, u64)> = val.as_array().map(|a| {
-        a.iter().filter_map(|x| {
-            let repo = x.get("repository").and_then(|r| r.get("name")).and_then(|n| n.as_str())?.to_string();
-            let num = x.get("number").and_then(|n| n.as_u64())?;
-            Some((repo, num))
-        }).collect()
-    }).unwrap_or_default();
+    // FIX(rs-bug 4): a success response that parses but isn't an array is a malformed fetch — abort
+    // loudly rather than fold it into an empty Vec (a falsely-empty all-clear).
+    let arr = match val.as_array() {
+        Some(a) => a,
+        None => {
+            eprintln!("error: `gh search prs` returned non-array JSON — aborting rather than print a falsely-empty report");
+            std::process::exit(1);
+        }
+    };
+    let prs: Vec<(String, u64)> = arr.iter().filter_map(|x| {
+        let repo = x.get("repository").and_then(|r| r.get("name")).and_then(|n| n.as_str())?.to_string();
+        let num = x.get("number").and_then(|n| n.as_u64())?;
+        Some((repo, num))
+    }).collect();
 
     let verds = load_verdicts(&review_verdicts);
 
@@ -341,14 +388,15 @@ fn main() {
     for (k, c) in hv { println!("   {} {}", c, k); }
 }
 
-/// FIX(bug 1,8,9,10,11): robust line-by-line parse; require a string repo; FAIL-OPEN on the live
-/// state check (a transient gh error → state UNKNOWN, still SHOWN, never hidden); count open /
-/// closed / unverified separately (don't fold gh errors into "already closed").
+/// FIX(bug 1,8,9,10,11 + rs-bug 8): robust line-by-line parse; require a string repo; dedup on the
+/// (repo,issue) identity (not the url, so an explicit url vs the constructed fallback for the same
+/// issue can't double-count); classify each reason as NOT-LANDED (covered/made-moot by an OPEN pr →
+/// exclude + counted separately), LANDED (show), or UNRECOGNIZED (show, tagged — never silently
+/// dropped); FAIL-OPEN on the live state check (gh error → state UNKNOWN, still SHOWN).
 fn close_candidates_section(org: &str, path: &str) {
     let content = std::fs::read_to_string(path).unwrap_or_default();
     if content.trim().is_empty() { return; }
-    // dedup to the latest entry per issue-url
-    let mut latest: HashMap<String, (String, String, String)> = HashMap::new(); // url -> (full_repo, issue, reason)
+    let mut latest: HashMap<String, (String, String, String, String)> = HashMap::new(); // id -> (full, issue, url, reason)
     for line in content.lines() {
         let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
         if !v.is_object() { continue; }
@@ -366,34 +414,36 @@ fn close_candidates_section(org: &str, path: &str) {
             v.get("reason").and_then(|x| x.as_str())
                 .or_else(|| v.get("note").and_then(|x| x.as_str()))
                 .unwrap_or(""), 80);
-        latest.insert(url.clone(), (full, issue, reason));
+        let id = format!("{full}#{issue}");
+        latest.insert(id, (full, issue, url, reason));
     }
-    let mut items: Vec<(String, (String, String, String))> = latest.into_iter().collect();
-    items.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut items: Vec<(String, String, String, String)> = latest.into_values().collect();
+    items.sort_by(|a, b| a.2.cmp(&b.2)); // by url, for display
 
     let mut open_c = 0usize;
     let mut closed_c = 0usize;
     let mut unknown_c = 0usize;
-    let mut excluded_c = 0usize;
+    let mut not_landed_c = 0usize;
     let mut rows: Vec<String> = Vec::new();
-    for (url, (full, issue, reason)) in items {
-        // An issue "covered / made-moot by an OPEN pr" (or any non-landed reason) is NOT closeable:
-        // the fix has not merged, so it may never land; it self-closes via `Closes #N` when that PR
-        // merges, or stays open. Only surface candidates whose resolution has GENUINELY LANDED —
-        // fix already on main / invalid / duplicate / won't-fix. Everything else is excluded.
+    for (full, issue, url, reason) in items {
         let rl = reason.trim().to_lowercase();
-        let landed = rl.starts_with("already-fixed-on-main")
-            || rl.starts_with("already-addressed-by-ci")
-            || rl.starts_with("invalid")
-            || rl.starts_with("duplicate")
-            || rl.starts_with("wont-fix") || rl.starts_with("won't-fix") || rl.starts_with("wontfix");
-        if !landed { excluded_c += 1; continue; }
+        // NOT LANDED: covered/made-moot by an OPEN pr/dependency — the fix hasn't merged, so this is
+        // not a manual close-candidate (it self-closes on merge via `Closes #N`, or stays open). Exclude.
+        let not_landed = rl.contains("open-pr") || rl.contains("open pr") || rl.contains("covered-by-open")
+            || rl.contains("made-moot-by") || rl.contains("opened to") || rl.contains("pr opened") || rl.contains("opened a pr");
+        if not_landed { not_landed_c += 1; continue; }
+        // LANDED: the leading token is a canonical landed reason, OR a won't-fix token appears anywhere.
+        let lead = rl.split(|c: char| c == ' ' || c == ':').next().unwrap_or("");
+        let landed = matches!(lead, "already-fixed-on-main" | "already-addressed-by-ci" | "invalid" | "duplicate" | "wont-fix" | "won't-fix" | "wontfix")
+            || rl.contains("wontfix") || rl.contains("won't-fix") || rl.contains("wont-fix") || rl.contains("won't fix") || rl.contains("wont fix");
+        // UNRECOGNIZED (neither not-landed nor landed) is still SHOWN, tagged — never silently dropped.
+        let tag = if landed { "" } else { "  [reason unrecognized — verify]" };
         let st = gh_json(&["issue", "view", &issue, "-R", &full, "--json", "state"])
             .and_then(|j| j.get("state").and_then(|x| x.as_str()).map(|s| s.to_string()));
         match st.as_deref() {
-            Some("OPEN") => { open_c += 1; rows.push(format!("  {}  — {}", url, reason)); }
+            Some("OPEN") => { open_c += 1; rows.push(format!("  {}  — {}{}", url, reason, tag)); }
             Some("CLOSED") => { closed_c += 1; }
-            _ => { unknown_c += 1; rows.push(format!("  {}  — {} (state UNKNOWN — gh error)", url, reason)); }
+            _ => { unknown_c += 1; rows.push(format!("  {}  — {} (state UNKNOWN — gh error){}", url, reason, tag)); }
         }
     }
     if open_c + unknown_c > 0 {
@@ -402,7 +452,7 @@ fn close_candidates_section(org: &str, path: &str) {
         println!();
         println!(
             "🗑️  ISSUE CLOSE-CANDIDATES — cron-logged landed-fix/invalid issues still OPEN ({} open, {} unverified shown; {} already closed, hidden; {} not-landed/open-pr-covered, excluded)",
-            open_c, unknown_c, closed_c, excluded_c
+            open_c, unknown_c, closed_c, not_landed_c
         );
         for r in &rows { println!("{}", r); }
     }
