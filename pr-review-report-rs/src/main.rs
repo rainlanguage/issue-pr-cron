@@ -27,7 +27,7 @@ enum Source { Human, AiCampaign, Other }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Bucket {
-    Approved, AiVet, StaleVet, ProducerFix, Relink, Reject, Close,
+    Approved, AiVet, CoderabbitDirty, StaleVet, ProducerFix, Relink, Reject, Close,
     Unreviewed, Conflicting, Pending, Draft, FetchError, UnknownVerdict,
 }
 impl Bucket {
@@ -35,6 +35,7 @@ impl Bucket {
         match self {
             Bucket::Approved => "APPROVED",
             Bucket::AiVet => "AIVET",
+            Bucket::CoderabbitDirty => "CODERABBIT_DIRTY",
             Bucket::StaleVet => "STALE_VET",
             Bucket::ProducerFix => "PRODUCER_FIX",
             Bucket::Relink => "RELINK",
@@ -53,6 +54,32 @@ impl Bucket {
 /// Replace tab/newline/cr with a space and truncate to `n` Unicode codepoints (matches jq `.[0:n]`).
 fn sanitize(s: &str, n: usize) -> String {
     s.chars().map(|c| if c == '\t' || c == '\n' || c == '\r' { ' ' } else { c }).take(n).collect()
+}
+
+/// Returns true if the latest CodeRabbit review on this PR has unresolved actionable comments
+/// (body contains "Actionable comments posted: N" where N > 0 and state != APPROVED).
+/// Fails open (returns false) on any API error so a transient gh failure never blocks the report.
+fn is_coderabbit_dirty(org: &str, repo: &str, num: u64) -> bool {
+    let path = format!("repos/{org}/{repo}/pulls/{num}/reviews");
+    let reviews = match gh_json(&["api", &path]) {
+        Some(Value::Array(a)) => a,
+        _ => return false,
+    };
+    let cr = reviews.iter().rev().find(|r| {
+        r.pointer("/user/login").and_then(|v| v.as_str()) == Some("coderabbitai[bot]")
+    });
+    let Some(rev) = cr else { return false };
+    if rev.get("state").and_then(|v| v.as_str()) == Some("APPROVED") {
+        return false;
+    }
+    let body = rev.get("body").and_then(|v| v.as_str()).unwrap_or("");
+    let needle = "Actionable comments posted:";
+    if let Some(idx) = body.find(needle) {
+        let after = body[idx + needle.len()..].trim_start().trim_start_matches('*').trim_start();
+        let n: u64 = after.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
+        return n > 0;
+    }
+    false
 }
 
 /// Run gh and parse stdout as JSON; None on non-zero exit, spawn failure, or unparseable output.
@@ -348,6 +375,15 @@ fn main() {
         outs.push(OutRow { bucket: b, url: r.url.clone(), oneliner });
     }
 
+    // Post-process: AiVet PRs that have unresolved CodeRabbit actionable comments route to
+    // CoderabbitDirty instead — a human should not be asked to approve a CodeRabbit-dirty PR.
+    // Only check AiVet (not Approved): a human who explicitly approved overrides the gate.
+    for (i, out) in outs.iter_mut().enumerate() {
+        if out.bucket == Bucket::AiVet && is_coderabbit_dirty(&org, &rows[i].repo, rows[i].num) {
+            out.bucket = Bucket::CoderabbitDirty;
+        }
+    }
+
     let emit = |bucket: Bucket, header: &str| {
         let mut lines: Vec<String> = outs.iter()
             .filter(|o| o.bucket == bucket)
@@ -363,6 +399,7 @@ fn main() {
     emit(Bucket::Approved, "✅ APPROVED BY YOU — ready to merge (GitHub approval / verdict you set)");
     if only_ready { return; }
     emit(Bucket::AiVet, "🤖 AI-VETTED — awaiting YOUR approval (passed the automated review; NOT human-reviewed yet)");
+    emit(Bucket::CoderabbitDirty, "🐰 CODERABBIT DIRTY — unresolved actionable CodeRabbit findings; producer must address before human review (step 3e)");
     emit(Bucket::StaleVet, "🔄 RE-VET PENDING — head moved since the recorded verdict (e.g. a producer step-3b fix); the vetter re-reviews the new commit before this can merge");
     emit(Bucket::ProducerFix, "🔴 RED — NEEDS A PRODUCER FIX (CI failing; the producer cron diagnoses it and pushes a fix to drive it green — producer work, NOT 'blocked', NOT your action)");
     emit(Bucket::Relink, "🔧 AI-flagged — relink Closes→Refs before merge (else it auto-closes a live issue)");
