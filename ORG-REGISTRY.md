@@ -48,21 +48,21 @@ rain.vats | 2026-06-21 | Verifiable Asset Tokenization System (VATS)
 rain.factory | 2026-06-20 | Solidity interfaces and implementation of Rain
 factories. rain.metadata | 2026-06-19 | Contracts, libs, and tooling for Rain
 metadata rain.math.fixedpoint | 2026-06-19 | 18 decimal fixed point math in
-solidity github-chore | 2026-06-18 | alloy-ethers-typecast | 2026-06-17 |
-claude-audit-skills | 2026-06-16 | adversarial-mutation-test | 2026-06-16 |
-Claude Code plugin: build or harden a repo's test suite so every test provably
-covers code (adversarial mutation testing, whole-repo, resumable).
-pyth-crosschain | 2026-06-16 | Crosschain Pyth programs and utilities
-rain.tofu.erc20-decimals | 2026-06-15 | TOFU lookups for erc20 decimals
-sushiswap | 2026-06-15 | Sushi 2.0 🍣 rain.extrospection | 2026-06-15 |
-rain.interpreter.interface | 2026-06-15 | rain.lib.memkv | 2026-06-15 | An
-in-memory KV store (hashmap) implemented in Solidity (mostly yul assembly).
-rain.erc | 2026-06-15 | rain.datacontract | 2026-06-15 | SSTORE2 inspired
-implementation of data contracts rain.wasm | 2026-06-15 | Provides wasm bindgen
-utilities and helpers docs.rainlang.xyz | 2026-06-15 | rain.dia | 2026-06-15 |
-private-key-dev-recovery | 2026-06-06 | TEMPORARY: admin-gated recovery of
-PRIVATE_KEY_DEV. Delete after use. dvin.deploy | 2026-06-05 | rain.uniswap |
-2026-06-05 | ARCHIVED | Uniswap for rainlang. Words and libs.
+solidity github-chore | 2026-06-18 | alloy-ethers-typecast (ARCHIVED 2026-07-04,
+unused) | 2026-06-17 | claude-audit-skills | 2026-06-16 |
+adversarial-mutation-test | 2026-06-16 | Claude Code plugin: build or harden a
+repo's test suite so every test provably covers code (adversarial mutation
+testing, whole-repo, resumable). pyth-crosschain | 2026-06-16 | Crosschain Pyth
+programs and utilities rain.tofu.erc20-decimals | 2026-06-15 | TOFU lookups for
+erc20 decimals sushiswap | 2026-06-15 | Sushi 2.0 🍣 rain.extrospection |
+2026-06-15 | rain.interpreter.interface | 2026-06-15 | rain.lib.memkv |
+2026-06-15 | An in-memory KV store (hashmap) implemented in Solidity (mostly yul
+assembly). rain.erc | 2026-06-15 | rain.datacontract | 2026-06-15 | SSTORE2
+inspired implementation of data contracts rain.wasm | 2026-06-15 | Provides wasm
+bindgen utilities and helpers docs.rainlang.xyz | 2026-06-15 | rain.dia |
+2026-06-15 | private-key-dev-recovery | 2026-06-06 | TEMPORARY: admin-gated
+recovery of PRIVATE_KEY_DEV. Delete after use. dvin.deploy | 2026-06-05 |
+rain.uniswap | 2026-06-05 | ARCHIVED | Uniswap for rainlang. Words and libs.
 rain.subgraph.docker | 2026-06-05 | Shared environment for testing subgraphs
 rainlang-vscode | 2026-06-05 | ARCHIVED | Rain language implementation for
 vscode rainlang-codemirror | 2026-06-05 | Rain language implementation for
