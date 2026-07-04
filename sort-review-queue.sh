@@ -72,7 +72,9 @@ for p in json.loads(os.environ['OPEN_JSON']):
 
 rows.sort(key=lambda r: (r[0], r[1], r[2]))
 shown = rows if top == 0 else rows[:top]
-print(f"review queue: {len(rows)} PRs (showing {len(shown)}, cheapest first)\n")
+n_open = len(json.loads(os.environ['OPEN_JSON']))
+trunc = "  [WARNING: search hit the 1000-result limit — queue may be undercounted]" if n_open >= 1000 else ""
+print(f"review queue: {len(rows)} PRs (showing {len(shown)}, cheapest first){trunc}\n")
 for cost, repo, num, url, basis in shown:
     c = 'unscored' if cost == 1001 else f"{cost:>4}"
     print(f"  {c}  {repo}#{num}  {basis}\n        {url}")
