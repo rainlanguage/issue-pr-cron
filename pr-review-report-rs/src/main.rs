@@ -67,8 +67,11 @@ struct VEntry { verdict: Option<Verdict>, source: Source, sha: String, note: Str
 /// FIX(bug 1,6,7): parse the ledger line-by-line so one malformed line (e.g. `hello`) can't drop
 /// every verdict after it; normalize (trim+lowercase) the verdict; last matching line wins per key.
 fn load_verdicts(path: &str) -> HashMap<String, VEntry> {
+    parse_verdicts(&std::fs::read_to_string(path).unwrap_or_default())
+}
+
+fn parse_verdicts(content: &str) -> HashMap<String, VEntry> {
     let mut m = HashMap::new();
-    let content = std::fs::read_to_string(path).unwrap_or_default();
     for line in content.lines() {
         let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
         if !v.is_object() { continue; }
@@ -244,12 +247,10 @@ fn base_dir() -> std::path::PathBuf {
 /// verdict is ready/ai-campaign. Cost from the verdict line's own `cost`, else the
 /// review-costs.jsonl sidecar (sha-matching preferred, mismatched sha flagged), else unscored
 /// (sorts last at 1001). N defaults to 20; 0 = all.
-fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
-    let verds = load_verdicts(review_verdicts);
-
-    // Sidecar backfill costs: key -> (cost, basis, sha). Same line-by-line tolerance as the ledger.
-    let mut sidecar: HashMap<String, (i64, String, String)> = HashMap::new();
-    for line in std::fs::read_to_string(costs_path).unwrap_or_default().lines() {
+/// Sidecar backfill costs: key -> (cost, basis, sha). Same line-by-line tolerance as the ledger.
+fn parse_sidecar(content: &str) -> HashMap<String, (i64, String, String)> {
+    let mut sidecar = HashMap::new();
+    for line in content.lines() {
         let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
         let Some(repo) = v.get("repo").and_then(|x| x.as_str()) else { continue };
         let pr = match v.get("pr") {
@@ -262,20 +263,21 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
         let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("").to_string();
         sidecar.insert(format!("{repo}/{pr}"), (cost, basis, sha));
     }
+    sidecar
+}
 
-    let Some(val) = gh_json(&["search", "prs",
-        "--owner", "rainlanguage", "--owner", "cyclofinance",
-        "--state", "open", "--limit", "1000",
-        "--json", "repository,number,isDraft,url"]) else {
-        eprintln!("error: `gh search prs` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
-        std::process::exit(1);
-    };
-    let Some(arr) = val.as_array() else {
-        eprintln!("error: `gh search prs` returned non-array JSON — aborting");
-        std::process::exit(1);
-    };
+/// One queue row: (cost, repo, number, url, basis). Unscored rows carry cost 1001 so they sort last.
+type QueueRow = (i64, String, u64, String, String);
 
-    let mut rows: Vec<(i64, String, u64, String, String)> = Vec::new();
+/// Build the queue rows from raw `gh search prs` results × effective verdicts × sidecar costs:
+/// open non-draft PRs whose last-wins verdict is ready/ai-campaign, costed from the verdict line
+/// itself, else the sidecar (sha mismatch flagged), else unscored (1001). Sorted (cost, repo, num).
+fn queue_rows(
+    arr: &[Value],
+    verds: &HashMap<String, VEntry>,
+    sidecar: &HashMap<String, (i64, String, String)>,
+) -> Vec<QueueRow> {
+    let mut rows: Vec<QueueRow> = Vec::new();
     for p in arr {
         if p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false) { continue; }
         let Some(repo) = p.get("repository").and_then(|r| r.get("name")).and_then(|n| n.as_str()) else { continue };
@@ -296,15 +298,41 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
         };
         rows.push((cost, repo.to_string(), num, url, basis));
     }
-
     rows.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
-    let shown: &[_] = if top == 0 { &rows } else { &rows[..rows.len().min(top)] };
-    let trunc = if arr.len() >= 1000 { "  [WARNING: search hit the 1000-result limit — queue may be undercounted]" } else { "" };
-    println!("review queue: {} PRs (showing {}, cheapest first){}\n", rows.len(), shown.len(), trunc);
+    rows
+}
+
+/// Render the queue: header (count + optional 1000-result truncation warning) then one entry per
+/// shown row; top == 0 means all rows.
+fn render_queue(rows: &[QueueRow], top: usize, n_raw: usize) -> String {
+    let shown: &[QueueRow] = if top == 0 { rows } else { &rows[..rows.len().min(top)] };
+    let trunc = if n_raw >= 1000 { "  [WARNING: search hit the 1000-result limit — queue may be undercounted]" } else { "" };
+    let mut out = format!("review queue: {} PRs (showing {}, cheapest first){}\n", rows.len(), shown.len(), trunc);
     for (cost, repo, num, url, basis) in shown {
         let c = if *cost == 1001 { "unscored".to_string() } else { format!("{cost:>4}") };
-        println!("  {c}  {repo}#{num}  {basis}\n        {url}");
+        out.push_str(&format!("\n  {c}  {repo}#{num}  {basis}\n        {url}"));
     }
+    out
+}
+
+fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
+    let verds = load_verdicts(review_verdicts);
+    let sidecar = parse_sidecar(&std::fs::read_to_string(costs_path).unwrap_or_default());
+
+    let Some(val) = gh_json(&["search", "prs",
+        "--owner", "rainlanguage", "--owner", "cyclofinance",
+        "--state", "open", "--limit", "1000",
+        "--json", "repository,number,isDraft,url"]) else {
+        eprintln!("error: `gh search prs` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
+        std::process::exit(1);
+    };
+    let Some(arr) = val.as_array() else {
+        eprintln!("error: `gh search prs` returned non-array JSON — aborting");
+        std::process::exit(1);
+    };
+
+    let rows = queue_rows(arr, &verds, &sidecar);
+    println!("{}", render_queue(&rows, top, arr.len()));
 }
 
 fn main() {
@@ -539,5 +567,188 @@ fn close_candidates_section(org: &str, path: &str) {
             open_c, unknown_c, closed_c, not_landed_c
         );
         for r in &rows { println!("{}", r); }
+    }
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn pr(repo: &str, num: u64) -> Value {
+        json!({"repository": {"name": repo}, "number": num,
+               "url": format!("https://github.com/rainlanguage/{repo}/pull/{num}")})
+    }
+    fn ready_line(repo: &str, pr: u64, cost: i64) -> String {
+        format!(r#"{{"repo":"{repo}","pr":{pr},"verdict":"ready","source":"ai-campaign","sha":"aaa","cost":{cost},"cost_basis":"basis-{pr}"}}"#)
+    }
+
+    // B1: the ledger is append-only and last line wins BY POSITION for the same (repo, pr).
+    #[test]
+    fn last_line_wins_by_position() {
+        let led = format!("{}\n{}", ready_line("r", 1, 50),
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#);
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+        assert_eq!(rows.len(), 0, "later reject must override earlier ready");
+        let led2 = format!("{}\n{}",
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#, ready_line("r", 1, 50));
+        let rows2 = queue_rows(&[pr("r", 1)], &parse_verdicts(&led2), &HashMap::new());
+        assert_eq!(rows2.len(), 1, "later ready must override earlier reject");
+    }
+
+    // B2: a ledger line writing `pr` as a JSON string keys identically to the search's number.
+    #[test]
+    fn pr_as_string_keys_same_as_number() {
+        let led = r#"{"repo":"r","pr":"7","verdict":"ready","source":"ai-campaign","cost":10,"cost_basis":"b"}"#;
+        let rows = queue_rows(&[pr("r", 7)], &parse_verdicts(led), &HashMap::new());
+        assert_eq!(rows.len(), 1);
+    }
+
+    // B3: one malformed ledger line must not drop the lines after it.
+    #[test]
+    fn malformed_line_does_not_poison_later_lines() {
+        let led = format!("{}\nnot json at all\n{}",
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#, ready_line("r", 1, 42));
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+        assert_eq!(rows.len(), 1, "ready after the garbage line must still take effect");
+        assert_eq!(rows[0].0, 42);
+    }
+
+    // B4: verdict matching is trimmed + case-insensitive.
+    #[test]
+    fn verdict_normalized_trim_lowercase() {
+        let led = r#"{"repo":"r","pr":1,"verdict":"  Ready ","source":"ai-campaign","cost":10,"cost_basis":"b"}"#;
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
+        assert_eq!(rows.len(), 1);
+    }
+
+    // B5: queue = ready/ai-campaign ONLY — human-decided and non-ready verdicts are excluded.
+    #[test]
+    fn only_ready_ai_campaign_enters_queue() {
+        for led in [
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"human","cost":10}"#,
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign","cost":10}"#,
+            r#"{"repo":"r","pr":1,"verdict":"close","source":"ai-campaign","cost":10}"#,
+            r#"{"repo":"r","pr":1,"verdict":"relink","source":"ai-campaign","cost":10}"#,
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"somebody-else","cost":10}"#,
+        ] {
+            let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
+            assert_eq!(rows.len(), 0, "must exclude: {led}");
+        }
+    }
+
+    // B6: draft PRs are excluded; a missing isDraft field means not-draft (included).
+    #[test]
+    fn drafts_excluded_missing_isdraft_included() {
+        let led = ready_line("r", 1, 10);
+        let mut draft = pr("r", 1);
+        draft["isDraft"] = json!(true);
+        assert_eq!(queue_rows(&[draft], &parse_verdicts(&led), &HashMap::new()).len(), 0);
+        assert_eq!(queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new()).len(), 1);
+    }
+
+    // B7: a cost on the verdict line itself beats the sidecar.
+    #[test]
+    fn verdict_cost_beats_sidecar() {
+        let led = ready_line("r", 1, 60);
+        let side = parse_sidecar(r#"{"repo":"r","pr":1,"cost":999,"basis":"side","sha":"aaa"}"#);
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &side);
+        assert_eq!(rows[0].0, 60);
+        assert_eq!(rows[0].4, "basis-1", "basis must come from the verdict line too");
+    }
+
+    // B8: a numeric-string cost on the verdict line is accepted.
+    #[test]
+    fn numeric_string_cost_accepted() {
+        let led = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","cost":"73","cost_basis":"b"}"#;
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
+        assert_eq!(rows[0].0, 73);
+    }
+
+    // B10: the stale flag appears ONLY when both shas are non-empty and differ.
+    #[test]
+    fn stale_flag_requires_two_nonempty_differing_shas() {
+        let led = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","sha":"vvv"}"#;
+        let mk = |sha: &str| parse_sidecar(&format!(r#"{{"repo":"r","pr":1,"cost":5,"basis":"b","sha":"{sha}"}}"#));
+        let flagged = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk("other"));
+        assert!(flagged[0].4.ends_with(" [cost from older head]"), "differing shas must flag: {}", flagged[0].4);
+        let same = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk("vvv"));
+        assert_eq!(same[0].4, "b", "same sha must not flag");
+        let empty_side = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk(""));
+        assert_eq!(empty_side[0].4, "b", "empty sidecar sha must not flag");
+        let led_nosha = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#;
+        let no_v_sha = queue_rows(&[pr("r", 1)], &parse_verdicts(led_nosha), &mk("other"));
+        assert_eq!(no_v_sha[0].4, "b", "empty verdict sha must not flag");
+    }
+
+    // B11: a sidecar line without a cost contributes nothing.
+    #[test]
+    fn sidecar_without_cost_ignored() {
+        let side = parse_sidecar(r#"{"repo":"r","pr":1,"basis":"b","sha":"x"}"#);
+        assert!(side.is_empty());
+    }
+
+    // B12: unscored rows carry 1001, sort after every real cost, and render as "unscored".
+    #[test]
+    fn unscored_sorts_last_and_renders_unscored() {
+        let led = format!("{}\n{}", ready_line("r", 2, 1000),
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#);
+        let rows = queue_rows(&[pr("r", 1), pr("r", 2)], &parse_verdicts(&led), &HashMap::new());
+        assert_eq!((rows[0].0, rows[0].2), (1000, 2));
+        assert_eq!((rows[1].0, rows[1].2), (1001, 1));
+        let out = render_queue(&rows, 0, 2);
+        assert!(out.contains("  unscored  r#1  "), "unscored label missing:\n{out}");
+    }
+
+    // B13: rows sort by (cost, repo, number) ascending.
+    #[test]
+    fn sort_by_cost_then_repo_then_number() {
+        let led = format!("{}\n{}\n{}", ready_line("zzz", 1, 10), ready_line("aaa", 9, 10), ready_line("aaa", 2, 5));
+        let rows = queue_rows(&[pr("zzz", 1), pr("aaa", 9), pr("aaa", 2)], &parse_verdicts(&led), &HashMap::new());
+        let order: Vec<(i64, &str, u64)> = rows.iter().map(|r| (r.0, r.1.as_str(), r.2)).collect();
+        assert_eq!(order, vec![(5, "aaa", 2), (10, "aaa", 9), (10, "zzz", 1)]);
+    }
+
+    // B14: top slicing — 0 means all; N caps; N beyond len shows all.
+    #[test]
+    fn top_slicing() {
+        let led = format!("{}\n{}", ready_line("r", 1, 1), ready_line("r", 2, 2));
+        let rows = queue_rows(&[pr("r", 1), pr("r", 2)], &parse_verdicts(&led), &HashMap::new());
+        assert!(render_queue(&rows, 0, 2).contains("showing 2"));
+        assert!(render_queue(&rows, 1, 2).contains("showing 1"));
+        assert!(render_queue(&rows, 99, 2).contains("showing 2"));
+    }
+
+    // B15: the truncation warning fires exactly when the raw search result count hits the limit.
+    #[test]
+    fn truncation_warning_at_search_limit() {
+        assert!(render_queue(&[], 0, 1000).contains("WARNING"));
+        assert!(!render_queue(&[], 0, 999).contains("WARNING"));
+    }
+
+    // B16: an open PR with no ledger entry at all is not in the queue.
+    #[test]
+    fn no_verdict_means_not_in_queue() {
+        let rows = queue_rows(&[pr("r", 1)], &HashMap::new(), &HashMap::new());
+        assert_eq!(rows.len(), 0);
+    }
+
+    // B18: basis text is sanitized — tabs/newlines become spaces, capped at 120 codepoints.
+    #[test]
+    fn basis_sanitized_and_capped() {
+        let long = "x".repeat(200);
+        let led = format!(r#"{{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","cost":1,"cost_basis":"a\tb\nc{long}"}}"#);
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+        assert!(rows[0].4.starts_with("a b c"));
+        assert_eq!(rows[0].4.chars().count(), 120);
+    }
+
+    // Exact rendering pin: header wording + cost right-alignment + URL indent.
+    #[test]
+    fn render_exact_format() {
+        let led = ready_line("r", 1, 60);
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+        let out = render_queue(&rows, 20, 1);
+        assert_eq!(out, "review queue: 1 PRs (showing 1, cheapest first)\n\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1");
     }
 }
