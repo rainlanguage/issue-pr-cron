@@ -30,3 +30,7 @@
 #   campaign.log, runs/, close-candidates.jsonl, DISABLED, *.lock  (runtime state)
 #   WORKLOG.md, PRECOMPACT-SNAPSHOT.md                              (assistant scratch)
 #   <repo> clones, ci-*/ rt-*/ fix-*/ etc.                          (work dirs)
+!/sort-review-queue.sh
+!/ORG-REGISTRY.md
+# Mutation-test scan records (committed so org health-checks can see scan freshness):
+!/mutation-test-scans.json

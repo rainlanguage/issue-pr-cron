@@ -89,13 +89,16 @@ fn gh_json(args: &[&str]) -> Option<Value> {
     serde_json::from_slice(&out.stdout).ok()
 }
 
-struct VEntry { verdict: Option<Verdict>, source: Source, sha: String, note: String }
+struct VEntry { verdict: Option<Verdict>, source: Source, sha: String, note: String, cost: Option<i64>, cost_basis: String }
 
 /// FIX(bug 1,6,7): parse the ledger line-by-line so one malformed line (e.g. `hello`) can't drop
 /// every verdict after it; normalize (trim+lowercase) the verdict; last matching line wins per key.
 fn load_verdicts(path: &str) -> HashMap<String, VEntry> {
+    parse_verdicts(&std::fs::read_to_string(path).unwrap_or_default())
+}
+
+fn parse_verdicts(content: &str) -> HashMap<String, VEntry> {
     let mut m = HashMap::new();
-    let content = std::fs::read_to_string(path).unwrap_or_default();
     for line in content.lines() {
         let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
         if !v.is_object() { continue; }
@@ -122,7 +125,15 @@ fn load_verdicts(path: &str) -> HashMap<String, VEntry> {
         };
         let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let note = sanitize(v.get("note").and_then(|x| x.as_str()).unwrap_or(""), 100);
-        m.insert(key, VEntry { verdict, source, sha, note });
+        // Cost is stamped by the vetter as a number; tolerate a numeric string too (matches the
+        // python queue sort, which accepted either via int()).
+        let cost = match v.get("cost") {
+            Some(Value::Number(n)) => n.as_f64().map(|f| f as i64),
+            Some(Value::String(s)) => s.trim().parse::<i64>().ok(),
+            _ => None,
+        };
+        let cost_basis = sanitize(v.get("cost_basis").and_then(|x| x.as_str()).unwrap_or(""), 120);
+        m.insert(key, VEntry { verdict, source, sha, note, cost, cost_basis });
     }
     m
 }
@@ -258,35 +269,182 @@ fn base_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(".")
 }
 
+/// `--queue [N]`: print the human review queue sorted by verification cost (cheapest first).
+/// Queue = every OPEN, non-draft PR in the covered orgs whose effective (last-wins-by-position)
+/// verdict is ready/ai-campaign. Cost from the verdict line's own `cost`, else the
+/// review-costs.jsonl sidecar (sha-matching preferred, mismatched sha flagged), else unscored
+/// (sorts last at 1001). N defaults to 20; 0 = all.
+/// Sidecar backfill costs: key -> (cost, basis, sha). Same line-by-line tolerance as the ledger.
+fn parse_sidecar(content: &str) -> HashMap<String, (i64, String, String)> {
+    let mut sidecar = HashMap::new();
+    for line in content.lines() {
+        let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
+        let Some(repo) = v.get("repo").and_then(|x| x.as_str()) else { continue };
+        let pr = match v.get("pr") {
+            Some(Value::Number(n)) => n.to_string(),
+            Some(Value::String(s)) => s.clone(),
+            _ => continue,
+        };
+        let Some(cost) = v.get("cost").and_then(|x| x.as_i64()) else { continue };
+        let basis = sanitize(v.get("basis").and_then(|x| x.as_str()).unwrap_or(""), 120);
+        let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        sidecar.insert(format!("{repo}/{pr}"), (cost, basis, sha));
+    }
+    sidecar
+}
+
+/// One queue row: (cost, repo, number, url, basis). Unscored rows carry cost 1001 so they sort last.
+type QueueRow = (i64, String, u64, String, String);
+
+/// Build the queue rows from raw `gh search prs` results × effective verdicts × sidecar costs:
+/// open non-draft PRs whose last-wins verdict is ready/ai-campaign, costed from the verdict line
+/// itself, else the sidecar (sha mismatch flagged), else unscored (1001). Sorted (cost, repo, num).
+fn queue_rows(
+    arr: &[Value],
+    verds: &HashMap<String, VEntry>,
+    sidecar: &HashMap<String, (i64, String, String)>,
+) -> Vec<QueueRow> {
+    let mut rows: Vec<QueueRow> = Vec::new();
+    for p in arr {
+        if p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false) { continue; }
+        let Some(repo) = p.get("repository").and_then(|r| r.get("name")).and_then(|n| n.as_str()) else { continue };
+        let Some(num) = p.get("number").and_then(|n| n.as_u64()) else { continue };
+        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+        // Ledger convention: bare repo name for rainlanguage repos, org-qualified
+        // "owner/repo" for every other org (e.g. cyclofinance/cyclo.site).
+        let ledger_repo = match pr_slug(&url) {
+            Some(slug) if !slug.starts_with("rainlanguage/") => slug,
+            _ => repo.to_string(),
+        };
+        let key = format!("{ledger_repo}/{num}");
+        let Some(v) = verds.get(&key) else { continue };
+        if v.verdict != Some(Verdict::Ready) || v.source != Source::AiCampaign { continue; }
+        let (cost, basis) = match v.cost {
+            Some(c) => (c, v.cost_basis.clone()),
+            None => match sidecar.get(&key) {
+                Some((c, b, sha)) => {
+                    let stale = if !sha.is_empty() && !v.sha.is_empty() && sha != &v.sha { " [cost from older head]" } else { "" };
+                    (*c, format!("{b}{stale}"))
+                }
+                None => (1001, String::new()),
+            },
+        };
+        rows.push((cost, repo.to_string(), num, url, basis));
+    }
+    rows.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    rows
+}
+
+/// owner/repo slug from a GitHub PR url — the search result's own URL, never guessed by org.
+/// None for anything that is not an https://github.com/<owner>/<repo>/pull/<n> URL.
+fn pr_slug(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    let slug = rest.split("/pull/").next()?;
+    if slug.is_empty() || !slug.contains('/') || !rest.contains("/pull/") { return None; }
+    Some(slug.to_string())
+}
+
+/// Walk `rows` in order, keeping only rows `presentable` accepts, until `want` are kept (0 = all).
+/// Rows the predicate rejects are skipped and later rows backfill their slots, so the human always
+/// sees `want` genuinely actionable entries (or every presentable row if fewer exist). Returns
+/// (kept, skipped-count).
+fn take_presentable<F: FnMut(&QueueRow) -> bool>(
+    rows: &[QueueRow],
+    want: usize,
+    mut presentable: F,
+) -> (Vec<QueueRow>, usize) {
+    let mut kept: Vec<QueueRow> = Vec::new();
+    let mut skipped = 0usize;
+    for r in rows {
+        if want != 0 && kept.len() == want { break; }
+        if presentable(r) { kept.push(r.clone()); } else { skipped += 1; }
+    }
+    (kept, skipped)
+}
+
+/// Render the queue: header (ready count, shown count, skipped-unpresentable count, optional
+/// 1000-result truncation warning) then one entry per shown row.
+fn render_queue(rows: &[QueueRow], shown: &[QueueRow], skipped: usize, n_raw: usize) -> String {
+    let trunc = if n_raw >= 1000 { "  [WARNING: search hit the 1000-result limit — queue may be undercounted]" } else { "" };
+    let skip_note = if skipped > 0 { format!(", {skipped} unpresentable skipped") } else { String::new() };
+    let mut out = format!(
+        "review queue: {} ready PRs, reds excluded (showing {}{}, cheapest first){}\n",
+        rows.len(), shown.len(), skip_note, trunc
+    );
+    for (cost, repo, num, url, basis) in shown {
+        let c = if *cost == 1001 { "unscored".to_string() } else { format!("{cost:>4}") };
+        out.push_str(&format!("\n  {c}  {repo}#{num}  {basis}\n        {url}"));
+    }
+    out
+}
+
+fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
+    let verds = load_verdicts(review_verdicts);
+    let sidecar = parse_sidecar(&std::fs::read_to_string(costs_path).unwrap_or_default());
+
+    // `--checks success` drops CI-red and checks-pending PRs at the search layer (one call):
+    // a red PR is the producer's to fix and a pending one is not yet judgeable — neither is
+    // presentable for human approval.
+    let Some(val) = gh_json(&["search", "prs",
+        "--owner", "rainlanguage", "--owner", "cyclofinance",
+        "--state", "open", "--checks", "success", "--limit", "1000",
+        "--json", "repository,number,isDraft,url"]) else {
+        eprintln!("error: `gh search prs` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
+        std::process::exit(1);
+    };
+    let Some(arr) = val.as_array() else {
+        eprintln!("error: `gh search prs` returned non-array JSON — aborting");
+        std::process::exit(1);
+    };
+
+    let rows = queue_rows(arr, &verds, &sidecar);
+    // Conflicting PRs are the producer's step-3d work, not human-presentable. Only the shown
+    // slice is live-checked (one gh call per candidate, walking past skips), so cost stays
+    // proportional to what a human actually reads.
+    let (shown, skipped) = take_presentable(&rows, top, |r| {
+        let (_, _, num, url, _) = r;
+        let Some(slug) = pr_slug(url) else { return false };
+        gh_json(&["pr", "view", &num.to_string(), "-R", &slug, "--json", "mergeable"])
+            .map(|j| j.get("mergeable").and_then(|m| m.as_str()) != Some("CONFLICTING"))
+            .unwrap_or(false)
+    });
+    println!("{}", render_queue(&rows, &shown, skipped, arr.len()));
+}
+
+/// Parse cron.env content (KEY=VALUE lines): skips blanks/comments, strips `export `, honours
+/// double/single quotes, strips a trailing unquoted ` #...` comment, expands leading $HOME/~.
+fn parse_cron_env(content: &str) -> HashMap<String, String> {
+    let mut cron: HashMap<String, String> = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        if let Some((k, v0)) = line.split_once('=') {
+            let v0 = v0.trim_start();
+            // FIX(rs-bug 7): honour quotes; strip a trailing unquoted ` #...` comment; expand $HOME/~.
+            let val = if let Some(rest) = v0.strip_prefix('"') {
+                rest.split_once('"').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
+            } else if let Some(rest) = v0.strip_prefix('\'') {
+                rest.split_once('\'').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
+            } else {
+                let cut = v0.find(" #").or_else(|| v0.find("\t#")).unwrap_or(v0.len());
+                v0[..cut].trim().to_string()
+            };
+            let val = if let Some(rest) = val.strip_prefix("$HOME") {
+                format!("{}{}", std::env::var("HOME").unwrap_or_default(), rest)
+            } else if let Some(rest) = val.strip_prefix("~/") {
+                format!("{}/{}", std::env::var("HOME").unwrap_or_default(), rest)
+            } else { val };
+            cron.insert(k.trim().to_string(), val);
+        }
+    }
+    cron
+}
+
 fn main() {
     let base = base_dir();
     // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
-    let mut cron: HashMap<String, String> = HashMap::new();
-    if let Ok(c) = std::fs::read_to_string(base.join("cron.env")) {
-        for line in c.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
-            let line = line.strip_prefix("export ").unwrap_or(line);
-            if let Some((k, v0)) = line.split_once('=') {
-                let v0 = v0.trim_start();
-                // FIX(rs-bug 7): honour quotes; strip a trailing unquoted ` #...` comment; expand $HOME/~.
-                let val = if let Some(rest) = v0.strip_prefix('"') {
-                    rest.split_once('"').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
-                } else if let Some(rest) = v0.strip_prefix('\'') {
-                    rest.split_once('\'').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
-                } else {
-                    let cut = v0.find(" #").or_else(|| v0.find("\t#")).unwrap_or(v0.len());
-                    v0[..cut].trim().to_string()
-                };
-                let val = if let Some(rest) = val.strip_prefix("$HOME") {
-                    format!("{}{}", std::env::var("HOME").unwrap_or_default(), rest)
-                } else if let Some(rest) = val.strip_prefix("~/") {
-                    format!("{}/{}", std::env::var("HOME").unwrap_or_default(), rest)
-                } else { val };
-                cron.insert(k.trim().to_string(), val);
-            }
-        }
-    }
+    let cron = parse_cron_env(&std::fs::read_to_string(base.join("cron.env")).unwrap_or_default());
     let org = cfg(&cron, "ORG", "rainlanguage");
     // FIX(rs-bug 5): PR_ASSIGNEE via cfg() so a set-but-empty value also falls back to the default.
     let author = cfg(&cron, "PR_ASSIGNEE", "thedavidmeister");
@@ -295,7 +453,15 @@ fn main() {
     let rv_def = base.join("review-verdicts.jsonl").to_string_lossy().into_owned();
     let close_candidates = cfg(&cron, "CLOSE_CANDIDATES", &cc_def);
     let review_verdicts = cfg(&cron, "REVIEW_VERDICTS", &rv_def);
-    let only_ready = std::env::args().nth(1).as_deref() == Some("--ready");
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--queue") {
+        let top = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(20);
+        let costs_def = base.join("review-costs.jsonl").to_string_lossy().into_owned();
+        let costs_path = cfg(&cron, "REVIEW_COSTS", &costs_def);
+        queue_mode(&review_verdicts, &costs_path, top);
+        return;
+    }
+    let only_ready = args.get(1).map(String::as_str) == Some("--ready");
 
     let now = Command::new("date").args(["-u", "+%FT%TZ"]).output().ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -492,5 +658,399 @@ fn close_candidates_section(org: &str, path: &str) {
             open_c, unknown_c, closed_c, not_landed_c
         );
         for r in &rows { println!("{}", r); }
+    }
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn pr(repo: &str, num: u64) -> Value {
+        json!({"repository": {"name": repo}, "number": num,
+               "url": format!("https://github.com/rainlanguage/{repo}/pull/{num}")})
+    }
+    fn ready_line(repo: &str, pr: u64, cost: i64) -> String {
+        format!(r#"{{"repo":"{repo}","pr":{pr},"verdict":"ready","source":"ai-campaign","sha":"aaa","cost":{cost},"cost_basis":"basis-{pr}"}}"#)
+    }
+
+    // B1: the ledger is append-only and last line wins BY POSITION for the same (repo, pr).
+    #[test]
+    fn last_line_wins_by_position() {
+        let led = format!("{}\n{}", ready_line("r", 1, 50),
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#);
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+        assert_eq!(rows.len(), 0, "later reject must override earlier ready");
+        let led2 = format!("{}\n{}",
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#, ready_line("r", 1, 50));
+        let rows2 = queue_rows(&[pr("r", 1)], &parse_verdicts(&led2), &HashMap::new());
+        assert_eq!(rows2.len(), 1, "later ready must override earlier reject");
+    }
+
+    // B2: a ledger line writing `pr` as a JSON string keys identically to the search's number.
+    #[test]
+    fn pr_as_string_keys_same_as_number() {
+        let led = r#"{"repo":"r","pr":"7","verdict":"ready","source":"ai-campaign","cost":10,"cost_basis":"b"}"#;
+        let rows = queue_rows(&[pr("r", 7)], &parse_verdicts(led), &HashMap::new());
+        assert_eq!(rows.len(), 1);
+    }
+
+    // B3: one malformed ledger line must not drop the lines after it.
+    #[test]
+    fn malformed_line_does_not_poison_later_lines() {
+        let led = format!("{}\nnot json at all\n{}",
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#, ready_line("r", 1, 42));
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+        assert_eq!(rows.len(), 1, "ready after the garbage line must still take effect");
+        assert_eq!(rows[0].0, 42);
+    }
+
+    // B4: verdict matching is trimmed + case-insensitive.
+    #[test]
+    fn verdict_normalized_trim_lowercase() {
+        let led = r#"{"repo":"r","pr":1,"verdict":"  Ready ","source":"ai-campaign","cost":10,"cost_basis":"b"}"#;
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
+        assert_eq!(rows.len(), 1);
+    }
+
+    // B5: queue = ready/ai-campaign ONLY — human-decided and non-ready verdicts are excluded.
+    #[test]
+    fn only_ready_ai_campaign_enters_queue() {
+        for led in [
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"human","cost":10}"#,
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign","cost":10}"#,
+            r#"{"repo":"r","pr":1,"verdict":"close","source":"ai-campaign","cost":10}"#,
+            r#"{"repo":"r","pr":1,"verdict":"relink","source":"ai-campaign","cost":10}"#,
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"somebody-else","cost":10}"#,
+        ] {
+            let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
+            assert_eq!(rows.len(), 0, "must exclude: {led}");
+        }
+    }
+
+    // B6: draft PRs are excluded; a missing isDraft field means not-draft (included).
+    #[test]
+    fn drafts_excluded_missing_isdraft_included() {
+        let led = ready_line("r", 1, 10);
+        let mut draft = pr("r", 1);
+        draft["isDraft"] = json!(true);
+        assert_eq!(queue_rows(&[draft], &parse_verdicts(&led), &HashMap::new()).len(), 0);
+        assert_eq!(queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new()).len(), 1);
+    }
+
+    // B7: a cost on the verdict line itself beats the sidecar.
+    #[test]
+    fn verdict_cost_beats_sidecar() {
+        let led = ready_line("r", 1, 60);
+        let side = parse_sidecar(r#"{"repo":"r","pr":1,"cost":999,"basis":"side","sha":"aaa"}"#);
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &side);
+        assert_eq!(rows[0].0, 60);
+        assert_eq!(rows[0].4, "basis-1", "basis must come from the verdict line too");
+    }
+
+    // B8: a numeric-string cost on the verdict line is accepted.
+    #[test]
+    fn numeric_string_cost_accepted() {
+        let led = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","cost":"73","cost_basis":"b"}"#;
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
+        assert_eq!(rows[0].0, 73);
+    }
+
+    // B10: the stale flag appears ONLY when both shas are non-empty and differ.
+    #[test]
+    fn stale_flag_requires_two_nonempty_differing_shas() {
+        let led = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","sha":"vvv"}"#;
+        let mk = |sha: &str| parse_sidecar(&format!(r#"{{"repo":"r","pr":1,"cost":5,"basis":"b","sha":"{sha}"}}"#));
+        let flagged = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk("other"));
+        assert!(flagged[0].4.ends_with(" [cost from older head]"), "differing shas must flag: {}", flagged[0].4);
+        let same = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk("vvv"));
+        assert_eq!(same[0].4, "b", "same sha must not flag");
+        let empty_side = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk(""));
+        assert_eq!(empty_side[0].4, "b", "empty sidecar sha must not flag");
+        let led_nosha = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#;
+        let no_v_sha = queue_rows(&[pr("r", 1)], &parse_verdicts(led_nosha), &mk("other"));
+        assert_eq!(no_v_sha[0].4, "b", "empty verdict sha must not flag");
+    }
+
+    // B11: a sidecar line without a cost contributes nothing.
+    #[test]
+    fn sidecar_without_cost_ignored() {
+        let side = parse_sidecar(r#"{"repo":"r","pr":1,"basis":"b","sha":"x"}"#);
+        assert!(side.is_empty());
+    }
+
+    // B12: unscored rows carry 1001, sort after every real cost, and render as "unscored".
+    #[test]
+    fn unscored_sorts_last_and_renders_unscored() {
+        let led = format!("{}\n{}", ready_line("r", 2, 1000),
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#);
+        let rows = queue_rows(&[pr("r", 1), pr("r", 2)], &parse_verdicts(&led), &HashMap::new());
+        assert_eq!((rows[0].0, rows[0].2), (1000, 2));
+        assert_eq!((rows[1].0, rows[1].2), (1001, 1));
+        let out = render_queue(&rows, &rows, 0, 2);
+        assert!(out.contains("  unscored  r#1  "), "unscored label missing:\n{out}");
+    }
+
+    // B13: rows sort by (cost, repo, number) ascending.
+    #[test]
+    fn sort_by_cost_then_repo_then_number() {
+        let led = format!("{}\n{}\n{}", ready_line("zzz", 1, 10), ready_line("aaa", 9, 10), ready_line("aaa", 2, 5));
+        let rows = queue_rows(&[pr("zzz", 1), pr("aaa", 9), pr("aaa", 2)], &parse_verdicts(&led), &HashMap::new());
+        let order: Vec<(i64, &str, u64)> = rows.iter().map(|r| (r.0, r.1.as_str(), r.2)).collect();
+        assert_eq!(order, vec![(5, "aaa", 2), (10, "aaa", 9), (10, "zzz", 1)]);
+    }
+
+    // B14: top slicing via take_presentable — 0 means all; N caps; N beyond len shows all;
+    // rejected rows are skipped, counted, and backfilled by later rows.
+    #[test]
+    fn top_slicing_and_backfill() {
+        let led = format!("{}\n{}\n{}", ready_line("r", 1, 1), ready_line("r", 2, 2), ready_line("r", 3, 3));
+        let rows = queue_rows(&[pr("r", 1), pr("r", 2), pr("r", 3)], &parse_verdicts(&led), &HashMap::new());
+        let (all, sk) = take_presentable(&rows, 0, |_| true);
+        assert_eq!((all.len(), sk), (3, 0));
+        let (one, _) = take_presentable(&rows, 1, |_| true);
+        assert_eq!(one.len(), 1);
+        let (over, _) = take_presentable(&rows, 99, |_| true);
+        assert_eq!(over.len(), 3);
+        // skip the middle row: slot backfills from the next row and the skip is counted.
+        let (filled, skipped) = take_presentable(&rows, 2, |r| r.2 != 2);
+        assert_eq!(filled.iter().map(|r| r.2).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(skipped, 1);
+        assert!(render_queue(&rows, &filled, skipped, 3).contains("showing 2, 1 unpresentable skipped"));
+    }
+
+    // B15: the truncation warning fires exactly when the raw search result count hits the limit.
+    #[test]
+    fn truncation_warning_at_search_limit() {
+        assert!(render_queue(&[], &[], 0, 1000).contains("WARNING"));
+        assert!(!render_queue(&[], &[], 0, 999).contains("WARNING"));
+    }
+
+    // B16: an open PR with no ledger entry at all is not in the queue.
+    #[test]
+    fn no_verdict_means_not_in_queue() {
+        let rows = queue_rows(&[pr("r", 1)], &HashMap::new(), &HashMap::new());
+        assert_eq!(rows.len(), 0);
+    }
+
+    // B18: basis text is sanitized — tabs/newlines become spaces, capped at 120 codepoints.
+    #[test]
+    fn basis_sanitized_and_capped() {
+        let long = "x".repeat(200);
+        let led = format!(r#"{{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","cost":1,"cost_basis":"a\tb\nc{long}"}}"#);
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+        assert!(rows[0].4.starts_with("a b c"));
+        assert_eq!(rows[0].4.chars().count(), 120);
+    }
+
+
+    // Ledger keys are bare for rainlanguage, org-qualified for other orgs — the
+    // queue must look up each row under the convention its org uses.
+    #[test]
+    fn org_qualified_ledger_keys_match_non_rainlanguage_rows() {
+        let led = r#"{"repo":"cyclofinance/cyclo.site","pr":400,"verdict":"ready","source":"ai-campaign","cost":50,"cost_basis":"b"}"#;
+        let p = json!({"repository": {"name": "cyclo.site"}, "number": 400,
+                       "url": "https://github.com/cyclofinance/cyclo.site/pull/400"});
+        let rows = queue_rows(&[p], &parse_verdicts(led), &HashMap::new());
+        assert_eq!(rows.len(), 1, "cyclofinance row must match its org-qualified ledger key");
+        let bare = r#"{"repo":"cyclo.site","pr":400,"verdict":"ready","source":"ai-campaign","cost":50,"cost_basis":"b"}"#;
+        let rows2 = queue_rows(&[json!({"repository": {"name": "cyclo.site"}, "number": 400,
+                       "url": "https://github.com/cyclofinance/cyclo.site/pull/400"})], &parse_verdicts(bare), &HashMap::new());
+        assert_eq!(rows2.len(), 0, "bare key must NOT match a non-rainlanguage row");
+    }
+
+    // The presentability probe derives owner/repo from the row URL — never guessed by org.
+    #[test]
+    fn pr_slug_parses_owner_repo_only_from_real_pr_urls() {
+        assert_eq!(pr_slug("https://github.com/cyclofinance/cyclo.site/pull/401").as_deref(), Some("cyclofinance/cyclo.site"));
+        assert_eq!(pr_slug("https://github.com/rainlanguage/rainix/pull/1").as_deref(), Some("rainlanguage/rainix"));
+        assert_eq!(pr_slug("https://example.com/rainlanguage/rainix/pull/1"), None, "wrong host must not pass");
+        assert_eq!(pr_slug("https://github.com/rainlanguage/rainix/issues/1"), None, "issue URL is not a PR URL");
+        assert_eq!(pr_slug(""), None);
+    }
+
+    // Exact rendering pin: header wording + cost right-alignment + URL indent.
+    #[test]
+    fn render_exact_format() {
+        let led = ready_line("r", 1, 60);
+        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+        let out = render_queue(&rows, &rows, 0, 1);
+        assert_eq!(out, "review queue: 1 ready PRs, reds excluded (showing 1, cheapest first)\n\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1");
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ventry(verdict: Option<Verdict>, source: Source, sha: &str) -> VEntry {
+        VEntry { verdict, source, sha: sha.to_string(), note: String::new(), cost: None, cost_basis: String::new() }
+    }
+
+    // C1: empty / non-array rollups mean NO CHECKS, never green-by-default.
+    #[test]
+    fn ci_empty_rollup_is_nochecks() {
+        assert!(classify_ci(&json!([])) == Ci::NoChecks);
+        assert!(classify_ci(&Value::Null) == Ci::NoChecks);
+    }
+
+    // C2/C3: every failure conclusion and failed StatusContext state classifies RED.
+    #[test]
+    fn ci_fail_conclusions_and_states_are_red() {
+        for c in ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"] {
+            assert!(classify_ci(&json!([{"status":"COMPLETED","conclusion":c}])) == Ci::Red, "conclusion {c}");
+        }
+        for s in ["FAILURE", "ERROR"] {
+            assert!(classify_ci(&json!([{"state":s}])) == Ci::Red, "state {s}");
+        }
+    }
+
+    // C4/C5/C6: unfinished CheckRuns, non-terminal StatusContexts, and status-less items are PENDING.
+    #[test]
+    fn ci_unfinished_items_are_pending() {
+        for st in ["QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"] {
+            assert!(classify_ci(&json!([{"status":st}])) == Ci::Pending, "status {st}");
+        }
+        for s in ["PENDING", "EXPECTED"] {
+            assert!(classify_ci(&json!([{"state":s}])) == Ci::Pending, "state {s}");
+        }
+        assert!(classify_ci(&json!([{"name":"mystery"}])) == Ci::Pending, "no status/state must never be green");
+    }
+
+    // C7: all-complete successes are GREEN (SUCCESS state contexts too).
+    #[test]
+    fn ci_all_success_is_green() {
+        let r = json!([{"status":"COMPLETED","conclusion":"SUCCESS"},{"state":"SUCCESS"}]);
+        assert!(classify_ci(&r) == Ci::Green);
+    }
+
+    // C8: one failure outranks any number of pending items.
+    #[test]
+    fn ci_fail_beats_pending() {
+        let r = json!([{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]);
+        assert!(classify_ci(&r) == Ci::Red);
+    }
+
+    // K1: a recorded disposition (close/reject/relink/unknown) IS the bucket, regardless of
+    // fetch errors, draft state, or CI — state-independent precedence.
+    #[test]
+    fn bucket_disposition_beats_everything() {
+        let e = ventry(Some(Verdict::Close), Source::AiCampaign, "");
+        assert!(bucket_of(Some(&e), None, Merge::Conflicting, Ci::Red, true, "-", true) == Bucket::Close);
+        let e = ventry(Some(Verdict::Reject), Source::Human, "");
+        assert!(bucket_of(Some(&e), None, Merge::Unknown, Ci::Pending, false, "-", true) == Bucket::Reject);
+        let e = ventry(Some(Verdict::Relink), Source::AiCampaign, "");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::Relink);
+        let e = ventry(Some(Verdict::Unknown), Source::AiCampaign, "");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::UnknownVerdict);
+    }
+
+    // K2: fetch errors surface as FETCH_ERROR (after dispositions, before all live-state buckets).
+    #[test]
+    fn bucket_fetch_error_masks_state() {
+        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Green, true, "x", true) == Bucket::FetchError);
+    }
+
+    // K3..K7: live-state precedence chain — CHANGES_REQUESTED > draft > red > conflicting > pending.
+    #[test]
+    fn bucket_state_precedence_chain() {
+        assert!(bucket_of(None, Some("CHANGES_REQUESTED"), Merge::Mergeable, Ci::Green, true, "x", false) == Bucket::Reject);
+        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Red, true, "x", false) == Bucket::Draft);
+        assert!(bucket_of(None, None, Merge::Conflicting, Ci::Red, false, "x", false) == Bucket::ProducerFix);
+        assert!(bucket_of(None, None, Merge::Conflicting, Ci::Pending, false, "x", false) == Bucket::Conflicting);
+        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Pending, false, "x", false) == Bucket::Pending);
+    }
+
+    // K8/K9/K15: human-ready or GitHub-approved goes APPROVED; the approval overlay outranks AiVet.
+    #[test]
+    fn bucket_approved_paths() {
+        let e = ventry(Some(Verdict::Ready), Source::Human, "head1");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
+        assert!(bucket_of(None, Some("APPROVED"), Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
+        let ai = ventry(Some(Verdict::Ready), Source::AiCampaign, "head1");
+        assert!(bucket_of(Some(&ai), Some("APPROVED"), Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
+    }
+
+    // K10: ai-ready on the CURRENT head is AIVET; NoChecks counts like green for this branch.
+    #[test]
+    fn bucket_aivet_current_head() {
+        let e = ventry(Some(Verdict::Ready), Source::AiCampaign, "head1");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::AiVet);
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::NoChecks, false, "head1", false) == Bucket::AiVet);
+    }
+
+    // K14: a verdict sha that can't be confirmed equal to the live head is STALE — explicit
+    // mismatch AND unknown/missing head both count; an empty or "-" verdict sha never does.
+    #[test]
+    fn bucket_stale_vet_semantics() {
+        let e = ventry(Some(Verdict::Ready), Source::AiCampaign, "oldsha");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "newsha", false) == Bucket::StaleVet);
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "-", false) == Bucket::StaleVet);
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "", false) == Bucket::StaleVet);
+        let nosha = ventry(Some(Verdict::Ready), Source::AiCampaign, "");
+        assert!(bucket_of(Some(&nosha), None, Merge::Mergeable, Ci::Green, false, "anything", false) == Bucket::AiVet);
+        let human = ventry(Some(Verdict::Ready), Source::Human, "oldsha");
+        assert!(bucket_of(Some(&human), None, Merge::Mergeable, Ci::Green, false, "newsha", false) == Bucket::StaleVet);
+    }
+
+    // K11/K12: no verdict on a green mergeable PR is UNREVIEWED; unresolved mergeability is PENDING.
+    #[test]
+    fn bucket_unreviewed_and_unknown_mergeable() {
+        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::Unreviewed);
+        assert!(bucket_of(None, None, Merge::Unknown, Ci::Green, false, "x", false) == Bucket::Pending);
+    }
+
+    // G: cfg precedence — non-empty env > non-empty cron > default (empty values fall through).
+    #[test]
+    fn cfg_precedence_and_empty_fallthrough() {
+        let mut cron = HashMap::new();
+        cron.insert("PRR_TEST_K1".to_string(), "from-cron".to_string());
+        cron.insert("PRR_TEST_K2".to_string(), "".to_string());
+        assert_eq!(cfg(&cron, "PRR_TEST_K1", "def"), "from-cron");
+        assert_eq!(cfg(&cron, "PRR_TEST_K2", "def"), "def", "empty cron value must fall to default");
+        assert_eq!(cfg(&cron, "PRR_TEST_MISSING", "def"), "def");
+        std::env::set_var("PRR_TEST_K3", "from-env");
+        let mut c3 = HashMap::new();
+        c3.insert("PRR_TEST_K3".to_string(), "from-cron".to_string());
+        assert_eq!(cfg(&c3, "PRR_TEST_K3", "def"), "from-env");
+        std::env::set_var("PRR_TEST_K4", "");
+        let mut c4 = HashMap::new();
+        c4.insert("PRR_TEST_K4".to_string(), "from-cron".to_string());
+        assert_eq!(cfg(&c4, "PRR_TEST_K4", "def"), "from-cron", "empty env must fall to cron");
+    }
+
+    // E: cron.env parsing — comments, export prefix, quotes, trailing comments, HOME expansion.
+    #[test]
+    fn cron_env_parsing() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let m = parse_cron_env(concat!(
+            "# comment\n",
+            "\n",
+            "export A=plain\n",
+            "B=\"double quoted # not a comment\"\n",
+            "C='single quoted'\n",
+            "D=value # trailing comment\n",
+            "E=$HOME/sub\n",
+            "F=~/tilde\n",
+            " G = spaced\n",
+            "no_equals_line\n"));
+        assert_eq!(m.get("A").unwrap(), "plain");
+        assert_eq!(m.get("B").unwrap(), "double quoted # not a comment");
+        assert_eq!(m.get("C").unwrap(), "single quoted");
+        assert_eq!(m.get("D").unwrap(), "value");
+        assert_eq!(m.get("E").unwrap(), &format!("{home}/sub"));
+        assert_eq!(m.get("F").unwrap(), &format!("{home}/tilde"));
+        assert_eq!(m.get("G").unwrap(), "spaced");
+        assert!(!m.contains_key("no_equals_line"));
+        assert_eq!(m.len(), 7);
+    }
+
+    // S: sanitize replaces tab/newline/cr with spaces and truncates by CODEPOINTS (multibyte-safe).
+    #[test]
+    fn sanitize_codepoint_truncation() {
+        assert_eq!(sanitize("a\tb\nc\rd", 10), "a b c d");
+        assert_eq!(sanitize("ééééé", 3), "ééé");
+        assert_eq!(sanitize("short", 100), "short");
     }
 }

@@ -29,8 +29,8 @@ export HOME
 export RAINIX_CRON_HOOK=1
 export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # nix.sh is third-party and references unbound vars; relax `set -u` only around it.
-# shellcheck disable=SC1091
 set +u
+# shellcheck disable=SC1091
 [ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
 set -u
 
@@ -47,6 +47,7 @@ LOG="$DIR/campaign.log"
 LOCK="$DIR/campaign.lock"
 RUNDIR="$DIR/runs"
 CLOSE_CANDIDATES="$DIR/close-candidates.jsonl"
+DESIGN_CANDIDATES="$DIR/design-candidates.jsonl"
 REVIEW_VERDICTS="$DIR/review-verdicts.jsonl"
 
 # --- kill switch ---
@@ -67,7 +68,7 @@ mkdir -p "$WORK_DIR" "$RUNDIR"
 cd "$WORK_DIR" || exit 1
 
 # rotate per-run traces (keep newest $KEEP_RUNS .jsonl + their .err sidecars)
-ls -1t "$RUNDIR"/*.jsonl 2>/dev/null | tail -n +$((KEEP_RUNS+1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
+find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d" " -f2- | tail -n +$((KEEP_RUNS + 1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
@@ -75,12 +76,15 @@ ERRLOG="$RUNDIR/$TS.err"
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{CLOSE_CANDIDATES}}#$CLOSE_CANDIDATES#g" \
+              -e "s#{{DESIGN_CANDIDATES}}#$DESIGN_CANDIDATES#g" \
               -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               "$DIR/campaign-prompt.txt")"
 
-echo "=================================================================" >> "$LOG"
-echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(hostname)) trace=$RUNLOG" >> "$LOG"
+{
+  echo "================================================================="
+  echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(hostname)) trace=$RUNLOG"
+} >> "$LOG"
 
 # Run claude with gh + jq ON PATH (via nix shell) so the model invokes them DIRECTLY:
 #   - bare `gh ...` is subject to campaign-settings.json's deny-list (nix-wrapped gh bypasses it),
