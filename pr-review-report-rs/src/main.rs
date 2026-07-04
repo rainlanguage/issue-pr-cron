@@ -302,12 +302,33 @@ fn queue_rows(
     rows
 }
 
-/// Render the queue: header (count + optional 1000-result truncation warning) then one entry per
-/// shown row; top == 0 means all rows.
-fn render_queue(rows: &[QueueRow], top: usize, n_raw: usize) -> String {
-    let shown: &[QueueRow] = if top == 0 { rows } else { &rows[..rows.len().min(top)] };
+/// Walk `rows` in order, keeping only rows `presentable` accepts, until `want` are kept (0 = all).
+/// Rows the predicate rejects are skipped and later rows backfill their slots, so the human always
+/// sees `want` genuinely actionable entries (or every presentable row if fewer exist). Returns
+/// (kept, skipped-count).
+fn take_presentable<F: FnMut(&QueueRow) -> bool>(
+    rows: &[QueueRow],
+    want: usize,
+    mut presentable: F,
+) -> (Vec<QueueRow>, usize) {
+    let mut kept: Vec<QueueRow> = Vec::new();
+    let mut skipped = 0usize;
+    for r in rows {
+        if want != 0 && kept.len() == want { break; }
+        if presentable(r) { kept.push(r.clone()); } else { skipped += 1; }
+    }
+    (kept, skipped)
+}
+
+/// Render the queue: header (ready count, shown count, skipped-unpresentable count, optional
+/// 1000-result truncation warning) then one entry per shown row.
+fn render_queue(rows: &[QueueRow], shown: &[QueueRow], skipped: usize, n_raw: usize) -> String {
     let trunc = if n_raw >= 1000 { "  [WARNING: search hit the 1000-result limit — queue may be undercounted]" } else { "" };
-    let mut out = format!("review queue: {} PRs (showing {}, cheapest first){}\n", rows.len(), shown.len(), trunc);
+    let skip_note = if skipped > 0 { format!(", {skipped} unpresentable skipped") } else { String::new() };
+    let mut out = format!(
+        "review queue: {} ready PRs, reds excluded (showing {}{}, cheapest first){}\n",
+        rows.len(), shown.len(), skip_note, trunc
+    );
     for (cost, repo, num, url, basis) in shown {
         let c = if *cost == 1001 { "unscored".to_string() } else { format!("{cost:>4}") };
         out.push_str(&format!("\n  {c}  {repo}#{num}  {basis}\n        {url}"));
@@ -319,9 +340,12 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
     let verds = load_verdicts(review_verdicts);
     let sidecar = parse_sidecar(&std::fs::read_to_string(costs_path).unwrap_or_default());
 
+    // `--checks success` drops CI-red and checks-pending PRs at the search layer (one call):
+    // a red PR is the producer's to fix and a pending one is not yet judgeable — neither is
+    // presentable for human approval.
     let Some(val) = gh_json(&["search", "prs",
         "--owner", "rainlanguage", "--owner", "cyclofinance",
-        "--state", "open", "--limit", "1000",
+        "--state", "open", "--checks", "success", "--limit", "1000",
         "--json", "repository,number,isDraft,url"]) else {
         eprintln!("error: `gh search prs` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
         std::process::exit(1);
@@ -332,7 +356,19 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
     };
 
     let rows = queue_rows(arr, &verds, &sidecar);
-    println!("{}", render_queue(&rows, top, arr.len()));
+    // Conflicting PRs are the producer's step-3d work, not human-presentable. Only the shown
+    // slice is live-checked (one gh call per candidate, walking past skips), so cost stays
+    // proportional to what a human actually reads.
+    let (shown, skipped) = take_presentable(&rows, top, |r| {
+        let (_, _, num, url, _) = r;
+        // owner/repo comes from the search result's own URL — never guessed by org.
+        let Some(slug) = url.strip_prefix("https://github.com/")
+            .and_then(|s| s.split("/pull/").next()) else { return false };
+        gh_json(&["pr", "view", &num.to_string(), "-R", slug, "--json", "mergeable"])
+            .map(|j| j.get("mergeable").and_then(|m| m.as_str()) != Some("CONFLICTING"))
+            .unwrap_or(false)
+    });
+    println!("{}", render_queue(&rows, &shown, skipped, arr.len()));
 }
 
 /// Parse cron.env content (KEY=VALUE lines): skips blanks/comments, strips `export `, honours
@@ -701,7 +737,7 @@ mod queue_tests {
         let rows = queue_rows(&[pr("r", 1), pr("r", 2)], &parse_verdicts(&led), &HashMap::new());
         assert_eq!((rows[0].0, rows[0].2), (1000, 2));
         assert_eq!((rows[1].0, rows[1].2), (1001, 1));
-        let out = render_queue(&rows, 0, 2);
+        let out = render_queue(&rows, &rows, 0, 2);
         assert!(out.contains("  unscored  r#1  "), "unscored label missing:\n{out}");
     }
 
@@ -714,21 +750,30 @@ mod queue_tests {
         assert_eq!(order, vec![(5, "aaa", 2), (10, "aaa", 9), (10, "zzz", 1)]);
     }
 
-    // B14: top slicing — 0 means all; N caps; N beyond len shows all.
+    // B14: top slicing via take_presentable — 0 means all; N caps; N beyond len shows all;
+    // rejected rows are skipped, counted, and backfilled by later rows.
     #[test]
-    fn top_slicing() {
-        let led = format!("{}\n{}", ready_line("r", 1, 1), ready_line("r", 2, 2));
-        let rows = queue_rows(&[pr("r", 1), pr("r", 2)], &parse_verdicts(&led), &HashMap::new());
-        assert!(render_queue(&rows, 0, 2).contains("showing 2"));
-        assert!(render_queue(&rows, 1, 2).contains("showing 1"));
-        assert!(render_queue(&rows, 99, 2).contains("showing 2"));
+    fn top_slicing_and_backfill() {
+        let led = format!("{}\n{}\n{}", ready_line("r", 1, 1), ready_line("r", 2, 2), ready_line("r", 3, 3));
+        let rows = queue_rows(&[pr("r", 1), pr("r", 2), pr("r", 3)], &parse_verdicts(&led), &HashMap::new());
+        let (all, sk) = take_presentable(&rows, 0, |_| true);
+        assert_eq!((all.len(), sk), (3, 0));
+        let (one, _) = take_presentable(&rows, 1, |_| true);
+        assert_eq!(one.len(), 1);
+        let (over, _) = take_presentable(&rows, 99, |_| true);
+        assert_eq!(over.len(), 3);
+        // skip the middle row: slot backfills from the next row and the skip is counted.
+        let (filled, skipped) = take_presentable(&rows, 2, |r| r.2 != 2);
+        assert_eq!(filled.iter().map(|r| r.2).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(skipped, 1);
+        assert!(render_queue(&rows, &filled, skipped, 3).contains("showing 2, 1 unpresentable skipped"));
     }
 
     // B15: the truncation warning fires exactly when the raw search result count hits the limit.
     #[test]
     fn truncation_warning_at_search_limit() {
-        assert!(render_queue(&[], 0, 1000).contains("WARNING"));
-        assert!(!render_queue(&[], 0, 999).contains("WARNING"));
+        assert!(render_queue(&[], &[], 0, 1000).contains("WARNING"));
+        assert!(!render_queue(&[], &[], 0, 999).contains("WARNING"));
     }
 
     // B16: an open PR with no ledger entry at all is not in the queue.
@@ -753,8 +798,8 @@ mod queue_tests {
     fn render_exact_format() {
         let led = ready_line("r", 1, 60);
         let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
-        let out = render_queue(&rows, 20, 1);
-        assert_eq!(out, "review queue: 1 PRs (showing 1, cheapest first)\n\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1");
+        let out = render_queue(&rows, &rows, 0, 1);
+        assert_eq!(out, "review queue: 1 ready PRs, reds excluded (showing 1, cheapest first)\n\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1");
     }
 }
 
