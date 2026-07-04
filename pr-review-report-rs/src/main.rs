@@ -302,6 +302,15 @@ fn queue_rows(
     rows
 }
 
+/// owner/repo slug from a GitHub PR url — the search result's own URL, never guessed by org.
+/// None for anything that is not an https://github.com/<owner>/<repo>/pull/<n> URL.
+fn pr_slug(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    let slug = rest.split("/pull/").next()?;
+    if slug.is_empty() || !slug.contains('/') || !rest.contains("/pull/") { return None; }
+    Some(slug.to_string())
+}
+
 /// Walk `rows` in order, keeping only rows `presentable` accepts, until `want` are kept (0 = all).
 /// Rows the predicate rejects are skipped and later rows backfill their slots, so the human always
 /// sees `want` genuinely actionable entries (or every presentable row if fewer exist). Returns
@@ -361,10 +370,8 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
     // proportional to what a human actually reads.
     let (shown, skipped) = take_presentable(&rows, top, |r| {
         let (_, _, num, url, _) = r;
-        // owner/repo comes from the search result's own URL — never guessed by org.
-        let Some(slug) = url.strip_prefix("https://github.com/")
-            .and_then(|s| s.split("/pull/").next()) else { return false };
-        gh_json(&["pr", "view", &num.to_string(), "-R", slug, "--json", "mergeable"])
+        let Some(slug) = pr_slug(url) else { return false };
+        gh_json(&["pr", "view", &num.to_string(), "-R", &slug, "--json", "mergeable"])
             .map(|j| j.get("mergeable").and_then(|m| m.as_str()) != Some("CONFLICTING"))
             .unwrap_or(false)
     });
@@ -791,6 +798,16 @@ mod queue_tests {
         let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
         assert!(rows[0].4.starts_with("a b c"));
         assert_eq!(rows[0].4.chars().count(), 120);
+    }
+
+    // The presentability probe derives owner/repo from the row URL — never guessed by org.
+    #[test]
+    fn pr_slug_parses_owner_repo_only_from_real_pr_urls() {
+        assert_eq!(pr_slug("https://github.com/cyclofinance/cyclo.site/pull/401").as_deref(), Some("cyclofinance/cyclo.site"));
+        assert_eq!(pr_slug("https://github.com/rainlanguage/rainix/pull/1").as_deref(), Some("rainlanguage/rainix"));
+        assert_eq!(pr_slug("https://example.com/rainlanguage/rainix/pull/1"), None, "wrong host must not pass");
+        assert_eq!(pr_slug("https://github.com/rainlanguage/rainix/issues/1"), None, "issue URL is not a PR URL");
+        assert_eq!(pr_slug(""), None);
     }
 
     // Exact rendering pin: header wording + cost right-alignment + URL indent.
