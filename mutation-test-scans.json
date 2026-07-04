@@ -1,0 +1,9 @@
+[
+ {
+  "timestamp": "2026-07-04T17:43:15Z",
+  "commit": "f4db4f4a6e0c593f1a0f73667133b6fd364ff1fe",
+  "publishedTag": null,
+  "scope": "pr-review-report-rs (queue + report paths: parse_verdicts/parse_sidecar/queue_rows/render_queue/classify_ci/bucket_of/cfg/parse_cron_env/sanitize)",
+  "summary": "37/37 mutants killed (20 queue + 17 report), 0 survivors, 32 tests added from zero; findings: F1 missing-source queue divergence (ruling pending), F3 STALE-conclusion-green (ruling pending), F4 redundant stale-vet arms, F5 legacy close-candidates section; base_dir/gh subprocess seams untested (recorded)"
+ }
+]

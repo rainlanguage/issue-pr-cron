@@ -32,3 +32,5 @@
 #   <repo> clones, ci-*/ rt-*/ fix-*/ etc.                          (work dirs)
 !/sort-review-queue.sh
 !/ORG-REGISTRY.md
+# Mutation-test scan records (committed so org health-checks can see scan freshness):
+!/mutation-test-scans.json
