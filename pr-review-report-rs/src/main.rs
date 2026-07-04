@@ -283,7 +283,13 @@ fn queue_rows(
         let Some(repo) = p.get("repository").and_then(|r| r.get("name")).and_then(|n| n.as_str()) else { continue };
         let Some(num) = p.get("number").and_then(|n| n.as_u64()) else { continue };
         let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
-        let key = format!("{repo}/{num}");
+        // Ledger convention: bare repo name for rainlanguage repos, org-qualified
+        // "owner/repo" for every other org (e.g. cyclofinance/cyclo.site).
+        let ledger_repo = match pr_slug(&url) {
+            Some(slug) if !slug.starts_with("rainlanguage/") => slug,
+            _ => repo.to_string(),
+        };
+        let key = format!("{ledger_repo}/{num}");
         let Some(v) = verds.get(&key) else { continue };
         if v.verdict != Some(Verdict::Ready) || v.source != Source::AiCampaign { continue; }
         let (cost, basis) = match v.cost {
@@ -798,6 +804,22 @@ mod queue_tests {
         let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
         assert!(rows[0].4.starts_with("a b c"));
         assert_eq!(rows[0].4.chars().count(), 120);
+    }
+
+
+    // Ledger keys are bare for rainlanguage, org-qualified for other orgs — the
+    // queue must look up each row under the convention its org uses.
+    #[test]
+    fn org_qualified_ledger_keys_match_non_rainlanguage_rows() {
+        let led = r#"{"repo":"cyclofinance/cyclo.site","pr":400,"verdict":"ready","source":"ai-campaign","cost":50,"cost_basis":"b"}"#;
+        let p = json!({"repository": {"name": "cyclo.site"}, "number": 400,
+                       "url": "https://github.com/cyclofinance/cyclo.site/pull/400"});
+        let rows = queue_rows(&[p], &parse_verdicts(led), &HashMap::new());
+        assert_eq!(rows.len(), 1, "cyclofinance row must match its org-qualified ledger key");
+        let bare = r#"{"repo":"cyclo.site","pr":400,"verdict":"ready","source":"ai-campaign","cost":50,"cost_basis":"b"}"#;
+        let rows2 = queue_rows(&[json!({"repository": {"name": "cyclo.site"}, "number": 400,
+                       "url": "https://github.com/cyclofinance/cyclo.site/pull/400"})], &parse_verdicts(bare), &HashMap::new());
+        assert_eq!(rows2.len(), 0, "bare key must NOT match a non-rainlanguage row");
     }
 
     // The presentability probe derives owner/repo from the row URL — never guessed by org.
