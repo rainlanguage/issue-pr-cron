@@ -335,35 +335,40 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
     println!("{}", render_queue(&rows, top, arr.len()));
 }
 
+/// Parse cron.env content (KEY=VALUE lines): skips blanks/comments, strips `export `, honours
+/// double/single quotes, strips a trailing unquoted ` #...` comment, expands leading $HOME/~.
+fn parse_cron_env(content: &str) -> HashMap<String, String> {
+    let mut cron: HashMap<String, String> = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        if let Some((k, v0)) = line.split_once('=') {
+            let v0 = v0.trim_start();
+            // FIX(rs-bug 7): honour quotes; strip a trailing unquoted ` #...` comment; expand $HOME/~.
+            let val = if let Some(rest) = v0.strip_prefix('"') {
+                rest.split_once('"').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
+            } else if let Some(rest) = v0.strip_prefix('\'') {
+                rest.split_once('\'').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
+            } else {
+                let cut = v0.find(" #").or_else(|| v0.find("\t#")).unwrap_or(v0.len());
+                v0[..cut].trim().to_string()
+            };
+            let val = if let Some(rest) = val.strip_prefix("$HOME") {
+                format!("{}{}", std::env::var("HOME").unwrap_or_default(), rest)
+            } else if let Some(rest) = val.strip_prefix("~/") {
+                format!("{}/{}", std::env::var("HOME").unwrap_or_default(), rest)
+            } else { val };
+            cron.insert(k.trim().to_string(), val);
+        }
+    }
+    cron
+}
+
 fn main() {
     let base = base_dir();
     // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
-    let mut cron: HashMap<String, String> = HashMap::new();
-    if let Ok(c) = std::fs::read_to_string(base.join("cron.env")) {
-        for line in c.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
-            let line = line.strip_prefix("export ").unwrap_or(line);
-            if let Some((k, v0)) = line.split_once('=') {
-                let v0 = v0.trim_start();
-                // FIX(rs-bug 7): honour quotes; strip a trailing unquoted ` #...` comment; expand $HOME/~.
-                let val = if let Some(rest) = v0.strip_prefix('"') {
-                    rest.split_once('"').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
-                } else if let Some(rest) = v0.strip_prefix('\'') {
-                    rest.split_once('\'').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
-                } else {
-                    let cut = v0.find(" #").or_else(|| v0.find("\t#")).unwrap_or(v0.len());
-                    v0[..cut].trim().to_string()
-                };
-                let val = if let Some(rest) = val.strip_prefix("$HOME") {
-                    format!("{}{}", std::env::var("HOME").unwrap_or_default(), rest)
-                } else if let Some(rest) = val.strip_prefix("~/") {
-                    format!("{}/{}", std::env::var("HOME").unwrap_or_default(), rest)
-                } else { val };
-                cron.insert(k.trim().to_string(), val);
-            }
-        }
-    }
+    let cron = parse_cron_env(&std::fs::read_to_string(base.join("cron.env")).unwrap_or_default());
     let org = cfg(&cron, "ORG", "rainlanguage");
     // FIX(rs-bug 5): PR_ASSIGNEE via cfg() so a set-but-empty value also falls back to the default.
     let author = cfg(&cron, "PR_ASSIGNEE", "thedavidmeister");
@@ -750,5 +755,181 @@ mod queue_tests {
         let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
         let out = render_queue(&rows, 20, 1);
         assert_eq!(out, "review queue: 1 PRs (showing 1, cheapest first)\n\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1");
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ventry(verdict: Option<Verdict>, source: Source, sha: &str) -> VEntry {
+        VEntry { verdict, source, sha: sha.to_string(), note: String::new(), cost: None, cost_basis: String::new() }
+    }
+
+    // C1: empty / non-array rollups mean NO CHECKS, never green-by-default.
+    #[test]
+    fn ci_empty_rollup_is_nochecks() {
+        assert!(classify_ci(&json!([])) == Ci::NoChecks);
+        assert!(classify_ci(&Value::Null) == Ci::NoChecks);
+    }
+
+    // C2/C3: every failure conclusion and failed StatusContext state classifies RED.
+    #[test]
+    fn ci_fail_conclusions_and_states_are_red() {
+        for c in ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"] {
+            assert!(classify_ci(&json!([{"status":"COMPLETED","conclusion":c}])) == Ci::Red, "conclusion {c}");
+        }
+        for s in ["FAILURE", "ERROR"] {
+            assert!(classify_ci(&json!([{"state":s}])) == Ci::Red, "state {s}");
+        }
+    }
+
+    // C4/C5/C6: unfinished CheckRuns, non-terminal StatusContexts, and status-less items are PENDING.
+    #[test]
+    fn ci_unfinished_items_are_pending() {
+        for st in ["QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"] {
+            assert!(classify_ci(&json!([{"status":st}])) == Ci::Pending, "status {st}");
+        }
+        for s in ["PENDING", "EXPECTED"] {
+            assert!(classify_ci(&json!([{"state":s}])) == Ci::Pending, "state {s}");
+        }
+        assert!(classify_ci(&json!([{"name":"mystery"}])) == Ci::Pending, "no status/state must never be green");
+    }
+
+    // C7: all-complete successes are GREEN (SUCCESS state contexts too).
+    #[test]
+    fn ci_all_success_is_green() {
+        let r = json!([{"status":"COMPLETED","conclusion":"SUCCESS"},{"state":"SUCCESS"}]);
+        assert!(classify_ci(&r) == Ci::Green);
+    }
+
+    // C8: one failure outranks any number of pending items.
+    #[test]
+    fn ci_fail_beats_pending() {
+        let r = json!([{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]);
+        assert!(classify_ci(&r) == Ci::Red);
+    }
+
+    // K1: a recorded disposition (close/reject/relink/unknown) IS the bucket, regardless of
+    // fetch errors, draft state, or CI — state-independent precedence.
+    #[test]
+    fn bucket_disposition_beats_everything() {
+        let e = ventry(Some(Verdict::Close), Source::AiCampaign, "");
+        assert!(bucket_of(Some(&e), None, Merge::Conflicting, Ci::Red, true, "-", true) == Bucket::Close);
+        let e = ventry(Some(Verdict::Reject), Source::Human, "");
+        assert!(bucket_of(Some(&e), None, Merge::Unknown, Ci::Pending, false, "-", true) == Bucket::Reject);
+        let e = ventry(Some(Verdict::Relink), Source::AiCampaign, "");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::Relink);
+        let e = ventry(Some(Verdict::Unknown), Source::AiCampaign, "");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::UnknownVerdict);
+    }
+
+    // K2: fetch errors surface as FETCH_ERROR (after dispositions, before all live-state buckets).
+    #[test]
+    fn bucket_fetch_error_masks_state() {
+        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Green, true, "x", true) == Bucket::FetchError);
+    }
+
+    // K3..K7: live-state precedence chain — CHANGES_REQUESTED > draft > red > conflicting > pending.
+    #[test]
+    fn bucket_state_precedence_chain() {
+        assert!(bucket_of(None, Some("CHANGES_REQUESTED"), Merge::Mergeable, Ci::Green, true, "x", false) == Bucket::Reject);
+        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Red, true, "x", false) == Bucket::Draft);
+        assert!(bucket_of(None, None, Merge::Conflicting, Ci::Red, false, "x", false) == Bucket::ProducerFix);
+        assert!(bucket_of(None, None, Merge::Conflicting, Ci::Pending, false, "x", false) == Bucket::Conflicting);
+        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Pending, false, "x", false) == Bucket::Pending);
+    }
+
+    // K8/K9/K15: human-ready or GitHub-approved goes APPROVED; the approval overlay outranks AiVet.
+    #[test]
+    fn bucket_approved_paths() {
+        let e = ventry(Some(Verdict::Ready), Source::Human, "head1");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
+        assert!(bucket_of(None, Some("APPROVED"), Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
+        let ai = ventry(Some(Verdict::Ready), Source::AiCampaign, "head1");
+        assert!(bucket_of(Some(&ai), Some("APPROVED"), Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
+    }
+
+    // K10: ai-ready on the CURRENT head is AIVET; NoChecks counts like green for this branch.
+    #[test]
+    fn bucket_aivet_current_head() {
+        let e = ventry(Some(Verdict::Ready), Source::AiCampaign, "head1");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::AiVet);
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::NoChecks, false, "head1", false) == Bucket::AiVet);
+    }
+
+    // K14: a verdict sha that can't be confirmed equal to the live head is STALE — explicit
+    // mismatch AND unknown/missing head both count; an empty or "-" verdict sha never does.
+    #[test]
+    fn bucket_stale_vet_semantics() {
+        let e = ventry(Some(Verdict::Ready), Source::AiCampaign, "oldsha");
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "newsha", false) == Bucket::StaleVet);
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "-", false) == Bucket::StaleVet);
+        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "", false) == Bucket::StaleVet);
+        let nosha = ventry(Some(Verdict::Ready), Source::AiCampaign, "");
+        assert!(bucket_of(Some(&nosha), None, Merge::Mergeable, Ci::Green, false, "anything", false) == Bucket::AiVet);
+        let human = ventry(Some(Verdict::Ready), Source::Human, "oldsha");
+        assert!(bucket_of(Some(&human), None, Merge::Mergeable, Ci::Green, false, "newsha", false) == Bucket::StaleVet);
+    }
+
+    // K11/K12: no verdict on a green mergeable PR is UNREVIEWED; unresolved mergeability is PENDING.
+    #[test]
+    fn bucket_unreviewed_and_unknown_mergeable() {
+        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::Unreviewed);
+        assert!(bucket_of(None, None, Merge::Unknown, Ci::Green, false, "x", false) == Bucket::Pending);
+    }
+
+    // G: cfg precedence — non-empty env > non-empty cron > default (empty values fall through).
+    #[test]
+    fn cfg_precedence_and_empty_fallthrough() {
+        let mut cron = HashMap::new();
+        cron.insert("PRR_TEST_K1".to_string(), "from-cron".to_string());
+        cron.insert("PRR_TEST_K2".to_string(), "".to_string());
+        assert_eq!(cfg(&cron, "PRR_TEST_K1", "def"), "from-cron");
+        assert_eq!(cfg(&cron, "PRR_TEST_K2", "def"), "def", "empty cron value must fall to default");
+        assert_eq!(cfg(&cron, "PRR_TEST_MISSING", "def"), "def");
+        std::env::set_var("PRR_TEST_K3", "from-env");
+        let mut c3 = HashMap::new();
+        c3.insert("PRR_TEST_K3".to_string(), "from-cron".to_string());
+        assert_eq!(cfg(&c3, "PRR_TEST_K3", "def"), "from-env");
+        std::env::set_var("PRR_TEST_K4", "");
+        let mut c4 = HashMap::new();
+        c4.insert("PRR_TEST_K4".to_string(), "from-cron".to_string());
+        assert_eq!(cfg(&c4, "PRR_TEST_K4", "def"), "from-cron", "empty env must fall to cron");
+    }
+
+    // E: cron.env parsing — comments, export prefix, quotes, trailing comments, HOME expansion.
+    #[test]
+    fn cron_env_parsing() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let m = parse_cron_env(concat!(
+            "# comment\n",
+            "\n",
+            "export A=plain\n",
+            "B=\"double quoted # not a comment\"\n",
+            "C='single quoted'\n",
+            "D=value # trailing comment\n",
+            "E=$HOME/sub\n",
+            "F=~/tilde\n",
+            " G = spaced\n",
+            "no_equals_line\n"));
+        assert_eq!(m.get("A").unwrap(), "plain");
+        assert_eq!(m.get("B").unwrap(), "double quoted # not a comment");
+        assert_eq!(m.get("C").unwrap(), "single quoted");
+        assert_eq!(m.get("D").unwrap(), "value");
+        assert_eq!(m.get("E").unwrap(), &format!("{home}/sub"));
+        assert_eq!(m.get("F").unwrap(), &format!("{home}/tilde"));
+        assert_eq!(m.get("G").unwrap(), "spaced");
+        assert!(!m.contains_key("no_equals_line"));
+        assert_eq!(m.len(), 7);
+    }
+
+    // S: sanitize replaces tab/newline/cr with spaces and truncates by CODEPOINTS (multibyte-safe).
+    #[test]
+    fn sanitize_codepoint_truncation() {
+        assert_eq!(sanitize("a\tb\nc\rd", 10), "a b c d");
+        assert_eq!(sanitize("ééééé", 3), "ééé");
+        assert_eq!(sanitize("short", 100), "short");
     }
 }
