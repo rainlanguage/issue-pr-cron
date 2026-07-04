@@ -62,7 +62,7 @@ fn gh_json(args: &[&str]) -> Option<Value> {
     serde_json::from_slice(&out.stdout).ok()
 }
 
-struct VEntry { verdict: Option<Verdict>, source: Source, sha: String, note: String }
+struct VEntry { verdict: Option<Verdict>, source: Source, sha: String, note: String, cost: Option<i64>, cost_basis: String }
 
 /// FIX(bug 1,6,7): parse the ledger line-by-line so one malformed line (e.g. `hello`) can't drop
 /// every verdict after it; normalize (trim+lowercase) the verdict; last matching line wins per key.
@@ -95,7 +95,15 @@ fn load_verdicts(path: &str) -> HashMap<String, VEntry> {
         };
         let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let note = sanitize(v.get("note").and_then(|x| x.as_str()).unwrap_or(""), 100);
-        m.insert(key, VEntry { verdict, source, sha, note });
+        // Cost is stamped by the vetter as a number; tolerate a numeric string too (matches the
+        // python queue sort, which accepted either via int()).
+        let cost = match v.get("cost") {
+            Some(Value::Number(n)) => n.as_f64().map(|f| f as i64),
+            Some(Value::String(s)) => s.trim().parse::<i64>().ok(),
+            _ => None,
+        };
+        let cost_basis = sanitize(v.get("cost_basis").and_then(|x| x.as_str()).unwrap_or(""), 120);
+        m.insert(key, VEntry { verdict, source, sha, note, cost, cost_basis });
     }
     m
 }
@@ -231,6 +239,74 @@ fn base_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(".")
 }
 
+/// `--queue [N]`: print the human review queue sorted by verification cost (cheapest first).
+/// Queue = every OPEN, non-draft PR in the covered orgs whose effective (last-wins-by-position)
+/// verdict is ready/ai-campaign. Cost from the verdict line's own `cost`, else the
+/// review-costs.jsonl sidecar (sha-matching preferred, mismatched sha flagged), else unscored
+/// (sorts last at 1001). N defaults to 20; 0 = all.
+fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
+    let verds = load_verdicts(review_verdicts);
+
+    // Sidecar backfill costs: key -> (cost, basis, sha). Same line-by-line tolerance as the ledger.
+    let mut sidecar: HashMap<String, (i64, String, String)> = HashMap::new();
+    for line in std::fs::read_to_string(costs_path).unwrap_or_default().lines() {
+        let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
+        let Some(repo) = v.get("repo").and_then(|x| x.as_str()) else { continue };
+        let pr = match v.get("pr") {
+            Some(Value::Number(n)) => n.to_string(),
+            Some(Value::String(s)) => s.clone(),
+            _ => continue,
+        };
+        let Some(cost) = v.get("cost").and_then(|x| x.as_i64()) else { continue };
+        let basis = sanitize(v.get("basis").and_then(|x| x.as_str()).unwrap_or(""), 120);
+        let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        sidecar.insert(format!("{repo}/{pr}"), (cost, basis, sha));
+    }
+
+    let Some(val) = gh_json(&["search", "prs",
+        "--owner", "rainlanguage", "--owner", "cyclofinance",
+        "--state", "open", "--limit", "1000",
+        "--json", "repository,number,isDraft,url"]) else {
+        eprintln!("error: `gh search prs` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
+        std::process::exit(1);
+    };
+    let Some(arr) = val.as_array() else {
+        eprintln!("error: `gh search prs` returned non-array JSON — aborting");
+        std::process::exit(1);
+    };
+
+    let mut rows: Vec<(i64, String, u64, String, String)> = Vec::new();
+    for p in arr {
+        if p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false) { continue; }
+        let Some(repo) = p.get("repository").and_then(|r| r.get("name")).and_then(|n| n.as_str()) else { continue };
+        let Some(num) = p.get("number").and_then(|n| n.as_u64()) else { continue };
+        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+        let key = format!("{repo}/{num}");
+        let Some(v) = verds.get(&key) else { continue };
+        if v.verdict != Some(Verdict::Ready) || v.source != Source::AiCampaign { continue; }
+        let (cost, basis) = match v.cost {
+            Some(c) => (c, v.cost_basis.clone()),
+            None => match sidecar.get(&key) {
+                Some((c, b, sha)) => {
+                    let stale = if !sha.is_empty() && !v.sha.is_empty() && sha != &v.sha { " [cost from older head]" } else { "" };
+                    (*c, format!("{b}{stale}"))
+                }
+                None => (1001, String::new()),
+            },
+        };
+        rows.push((cost, repo.to_string(), num, url, basis));
+    }
+
+    rows.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    let shown: &[_] = if top == 0 { &rows } else { &rows[..rows.len().min(top)] };
+    let trunc = if arr.len() >= 1000 { "  [WARNING: search hit the 1000-result limit — queue may be undercounted]" } else { "" };
+    println!("review queue: {} PRs (showing {}, cheapest first){}\n", rows.len(), shown.len(), trunc);
+    for (cost, repo, num, url, basis) in shown {
+        let c = if *cost == 1001 { "unscored".to_string() } else { format!("{cost:>4}") };
+        println!("  {c}  {repo}#{num}  {basis}\n        {url}");
+    }
+}
+
 fn main() {
     let base = base_dir();
     // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
@@ -268,7 +344,15 @@ fn main() {
     let rv_def = base.join("review-verdicts.jsonl").to_string_lossy().into_owned();
     let close_candidates = cfg(&cron, "CLOSE_CANDIDATES", &cc_def);
     let review_verdicts = cfg(&cron, "REVIEW_VERDICTS", &rv_def);
-    let only_ready = std::env::args().nth(1).as_deref() == Some("--ready");
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--queue") {
+        let top = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(20);
+        let costs_def = base.join("review-costs.jsonl").to_string_lossy().into_owned();
+        let costs_path = cfg(&cron, "REVIEW_COSTS", &costs_def);
+        queue_mode(&review_verdicts, &costs_path, top);
+        return;
+    }
+    let only_ready = args.get(1).map(String::as_str) == Some("--ready");
 
     let now = Command::new("date").args(["-u", "+%FT%TZ"]).output().ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
