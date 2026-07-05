@@ -32,5 +32,7 @@
 #   <repo> clones, ci-*/ rt-*/ fix-*/ etc.                          (work dirs)
 !/sort-review-queue.sh
 !/ORG-REGISTRY.md
+# Producer QA doctrine (referenced by campaign-prompt step 4 + review-prompt QA gate):
+!/QA-GUIDE.md
 # Mutation-test scan records (committed so org health-checks can see scan freshness):
 !/mutation-test-scans.json

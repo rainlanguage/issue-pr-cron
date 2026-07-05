@@ -29,4 +29,6 @@ Each run:
 End each run with a concise summary: PRs vetted this run by verdict (counts: ready/relink/reject/close), PRs skipped (drafts/already-vetted), and any you left un-vetted because you couldn't confidently judge them.
 
 
+QA GATE (mandatory): a PR whose body lacks the QA-GUIDE.md section-8 evidence block, or whose claims in it do not hold (run the named tests against base when cheap; spot-check the mutation claims), is verdict=reject with note "missing/false QA evidence" — regardless of how correct the diff looks. Correct-looking and unpinned is the failure mode this gate exists for.
+
 ORG SCOPE: the pipeline covers the rainlanguage AND cyclofinance orgs. `rainlanguage/<repo>` in the command examples above means `<org>/<repo>` — always use the repo's ACTUAL org (from the search result's repository.nameWithOwner). In the review ledger the `repo` field stays the bare repo name for rainlanguage repos (existing convention) and is org-qualified `cyclofinance/<repo>` for cyclofinance repos.
