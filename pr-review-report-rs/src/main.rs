@@ -2141,22 +2141,34 @@ mod open_threads_tests {
     // T2: zero threads is a verified-clean Some(0), distinct from unknown.
     #[test]
     fn count_empty_nodes_is_zero() {
-        assert_eq!(count_unresolved_page(&page(json!([]), false, "")), Some((0, None)));
+        assert_eq!(
+            count_unresolved_page(&page(json!([]), false, "")),
+            Some((0, None))
+        );
     }
 
     // T3: a further page propagates its cursor so pagination can't silently truncate.
     #[test]
     fn count_propagates_next_cursor() {
         let v = page(json!([{"isResolved": false}]), true, "CUR");
-        assert_eq!(count_unresolved_page(&v), Some((1, Some("CUR".to_string()))));
+        assert_eq!(
+            count_unresolved_page(&v),
+            Some((1, Some("CUR".to_string())))
+        );
     }
 
     // T4: malformed responses (missing pullRequest, non-array nodes, node without isResolved,
     // GraphQL error shape) are None — unknown, never a silent 0.
     #[test]
     fn count_malformed_is_none() {
-        assert_eq!(count_unresolved_page(&json!({"data": {"repository": null}})), None);
-        assert_eq!(count_unresolved_page(&json!({"errors": [{"message": "boom"}]})), None);
+        assert_eq!(
+            count_unresolved_page(&json!({"data": {"repository": null}})),
+            None
+        );
+        assert_eq!(
+            count_unresolved_page(&json!({"errors": [{"message": "boom"}]})),
+            None
+        );
         let bad_nodes = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {
             "nodes": "nope", "pageInfo": {"hasNextPage": false, "endCursor": ""}}}}}});
         assert_eq!(count_unresolved_page(&bad_nodes), None);
