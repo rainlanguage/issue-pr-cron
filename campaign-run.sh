@@ -91,7 +91,7 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 #   - bare `jq` means dedup is one jq pass, not the byte-grep pathology that stalls runs,
 #   - no nix git-hooks WARNING banner leaking into close-candidates.jsonl.
 # Stream every event as JSON. tee keeps the full trace even if the jq distiller is missing/errors.
-timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq --command claude --print "$PROMPT" \
+timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
   --model "$MODEL" \
   --settings "$DIR/campaign-settings.json" \
   --permission-mode default \

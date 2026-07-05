@@ -72,7 +72,7 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
 } >> "$LOG"
 
 # gh + jq on PATH (via nix shell) so the model uses BARE gh -> the read-only deny-list applies.
-timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq --command claude --print "$PROMPT" \
+timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
   --model "$REVIEW_MODEL" \
   --settings "$DIR/review-settings.json" \
   --permission-mode default \
