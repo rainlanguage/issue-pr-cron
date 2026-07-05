@@ -41,6 +41,9 @@
 !/.github/workflows/rust.yml
 # Mutation-test scan records (committed so org health-checks can see scan freshness):
 !/mutation-test-scans.json
+# Per-run pipeline metrics (accumulates across trace rotation; committed periodically):
+!/metrics/
+!/metrics/runs.jsonl
 # Flake exposing pr-review-report as a package (bin on the cron PATH):
 !/flake.nix
 !/flake.lock

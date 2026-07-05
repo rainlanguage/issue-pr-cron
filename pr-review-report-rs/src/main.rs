@@ -798,6 +798,153 @@ fn commit_closes_mode(slug: &str, pr: &str) -> i32 {
     }
 }
 
+/// Metrics extracted from one claude run trace (a stream-json `.jsonl`). Startup overhead
+/// is measured in TOOL CALLS (always present) — the count of tool calls before the run's
+/// first org-mutating action — because state recovery (issue/PR enumeration, dedup) runs as
+/// read-only tool calls before any PR/issue/commit is created.
+#[derive(Default, PartialEq, Debug)]
+struct RunMetrics {
+    tool_calls: usize,
+    startup_tool_calls: usize,
+    first_mutation_index: Option<usize>,
+    duration_ms: u64,
+    num_turns: u64,
+    tokens_in: u64,
+    tokens_out: u64,
+    cache_read: u64,
+    cache_creation: u64,
+    cost_usd: f64,
+}
+
+impl RunMetrics {
+    fn startup_pct(&self) -> f64 {
+        if self.tool_calls == 0 {
+            0.0
+        } else {
+            (self.startup_tool_calls as f64 / self.tool_calls as f64) * 100.0
+        }
+    }
+}
+
+/// A tool call is an org MUTATION when it is a Bash command that creates/edits/merges/closes
+/// a PR or issue, or commits/pushes — i.e. the run stopped recovering state and started doing
+/// work. Read-only gh/git/grep calls are NOT mutations.
+fn is_mutation_tool(name: &str, input: &serde_json::Value) -> bool {
+    if name != "Bash" {
+        return false;
+    }
+    let cmd = input.get("command").and_then(|c| c.as_str()).unwrap_or("");
+    const MARKERS: &[&str] = &[
+        "pr create",
+        "pr comment",
+        "pr merge",
+        "pr edit",
+        "pr close",
+        "pr ready",
+        "issue create",
+        "issue comment",
+        "issue close",
+        "issue reopen",
+        "issue edit",
+        "git commit",
+        "git push",
+        "git merge",
+    ];
+    MARKERS.iter().any(|m| cmd.contains(m))
+}
+
+/// Parse a stream-json trace: count tool calls in order, find the first mutation, and take
+/// the usage/duration/cost from the result event with the most turns (the main run — trailing
+/// short result events from continuations are ignored).
+fn run_metrics(content: &str) -> RunMetrics {
+    let mut m = RunMetrics::default();
+    let mut best_turns = 0u64;
+    for line in content.lines() {
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                if let Some(content) = v
+                    .get("message")
+                    .and_then(|msg| msg.get("content"))
+                    .and_then(|c| c.as_array())
+                {
+                    for block in content {
+                        if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                            let empty = serde_json::json!({});
+                            let input = block.get("input").unwrap_or(&empty);
+                            if m.first_mutation_index.is_none() {
+                                if is_mutation_tool(name, input) {
+                                    m.first_mutation_index = Some(m.tool_calls);
+                                } else {
+                                    m.startup_tool_calls += 1;
+                                }
+                            }
+                            m.tool_calls += 1;
+                        }
+                    }
+                }
+            }
+            Some("result") => {
+                let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
+                if turns >= best_turns {
+                    best_turns = turns;
+                    m.num_turns = turns;
+                    m.duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
+                    m.cost_usd = v
+                        .get("total_cost_usd")
+                        .and_then(|c| c.as_f64())
+                        .unwrap_or(0.0);
+                    let u = v.get("usage");
+                    let g = |k: &str| {
+                        u.and_then(|u| u.get(k))
+                            .and_then(|n| n.as_u64())
+                            .unwrap_or(0)
+                    };
+                    m.tokens_in = g("input_tokens");
+                    m.tokens_out = g("output_tokens");
+                    m.cache_read = g("cache_read_input_tokens");
+                    m.cache_creation = g("cache_creation_input_tokens");
+                }
+            }
+            _ => {}
+        }
+    }
+    m
+}
+
+/// `--run-metrics <trace.jsonl>`: print the run's metrics (startup overhead, duration, tokens,
+/// cost) as one JSON line — the input to a committed metrics/runs.jsonl and the #7 dashboard.
+fn run_metrics_mode(path: &str) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read trace {path}: {e}");
+            return 2;
+        }
+    };
+    let m = run_metrics(&content);
+    let doc = serde_json::json!({
+        "trace": path,
+        "toolCalls": m.tool_calls,
+        "startupToolCalls": m.startup_tool_calls,
+        "startupPct": (m.startup_pct() * 10.0).round() / 10.0,
+        "firstMutationIndex": m.first_mutation_index,
+        "durationMs": m.duration_ms,
+        "numTurns": m.num_turns,
+        "tokensIn": m.tokens_in,
+        "tokensOut": m.tokens_out,
+        "cacheRead": m.cache_read,
+        "cacheCreation": m.cache_creation,
+        "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
+    });
+    println!("{}", serde_json::to_string(&doc).unwrap());
+    0
+}
+
 fn main() {
     let base = base_dir();
     // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
@@ -836,6 +983,13 @@ fn main() {
             std::process::exit(2);
         };
         std::process::exit(commit_closes_mode(slug, pr));
+    }
+    if args.get(1).map(String::as_str) == Some("--run-metrics") {
+        let Some(path) = args.get(2) else {
+            eprintln!("usage: pr-review-report --run-metrics <trace.jsonl>");
+            std::process::exit(2);
+        };
+        std::process::exit(run_metrics_mode(path));
     }
     let only_ready = args.get(1).map(String::as_str) == Some("--ready");
 
@@ -1921,5 +2075,134 @@ mod commit_closes_tests {
         // the exact shape that auto-closed #102/#86: body says Refs but a commit says Closes
         let commit = "docs(natspec): unused params + untrusted vault\n\nCloses #99 Closes #102";
         assert_eq!(closing_keywords(commit), vec![99, 102]);
+    }
+}
+
+#[cfg(test)]
+mod run_metrics_tests {
+    use super::{is_mutation_tool, run_metrics};
+    use serde_json::json;
+
+    fn tool_line(name: &str, cmd: &str) -> String {
+        json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":name,"input":{"command":cmd}}]}})
+        .to_string()
+    }
+    fn result_line(turns: u64, dur: u64, cost: f64) -> String {
+        json!({"type":"result","num_turns":turns,"duration_ms":dur,"total_cost_usd":cost,
+            "usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":9000,"cache_creation_input_tokens":50}}).to_string()
+    }
+
+    #[test]
+    fn is_mutation_only_for_mutating_bash() {
+        assert!(is_mutation_tool(
+            "Bash",
+            &json!({"command":"gh pr create -R x"})
+        ));
+        assert!(is_mutation_tool(
+            "Bash",
+            &json!({"command":"cd d && git commit -m x"})
+        ));
+        assert!(is_mutation_tool(
+            "Bash",
+            &json!({"command":"gh issue comment 5 --body y"})
+        ));
+        // read-only gh/git are NOT mutations
+        assert!(!is_mutation_tool(
+            "Bash",
+            &json!({"command":"gh pr view 5 --json state"})
+        ));
+        assert!(!is_mutation_tool(
+            "Bash",
+            &json!({"command":"gh search prs --owner x"})
+        ));
+        assert!(!is_mutation_tool(
+            "Bash",
+            &json!({"command":"git log --oneline"})
+        ));
+        // non-Bash tools never count
+        assert!(!is_mutation_tool(
+            "Read",
+            &json!({"command":"gh pr create"})
+        ));
+        assert!(!is_mutation_tool("Edit", &json!({})));
+    }
+
+    #[test]
+    fn startup_is_reads_before_first_mutation() {
+        let trace = [
+            tool_line("Bash", "gh search issues --owner x"), // recovery
+            tool_line("Bash", "gh search prs --owner x"),    // recovery
+            tool_line("Read", "whatever"),                   // recovery (non-mutation)
+            tool_line("Bash", "gh pr create -R x"),          // FIRST MUTATION at index 3
+            tool_line("Bash", "gh pr comment 1 --body y"),   // work
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.tool_calls, 5);
+        assert_eq!(m.startup_tool_calls, 3);
+        assert_eq!(m.first_mutation_index, Some(3));
+        assert!((m.startup_pct() - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn no_mutation_means_all_startup() {
+        let trace = [
+            tool_line("Bash", "gh search prs"),
+            tool_line("Bash", "gh pr view 1 --json state"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.startup_tool_calls, 2);
+        assert_eq!(m.first_mutation_index, None);
+        assert!((m.startup_pct() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn first_mutation_is_the_first_only() {
+        // a later read after the first mutation must NOT increment startup
+        let trace = [
+            tool_line("Bash", "gh search issues"),
+            tool_line("Bash", "git commit -m x"), // first mutation, index 1
+            tool_line("Bash", "gh pr view 2"),    // read AFTER mutation — not startup
+            tool_line("Bash", "git push"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.startup_tool_calls, 1);
+        assert_eq!(m.first_mutation_index, Some(1));
+        assert_eq!(m.tool_calls, 4);
+    }
+
+    #[test]
+    fn result_taken_from_max_turns_event() {
+        // trailing short continuation results must not override the main run
+        let trace = [
+            tool_line("Bash", "gh pr create"),
+            result_line(158, 1_600_000, 54.5), // main run
+            result_line(1, 7592, 58.2),        // continuation
+            result_line(1, 4272, 62.0),        // continuation
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.num_turns, 158);
+        assert_eq!(m.duration_ms, 1_600_000);
+        assert!((m.cost_usd - 54.5).abs() < 0.001);
+        assert_eq!(m.cache_read, 9000);
+    }
+
+    #[test]
+    fn malformed_lines_and_non_events_ignored() {
+        let trace = [
+            "not json",
+            &json!({"type":"system","subtype":"init"}).to_string(),
+            &tool_line("Bash", "gh pr create"),
+            "{bad",
+            &result_line(3, 100, 1.0),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.tool_calls, 1);
+        assert_eq!(m.num_turns, 3);
     }
 }

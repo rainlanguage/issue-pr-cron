@@ -97,4 +97,15 @@ if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
 fi
 
 echo "$(date -u +%FT%TZ) review run END (exit=$rc, verdicts now=$(wc -l < "$REVIEW_VERDICTS" 2>/dev/null), trace=$RUNLOG)" >> "$LOG"
+
+if [ -s "$RUNLOG" ]; then
+  outcome="ok"; [ "$rc" -ne 0 ] && outcome="error"
+  grep -qi "session limit\|usage limit" "$RUNLOG" 2>/dev/null && outcome="session-limit"
+  mkdir -p "$DIR/metrics"
+  # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
+  nix run "path:$DIR#pr-review-report" -- --run-metrics "$RUNLOG" 2>/dev/null \
+    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$REVIEW_MODEL" --arg oc "$outcome" --argjson rc "$rc" \
+      '. + {runId:$ts, role:"vetter", model:$model, exitCode:$rc, outcome:$oc}' \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+fi
 exit 0
