@@ -37,7 +37,7 @@ set -u
 # --- deployment config (defaults here; override in ./cron.env) ---
 WORK_DIR="$HOME/code"          # where issue clones are made
 PR_ASSIGNEE=""                 # GitHub handle to assign opened PRs to (set in cron.env)
-MODEL="claude-sonnet-4-6"      # quality/cost default; claude-opus-4-8 for max rigor
+MODEL="claude-fable-5"      # org default per 2026-07-04 directive: max-capability model for both crons
 MAXTIME="3h"                   # hard cap per run
 KEEP_RUNS=20                   # retained per-run traces
 # shellcheck disable=SC1091
