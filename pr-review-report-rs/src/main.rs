@@ -414,6 +414,101 @@ fn parse_cron_env(content: &str) -> HashMap<String, String> {
     cron
 }
 
+/// Parse the closing-keyword issue numbers from arbitrary text (a commit message or a
+/// PR body). Matches GitHub's own set — close/closes/closed, fix/fixes/fixed,
+/// resolve/resolves/resolved — followed by optional whitespace and `#N`, case-insensitively.
+/// GitHub requires the keyword IMMEDIATELY before the `#N` (a keyword and a bare `#N`
+/// elsewhere in the same text do NOT link), so this matches `<keyword>[ :]#N` adjacency,
+/// not a keyword anywhere plus a `#N` anywhere. Returns the numbers in first-seen order,
+/// de-duplicated.
+fn closing_keywords(text: &str) -> Vec<u64> {
+    const KEYWORDS: &[&str] = &[
+        "closes", "closed", "close", "fixes", "fixed", "fix", "resolves", "resolved", "resolve",
+    ];
+    let lower = text.to_lowercase();
+    let bytes = lower.as_bytes();
+    let mut out: Vec<u64> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        // find the next keyword whose start is at a word boundary
+        let at_boundary = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        if at_boundary {
+            if let Some(kw) = KEYWORDS.iter().find(|kw| lower[i..].starts_with(**kw)) {
+                let mut j = i + kw.len();
+                // the char right after the keyword must not continue a word (so `closest` ≠ `close`)
+                if bytes.get(j).map(|c| c.is_ascii_alphanumeric()).unwrap_or(false) {
+                    i += 1;
+                    continue;
+                }
+                // skip a single optional separator run of spaces/colon between keyword and #
+                while bytes.get(j).map(|c| *c == b' ' || *c == b':' || *c == b'\t').unwrap_or(false) {
+                    j += 1;
+                }
+                if bytes.get(j) == Some(&b'#') {
+                    j += 1;
+                    let start = j;
+                    while bytes.get(j).map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                        j += 1;
+                    }
+                    if j > start {
+                        if let Ok(n) = lower[start..j].parse::<u64>() {
+                            if !out.contains(&n) {
+                                out.push(n);
+                            }
+                        }
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// `--commit-closes <owner/repo> <pr>`: fail (exit 1) if any closing keyword in a branch
+/// COMMIT MESSAGE references an issue that is NOT in the PR's live closingIssuesReferences.
+/// Commit-message keywords fire on merge independently of the PR body, so a body relink does
+/// not neutralize them — this catches the erc4626#217 auto-close class before merge.
+fn commit_closes_mode(slug: &str, pr: &str) -> i32 {
+    let Some(commits) = gh_json(&["pr", "view", pr, "-R", slug, "--json", "commits"]) else {
+        eprintln!("error: could not fetch commits for {slug}#{pr}");
+        return 2;
+    };
+    let mut kw: Vec<u64> = Vec::new();
+    if let Some(arr) = commits.get("commits").and_then(|c| c.as_array()) {
+        for c in arr {
+            let head = c.get("messageHeadline").and_then(|x| x.as_str()).unwrap_or("");
+            let body = c.get("messageBody").and_then(|x| x.as_str()).unwrap_or("");
+            for n in closing_keywords(&format!("{head}\n{body}")) {
+                if !kw.contains(&n) {
+                    kw.push(n);
+                }
+            }
+        }
+    }
+    let Some(refs) = gh_json(&["pr", "view", pr, "-R", slug, "--json", "closingIssuesReferences"]) else {
+        eprintln!("error: could not fetch closingIssuesReferences for {slug}#{pr}");
+        return 2;
+    };
+    let indexed: Vec<u64> = refs
+        .get("closingIssuesReferences")
+        .and_then(|c| c.as_array())
+        .map(|a| a.iter().filter_map(|x| x.get("number").and_then(|n| n.as_u64())).collect())
+        .unwrap_or_default();
+    let extras: Vec<u64> = kw.iter().copied().filter(|n| !indexed.contains(n)).collect();
+    if extras.is_empty() {
+        println!("commit-closes {slug}#{pr}: OK (commit keywords {kw:?} all in index {indexed:?})");
+        0
+    } else {
+        println!(
+            "commit-closes {slug}#{pr}: MISMATCH — commit messages close {extras:?} not in the PR's closing index {indexed:?}; these auto-close on merge regardless of the body. Rewrite history or accept the closes before merging."
+        );
+        1
+    }
+}
+
 fn main() {
     let base = base_dir();
     // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
@@ -433,6 +528,13 @@ fn main() {
         let costs_path = cfg(&cron, "REVIEW_COSTS", &costs_def);
         queue_mode(&review_verdicts, &costs_path, top);
         return;
+    }
+    if args.get(1).map(String::as_str) == Some("--commit-closes") {
+        let (Some(slug), Some(pr)) = (args.get(2), args.get(3)) else {
+            eprintln!("usage: pr-review-report --commit-closes <owner/repo> <pr>");
+            std::process::exit(2);
+        };
+        std::process::exit(commit_closes_mode(slug, pr));
     }
     let only_ready = args.get(1).map(String::as_str) == Some("--ready");
 
@@ -1015,5 +1117,65 @@ mod report_tests {
         assert_eq!(sanitize("a\tb\nc\rd", 10), "a b c d");
         assert_eq!(sanitize("ééééé", 3), "ééé");
         assert_eq!(sanitize("short", 100), "short");
+    }
+}
+
+#[cfg(test)]
+mod commit_closes_tests {
+    use super::closing_keywords;
+
+    #[test]
+    fn basic_keywords_and_separators() {
+        assert_eq!(closing_keywords("Closes #99"), vec![99]);
+        assert_eq!(closing_keywords("fixes #12"), vec![12]);
+        assert_eq!(closing_keywords("Resolved #7"), vec![7]);
+        assert_eq!(closing_keywords("closes: #5"), vec![5]);
+        assert_eq!(closing_keywords("close#3"), vec![3]);
+    }
+
+    #[test]
+    fn case_insensitive() {
+        assert_eq!(closing_keywords("CLOSES #1 Fixes #2 rEsOlVeS #3"), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn multiple_and_dedup_first_seen_order() {
+        assert_eq!(closing_keywords("Closes #10\nCloses #2\nfixes #10"), vec![10, 2]);
+    }
+
+    #[test]
+    fn bare_hash_without_keyword_is_ignored() {
+        // the #217 lesson: a bare reference is not a closing keyword
+        assert_eq!(closing_keywords("see #42 and refs #7"), Vec::<u64>::new());
+        assert_eq!(closing_keywords("part of #100"), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn keyword_must_be_adjacent_to_hash() {
+        // keyword and #N separated by real words do NOT link
+        assert_eq!(closing_keywords("closes the door, see #5"), Vec::<u64>::new());
+        assert_eq!(closing_keywords("fixes several things in #9"), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn word_boundary_prevents_false_keywords() {
+        // "closest" / "prefix" must not trigger close/fix
+        assert_eq!(closing_keywords("the closest #5 station"), Vec::<u64>::new());
+        assert_eq!(closing_keywords("prefixes #5"), Vec::<u64>::new());
+        // but a keyword at a real boundary still fires
+        assert_eq!(closing_keywords("(closes #5)"), vec![5]);
+    }
+
+    #[test]
+    fn no_number_after_hash() {
+        assert_eq!(closing_keywords("closes #"), Vec::<u64>::new());
+        assert_eq!(closing_keywords("closes #abc"), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn realistic_217_incident_shape() {
+        // the exact shape that auto-closed #102/#86: body says Refs but a commit says Closes
+        let commit = "docs(natspec): unused params + untrusted vault\n\nCloses #99 Closes #102";
+        assert_eq!(closing_keywords(commit), vec![99, 102]);
     }
 }
