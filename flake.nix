@@ -19,7 +19,7 @@
           pname = "pr-review-report";
           version = "0.1.0";
           src = ./pr-review-report-rs;
-          cargoLock.lockFile = ./pr-review-report-rs/Cargo.lock;
+          cargoLock.lockFile = ./Cargo.lock;
         };
       in
       {
