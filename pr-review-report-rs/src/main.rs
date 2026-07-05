@@ -5,6 +5,8 @@
 //
 // Usage:   pr-review-report            # all buckets
 //          pr-review-report --ready    # only the reviewed-&-ready-to-merge bucket
+//          pr-review-report --queue [N]                 # cheapest-first review queue
+//          pr-review-report --commit-closes <owner/repo> <pr>  # fail if a commit keyword closes an out-of-index issue
 // Config (env overrides cron.env in CWD, then default): ORG, PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
 
 use serde_json::Value;
