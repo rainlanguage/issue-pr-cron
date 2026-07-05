@@ -89,7 +89,6 @@
       "Bash(rm -rf /:*)",
       "Bash(rm -rf ~:*)",
       "Bash(rm -rf /*)",
-      "Bash(gh pr merge:*)",
       "Bash(gh pr close:*)",
       "Bash(gh pr edit:*)",
       "Bash(gh release:*)",
