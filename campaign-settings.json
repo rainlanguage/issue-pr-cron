@@ -108,7 +108,8 @@
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
       "Bash(git reset --hard:*)",
-      "Bash(crontab:*)"
+      "Bash(crontab:*)",
+      "Bash(gh pr merge:*)"
     ]
   }
 }
