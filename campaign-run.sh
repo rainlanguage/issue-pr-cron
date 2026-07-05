@@ -118,4 +118,18 @@ if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
 fi
 
 echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)" >> "$LOG"
+
+# Persist per-run metrics BEFORE the next run's rotation deletes this trace.
+# Appends one enriched JSON line to metrics/runs.jsonl (committed periodically,
+# never from here — the cron does not push). Best-effort: never fail the run on it.
+if [ -s "$RUNLOG" ]; then
+  outcome="ok"; [ "$rc" -ne 0 ] && outcome="error"
+  grep -qi "session limit\|usage limit" "$RUNLOG" "$ERRLOG" 2>/dev/null && outcome="session-limit"
+  mkdir -p "$DIR/metrics"
+  # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
+  nix run "path:$DIR#pr-review-report" -- --run-metrics "$RUNLOG" 2>/dev/null \
+    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$MODEL" --arg oc "$outcome" --argjson rc "$rc" \
+      '. + {runId:$ts, role:"producer", model:$model, exitCode:$rc, outcome:$oc}' \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+fi
 exit 0
