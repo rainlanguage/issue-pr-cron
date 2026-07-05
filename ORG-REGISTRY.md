@@ -82,10 +82,10 @@ hashing without abi.encode (avoiding allocation)
 ## cyclofinance
 
 cyclo.sol | 2026-05-09 | Solidity contracts for https://cyclo.finance cyclo.site
-| 2026-05-07 | Front end for Cyclo rflr-nix | 2026-04-23 | cyclo.rewards |
-2026-04-22 | cyclo.subgraph | 2026-04-20 | dimension-adapters | 2025-04-28 |
-DefiLlama-Adapters | 2025-04-27 | cyclo.rewardsold | 2025-01-30 | ARCHIVED |
-cyclo.brand | 2024-11-13 |
+| 2026-05-07 | Front end for Cyclo rflr-nix (ARCHIVED 2026-07-04) | 2026-04-23 |
+cyclo.rewards | 2026-04-22 | cyclo.subgraph | 2026-04-20 | dimension-adapters |
+2025-04-28 | DefiLlama-Adapters | 2025-04-27 | cyclo.rewardsold | 2025-01-30 |
+ARCHIVED | cyclo.brand | 2024-11-13 |
 
 ## S01-Issuer
 
