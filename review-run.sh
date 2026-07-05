@@ -22,14 +22,14 @@ export HOME
 # (gh is on PATH below) and closes the deny-list nix-wrap bypass — cron-scoped only.
 export RAINIX_CRON_HOOK=1
 export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-# shellcheck disable=SC1091
 set +u
+# shellcheck disable=SC1091
 [ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
 set -u
 
 # --- deployment config (defaults; override in ./cron.env) ---
 PR_ASSIGNEE=""
-REVIEW_MODEL="claude-sonnet-4-6"   # bump to claude-opus-4-8 in cron.env for max review rigor
+REVIEW_MODEL="claude-fable-5"   # org default per 2026-07-04 directive; override via cron.env if needed
 REVIEW_MAXTIME="2h"
 REVIEW_KEEP_RUNS=20
 # shellcheck disable=SC1091
@@ -56,7 +56,7 @@ touch "$REVIEW_VERDICTS"
 cd "$DIR" || exit 1
 
 # rotate per-run traces
-ls -1t "$RUNDIR"/*.jsonl 2>/dev/null | tail -n +$((REVIEW_KEEP_RUNS+1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
+find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d" " -f2- | tail -n +$((REVIEW_KEEP_RUNS + 1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
@@ -66,11 +66,13 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
               "$DIR/review-prompt.txt")"
 
-echo "=================================================================" >> "$LOG"
-echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(hostname)) trace=$RUNLOG" >> "$LOG"
+{
+  echo "================================================================="
+  echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(hostname)) trace=$RUNLOG"
+} >> "$LOG"
 
 # gh + jq on PATH (via nix shell) so the model uses BARE gh -> the read-only deny-list applies.
-timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq --command claude --print "$PROMPT" \
+timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
   --model "$REVIEW_MODEL" \
   --settings "$DIR/review-settings.json" \
   --permission-mode default \
@@ -95,4 +97,15 @@ if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
 fi
 
 echo "$(date -u +%FT%TZ) review run END (exit=$rc, verdicts now=$(wc -l < "$REVIEW_VERDICTS" 2>/dev/null), trace=$RUNLOG)" >> "$LOG"
+
+if [ -s "$RUNLOG" ]; then
+  outcome="ok"; [ "$rc" -ne 0 ] && outcome="error"
+  grep -qi "session limit\|usage limit" "$RUNLOG" 2>/dev/null && outcome="session-limit"
+  mkdir -p "$DIR/metrics"
+  # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
+  nix run "path:$DIR#pr-review-report" -- --run-metrics "$RUNLOG" 2>/dev/null \
+    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$REVIEW_MODEL" --arg oc "$outcome" --argjson rc "$rc" \
+      '. + {runId:$ts, role:"vetter", model:$model, exitCode:$rc, outcome:$oc}' \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+fi
 exit 0

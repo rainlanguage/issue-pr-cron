@@ -1,0 +1,25 @@
+name: rust
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    uses: rainlanguage/rainix/.github/workflows/rainix-rs-test.yaml@main
+    secrets: inherit
+  static:
+    uses: rainlanguage/rainix/.github/workflows/rainix-rs-static.yaml@main
+    secrets: inherit
+  # The rainix reusables above build via cargo. The cron and the metrics
+  # tooling run the flake PACKAGE (`nix run .#pr-review-report`), which cargo
+  # CI does not exercise — a workspace/lockfile drift can leave cargo green
+  # while the package fails to build. This job guards that path directly.
+  nix-build:
+    name: nix-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@a7ad9c4f0c65208097f4d34f3cfa1913b80cce5c # main
+      - run: nix build .#pr-review-report --print-build-logs

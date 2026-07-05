@@ -30,17 +30,17 @@ decimal floating point math in Solidity (mostly yul assembly). rainlang.xyz |
 2026-07-03 | rainlang | 2026-07-03 | Solidity library for implementing Rain
 compatible interpreters. raindex.interface | 2026-07-03 | Interfaces for the
 rain orderbook. rain.devops | 2026-07-03 | flow | 2026-07-03 | Solidity
-interfaces for flow contracts orderbook-subgraph | 2026-07-03 |
-raindex.governance | 2026-07-01 | Ownership and access-control tooling for
-Raindex orders and vaults (RaindexInventory: one shared vault pool, many
-authorised operators). sqlite-web | 2026-07-01 | dotrain | 2026-06-29 | .rain to
-rainlang composer and rain language server protocol services rain.deploy |
-2026-06-29 | Tools for deploying Solidity code and checking existing deployments
-to supported networks. rain.solver | 2026-06-28 | Node.js app that solves
-(clears) Rain Orderbook orders against onchain liquidity (DEXes, other Rain
-Orderbooks and orders) issue-pr-cron | 2026-06-28 | Autonomous GitHub issue→PR
-cron for the rainlanguage org — opens fix PRs for open issues; never merges,
-deploys, or closes issues. rain-org-health | 2026-06-28 | Claude Code
+interfaces for flow contracts orderbook-subgraph (ARCHIVED 2026-07-04) |
+2026-07-03 | raindex.governance | 2026-07-01 | Ownership and access-control
+tooling for Raindex orders and vaults (RaindexInventory: one shared vault pool,
+many authorised operators). sqlite-web | 2026-07-01 | dotrain | 2026-06-29 |
+.rain to rainlang composer and rain language server protocol services
+rain.deploy | 2026-06-29 | Tools for deploying Solidity code and checking
+existing deployments to supported networks. rain.solver | 2026-06-28 | Node.js
+app that solves (clears) Rain Orderbook orders against onchain liquidity (DEXes,
+other Rain Orderbooks and orders) issue-pr-cron | 2026-06-28 | Autonomous GitHub
+issue→PR cron for the rainlanguage org — opens fix PRs for open issues; never
+merges, deploys, or closes issues. rain-org-health | 2026-06-28 | Claude Code
 marketplace: rain-org-health-check skill — audit rainlanguage repos for
 rainix/soldeer modernization debt base-node | 2026-06-27 | Everything required
 to run your own Base node rain.webapp | 2026-06-23 | specs | 2026-06-22 |
@@ -82,10 +82,10 @@ hashing without abi.encode (avoiding allocation)
 ## cyclofinance
 
 cyclo.sol | 2026-05-09 | Solidity contracts for https://cyclo.finance cyclo.site
-| 2026-05-07 | Front end for Cyclo rflr-nix | 2026-04-23 | cyclo.rewards |
-2026-04-22 | cyclo.subgraph | 2026-04-20 | dimension-adapters | 2025-04-28 |
-DefiLlama-Adapters | 2025-04-27 | cyclo.rewardsold | 2025-01-30 | ARCHIVED |
-cyclo.brand | 2024-11-13 |
+| 2026-05-07 | Front end for Cyclo rflr-nix (ARCHIVED 2026-07-04) | 2026-04-23 |
+cyclo.rewards | 2026-04-22 | cyclo.subgraph | 2026-04-20 | dimension-adapters |
+2025-04-28 | DefiLlama-Adapters | 2025-04-27 | cyclo.rewardsold | 2025-01-30 |
+ARCHIVED | cyclo.brand | 2024-11-13 |
 
 ## S01-Issuer
 

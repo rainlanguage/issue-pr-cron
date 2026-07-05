@@ -37,7 +37,7 @@ set -u
 # --- deployment config (defaults here; override in ./cron.env) ---
 WORK_DIR="$HOME/code"          # where issue clones are made
 PR_ASSIGNEE=""                 # GitHub handle to assign opened PRs to (set in cron.env)
-MODEL="claude-sonnet-4-6"      # quality/cost default; claude-opus-4-8 for max rigor
+MODEL="claude-fable-5"      # org default per 2026-07-04 directive: max-capability model for both crons
 MAXTIME="3h"                   # hard cap per run
 KEEP_RUNS=20                   # retained per-run traces
 # shellcheck disable=SC1091
@@ -91,7 +91,7 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 #   - bare `jq` means dedup is one jq pass, not the byte-grep pathology that stalls runs,
 #   - no nix git-hooks WARNING banner leaking into close-candidates.jsonl.
 # Stream every event as JSON. tee keeps the full trace even if the jq distiller is missing/errors.
-timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq --command claude --print "$PROMPT" \
+timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
   --model "$MODEL" \
   --settings "$DIR/campaign-settings.json" \
   --permission-mode default \
@@ -118,4 +118,18 @@ if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
 fi
 
 echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)" >> "$LOG"
+
+# Persist per-run metrics BEFORE the next run's rotation deletes this trace.
+# Appends one enriched JSON line to metrics/runs.jsonl (committed periodically,
+# never from here — the cron does not push). Best-effort: never fail the run on it.
+if [ -s "$RUNLOG" ]; then
+  outcome="ok"; [ "$rc" -ne 0 ] && outcome="error"
+  grep -qi "session limit\|usage limit" "$RUNLOG" "$ERRLOG" 2>/dev/null && outcome="session-limit"
+  mkdir -p "$DIR/metrics"
+  # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
+  nix run "path:$DIR#pr-review-report" -- --run-metrics "$RUNLOG" 2>/dev/null \
+    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$MODEL" --arg oc "$outcome" --argjson rc "$rc" \
+      '. + {runId:$ts, role:"producer", model:$model, exitCode:$rc, outcome:$oc}' \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+fi
 exit 0
