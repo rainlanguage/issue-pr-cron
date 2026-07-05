@@ -6,6 +6,29 @@ re-pushed. This guide exists because an entire evening of review rejected PR
 after PR for the same defect: correct-looking fixes whose failure modes no test
 could distinguish.
 
+## 0. Understand before you act
+
+The issue text is a CLAIM about the system, not a spec. Before classifying it
+(fix / close-candidate / design question) or writing a line of code, derive what
+the design actually IS from primary sources: the interface and base contracts,
+the FRAMEWORK CALLER of the thing in question, and at least two sibling
+implementations. Then judge the claim against that model:
+
+- Claim contradicts the derived design and the design is coherent → the issue
+  has an INVALID PREMISE → close-candidate with the derivation as evidence. Do
+  NOT file it as a design question when your own evidence already answers it —
+  deferring a judgment you have the material to make just moves your reading
+  onto the human's plate.
+- Claim exposes a real defect in the derived design → design question (the gate
+  is for genuinely contested calls, not for unfinished reading).
+- Claim is right and the fix is uncontested → implement, per the rest of this
+  guide.
+
+Canonical example: "integrity() ignores its declared-arity params" — reading the
+framework's integrity loop shows it compares the RETURNED arity against the
+declaration; per-word validation would duplicate one framework invariant across
+every word. The convention answers the issue; that is a close, not a question.
+
 ## 1. Baseline
 
 Run the suite green on the UNCHANGED code before touching anything. A red
