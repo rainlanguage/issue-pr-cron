@@ -56,6 +56,7 @@ enum Bucket {
     Reject,
     Close,
     Unreviewed,
+    OpenThreads,
     Conflicting,
     Pending,
     Draft,
@@ -73,6 +74,7 @@ impl Bucket {
             Bucket::Reject => "REJECT",
             Bucket::Close => "CLOSE",
             Bucket::Unreviewed => "UNREVIEWED",
+            Bucket::OpenThreads => "OPEN_THREADS",
             Bucket::Conflicting => "CONFLICTING",
             Bucket::Pending => "PENDING",
             Bucket::Draft => "DRAFT",
@@ -103,6 +105,97 @@ fn gh_json(args: &[&str]) -> Option<Value> {
         return None;
     }
     serde_json::from_slice(&out.stdout).ok()
+}
+
+/// One page of the reviewThreads GraphQL response → (unresolved count, end cursor if more pages).
+/// None when the expected structure is missing (malformed/error response) — never a silent 0:
+/// an unknown thread state must stay distinguishable from a verified-clean one.
+fn count_unresolved_page(v: &Value) -> Option<(u64, Option<String>)> {
+    let threads = v
+        .get("data")?
+        .get("repository")?
+        .get("pullRequest")?
+        .get("reviewThreads")?;
+    let nodes = threads.get("nodes")?.as_array()?;
+    let mut unresolved = 0u64;
+    for n in nodes {
+        // A node missing isResolved is malformed — treat the whole page as unknown.
+        if !n.get("isResolved")?.as_bool()? {
+            unresolved += 1;
+        }
+    }
+    let page = threads.get("pageInfo")?;
+    let cursor = if page.get("hasNextPage")?.as_bool()? {
+        Some(page.get("endCursor")?.as_str()?.to_string())
+    } else {
+        None
+    };
+    Some((unresolved, cursor))
+}
+
+/// Total unresolved review threads on a PR (CodeRabbit or human), paginated so a long review
+/// history is never silently truncated. None on any fetch/parse failure.
+fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Option<u64> {
+    let query = "query($owner:String!,$repo:String!,$num:Int!,$cursor:String){\
+                 repository(owner:$owner,name:$repo){pullRequest(number:$num){\
+                 reviewThreads(first:100,after:$cursor){nodes{isResolved}\
+                 pageInfo{hasNextPage endCursor}}}}}";
+    let mut total = 0u64;
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut args: Vec<String> = vec![
+            "api".into(),
+            "graphql".into(),
+            "-f".into(),
+            format!("query={query}"),
+            "-f".into(),
+            format!("owner={owner}"),
+            "-f".into(),
+            format!("repo={repo}"),
+            "-F".into(),
+            format!("num={num}"),
+        ];
+        if let Some(cur) = &cursor {
+            args.push("-f".into());
+            args.push(format!("cursor={cur}"));
+        }
+        let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (page, next) = count_unresolved_page(&gh_json(&argrefs)?)?;
+        total += page;
+        match next {
+            Some(cur) => cursor = Some(cur),
+            None => return Some(total),
+        }
+    }
+}
+
+/// Buckets that would present a PR as actionable-toward-landing to the human/vetter; only these
+/// are subject to the open-threads gate (a red/conflicting/pending PR has louder producer work).
+fn threads_gated(b: Bucket) -> bool {
+    matches!(
+        b,
+        Bucket::Approved | Bucket::AiVet | Bucket::StaleVet | Bucket::Unreviewed
+    )
+}
+
+/// Open-threads gate: an otherwise-presentable PR with unresolved review threads routes to
+/// OPEN_THREADS (producer work: address + resolve each thread). Unknown thread state on a gated
+/// bucket surfaces as FETCH_ERROR — visible, never a silently-presentable maybe-dirty PR.
+fn apply_threads_gate(b: Bucket, threads: Option<u64>) -> Bucket {
+    if !threads_gated(b) {
+        return b;
+    }
+    match threads {
+        Some(0) => b,
+        Some(_) => Bucket::OpenThreads,
+        None => Bucket::FetchError,
+    }
+}
+
+/// Queue presentability of a thread count: only a verified zero passes (fail-closed, matching
+/// the queue's existing mergeable check — an unverifiable PR is not presented to the human).
+fn threads_presentable(threads: Option<u64>) -> bool {
+    threads == Some(0)
 }
 
 struct VEntry {
@@ -201,6 +294,7 @@ struct PrRow {
     url: String,
     headoid: String,
     title: String,
+    threads: Option<u64>,
     fetch_error: bool,
 }
 
@@ -277,6 +371,7 @@ fn classify_one(org: &str, repo: &str, num: u64) -> PrRow {
             url: url_fb,
             headoid: "-".to_string(),
             title: String::new(),
+            threads: None,
             fetch_error: true,
         },
         Some(j) => {
@@ -305,6 +400,7 @@ fn classify_one(org: &str, repo: &str, num: u64) -> PrRow {
                 .unwrap_or("-")
                 .to_string();
             let title = sanitize(j.get("title").and_then(|x| x.as_str()).unwrap_or(""), 100);
+            let threads = unresolved_threads(org, repo, num);
             PrRow {
                 repo: repo.to_string(),
                 num,
@@ -315,6 +411,7 @@ fn classify_one(org: &str, repo: &str, num: u64) -> PrRow {
                 url,
                 headoid,
                 title,
+                threads,
                 fetch_error: false,
             }
         }
@@ -621,15 +718,16 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
     };
 
     let rows = queue_rows(arr, &verds, &sidecar);
-    // Conflicting PRs are the producer's step-3d work, not human-presentable. Only the shown
-    // slice is live-checked (one gh call per candidate, walking past skips), so cost stays
-    // proportional to what a human actually reads.
+    // Conflicting PRs are the producer's step-3d work and PRs with unresolved review threads
+    // are its thread-resolution work — neither is human-presentable. Only the shown slice is
+    // live-checked (two gh calls per candidate, walking past skips), so cost stays proportional
+    // to what a human actually reads.
     let (shown, skipped) = take_presentable(&rows, top, |r| {
         let (_, _, num, url, _) = r;
         let Some(slug) = pr_slug(url) else {
             return false;
         };
-        gh_json(&[
+        let mergeable_ok = gh_json(&[
             "pr",
             "view",
             &num.to_string(),
@@ -639,7 +737,14 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
             "mergeable",
         ])
         .map(|j| j.get("mergeable").and_then(|m| m.as_str()) != Some("CONFLICTING"))
-        .unwrap_or(false)
+        .unwrap_or(false);
+        if !mergeable_ok {
+            return false;
+        }
+        let Some((owner, repo)) = slug.split_once('/') else {
+            return false;
+        };
+        threads_presentable(unresolved_threads(owner, repo, *num))
     });
     println!("{}", render_queue(&rows, &shown, skipped, arr.len()));
 }
@@ -1082,14 +1187,17 @@ fn main() {
     for r in &rows {
         let key = format!("{}/{}", r.repo, r.num);
         let e = verds.get(&key);
-        let b = bucket_of(
-            e,
-            r.rev.as_deref(),
-            r.merge,
-            r.ci,
-            r.draft,
-            &r.headoid,
-            r.fetch_error,
+        let b = apply_threads_gate(
+            bucket_of(
+                e,
+                r.rev.as_deref(),
+                r.merge,
+                r.ci,
+                r.draft,
+                &r.headoid,
+                r.fetch_error,
+            ),
+            r.threads,
         );
         let note = e.map(|x| x.note.clone()).unwrap_or_default();
         let oneliner = if note.is_empty() || note == "approved by user" {
@@ -1154,6 +1262,10 @@ fn main() {
     emit(
         Bucket::Unreviewed,
         "🟦 NOT YET REVIEWED — green + mergeable, awaiting AI review + your approval",
+    );
+    emit(
+        Bucket::OpenThreads,
+        "💬 OPEN REVIEW THREADS — unresolved review threads (CodeRabbit or human); the producer addresses and resolves each before this is presentable (producer work, NOT your action)",
     );
     emit(
         Bucket::Conflicting,
@@ -2000,6 +2112,119 @@ mod report_tests {
         assert_eq!(sanitize("a\tb\nc\rd", 10), "a b c d");
         assert_eq!(sanitize("ééééé", 3), "ééé");
         assert_eq!(sanitize("short", 100), "short");
+    }
+}
+
+#[cfg(test)]
+mod open_threads_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn page(nodes: Value, has_next: bool, cursor: &str) -> Value {
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": nodes,
+            "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}
+        }}}}})
+    }
+
+    // T1: unresolved threads are counted by the typed isResolved field, resolved ones excluded.
+    #[test]
+    fn count_mixed_resolved_unresolved() {
+        let v = page(
+            json!([{"isResolved": false}, {"isResolved": true}, {"isResolved": false}]),
+            false,
+            "",
+        );
+        assert_eq!(count_unresolved_page(&v), Some((2, None)));
+    }
+
+    // T2: zero threads is a verified-clean Some(0), distinct from unknown.
+    #[test]
+    fn count_empty_nodes_is_zero() {
+        assert_eq!(count_unresolved_page(&page(json!([]), false, "")), Some((0, None)));
+    }
+
+    // T3: a further page propagates its cursor so pagination can't silently truncate.
+    #[test]
+    fn count_propagates_next_cursor() {
+        let v = page(json!([{"isResolved": false}]), true, "CUR");
+        assert_eq!(count_unresolved_page(&v), Some((1, Some("CUR".to_string()))));
+    }
+
+    // T4: malformed responses (missing pullRequest, non-array nodes, node without isResolved,
+    // GraphQL error shape) are None — unknown, never a silent 0.
+    #[test]
+    fn count_malformed_is_none() {
+        assert_eq!(count_unresolved_page(&json!({"data": {"repository": null}})), None);
+        assert_eq!(count_unresolved_page(&json!({"errors": [{"message": "boom"}]})), None);
+        let bad_nodes = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": "nope", "pageInfo": {"hasNextPage": false, "endCursor": ""}}}}}});
+        assert_eq!(count_unresolved_page(&bad_nodes), None);
+        let bad_node = page(json!([{"resolved": true}]), false, "");
+        assert_eq!(count_unresolved_page(&bad_node), None);
+    }
+
+    // T5: only otherwise-presentable buckets are gated.
+    #[test]
+    fn gated_set_is_presentable_buckets_only() {
+        for b in [
+            Bucket::Approved,
+            Bucket::AiVet,
+            Bucket::StaleVet,
+            Bucket::Unreviewed,
+        ] {
+            assert!(threads_gated(b));
+        }
+        for b in [
+            Bucket::ProducerFix,
+            Bucket::Relink,
+            Bucket::Reject,
+            Bucket::Close,
+            Bucket::OpenThreads,
+            Bucket::Conflicting,
+            Bucket::Pending,
+            Bucket::Draft,
+            Bucket::FetchError,
+            Bucket::UnknownVerdict,
+        ] {
+            assert!(!threads_gated(b));
+        }
+    }
+
+    // T6: gated + unresolved threads → OPEN_THREADS; verified-zero keeps the bucket;
+    // unknown on a gated bucket surfaces as FETCH_ERROR (visible, not maybe-presentable).
+    #[test]
+    fn gate_routes_gated_buckets() {
+        assert!(apply_threads_gate(Bucket::Approved, Some(3)) == Bucket::OpenThreads);
+        assert!(apply_threads_gate(Bucket::AiVet, Some(1)) == Bucket::OpenThreads);
+        assert!(apply_threads_gate(Bucket::Unreviewed, Some(0)) == Bucket::Unreviewed);
+        assert!(apply_threads_gate(Bucket::StaleVet, Some(0)) == Bucket::StaleVet);
+        assert!(apply_threads_gate(Bucket::Approved, None) == Bucket::FetchError);
+    }
+
+    // T7: non-gated buckets pass through untouched whatever the thread state — a red PR stays
+    // producer-fix work even with open threads (CI is the louder signal).
+    #[test]
+    fn gate_ignores_non_gated_buckets() {
+        for t in [Some(0), Some(5), None] {
+            assert!(apply_threads_gate(Bucket::ProducerFix, t) == Bucket::ProducerFix);
+            assert!(apply_threads_gate(Bucket::Conflicting, t) == Bucket::Conflicting);
+            assert!(apply_threads_gate(Bucket::Draft, t) == Bucket::Draft);
+        }
+    }
+
+    // T8: queue presentability is fail-closed — only a verified zero passes.
+    #[test]
+    fn queue_presentability_fail_closed() {
+        assert!(threads_presentable(Some(0)));
+        assert!(!threads_presentable(Some(1)));
+        assert!(!threads_presentable(None));
+    }
+
+    // T9: OPEN_THREADS has a stable ledger/report key.
+    #[test]
+    fn open_threads_key() {
+        assert_eq!(Bucket::OpenThreads.key(), "OPEN_THREADS");
     }
 }
 
