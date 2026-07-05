@@ -435,11 +435,9 @@ fn closing_keywords(text: &str) -> Vec<u64> {
         if at_boundary {
             if let Some(kw) = KEYWORDS.iter().find(|kw| lower[i..].starts_with(**kw)) {
                 let mut j = i + kw.len();
-                // the char right after the keyword must not continue a word (so `closest` ≠ `close`)
-                if bytes.get(j).map(|c| c.is_ascii_alphanumeric()).unwrap_or(false) {
-                    i += 1;
-                    continue;
-                }
+                // No separate "keyword is a word-prefix" guard is needed: a keyword that only
+                // prefixes a longer word (`closest`) is followed by a letter, which is not a
+                // separator, so the `#`-adjacency check below rejects it anyway.
                 // skip a single optional separator run of spaces/colon between keyword and #
                 while bytes.get(j).map(|c| *c == b' ' || *c == b':' || *c == b'\t').unwrap_or(false) {
                     j += 1;
