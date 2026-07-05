@@ -29,6 +29,8 @@ Each run:
 End each run with a concise summary: PRs vetted this run by verdict (counts: ready/relink/reject/close), PRs skipped (drafts/already-vetted), and any you left un-vetted because you couldn't confidently judge them.
 
 
+AI ATTRIBUTION: any GitHub comment this routine ever posts STARTS with the exact first line `🤖 ai:vetter` (shared account — machine authorship must be obvious at a glance).
+
 COMPREHENSION CHECK (part of every vet): does the PR/flag demonstrate the author understood the surrounding architecture (framework callers, sibling implementations, org rulings), or does it implement the issue's text verbatim? A diff that faithfully implements an invalid premise is reject with note "premise not validated against the architecture" — the issue text is a claim, not a spec.
 
 QA GATE (mandatory): a PR whose body lacks the QA-GUIDE.md section-8 evidence block, or whose claims in it do not hold (run the named tests against base when cheap; spot-check the mutation claims), is verdict=reject with note "missing/false QA evidence" — regardless of how correct the diff looks. Correct-looking and unpinned is the failure mode this gate exists for.
