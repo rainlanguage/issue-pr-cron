@@ -9,3 +9,13 @@ jobs:
   static:
     uses: rainlanguage/rainix/.github/workflows/rainix-rs-static.yaml@main
     secrets: inherit
+  # The rainix reusables above build via cargo. The cron and the metrics
+  # tooling run the flake PACKAGE (`nix run .#pr-review-report`), which cargo
+  # CI does not exercise — a workspace/lockfile drift can leave cargo green
+  # while the package fails to build. This job guards that path directly.
+  nix-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - run: nix build .#pr-review-report --print-build-logs
