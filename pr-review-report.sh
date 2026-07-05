@@ -10,7 +10,7 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-cd "$DIR"                       # the binary reads cron.env + ledgers from this dir
+cd "$DIR" || exit 1            # the binary reads cron.env + ledgers from this dir
 BIN="$DIR/pr-review-report-rs/target/release/pr-review-report"
 
 # gh is required at runtime; re-exec under nix if it isn't already on PATH.
