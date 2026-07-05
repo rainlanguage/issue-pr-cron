@@ -1,0 +1,11 @@
+name: rust
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    uses: rainlanguage/rainix/.github/workflows/rainix-rs-test.yaml@main
+    secrets: inherit
+  static:
+    uses: rainlanguage/rainix/.github/workflows/rainix-rs-static.yaml@main
+    secrets: inherit

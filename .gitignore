@@ -34,5 +34,13 @@
 !/ORG-REGISTRY.md
 # Producer QA doctrine (referenced by campaign-prompt step 4 + review-prompt QA gate):
 !/QA-GUIDE.md
+# Rust workspace + CI (rainix rust reusables gate pr-review-report):
+!/Cargo.toml
+!/Cargo.lock
+!/.github/
+!/.github/workflows/rust.yml
 # Mutation-test scan records (committed so org health-checks can see scan freshness):
 !/mutation-test-scans.json
+# Flake exposing pr-review-report as a package (bin on the cron PATH):
+!/flake.nix
+!/flake.lock

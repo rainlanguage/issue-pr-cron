@@ -29,6 +29,7 @@ except Exception: pass' 2>/dev/null)
 
 if printf '%s' "$cmd" | grep -qE 'nixpkgs#gh\b'; then
   printf 'blocked nix-wrapped gh: %s\n' "$cmd" >&2
+  # shellcheck disable=SC2016  # literal help text; backticks/$ must not expand
   printf 'gh is ALREADY on PATH in this cron — invoke BARE `gh …` (and bare `jq`) so the deny-list applies. Wrapping gh in `nix shell/run nixpkgs#gh` bypasses the deny-list and is forbidden (prompt step 7).\n' >&2
   exit 2
 fi

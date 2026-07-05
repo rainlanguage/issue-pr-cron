@@ -1,0 +1,8 @@
+# Workspace root so the rainix rust reusables (cargo test / rainix-rs-static at
+# the repo root) pick up the crate under pr-review-report-rs/.
+[workspace]
+resolver = "2"
+members = ["pr-review-report-rs"]
+
+[profile.release]
+opt-level = 2

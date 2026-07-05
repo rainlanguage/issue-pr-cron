@@ -5,6 +5,8 @@
 //
 // Usage:   pr-review-report            # all buckets
 //          pr-review-report --ready    # only the reviewed-&-ready-to-merge bucket
+//          pr-review-report --queue [N]                 # cheapest-first review queue
+//          pr-review-report --commit-closes <owner/repo> <pr>  # fail if a commit keyword closes an out-of-index issue
 // Config (env overrides cron.env in CWD, then default): ORG, PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
 
 use serde_json::Value;
@@ -14,21 +16,51 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 #[derive(Clone, Copy, PartialEq)]
-enum Ci { Red, Pending, NoChecks, Green }
+enum Ci {
+    Red,
+    Pending,
+    NoChecks,
+    Green,
+}
 
 #[derive(Clone, Copy, PartialEq)]
-enum Merge { Mergeable, Conflicting, Unknown }
+enum Merge {
+    Mergeable,
+    Conflicting,
+    Unknown,
+}
 
 #[derive(Clone, Copy, PartialEq)]
-enum Verdict { Ready, Relink, Reject, Close, Unknown }
+enum Verdict {
+    Ready,
+    Relink,
+    Reject,
+    Close,
+    Unknown,
+}
 
 #[derive(Clone, Copy, PartialEq)]
-enum Source { Human, AiCampaign, Other }
+enum Source {
+    Human,
+    AiCampaign,
+    Other,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Bucket {
-    Approved, AiVet, StaleVet, ProducerFix, Relink, Reject, Close,
-    Unreviewed, Conflicting, Pending, Draft, FetchError, UnknownVerdict,
+    Approved,
+    AiVet,
+    StaleVet,
+    ProducerFix,
+    Relink,
+    Reject,
+    Close,
+    Unreviewed,
+    Conflicting,
+    Pending,
+    Draft,
+    FetchError,
+    UnknownVerdict,
 }
 impl Bucket {
     fn key(self) -> &'static str {
@@ -52,17 +84,35 @@ impl Bucket {
 
 /// Replace tab/newline/cr with a space and truncate to `n` Unicode codepoints (matches jq `.[0:n]`).
 fn sanitize(s: &str, n: usize) -> String {
-    s.chars().map(|c| if c == '\t' || c == '\n' || c == '\r' { ' ' } else { c }).take(n).collect()
+    s.chars()
+        .map(|c| {
+            if c == '\t' || c == '\n' || c == '\r' {
+                ' '
+            } else {
+                c
+            }
+        })
+        .take(n)
+        .collect()
 }
 
 /// Run gh and parse stdout as JSON; None on non-zero exit, spawn failure, or unparseable output.
 fn gh_json(args: &[&str]) -> Option<Value> {
     let out = Command::new("gh").args(args).output().ok()?;
-    if !out.status.success() { return None; }
+    if !out.status.success() {
+        return None;
+    }
     serde_json::from_slice(&out.stdout).ok()
 }
 
-struct VEntry { verdict: Option<Verdict>, source: Source, sha: String, note: String, cost: Option<i64>, cost_basis: String }
+struct VEntry {
+    verdict: Option<Verdict>,
+    source: Source,
+    sha: String,
+    note: String,
+    cost: Option<i64>,
+    cost_basis: String,
+}
 
 /// FIX(bug 1,6,7): parse the ledger line-by-line so one malformed line (e.g. `hello`) can't drop
 /// every verdict after it; normalize (trim+lowercase) the verdict; last matching line wins per key.
@@ -73,16 +123,29 @@ fn load_verdicts(path: &str) -> HashMap<String, VEntry> {
 fn parse_verdicts(content: &str) -> HashMap<String, VEntry> {
     let mut m = HashMap::new();
     for line in content.lines() {
-        let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
-        if !v.is_object() { continue; }
-        let repo = match v.get("repo").and_then(|x| x.as_str()) { Some(r) => r, None => continue };
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if !v.is_object() {
+            continue;
+        }
+        let repo = match v.get("repo").and_then(|x| x.as_str()) {
+            Some(r) => r,
+            None => continue,
+        };
         let pr = match v.get("pr") {
             Some(Value::Number(n)) => n.to_string(),
             Some(Value::String(s)) => s.clone(),
             _ => continue,
         };
         let key = format!("{repo}/{pr}");
-        let raw = v.get("verdict").and_then(|x| x.as_str()).unwrap_or("").trim().to_lowercase();
+        let raw = v
+            .get("verdict")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
         let verdict = match raw.as_str() {
             "" => None,
             "ready" => Some(Verdict::Ready),
@@ -96,7 +159,11 @@ fn parse_verdicts(content: &str) -> HashMap<String, VEntry> {
             Some("ai-campaign") | None => Source::AiCampaign,
             Some(_) => Source::Other,
         };
-        let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let sha = v
+            .get("sha")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
         let note = sanitize(v.get("note").and_then(|x| x.as_str()).unwrap_or(""), 100);
         // Cost is stamped by the vetter as a number; tolerate a numeric string too (matches the
         // python queue sort, which accepted either via int()).
@@ -105,15 +172,36 @@ fn parse_verdicts(content: &str) -> HashMap<String, VEntry> {
             Some(Value::String(s)) => s.trim().parse::<i64>().ok(),
             _ => None,
         };
-        let cost_basis = sanitize(v.get("cost_basis").and_then(|x| x.as_str()).unwrap_or(""), 120);
-        m.insert(key, VEntry { verdict, source, sha, note, cost, cost_basis });
+        let cost_basis = sanitize(
+            v.get("cost_basis").and_then(|x| x.as_str()).unwrap_or(""),
+            120,
+        );
+        m.insert(
+            key,
+            VEntry {
+                verdict,
+                source,
+                sha,
+                note,
+                cost,
+                cost_basis,
+            },
+        );
     }
     m
 }
 
 struct PrRow {
-    repo: String, num: u64, merge: Merge, ci: Ci, draft: bool,
-    rev: Option<String>, url: String, headoid: String, title: String, fetch_error: bool,
+    repo: String,
+    num: u64,
+    merge: Merge,
+    ci: Ci,
+    draft: bool,
+    rev: Option<String>,
+    url: String,
+    headoid: String,
+    title: String,
+    fetch_error: bool,
 }
 
 /// FIX(bug 2): a CheckRun is pending unless status==COMPLETED (WAITING/REQUESTED/QUEUED/IN_PROGRESS
@@ -129,9 +217,18 @@ fn classify_ci(rollup: &Value) -> Ci {
         let concl = it.get("conclusion").and_then(|v| v.as_str());
         let state = it.get("state").and_then(|v| v.as_str());
         let status = it.get("status").and_then(|v| v.as_str());
-        let is_fail = matches!(concl, Some("FAILURE") | Some("TIMED_OUT") | Some("CANCELLED") | Some("ACTION_REQUIRED") | Some("STARTUP_FAILURE"))
-            || matches!(state, Some("FAILURE") | Some("ERROR"));
-        if is_fail { fail += 1; continue; }
+        let is_fail = matches!(
+            concl,
+            Some("FAILURE")
+                | Some("TIMED_OUT")
+                | Some("CANCELLED")
+                | Some("ACTION_REQUIRED")
+                | Some("STARTUP_FAILURE")
+        ) || matches!(state, Some("FAILURE") | Some("ERROR"));
+        if is_fail {
+            fail += 1;
+            continue;
+        }
         let is_pend = if let Some(st) = status {
             st != "COMPLETED"
         } else if let Some(s) = state {
@@ -140,9 +237,19 @@ fn classify_ci(rollup: &Value) -> Ci {
             // FIX(rs-bug 3): a check with neither status nor state is unconfirmed → pending, never green.
             true
         };
-        if is_pend { pend += 1; }
+        if is_pend {
+            pend += 1;
+        }
     }
-    if fail > 0 { Ci::Red } else if pend > 0 { Ci::Pending } else if tot == 0 { Ci::NoChecks } else { Ci::Green }
+    if fail > 0 {
+        Ci::Red
+    } else if pend > 0 {
+        Ci::Pending
+    } else if tot == 0 {
+        Ci::NoChecks
+    } else {
+        Ci::Green
+    }
 }
 
 /// FIX(bug 3,4,5): on gh failure, flag fetch_error (→ a visible FETCH_ERROR bucket) instead of
@@ -151,33 +258,79 @@ fn classify_one(org: &str, repo: &str, num: u64) -> PrRow {
     let target = format!("{org}/{repo}");
     let url_fb = format!("https://github.com/{org}/{repo}/pull/{num}");
     let j = gh_json(&[
-        "pr", "view", &num.to_string(), "-R", &target, "--json",
+        "pr",
+        "view",
+        &num.to_string(),
+        "-R",
+        &target,
+        "--json",
         "url,mergeable,isDraft,reviewDecision,statusCheckRollup,headRefOid,title",
     ]);
     match j {
         None => PrRow {
-            repo: repo.to_string(), num, merge: Merge::Unknown, ci: Ci::NoChecks, draft: false,
-            rev: None, url: url_fb, headoid: "-".to_string(), title: String::new(), fetch_error: true,
+            repo: repo.to_string(),
+            num,
+            merge: Merge::Unknown,
+            ci: Ci::NoChecks,
+            draft: false,
+            rev: None,
+            url: url_fb,
+            headoid: "-".to_string(),
+            title: String::new(),
+            fetch_error: true,
         },
         Some(j) => {
-            let url = j.get("url").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).unwrap_or(&url_fb).to_string();
+            let url = j
+                .get("url")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&url_fb)
+                .to_string();
             let merge = match j.get("mergeable").and_then(|x| x.as_str()) {
                 Some("MERGEABLE") => Merge::Mergeable,
                 Some("CONFLICTING") => Merge::Conflicting,
                 _ => Merge::Unknown,
             };
             let draft = j.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false);
-            let rev = j.get("reviewDecision").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+            let rev = j
+                .get("reviewDecision")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
             let ci = classify_ci(j.get("statusCheckRollup").unwrap_or(&Value::Null));
-            let headoid = j.get("headRefOid").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).unwrap_or("-").to_string();
+            let headoid = j
+                .get("headRefOid")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("-")
+                .to_string();
             let title = sanitize(j.get("title").and_then(|x| x.as_str()).unwrap_or(""), 100);
-            PrRow { repo: repo.to_string(), num, merge, ci, draft, rev, url, headoid, title, fetch_error: false }
+            PrRow {
+                repo: repo.to_string(),
+                num,
+                merge,
+                ci,
+                draft,
+                rev,
+                url,
+                headoid,
+                title,
+                fetch_error: false,
+            }
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn bucket_of(e: Option<&VEntry>, rev: Option<&str>, merge: Merge, ci: Ci, draft: bool, headoid: &str, fetch_error: bool) -> Bucket {
+fn bucket_of(
+    e: Option<&VEntry>,
+    rev: Option<&str>,
+    merge: Merge,
+    ci: Ci,
+    draft: bool,
+    headoid: &str,
+    fetch_error: bool,
+) -> Bucket {
     let verdict = e.and_then(|x| x.verdict);
     // An AI/human-flagged disposition IS the action, regardless of CI or fetch state.
     match verdict {
@@ -189,12 +342,24 @@ fn bucket_of(e: Option<&VEntry>, rev: Option<&str>, merge: Merge, ci: Ci, draft:
     }
     // FIX(rs-bug 1): a transient fetch failure masks only state-dependent buckets, AFTER the
     // state-independent verdict disposition above (matches the original bash precedence).
-    if fetch_error { return Bucket::FetchError; }
-    if rev == Some("CHANGES_REQUESTED") { return Bucket::Reject; }
-    if draft { return Bucket::Draft; }
-    if ci == Ci::Red { return Bucket::ProducerFix; }
-    if merge == Merge::Conflicting { return Bucket::Conflicting; }
-    if ci == Ci::Pending { return Bucket::Pending; }
+    if fetch_error {
+        return Bucket::FetchError;
+    }
+    if rev == Some("CHANGES_REQUESTED") {
+        return Bucket::Reject;
+    }
+    if draft {
+        return Bucket::Draft;
+    }
+    if ci == Ci::Red {
+        return Bucket::ProducerFix;
+    }
+    if merge == Merge::Conflicting {
+        return Bucket::Conflicting;
+    }
+    if ci == Ci::Pending {
+        return Bucket::Pending;
+    }
     let is_ready = verdict == Some(Verdict::Ready);
     let src = e.map(|x| x.source);
     let approved = rev == Some("APPROVED") || (is_ready && src == Some(Source::Human));
@@ -203,21 +368,35 @@ fn bucket_of(e: Option<&VEntry>, rev: Option<&str>, merge: Merge, ci: Ci, draft:
         let vsha = e.map(|x| x.sha.as_str()).unwrap_or("");
         // FIX(rs-bug 2): a recorded verdict with a real sha is STALE whenever the live head can't be
         // confirmed equal — including a missing/unknown head ("-") — not only on an explicit mismatch.
-        if (approved || aivet) && !vsha.is_empty() && vsha != "-" && (headoid.is_empty() || headoid == "-" || vsha != headoid) {
+        if (approved || aivet)
+            && !vsha.is_empty()
+            && vsha != "-"
+            && (headoid.is_empty() || headoid == "-" || vsha != headoid)
+        {
             return Bucket::StaleVet;
         }
-        if approved { return Bucket::Approved; }
-        if aivet { return Bucket::AiVet; }
+        if approved {
+            return Bucket::Approved;
+        }
+        if aivet {
+            return Bucket::AiVet;
+        }
         return Bucket::Unreviewed;
     }
     Bucket::Pending // mergeability still resolving (mergeable=UNKNOWN)
 }
 
-struct OutRow { bucket: Bucket, url: String, oneliner: String }
+struct OutRow {
+    bucket: Bucket,
+    url: String,
+    oneliner: String,
+}
 
 fn cfg(cron: &HashMap<String, String>, env_key: &str, def: &str) -> String {
     // FIX(rs-bug 5): a set-but-EMPTY env OR cron.env value falls back to the default (bash ${VAR:-def}).
-    std::env::var(env_key).ok().filter(|s| !s.is_empty())
+    std::env::var(env_key)
+        .ok()
+        .filter(|s| !s.is_empty())
         .or_else(|| cron.get(env_key).cloned().filter(|s| !s.is_empty()))
         .unwrap_or_else(|| def.to_string())
 }
@@ -227,13 +406,18 @@ fn cfg(cron: &HashMap<String, String>, env_key: &str, def: &str) -> String {
 /// ledger / cron.env, else ".".
 fn base_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("RAINIX_BATCH_DIR") {
-        if !d.is_empty() { return std::path::PathBuf::from(d); }
+        if !d.is_empty() {
+            return std::path::PathBuf::from(d);
+        }
     }
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent().map(|p| p.to_path_buf());
         for _ in 0..6 {
             let Some(d) = dir else { break };
-            if d.join("review-verdicts.jsonl").exists() || d.join("cron.env").exists() || d.join("close-candidates.jsonl").exists() {
+            if d.join("review-verdicts.jsonl").exists()
+                || d.join("cron.env").exists()
+                || d.join("close-candidates.jsonl").exists()
+            {
                 return d;
             }
             dir = d.parent().map(|p| p.to_path_buf());
@@ -251,16 +435,27 @@ fn base_dir() -> std::path::PathBuf {
 fn parse_sidecar(content: &str) -> HashMap<String, (i64, String, String)> {
     let mut sidecar = HashMap::new();
     for line in content.lines() {
-        let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
-        let Some(repo) = v.get("repo").and_then(|x| x.as_str()) else { continue };
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let Some(repo) = v.get("repo").and_then(|x| x.as_str()) else {
+            continue;
+        };
         let pr = match v.get("pr") {
             Some(Value::Number(n)) => n.to_string(),
             Some(Value::String(s)) => s.clone(),
             _ => continue,
         };
-        let Some(cost) = v.get("cost").and_then(|x| x.as_i64()) else { continue };
+        let Some(cost) = v.get("cost").and_then(|x| x.as_i64()) else {
+            continue;
+        };
         let basis = sanitize(v.get("basis").and_then(|x| x.as_str()).unwrap_or(""), 120);
-        let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let sha = v
+            .get("sha")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
         sidecar.insert(format!("{repo}/{pr}"), (cost, basis, sha));
     }
     sidecar
@@ -279,10 +474,24 @@ fn queue_rows(
 ) -> Vec<QueueRow> {
     let mut rows: Vec<QueueRow> = Vec::new();
     for p in arr {
-        if p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false) { continue; }
-        let Some(repo) = p.get("repository").and_then(|r| r.get("name")).and_then(|n| n.as_str()) else { continue };
-        let Some(num) = p.get("number").and_then(|n| n.as_u64()) else { continue };
-        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+        if p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let Some(repo) = p
+            .get("repository")
+            .and_then(|r| r.get("name"))
+            .and_then(|n| n.as_str())
+        else {
+            continue;
+        };
+        let Some(num) = p.get("number").and_then(|n| n.as_u64()) else {
+            continue;
+        };
+        let url = p
+            .get("url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string();
         // Ledger convention: bare repo name for rainlanguage repos, org-qualified
         // "owner/repo" for every other org (e.g. cyclofinance/cyclo.site).
         let ledger_repo = match pr_slug(&url) {
@@ -291,12 +500,18 @@ fn queue_rows(
         };
         let key = format!("{ledger_repo}/{num}");
         let Some(v) = verds.get(&key) else { continue };
-        if v.verdict != Some(Verdict::Ready) || v.source != Source::AiCampaign { continue; }
+        if v.verdict != Some(Verdict::Ready) || v.source != Source::AiCampaign {
+            continue;
+        }
         let (cost, basis) = match v.cost {
             Some(c) => (c, v.cost_basis.clone()),
             None => match sidecar.get(&key) {
                 Some((c, b, sha)) => {
-                    let stale = if !sha.is_empty() && !v.sha.is_empty() && sha != &v.sha { " [cost from older head]" } else { "" };
+                    let stale = if !sha.is_empty() && !v.sha.is_empty() && sha != &v.sha {
+                        " [cost from older head]"
+                    } else {
+                        ""
+                    };
                     (*c, format!("{b}{stale}"))
                 }
                 None => (1001, String::new()),
@@ -313,7 +528,9 @@ fn queue_rows(
 fn pr_slug(url: &str) -> Option<String> {
     let rest = url.strip_prefix("https://github.com/")?;
     let slug = rest.split("/pull/").next()?;
-    if slug.is_empty() || !slug.contains('/') || !rest.contains("/pull/") { return None; }
+    if slug.is_empty() || !slug.contains('/') || !rest.contains("/pull/") {
+        return None;
+    }
     Some(slug.to_string())
 }
 
@@ -329,8 +546,14 @@ fn take_presentable<F: FnMut(&QueueRow) -> bool>(
     let mut kept: Vec<QueueRow> = Vec::new();
     let mut skipped = 0usize;
     for r in rows {
-        if want != 0 && kept.len() == want { break; }
-        if presentable(r) { kept.push(r.clone()); } else { skipped += 1; }
+        if want != 0 && kept.len() == want {
+            break;
+        }
+        if presentable(r) {
+            kept.push(r.clone());
+        } else {
+            skipped += 1;
+        }
     }
     (kept, skipped)
 }
@@ -338,14 +561,29 @@ fn take_presentable<F: FnMut(&QueueRow) -> bool>(
 /// Render the queue: header (ready count, shown count, skipped-unpresentable count, optional
 /// 1000-result truncation warning) then one entry per shown row.
 fn render_queue(rows: &[QueueRow], shown: &[QueueRow], skipped: usize, n_raw: usize) -> String {
-    let trunc = if n_raw >= 1000 { "  [WARNING: search hit the 1000-result limit — queue may be undercounted]" } else { "" };
-    let skip_note = if skipped > 0 { format!(", {skipped} unpresentable skipped") } else { String::new() };
+    let trunc = if n_raw >= 1000 {
+        "  [WARNING: search hit the 1000-result limit — queue may be undercounted]"
+    } else {
+        ""
+    };
+    let skip_note = if skipped > 0 {
+        format!(", {skipped} unpresentable skipped")
+    } else {
+        String::new()
+    };
     let mut out = format!(
         "review queue: {} ready PRs, reds excluded (showing {}{}, cheapest first){}\n",
-        rows.len(), shown.len(), skip_note, trunc
+        rows.len(),
+        shown.len(),
+        skip_note,
+        trunc
     );
     for (cost, repo, num, url, basis) in shown {
-        let c = if *cost == 1001 { "unscored".to_string() } else { format!("{cost:>4}") };
+        let c = if *cost == 1001 {
+            "unscored".to_string()
+        } else {
+            format!("{cost:>4}")
+        };
         out.push_str(&format!("\n  {c}  {repo}#{num}  {basis}\n        {url}"));
     }
     out
@@ -358,10 +596,22 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
     // `--checks success` drops CI-red and checks-pending PRs at the search layer (one call):
     // a red PR is the producer's to fix and a pending one is not yet judgeable — neither is
     // presentable for human approval.
-    let Some(val) = gh_json(&["search", "prs",
-        "--owner", "rainlanguage", "--owner", "cyclofinance",
-        "--state", "open", "--checks", "success", "--limit", "1000",
-        "--json", "repository,number,isDraft,url"]) else {
+    let Some(val) = gh_json(&[
+        "search",
+        "prs",
+        "--owner",
+        "rainlanguage",
+        "--owner",
+        "cyclofinance",
+        "--state",
+        "open",
+        "--checks",
+        "success",
+        "--limit",
+        "1000",
+        "--json",
+        "repository,number,isDraft,url",
+    ]) else {
         eprintln!("error: `gh search prs` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
         std::process::exit(1);
     };
@@ -376,10 +626,20 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
     // proportional to what a human actually reads.
     let (shown, skipped) = take_presentable(&rows, top, |r| {
         let (_, _, num, url, _) = r;
-        let Some(slug) = pr_slug(url) else { return false };
-        gh_json(&["pr", "view", &num.to_string(), "-R", &slug, "--json", "mergeable"])
-            .map(|j| j.get("mergeable").and_then(|m| m.as_str()) != Some("CONFLICTING"))
-            .unwrap_or(false)
+        let Some(slug) = pr_slug(url) else {
+            return false;
+        };
+        gh_json(&[
+            "pr",
+            "view",
+            &num.to_string(),
+            "-R",
+            &slug,
+            "--json",
+            "mergeable",
+        ])
+        .map(|j| j.get("mergeable").and_then(|m| m.as_str()) != Some("CONFLICTING"))
+        .unwrap_or(false)
     });
     println!("{}", render_queue(&rows, &shown, skipped, arr.len()));
 }
@@ -390,15 +650,21 @@ fn parse_cron_env(content: &str) -> HashMap<String, String> {
     let mut cron: HashMap<String, String> = HashMap::new();
     for line in content.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         let line = line.strip_prefix("export ").unwrap_or(line);
         if let Some((k, v0)) = line.split_once('=') {
             let v0 = v0.trim_start();
             // FIX(rs-bug 7): honour quotes; strip a trailing unquoted ` #...` comment; expand $HOME/~.
             let val = if let Some(rest) = v0.strip_prefix('"') {
-                rest.split_once('"').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
+                rest.split_once('"')
+                    .map(|(inner, _)| inner.to_string())
+                    .unwrap_or_else(|| rest.to_string())
             } else if let Some(rest) = v0.strip_prefix('\'') {
-                rest.split_once('\'').map(|(inner, _)| inner.to_string()).unwrap_or_else(|| rest.to_string())
+                rest.split_once('\'')
+                    .map(|(inner, _)| inner.to_string())
+                    .unwrap_or_else(|| rest.to_string())
             } else {
                 let cut = v0.find(" #").or_else(|| v0.find("\t#")).unwrap_or(v0.len());
                 v0[..cut].trim().to_string()
@@ -407,11 +673,129 @@ fn parse_cron_env(content: &str) -> HashMap<String, String> {
                 format!("{}{}", std::env::var("HOME").unwrap_or_default(), rest)
             } else if let Some(rest) = val.strip_prefix("~/") {
                 format!("{}/{}", std::env::var("HOME").unwrap_or_default(), rest)
-            } else { val };
+            } else {
+                val
+            };
             cron.insert(k.trim().to_string(), val);
         }
     }
     cron
+}
+
+/// Parse the closing-keyword issue numbers from arbitrary text (a commit message or a
+/// PR body). Matches GitHub's own set — close/closes/closed, fix/fixes/fixed,
+/// resolve/resolves/resolved — followed by optional whitespace and `#N`, case-insensitively.
+/// GitHub requires the keyword IMMEDIATELY before the `#N` (a keyword and a bare `#N`
+/// elsewhere in the same text do NOT link), so this matches `<keyword>[ :]#N` adjacency,
+/// not a keyword anywhere plus a `#N` anywhere. Returns the numbers in first-seen order,
+/// de-duplicated.
+fn closing_keywords(text: &str) -> Vec<u64> {
+    const KEYWORDS: &[&str] = &[
+        "closes", "closed", "close", "fixes", "fixed", "fix", "resolves", "resolved", "resolve",
+    ];
+    let lower = text.to_lowercase();
+    let bytes = lower.as_bytes();
+    let mut out: Vec<u64> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        // find the next keyword whose start is at a word boundary
+        let at_boundary = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        if at_boundary {
+            if let Some(kw) = KEYWORDS.iter().find(|kw| lower[i..].starts_with(**kw)) {
+                let mut j = i + kw.len();
+                // No separate "keyword is a word-prefix" guard is needed: a keyword that only
+                // prefixes a longer word (`closest`) is followed by a letter, which is not a
+                // separator, so the `#`-adjacency check below rejects it anyway.
+                // skip a single optional separator run of spaces/colon between keyword and #
+                while bytes
+                    .get(j)
+                    .map(|c| *c == b' ' || *c == b':' || *c == b'\t')
+                    .unwrap_or(false)
+                {
+                    j += 1;
+                }
+                if bytes.get(j) == Some(&b'#') {
+                    j += 1;
+                    let start = j;
+                    while bytes.get(j).map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                        j += 1;
+                    }
+                    if j > start {
+                        if let Ok(n) = lower[start..j].parse::<u64>() {
+                            if !out.contains(&n) {
+                                out.push(n);
+                            }
+                        }
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// `--commit-closes <owner/repo> <pr>`: fail (exit 1) if any closing keyword in a branch
+/// COMMIT MESSAGE references an issue that is NOT in the PR's live closingIssuesReferences.
+/// Commit-message keywords fire on merge independently of the PR body, so a body relink does
+/// not neutralize them — this catches the erc4626#217 auto-close class before merge.
+fn commit_closes_mode(slug: &str, pr: &str) -> i32 {
+    let Some(commits) = gh_json(&["pr", "view", pr, "-R", slug, "--json", "commits"]) else {
+        eprintln!("error: could not fetch commits for {slug}#{pr}");
+        return 2;
+    };
+    let mut kw: Vec<u64> = Vec::new();
+    if let Some(arr) = commits.get("commits").and_then(|c| c.as_array()) {
+        for c in arr {
+            let head = c
+                .get("messageHeadline")
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            let body = c.get("messageBody").and_then(|x| x.as_str()).unwrap_or("");
+            for n in closing_keywords(&format!("{head}\n{body}")) {
+                if !kw.contains(&n) {
+                    kw.push(n);
+                }
+            }
+        }
+    }
+    let Some(refs) = gh_json(&[
+        "pr",
+        "view",
+        pr,
+        "-R",
+        slug,
+        "--json",
+        "closingIssuesReferences",
+    ]) else {
+        eprintln!("error: could not fetch closingIssuesReferences for {slug}#{pr}");
+        return 2;
+    };
+    let indexed: Vec<u64> = refs
+        .get("closingIssuesReferences")
+        .and_then(|c| c.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.get("number").and_then(|n| n.as_u64()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let extras: Vec<u64> = kw
+        .iter()
+        .copied()
+        .filter(|n| !indexed.contains(n))
+        .collect();
+    if extras.is_empty() {
+        println!("commit-closes {slug}#{pr}: OK (commit keywords {kw:?} all in index {indexed:?})");
+        0
+    } else {
+        println!(
+            "commit-closes {slug}#{pr}: MISMATCH — commit messages close {extras:?} not in the PR's closing index {indexed:?}; these auto-close on merge regardless of the body. Rewrite history or accept the closes before merging."
+        );
+        1
+    }
 }
 
 fn main() {
@@ -422,21 +806,43 @@ fn main() {
     // FIX(rs-bug 5): PR_ASSIGNEE via cfg() so a set-but-empty value also falls back to the default.
     let author = cfg(&cron, "PR_ASSIGNEE", "thedavidmeister");
     // FIX(rs-bug 6): default the ledgers to the base dir (found regardless of CWD).
-    let cc_def = base.join("close-candidates.jsonl").to_string_lossy().into_owned();
-    let rv_def = base.join("review-verdicts.jsonl").to_string_lossy().into_owned();
+    let cc_def = base
+        .join("close-candidates.jsonl")
+        .to_string_lossy()
+        .into_owned();
+    let rv_def = base
+        .join("review-verdicts.jsonl")
+        .to_string_lossy()
+        .into_owned();
     let close_candidates = cfg(&cron, "CLOSE_CANDIDATES", &cc_def);
     let review_verdicts = cfg(&cron, "REVIEW_VERDICTS", &rv_def);
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--queue") {
-        let top = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(20);
-        let costs_def = base.join("review-costs.jsonl").to_string_lossy().into_owned();
+        let top = args
+            .get(2)
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(20);
+        let costs_def = base
+            .join("review-costs.jsonl")
+            .to_string_lossy()
+            .into_owned();
         let costs_path = cfg(&cron, "REVIEW_COSTS", &costs_def);
         queue_mode(&review_verdicts, &costs_path, top);
         return;
     }
+    if args.get(1).map(String::as_str) == Some("--commit-closes") {
+        let (Some(slug), Some(pr)) = (args.get(2), args.get(3)) else {
+            eprintln!("usage: pr-review-report --commit-closes <owner/repo> <pr>");
+            std::process::exit(2);
+        };
+        std::process::exit(commit_closes_mode(slug, pr));
+    }
     let only_ready = args.get(1).map(String::as_str) == Some("--ready");
 
-    let now = Command::new("date").args(["-u", "+%FT%TZ"]).output().ok()
+    let now = Command::new("date")
+        .args(["-u", "+%FT%TZ"])
+        .output()
+        .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
     println!("PR review report — {}, author {} — {}", org, author, now);
@@ -446,7 +852,20 @@ fn main() {
 
     // FIX(bug 4): a failed `gh search prs` aborts loudly — never a falsely-empty all-clear.
     let search = Command::new("gh")
-        .args(["search", "prs", "--owner", &org, "--author", &author, "--state", "open", "--limit", "300", "--json", "repository,number"])
+        .args([
+            "search",
+            "prs",
+            "--owner",
+            &org,
+            "--author",
+            &author,
+            "--state",
+            "open",
+            "--limit",
+            "300",
+            "--json",
+            "repository,number",
+        ])
         .output();
     let out = match search {
         Ok(o) if o.status.success() => o,
@@ -471,23 +890,32 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let prs: Vec<(String, u64)> = arr.iter().filter_map(|x| {
-        let repo = x.get("repository").and_then(|r| r.get("name")).and_then(|n| n.as_str())?.to_string();
-        let num = x.get("number").and_then(|n| n.as_u64())?;
-        Some((repo, num))
-    }).collect();
+    let prs: Vec<(String, u64)> = arr
+        .iter()
+        .filter_map(|x| {
+            let repo = x
+                .get("repository")
+                .and_then(|r| r.get("name"))
+                .and_then(|n| n.as_str())?
+                .to_string();
+            let num = x.get("number").and_then(|n| n.as_u64())?;
+            Some((repo, num))
+        })
+        .collect();
 
     let verds = load_verdicts(&review_verdicts);
 
     // Bounded-concurrency per-PR fan-out (~12 workers, std only) via scoped threads + an atomic cursor.
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<PrRow>> = Mutex::new(Vec::with_capacity(prs.len()));
-    let nworkers = std::cmp::min(12, std::cmp::max(1, prs.len()));
+    let nworkers = prs.len().clamp(1, 12);
     std::thread::scope(|s| {
         for _ in 0..nworkers {
             s.spawn(|| loop {
                 let i = next.fetch_add(1, Ordering::Relaxed);
-                if i >= prs.len() { break; }
+                if i >= prs.len() {
+                    break;
+                }
                 let (repo, num) = &prs[i];
                 let row = classify_one(&org, repo, *num);
                 results.lock().unwrap().push(row);
@@ -500,43 +928,87 @@ fn main() {
     for r in &rows {
         let key = format!("{}/{}", r.repo, r.num);
         let e = verds.get(&key);
-        let b = bucket_of(e, r.rev.as_deref(), r.merge, r.ci, r.draft, &r.headoid, r.fetch_error);
+        let b = bucket_of(
+            e,
+            r.rev.as_deref(),
+            r.merge,
+            r.ci,
+            r.draft,
+            &r.headoid,
+            r.fetch_error,
+        );
         let note = e.map(|x| x.note.clone()).unwrap_or_default();
         let oneliner = if note.is_empty() || note == "approved by user" {
             if r.title.is_empty() {
-                if r.fetch_error { "(gh pr view failed — state unknown)".to_string() } else { "?".to_string() }
+                if r.fetch_error {
+                    "(gh pr view failed — state unknown)".to_string()
+                } else {
+                    "?".to_string()
+                }
             } else {
                 r.title.clone()
             }
         } else {
             note
         };
-        outs.push(OutRow { bucket: b, url: r.url.clone(), oneliner });
+        outs.push(OutRow {
+            bucket: b,
+            url: r.url.clone(),
+            oneliner,
+        });
     }
 
     let emit = |bucket: Bucket, header: &str| {
-        let mut lines: Vec<String> = outs.iter()
+        let mut lines: Vec<String> = outs
+            .iter()
             .filter(|o| o.bucket == bucket)
             .map(|o| format!("  {}  —  {}", o.url, o.oneliner))
             .collect();
-        if lines.is_empty() { return; }
+        if lines.is_empty() {
+            return;
+        }
         lines.sort();
         println!();
         println!("{}  ({})", header, lines.len());
-        for l in &lines { println!("{}", l); }
+        for l in &lines {
+            println!("{}", l);
+        }
     };
 
-    emit(Bucket::Approved, "✅ APPROVED BY YOU — ready to merge (GitHub approval / verdict you set)");
-    if only_ready { return; }
+    emit(
+        Bucket::Approved,
+        "✅ APPROVED BY YOU — ready to merge (GitHub approval / verdict you set)",
+    );
+    if only_ready {
+        return;
+    }
     emit(Bucket::AiVet, "🤖 AI-VETTED — awaiting YOUR approval (passed the automated review; NOT human-reviewed yet)");
     emit(Bucket::StaleVet, "🔄 RE-VET PENDING — head moved since the recorded verdict (e.g. a producer step-3b fix); the vetter re-reviews the new commit before this can merge");
     emit(Bucket::ProducerFix, "🔴 RED — NEEDS A PRODUCER FIX (CI failing; the producer cron diagnoses it and pushes a fix to drive it green — producer work, NOT 'blocked', NOT your action)");
-    emit(Bucket::Relink, "🔧 AI-flagged — relink Closes→Refs before merge (else it auto-closes a live issue)");
-    emit(Bucket::Reject, "❌ AI-flagged / you requested changes — rework or close");
-    emit(Bucket::Close, "🗑️  AI-flagged — close (duplicate / superseded)");
-    emit(Bucket::Unreviewed, "🟦 NOT YET REVIEWED — green + mergeable, awaiting AI review + your approval");
-    emit(Bucket::Conflicting, "⚠️  CONFLICTING — needs a rebase onto current main (producer work)");
-    emit(Bucket::Pending, "🟡 PENDING — CI / mergeability still resolving (no action; just wait)");
+    emit(
+        Bucket::Relink,
+        "🔧 AI-flagged — relink Closes→Refs before merge (else it auto-closes a live issue)",
+    );
+    emit(
+        Bucket::Reject,
+        "❌ AI-flagged / you requested changes — rework or close",
+    );
+    emit(
+        Bucket::Close,
+        "🗑️  AI-flagged — close (duplicate / superseded)",
+    );
+    emit(
+        Bucket::Unreviewed,
+        "🟦 NOT YET REVIEWED — green + mergeable, awaiting AI review + your approval",
+    );
+    emit(
+        Bucket::Conflicting,
+        "⚠️  CONFLICTING — needs a rebase onto current main (producer work)",
+    );
+    emit(
+        Bucket::Pending,
+        "🟡 PENDING — CI / mergeability still resolving (no action; just wait)",
+    );
     emit(Bucket::Draft, "📝 DRAFTS — intentionally not ready");
     // FIX(bug 3,5): degraded/partial data is visible, not masked as a settled PENDING.
     emit(Bucket::FetchError, "⚠️  COULD NOT FETCH — gh pr view failed; state UNKNOWN (re-run; NOT a settled 'just wait')");
@@ -548,10 +1020,14 @@ fn main() {
     println!("----------------------------------------------------------------");
     println!("totals: {} open PRs by {}  ·  buckets:", rows.len(), author);
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
-    for o in &outs { *counts.entry(o.bucket.key()).or_insert(0) += 1; }
+    for o in &outs {
+        *counts.entry(o.bucket.key()).or_insert(0) += 1;
+    }
     let mut hv: Vec<(&str, usize)> = counts.into_iter().collect();
     hv.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-    for (k, c) in hv { println!("   {} {}", c, k); }
+    for (k, c) in hv {
+        println!("   {} {}", c, k);
+    }
 }
 
 /// FIX(bug 1,8,9,10,11 + rs-bug 8): robust line-by-line parse; require a string repo; dedup on the
@@ -561,25 +1037,47 @@ fn main() {
 /// dropped); FAIL-OPEN on the live state check (gh error → state UNKNOWN, still SHOWN).
 fn close_candidates_section(org: &str, path: &str) {
     let content = std::fs::read_to_string(path).unwrap_or_default();
-    if content.trim().is_empty() { return; }
+    if content.trim().is_empty() {
+        return;
+    }
     let mut latest: HashMap<String, (String, String, String, String)> = HashMap::new(); // id -> (full, issue, url, reason)
     for line in content.lines() {
-        let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
-        if !v.is_object() { continue; }
-        if v.get("issue").map(|x| x.is_null()).unwrap_or(true) { continue; }
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if !v.is_object() {
+            continue;
+        }
+        if v.get("issue").map(|x| x.is_null()).unwrap_or(true) {
+            continue;
+        }
         let issue = match v.get("issue") {
             Some(Value::Number(n)) => n.to_string(),
             Some(Value::String(s)) => s.clone(),
             _ => continue,
         };
-        let repo = match v.get("repo").and_then(|x| x.as_str()) { Some(r) => r.to_string(), None => continue };
-        let full = if repo.contains('/') { repo } else { format!("{org}/{repo}") };
-        let url = v.get("url").and_then(|x| x.as_str()).map(|s| s.to_string())
+        let repo = match v.get("repo").and_then(|x| x.as_str()) {
+            Some(r) => r.to_string(),
+            None => continue,
+        };
+        let full = if repo.contains('/') {
+            repo
+        } else {
+            format!("{org}/{repo}")
+        };
+        let url = v
+            .get("url")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string())
             .unwrap_or_else(|| format!("https://github.com/{full}/issues/{issue}"));
         let reason = sanitize(
-            v.get("reason").and_then(|x| x.as_str())
+            v.get("reason")
+                .and_then(|x| x.as_str())
                 .or_else(|| v.get("note").and_then(|x| x.as_str()))
-                .unwrap_or(""), 80);
+                .unwrap_or(""),
+            80,
+        );
         let id = format!("{full}#{issue}");
         latest.insert(id, (full, issue, url, reason));
     }
@@ -595,21 +1093,60 @@ fn close_candidates_section(org: &str, path: &str) {
         let rl = reason.trim().to_lowercase();
         // NOT LANDED: covered/made-moot by an OPEN pr/dependency — the fix hasn't merged, so this is
         // not a manual close-candidate (it self-closes on merge via `Closes #N`, or stays open). Exclude.
-        let not_landed = rl.contains("open-pr") || rl.contains("open pr") || rl.contains("covered-by-open")
-            || rl.contains("made-moot-by") || rl.contains("opened to") || rl.contains("pr opened") || rl.contains("opened a pr");
-        if not_landed { not_landed_c += 1; continue; }
+        let not_landed = rl.contains("open-pr")
+            || rl.contains("open pr")
+            || rl.contains("covered-by-open")
+            || rl.contains("made-moot-by")
+            || rl.contains("opened to")
+            || rl.contains("pr opened")
+            || rl.contains("opened a pr");
+        if not_landed {
+            not_landed_c += 1;
+            continue;
+        }
         // LANDED: the leading token is a canonical landed reason, OR a won't-fix token appears anywhere.
-        let lead = rl.split(|c: char| c == ' ' || c == ':').next().unwrap_or("");
-        let landed = matches!(lead, "already-fixed-on-main" | "already-addressed-by-ci" | "invalid" | "duplicate" | "wont-fix" | "won't-fix" | "wontfix")
-            || rl.contains("wontfix") || rl.contains("won't-fix") || rl.contains("wont-fix") || rl.contains("won't fix") || rl.contains("wont fix");
+        let lead = rl.split([' ', ':']).next().unwrap_or("");
+        let landed = matches!(
+            lead,
+            "already-fixed-on-main"
+                | "already-addressed-by-ci"
+                | "invalid"
+                | "duplicate"
+                | "wont-fix"
+                | "won't-fix"
+                | "wontfix"
+        ) || rl.contains("wontfix")
+            || rl.contains("won't-fix")
+            || rl.contains("wont-fix")
+            || rl.contains("won't fix")
+            || rl.contains("wont fix");
         // UNRECOGNIZED (neither not-landed nor landed) is still SHOWN, tagged — never silently dropped.
-        let tag = if landed { "" } else { "  [reason unrecognized — verify]" };
-        let st = gh_json(&["issue", "view", &issue, "-R", &full, "--json", "state"])
-            .and_then(|j| j.get("state").and_then(|x| x.as_str()).map(|s| s.to_string()));
+        let tag = if landed {
+            ""
+        } else {
+            "  [reason unrecognized — verify]"
+        };
+        let st =
+            gh_json(&["issue", "view", &issue, "-R", &full, "--json", "state"]).and_then(|j| {
+                j.get("state")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+            });
         match st.as_deref() {
-            Some("OPEN") => { open_c += 1; rows.push(format!("  {}  — {}{}", url, reason, tag)); }
-            Some("CLOSED") => { closed_c += 1; }
-            _ => { unknown_c += 1; rows.push(format!("  {}  — {} (state UNKNOWN — gh error){}", url, reason, tag)); }
+            Some("OPEN") => {
+                open_c += 1;
+                rows.push(format!("  {}  — {}{}", url, reason, tag));
+            }
+            Some("CLOSED") => {
+                closed_c += 1;
+            }
+            _ => {
+                unknown_c += 1;
+                rows.push(format!(
+                    "  {}  — {} (state UNKNOWN — gh error){}",
+                    url, reason, tag
+                ));
+            }
         }
     }
     if open_c + unknown_c > 0 {
@@ -620,7 +1157,9 @@ fn close_candidates_section(org: &str, path: &str) {
             "🗑️  ISSUE CLOSE-CANDIDATES — cron-logged landed-fix/invalid issues still OPEN ({} open, {} unverified shown; {} already closed, hidden; {} not-landed/open-pr-covered, excluded)",
             open_c, unknown_c, closed_c, not_landed_c
         );
-        for r in &rows { println!("{}", r); }
+        for r in &rows {
+            println!("{}", r);
+        }
     }
 }
 
@@ -634,18 +1173,26 @@ mod queue_tests {
                "url": format!("https://github.com/rainlanguage/{repo}/pull/{num}")})
     }
     fn ready_line(repo: &str, pr: u64, cost: i64) -> String {
-        format!(r#"{{"repo":"{repo}","pr":{pr},"verdict":"ready","source":"ai-campaign","sha":"aaa","cost":{cost},"cost_basis":"basis-{pr}"}}"#)
+        format!(
+            r#"{{"repo":"{repo}","pr":{pr},"verdict":"ready","source":"ai-campaign","sha":"aaa","cost":{cost},"cost_basis":"basis-{pr}"}}"#
+        )
     }
 
     // B1: the ledger is append-only and last line wins BY POSITION for the same (repo, pr).
     #[test]
     fn last_line_wins_by_position() {
-        let led = format!("{}\n{}", ready_line("r", 1, 50),
-            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#);
+        let led = format!(
+            "{}\n{}",
+            ready_line("r", 1, 50),
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#
+        );
         let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
         assert_eq!(rows.len(), 0, "later reject must override earlier ready");
-        let led2 = format!("{}\n{}",
-            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#, ready_line("r", 1, 50));
+        let led2 = format!(
+            "{}\n{}",
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#,
+            ready_line("r", 1, 50)
+        );
         let rows2 = queue_rows(&[pr("r", 1)], &parse_verdicts(&led2), &HashMap::new());
         assert_eq!(rows2.len(), 1, "later ready must override earlier reject");
     }
@@ -661,10 +1208,17 @@ mod queue_tests {
     // B3: one malformed ledger line must not drop the lines after it.
     #[test]
     fn malformed_line_does_not_poison_later_lines() {
-        let led = format!("{}\nnot json at all\n{}",
-            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#, ready_line("r", 1, 42));
+        let led = format!(
+            "{}\nnot json at all\n{}",
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#,
+            ready_line("r", 1, 42)
+        );
         let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
-        assert_eq!(rows.len(), 1, "ready after the garbage line must still take effect");
+        assert_eq!(
+            rows.len(),
+            1,
+            "ready after the garbage line must still take effect"
+        );
         assert_eq!(rows[0].0, 42);
     }
 
@@ -697,8 +1251,14 @@ mod queue_tests {
         let led = ready_line("r", 1, 10);
         let mut draft = pr("r", 1);
         draft["isDraft"] = json!(true);
-        assert_eq!(queue_rows(&[draft], &parse_verdicts(&led), &HashMap::new()).len(), 0);
-        assert_eq!(queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new()).len(), 1);
+        assert_eq!(
+            queue_rows(&[draft], &parse_verdicts(&led), &HashMap::new()).len(),
+            0
+        );
+        assert_eq!(
+            queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new()).len(),
+            1
+        );
     }
 
     // B7: a cost on the verdict line itself beats the sidecar.
@@ -708,7 +1268,10 @@ mod queue_tests {
         let side = parse_sidecar(r#"{"repo":"r","pr":1,"cost":999,"basis":"side","sha":"aaa"}"#);
         let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &side);
         assert_eq!(rows[0].0, 60);
-        assert_eq!(rows[0].4, "basis-1", "basis must come from the verdict line too");
+        assert_eq!(
+            rows[0].4, "basis-1",
+            "basis must come from the verdict line too"
+        );
     }
 
     // B8: a numeric-string cost on the verdict line is accepted.
@@ -723,9 +1286,17 @@ mod queue_tests {
     #[test]
     fn stale_flag_requires_two_nonempty_differing_shas() {
         let led = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","sha":"vvv"}"#;
-        let mk = |sha: &str| parse_sidecar(&format!(r#"{{"repo":"r","pr":1,"cost":5,"basis":"b","sha":"{sha}"}}"#));
+        let mk = |sha: &str| {
+            parse_sidecar(&format!(
+                r#"{{"repo":"r","pr":1,"cost":5,"basis":"b","sha":"{sha}"}}"#
+            ))
+        };
         let flagged = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk("other"));
-        assert!(flagged[0].4.ends_with(" [cost from older head]"), "differing shas must flag: {}", flagged[0].4);
+        assert!(
+            flagged[0].4.ends_with(" [cost from older head]"),
+            "differing shas must flag: {}",
+            flagged[0].4
+        );
         let same = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk("vvv"));
         assert_eq!(same[0].4, "b", "same sha must not flag");
         let empty_side = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk(""));
@@ -745,20 +1316,39 @@ mod queue_tests {
     // B12: unscored rows carry 1001, sort after every real cost, and render as "unscored".
     #[test]
     fn unscored_sorts_last_and_renders_unscored() {
-        let led = format!("{}\n{}", ready_line("r", 2, 1000),
-            r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#);
-        let rows = queue_rows(&[pr("r", 1), pr("r", 2)], &parse_verdicts(&led), &HashMap::new());
+        let led = format!(
+            "{}\n{}",
+            ready_line("r", 2, 1000),
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#
+        );
+        let rows = queue_rows(
+            &[pr("r", 1), pr("r", 2)],
+            &parse_verdicts(&led),
+            &HashMap::new(),
+        );
         assert_eq!((rows[0].0, rows[0].2), (1000, 2));
         assert_eq!((rows[1].0, rows[1].2), (1001, 1));
         let out = render_queue(&rows, &rows, 0, 2);
-        assert!(out.contains("  unscored  r#1  "), "unscored label missing:\n{out}");
+        assert!(
+            out.contains("  unscored  r#1  "),
+            "unscored label missing:\n{out}"
+        );
     }
 
     // B13: rows sort by (cost, repo, number) ascending.
     #[test]
     fn sort_by_cost_then_repo_then_number() {
-        let led = format!("{}\n{}\n{}", ready_line("zzz", 1, 10), ready_line("aaa", 9, 10), ready_line("aaa", 2, 5));
-        let rows = queue_rows(&[pr("zzz", 1), pr("aaa", 9), pr("aaa", 2)], &parse_verdicts(&led), &HashMap::new());
+        let led = format!(
+            "{}\n{}\n{}",
+            ready_line("zzz", 1, 10),
+            ready_line("aaa", 9, 10),
+            ready_line("aaa", 2, 5)
+        );
+        let rows = queue_rows(
+            &[pr("zzz", 1), pr("aaa", 9), pr("aaa", 2)],
+            &parse_verdicts(&led),
+            &HashMap::new(),
+        );
         let order: Vec<(i64, &str, u64)> = rows.iter().map(|r| (r.0, r.1.as_str(), r.2)).collect();
         assert_eq!(order, vec![(5, "aaa", 2), (10, "aaa", 9), (10, "zzz", 1)]);
     }
@@ -767,8 +1357,17 @@ mod queue_tests {
     // rejected rows are skipped, counted, and backfilled by later rows.
     #[test]
     fn top_slicing_and_backfill() {
-        let led = format!("{}\n{}\n{}", ready_line("r", 1, 1), ready_line("r", 2, 2), ready_line("r", 3, 3));
-        let rows = queue_rows(&[pr("r", 1), pr("r", 2), pr("r", 3)], &parse_verdicts(&led), &HashMap::new());
+        let led = format!(
+            "{}\n{}\n{}",
+            ready_line("r", 1, 1),
+            ready_line("r", 2, 2),
+            ready_line("r", 3, 3)
+        );
+        let rows = queue_rows(
+            &[pr("r", 1), pr("r", 2), pr("r", 3)],
+            &parse_verdicts(&led),
+            &HashMap::new(),
+        );
         let (all, sk) = take_presentable(&rows, 0, |_| true);
         assert_eq!((all.len(), sk), (3, 0));
         let (one, _) = take_presentable(&rows, 1, |_| true);
@@ -779,7 +1378,9 @@ mod queue_tests {
         let (filled, skipped) = take_presentable(&rows, 2, |r| r.2 != 2);
         assert_eq!(filled.iter().map(|r| r.2).collect::<Vec<_>>(), vec![1, 3]);
         assert_eq!(skipped, 1);
-        assert!(render_queue(&rows, &filled, skipped, 3).contains("showing 2, 1 unpresentable skipped"));
+        assert!(
+            render_queue(&rows, &filled, skipped, 3).contains("showing 2, 1 unpresentable skipped")
+        );
     }
 
     // B15: the truncation warning fires exactly when the raw search result count hits the limit.
@@ -800,12 +1401,13 @@ mod queue_tests {
     #[test]
     fn basis_sanitized_and_capped() {
         let long = "x".repeat(200);
-        let led = format!(r#"{{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","cost":1,"cost_basis":"a\tb\nc{long}"}}"#);
+        let led = format!(
+            r#"{{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","cost":1,"cost_basis":"a\tb\nc{long}"}}"#
+        );
         let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
         assert!(rows[0].4.starts_with("a b c"));
         assert_eq!(rows[0].4.chars().count(), 120);
     }
-
 
     // Ledger keys are bare for rainlanguage, org-qualified for other orgs — the
     // queue must look up each row under the convention its org uses.
@@ -815,20 +1417,46 @@ mod queue_tests {
         let p = json!({"repository": {"name": "cyclo.site"}, "number": 400,
                        "url": "https://github.com/cyclofinance/cyclo.site/pull/400"});
         let rows = queue_rows(&[p], &parse_verdicts(led), &HashMap::new());
-        assert_eq!(rows.len(), 1, "cyclofinance row must match its org-qualified ledger key");
+        assert_eq!(
+            rows.len(),
+            1,
+            "cyclofinance row must match its org-qualified ledger key"
+        );
         let bare = r#"{"repo":"cyclo.site","pr":400,"verdict":"ready","source":"ai-campaign","cost":50,"cost_basis":"b"}"#;
-        let rows2 = queue_rows(&[json!({"repository": {"name": "cyclo.site"}, "number": 400,
-                       "url": "https://github.com/cyclofinance/cyclo.site/pull/400"})], &parse_verdicts(bare), &HashMap::new());
-        assert_eq!(rows2.len(), 0, "bare key must NOT match a non-rainlanguage row");
+        let rows2 = queue_rows(
+            &[json!({"repository": {"name": "cyclo.site"}, "number": 400,
+                       "url": "https://github.com/cyclofinance/cyclo.site/pull/400"})],
+            &parse_verdicts(bare),
+            &HashMap::new(),
+        );
+        assert_eq!(
+            rows2.len(),
+            0,
+            "bare key must NOT match a non-rainlanguage row"
+        );
     }
 
     // The presentability probe derives owner/repo from the row URL — never guessed by org.
     #[test]
     fn pr_slug_parses_owner_repo_only_from_real_pr_urls() {
-        assert_eq!(pr_slug("https://github.com/cyclofinance/cyclo.site/pull/401").as_deref(), Some("cyclofinance/cyclo.site"));
-        assert_eq!(pr_slug("https://github.com/rainlanguage/rainix/pull/1").as_deref(), Some("rainlanguage/rainix"));
-        assert_eq!(pr_slug("https://example.com/rainlanguage/rainix/pull/1"), None, "wrong host must not pass");
-        assert_eq!(pr_slug("https://github.com/rainlanguage/rainix/issues/1"), None, "issue URL is not a PR URL");
+        assert_eq!(
+            pr_slug("https://github.com/cyclofinance/cyclo.site/pull/401").as_deref(),
+            Some("cyclofinance/cyclo.site")
+        );
+        assert_eq!(
+            pr_slug("https://github.com/rainlanguage/rainix/pull/1").as_deref(),
+            Some("rainlanguage/rainix")
+        );
+        assert_eq!(
+            pr_slug("https://example.com/rainlanguage/rainix/pull/1"),
+            None,
+            "wrong host must not pass"
+        );
+        assert_eq!(
+            pr_slug("https://github.com/rainlanguage/rainix/issues/1"),
+            None,
+            "issue URL is not a PR URL"
+        );
         assert_eq!(pr_slug(""), None);
     }
 
@@ -848,7 +1476,14 @@ mod report_tests {
     use serde_json::json;
 
     fn ventry(verdict: Option<Verdict>, source: Source, sha: &str) -> VEntry {
-        VEntry { verdict, source, sha: sha.to_string(), note: String::new(), cost: None, cost_basis: String::new() }
+        VEntry {
+            verdict,
+            source,
+            sha: sha.to_string(),
+            note: String::new(),
+            cost: None,
+            cost_basis: String::new(),
+        }
     }
 
     // C1: empty / non-array rollups mean NO CHECKS, never green-by-default.
@@ -861,8 +1496,17 @@ mod report_tests {
     // C2/C3: every failure conclusion and failed StatusContext state classifies RED.
     #[test]
     fn ci_fail_conclusions_and_states_are_red() {
-        for c in ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"] {
-            assert!(classify_ci(&json!([{"status":"COMPLETED","conclusion":c}])) == Ci::Red, "conclusion {c}");
+        for c in [
+            "FAILURE",
+            "TIMED_OUT",
+            "CANCELLED",
+            "ACTION_REQUIRED",
+            "STARTUP_FAILURE",
+        ] {
+            assert!(
+                classify_ci(&json!([{"status":"COMPLETED","conclusion":c}])) == Ci::Red,
+                "conclusion {c}"
+            );
         }
         for s in ["FAILURE", "ERROR"] {
             assert!(classify_ci(&json!([{"state":s}])) == Ci::Red, "state {s}");
@@ -873,12 +1517,21 @@ mod report_tests {
     #[test]
     fn ci_unfinished_items_are_pending() {
         for st in ["QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"] {
-            assert!(classify_ci(&json!([{"status":st}])) == Ci::Pending, "status {st}");
+            assert!(
+                classify_ci(&json!([{"status":st}])) == Ci::Pending,
+                "status {st}"
+            );
         }
         for s in ["PENDING", "EXPECTED"] {
-            assert!(classify_ci(&json!([{"state":s}])) == Ci::Pending, "state {s}");
+            assert!(
+                classify_ci(&json!([{"state":s}])) == Ci::Pending,
+                "state {s}"
+            );
         }
-        assert!(classify_ci(&json!([{"name":"mystery"}])) == Ci::Pending, "no status/state must never be green");
+        assert!(
+            classify_ci(&json!([{"name":"mystery"}])) == Ci::Pending,
+            "no status/state must never be green"
+        );
     }
 
     // C7: all-complete successes are GREEN (SUCCESS state contexts too).
@@ -900,47 +1553,161 @@ mod report_tests {
     #[test]
     fn bucket_disposition_beats_everything() {
         let e = ventry(Some(Verdict::Close), Source::AiCampaign, "");
-        assert!(bucket_of(Some(&e), None, Merge::Conflicting, Ci::Red, true, "-", true) == Bucket::Close);
+        assert!(
+            bucket_of(Some(&e), None, Merge::Conflicting, Ci::Red, true, "-", true)
+                == Bucket::Close
+        );
         let e = ventry(Some(Verdict::Reject), Source::Human, "");
-        assert!(bucket_of(Some(&e), None, Merge::Unknown, Ci::Pending, false, "-", true) == Bucket::Reject);
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Unknown,
+                Ci::Pending,
+                false,
+                "-",
+                true
+            ) == Bucket::Reject
+        );
         let e = ventry(Some(Verdict::Relink), Source::AiCampaign, "");
-        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::Relink);
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "x",
+                false
+            ) == Bucket::Relink
+        );
         let e = ventry(Some(Verdict::Unknown), Source::AiCampaign, "");
-        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::UnknownVerdict);
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "x",
+                false
+            ) == Bucket::UnknownVerdict
+        );
     }
 
     // K2: fetch errors surface as FETCH_ERROR (after dispositions, before all live-state buckets).
     #[test]
     fn bucket_fetch_error_masks_state() {
-        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Green, true, "x", true) == Bucket::FetchError);
+        assert!(
+            bucket_of(None, None, Merge::Mergeable, Ci::Green, true, "x", true)
+                == Bucket::FetchError
+        );
     }
 
     // K3..K7: live-state precedence chain — CHANGES_REQUESTED > draft > red > conflicting > pending.
     #[test]
     fn bucket_state_precedence_chain() {
-        assert!(bucket_of(None, Some("CHANGES_REQUESTED"), Merge::Mergeable, Ci::Green, true, "x", false) == Bucket::Reject);
-        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Red, true, "x", false) == Bucket::Draft);
-        assert!(bucket_of(None, None, Merge::Conflicting, Ci::Red, false, "x", false) == Bucket::ProducerFix);
-        assert!(bucket_of(None, None, Merge::Conflicting, Ci::Pending, false, "x", false) == Bucket::Conflicting);
-        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Pending, false, "x", false) == Bucket::Pending);
+        assert!(
+            bucket_of(
+                None,
+                Some("CHANGES_REQUESTED"),
+                Merge::Mergeable,
+                Ci::Green,
+                true,
+                "x",
+                false
+            ) == Bucket::Reject
+        );
+        assert!(
+            bucket_of(None, None, Merge::Mergeable, Ci::Red, true, "x", false) == Bucket::Draft
+        );
+        assert!(
+            bucket_of(None, None, Merge::Conflicting, Ci::Red, false, "x", false)
+                == Bucket::ProducerFix
+        );
+        assert!(
+            bucket_of(
+                None,
+                None,
+                Merge::Conflicting,
+                Ci::Pending,
+                false,
+                "x",
+                false
+            ) == Bucket::Conflicting
+        );
+        assert!(
+            bucket_of(None, None, Merge::Mergeable, Ci::Pending, false, "x", false)
+                == Bucket::Pending
+        );
     }
 
     // K8/K9/K15: human-ready or GitHub-approved goes APPROVED; the approval overlay outranks AiVet.
     #[test]
     fn bucket_approved_paths() {
         let e = ventry(Some(Verdict::Ready), Source::Human, "head1");
-        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
-        assert!(bucket_of(None, Some("APPROVED"), Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "head1",
+                false
+            ) == Bucket::Approved
+        );
+        assert!(
+            bucket_of(
+                None,
+                Some("APPROVED"),
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "head1",
+                false
+            ) == Bucket::Approved
+        );
         let ai = ventry(Some(Verdict::Ready), Source::AiCampaign, "head1");
-        assert!(bucket_of(Some(&ai), Some("APPROVED"), Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::Approved);
+        assert!(
+            bucket_of(
+                Some(&ai),
+                Some("APPROVED"),
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "head1",
+                false
+            ) == Bucket::Approved
+        );
     }
 
     // K10: ai-ready on the CURRENT head is AIVET; NoChecks counts like green for this branch.
     #[test]
     fn bucket_aivet_current_head() {
         let e = ventry(Some(Verdict::Ready), Source::AiCampaign, "head1");
-        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "head1", false) == Bucket::AiVet);
-        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::NoChecks, false, "head1", false) == Bucket::AiVet);
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "head1",
+                false
+            ) == Bucket::AiVet
+        );
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Mergeable,
+                Ci::NoChecks,
+                false,
+                "head1",
+                false
+            ) == Bucket::AiVet
+        );
     }
 
     // K14: a verdict sha that can't be confirmed equal to the live head is STALE — explicit
@@ -948,20 +1715,75 @@ mod report_tests {
     #[test]
     fn bucket_stale_vet_semantics() {
         let e = ventry(Some(Verdict::Ready), Source::AiCampaign, "oldsha");
-        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "newsha", false) == Bucket::StaleVet);
-        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "-", false) == Bucket::StaleVet);
-        assert!(bucket_of(Some(&e), None, Merge::Mergeable, Ci::Green, false, "", false) == Bucket::StaleVet);
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "newsha",
+                false
+            ) == Bucket::StaleVet
+        );
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "-",
+                false
+            ) == Bucket::StaleVet
+        );
+        assert!(
+            bucket_of(
+                Some(&e),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "",
+                false
+            ) == Bucket::StaleVet
+        );
         let nosha = ventry(Some(Verdict::Ready), Source::AiCampaign, "");
-        assert!(bucket_of(Some(&nosha), None, Merge::Mergeable, Ci::Green, false, "anything", false) == Bucket::AiVet);
+        assert!(
+            bucket_of(
+                Some(&nosha),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "anything",
+                false
+            ) == Bucket::AiVet
+        );
         let human = ventry(Some(Verdict::Ready), Source::Human, "oldsha");
-        assert!(bucket_of(Some(&human), None, Merge::Mergeable, Ci::Green, false, "newsha", false) == Bucket::StaleVet);
+        assert!(
+            bucket_of(
+                Some(&human),
+                None,
+                Merge::Mergeable,
+                Ci::Green,
+                false,
+                "newsha",
+                false
+            ) == Bucket::StaleVet
+        );
     }
 
     // K11/K12: no verdict on a green mergeable PR is UNREVIEWED; unresolved mergeability is PENDING.
     #[test]
     fn bucket_unreviewed_and_unknown_mergeable() {
-        assert!(bucket_of(None, None, Merge::Mergeable, Ci::Green, false, "x", false) == Bucket::Unreviewed);
-        assert!(bucket_of(None, None, Merge::Unknown, Ci::Green, false, "x", false) == Bucket::Pending);
+        assert!(
+            bucket_of(None, None, Merge::Mergeable, Ci::Green, false, "x", false)
+                == Bucket::Unreviewed
+        );
+        assert!(
+            bucket_of(None, None, Merge::Unknown, Ci::Green, false, "x", false) == Bucket::Pending
+        );
     }
 
     // G: cfg precedence — non-empty env > non-empty cron > default (empty values fall through).
@@ -971,7 +1793,11 @@ mod report_tests {
         cron.insert("PRR_TEST_K1".to_string(), "from-cron".to_string());
         cron.insert("PRR_TEST_K2".to_string(), "".to_string());
         assert_eq!(cfg(&cron, "PRR_TEST_K1", "def"), "from-cron");
-        assert_eq!(cfg(&cron, "PRR_TEST_K2", "def"), "def", "empty cron value must fall to default");
+        assert_eq!(
+            cfg(&cron, "PRR_TEST_K2", "def"),
+            "def",
+            "empty cron value must fall to default"
+        );
         assert_eq!(cfg(&cron, "PRR_TEST_MISSING", "def"), "def");
         std::env::set_var("PRR_TEST_K3", "from-env");
         let mut c3 = HashMap::new();
@@ -980,7 +1806,11 @@ mod report_tests {
         std::env::set_var("PRR_TEST_K4", "");
         let mut c4 = HashMap::new();
         c4.insert("PRR_TEST_K4".to_string(), "from-cron".to_string());
-        assert_eq!(cfg(&c4, "PRR_TEST_K4", "def"), "from-cron", "empty env must fall to cron");
+        assert_eq!(
+            cfg(&c4, "PRR_TEST_K4", "def"),
+            "from-cron",
+            "empty env must fall to cron"
+        );
     }
 
     // E: cron.env parsing — comments, export prefix, quotes, trailing comments, HOME expansion.
@@ -997,7 +1827,8 @@ mod report_tests {
             "E=$HOME/sub\n",
             "F=~/tilde\n",
             " G = spaced\n",
-            "no_equals_line\n"));
+            "no_equals_line\n"
+        ));
         assert_eq!(m.get("A").unwrap(), "plain");
         assert_eq!(m.get("B").unwrap(), "double quoted # not a comment");
         assert_eq!(m.get("C").unwrap(), "single quoted");
@@ -1015,5 +1846,80 @@ mod report_tests {
         assert_eq!(sanitize("a\tb\nc\rd", 10), "a b c d");
         assert_eq!(sanitize("ééééé", 3), "ééé");
         assert_eq!(sanitize("short", 100), "short");
+    }
+}
+
+#[cfg(test)]
+mod commit_closes_tests {
+    use super::closing_keywords;
+
+    #[test]
+    fn basic_keywords_and_separators() {
+        assert_eq!(closing_keywords("Closes #99"), vec![99]);
+        assert_eq!(closing_keywords("fixes #12"), vec![12]);
+        assert_eq!(closing_keywords("Resolved #7"), vec![7]);
+        assert_eq!(closing_keywords("closes: #5"), vec![5]);
+        assert_eq!(closing_keywords("close#3"), vec![3]);
+    }
+
+    #[test]
+    fn case_insensitive() {
+        assert_eq!(
+            closing_keywords("CLOSES #1 Fixes #2 rEsOlVeS #3"),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn multiple_and_dedup_first_seen_order() {
+        assert_eq!(
+            closing_keywords("Closes #10\nCloses #2\nfixes #10"),
+            vec![10, 2]
+        );
+    }
+
+    #[test]
+    fn bare_hash_without_keyword_is_ignored() {
+        // the #217 lesson: a bare reference is not a closing keyword
+        assert_eq!(closing_keywords("see #42 and refs #7"), Vec::<u64>::new());
+        assert_eq!(closing_keywords("part of #100"), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn keyword_must_be_adjacent_to_hash() {
+        // keyword and #N separated by real words do NOT link
+        assert_eq!(
+            closing_keywords("closes the door, see #5"),
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            closing_keywords("fixes several things in #9"),
+            Vec::<u64>::new()
+        );
+    }
+
+    #[test]
+    fn word_boundary_prevents_false_keywords() {
+        // "closest" / "prefix" must not trigger close/fix
+        assert_eq!(
+            closing_keywords("the closest #5 station"),
+            Vec::<u64>::new()
+        );
+        assert_eq!(closing_keywords("prefixes #5"), Vec::<u64>::new());
+        // but a keyword at a real boundary still fires
+        assert_eq!(closing_keywords("(closes #5)"), vec![5]);
+    }
+
+    #[test]
+    fn no_number_after_hash() {
+        assert_eq!(closing_keywords("closes #"), Vec::<u64>::new());
+        assert_eq!(closing_keywords("closes #abc"), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn realistic_217_incident_shape() {
+        // the exact shape that auto-closed #102/#86: body says Refs but a commit says Closes
+        let commit = "docs(natspec): unused params + untrusted vault\n\nCloses #99 Closes #102";
+        assert_eq!(closing_keywords(commit), vec![99, 102]);
     }
 }

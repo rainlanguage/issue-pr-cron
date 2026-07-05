@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # single-quoted grep patterns contain literal $ regex anchors
 # Cron-scoped PreToolUse hook (RAINIX_CRON_HOOK=1, set by the cron runners). Closes
 # the `git -C <dir> …` spellings that EVADE the history-rewrite guards: the deny-list
 # and block-history-rewrite.sh both anchor on a BARE `git reset` / `git push`, so
