@@ -1102,6 +1102,54 @@ fn should_skip_comment(last_vetter_body: Option<&str>, sha: &str, verdict: &str)
     }
 }
 
+/// The recording decision, computed PURELY from the fetched PR JSON so the guard-before-write logic
+/// is unit-testable (not just the leaf helpers): refuse if a human verdict is present, refuse if
+/// there is no head sha, else the label plan + whether the comment is a dedup no-op.
+#[derive(PartialEq, Debug)]
+enum VerdictPlan {
+    RefuseHuman,
+    NoSha,
+    Record {
+        to_remove: Vec<String>,
+        has_target: bool,
+        sha: String,
+        skip_comment: bool,
+    },
+}
+
+fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
+    // Sacred: never override a human verdict. This is the guard whose ABSENCE a mutation must fail.
+    if has_human_override(pr_json) {
+        return VerdictPlan::RefuseHuman;
+    }
+    let sha = pr_json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    // No head sha ⇒ can't write a SHA-bound verdict; refuse rather than post "Reviewed :".
+    if sha.is_empty() {
+        return VerdictPlan::NoSha;
+    }
+    let current: Vec<String> = pr_json
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let to_remove = labels_to_remove(&current, target);
+    let has_target = current.iter().any(|c| c == target);
+    let skip_comment = should_skip_comment(last_vetter_comment(pr_json).as_deref(), sha, verdict);
+    VerdictPlan::Record {
+        to_remove,
+        has_target,
+        sha: sha.to_string(),
+        skip_comment,
+    }
+}
+
 /// `--record-verdict <owner/repo> <pr> <verdict> [note...]`: record an AI verdict as the
 /// `ai:<verdict>` label (exactly one AI verdict at a time) + a SHA-bound `🤖 ai:vetter` comment.
 /// The ONE writer of AI verdicts (shared by the vetter); never overrides a human verdict.
@@ -1124,28 +1172,25 @@ fn record_verdict_mode(slug: &str, pr: &str, verdict: &str, note: &str, dry_run:
         eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
         return 1;
     };
-    if has_human_override(&pr_json) {
-        eprintln!("human verdict present on {slug}#{pr}; not overriding");
-        return 3;
-    }
-    let sha = pr_json
-        .get("headRefOid")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let current: Vec<String> = pr_json
-        .get("labels")
-        .and_then(|l| l.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let to_remove = labels_to_remove(&current, target);
-    let has_target = current.iter().any(|c| c == target);
-    let last_vetter = last_vetter_comment(&pr_json);
-    let skip = should_skip_comment(last_vetter.as_deref(), sha, verdict);
-    let comment = verdict_comment(sha, verdict, note);
+    let (to_remove, has_target, sha, skip) = match verdict_plan(&pr_json, target, verdict) {
+        VerdictPlan::RefuseHuman => {
+            eprintln!("human verdict present on {slug}#{pr}; not overriding");
+            return 3;
+        }
+        VerdictPlan::NoSha => {
+            eprintln!(
+                "error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"
+            );
+            return 1;
+        }
+        VerdictPlan::Record {
+            to_remove,
+            has_target,
+            sha,
+            skip_comment,
+        } => (to_remove, has_target, sha, skip_comment),
+    };
+    let comment = verdict_comment(&sha, verdict, note);
 
     if dry_run {
         println!("[dry-run] {slug}#{pr} @ {sha}");
@@ -1192,10 +1237,14 @@ fn record_verdict_mode(slug: &str, pr: &str, verdict: &str, note: &str, dry_run:
         return 1;
     }
     for r in &to_remove {
-        gh_run(&["pr", "edit", pr, "-R", slug, "--remove-label", r]);
+        if !gh_run(&["pr", "edit", pr, "-R", slug, "--remove-label", r]) {
+            eprintln!("warning: failed to remove label {r} from {slug}#{pr}");
+        }
     }
-    if !skip {
-        gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]);
+    // A swallowed comment failure would report success with the SHA-bound rationale never posted.
+    if !skip && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
+        eprintln!("error: recorded {target} on {slug}#{pr} but FAILED to post the verdict comment");
+        return 1;
     }
     println!(
         "recorded {target} on {slug}#{pr}{}{}",
@@ -2554,9 +2603,55 @@ mod settings_tests {
 mod record_verdict_tests {
     use super::{
         has_human_override, labels_to_remove, last_vetter_comment, should_skip_comment,
-        verdict_comment, verdict_label,
+        verdict_comment, verdict_label, verdict_plan, VerdictPlan,
     };
     use serde_json::json;
+
+    // GAP-CLOSER: pins that the recording decision REFUSES when a human verdict is present. Removing
+    // the guard from verdict_plan makes this fail (the leaf has_human_override test alone did not).
+    #[test]
+    fn verdict_plan_refuses_a_human_overridden_pr() {
+        let pr = json!({"headRefOid":"abc123","labels":[{"name":"ai:ready"},{"name":"human:reject"}],"comments":[]});
+        assert_eq!(
+            verdict_plan(&pr, "ai:ready", "ready"),
+            VerdictPlan::RefuseHuman
+        );
+    }
+
+    // No head sha ⇒ refuse (never post a "Reviewed :" comment).
+    #[test]
+    fn verdict_plan_refuses_without_a_head_sha() {
+        let empty = json!({"headRefOid":"","labels":[],"comments":[]});
+        assert_eq!(
+            verdict_plan(&empty, "ai:ready", "ready"),
+            VerdictPlan::NoSha
+        );
+        let missing = json!({"labels":[],"comments":[]});
+        assert_eq!(
+            verdict_plan(&missing, "ai:ready", "ready"),
+            VerdictPlan::NoSha
+        );
+    }
+
+    // Happy path: strips the other ai:*, keeps sha, no prior comment ⇒ don't skip.
+    #[test]
+    fn verdict_plan_records_the_label_plan() {
+        let pr = json!({"headRefOid":"deadbeef","labels":[{"name":"ai:reject"},{"name":"bug"}],"comments":[]});
+        match verdict_plan(&pr, "ai:ready", "ready") {
+            VerdictPlan::Record {
+                to_remove,
+                has_target,
+                sha,
+                skip_comment,
+            } => {
+                assert_eq!(to_remove, vec!["ai:reject".to_string()]);
+                assert!(!has_target);
+                assert_eq!(sha, "deadbeef");
+                assert!(!skip_comment);
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
 
     #[test]
     fn verdict_label_maps_the_four_verdicts() {
