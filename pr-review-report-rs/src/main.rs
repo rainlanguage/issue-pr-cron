@@ -471,12 +471,14 @@ enum PresentState {
     Red,
     Pending,
     Conflicting,
+    MergeUnknown,
     Approved,
 }
 
 /// Pure: is an `ai:ready`-labelled PR presentable for a human decision right now?
-/// A PR a human has already APPROVED has left the pending-review queue; red or pending CI and a
-/// merge conflict are each disqualifying; green (or no configured checks) + mergeable is presentable.
+/// A PR a human has already APPROVED has left the pending-review queue; red or pending CI, a merge
+/// conflict, and UNCONFIRMED mergeability are each disqualifying; only green (or no configured
+/// checks) + CONFIRMED-mergeable is presentable — the human sees only fully-clean PRs.
 fn presentable_state(ci: Ci, merge: Merge, review_decision: Option<&str>) -> PresentState {
     if review_decision == Some("APPROVED") {
         return PresentState::Approved;
@@ -486,7 +488,10 @@ fn presentable_state(ci: Ci, merge: Merge, review_decision: Option<&str>) -> Pre
         Ci::Pending => PresentState::Pending,
         Ci::Green | Ci::NoChecks => match merge {
             Merge::Conflicting => PresentState::Conflicting,
-            Merge::Mergeable | Merge::Unknown => PresentState::Presentable,
+            // Unknown = GitHub has not confirmed the PR merges cleanly. Not fully clean, so not
+            // presentable; surfaced as MergeUnknown (the producer's job to settle before a human views).
+            Merge::Unknown => PresentState::MergeUnknown,
+            Merge::Mergeable => PresentState::Presentable,
         },
     }
 }
@@ -561,6 +566,7 @@ struct QueueCounts {
     conflict: usize,
     red: usize,
     pending: usize,
+    merge_unknown: usize,
     approved: usize,
     fetch_error: usize,
 }
@@ -590,8 +596,8 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} approved{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.approved, err, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, err, excl, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -666,6 +672,7 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
         conflict: 0,
         red: 0,
         pending: 0,
+        merge_unknown: 0,
         approved: 0,
         fetch_error: 0,
     };
@@ -701,6 +708,7 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
             PresentState::Red => counts.red += 1,
             PresentState::Pending => counts.pending += 1,
             PresentState::Conflicting => counts.conflict += 1,
+            PresentState::MergeUnknown => counts.merge_unknown += 1,
             PresentState::Approved => counts.approved += 1,
         }
     }
@@ -1433,6 +1441,16 @@ mod queue_tests {
         );
     }
 
+    // Unknown mergeability is UNCONFIRMED (GitHub hasn't computed the merge) — not fully clean, so
+    // NOT presentable; the human sees only confirmed-mergeable PRs. Green CI does not rescue it.
+    #[test]
+    fn green_unknown_mergeability_is_not_presentable() {
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Unknown, None),
+            PresentState::MergeUnknown
+        );
+    }
+
     // Already human-APPROVED leaves the pending-review queue (short-circuits even a red PR).
     #[test]
     fn approved_leaves_the_queue() {
@@ -1600,6 +1618,7 @@ mod queue_tests {
             conflict,
             red,
             pending,
+            merge_unknown: 0,
             approved,
             fetch_error: 0,
         }
@@ -1618,7 +1637,7 @@ mod queue_tests {
         let out = render_queue(&rows, &qc(5, 2, 1, 0, 1), 0);
         assert!(
             out.starts_with(
-                "review queue: 5 ai:ready -> 1 presentable, 2 conflicting, 1 red, 0 pending, 1 approved (cheapest first)\n"
+                "review queue: 5 ai:ready -> 1 presentable, 2 conflicting, 1 red, 0 pending, 0 unknown-merge, 1 approved (cheapest first)\n"
             ),
             "header:\n{out}"
         );
@@ -1633,10 +1652,15 @@ mod queue_tests {
         let mut c = qc(3, 0, 0, 0, 0);
         c.excluded = 1;
         c.fetch_error = 1;
+        c.merge_unknown = 2;
         let out = render_queue(&rows, &c, 0);
         assert!(out.contains("  unscored  r#2  "), "unscored:\n{out}");
         assert!(out.contains("1 fetch-error"));
         assert!(out.contains("1 excluded (draft/human-override)"));
+        assert!(
+            out.contains("2 unknown-merge"),
+            "unknown-merge count:\n{out}"
+        );
     }
 
     // `top` caps the printed list and reports "+N more"; the 1000-limit warning fires at raw>=1000.
