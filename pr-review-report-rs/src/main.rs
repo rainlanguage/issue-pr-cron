@@ -568,6 +568,16 @@ fn has_human_override(p: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// A native GitHub human review (`reviewDecision` APPROVED or CHANGES_REQUESTED) is a human decision
+/// too, as sacred as a `human:*` label. Checked at WRITE time so a review that lands between the
+/// vetter's read and its record cannot be clobbered — this closes the human-review TOCTOU race.
+fn has_native_human_review(p: &Value) -> bool {
+    matches!(
+        p.get("reviewDecision").and_then(|d| d.as_str()),
+        Some("APPROVED") | Some("CHANGES_REQUESTED")
+    )
+}
+
 /// owner/repo slug from a GitHub PR url — the search result's own URL, never guessed by org.
 /// None for anything that is not an https://github.com/<owner>/<repo>/pull/<n> URL.
 fn pr_slug(url: &str) -> Option<String> {
@@ -1141,8 +1151,9 @@ enum VerdictPlan {
 }
 
 fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
-    // Sacred: never override a human verdict. This is the guard whose ABSENCE a mutation must fail.
-    if has_human_override(pr_json) {
+    // Sacred: never override a human verdict — a human:* label OR a native GitHub review
+    // (APPROVED/CHANGES_REQUESTED). This is the guard whose ABSENCE a mutation must fail.
+    if has_human_override(pr_json) || has_native_human_review(pr_json) {
         return VerdictPlan::RefuseHuman;
     }
     let sha = pr_json
@@ -1200,7 +1211,7 @@ fn record_verdict_mode(
         "-R",
         slug,
         "--json",
-        "headRefOid,labels,comments",
+        "headRefOid,labels,comments,reviewDecision",
     ]) else {
         eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
         return 1;
@@ -2718,6 +2729,26 @@ mod record_verdict_tests {
             verdict_plan(&pr, "ai:ready", "ready"),
             VerdictPlan::RefuseHuman
         );
+    }
+
+    // A native GitHub human review is sacred too — closes the TOCTOU race where a review lands between
+    // the vetter's read and its record. APPROVED/CHANGES_REQUESTED refuse; a non-decision does not.
+    #[test]
+    fn verdict_plan_refuses_a_native_human_review() {
+        for d in ["APPROVED", "CHANGES_REQUESTED"] {
+            let pr = json!({"headRefOid":"abc","labels":[{"name":"ai:ready"}],"comments":[],"reviewDecision":d});
+            assert_eq!(
+                verdict_plan(&pr, "ai:ready", "ready"),
+                VerdictPlan::RefuseHuman,
+                "{d} must refuse"
+            );
+        }
+        // REVIEW_REQUIRED (no human decision yet) records normally
+        let pending = json!({"headRefOid":"abc","labels":[],"comments":[],"reviewDecision":"REVIEW_REQUIRED"});
+        assert!(matches!(
+            verdict_plan(&pending, "ai:ready", "ready"),
+            VerdictPlan::Record { .. }
+        ));
     }
 
     // No head sha ⇒ refuse (never post a "Reviewed :" comment).
