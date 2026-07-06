@@ -105,6 +105,16 @@ fn gh_json(args: &[&str]) -> Option<Value> {
     serde_json::from_slice(&out.stdout).ok()
 }
 
+/// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
+/// `--record-verdict`'s logic testable without network.
+fn gh_run(args: &[&str]) -> bool {
+    Command::new("gh")
+        .args(args)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 struct VEntry {
     verdict: Option<Verdict>,
     source: Source,
@@ -1024,6 +1034,185 @@ fn run_metrics_mode(path: &str) -> i32 {
     0
 }
 
+/// verdict word -> the `ai:*` label it records. None for anything else.
+fn verdict_label(verdict: &str) -> Option<&'static str> {
+    match verdict {
+        "ready" => Some("ai:ready"),
+        "reject" => Some("ai:reject"),
+        "design" => Some("ai:design"),
+        "close" => Some("ai:close-candidate"),
+        _ => None,
+    }
+}
+
+/// GitHub colour + description for an `ai:*` verdict label (matches the taxonomy already created
+/// across the repos).
+fn label_meta(label: &str) -> (&'static str, &'static str) {
+    match label {
+        "ai:ready" => (
+            "0e8a16",
+            "AI vetter: passes review, ready for human decision",
+        ),
+        "ai:reject" => ("b60205", "AI vetter: needs rework (code issue)"),
+        "ai:design" => ("5319e7", "AI vetter: raises a design question"),
+        "ai:close-candidate" => ("c5def5", "AI vetter: candidate to close"),
+        _ => ("cccccc", "AI vetter verdict"),
+    }
+}
+
+/// The `ai:*` labels to strip so the PR ends with exactly ONE AI verdict: every `ai:*` label present
+/// EXCEPT the target. `human:*` and non-`ai:` labels are left untouched.
+fn labels_to_remove(current: &[String], target: &str) -> Vec<String> {
+    current
+        .iter()
+        .filter(|l| l.starts_with("ai:") && l.as_str() != target)
+        .cloned()
+        .collect()
+}
+
+/// The SHA-bound vetter comment: `🤖 ai:vetter` marker line, then `Reviewed <sha>: <verdict>`
+/// (plus ` — <note>` when a note is given).
+fn verdict_comment(sha: &str, verdict: &str, note: &str) -> String {
+    let tail = if note.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" — {}", note.trim())
+    };
+    format!("🤖 ai:vetter\nReviewed {sha}: {verdict}{tail}")
+}
+
+/// Body of the PR's most-recent comment starting with the `🤖 ai:vetter` marker (chronological
+/// `comments` array, last match wins), or None.
+fn last_vetter_comment(pr: &Value) -> Option<String> {
+    pr.get("comments")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c.get("body").and_then(|b| b.as_str()))
+        .rfind(|b| b.starts_with("🤖 ai:vetter"))
+        .map(String::from)
+}
+
+/// Skip a new vetter comment iff the last one already recorded the SAME verdict at the SAME head sha
+/// (no-op re-review). A moved head or a changed verdict does NOT skip.
+fn should_skip_comment(last_vetter_body: Option<&str>, sha: &str, verdict: &str) -> bool {
+    match last_vetter_body {
+        Some(b) => b.contains(&format!("Reviewed {sha}: {verdict}")),
+        None => false,
+    }
+}
+
+/// `--record-verdict <owner/repo> <pr> <verdict> [note...]`: record an AI verdict as the
+/// `ai:<verdict>` label (exactly one AI verdict at a time) + a SHA-bound `🤖 ai:vetter` comment.
+/// The ONE writer of AI verdicts (shared by the vetter); never overrides a human verdict.
+fn record_verdict_mode(slug: &str, pr: &str, verdict: &str, note: &str, dry_run: bool) -> i32 {
+    let Some(target) = verdict_label(verdict) else {
+        eprintln!(
+            "usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...]"
+        );
+        return 2;
+    };
+    let Some(pr_json) = gh_json(&[
+        "pr",
+        "view",
+        pr,
+        "-R",
+        slug,
+        "--json",
+        "headRefOid,labels,comments",
+    ]) else {
+        eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
+        return 1;
+    };
+    if has_human_override(&pr_json) {
+        eprintln!("human verdict present on {slug}#{pr}; not overriding");
+        return 3;
+    }
+    let sha = pr_json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let current: Vec<String> = pr_json
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let to_remove = labels_to_remove(&current, target);
+    let has_target = current.iter().any(|c| c == target);
+    let last_vetter = last_vetter_comment(&pr_json);
+    let skip = should_skip_comment(last_vetter.as_deref(), sha, verdict);
+    let comment = verdict_comment(sha, verdict, note);
+
+    if dry_run {
+        println!("[dry-run] {slug}#{pr} @ {sha}");
+        println!(
+            "  target label: {target}{}",
+            if has_target { " (already present)" } else { "" }
+        );
+        println!(
+            "  labels to remove: {}",
+            if to_remove.is_empty() {
+                "(none)".to_string()
+            } else {
+                to_remove.join(", ")
+            }
+        );
+        println!(
+            "  comment: {}",
+            if skip {
+                "skip (same verdict + sha already posted)".to_string()
+            } else {
+                format!("post -> {}", comment.replace('\n', " / "))
+            }
+        );
+        return 0;
+    }
+
+    let (color, desc) = label_meta(target);
+    if !gh_run(&[
+        "label",
+        "create",
+        target,
+        "-R",
+        slug,
+        "--color",
+        color,
+        "--description",
+        desc,
+        "--force",
+    ]) {
+        eprintln!("warning: could not ensure label {target} exists in {slug}");
+    }
+    if !has_target && !gh_run(&["pr", "edit", pr, "-R", slug, "--add-label", target]) {
+        eprintln!("error: failed to add {target} to {slug}#{pr}");
+        return 1;
+    }
+    for r in &to_remove {
+        gh_run(&["pr", "edit", pr, "-R", slug, "--remove-label", r]);
+    }
+    if !skip {
+        gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]);
+    }
+    println!(
+        "recorded {target} on {slug}#{pr}{}{}",
+        if to_remove.is_empty() {
+            String::new()
+        } else {
+            format!(" (removed {})", to_remove.join(","))
+        },
+        if skip {
+            " [comment deduped]"
+        } else {
+            " [comment posted]"
+        }
+    );
+    0
+}
+
 fn main() {
     let base = base_dir();
     // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
@@ -1069,6 +1258,26 @@ fn main() {
             std::process::exit(2);
         };
         std::process::exit(run_metrics_mode(path));
+    }
+    if args.get(1).map(String::as_str) == Some("--record-verdict") {
+        let dry_run = args.iter().any(|a| a == "--dry-run");
+        let positional: Vec<&str> = args[2..]
+            .iter()
+            .map(String::as_str)
+            .filter(|a| *a != "--dry-run")
+            .collect();
+        let (Some(&slug), Some(&pr), Some(&verdict)) =
+            (positional.first(), positional.get(1), positional.get(2))
+        else {
+            eprintln!("usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--dry-run]");
+            std::process::exit(2);
+        };
+        let note = if positional.len() > 3 {
+            positional[3..].join(" ")
+        } else {
+            String::new()
+        };
+        std::process::exit(record_verdict_mode(slug, pr, verdict, &note, dry_run));
     }
     let only_ready = args.get(1).map(String::as_str) == Some("--ready");
 
@@ -2338,5 +2547,107 @@ mod settings_tests {
                 "{f}: must deny CronCreate (one-shot crons must not park)"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod record_verdict_tests {
+    use super::{
+        has_human_override, labels_to_remove, last_vetter_comment, should_skip_comment,
+        verdict_comment, verdict_label,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn verdict_label_maps_the_four_verdicts() {
+        assert_eq!(verdict_label("ready"), Some("ai:ready"));
+        assert_eq!(verdict_label("reject"), Some("ai:reject"));
+        assert_eq!(verdict_label("design"), Some("ai:design"));
+        assert_eq!(verdict_label("close"), Some("ai:close-candidate"));
+        assert_eq!(verdict_label("approve"), None);
+        assert_eq!(verdict_label("ai:ready"), None);
+    }
+
+    #[test]
+    fn labels_to_remove_drops_other_ai_keeps_human_and_plain() {
+        let current = vec![
+            "ai:reject".to_string(),
+            "ai:design".to_string(),
+            "ai:ready".to_string(),
+            "human:reject".to_string(),
+            "bug".to_string(),
+        ];
+        let rm = labels_to_remove(&current, "ai:ready");
+        // strips the OTHER ai:* verdicts...
+        assert!(rm.contains(&"ai:reject".to_string()));
+        assert!(rm.contains(&"ai:design".to_string()));
+        // ...but never the target, a human:* label, or a plain label
+        assert!(!rm.contains(&"ai:ready".to_string()), "target kept");
+        assert!(!rm.contains(&"human:reject".to_string()), "human kept");
+        assert!(!rm.contains(&"bug".to_string()), "non-ai kept");
+        assert_eq!(rm.len(), 2);
+    }
+
+    #[test]
+    fn labels_to_remove_noop_when_only_target_present() {
+        let current = vec!["ai:ready".to_string(), "enhancement".to_string()];
+        assert!(labels_to_remove(&current, "ai:ready").is_empty());
+    }
+
+    #[test]
+    fn verdict_comment_shape_with_and_without_note() {
+        assert_eq!(
+            verdict_comment("abc123", "ready", "looks good"),
+            "🤖 ai:vetter\nReviewed abc123: ready — looks good"
+        );
+        assert_eq!(
+            verdict_comment("abc123", "reject", "   "),
+            "🤖 ai:vetter\nReviewed abc123: reject"
+        );
+    }
+
+    #[test]
+    fn should_skip_only_on_same_verdict_and_sha() {
+        let body = "🤖 ai:vetter\nReviewed sha1: ready — ok";
+        assert!(
+            should_skip_comment(Some(body), "sha1", "ready"),
+            "same → skip"
+        );
+        assert!(
+            !should_skip_comment(Some(body), "sha2", "ready"),
+            "moved head → repost"
+        );
+        assert!(
+            !should_skip_comment(Some(body), "sha1", "reject"),
+            "changed verdict → repost"
+        );
+        assert!(
+            !should_skip_comment(None, "sha1", "ready"),
+            "no prior vetter comment → post"
+        );
+    }
+
+    #[test]
+    fn last_vetter_comment_takes_the_last_marked_one() {
+        let pr = json!({"comments":[
+            {"body":"🤖 ai:vetter\nReviewed s1: reject — old"},
+            {"body":"a human chiming in"},
+            {"body":"🤖 ai:vetter\nReviewed s2: ready — new"}
+        ]});
+        assert_eq!(
+            last_vetter_comment(&pr).as_deref(),
+            Some("🤖 ai:vetter\nReviewed s2: ready — new")
+        );
+        // no vetter comments → None (a non-vetter comment must not match)
+        let none = json!({"comments":[{"body":"just a note"}]});
+        assert_eq!(last_vetter_comment(&none), None);
+    }
+
+    #[test]
+    fn human_override_guards_the_verdict() {
+        let human = json!({"labels":[{"name":"ai:ready"},{"name":"human:reject"}]});
+        assert!(has_human_override(&human), "human:reject must guard");
+        let ai_only = json!({"labels":[{"name":"ai:ready"}]});
+        assert!(!has_human_override(&ai_only));
     }
 }
