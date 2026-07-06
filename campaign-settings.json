@@ -109,7 +109,9 @@
       "Bash(git push -f:*)",
       "Bash(git reset --hard:*)",
       "Bash(crontab:*)",
-      "Bash(gh pr merge:*)"
+      "Bash(gh pr merge:*)",
+      "ScheduleWakeup",
+      "CronCreate"
     ]
   }
 }
