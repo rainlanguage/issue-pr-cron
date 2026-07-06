@@ -115,6 +115,16 @@ fn gh_run(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+/// Append one line (+newline) to a file, creating it if absent — the append-only cost sidecar write.
+fn append_line(path: &str, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(f, "{line}")
+}
+
 struct VEntry {
     verdict: Option<Verdict>,
     source: Source,
@@ -1041,6 +1051,7 @@ fn verdict_label(verdict: &str) -> Option<&'static str> {
         "reject" => Some("ai:reject"),
         "design" => Some("ai:design"),
         "close" => Some("ai:close-candidate"),
+        "relink" => Some("ai:relink"),
         _ => None,
     }
 }
@@ -1056,6 +1067,10 @@ fn label_meta(label: &str) -> (&'static str, &'static str) {
         "ai:reject" => ("b60205", "AI vetter: needs rework (code issue)"),
         "ai:design" => ("5319e7", "AI vetter: raises a design question"),
         "ai:close-candidate" => ("c5def5", "AI vetter: candidate to close"),
+        "ai:relink" => (
+            "fbca04",
+            "AI vetter: sound code, needs Closes→Refs linkage fix",
+        ),
         _ => ("cccccc", "AI vetter verdict"),
     }
 }
@@ -1100,6 +1115,14 @@ fn should_skip_comment(last_vetter_body: Option<&str>, sha: &str, verdict: &str)
         Some(b) => b.contains(&format!("Reviewed {sha}: {verdict}")),
         None => false,
     }
+}
+
+/// One cost-sidecar line (review-costs.jsonl) in the shape `cost_for`/`parse_sidecar` reads: the
+/// ledger-key repo (bare for rainlanguage, org-qualified otherwise), pr, cost, basis, reviewed sha.
+/// This keeps the queue's cheapest-first ordering working once the vetter writes labels not a ledger.
+fn cost_sidecar_line(ledger_repo: &str, pr: &str, cost: i64, basis: &str, sha: &str) -> String {
+    serde_json::json!({"repo": ledger_repo, "pr": pr, "cost": cost, "basis": basis, "sha": sha})
+        .to_string()
 }
 
 /// The recording decision, computed PURELY from the fetched PR JSON so the guard-before-write logic
@@ -1153,10 +1176,20 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
 /// `--record-verdict <owner/repo> <pr> <verdict> [note...]`: record an AI verdict as the
 /// `ai:<verdict>` label (exactly one AI verdict at a time) + a SHA-bound `🤖 ai:vetter` comment.
 /// The ONE writer of AI verdicts (shared by the vetter); never overrides a human verdict.
-fn record_verdict_mode(slug: &str, pr: &str, verdict: &str, note: &str, dry_run: bool) -> i32 {
+#[allow(clippy::too_many_arguments)]
+fn record_verdict_mode(
+    slug: &str,
+    pr: &str,
+    verdict: &str,
+    note: &str,
+    cost: Option<i64>,
+    basis: &str,
+    costs_path: &str,
+    dry_run: bool,
+) -> i32 {
     let Some(target) = verdict_label(verdict) else {
         eprintln!(
-            "usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...]"
+            "usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close|relink> [note...] [--cost <n>] [--basis <s>] [--dry-run]"
         );
         return 2;
     };
@@ -1214,6 +1247,13 @@ fn record_verdict_mode(slug: &str, pr: &str, verdict: &str, note: &str, dry_run:
                 format!("post -> {}", comment.replace('\n', " / "))
             }
         );
+        println!(
+            "  cost: {}",
+            match cost {
+                Some(c) => format!("{c} ({basis}) -> {costs_path}"),
+                None => "(none)".to_string(),
+            }
+        );
         return 0;
     }
 
@@ -1246,8 +1286,18 @@ fn record_verdict_mode(slug: &str, pr: &str, verdict: &str, note: &str, dry_run:
         eprintln!("error: recorded {target} on {slug}#{pr} but FAILED to post the verdict comment");
         return 1;
     }
+    // Cost feeds the queue's cheapest-first ordering (cost_for reads this sidecar).
+    if let Some(c) = cost {
+        let ledger_repo = slug.strip_prefix("rainlanguage/").unwrap_or(slug);
+        let line = cost_sidecar_line(ledger_repo, pr, c, basis, &sha);
+        if let Err(e) = append_line(costs_path, &line) {
+            eprintln!(
+                "warning: recorded {target} on {slug}#{pr} but failed to write cost to {costs_path}: {e}"
+            );
+        }
+    }
     println!(
-        "recorded {target} on {slug}#{pr}{}{}",
+        "recorded {target} on {slug}#{pr}{}{}{}",
         if to_remove.is_empty() {
             String::new()
         } else {
@@ -1257,6 +1307,10 @@ fn record_verdict_mode(slug: &str, pr: &str, verdict: &str, note: &str, dry_run:
             " [comment deduped]"
         } else {
             " [comment posted]"
+        },
+        match cost {
+            Some(c) => format!(" [cost {c}]"),
+            None => String::new(),
         }
     );
     0
@@ -1310,15 +1364,31 @@ fn main() {
     }
     if args.get(1).map(String::as_str) == Some("--record-verdict") {
         let dry_run = args.iter().any(|a| a == "--dry-run");
-        let positional: Vec<&str> = args[2..]
-            .iter()
-            .map(String::as_str)
-            .filter(|a| *a != "--dry-run")
-            .collect();
+        // Extract `--cost <n>` / `--basis <s>` (flags with a value); everything else is positional.
+        let mut cost: Option<i64> = None;
+        let mut basis = String::new();
+        let mut positional: Vec<&str> = Vec::new();
+        let rest = &args[2..];
+        let mut i = 0;
+        while i < rest.len() {
+            match rest[i].as_str() {
+                "--dry-run" => {}
+                "--cost" => {
+                    i += 1;
+                    cost = rest.get(i).and_then(|s| s.parse::<i64>().ok());
+                }
+                "--basis" => {
+                    i += 1;
+                    basis = rest.get(i).cloned().unwrap_or_default();
+                }
+                other => positional.push(other),
+            }
+            i += 1;
+        }
         let (Some(&slug), Some(&pr), Some(&verdict)) =
             (positional.first(), positional.get(1), positional.get(2))
         else {
-            eprintln!("usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--dry-run]");
+            eprintln!("usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close|relink> [note...] [--cost <n>] [--basis <s>] [--dry-run]");
             std::process::exit(2);
         };
         let note = if positional.len() > 3 {
@@ -1326,7 +1396,21 @@ fn main() {
         } else {
             String::new()
         };
-        std::process::exit(record_verdict_mode(slug, pr, verdict, &note, dry_run));
+        let costs_def = base
+            .join("review-costs.jsonl")
+            .to_string_lossy()
+            .into_owned();
+        let costs_path = cfg(&cron, "REVIEW_COSTS", &costs_def);
+        std::process::exit(record_verdict_mode(
+            slug,
+            pr,
+            verdict,
+            &note,
+            cost,
+            &basis,
+            &costs_path,
+            dry_run,
+        ));
     }
     let only_ready = args.get(1).map(String::as_str) == Some("--ready");
 
@@ -2602,10 +2686,28 @@ mod settings_tests {
 #[cfg(test)]
 mod record_verdict_tests {
     use super::{
-        has_human_override, labels_to_remove, last_vetter_comment, should_skip_comment,
-        verdict_comment, verdict_label, verdict_plan, VerdictPlan,
+        cost_sidecar_line, has_human_override, labels_to_remove, last_vetter_comment,
+        parse_sidecar, should_skip_comment, verdict_comment, verdict_label, verdict_plan,
+        VerdictPlan,
     };
     use serde_json::json;
+
+    #[test]
+    fn verdict_label_includes_relink() {
+        assert_eq!(verdict_label("relink"), Some("ai:relink"));
+    }
+
+    // The cost line must be exactly what the queue's parse_sidecar reads back (cheapest-first depends
+    // on it once the vetter writes labels, not a ledger).
+    #[test]
+    fn cost_sidecar_line_round_trips_through_parse_sidecar() {
+        let line = cost_sidecar_line("rain.flare", "170", 115, "path refactor", "abc");
+        let m = parse_sidecar(&line);
+        assert_eq!(
+            m.get("rain.flare/170"),
+            Some(&(115_i64, "path refactor".to_string(), "abc".to_string()))
+        );
+    }
 
     // GAP-CLOSER: pins that the recording decision REFUSES when a human verdict is present. Removing
     // the guard from verdict_plan makes this fail (the leaf has_human_override test alone did not).
