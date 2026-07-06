@@ -878,6 +878,9 @@ fn commit_closes_mode(slug: &str, pr: &str) -> i32 {
 struct RunMetrics {
     tool_calls: usize,
     startup_tool_calls: usize,
+    // ScheduleWakeup / CronCreate calls. A one-shot cron must NEVER park itself to resume "later";
+    // any non-zero value is a regression of the no-park rule (both tools are denied in settings).
+    wakeup_calls: usize,
     first_mutation_index: Option<usize>,
     duration_ms: u64,
     num_turns: u64,
@@ -948,6 +951,9 @@ fn run_metrics(content: &str) -> RunMetrics {
                             let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
                             let empty = serde_json::json!({});
                             let input = block.get("input").unwrap_or(&empty);
+                            if name == "ScheduleWakeup" || name == "CronCreate" {
+                                m.wakeup_calls += 1;
+                            }
                             if m.first_mutation_index.is_none() {
                                 if is_mutation_tool(name, input) {
                                     m.first_mutation_index = Some(m.tool_calls);
@@ -1004,6 +1010,7 @@ fn run_metrics_mode(path: &str) -> i32 {
         "toolCalls": m.tool_calls,
         "startupToolCalls": m.startup_tool_calls,
         "startupPct": (m.startup_pct() * 10.0).round() / 10.0,
+        "wakeupCalls": m.wakeup_calls,
         "firstMutationIndex": m.first_mutation_index,
         "durationMs": m.duration_ms,
         "numTurns": m.num_turns,
@@ -2183,6 +2190,36 @@ mod run_metrics_tests {
         assert!(!is_mutation_tool("Edit", &json!({})));
     }
 
+    // A one-shot cron must never park itself: ScheduleWakeup + CronCreate are counted as wakeupCalls,
+    // so any non-zero value flags a regression of the no-park rule (both are denied in settings).
+    #[test]
+    fn wakeup_calls_count_scheduling_tools() {
+        let trace = [
+            tool_line("Bash", "gh search prs --owner x"), // startup read
+            tool_line("ScheduleWakeup", ""),              // PARK — must be counted
+            tool_line("Bash", "gh pr create -R x"),       // first mutation at index 2
+            tool_line("CronCreate", ""),                  // PARK — must be counted
+            result_line(10, 1000, 1.0),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.wakeup_calls, 2, "ScheduleWakeup + CronCreate both count");
+        // and they don't corrupt the tool/mutation accounting
+        assert_eq!(m.tool_calls, 4);
+        assert_eq!(m.first_mutation_index, Some(2));
+    }
+
+    #[test]
+    fn no_wakeup_calls_in_a_clean_trace() {
+        let trace = [
+            tool_line("Bash", "gh pr view 5 --json state"),
+            tool_line("Bash", "gh pr create -R x"),
+            result_line(3, 100, 0.1),
+        ]
+        .join("\n");
+        assert_eq!(run_metrics(&trace).wakeup_calls, 0);
+    }
+
     #[test]
     fn startup_is_reads_before_first_mutation() {
         let trace = [
@@ -2259,5 +2296,47 @@ mod run_metrics_tests {
         let m = run_metrics(&trace);
         assert_eq!(m.tool_calls, 1);
         assert_eq!(m.num_turns, 3);
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use serde_json::Value;
+
+    // The producer AND vetter are one-shot crons that must never park themselves — ScheduleWakeup and
+    // CronCreate are DENIED in both settings files so the tools are unavailable at all. This asserts
+    // the deny stays in place (catches a regression where someone edits the settings and drops it).
+    // Files live at the repo root, one dir up from the crate. The flake package build runs tests with
+    // a filtered src that omits them, so the read is skipped there; the rs-test gate (cargo test at the
+    // repo root) has the files and enforces the assertion.
+    fn deny_list(rel: &str) -> Option<Vec<String>> {
+        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
+        let text = std::fs::read_to_string(&path).ok()?;
+        let v: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}"));
+        Some(
+            v["permissions"]["deny"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{path}: permissions.deny is not an array"))
+                .iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn both_crons_deny_scheduling_tools() {
+        for f in ["campaign-settings.json", "review-settings.json"] {
+            let Some(deny) = deny_list(f) else {
+                continue; // settings not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            assert!(
+                deny.iter().any(|d| d == "ScheduleWakeup"),
+                "{f}: must deny ScheduleWakeup (one-shot crons must not park)"
+            );
+            assert!(
+                deny.iter().any(|d| d == "CronCreate"),
+                "{f}: must deny CronCreate (one-shot crons must not park)"
+            );
+        }
     }
 }
