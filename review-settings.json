@@ -2,7 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(gh:*)",
-      "Bash(jq:*)", "Bash(nix:*)",
+      "Bash(jq:*)", "Bash(nix:*)", "Bash(pr-review-report:*)",
       "Bash(rg:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(cut:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(tr:*)", "Bash(comm:*)", "Bash(diff:*)", "Bash(tee:*)", "Bash(xargs:*)",
       "Bash(cat:*)", "Bash(echo:*)", "Bash(printf:*)", "Bash(ls:*)", "Bash(test:*)", "Bash(date:*)", "Bash(mktemp:*)", "Bash(cd:*)", "Bash(pwd:*)", "Bash(basename:*)", "Bash(dirname:*)", "Bash(realpath:*)", "Bash(env:*)", "Bash(which:*)", "Bash(command:*)", "Bash(true:*)", "Bash(false:*)", "Bash(sleep:*)", "Bash(timeout:*)", "Bash(flock:*)",
       "Read", "Glob", "Grep", "TodoWrite"
