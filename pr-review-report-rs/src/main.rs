@@ -461,66 +461,91 @@ fn parse_sidecar(content: &str) -> HashMap<String, (i64, String, String)> {
     sidecar
 }
 
-/// One queue row: (cost, repo, number, url, basis). Unscored rows carry cost 1001 so they sort last.
+/// One queue row for cheapest-first display: (cost, repo-display, number, url, basis). Unscored
+/// rows carry cost 1001 so they sort last.
 type QueueRow = (i64, String, u64, String, String);
 
-/// Build the queue rows from raw `gh search prs` results × effective verdicts × sidecar costs:
-/// open non-draft PRs whose last-wins verdict is ready/ai-campaign, costed from the verdict line
-/// itself, else the sidecar (sha mismatch flagged), else unscored (1001). Sorted (cost, repo, num).
-fn queue_rows(
-    arr: &[Value],
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum PresentState {
+    Presentable,
+    Red,
+    Pending,
+    Conflicting,
+    MergeUnknown,
+    Approved,
+}
+
+/// Pure: is an `ai:ready`-labelled PR presentable for a human decision right now?
+/// A PR a human has already APPROVED has left the pending-review queue; red or pending CI, a merge
+/// conflict, and UNCONFIRMED mergeability are each disqualifying; only green (or no configured
+/// checks) + CONFIRMED-mergeable is presentable — the human sees only fully-clean PRs.
+fn presentable_state(ci: Ci, merge: Merge, review_decision: Option<&str>) -> PresentState {
+    if review_decision == Some("APPROVED") {
+        return PresentState::Approved;
+    }
+    match ci {
+        Ci::Red => PresentState::Red,
+        Ci::Pending => PresentState::Pending,
+        Ci::Green | Ci::NoChecks => match merge {
+            Merge::Conflicting => PresentState::Conflicting,
+            // Unknown = GitHub has not confirmed the PR merges cleanly. Not fully clean, so not
+            // presentable; surfaced as MergeUnknown (the producer's job to settle before a human views).
+            Merge::Unknown => PresentState::MergeUnknown,
+            Merge::Mergeable => PresentState::Presentable,
+        },
+    }
+}
+
+/// owner/repo slug + number → verdict-ledger / cost-sidecar key: bare repo name for rainlanguage,
+/// org-qualified "owner/repo" for every other org (e.g. cyclofinance/cyclo.site) — the convention
+/// those files use.
+fn ledger_key(slug: &str, num: u64) -> String {
+    let repo = slug.strip_prefix("rainlanguage/").unwrap_or(slug);
+    format!("{repo}/{num}")
+}
+
+/// Verification cost + basis for ordering the queue cheapest-first: the verdict line's own cost
+/// wins, else the sidecar's (sha mismatch flagged), else unscored (1001, sorts last). A label-only
+/// candidate with no ledger entry falls straight through to the sidecar, then unscored.
+fn cost_for(
+    key: &str,
     verds: &HashMap<String, VEntry>,
     sidecar: &HashMap<String, (i64, String, String)>,
-) -> Vec<QueueRow> {
-    let mut rows: Vec<QueueRow> = Vec::new();
-    for p in arr {
-        if p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false) {
-            continue;
+) -> (i64, String) {
+    if let Some(v) = verds.get(key) {
+        if let Some(c) = v.cost {
+            return (c, v.cost_basis.clone());
         }
-        let Some(repo) = p
-            .get("repository")
-            .and_then(|r| r.get("name"))
-            .and_then(|n| n.as_str())
-        else {
-            continue;
-        };
-        let Some(num) = p.get("number").and_then(|n| n.as_u64()) else {
-            continue;
-        };
-        let url = p
-            .get("url")
-            .and_then(|u| u.as_str())
-            .unwrap_or("")
-            .to_string();
-        // Ledger convention: bare repo name for rainlanguage repos, org-qualified
-        // "owner/repo" for every other org (e.g. cyclofinance/cyclo.site).
-        let ledger_repo = match pr_slug(&url) {
-            Some(slug) if !slug.starts_with("rainlanguage/") => slug,
-            _ => repo.to_string(),
-        };
-        let key = format!("{ledger_repo}/{num}");
-        let Some(v) = verds.get(&key) else { continue };
-        if v.verdict != Some(Verdict::Ready) || v.source != Source::AiCampaign {
-            continue;
+        if let Some((c, b, sha)) = sidecar.get(key) {
+            let stale = if !sha.is_empty() && !v.sha.is_empty() && sha != &v.sha {
+                " [cost from older head]"
+            } else {
+                ""
+            };
+            return (*c, format!("{b}{stale}"));
         }
-        let (cost, basis) = match v.cost {
-            Some(c) => (c, v.cost_basis.clone()),
-            None => match sidecar.get(&key) {
-                Some((c, b, sha)) => {
-                    let stale = if !sha.is_empty() && !v.sha.is_empty() && sha != &v.sha {
-                        " [cost from older head]"
-                    } else {
-                        ""
-                    };
-                    (*c, format!("{b}{stale}"))
-                }
-                None => (1001, String::new()),
-            },
-        };
-        rows.push((cost, repo.to_string(), num, url, basis));
+        return (1001, String::new());
     }
-    rows.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
-    rows
+    if let Some((c, b, _)) = sidecar.get(key) {
+        return (*c, b.clone());
+    }
+    (1001, String::new())
+}
+
+/// A `gh search` result carries a human override label (which beats an `ai:ready` label) when any
+/// of its labels is `human:reject` / `human:design` / `human:close-candidate`.
+fn has_human_override(p: &Value) -> bool {
+    p.get("labels")
+        .and_then(|l| l.as_array())
+        .map(|arr| {
+            arr.iter().any(|l| {
+                matches!(
+                    l.get("name").and_then(|n| n.as_str()),
+                    Some("human:reject") | Some("human:design") | Some("human:close-candidate")
+                )
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// owner/repo slug from a GitHub PR url — the search result's own URL, never guessed by org.
@@ -534,57 +559,56 @@ fn pr_slug(url: &str) -> Option<String> {
     Some(slug.to_string())
 }
 
-/// Walk `rows` in order, keeping only rows `presentable` accepts, until `want` are kept (0 = all).
-/// Rows the predicate rejects are skipped and later rows backfill their slots, so the human always
-/// sees `want` genuinely actionable entries (or every presentable row if fewer exist). Returns
-/// (kept, skipped-count).
-fn take_presentable<F: FnMut(&QueueRow) -> bool>(
-    rows: &[QueueRow],
-    want: usize,
-    mut presentable: F,
-) -> (Vec<QueueRow>, usize) {
-    let mut kept: Vec<QueueRow> = Vec::new();
-    let mut skipped = 0usize;
-    for r in rows {
-        if want != 0 && kept.len() == want {
-            break;
-        }
-        if presentable(r) {
-            kept.push(r.clone());
-        } else {
-            skipped += 1;
-        }
-    }
-    (kept, skipped)
+/// Aggregate queue counts for the header (see `render_queue`).
+struct QueueCounts {
+    raw: usize,      // all ai:ready PRs the search returned
+    excluded: usize, // filtered before the per-PR check: drafts + human:* overrides
+    conflict: usize,
+    red: usize,
+    pending: usize,
+    merge_unknown: usize,
+    approved: usize,
+    fetch_error: usize,
 }
 
-/// Render the queue: header (ready count, shown count, skipped-unpresentable count, optional
-/// 1000-result truncation warning) then one entry per shown row.
-fn render_queue(rows: &[QueueRow], shown: &[QueueRow], skipped: usize, n_raw: usize) -> String {
-    let trunc = if n_raw >= 1000 {
+/// Render the queue: a header with the true ai:ready -> presentable / conflicting / red / pending /
+/// approved breakdown, then the cheapest-first presentable rows (printed list capped at `top`,
+/// 0 = all; a `+N more` line notes any presentable rows beyond the cap).
+fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
+    let trunc = if c.raw >= 1000 {
         "  [WARNING: search hit the 1000-result limit — queue may be undercounted]"
     } else {
         ""
     };
-    let skip_note = if skipped > 0 {
-        format!(", {skipped} unpresentable skipped")
+    let err = if c.fetch_error > 0 {
+        format!(", {} fetch-error", c.fetch_error)
     } else {
         String::new()
     };
+    let excl = if c.excluded > 0 {
+        format!(", {} excluded (draft/human-override)", c.excluded)
+    } else {
+        String::new()
+    };
+    let shown = if top == 0 {
+        rows.len()
+    } else {
+        top.min(rows.len())
+    };
     let mut out = format!(
-        "review queue: {} ready PRs, reds excluded (showing {}{}, cheapest first){}\n",
-        rows.len(),
-        shown.len(),
-        skip_note,
-        trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, err, excl, trunc
     );
-    for (cost, repo, num, url, basis) in shown {
-        let c = if *cost == 1001 {
+    for (cost, repo, num, url, basis) in rows.iter().take(shown) {
+        let cs = if *cost == 1001 {
             "unscored".to_string()
         } else {
             format!("{cost:>4}")
         };
-        out.push_str(&format!("\n  {c}  {repo}#{num}  {basis}\n        {url}"));
+        out.push_str(&format!("\n  {cs}  {repo}#{num}  {basis}\n        {url}"));
+    }
+    if rows.len() > shown {
+        out.push_str(&format!("\n  … +{} more presentable", rows.len() - shown));
     }
     out
 }
@@ -593,9 +617,10 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
     let verds = load_verdicts(review_verdicts);
     let sidecar = parse_sidecar(&std::fs::read_to_string(costs_path).unwrap_or_default());
 
-    // `--checks success` drops CI-red and checks-pending PRs at the search layer (one call):
-    // a red PR is the producer's to fix and a pending one is not yet judgeable — neither is
-    // presentable for human approval.
+    // Candidates come from the `ai:ready` LABEL, NOT `gh search --checks success`. That qualifier is
+    // unreliable — the identical query returned 93 then 203 open PRs minutes apart, which collapsed a
+    // 75-deep review queue to "1". Label search is reliable; CI/mergeability is then verified per-PR
+    // below (statusCheckRollup + mergeable), never trusted from the search layer.
     let Some(val) = gh_json(&[
         "search",
         "prs",
@@ -605,14 +630,14 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
         "cyclofinance",
         "--state",
         "open",
-        "--checks",
-        "success",
+        "--label",
+        "ai:ready",
         "--limit",
         "1000",
         "--json",
-        "repository,number,isDraft,url",
+        "url,number,repository,isDraft,labels",
     ]) else {
-        eprintln!("error: `gh search prs` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
+        eprintln!("error: `gh search prs --label ai:ready` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
         std::process::exit(1);
     };
     let Some(arr) = val.as_array() else {
@@ -620,28 +645,75 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
         std::process::exit(1);
     };
 
-    let rows = queue_rows(arr, &verds, &sidecar);
-    // Conflicting PRs are the producer's step-3d work, not human-presentable. Only the shown
-    // slice is live-checked (one gh call per candidate, walking past skips), so cost stays
-    // proportional to what a human actually reads.
-    let (shown, skipped) = take_presentable(&rows, top, |r| {
-        let (_, _, num, url, _) = r;
-        let Some(slug) = pr_slug(url) else {
-            return false;
-        };
-        gh_json(&[
+    // Candidate filter (from the search JSON, no extra call): drop drafts and any PR whose ai:ready
+    // is overridden by a human:* label (the human's verdict wins).
+    let candidates: Vec<(String, u64, String)> = arr
+        .iter()
+        .filter(|p| !p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false))
+        .filter(|p| !has_human_override(p))
+        .filter_map(|p| {
+            let num = p.get("number").and_then(|n| n.as_u64())?;
+            let url = p
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string();
+            let slug = pr_slug(&url)?;
+            Some((slug, num, url))
+        })
+        .collect();
+
+    // Full per-PR pass over every candidate — after the 1-vs-75 failure, an ACCURATE queue is the
+    // whole point, so each candidate's real CI rollup + mergeable + reviewDecision is fetched.
+    let mut rows: Vec<QueueRow> = Vec::new();
+    let mut counts = QueueCounts {
+        raw: arr.len(),
+        excluded: arr.len() - candidates.len(),
+        conflict: 0,
+        red: 0,
+        pending: 0,
+        merge_unknown: 0,
+        approved: 0,
+        fetch_error: 0,
+    };
+    for (slug, num, url) in &candidates {
+        let Some(j) = gh_json(&[
             "pr",
             "view",
             &num.to_string(),
             "-R",
-            &slug,
+            slug,
             "--json",
-            "mergeable",
-        ])
-        .map(|j| j.get("mergeable").and_then(|m| m.as_str()) != Some("CONFLICTING"))
-        .unwrap_or(false)
-    });
-    println!("{}", render_queue(&rows, &shown, skipped, arr.len()));
+            "mergeable,statusCheckRollup,reviewDecision",
+        ]) else {
+            counts.fetch_error += 1;
+            continue;
+        };
+        let merge = match j.get("mergeable").and_then(|x| x.as_str()) {
+            Some("MERGEABLE") => Merge::Mergeable,
+            Some("CONFLICTING") => Merge::Conflicting,
+            _ => Merge::Unknown,
+        };
+        let ci = classify_ci(j.get("statusCheckRollup").unwrap_or(&Value::Null));
+        let rev = j
+            .get("reviewDecision")
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty());
+        match presentable_state(ci, merge, rev) {
+            PresentState::Presentable => {
+                let (cost, basis) = cost_for(&ledger_key(slug, *num), &verds, &sidecar);
+                let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
+                rows.push((cost, repo_disp, *num, url.clone(), basis));
+            }
+            PresentState::Red => counts.red += 1,
+            PresentState::Pending => counts.pending += 1,
+            PresentState::Conflicting => counts.conflict += 1,
+            PresentState::MergeUnknown => counts.merge_unknown += 1,
+            PresentState::Approved => counts.approved += 1,
+        }
+    }
+    rows.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    println!("{}", render_queue(&rows, &counts, top));
 }
 
 /// Parse cron.env content (KEY=VALUE lines): skips blanks/comments, strips `export `, honours
@@ -1322,275 +1394,206 @@ mod queue_tests {
     use super::*;
     use serde_json::json;
 
-    fn pr(repo: &str, num: u64) -> Value {
-        json!({"repository": {"name": repo}, "number": num,
-               "url": format!("https://github.com/rainlanguage/{repo}/pull/{num}")})
-    }
-    fn ready_line(repo: &str, pr: u64, cost: i64) -> String {
-        format!(
-            r#"{{"repo":"{repo}","pr":{pr},"verdict":"ready","source":"ai-campaign","sha":"aaa","cost":{cost},"cost_basis":"basis-{pr}"}}"#
-        )
-    }
+    // --- presentable_state: the core presentability decision -----------------------------------
 
-    // B1: the ledger is append-only and last line wins BY POSITION for the same (repo, pr).
+    // A single failing check disqualifies regardless of mergeability.
     #[test]
-    fn last_line_wins_by_position() {
-        let led = format!(
-            "{}\n{}",
-            ready_line("r", 1, 50),
-            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#
-        );
-        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
-        assert_eq!(rows.len(), 0, "later reject must override earlier ready");
-        let led2 = format!(
-            "{}\n{}",
-            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#,
-            ready_line("r", 1, 50)
-        );
-        let rows2 = queue_rows(&[pr("r", 1)], &parse_verdicts(&led2), &HashMap::new());
-        assert_eq!(rows2.len(), 1, "later ready must override earlier reject");
-    }
-
-    // B2: a ledger line writing `pr` as a JSON string keys identically to the search's number.
-    #[test]
-    fn pr_as_string_keys_same_as_number() {
-        let led = r#"{"repo":"r","pr":"7","verdict":"ready","source":"ai-campaign","cost":10,"cost_basis":"b"}"#;
-        let rows = queue_rows(&[pr("r", 7)], &parse_verdicts(led), &HashMap::new());
-        assert_eq!(rows.len(), 1);
-    }
-
-    // B3: one malformed ledger line must not drop the lines after it.
-    #[test]
-    fn malformed_line_does_not_poison_later_lines() {
-        let led = format!(
-            "{}\nnot json at all\n{}",
-            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#,
-            ready_line("r", 1, 42)
-        );
-        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
+    fn red_ci_is_not_presentable() {
         assert_eq!(
-            rows.len(),
-            1,
-            "ready after the garbage line must still take effect"
+            presentable_state(Ci::Red, Merge::Mergeable, None),
+            PresentState::Red
         );
-        assert_eq!(rows[0].0, 42);
     }
 
-    // B4: verdict matching is trimmed + case-insensitive.
+    // Pending CI is not yet judgeable — never presentable, even when mergeable.
     #[test]
-    fn verdict_normalized_trim_lowercase() {
-        let led = r#"{"repo":"r","pr":1,"verdict":"  Ready ","source":"ai-campaign","cost":10,"cost_basis":"b"}"#;
-        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
-        assert_eq!(rows.len(), 1);
+    fn pending_ci_is_not_presentable() {
+        assert_eq!(
+            presentable_state(Ci::Pending, Merge::Mergeable, None),
+            PresentState::Pending
+        );
     }
 
-    // B5: queue = ready/ai-campaign ONLY — human-decided and non-ready verdicts are excluded.
+    // Green but conflicting is the producer's step-3d work, not presentable.
     #[test]
-    fn only_ready_ai_campaign_enters_queue() {
-        for led in [
-            r#"{"repo":"r","pr":1,"verdict":"ready","source":"human","cost":10}"#,
-            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign","cost":10}"#,
-            r#"{"repo":"r","pr":1,"verdict":"close","source":"ai-campaign","cost":10}"#,
-            r#"{"repo":"r","pr":1,"verdict":"relink","source":"ai-campaign","cost":10}"#,
-            r#"{"repo":"r","pr":1,"verdict":"ready","source":"somebody-else","cost":10}"#,
-        ] {
-            let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
-            assert_eq!(rows.len(), 0, "must exclude: {led}");
+    fn green_conflicting_is_conflicting() {
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Conflicting, None),
+            PresentState::Conflicting
+        );
+    }
+
+    // Green + mergeable + not-yet-approved is the presentable case.
+    #[test]
+    fn green_mergeable_is_presentable() {
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Mergeable, None),
+            PresentState::Presentable
+        );
+    }
+
+    // A PR with no configured checks + mergeable is presentable (nothing failing/pending).
+    #[test]
+    fn nochecks_mergeable_is_presentable() {
+        assert_eq!(
+            presentable_state(Ci::NoChecks, Merge::Mergeable, None),
+            PresentState::Presentable
+        );
+    }
+
+    // Unknown mergeability is UNCONFIRMED (GitHub hasn't computed the merge) — not fully clean, so
+    // NOT presentable; the human sees only confirmed-mergeable PRs. Green CI does not rescue it.
+    #[test]
+    fn green_unknown_mergeability_is_not_presentable() {
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Unknown, None),
+            PresentState::MergeUnknown
+        );
+    }
+
+    // Already human-APPROVED leaves the pending-review queue (short-circuits even a red PR).
+    #[test]
+    fn approved_leaves_the_queue() {
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Mergeable, Some("APPROVED")),
+            PresentState::Approved
+        );
+        assert_eq!(
+            presentable_state(Ci::Red, Merge::Mergeable, Some("APPROVED")),
+            PresentState::Approved,
+            "APPROVED short-circuits before CI"
+        );
+    }
+
+    // Only the exact string "APPROVED" leaves the queue — REVIEW_REQUIRED etc. stay presentable.
+    #[test]
+    fn only_exact_approved_leaves_queue() {
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Mergeable, Some("REVIEW_REQUIRED")),
+            PresentState::Presentable
+        );
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Mergeable, Some("CHANGES_REQUESTED")),
+            PresentState::Presentable
+        );
+    }
+
+    // --- has_human_override: a human:* label beats an ai:ready label ----------------------------
+
+    #[test]
+    fn human_override_labels_detected() {
+        for l in ["human:reject", "human:design", "human:close-candidate"] {
+            let p = json!({"labels": [{"name": "ai:ready"}, {"name": l}]});
+            assert!(has_human_override(&p), "must override on {l}");
         }
     }
 
-    // B6: draft PRs are excluded; a missing isDraft field means not-draft (included).
     #[test]
-    fn drafts_excluded_missing_isdraft_included() {
-        let led = ready_line("r", 1, 10);
-        let mut draft = pr("r", 1);
-        draft["isDraft"] = json!(true);
+    fn plain_ai_ready_is_not_overridden() {
+        let p = json!({"labels": [{"name": "ai:ready"}]});
+        assert!(!has_human_override(&p));
+        let none = json!({"number": 1});
+        assert!(!has_human_override(&none), "no labels field => no override");
+    }
+
+    // --- ledger_key: bare for rainlanguage, org-qualified otherwise -----------------------------
+
+    #[test]
+    fn ledger_key_bare_for_rainlanguage_qualified_for_others() {
+        assert_eq!(ledger_key("rainlanguage/rainix", 5), "rainix/5");
         assert_eq!(
-            queue_rows(&[draft], &parse_verdicts(&led), &HashMap::new()).len(),
-            0
-        );
-        assert_eq!(
-            queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new()).len(),
-            1
+            ledger_key("cyclofinance/cyclo.site", 400),
+            "cyclofinance/cyclo.site/400"
         );
     }
 
-    // B7: a cost on the verdict line itself beats the sidecar.
+    // --- cost_for: cheapest-first ordering signal ----------------------------------------------
+
+    // The verdict line's own cost + basis wins over the sidecar.
     #[test]
     fn verdict_cost_beats_sidecar() {
-        let led = ready_line("r", 1, 60);
+        let v = parse_verdicts(
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","sha":"aaa","cost":60,"cost_basis":"basis-1"}"#,
+        );
         let side = parse_sidecar(r#"{"repo":"r","pr":1,"cost":999,"basis":"side","sha":"aaa"}"#);
-        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &side);
-        assert_eq!(rows[0].0, 60);
+        assert_eq!(cost_for("r/1", &v, &side), (60, "basis-1".to_string()));
+    }
+
+    // No cost on the verdict falls to the sidecar; the stale flag appears ONLY when both shas are
+    // non-empty and differ.
+    #[test]
+    fn sidecar_cost_and_stale_flag() {
+        let v = parse_verdicts(
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","sha":"vvv"}"#,
+        );
+        let diff = parse_sidecar(r#"{"repo":"r","pr":1,"cost":5,"basis":"b","sha":"other"}"#);
         assert_eq!(
-            rows[0].4, "basis-1",
-            "basis must come from the verdict line too"
+            cost_for("r/1", &v, &diff),
+            (5, "b [cost from older head]".to_string())
+        );
+        let same = parse_sidecar(r#"{"repo":"r","pr":1,"cost":5,"basis":"b","sha":"vvv"}"#);
+        assert_eq!(cost_for("r/1", &v, &same), (5, "b".to_string()));
+    }
+
+    // A label-only candidate with NO ledger verdict still costs from the sidecar (new path).
+    #[test]
+    fn label_only_candidate_costs_from_sidecar() {
+        let side = parse_sidecar(r#"{"repo":"r","pr":1,"cost":7,"basis":"s","sha":"x"}"#);
+        assert_eq!(
+            cost_for("r/1", &HashMap::new(), &side),
+            (7, "s".to_string())
         );
     }
 
-    // B8: a numeric-string cost on the verdict line is accepted.
+    // Nothing anywhere => unscored 1001 (sorts last).
     #[test]
-    fn numeric_string_cost_accepted() {
-        let led = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","cost":"73","cost_basis":"b"}"#;
-        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &HashMap::new());
-        assert_eq!(rows[0].0, 73);
-    }
-
-    // B10: the stale flag appears ONLY when both shas are non-empty and differ.
-    #[test]
-    fn stale_flag_requires_two_nonempty_differing_shas() {
-        let led = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","sha":"vvv"}"#;
-        let mk = |sha: &str| {
-            parse_sidecar(&format!(
-                r#"{{"repo":"r","pr":1,"cost":5,"basis":"b","sha":"{sha}"}}"#
-            ))
-        };
-        let flagged = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk("other"));
-        assert!(
-            flagged[0].4.ends_with(" [cost from older head]"),
-            "differing shas must flag: {}",
-            flagged[0].4
+    fn unscored_when_no_cost_anywhere() {
+        assert_eq!(
+            cost_for("r/1", &HashMap::new(), &HashMap::new()),
+            (1001, String::new())
         );
-        let same = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk("vvv"));
-        assert_eq!(same[0].4, "b", "same sha must not flag");
-        let empty_side = queue_rows(&[pr("r", 1)], &parse_verdicts(led), &mk(""));
-        assert_eq!(empty_side[0].4, "b", "empty sidecar sha must not flag");
-        let led_nosha = r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#;
-        let no_v_sha = queue_rows(&[pr("r", 1)], &parse_verdicts(led_nosha), &mk("other"));
-        assert_eq!(no_v_sha[0].4, "b", "empty verdict sha must not flag");
     }
 
-    // B11: a sidecar line without a cost contributes nothing.
-    #[test]
-    fn sidecar_without_cost_ignored() {
-        let side = parse_sidecar(r#"{"repo":"r","pr":1,"basis":"b","sha":"x"}"#);
-        assert!(side.is_empty());
-    }
+    // --- parse_verdicts: still used by the queue's cost lookup + the full report ----------------
 
-    // B12: unscored rows carry 1001, sort after every real cost, and render as "unscored".
+    // Last matching line wins by position (append-only ledger).
     #[test]
-    fn unscored_sorts_last_and_renders_unscored() {
+    fn parse_verdicts_last_line_wins() {
         let led = format!(
             "{}\n{}",
-            ready_line("r", 2, 1000),
+            r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#,
+            r#"{"repo":"r","pr":1,"verdict":"reject","source":"ai-campaign"}"#
+        );
+        assert!(parse_verdicts(&led)["r/1"].verdict == Some(Verdict::Reject));
+    }
+
+    // A `pr` written as a JSON string keys identically to the numeric form.
+    #[test]
+    fn parse_verdicts_pr_as_string_keys_same() {
+        let v = parse_verdicts(r#"{"repo":"r","pr":"7","verdict":"ready","source":"ai-campaign"}"#);
+        assert!(v.contains_key("r/7"));
+    }
+
+    // One malformed line must not drop the lines after it.
+    #[test]
+    fn parse_verdicts_malformed_line_skipped() {
+        let led = format!(
+            "not json\n{}",
             r#"{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign"}"#
         );
-        let rows = queue_rows(
-            &[pr("r", 1), pr("r", 2)],
-            &parse_verdicts(&led),
-            &HashMap::new(),
-        );
-        assert_eq!((rows[0].0, rows[0].2), (1000, 2));
-        assert_eq!((rows[1].0, rows[1].2), (1001, 1));
-        let out = render_queue(&rows, &rows, 0, 2);
-        assert!(
-            out.contains("  unscored  r#1  "),
-            "unscored label missing:\n{out}"
-        );
+        assert!(parse_verdicts(&led)["r/1"].verdict == Some(Verdict::Ready));
     }
 
-    // B13: rows sort by (cost, repo, number) ascending.
+    // Verdict matching is trimmed + case-insensitive.
     #[test]
-    fn sort_by_cost_then_repo_then_number() {
-        let led = format!(
-            "{}\n{}\n{}",
-            ready_line("zzz", 1, 10),
-            ready_line("aaa", 9, 10),
-            ready_line("aaa", 2, 5)
-        );
-        let rows = queue_rows(
-            &[pr("zzz", 1), pr("aaa", 9), pr("aaa", 2)],
-            &parse_verdicts(&led),
-            &HashMap::new(),
-        );
-        let order: Vec<(i64, &str, u64)> = rows.iter().map(|r| (r.0, r.1.as_str(), r.2)).collect();
-        assert_eq!(order, vec![(5, "aaa", 2), (10, "aaa", 9), (10, "zzz", 1)]);
+    fn parse_verdicts_verdict_normalized() {
+        let v =
+            parse_verdicts(r#"{"repo":"r","pr":1,"verdict":"  Ready ","source":"ai-campaign"}"#);
+        assert!(v["r/1"].verdict == Some(Verdict::Ready));
     }
 
-    // B14: top slicing via take_presentable — 0 means all; N caps; N beyond len shows all;
-    // rejected rows are skipped, counted, and backfilled by later rows.
-    #[test]
-    fn top_slicing_and_backfill() {
-        let led = format!(
-            "{}\n{}\n{}",
-            ready_line("r", 1, 1),
-            ready_line("r", 2, 2),
-            ready_line("r", 3, 3)
-        );
-        let rows = queue_rows(
-            &[pr("r", 1), pr("r", 2), pr("r", 3)],
-            &parse_verdicts(&led),
-            &HashMap::new(),
-        );
-        let (all, sk) = take_presentable(&rows, 0, |_| true);
-        assert_eq!((all.len(), sk), (3, 0));
-        let (one, _) = take_presentable(&rows, 1, |_| true);
-        assert_eq!(one.len(), 1);
-        let (over, _) = take_presentable(&rows, 99, |_| true);
-        assert_eq!(over.len(), 3);
-        // skip the middle row: slot backfills from the next row and the skip is counted.
-        let (filled, skipped) = take_presentable(&rows, 2, |r| r.2 != 2);
-        assert_eq!(filled.iter().map(|r| r.2).collect::<Vec<_>>(), vec![1, 3]);
-        assert_eq!(skipped, 1);
-        assert!(
-            render_queue(&rows, &filled, skipped, 3).contains("showing 2, 1 unpresentable skipped")
-        );
-    }
+    // --- pr_slug: owner/repo only from real PR URLs ---------------------------------------------
 
-    // B15: the truncation warning fires exactly when the raw search result count hits the limit.
-    #[test]
-    fn truncation_warning_at_search_limit() {
-        assert!(render_queue(&[], &[], 0, 1000).contains("WARNING"));
-        assert!(!render_queue(&[], &[], 0, 999).contains("WARNING"));
-    }
-
-    // B16: an open PR with no ledger entry at all is not in the queue.
-    #[test]
-    fn no_verdict_means_not_in_queue() {
-        let rows = queue_rows(&[pr("r", 1)], &HashMap::new(), &HashMap::new());
-        assert_eq!(rows.len(), 0);
-    }
-
-    // B18: basis text is sanitized — tabs/newlines become spaces, capped at 120 codepoints.
-    #[test]
-    fn basis_sanitized_and_capped() {
-        let long = "x".repeat(200);
-        let led = format!(
-            r#"{{"repo":"r","pr":1,"verdict":"ready","source":"ai-campaign","cost":1,"cost_basis":"a\tb\nc{long}"}}"#
-        );
-        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
-        assert!(rows[0].4.starts_with("a b c"));
-        assert_eq!(rows[0].4.chars().count(), 120);
-    }
-
-    // Ledger keys are bare for rainlanguage, org-qualified for other orgs — the
-    // queue must look up each row under the convention its org uses.
-    #[test]
-    fn org_qualified_ledger_keys_match_non_rainlanguage_rows() {
-        let led = r#"{"repo":"cyclofinance/cyclo.site","pr":400,"verdict":"ready","source":"ai-campaign","cost":50,"cost_basis":"b"}"#;
-        let p = json!({"repository": {"name": "cyclo.site"}, "number": 400,
-                       "url": "https://github.com/cyclofinance/cyclo.site/pull/400"});
-        let rows = queue_rows(&[p], &parse_verdicts(led), &HashMap::new());
-        assert_eq!(
-            rows.len(),
-            1,
-            "cyclofinance row must match its org-qualified ledger key"
-        );
-        let bare = r#"{"repo":"cyclo.site","pr":400,"verdict":"ready","source":"ai-campaign","cost":50,"cost_basis":"b"}"#;
-        let rows2 = queue_rows(
-            &[json!({"repository": {"name": "cyclo.site"}, "number": 400,
-                       "url": "https://github.com/cyclofinance/cyclo.site/pull/400"})],
-            &parse_verdicts(bare),
-            &HashMap::new(),
-        );
-        assert_eq!(
-            rows2.len(),
-            0,
-            "bare key must NOT match a non-rainlanguage row"
-        );
-    }
-
-    // The presentability probe derives owner/repo from the row URL — never guessed by org.
     #[test]
     fn pr_slug_parses_owner_repo_only_from_real_pr_urls() {
         assert_eq!(
@@ -1601,26 +1604,78 @@ mod queue_tests {
             pr_slug("https://github.com/rainlanguage/rainix/pull/1").as_deref(),
             Some("rainlanguage/rainix")
         );
-        assert_eq!(
-            pr_slug("https://example.com/rainlanguage/rainix/pull/1"),
-            None,
-            "wrong host must not pass"
-        );
-        assert_eq!(
-            pr_slug("https://github.com/rainlanguage/rainix/issues/1"),
-            None,
-            "issue URL is not a PR URL"
-        );
+        assert_eq!(pr_slug("https://example.com/o/r/pull/1"), None);
+        assert_eq!(pr_slug("https://github.com/o/r/issues/1"), None);
         assert_eq!(pr_slug(""), None);
     }
 
-    // Exact rendering pin: header wording + cost right-alignment + URL indent.
+    // --- render_queue: header breakdown + rows + cap --------------------------------------------
+
+    fn qc(raw: usize, conflict: usize, red: usize, pending: usize, approved: usize) -> QueueCounts {
+        QueueCounts {
+            raw,
+            excluded: 0,
+            conflict,
+            red,
+            pending,
+            merge_unknown: 0,
+            approved,
+            fetch_error: 0,
+        }
+    }
+
+    // Header pins the true ai:ready -> presentable/conflicting/red/pending/approved breakdown.
     #[test]
-    fn render_exact_format() {
-        let led = ready_line("r", 1, 60);
-        let rows = queue_rows(&[pr("r", 1)], &parse_verdicts(&led), &HashMap::new());
-        let out = render_queue(&rows, &rows, 0, 1);
-        assert_eq!(out, "review queue: 1 ready PRs, reds excluded (showing 1, cheapest first)\n\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1");
+    fn render_header_breakdown() {
+        let rows: Vec<QueueRow> = vec![(
+            60,
+            "r".to_string(),
+            1,
+            "https://github.com/rainlanguage/r/pull/1".to_string(),
+            "basis-1".to_string(),
+        )];
+        let out = render_queue(&rows, &qc(5, 2, 1, 0, 1), 0);
+        assert!(
+            out.starts_with(
+                "review queue: 5 ai:ready -> 1 presentable, 2 conflicting, 1 red, 0 pending, 0 unknown-merge, 1 approved (cheapest first)\n"
+            ),
+            "header:\n{out}"
+        );
+        assert!(out
+            .contains("\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1"));
+    }
+
+    // Unscored rows render "unscored"; excluded + fetch-error surface in the header.
+    #[test]
+    fn render_unscored_and_notes() {
+        let rows: Vec<QueueRow> = vec![(1001, "r".to_string(), 2, "u".to_string(), String::new())];
+        let mut c = qc(3, 0, 0, 0, 0);
+        c.excluded = 1;
+        c.fetch_error = 1;
+        c.merge_unknown = 2;
+        let out = render_queue(&rows, &c, 0);
+        assert!(out.contains("  unscored  r#2  "), "unscored:\n{out}");
+        assert!(out.contains("1 fetch-error"));
+        assert!(out.contains("1 excluded (draft/human-override)"));
+        assert!(
+            out.contains("2 unknown-merge"),
+            "unknown-merge count:\n{out}"
+        );
+    }
+
+    // `top` caps the printed list and reports "+N more"; the 1000-limit warning fires at raw>=1000.
+    #[test]
+    fn render_caps_list_and_warns_on_truncation() {
+        let rows: Vec<QueueRow> = (1..=3)
+            .map(|n| (1, "r".to_string(), n, format!("u{n}"), String::new()))
+            .collect();
+        let out = render_queue(&rows, &qc(3, 0, 0, 0, 0), 2);
+        assert!(out.contains("r#1"));
+        assert!(out.contains("r#2"));
+        assert!(!out.contains("r#3"), "3rd row must be capped out");
+        assert!(out.contains("+1 more presentable"));
+        assert!(render_queue(&[], &qc(1000, 0, 0, 0, 0), 0).contains("WARNING"));
+        assert!(!render_queue(&[], &qc(999, 0, 0, 0, 0), 0).contains("WARNING"));
     }
 }
 
