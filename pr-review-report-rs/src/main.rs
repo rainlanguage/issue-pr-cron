@@ -1397,6 +1397,143 @@ fn trusted_comments_mode(slug: &str, n: &str, marker: Option<&str>, issue: bool)
     i32::from(bodies.is_empty())
 }
 
+/// The verdict word carried by a PR's current `ai:*` label (the authoritative migrated state), or
+/// None if the PR has no AI verdict label OR an AMBIGUOUS set (more than one `ai:*` verdict label —
+/// the backfill must never guess which to stamp). Inverse of [`verdict_label`].
+fn label_verdict(pr: &Value) -> Option<&'static str> {
+    let mut verdicts = pr
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l.get("name").and_then(|n| n.as_str()))
+        .filter_map(|name| match name {
+            "ai:ready" => Some("ready"),
+            "ai:reject" => Some("reject"),
+            "ai:design" => Some("design"),
+            "ai:close-candidate" => Some("close"),
+            "ai:relink" => Some("relink"),
+            _ => None,
+        });
+    let verdict = verdicts.next()?;
+    // A second `ai:*` verdict label (labels are unique per PR, so it's a DIFFERENT verdict) means the
+    // PR is ambiguously labelled — skip it rather than stamp an order-dependent guess.
+    if verdicts.next().is_some() {
+        return None;
+    }
+    Some(verdict)
+}
+
+/// What the ledger→GitHub comment backfill should do for one migrated PR.
+#[derive(Debug, PartialEq, Eq)]
+enum BackfillAction {
+    Post { verdict: String, sha: String },
+    Skip(String),
+}
+
+/// Decide whether to backfill a `🤖 ai:vetter` comment for a migrated PR. The migration moved verdicts
+/// to `ai:*` LABELS but never wrote the sha-bound COMMENTS the vetted-at-head gate needs; this replays
+/// the label's verdict as a comment ONLY when it's still safe to do so: the PR is open, not
+/// human-decided, its head still equals the ledger sha the verdict was made at (a moved head means the
+/// code changed — that needs a genuine re-vet, not a backfill), it still carries an `ai:*` label, and
+/// it isn't already stamped at head. The verdict comes from the current LABEL (authoritative), the sha
+/// from the still-current head.
+fn backfill_plan(pr: &Value, ledger_sha: &str) -> BackfillAction {
+    let state = pr.get("state").and_then(|s| s.as_str()).unwrap_or("");
+    if state != "OPEN" {
+        return BackfillAction::Skip("PR not open".into());
+    }
+    if has_human_override(pr) || has_native_human_review(pr) {
+        return BackfillAction::Skip("human-decided".into());
+    }
+    let head = pr.get("headRefOid").and_then(|s| s.as_str()).unwrap_or("");
+    if head.is_empty() {
+        return BackfillAction::Skip("no head sha".into());
+    }
+    if head != ledger_sha {
+        return BackfillAction::Skip("head moved since vet".into());
+    }
+    let Some(verdict) = label_verdict(pr) else {
+        return BackfillAction::Skip("no ai:* label".into());
+    };
+    if vetted_at_head(pr, head) {
+        return BackfillAction::Skip("already stamped at head".into());
+    }
+    BackfillAction::Post {
+        verdict: verdict.to_string(),
+        sha: head.to_string(),
+    }
+}
+
+/// `--backfill-comments [--dry-run] [--limit N]`: one-time completion of the ledger→labels migration.
+/// For each ledger verdict, post the `🤖 ai:vetter\nReviewed <head>:` comment the vetted-at-head gate
+/// requires — but only when [`backfill_plan`] says it's safe (open, not human-decided, head unmoved
+/// since the vet, still AI-labelled, not already stamped). Head-moved PRs are left for a genuine
+/// re-vet. Exit 1 if any fetch/post errored.
+fn backfill_comments_mode(ledger_path: &str, dry_run: bool, limit: usize) -> i32 {
+    let verds = load_verdicts(ledger_path);
+    let mut keys: Vec<&String> = verds.keys().collect();
+    keys.sort();
+    let (mut posted, mut skipped, mut errors) = (0usize, 0usize, 0usize);
+    for key in keys {
+        if limit > 0 && posted >= limit {
+            break;
+        }
+        let ve = &verds[key];
+        // Human verdicts are recorded as native reviews / human:* labels, never `🤖 ai:vetter` comments.
+        if ve.source == Source::Human {
+            continue;
+        }
+        let Some((repo, num)) = key.rsplit_once('/') else {
+            continue;
+        };
+        let slug = if repo.contains('/') {
+            repo.to_string()
+        } else {
+            format!("rainlanguage/{repo}")
+        };
+        let Some(pr) = gh_json(&[
+            "pr",
+            "view",
+            num,
+            "-R",
+            &slug,
+            "--json",
+            "state,headRefOid,labels,comments,reviewDecision",
+        ]) else {
+            eprintln!("error: fetch failed for {slug}#{num}");
+            errors += 1;
+            continue;
+        };
+        match backfill_plan(&pr, &ve.sha) {
+            BackfillAction::Post { verdict, sha } => {
+                let short = &sha[..sha.len().min(9)];
+                if dry_run {
+                    println!("would post  {slug}#{num}  {verdict} @ {short}");
+                    posted += 1;
+                } else {
+                    let body = verdict_comment(&sha, &verdict, &ve.note);
+                    if gh_run(&["pr", "comment", num, "-R", &slug, "--body", &body]) {
+                        println!("posted      {slug}#{num}  {verdict} @ {short}");
+                        posted += 1;
+                    } else {
+                        eprintln!("error: post failed for {slug}#{num}");
+                        errors += 1;
+                    }
+                }
+            }
+            BackfillAction::Skip(_) => skipped += 1,
+        }
+    }
+    let verb = if dry_run {
+        "would backfill"
+    } else {
+        "backfill"
+    };
+    println!("{verb}: {posted} posted, {skipped} skipped, {errors} errors");
+    i32::from(errors > 0)
+}
+
 fn main() {
     let base = base_dir();
     // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
@@ -1460,6 +1597,26 @@ fn main() {
             std::process::exit(2);
         };
         std::process::exit(trusted_comments_mode(slug, n, marker, issue));
+    }
+    if args.get(1).map(String::as_str) == Some("--backfill-comments") {
+        let rest = &args[2..];
+        let dry_run = rest.iter().any(|a| a == "--dry-run");
+        let mut limit: usize = 0;
+        let mut i = 0;
+        while i < rest.len() {
+            if rest[i] == "--limit" {
+                i += 1;
+                // Fail CLOSED: a missing/unparsable --limit must not silently mean "unlimited" for a
+                // GitHub-writing migration (a `--limit ten` typo would post every eligible comment).
+                let Some(v) = rest.get(i).and_then(|s| s.parse::<usize>().ok()) else {
+                    eprintln!("error: --limit requires a non-negative integer");
+                    std::process::exit(2);
+                };
+                limit = v;
+            }
+            i += 1;
+        }
+        std::process::exit(backfill_comments_mode(&review_verdicts, dry_run, limit));
     }
     if args.get(1).map(String::as_str) == Some("--run-metrics") {
         let Some(path) = args.get(2) else {
@@ -3054,5 +3211,103 @@ mod record_verdict_tests {
         assert!(has_human_override(&human), "human:reject must guard");
         let ai_only = json!({"labels":[{"name":"ai:ready"}]});
         assert!(!has_human_override(&ai_only));
+    }
+}
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::{backfill_plan, label_verdict, BackfillAction};
+    use serde_json::json;
+
+    fn open_pr(sha: &str, label: &str) -> serde_json::Value {
+        json!({
+            "state": "OPEN",
+            "headRefOid": sha,
+            "labels": [{"name": label}],
+            "comments": [],
+            "reviewDecision": "REVIEW_REQUIRED"
+        })
+    }
+
+    #[test]
+    fn label_verdict_reads_the_ai_label() {
+        assert_eq!(label_verdict(&open_pr("s", "ai:ready")), Some("ready"));
+        assert_eq!(
+            label_verdict(&open_pr("s", "ai:close-candidate")),
+            Some("close")
+        );
+        assert_eq!(label_verdict(&open_pr("s", "ai:relink")), Some("relink"));
+        assert_eq!(label_verdict(&json!({"labels":[{"name":"bug"}]})), None);
+        // Ambiguous multi-verdict label set → None (the backfill must not stamp an order-dependent
+        // guess); a single ai:* verdict alongside non-verdict labels still resolves.
+        assert_eq!(
+            label_verdict(&json!({"labels":[{"name":"ai:ready"},{"name":"ai:reject"}]})),
+            None,
+            "two ai:* verdicts is ambiguous"
+        );
+        assert_eq!(
+            label_verdict(&json!({"labels":[{"name":"ai:ready"},{"name":"bug"}]})),
+            Some("ready"),
+            "one ai:* verdict + noise still resolves"
+        );
+    }
+
+    // Happy path: open, no human decision, head still equals the ledger sha, AI-labelled, unstamped.
+    #[test]
+    fn backfill_posts_for_unmoved_head_with_ai_label() {
+        assert_eq!(
+            backfill_plan(&open_pr("abc123", "ai:ready"), "abc123"),
+            BackfillAction::Post {
+                verdict: "ready".into(),
+                sha: "abc123".into()
+            }
+        );
+    }
+
+    // A moved head means the code changed since the vet — never backfill, it needs a real re-vet.
+    #[test]
+    fn backfill_skips_moved_head() {
+        assert_eq!(
+            backfill_plan(&open_pr("newhead", "ai:ready"), "oldsha"),
+            BackfillAction::Skip("head moved since vet".into())
+        );
+    }
+
+    // Human decisions (label OR native review) and closed PRs are never backfilled.
+    #[test]
+    fn backfill_skips_human_and_closed() {
+        let human_label = json!({"state":"OPEN","headRefOid":"abc","labels":[{"name":"ai:ready"},{"name":"human:reject"}],"comments":[],"reviewDecision":"REVIEW_REQUIRED"});
+        assert_eq!(
+            backfill_plan(&human_label, "abc"),
+            BackfillAction::Skip("human-decided".into())
+        );
+        let approved = json!({"state":"OPEN","headRefOid":"abc","labels":[{"name":"ai:ready"}],"comments":[],"reviewDecision":"APPROVED"});
+        assert_eq!(
+            backfill_plan(&approved, "abc"),
+            BackfillAction::Skip("human-decided".into())
+        );
+        let closed = json!({"state":"CLOSED","headRefOid":"abc","labels":[{"name":"ai:ready"}],"comments":[],"reviewDecision":"REVIEW_REQUIRED"});
+        assert_eq!(
+            backfill_plan(&closed, "abc"),
+            BackfillAction::Skip("PR not open".into())
+        );
+    }
+
+    // No AI label (never migrated / relabelled) and already-stamped-at-head are both no-ops.
+    #[test]
+    fn backfill_skips_no_label_and_already_stamped() {
+        let no_label = json!({"state":"OPEN","headRefOid":"abc","labels":[],"comments":[],"reviewDecision":"REVIEW_REQUIRED"});
+        assert_eq!(
+            backfill_plan(&no_label, "abc"),
+            BackfillAction::Skip("no ai:* label".into())
+        );
+        let stamped = json!({
+            "state":"OPEN","headRefOid":"abc","labels":[{"name":"ai:ready"}],"reviewDecision":"REVIEW_REQUIRED",
+            "comments":[{"author":{"login":"thedavidmeister"},"body":"🤖 ai:vetter\nReviewed abc: ready"}]
+        });
+        assert_eq!(
+            backfill_plan(&stamped, "abc"),
+            BackfillAction::Skip("already stamped at head".into())
+        );
     }
 }
