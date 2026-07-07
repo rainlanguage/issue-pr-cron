@@ -68,6 +68,7 @@
       "Glob",
       "Grep",
       "Task",
+      "Skill",
       "TodoWrite",
       "WebFetch",
       "WebSearch"
