@@ -1398,21 +1398,30 @@ fn trusted_comments_mode(slug: &str, n: &str, marker: Option<&str>, issue: bool)
 }
 
 /// The verdict word carried by a PR's current `ai:*` label (the authoritative migrated state), or
-/// None if the PR has no AI verdict label. Inverse of [`verdict_label`].
+/// None if the PR has no AI verdict label OR an AMBIGUOUS set (more than one `ai:*` verdict label —
+/// the backfill must never guess which to stamp). Inverse of [`verdict_label`].
 fn label_verdict(pr: &Value) -> Option<&'static str> {
-    pr.get("labels")
+    let mut verdicts = pr
+        .get("labels")
         .and_then(|l| l.as_array())
         .into_iter()
         .flatten()
         .filter_map(|l| l.get("name").and_then(|n| n.as_str()))
-        .find_map(|name| match name {
+        .filter_map(|name| match name {
             "ai:ready" => Some("ready"),
             "ai:reject" => Some("reject"),
             "ai:design" => Some("design"),
             "ai:close-candidate" => Some("close"),
             "ai:relink" => Some("relink"),
             _ => None,
-        })
+        });
+    let verdict = verdicts.next()?;
+    // A second `ai:*` verdict label (labels are unique per PR, so it's a DIFFERENT verdict) means the
+    // PR is ambiguously labelled — skip it rather than stamp an order-dependent guess.
+    if verdicts.next().is_some() {
+        return None;
+    }
+    Some(verdict)
 }
 
 /// What the ledger→GitHub comment backfill should do for one migrated PR.
@@ -1597,9 +1606,13 @@ fn main() {
         while i < rest.len() {
             if rest[i] == "--limit" {
                 i += 1;
-                if let Some(v) = rest.get(i).and_then(|s| s.parse::<usize>().ok()) {
-                    limit = v;
-                }
+                // Fail CLOSED: a missing/unparsable --limit must not silently mean "unlimited" for a
+                // GitHub-writing migration (a `--limit ten` typo would post every eligible comment).
+                let Some(v) = rest.get(i).and_then(|s| s.parse::<usize>().ok()) else {
+                    eprintln!("error: --limit requires a non-negative integer");
+                    std::process::exit(2);
+                };
+                limit = v;
             }
             i += 1;
         }
@@ -3225,6 +3238,18 @@ mod backfill_tests {
         );
         assert_eq!(label_verdict(&open_pr("s", "ai:relink")), Some("relink"));
         assert_eq!(label_verdict(&json!({"labels":[{"name":"bug"}]})), None);
+        // Ambiguous multi-verdict label set → None (the backfill must not stamp an order-dependent
+        // guess); a single ai:* verdict alongside non-verdict labels still resolves.
+        assert_eq!(
+            label_verdict(&json!({"labels":[{"name":"ai:ready"},{"name":"ai:reject"}]})),
+            None,
+            "two ai:* verdicts is ambiguous"
+        );
+        assert_eq!(
+            label_verdict(&json!({"labels":[{"name":"ai:ready"},{"name":"bug"}]})),
+            Some("ready"),
+            "one ai:* verdict + noise still resolves"
+        );
     }
 
     // Happy path: open, no human decision, head still equals the ledger sha, AI-labelled, unstamped.
