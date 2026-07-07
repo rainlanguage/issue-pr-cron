@@ -1397,6 +1397,179 @@ fn trusted_comments_mode(slug: &str, n: &str, marker: Option<&str>, issue: bool)
     i32::from(bodies.is_empty())
 }
 
+/// PR state as reported by `gh pr list`, for the clone-gc decision.
+#[derive(Debug, PartialEq, Eq)]
+enum PrState {
+    Open,
+    Merged,
+    Closed,
+}
+
+/// What gc should do with one clone, plus a human-readable reason.
+#[derive(Debug, PartialEq, Eq)]
+enum GcAction {
+    Delete(String),
+    Keep(String),
+}
+
+/// One clone's state, as gathered for the gc decision.
+struct CloneState {
+    /// No uncommitted changes (`git status --porcelain` empty).
+    clean: bool,
+    /// Commits ahead of upstream — i.e. unpushed local work.
+    ahead: u32,
+    /// Resolved PR state for the checked-out branch, if any.
+    pr: Option<PrState>,
+    /// Days since the clone was last modified.
+    age_days: u64,
+}
+
+/// Map a `gh pr list` state string to a [`PrState`].
+fn parse_pr_state(s: &str) -> Option<PrState> {
+    match s {
+        "OPEN" => Some(PrState::Open),
+        "MERGED" => Some(PrState::Merged),
+        "CLOSED" => Some(PrState::Closed),
+        _ => None,
+    }
+}
+
+/// Extract `owner/repo` from a git remote URL (https or ssh form), stripping a trailing `.git`.
+/// `https://github.com/rainlanguage/raindex.git` → `rainlanguage/raindex`;
+/// `git@github.com:rainlanguage/cyclo.site.git`  → `rainlanguage/cyclo.site` (dots in the repo name
+/// are preserved — only a trailing `.git` is stripped).
+fn parse_repo_slug(remote_url: &str) -> Option<String> {
+    let (_, rest) = remote_url.trim().split_once("github.com")?;
+    let rest = rest.trim_start_matches([':', '/']);
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let mut it = rest.split('/');
+    let owner = it.next().filter(|x| !x.is_empty())?;
+    let repo = it.next().filter(|x| !x.is_empty())?;
+    Some(format!("{owner}/{repo}"))
+}
+
+/// Decide whether a clone is safe to garbage-collect, with a reason. Precedence is deliberate:
+/// unpushed/uncommitted work is ALWAYS preserved (never gc'd, whatever the PR state); then a
+/// merged/closed PR means the work has landed or been abandoned upstream, so the clone is disposable;
+/// an open PR is active work (kept); a clone with no resolvable PR is kept until it goes stale (the
+/// age backstop) so ad-hoc clones with no PR don't accumulate forever.
+fn gc_decision(s: &CloneState, max_age_days: u64) -> GcAction {
+    if !s.clean {
+        return GcAction::Keep("uncommitted changes".into());
+    }
+    if s.ahead > 0 {
+        return GcAction::Keep(format!("{} unpushed commit(s)", s.ahead));
+    }
+    match s.pr {
+        Some(PrState::Merged) => GcAction::Delete("PR merged".into()),
+        Some(PrState::Closed) => GcAction::Delete("PR closed".into()),
+        Some(PrState::Open) => GcAction::Keep("open PR".into()),
+        None => {
+            if s.age_days >= max_age_days {
+                GcAction::Delete(format!("no PR, idle {}d", s.age_days))
+            } else {
+                GcAction::Keep(format!("no PR, idle {}d < {max_age_days}d", s.age_days))
+            }
+        }
+    }
+}
+
+/// Run `git -C <dir> <args>` and return trimmed stdout, or None on spawn failure / non-zero exit.
+fn git_out(dir: &std::path::Path, args: &[&str]) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Resolve the PR state of the clone's checked-out branch, or None when there's no PR (or it can't be
+/// resolved — detached HEAD, missing remote, offline). Only the first `gh pr list` match is used.
+fn resolve_pr_state(dir: &std::path::Path) -> Option<PrState> {
+    let branch = git_out(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if branch.is_empty() || branch == "HEAD" {
+        return None; // detached HEAD — nothing to map
+    }
+    let slug = parse_repo_slug(&git_out(dir, &["remote", "get-url", "origin"])?)?;
+    let v = gh_json(&[
+        "pr", "list", "-R", &slug, "--head", &branch, "--state", "all", "--json", "state",
+        "--limit", "1",
+    ])?;
+    parse_pr_state(v.as_array()?.first()?.get("state")?.as_str()?)
+}
+
+/// Days since the clone dir was last modified (0 on any error — errs toward KEEPING, since only the
+/// no-PR age backstop consults it).
+fn clone_age_days(dir: &std::path::Path) -> u64 {
+    std::fs::metadata(dir)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0)
+}
+
+/// `--gc-clones <work-dir> [--dry-run] [--max-age-days N]`: garbage-collect the per-PR/issue work
+/// clones directly under <work-dir>. A clone is deleted only when it is clean + fully pushed AND its
+/// checked-out branch's PR is merged/closed (or it has no PR and has been idle past the age cap);
+/// clones with uncommitted/unpushed work or an open PR are always kept. Prints one line per clone.
+fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
+    let Ok(entries) = std::fs::read_dir(work_dir) else {
+        eprintln!("error: cannot read work-dir {work_dir}");
+        return 2;
+    };
+    let mut dirs: Vec<std::path::PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.join(".git").is_dir())
+        .collect();
+    dirs.sort();
+    let (mut deleted, mut kept) = (0u32, 0u32);
+    for dir in &dirs {
+        let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+        let clean = git_out(dir, &["status", "--porcelain"])
+            .map(|s| s.is_empty())
+            .unwrap_or(false);
+        let ahead = git_out(dir, &["rev-list", "--count", "@{u}..HEAD"])
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
+        let state = CloneState {
+            clean,
+            ahead,
+            pr: resolve_pr_state(dir),
+            age_days: clone_age_days(dir),
+        };
+        match gc_decision(&state, max_age_days) {
+            GcAction::Delete(reason) => {
+                if dry_run {
+                    println!("would delete  {name}  ({reason})");
+                    deleted += 1;
+                } else if std::fs::remove_dir_all(dir).is_ok() {
+                    println!("deleted       {name}  ({reason})");
+                    deleted += 1;
+                } else {
+                    eprintln!("error deleting {name}");
+                    kept += 1;
+                }
+            }
+            GcAction::Keep(reason) => {
+                println!("kept          {name}  ({reason})");
+                kept += 1;
+            }
+        }
+    }
+    let verb = if dry_run { "would gc" } else { "gc" };
+    println!(
+        "{verb}: {deleted} deleted, {kept} kept ({} clones)",
+        dirs.len()
+    );
+    0
+}
+
 fn main() {
     let base = base_dir();
     // Parse cron.env (KEY=VALUE) from the base dir if present; env vars override it; then defaults.
@@ -1460,6 +1633,33 @@ fn main() {
             std::process::exit(2);
         };
         std::process::exit(trusted_comments_mode(slug, n, marker, issue));
+    }
+    if args.get(1).map(String::as_str) == Some("--gc-clones") {
+        let rest = &args[2..];
+        let dry_run = rest.iter().any(|a| a == "--dry-run");
+        let mut max_age_days: u64 = 30;
+        let mut positional: Vec<&str> = Vec::new();
+        let mut i = 0;
+        while i < rest.len() {
+            match rest[i].as_str() {
+                "--dry-run" => {}
+                "--max-age-days" => {
+                    i += 1;
+                    if let Some(v) = rest.get(i).and_then(|s| s.parse::<u64>().ok()) {
+                        max_age_days = v;
+                    }
+                }
+                other => positional.push(other),
+            }
+            i += 1;
+        }
+        let Some(&work_dir) = positional.first() else {
+            eprintln!(
+                "usage: pr-review-report --gc-clones <work-dir> [--dry-run] [--max-age-days N]"
+            );
+            std::process::exit(2);
+        };
+        std::process::exit(gc_clones_mode(work_dir, max_age_days, dry_run));
     }
     if args.get(1).map(String::as_str) == Some("--run-metrics") {
         let Some(path) = args.get(2) else {
@@ -3054,5 +3254,97 @@ mod record_verdict_tests {
         assert!(has_human_override(&human), "human:reject must guard");
         let ai_only = json!({"labels":[{"name":"ai:ready"}]});
         assert!(!has_human_override(&ai_only));
+    }
+}
+
+#[cfg(test)]
+mod gc_tests {
+    use super::{gc_decision, parse_pr_state, parse_repo_slug, CloneState, GcAction, PrState};
+
+    fn st(clean: bool, ahead: u32, pr: Option<PrState>, age_days: u64) -> CloneState {
+        CloneState {
+            clean,
+            ahead,
+            pr,
+            age_days,
+        }
+    }
+
+    #[test]
+    fn parse_repo_slug_https_ssh_and_dotted_names() {
+        assert_eq!(
+            parse_repo_slug("https://github.com/rainlanguage/raindex.git").as_deref(),
+            Some("rainlanguage/raindex")
+        );
+        // ssh form + a dotted repo name; only trailing .git is stripped, inner dots preserved.
+        assert_eq!(
+            parse_repo_slug("git@github.com:rainlanguage/cyclo.site.git").as_deref(),
+            Some("rainlanguage/cyclo.site")
+        );
+        // no .git suffix, trailing slash tolerated.
+        assert_eq!(
+            parse_repo_slug("https://github.com/cyclofinance/cyclo.site/").as_deref(),
+            Some("cyclofinance/cyclo.site")
+        );
+        // non-github or malformed → None.
+        assert_eq!(parse_repo_slug("https://example.com/x/y"), None);
+        assert_eq!(parse_repo_slug("git@github.com:onlyowner"), None);
+    }
+
+    #[test]
+    fn parse_pr_state_maps_states() {
+        assert_eq!(parse_pr_state("OPEN"), Some(PrState::Open));
+        assert_eq!(parse_pr_state("MERGED"), Some(PrState::Merged));
+        assert_eq!(parse_pr_state("CLOSED"), Some(PrState::Closed));
+        assert_eq!(parse_pr_state("DRAFT"), None);
+    }
+
+    // A merged or closed PR on a clean, fully-pushed clone is disposable.
+    #[test]
+    fn gc_deletes_merged_and_closed_when_clean() {
+        assert_eq!(
+            gc_decision(&st(true, 0, Some(PrState::Merged), 0), 30),
+            GcAction::Delete("PR merged".into())
+        );
+        assert_eq!(
+            gc_decision(&st(true, 0, Some(PrState::Closed), 0), 30),
+            GcAction::Delete("PR closed".into())
+        );
+    }
+
+    // An open PR is active work — never gc'd.
+    #[test]
+    fn gc_keeps_open_pr() {
+        assert_eq!(
+            gc_decision(&st(true, 0, Some(PrState::Open), 999), 30),
+            GcAction::Keep("open PR".into())
+        );
+    }
+
+    // Unpushed / uncommitted work is preserved even when the PR is merged — the safety guard wins
+    // over the disposability rule (this is the whole reason gc is safe to run unattended).
+    #[test]
+    fn gc_never_deletes_dirty_or_unpushed_even_if_merged() {
+        assert_eq!(
+            gc_decision(&st(false, 0, Some(PrState::Merged), 0), 30),
+            GcAction::Keep("uncommitted changes".into())
+        );
+        assert_eq!(
+            gc_decision(&st(true, 3, Some(PrState::Merged), 0), 30),
+            GcAction::Keep("3 unpushed commit(s)".into())
+        );
+    }
+
+    // No resolvable PR: kept until idle past the age cap, then collected (boundary is inclusive).
+    #[test]
+    fn gc_age_backstop_for_no_pr_clones() {
+        assert!(matches!(
+            gc_decision(&st(true, 0, None, 13), 14),
+            GcAction::Keep(_)
+        ));
+        assert_eq!(
+            gc_decision(&st(true, 0, None, 14), 14),
+            GcAction::Delete("no PR, idle 14d".into())
+        );
     }
 }
