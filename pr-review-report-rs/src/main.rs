@@ -115,16 +115,6 @@ fn gh_run(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// Append one line (+newline) to a file, creating it if absent — the append-only cost sidecar write.
-fn append_line(path: &str, line: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    writeln!(f, "{line}")
-}
-
 struct VEntry {
     verdict: Option<Verdict>,
     source: Source,
@@ -516,14 +506,6 @@ fn presentable_state(ci: Ci, merge: Merge, review_decision: Option<&str>) -> Pre
     }
 }
 
-/// owner/repo slug + number → verdict-ledger / cost-sidecar key: bare repo name for rainlanguage,
-/// org-qualified "owner/repo" for every other org (e.g. cyclofinance/cyclo.site) — the convention
-/// those files use.
-fn ledger_key(slug: &str, num: u64) -> String {
-    let repo = slug.strip_prefix("rainlanguage/").unwrap_or(slug);
-    format!("{repo}/{num}")
-}
-
 /// Verification cost + basis for ordering the queue cheapest-first: the verdict line's own cost
 /// wins, else the sidecar's (sha mismatch flagged), else unscored (1001, sorts last). A label-only
 /// candidate with no ledger entry falls straight through to the sidecar, then unscored.
@@ -644,10 +626,7 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
     out
 }
 
-fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
-    let verds = load_verdicts(review_verdicts);
-    let sidecar = parse_sidecar(&std::fs::read_to_string(costs_path).unwrap_or_default());
-
+fn queue_mode(top: usize) {
     // Candidates come from the `ai:ready` LABEL, NOT `gh search --checks success`. That qualifier is
     // unreliable — the identical query returned 93 then 203 open PRs minutes apart, which collapsed a
     // 75-deep review queue to "1". Label search is reliable; CI/mergeability is then verified per-PR
@@ -738,7 +717,7 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
                 // pushed-since PR is not presented; it's counted as awaiting (re-)vet.
                 let head = j.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("");
                 if vetted_at_head(&j, head) {
-                    let (cost, basis) = cost_for(&ledger_key(slug, *num), &verds, &sidecar);
+                    let (cost, basis) = cost_from_comment(last_vetter_comment(&j).as_deref());
                     let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
                     rows.push((cost, repo_disp, *num, url.clone(), basis));
                 } else {
@@ -1105,15 +1084,74 @@ fn labels_to_remove(current: &[String], target: &str) -> Vec<String> {
         .collect()
 }
 
-/// The SHA-bound vetter comment: `🤖 ai:vetter` marker line, then `Reviewed <sha>: <verdict>`
-/// (plus ` — <note>` when a note is given).
-fn verdict_comment(sha: &str, verdict: &str, note: &str) -> String {
+/// The SHA-bound vetter comment: `🤖 ai:vetter` marker line, then `Reviewed <sha>: <verdict>` (plus
+/// ` — <note>`), then a `cost <n> — <basis>` line when a cost is given. The cost is on its OWN line so
+/// the `Reviewed <sha>:`/`Reviewed <sha>: <verdict>` matches (vetted-at-head, skip-dedup) are unaffected.
+/// This comment is now the SOLE home of verification cost — there is no cost sidecar.
+fn verdict_comment(sha: &str, verdict: &str, note: &str, cost: Option<i64>, basis: &str) -> String {
     let tail = if note.trim().is_empty() {
         String::new()
     } else {
         format!(" — {}", note.trim())
     };
-    format!("🤖 ai:vetter\nReviewed {sha}: {verdict}{tail}")
+    let cost_line = match cost {
+        Some(c) if basis.trim().is_empty() => format!("\ncost {c}"),
+        Some(c) => format!("\ncost {c} — {}", basis.trim()),
+        None => String::new(),
+    };
+    format!("🤖 ai:vetter\nReviewed {sha}: {verdict}{tail}{cost_line}")
+}
+
+/// Verification cost + basis parsed from a vetter comment's `cost <n> — <basis>` line, else
+/// (1001, "") = unscored (sorts last). This is where the queue reads cost now that the sidecar is gone.
+fn cost_from_comment(body: Option<&str>) -> (i64, String) {
+    let Some(body) = body else {
+        return (1001, String::new());
+    };
+    for line in body.lines() {
+        if let Some(rest) = line.strip_prefix("cost ") {
+            let (num, basis) = match rest.split_once(" — ") {
+                Some((n, b)) => (n.trim(), b.trim()),
+                None => (rest.trim(), ""),
+            };
+            if let Ok(c) = num.parse::<i64>() {
+                return (c, basis.to_string());
+            }
+        }
+    }
+    (1001, String::new())
+}
+
+/// Append a `cost <n> — <basis>` line to a vetter comment body that lacks one — the one-time
+/// ledger→comment cost migration. None when the body already carries a cost line (idempotent).
+fn add_cost_line(body: &str, cost: i64, basis: &str) -> Option<String> {
+    if body.lines().any(|l| l.starts_with("cost ")) {
+        return None;
+    }
+    let b = basis.trim();
+    Some(if b.is_empty() {
+        format!("{body}\ncost {cost}")
+    } else {
+        format!("{body}\ncost {cost} — {b}")
+    })
+}
+
+/// The (comment node-id, new body) needed to migrate a cost onto a PR: the most-recent trusted
+/// `🤖 ai:vetter` comment, IF it lacks a cost line. None when there's no such comment or it already
+/// has one. `pr` must be `gh pr view --json comments` output (comment objects carry `id` + `body`).
+fn cost_edit_plan(pr: &Value, cost: i64, basis: &str) -> Option<(String, String)> {
+    let (id, body) = pr
+        .get("comments")
+        .and_then(|c| c.as_array())?
+        .iter()
+        .filter(|c| author_login(c) == Some(TRUSTED_AUTHOR))
+        .filter_map(|c| {
+            let b = c.get("body").and_then(|x| x.as_str())?;
+            let id = c.get("id").and_then(|x| x.as_str())?;
+            b.starts_with("🤖 ai:vetter").then_some((id, b))
+        })
+        .next_back()?;
+    Some((id.to_string(), add_cost_line(body, cost, basis)?))
 }
 
 /// The GitHub login the pipeline's shared bot account authenticates as — the human, the producer
@@ -1173,14 +1211,6 @@ fn should_skip_comment(last_vetter_body: Option<&str>, sha: &str, verdict: &str)
         Some(b) => b.contains(&format!("Reviewed {sha}: {verdict}")),
         None => false,
     }
-}
-
-/// One cost-sidecar line (review-costs.jsonl) in the shape `cost_for`/`parse_sidecar` reads: the
-/// ledger-key repo (bare for rainlanguage, org-qualified otherwise), pr, cost, basis, reviewed sha.
-/// This keeps the queue's cheapest-first ordering working once the vetter writes labels not a ledger.
-fn cost_sidecar_line(ledger_repo: &str, pr: &str, cost: i64, basis: &str, sha: &str) -> String {
-    serde_json::json!({"repo": ledger_repo, "pr": pr, "cost": cost, "basis": basis, "sha": sha})
-        .to_string()
 }
 
 /// The recording decision, computed PURELY from the fetched PR JSON so the guard-before-write logic
@@ -1243,7 +1273,6 @@ fn record_verdict_mode(
     note: &str,
     cost: Option<i64>,
     basis: &str,
-    costs_path: &str,
     dry_run: bool,
 ) -> i32 {
     let Some(target) = verdict_label(verdict) else {
@@ -1282,7 +1311,7 @@ fn record_verdict_mode(
             skip_comment,
         } => (to_remove, has_target, sha, skip_comment),
     };
-    let comment = verdict_comment(&sha, verdict, note);
+    let comment = verdict_comment(&sha, verdict, note, cost, basis);
 
     if dry_run {
         println!("[dry-run] {slug}#{pr} @ {sha}");
@@ -1309,7 +1338,7 @@ fn record_verdict_mode(
         println!(
             "  cost: {}",
             match cost {
-                Some(c) => format!("{c} ({basis}) -> {costs_path}"),
+                Some(c) => format!("{c} ({basis}) -> embedded in the comment"),
                 None => "(none)".to_string(),
             }
         );
@@ -1341,19 +1370,10 @@ fn record_verdict_mode(
         }
     }
     // A swallowed comment failure would report success with the SHA-bound rationale never posted.
+    // The cost now travels INSIDE this comment (verdict_comment embeds it) — there is no cost sidecar.
     if !skip && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
         eprintln!("error: recorded {target} on {slug}#{pr} but FAILED to post the verdict comment");
         return 1;
-    }
-    // Cost feeds the queue's cheapest-first ordering (cost_for reads this sidecar).
-    if let Some(c) = cost {
-        let ledger_repo = slug.strip_prefix("rainlanguage/").unwrap_or(slug);
-        let line = cost_sidecar_line(ledger_repo, pr, c, basis, &sha);
-        if let Err(e) = append_line(costs_path, &line) {
-            eprintln!(
-                "warning: recorded {target} on {slug}#{pr} but failed to write cost to {costs_path}: {e}"
-            );
-        }
     }
     println!(
         "recorded {target} on {slug}#{pr}{}{}{}",
@@ -1692,7 +1712,7 @@ fn backfill_comments_mode(ledger_path: &str, dry_run: bool, limit: usize) -> i32
                     println!("would post  {slug}#{num}  {verdict} @ {short}");
                     posted += 1;
                 } else {
-                    let body = verdict_comment(&sha, &verdict, &ve.note);
+                    let body = verdict_comment(&sha, &verdict, &ve.note, ve.cost, &ve.cost_basis);
                     if gh_run(&["pr", "comment", num, "-R", &slug, "--body", &body]) {
                         println!("posted      {slug}#{num}  {verdict} @ {short}");
                         posted += 1;
@@ -1711,6 +1731,71 @@ fn backfill_comments_mode(ledger_path: &str, dry_run: bool, limit: usize) -> i32
         "backfill"
     };
     println!("{verb}: {posted} posted, {skipped} skipped, {errors} errors");
+    i32::from(errors > 0)
+}
+
+/// `--backfill-costs [--dry-run] [--limit N]`: one-time migration of verification cost from the
+/// ledger/sidecar INTO each PR's trusted `🤖 ai:vetter` comment (edits it to append a `cost` line) so
+/// the queue's comment-only cost read finds them. Idempotent — skips comments that already carry one.
+fn backfill_costs_mode(ledger_path: &str, costs_path: &str, dry_run: bool, limit: usize) -> i32 {
+    let verds = load_verdicts(ledger_path);
+    let sidecar = parse_sidecar(&std::fs::read_to_string(costs_path).unwrap_or_default());
+    let mut keys: Vec<&String> = verds.keys().collect();
+    keys.sort();
+    let (mut edited, mut skipped, mut errors) = (0usize, 0usize, 0usize);
+    for key in keys {
+        if limit > 0 && edited >= limit {
+            break;
+        }
+        let (cost, basis) = cost_for(key, &verds, &sidecar);
+        if cost == 1001 {
+            skipped += 1;
+            continue;
+        }
+        let Some((repo, num)) = key.rsplit_once('/') else {
+            continue;
+        };
+        let slug = if repo.contains('/') {
+            repo.to_string()
+        } else {
+            format!("rainlanguage/{repo}")
+        };
+        let Some(pr) = gh_json(&["pr", "view", num, "-R", &slug, "--json", "comments"]) else {
+            eprintln!("error: fetch failed for {slug}#{num}");
+            errors += 1;
+            continue;
+        };
+        match cost_edit_plan(&pr, cost, &basis) {
+            Some((id, new_body)) => {
+                if dry_run {
+                    println!("would edit  {slug}#{num}  +cost {cost}");
+                    edited += 1;
+                } else if gh_run(&[
+                    "api",
+                    "graphql",
+                    "-f",
+                    "query=mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}",
+                    "-f",
+                    &format!("id={id}"),
+                    "-f",
+                    &format!("body={new_body}"),
+                ]) {
+                    println!("edited      {slug}#{num}  +cost {cost}");
+                    edited += 1;
+                } else {
+                    eprintln!("error: edit failed for {slug}#{num}");
+                    errors += 1;
+                }
+            }
+            None => skipped += 1,
+        }
+    }
+    let verb = if dry_run {
+        "would backfill-costs"
+    } else {
+        "backfill-costs"
+    };
+    println!("{verb}: {edited} edited, {skipped} skipped, {errors} errors");
     i32::from(errors > 0)
 }
 
@@ -1738,12 +1823,7 @@ fn main() {
             .get(2)
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(20);
-        let costs_def = base
-            .join("review-costs.jsonl")
-            .to_string_lossy()
-            .into_owned();
-        let costs_path = cfg(&cron, "REVIEW_COSTS", &costs_def);
-        queue_mode(&review_verdicts, &costs_path, top);
+        queue_mode(top);
         return;
     }
     if args.get(1).map(String::as_str) == Some("--commit-closes") {
@@ -1825,6 +1905,34 @@ fn main() {
         }
         std::process::exit(backfill_comments_mode(&review_verdicts, dry_run, limit));
     }
+    if args.get(1).map(String::as_str) == Some("--backfill-costs") {
+        let rest = &args[2..];
+        let dry_run = rest.iter().any(|a| a == "--dry-run");
+        let mut limit: usize = 0;
+        let mut i = 0;
+        while i < rest.len() {
+            if rest[i] == "--limit" {
+                i += 1;
+                let Some(v) = rest.get(i).and_then(|s| s.parse::<usize>().ok()) else {
+                    eprintln!("error: --limit requires a non-negative integer");
+                    std::process::exit(2);
+                };
+                limit = v;
+            }
+            i += 1;
+        }
+        let costs_def = base
+            .join("review-costs.jsonl")
+            .to_string_lossy()
+            .into_owned();
+        let costs_path = cfg(&cron, "REVIEW_COSTS", &costs_def);
+        std::process::exit(backfill_costs_mode(
+            &review_verdicts,
+            &costs_path,
+            dry_run,
+            limit,
+        ));
+    }
     if args.get(1).map(String::as_str) == Some("--run-metrics") {
         let Some(path) = args.get(2) else {
             eprintln!("usage: pr-review-report --run-metrics <trace.jsonl>");
@@ -1866,20 +1974,8 @@ fn main() {
         } else {
             String::new()
         };
-        let costs_def = base
-            .join("review-costs.jsonl")
-            .to_string_lossy()
-            .into_owned();
-        let costs_path = cfg(&cron, "REVIEW_COSTS", &costs_def);
         std::process::exit(record_verdict_mode(
-            slug,
-            pr,
-            verdict,
-            &note,
-            cost,
-            &basis,
-            &costs_path,
-            dry_run,
+            slug, pr, verdict, &note, cost, &basis, dry_run,
         ));
     }
     let only_ready = args.get(1).map(String::as_str) == Some("--ready");
@@ -2313,17 +2409,6 @@ mod queue_tests {
         assert!(!has_human_override(&p));
         let none = json!({"number": 1});
         assert!(!has_human_override(&none), "no labels field => no override");
-    }
-
-    // --- ledger_key: bare for rainlanguage, org-qualified otherwise -----------------------------
-
-    #[test]
-    fn ledger_key_bare_for_rainlanguage_qualified_for_others() {
-        assert_eq!(ledger_key("rainlanguage/rainix", 5), "rainix/5");
-        assert_eq!(
-            ledger_key("cyclofinance/cyclo.site", 400),
-            "cyclofinance/cyclo.site/400"
-        );
     }
 
     // --- cost_for: cheapest-first ordering signal ----------------------------------------------
@@ -3211,8 +3296,8 @@ mod settings_tests {
 #[cfg(test)]
 mod record_verdict_tests {
     use super::{
-        cost_sidecar_line, has_human_override, labels_to_remove, last_vetter_comment,
-        parse_sidecar, should_skip_comment, verdict_comment, verdict_label, verdict_plan,
+        add_cost_line, cost_edit_plan, cost_from_comment, has_human_override, labels_to_remove,
+        last_vetter_comment, should_skip_comment, verdict_comment, verdict_label, verdict_plan,
         vetted_at_head, VerdictPlan, TRUSTED_AUTHOR,
     };
     use serde_json::json;
@@ -3220,18 +3305,6 @@ mod record_verdict_tests {
     #[test]
     fn verdict_label_includes_relink() {
         assert_eq!(verdict_label("relink"), Some("ai:relink"));
-    }
-
-    // The cost line must be exactly what the queue's parse_sidecar reads back (cheapest-first depends
-    // on it once the vetter writes labels, not a ledger).
-    #[test]
-    fn cost_sidecar_line_round_trips_through_parse_sidecar() {
-        let line = cost_sidecar_line("rain.flare", "170", 115, "path refactor", "abc");
-        let m = parse_sidecar(&line);
-        assert_eq!(
-            m.get("rain.flare/170"),
-            Some(&(115_i64, "path refactor".to_string(), "abc".to_string()))
-        );
     }
 
     // GAP-CLOSER: pins that the recording decision REFUSES when a human verdict is present. Removing
@@ -3339,13 +3412,69 @@ mod record_verdict_tests {
     #[test]
     fn verdict_comment_shape_with_and_without_note() {
         assert_eq!(
-            verdict_comment("abc123", "ready", "looks good"),
+            verdict_comment("abc123", "ready", "looks good", None, ""),
             "🤖 ai:vetter\nReviewed abc123: ready — looks good"
         );
         assert_eq!(
-            verdict_comment("abc123", "reject", "   "),
+            verdict_comment("abc123", "reject", "   ", None, ""),
             "🤖 ai:vetter\nReviewed abc123: reject"
         );
+        // Cost rides on its OWN line so the `Reviewed <sha>:`/`: <verdict>` matches are unaffected.
+        assert_eq!(
+            verdict_comment("abc123", "ready", "ok", Some(335), "org-wide CI gate"),
+            "🤖 ai:vetter\nReviewed abc123: ready — ok\ncost 335 — org-wide CI gate"
+        );
+        assert_eq!(
+            verdict_comment("abc123", "ready", "", Some(0), ""),
+            "🤖 ai:vetter\nReviewed abc123: ready\ncost 0"
+        );
+        // The cost line round-trips through cost_from_comment.
+        assert_eq!(
+            cost_from_comment(Some(&verdict_comment(
+                "s",
+                "ready",
+                "n",
+                Some(742),
+                "logic change"
+            ))),
+            (742, "logic change".to_string())
+        );
+        assert_eq!(
+            cost_from_comment(Some("🤖 ai:vetter\nReviewed s: ready — no cost here")),
+            (1001, String::new())
+        );
+    }
+
+    // The one-time ledger→comment cost migration: add_cost_line is idempotent, and cost_edit_plan
+    // targets the LAST trusted vetter comment lacking a cost (spoofed authors ignored).
+    #[test]
+    fn cost_migration_targets_uncosted_trusted_vetter_comment() {
+        assert_eq!(
+            add_cost_line("🤖 ai:vetter\nReviewed s: ready", 335, "ci gate"),
+            Some("🤖 ai:vetter\nReviewed s: ready\ncost 335 — ci gate".to_string())
+        );
+        // Already costed → None (never double-appends).
+        assert_eq!(
+            add_cost_line("🤖 ai:vetter\nReviewed s: ready\ncost 5 — x", 9, "y"),
+            None
+        );
+        let pr = json!({"comments":[
+            {"id":"IC_1","author":{"login":TRUSTED_AUTHOR},"body":"🤖 ai:vetter\nReviewed a: reject — old"},
+            {"id":"IC_2","author":{"login":"attacker"},"body":"🤖 ai:vetter\nReviewed b: ready SPOOF"},
+            {"id":"IC_3","author":{"login":TRUSTED_AUTHOR},"body":"🤖 ai:vetter\nReviewed b: ready — new"}
+        ]});
+        assert_eq!(
+            cost_edit_plan(&pr, 742, "logic"),
+            Some((
+                "IC_3".to_string(),
+                "🤖 ai:vetter\nReviewed b: ready — new\ncost 742 — logic".to_string()
+            ))
+        );
+        // A comment that already carries a cost → nothing to migrate.
+        let already = json!({"comments":[
+            {"id":"IC_9","author":{"login":TRUSTED_AUTHOR},"body":"🤖 ai:vetter\nReviewed b: ready\ncost 100"}
+        ]});
+        assert_eq!(cost_edit_plan(&already, 1, "x"), None);
     }
 
     #[test]
