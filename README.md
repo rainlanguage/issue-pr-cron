@@ -1,29 +1,49 @@
 # rainlanguage org issue→PR pipeline
 
 Local, autonomous cron jobs that drive issues to merge-ready PRs across the
-rainlanguage GitHub org. State lives entirely in GitHub + small local ledgers.
-The pipeline has two automated stages and one human gate:
+rainlanguage **and cyclofinance** GitHub orgs. The pipeline is a **finite state
+machine**: a PR's state _is_ its GitHub state — `ai:*` / `human:*` labels,
+trusted `🤖 ai:vetter` comments, and its native review — and the
+`pr-review-report` tool is the **only** transition function between states. A
+**producer** cron and a **vetter** cron drive the automated transitions; landing
+is interactive (a human merges on their explicit per-PR word). See
+[CLAUDE.md](CLAUDE.md) for the framing.
+
+## Pipeline state machine
 
 ```mermaid
-flowchart LR
-    ISS([📥 open issues])
-    PROD["🤖 PRODUCER · campaign-run.sh<br/>@ :00 of 01·05·09·13·17·21 UTC<br/>greens its OWN red PRs FIRST (step 3b),<br/>then opens 1 fix PR per uncovered<br/>issue (audit backlog first)"]
-    PRS([📤 open PRs])
-    VET["🔍 VETTER · review-run.sh<br/>@ :00 of 03·07·11·15·19·23 UTC<br/>AI-reviews each PR's CODE into a<br/>verdict: ready / relink / reject / close<br/>read-only · re-vets on head-move"]
-    HUM{"👤 YOU<br/>pr-review-report.sh<br/>approve = merge gate"}
-    MERGE["✅ MERGE · merge-run.sh<br/>@ :00 of 00·04·08·12·16·20 UTC<br/>merges ONLY human-approved + GREEN<br/>never deploys / force-pushes / touches issues"]
-    DONE([🎉 merged])
+stateDiagram-v2
+    direction LR
+    state "open issue" as issue
+    state "un-vetted PR" as unvetted
+    state "ai:ready" as ready
+    state "ai:reject" as reject
+    state "ai:design" as design
+    state "ai:close-candidate" as close
+    state "presentable · in queue" as queue
+    state "approved · human review" as approved
+    state "merged" as merged
 
-    ISS --> PROD --> PRS --> VET --> HUM
-    HUM -->|approved| MERGE --> DONE
-
-    class PROD,VET,MERGE cron
-    class ISS,PRS,DONE data
-    class HUM human
-    classDef cron fill:#0d1b2a,stroke:#4ea1ff,color:#e6edf3
-    classDef data fill:#0b0f14,stroke:#30363d,color:#9da7b1
-    classDef human fill:#2d1b3d,stroke:#bb86fc,color:#f3e8ff
+    [*] --> issue
+    issue --> unvetted : producer opens PR
+    unvetted --> ready : vetter --record-verdict
+    unvetted --> reject : vetter --record-verdict
+    unvetted --> design : vetter --record-verdict
+    unvetted --> close : vetter --record-verdict
+    ready --> queue : --queue · green·mergeable·vetted@head
+    queue --> approved : human review = APPROVED
+    approved --> merged : gh pr merge --admin · human word
+    reject --> unvetted : producer reworks → head moves
+    ready --> unvetted : head moves → re-vet · --backfill-comments
+    design --> [*] : human design ruling
+    close --> [*] : human closes
+    merged --> [*]
 ```
+
+Every transition above is a `pr-review-report` subcommand. A raw `gh` / `git`
+state change from a prompt is a _loose_ transition — unenforced and untested —
+so the prompts route **all** GitHub I/O through the tool. That is what makes
+this an actual finite state machine rather than a picture of one.
 
 The three crons are **staggered by 2 h** so work flows downstream within each
 4-hour cycle (all times UTC):
