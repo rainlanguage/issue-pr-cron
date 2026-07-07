@@ -5,7 +5,7 @@
       "Bash(jq:*)", "Bash(nix:*)", "Bash(pr-review-report:*)",
       "Bash(rg:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(cut:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(tr:*)", "Bash(comm:*)", "Bash(diff:*)", "Bash(tee:*)", "Bash(xargs:*)",
       "Bash(cat:*)", "Bash(echo:*)", "Bash(printf:*)", "Bash(ls:*)", "Bash(test:*)", "Bash(date:*)", "Bash(mktemp:*)", "Bash(cd:*)", "Bash(pwd:*)", "Bash(basename:*)", "Bash(dirname:*)", "Bash(realpath:*)", "Bash(env:*)", "Bash(which:*)", "Bash(command:*)", "Bash(true:*)", "Bash(false:*)", "Bash(sleep:*)", "Bash(timeout:*)", "Bash(flock:*)",
-      "Read", "Glob", "Grep", "TodoWrite"
+      "Read", "Glob", "Grep", "TodoWrite", "Skill"
     ],
     "deny": [
       "Bash(sudo:*)", "Bash(su:*)", "Bash(doas:*)",
@@ -13,7 +13,8 @@
       "Bash(rm -rf /:*)", "Bash(rm -rf ~:*)", "Bash(rm -rf /*)",
       "Bash(gh pr merge:*)", "Bash(gh pr close:*)", "Bash(gh pr edit:*)", "Bash(gh pr review:*)", "Bash(gh pr ready:*)", "Bash(gh pr comment:*)", "Bash(gh pr lock:*)",
       "Bash(gh issue close:*)", "Bash(gh issue comment:*)", "Bash(gh issue edit:*)", "Bash(gh issue reopen:*)", "Bash(gh issue create:*)", "Bash(gh issue delete:*)", "Bash(gh issue transfer:*)", "Bash(gh issue lock:*)", "Bash(gh issue pin:*)",
-      "Bash(gh workflow run:*)", "Bash(gh run rerun:*)", "Bash(gh release:*)", "Bash(gh repo:*)", "Bash(gh secret:*)", "Bash(gh api:*)",
+      "Bash(gh workflow run:*)", "Bash(gh run rerun:*)", "Bash(gh release:*)", "Bash(gh secret:*)", "Bash(gh api:*)",
+      "Bash(gh repo create:*)", "Bash(gh repo delete:*)", "Bash(gh repo edit:*)", "Bash(gh repo archive:*)", "Bash(gh repo unarchive:*)", "Bash(gh repo rename:*)", "Bash(gh repo fork:*)", "Bash(gh repo sync:*)", "Bash(gh repo set-default:*)", "Bash(gh repo deploy-key:*)",
       "Bash(git push:*)", "Bash(git commit:*)", "Bash(git reset:*)", "Bash(git clone:*)",
       "Bash(crontab:*)",
       "ScheduleWakeup", "CronCreate"
