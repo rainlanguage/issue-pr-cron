@@ -1416,8 +1416,9 @@ enum GcAction {
 struct CloneState {
     /// No uncommitted changes (`git status --porcelain` empty).
     clean: bool,
-    /// Commits ahead of upstream — i.e. unpushed local work.
-    ahead: u32,
+    /// Commits present locally but on NO remote-tracking branch — i.e. unpushed work. `None` when it
+    /// could not be determined (a git error), which is treated as possibly-unpushed → keep (fail safe).
+    unpushed: Option<u32>,
     /// Resolved PR state for the checked-out branch, if any.
     pr: Option<PrState>,
     /// Days since the clone was last modified.
@@ -1457,8 +1458,12 @@ fn gc_decision(s: &CloneState, max_age_days: u64) -> GcAction {
     if !s.clean {
         return GcAction::Keep("uncommitted changes".into());
     }
-    if s.ahead > 0 {
-        return GcAction::Keep(format!("{} unpushed commit(s)", s.ahead));
+    // Fail SAFE: `None` means the unpushed count couldn't be computed (e.g. no upstream), so we can't
+    // prove the work is pushed — never delete it. Some(>0) is genuinely unpushed work — also keep.
+    match s.unpushed {
+        None => return GcAction::Keep("unpushed state unknown".into()),
+        Some(n) if n > 0 => return GcAction::Keep(format!("{n} unpushed commit(s)")),
+        Some(_) => {}
     }
     match s.pr {
         Some(PrState::Merged) => GcAction::Delete("PR merged".into()),
@@ -1534,12 +1539,14 @@ fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
         let clean = git_out(dir, &["status", "--porcelain"])
             .map(|s| s.is_empty())
             .unwrap_or(false);
-        let ahead = git_out(dir, &["rev-list", "--count", "@{u}..HEAD"])
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(0);
+        // Unpushed commits = on HEAD but on NO remote-tracking branch. This works WITHOUT a configured
+        // upstream (unlike `@{u}..HEAD`, which errors on an upstream-less branch); a git error stays
+        // `None` (not 0) so gc_decision fails safe and keeps a clone whose push-state is unknown.
+        let unpushed = git_out(dir, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
+            .and_then(|s| s.parse::<u32>().ok());
         let state = CloneState {
             clean,
-            ahead,
+            unpushed,
             pr: resolve_pr_state(dir),
             age_days: clone_age_days(dir),
         };
@@ -3261,10 +3268,10 @@ mod record_verdict_tests {
 mod gc_tests {
     use super::{gc_decision, parse_pr_state, parse_repo_slug, CloneState, GcAction, PrState};
 
-    fn st(clean: bool, ahead: u32, pr: Option<PrState>, age_days: u64) -> CloneState {
+    fn st(clean: bool, unpushed: Option<u32>, pr: Option<PrState>, age_days: u64) -> CloneState {
         CloneState {
             clean,
-            ahead,
+            unpushed,
             pr,
             age_days,
         }
@@ -3303,11 +3310,11 @@ mod gc_tests {
     #[test]
     fn gc_deletes_merged_and_closed_when_clean() {
         assert_eq!(
-            gc_decision(&st(true, 0, Some(PrState::Merged), 0), 30),
+            gc_decision(&st(true, Some(0), Some(PrState::Merged), 0), 30),
             GcAction::Delete("PR merged".into())
         );
         assert_eq!(
-            gc_decision(&st(true, 0, Some(PrState::Closed), 0), 30),
+            gc_decision(&st(true, Some(0), Some(PrState::Closed), 0), 30),
             GcAction::Delete("PR closed".into())
         );
     }
@@ -3316,7 +3323,7 @@ mod gc_tests {
     #[test]
     fn gc_keeps_open_pr() {
         assert_eq!(
-            gc_decision(&st(true, 0, Some(PrState::Open), 999), 30),
+            gc_decision(&st(true, Some(0), Some(PrState::Open), 999), 30),
             GcAction::Keep("open PR".into())
         );
     }
@@ -3326,12 +3333,19 @@ mod gc_tests {
     #[test]
     fn gc_never_deletes_dirty_or_unpushed_even_if_merged() {
         assert_eq!(
-            gc_decision(&st(false, 0, Some(PrState::Merged), 0), 30),
+            gc_decision(&st(false, Some(0), Some(PrState::Merged), 0), 30),
             GcAction::Keep("uncommitted changes".into())
         );
         assert_eq!(
-            gc_decision(&st(true, 3, Some(PrState::Merged), 0), 30),
+            gc_decision(&st(true, Some(3), Some(PrState::Merged), 0), 30),
             GcAction::Keep("3 unpushed commit(s)".into())
+        );
+        // Fail SAFE: an undeterminable unpushed count (git error / no upstream) must NEVER delete.
+        // This is the exact bug the vetter caught — the old `@{u}..HEAD` + unwrap_or(0) read a
+        // no-upstream error as "0 = fully pushed" and could delete the only copy of unpushed work.
+        assert_eq!(
+            gc_decision(&st(true, None, Some(PrState::Merged), 0), 30),
+            GcAction::Keep("unpushed state unknown".into())
         );
     }
 
@@ -3339,11 +3353,11 @@ mod gc_tests {
     #[test]
     fn gc_age_backstop_for_no_pr_clones() {
         assert!(matches!(
-            gc_decision(&st(true, 0, None, 13), 14),
+            gc_decision(&st(true, Some(0), None, 13), 14),
             GcAction::Keep(_)
         ));
         assert_eq!(
-            gc_decision(&st(true, 0, None, 14), 14),
+            gc_decision(&st(true, Some(0), None, 14), 14),
             GcAction::Delete("no PR, idle 14d".into())
         );
     }
