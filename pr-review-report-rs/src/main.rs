@@ -598,6 +598,7 @@ struct QueueCounts {
     pending: usize,
     merge_unknown: usize,
     approved: usize,
+    unconfirmed: usize, // green+mergeable but no ai:vetter comment at head — awaiting (re-)vet, not shown
     fetch_error: usize,
 }
 
@@ -626,8 +627,8 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, err, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} awaiting re-vet{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unconfirmed, err, excl, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -704,6 +705,7 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
         pending: 0,
         merge_unknown: 0,
         approved: 0,
+        unconfirmed: 0,
         fetch_error: 0,
     };
     for (slug, num, url) in &candidates {
@@ -714,7 +716,7 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
             "-R",
             slug,
             "--json",
-            "mergeable,statusCheckRollup,reviewDecision",
+            "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments",
         ]) else {
             counts.fetch_error += 1;
             continue;
@@ -731,9 +733,17 @@ fn queue_mode(review_verdicts: &str, costs_path: &str, top: usize) {
             .filter(|s| !s.is_empty());
         match presentable_state(ci, merge, rev) {
             PresentState::Presentable => {
-                let (cost, basis) = cost_for(&ledger_key(slug, *num), &verds, &sidecar);
-                let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
-                rows.push((cost, repo_disp, *num, url.clone(), basis));
+                // Vetted-at-head gate: green + mergeable is not enough — the ai:ready label must be
+                // BACKED by an ai:vetter comment at the current head. A migration-labelled or
+                // pushed-since PR is not presented; it's counted as awaiting (re-)vet.
+                let head = j.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("");
+                if vetted_at_head(&j, head) {
+                    let (cost, basis) = cost_for(&ledger_key(slug, *num), &verds, &sidecar);
+                    let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
+                    rows.push((cost, repo_disp, *num, url.clone(), basis));
+                } else {
+                    counts.unconfirmed += 1;
+                }
             }
             PresentState::Red => counts.red += 1,
             PresentState::Pending => counts.pending += 1,
@@ -1116,6 +1126,17 @@ fn last_vetter_comment(pr: &Value) -> Option<String> {
         .filter_map(|c| c.get("body").and_then(|b| b.as_str()))
         .rfind(|b| b.starts_with("🤖 ai:vetter"))
         .map(String::from)
+}
+
+/// A PR is vetted AT HEAD only when its most-recent `🤖 ai:vetter` comment recorded a verdict at the
+/// CURRENT head sha (`Reviewed <head>:`). The `ai:*` label alone can be stale — migration-applied, or
+/// from before the producer pushed a commit — so the queue uses this stricter bar (the vetter's own
+/// definition) to never present a PR whose AI verdict isn't confirmed against the exact commit.
+fn vetted_at_head(pr_json: &Value, head: &str) -> bool {
+    !head.is_empty()
+        && last_vetter_comment(pr_json)
+            .map(|b| b.contains(&format!("Reviewed {head}:")))
+            .unwrap_or(false)
 }
 
 /// Skip a new vetter comment iff the last one already recorded the SAME verdict at the SAME head sha
@@ -1980,6 +2001,7 @@ mod queue_tests {
             pending,
             merge_unknown: 0,
             approved,
+            unconfirmed: 0,
             fetch_error: 0,
         }
     }
@@ -1997,12 +2019,27 @@ mod queue_tests {
         let out = render_queue(&rows, &qc(5, 2, 1, 0, 1), 0);
         assert!(
             out.starts_with(
-                "review queue: 5 ai:ready -> 1 presentable, 2 conflicting, 1 red, 0 pending, 0 unknown-merge, 1 approved (cheapest first)\n"
+                "review queue: 5 ai:ready -> 1 presentable, 2 conflicting, 1 red, 0 pending, 0 unknown-merge, 1 approved, 0 awaiting re-vet (cheapest first)\n"
             ),
             "header:\n{out}"
         );
         assert!(out
             .contains("\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1"));
+    }
+
+    // The vetted-at-head gate: green+mergeable is NOT enough — an ai:vetter comment must pin the
+    // CURRENT head. A migration-labelled PR (no comment) or a moved head is not presentable.
+    #[test]
+    fn vetted_at_head_requires_a_head_matching_vetter_comment() {
+        let at = json!({"comments":[{"body":"🤖 ai:vetter\nReviewed sha1: ready — ok"}]});
+        assert!(vetted_at_head(&at, "sha1"), "matching sha → vetted");
+        assert!(!vetted_at_head(&at, "sha2"), "head moved → not vetted");
+        let none = json!({"comments":[{"body":"just a human note"}]});
+        assert!(
+            !vetted_at_head(&none, "sha1"),
+            "no ai:vetter comment → not vetted"
+        );
+        assert!(!vetted_at_head(&at, ""), "empty head can never confirm");
     }
 
     // Unscored rows render "unscored"; excluded + fetch-error surface in the header.
@@ -2013,6 +2050,7 @@ mod queue_tests {
         c.excluded = 1;
         c.fetch_error = 1;
         c.merge_unknown = 2;
+        c.unconfirmed = 3;
         let out = render_queue(&rows, &c, 0);
         assert!(out.contains("  unscored  r#2  "), "unscored:\n{out}");
         assert!(out.contains("1 fetch-error"));
@@ -2020,6 +2058,10 @@ mod queue_tests {
         assert!(
             out.contains("2 unknown-merge"),
             "unknown-merge count:\n{out}"
+        );
+        assert!(
+            out.contains("3 awaiting re-vet"),
+            "awaiting-re-vet count:\n{out}"
         );
     }
 
