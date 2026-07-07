@@ -5,6 +5,7 @@
 # ...but keep the cron config + its docs:
 !/.gitignore
 !/README.md
+!/CLAUDE.md
 !/campaign-run.sh
 !/campaign-prompt.txt
 !/campaign-settings.json
