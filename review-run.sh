@@ -35,6 +35,13 @@ REVIEW_KEEP_RUNS=20
 # shellcheck disable=SC1091
 [ -f "$DIR/cron.env" ] && . "$DIR/cron.env"
 
+# --- org scope: single source = cron.env ORGS; derive owner-flags + prose, export for pr-review-report ---
+: "${ORGS:=rainlanguage cyclofinance}"
+export ORGS
+OWNER_FLAGS=""; for _o in $ORGS; do OWNER_FLAGS="$OWNER_FLAGS --owner $_o"; done
+OWNER_FLAGS="${OWNER_FLAGS# }"
+ORGS_HUMAN="$(printf '%s' "$ORGS" | sed -E 's/[[:space:]]+/, /g')"
+
 LOG="$DIR/review.log"
 LOCK="$DIR/review.lock"
 RUNDIR="$DIR/review-runs"
@@ -64,6 +71,8 @@ ERRLOG="$RUNDIR/$TS.err"
 # substitute deployment values into the prompt template
 PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
+              -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
+              -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
               "$DIR/review-prompt.txt")"
 
 {

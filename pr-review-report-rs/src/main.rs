@@ -7,7 +7,7 @@
 //          pr-review-report --ready    # only the reviewed-&-ready-to-merge bucket
 //          pr-review-report --queue [N]                 # cheapest-first review queue
 //          pr-review-report --commit-closes <owner/repo> <pr>  # fail if a commit keyword closes an out-of-index issue
-// Config (env overrides cron.env in CWD, then default): ORG, PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
+// Config (env overrides cron.env in CWD, then default): ORG, ORGS (org scope for --queue), PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
 
 use serde_json::Value;
 use std::process::Command;
@@ -217,27 +217,81 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
     out
 }
 
+/// Org scope for org-wide `gh search` — the SINGLE source of truth is the `ORGS` env var
+/// (space- or comma-separated), exported from cron.env by the run scripts, so the queue covers
+/// exactly the orgs the prompts do. Falls back to the historical default pair when unset (so a
+/// bare local invocation still works). Returns flattened `--owner <org>` args, ready to splice
+/// into a `gh search` arg list.
+fn parse_orgs(raw: &str) -> Vec<String> {
+    let orgs: Vec<String> = raw
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    let orgs = if orgs.is_empty() {
+        vec!["rainlanguage".to_string(), "cyclofinance".to_string()]
+    } else {
+        orgs
+    };
+    orgs.into_iter()
+        .flat_map(|o| ["--owner".to_string(), o])
+        .collect()
+}
+
+fn org_owner_args() -> Vec<String> {
+    parse_orgs(&std::env::var("ORGS").unwrap_or_default())
+}
+
+#[cfg(test)]
+mod org_tests {
+    use super::parse_orgs;
+
+    #[test]
+    fn empty_falls_back_to_default_pair() {
+        let want = ["--owner", "rainlanguage", "--owner", "cyclofinance"].map(String::from);
+        assert_eq!(parse_orgs(""), want);
+        assert_eq!(parse_orgs("   \n"), want);
+    }
+
+    #[test]
+    fn splits_on_whitespace_and_commas() {
+        let want = ["--owner", "a", "--owner", "b", "--owner", "c"].map(String::from);
+        assert_eq!(parse_orgs("a b c"), want);
+        assert_eq!(parse_orgs("a, b,c"), want);
+        assert_eq!(parse_orgs("  a\tb  c "), want);
+    }
+
+    #[test]
+    fn single_org() {
+        assert_eq!(parse_orgs("S01-Issuer"), ["--owner", "S01-Issuer"].map(String::from));
+    }
+}
+
 fn queue_mode(top: usize) {
     // Candidates come from the `ai:ready` LABEL, NOT `gh search --checks success`. That qualifier is
     // unreliable — the identical query returned 93 then 203 open PRs minutes apart, which collapsed a
     // 75-deep review queue to "1". Label search is reliable; CI/mergeability is then verified per-PR
     // below (statusCheckRollup + mergeable), never trusted from the search layer.
-    let Some(val) = gh_json(&[
-        "search",
-        "prs",
-        "--owner",
-        "rainlanguage",
-        "--owner",
-        "cyclofinance",
-        "--state",
-        "open",
-        "--label",
-        "ai:ready",
-        "--limit",
-        "1000",
-        "--json",
-        "url,number,repository,isDraft,labels",
-    ]) else {
+    // Org scope comes from ORGS (single source: cron.env), NOT a hardcoded owner list, so the
+    // queue covers exactly the orgs the prompts do — change scope in one place.
+    let mut search_args: Vec<String> = vec!["search".to_string(), "prs".to_string()];
+    search_args.extend(org_owner_args());
+    search_args.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            "ai:ready",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,isDraft,labels",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let search_ref: Vec<&str> = search_args.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&search_ref) else {
         eprintln!("error: `gh search prs --label ai:ready` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
         std::process::exit(1);
     };
