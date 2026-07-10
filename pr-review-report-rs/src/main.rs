@@ -35,6 +35,74 @@ fn gh_json(args: &[&str]) -> Option<Value> {
     serde_json::from_slice(&out.stdout).ok()
 }
 
+/// One page of the reviewThreads GraphQL response → (unresolved count, end cursor if more pages).
+/// None when the expected structure is missing (malformed/error response) — never a silent 0:
+/// an unknown thread state must stay distinguishable from a verified-clean one.
+fn count_unresolved_page(v: &Value) -> Option<(u64, Option<String>)> {
+    let threads = v
+        .get("data")?
+        .get("repository")?
+        .get("pullRequest")?
+        .get("reviewThreads")?;
+    let nodes = threads.get("nodes")?.as_array()?;
+    let mut unresolved = 0u64;
+    for n in nodes {
+        // A node missing isResolved is malformed — treat the whole page as unknown.
+        if !n.get("isResolved")?.as_bool()? {
+            unresolved += 1;
+        }
+    }
+    let page = threads.get("pageInfo")?;
+    let cursor = if page.get("hasNextPage")?.as_bool()? {
+        Some(page.get("endCursor")?.as_str()?.to_string())
+    } else {
+        None
+    };
+    Some((unresolved, cursor))
+}
+
+/// Total unresolved review threads on a PR (CodeRabbit or human), paginated so a long review
+/// history is never silently truncated. None on any fetch/parse failure.
+fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Option<u64> {
+    let query = "query($owner:String!,$repo:String!,$num:Int!,$cursor:String){\
+                 repository(owner:$owner,name:$repo){pullRequest(number:$num){\
+                 reviewThreads(first:100,after:$cursor){nodes{isResolved}\
+                 pageInfo{hasNextPage endCursor}}}}}";
+    let mut total = 0u64;
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut args: Vec<String> = vec![
+            "api".into(),
+            "graphql".into(),
+            "-f".into(),
+            format!("query={query}"),
+            "-f".into(),
+            format!("owner={owner}"),
+            "-f".into(),
+            format!("repo={repo}"),
+            "-F".into(),
+            format!("num={num}"),
+        ];
+        if let Some(cur) = &cursor {
+            args.push("-f".into());
+            args.push(format!("cursor={cur}"));
+        }
+        let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (page, next) = count_unresolved_page(&gh_json(&argrefs)?)?;
+        total += page;
+        match next {
+            Some(cur) => cursor = Some(cur),
+            None => return Some(total),
+        }
+    }
+}
+
+/// Queue presentability of a thread count: only a verified zero passes (fail-closed, matching
+/// the queue's existing mergeable check — an unverifiable PR is not presented to the human).
+fn threads_presentable(threads: Option<u64>) -> bool {
+    threads == Some(0)
+}
+
 /// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
 /// `--record-verdict`'s logic testable without network.
 fn gh_run(args: &[&str]) -> bool {
@@ -172,6 +240,7 @@ struct QueueCounts {
     merge_unknown: usize,
     approved: usize,
     unconfirmed: usize, // green+mergeable but no ai:vetter comment at head — awaiting (re-)vet, not shown
+    open_threads: usize, // otherwise-presentable but unresolved review threads — producer thread-resolution work
     fetch_error: usize,
 }
 
@@ -183,6 +252,11 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         "  [WARNING: search hit the 1000-result limit — queue may be undercounted]"
     } else {
         ""
+    };
+    let threads = if c.open_threads > 0 {
+        format!(", {} open-threads", c.open_threads)
+    } else {
+        String::new()
     };
     let err = if c.fetch_error > 0 {
         format!(", {} fetch-error", c.fetch_error)
@@ -200,8 +274,8 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} awaiting re-vet{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unconfirmed, err, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} awaiting re-vet{}{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unconfirmed, threads, err, excl, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -263,7 +337,10 @@ mod org_tests {
 
     #[test]
     fn single_org() {
-        assert_eq!(parse_orgs("S01-Issuer"), ["--owner", "S01-Issuer"].map(String::from));
+        assert_eq!(
+            parse_orgs("S01-Issuer"),
+            ["--owner", "S01-Issuer"].map(String::from)
+        );
     }
 }
 
@@ -330,6 +407,7 @@ fn queue_mode(top: usize) {
         merge_unknown: 0,
         approved: 0,
         unconfirmed: 0,
+        open_threads: 0,
         fetch_error: 0,
     };
     for (slug, num, url) in &candidates {
@@ -362,9 +440,24 @@ fn queue_mode(top: usize) {
                 // pushed-since PR is not presented; it's counted as awaiting (re-)vet.
                 let head = j.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("");
                 if vetted_at_head(&j, head) {
-                    let (cost, basis) = cost_from_comment(last_vetter_comment(&j).as_deref());
-                    let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
-                    rows.push((cost, repo_disp, *num, url.clone(), basis));
+                    // Open-threads gate: an otherwise-presentable PR with unresolved review
+                    // threads (CodeRabbit or human) is the producer's thread-resolution work,
+                    // not human-presentable. Only a VERIFIED zero passes (fail-closed): an
+                    // unknown thread state counts as a fetch error, never a maybe-dirty row.
+                    let Some((owner, repo)) = slug.split_once('/') else {
+                        counts.fetch_error += 1;
+                        continue;
+                    };
+                    let threads = unresolved_threads(owner, repo, *num);
+                    if threads_presentable(threads) {
+                        let (cost, basis) = cost_from_comment(last_vetter_comment(&j).as_deref());
+                        let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
+                        rows.push((cost, repo_disp, *num, url.clone(), basis));
+                    } else if threads.is_none() {
+                        counts.fetch_error += 1;
+                    } else {
+                        counts.open_threads += 1;
+                    }
                 } else {
                     counts.unconfirmed += 1;
                 }
@@ -1425,6 +1518,7 @@ mod queue_tests {
             merge_unknown: 0,
             approved,
             unconfirmed: 0,
+            open_threads: 0,
             fetch_error: 0,
         }
     }
@@ -1508,10 +1602,12 @@ mod queue_tests {
         c.fetch_error = 1;
         c.merge_unknown = 2;
         c.unconfirmed = 3;
+        c.open_threads = 4;
         let out = render_queue(&rows, &c, 0);
         assert!(out.contains("  unscored  r#2  "), "unscored:\n{out}");
         assert!(out.contains("1 fetch-error"));
         assert!(out.contains("1 excluded (draft/human-override)"));
+        assert!(out.contains("4 open-threads"), "open-threads note:\n{out}");
         assert!(
             out.contains("2 unknown-merge"),
             "unknown-merge count:\n{out}"
@@ -1602,6 +1698,76 @@ mod report_tests {
     fn ci_fail_beats_pending() {
         let r = json!([{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]);
         assert!(classify_ci(&r) == Ci::Red);
+    }
+}
+
+#[cfg(test)]
+mod open_threads_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn page(nodes: Value, has_next: bool, cursor: &str) -> Value {
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": nodes,
+            "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}
+        }}}}})
+    }
+
+    // T1: unresolved threads are counted by the typed isResolved field, resolved ones excluded.
+    #[test]
+    fn count_mixed_resolved_unresolved() {
+        let v = page(
+            json!([{"isResolved": false}, {"isResolved": true}, {"isResolved": false}]),
+            false,
+            "",
+        );
+        assert_eq!(count_unresolved_page(&v), Some((2, None)));
+    }
+
+    // T2: zero threads is a verified-clean Some(0), distinct from unknown.
+    #[test]
+    fn count_empty_nodes_is_zero() {
+        assert_eq!(
+            count_unresolved_page(&page(json!([]), false, "")),
+            Some((0, None))
+        );
+    }
+
+    // T3: a further page propagates its cursor so pagination can't silently truncate.
+    #[test]
+    fn count_propagates_next_cursor() {
+        let v = page(json!([{"isResolved": false}]), true, "CUR");
+        assert_eq!(
+            count_unresolved_page(&v),
+            Some((1, Some("CUR".to_string())))
+        );
+    }
+
+    // T4: malformed responses (missing pullRequest, non-array nodes, node without isResolved,
+    // GraphQL error shape) are None — unknown, never a silent 0.
+    #[test]
+    fn count_malformed_is_none() {
+        assert_eq!(
+            count_unresolved_page(&json!({"data": {"repository": null}})),
+            None
+        );
+        assert_eq!(
+            count_unresolved_page(&json!({"errors": [{"message": "boom"}]})),
+            None
+        );
+        let bad_nodes = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": "nope", "pageInfo": {"hasNextPage": false, "endCursor": ""}}}}}});
+        assert_eq!(count_unresolved_page(&bad_nodes), None);
+        let bad_node = page(json!([{"resolved": true}]), false, "");
+        assert_eq!(count_unresolved_page(&bad_node), None);
+    }
+
+    // T5: queue presentability is fail-closed — only a verified zero passes.
+    #[test]
+    fn queue_presentability_fail_closed() {
+        assert!(threads_presentable(Some(0)));
+        assert!(!threads_presentable(Some(1)));
+        assert!(!threads_presentable(None));
     }
 }
 
