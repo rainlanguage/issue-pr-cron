@@ -7,6 +7,7 @@
 //          pr-review-report --ready    # only the reviewed-&-ready-to-merge bucket
 //          pr-review-report --queue [N]                 # cheapest-first review queue
 //          pr-review-report --commit-closes <owner/repo> <pr>  # fail if a commit keyword closes an out-of-index issue
+//          pr-review-report --deploy <owner/repo> <pr> [--network <net>] [--dry-run]  # sanctioned Zoltu deploy of a PR branch
 // Config (env overrides cron.env in CWD, then default): ORG, ORGS (org scope for --queue), PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
 
 use serde_json::Value;
@@ -1137,10 +1138,18 @@ fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
         // `None` (not 0) so gc_decision fails safe and keeps a clone whose push-state is unknown.
         let unpushed = git_out(dir, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
             .and_then(|s| s.parse::<u32>().ok());
+        // Only pay for the `gh pr list` network round-trip once the clone is otherwise deletable: a
+        // dirty or unpushed clone is KEPT regardless of its PR state, so skipping the call for it is
+        // what keeps a full pass over hundreds of clones from dragging past any timeout.
+        let pr = if clean && matches!(unpushed, Some(0)) {
+            resolve_pr_state(dir)
+        } else {
+            None
+        };
         let state = CloneState {
             clean,
             unpushed,
-            pr: resolve_pr_state(dir),
+            pr,
             age_days: clone_age_days(dir),
         };
         match gc_decision(&state, max_age_days) {
@@ -1161,6 +1170,9 @@ fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
                 kept += 1;
             }
         }
+        // Stream each decision immediately: on a full disk the deletes above free space AS WE GO, and
+        // progress stays visible so a long run never looks hung or gets cut off mid-scan.
+        let _ = std::io::Write::flush(&mut std::io::stdout());
     }
     let verb = if dry_run { "would gc" } else { "gc" };
     println!(
@@ -1169,6 +1181,506 @@ fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
     );
     0
 }
+// --- --deploy: the SOLE, constrained way the producer triggers a sanctioned Zoltu deploy ---------
+//
+// Org prod deploys are Zoltu deterministic CREATE2 (address = f(bytecode); idempotent;
+// permissionless; low-stakes). The sanctioned path per repo is the repo's own
+// `.github/workflows/manual-sol-artifacts.yaml` `workflow_dispatch` (which runs
+// `nix develop -c rainix-sol-artifacts` / `script/Deploy.sol` under Zoltu with
+// `DEPLOYMENT_KEY: secrets.PRIVATE_KEY`). This subcommand is a WRAPPER around dispatching +
+// monitoring that workflow — never a reimplementation of on-chain deploy. The producer is
+// banned from raw `gh workflow run`; this is the one gate it may use, so deploys are auditable
+// (one tool, one behaviour) and can only happen the way we want.
+
+/// A single `workflow_dispatch` input declaration parsed from the workflow YAML — enough to
+/// construct a dispatch: its name, whether it's required, its `default`, and (for `type: choice`)
+/// the allowed `options`.
+#[derive(Debug, PartialEq, Clone)]
+struct WorkflowInput {
+    name: String,
+    required: bool,
+    default: Option<String>,
+    options: Vec<String>,
+}
+
+/// Count of leading ASCII spaces (YAML indentation; the workflow files use spaces, never tabs).
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|c| *c == ' ').count()
+}
+
+/// Strip surrounding single/double quotes and outer whitespace from a YAML scalar. (The
+/// manual-sol-artifacts inputs blocks carry no inline `#` comments, so none are stripped here.)
+fn strip_yaml_scalar(s: &str) -> String {
+    s.trim().trim_matches(|c| c == '\'' || c == '"').to_string()
+}
+
+/// Parse the `on.workflow_dispatch.inputs` block of a workflow YAML into [`WorkflowInput`]s, in
+/// declaration order. A hand-rolled, indentation-scoped scan (the crate carries only serde_json —
+/// no YAML dep) covering exactly the shape the org's `manual-sol-artifacts` workflows use:
+/// `inputs:` under `workflow_dispatch:`, each input a key with nested `required`/`default`/`type`/
+/// `options:` (a `- item` list). Returns empty when there's no dispatch/inputs block.
+fn parse_dispatch_inputs(yaml: &str) -> Vec<WorkflowInput> {
+    let lines: Vec<&str> = yaml.lines().collect();
+    let mut i = 0;
+    // Locate `workflow_dispatch:` and remember its indent.
+    let mut wd_indent = None;
+    while i < lines.len() {
+        if lines[i].trim() == "workflow_dispatch:" {
+            wd_indent = Some(leading_spaces(lines[i]));
+            i += 1;
+            break;
+        }
+        i += 1;
+    }
+    let Some(wd_indent) = wd_indent else {
+        return Vec::new();
+    };
+    // Find `inputs:` nested under it (deeper indent); bail if we leave the block first.
+    let mut inputs_indent = None;
+    while i < lines.len() {
+        let t = lines[i].trim();
+        if t.is_empty() || t.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        let ind = leading_spaces(lines[i]);
+        if ind <= wd_indent {
+            return Vec::new(); // left workflow_dispatch without an inputs: block
+        }
+        if t == "inputs:" {
+            inputs_indent = Some(ind);
+            i += 1;
+            break;
+        }
+        i += 1;
+    }
+    let Some(inputs_indent) = inputs_indent else {
+        return Vec::new();
+    };
+    // Parse each input entry until the block ends (a line indented back to/under `inputs:`).
+    let mut out: Vec<WorkflowInput> = Vec::new();
+    let mut key_indent: Option<usize> = None;
+    while i < lines.len() {
+        let t = lines[i].trim();
+        if t.is_empty() || t.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        let ind = leading_spaces(lines[i]);
+        if ind <= inputs_indent {
+            break;
+        }
+        let ki = *key_indent.get_or_insert(ind);
+        if ind == ki && t.ends_with(':') && !t.starts_with('-') {
+            out.push(WorkflowInput {
+                name: t.trim_end_matches(':').trim().to_string(),
+                required: false,
+                default: None,
+                options: Vec::new(),
+            });
+            i += 1;
+            continue;
+        }
+        // Property line (deeper than the key indent) of the current input.
+        if let Some(cur) = out.last_mut() {
+            if let Some(rest) = t.strip_prefix("default:") {
+                cur.default = Some(strip_yaml_scalar(rest));
+            } else if let Some(rest) = t.strip_prefix("required:") {
+                cur.required = strip_yaml_scalar(rest) == "true";
+            } else if t == "options:" {
+                // Consume the following `- item` list (deeper than the `options:` line).
+                let opt_indent = ind;
+                let mut j = i + 1;
+                while j < lines.len() {
+                    let tt = lines[j].trim();
+                    if tt.is_empty() || tt.starts_with('#') {
+                        j += 1;
+                        continue;
+                    }
+                    if leading_spaces(lines[j]) <= opt_indent {
+                        break;
+                    }
+                    let Some(item) = tt.strip_prefix('-') else {
+                        break;
+                    };
+                    cur.options.push(strip_yaml_scalar(item));
+                    j += 1;
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Input names we treat, in priority order, as the network/chain/suite SELECTOR that `--network`
+/// fills. Repos differ (`network` on rain.erc4626.words, `suite` on raindex/rain.flare), so the
+/// selector is derived from the workflow, never hardcoded to one name.
+const SELECTOR_NAMES: &[&str] = &["network", "net", "chain", "suite", "target"];
+
+/// Pick which declared input `--network` fills: the first whose name matches [`SELECTOR_NAMES`]
+/// (priority order), else the sole input when there's exactly one, else None (ambiguous).
+fn pick_selector(inputs: &[WorkflowInput]) -> Option<usize> {
+    for name in SELECTOR_NAMES {
+        if let Some(idx) = inputs
+            .iter()
+            .position(|i| i.name.eq_ignore_ascii_case(name))
+        {
+            return Some(idx);
+        }
+    }
+    if inputs.len() == 1 {
+        Some(0)
+    } else {
+        None
+    }
+}
+
+/// Resolve the selector input's value: the `--network` value if given, else the input's `default`,
+/// else the sole `option` when there's exactly one (the safe auto-pick), else an error telling the
+/// caller to pass `--network` (never guess among several options).
+fn resolve_selector_value(inp: &WorkflowInput, network: Option<&str>) -> Result<String, String> {
+    if let Some(n) = network {
+        return Ok(n.to_string());
+    }
+    if let Some(d) = &inp.default {
+        return Ok(d.clone());
+    }
+    match inp.options.len() {
+        1 => Ok(inp.options[0].clone()),
+        0 => Err(format!(
+            "input `{}` needs a value — pass --network <value>",
+            inp.name
+        )),
+        _ => Err(format!(
+            "input `{}` has options {:?} and no default — pass --network <one-of-them>",
+            inp.name, inp.options
+        )),
+    }
+}
+
+/// PURE: build the ordered `(name, value)` dispatch inputs from the workflow's declared inputs and
+/// the caller's `--network`. The selector (see [`pick_selector`]) takes `--network`; any OTHER
+/// required input is filled from its default/first-option; optional non-selector inputs are omitted.
+/// A value constrained by `options` is validated against them. Errors (rather than dispatching a
+/// wrong deploy) when it can't identify/fill the selector.
+fn build_dispatch_inputs(
+    inputs: &[WorkflowInput],
+    network: Option<&str>,
+) -> Result<Vec<(String, String)>, String> {
+    if inputs.is_empty() {
+        return if network.is_some() {
+            Err("workflow declares no dispatch inputs, but --network was given".into())
+        } else {
+            Ok(Vec::new())
+        };
+    }
+    let selector_idx = pick_selector(inputs);
+    if selector_idx.is_none() && network.is_some() {
+        let names: Vec<&str> = inputs.iter().map(|i| i.name.as_str()).collect();
+        return Err(format!(
+            "cannot tell which input --network fills (inputs: {names:?}); no network/suite/chain-style selector"
+        ));
+    }
+    let mut out = Vec::new();
+    for (idx, inp) in inputs.iter().enumerate() {
+        let value = if Some(idx) == selector_idx {
+            resolve_selector_value(inp, network)?
+        } else if inp.required {
+            inp.default
+                .clone()
+                .or_else(|| inp.options.first().cloned())
+                .ok_or_else(|| {
+                    format!(
+                        "required input `{}` has no default/options and is not the selector",
+                        inp.name
+                    )
+                })?
+        } else {
+            continue; // optional, non-selector — omit
+        };
+        if !inp.options.is_empty() && !inp.options.contains(&value) {
+            return Err(format!(
+                "value `{}` for input `{}` is not one of its options {:?}",
+                value, inp.name, inp.options
+            ));
+        }
+        out.push((inp.name.clone(), value));
+    }
+    Ok(out)
+}
+
+/// PURE: the exact `gh workflow run` argv for a dispatch — also precisely what `--dry-run` prints,
+/// so the previewed command is the one that would run.
+fn dispatch_command(
+    workflow_file: &str,
+    slug: &str,
+    branch: &str,
+    inputs: &[(String, String)],
+) -> Vec<String> {
+    let mut cmd = vec![
+        "gh".to_string(),
+        "workflow".to_string(),
+        "run".to_string(),
+        workflow_file.to_string(),
+        "-R".to_string(),
+        slug.to_string(),
+        "--ref".to_string(),
+        branch.to_string(),
+    ];
+    for (k, v) in inputs {
+        cmd.push("-f".to_string());
+        cmd.push(format!("{k}={v}"));
+    }
+    cmd
+}
+
+/// The terminal-or-not state of a workflow run, classified from its `status`/`conclusion`.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum RunResult {
+    Success,
+    Failure,
+    InProgress,
+}
+
+/// PURE: classify a `gh run view --json status,conclusion` pair (values are lowercase, unlike the
+/// statusCheckRollup). A run is terminal ONLY at `status == "completed"`; anything else
+/// (queued/in_progress/waiting/requested/…) is InProgress. Once completed, only `success` is
+/// Success — every other conclusion (failure/cancelled/timed_out/action_required/…) is Failure.
+fn classify_run(status: Option<&str>, conclusion: Option<&str>) -> RunResult {
+    if status != Some("completed") {
+        return RunResult::InProgress;
+    }
+    match conclusion {
+        Some("success") => RunResult::Success,
+        _ => RunResult::Failure,
+    }
+}
+
+/// Human-readable one-line summary of the declared dispatch inputs, for `--dry-run` display.
+fn fmt_decl(decl: &[WorkflowInput]) -> String {
+    if decl.is_empty() {
+        return "(none)".to_string();
+    }
+    decl.iter()
+        .map(|i| {
+            let mut s = i.name.clone();
+            if i.required {
+                s.push('*');
+            }
+            if !i.options.is_empty() {
+                s.push_str(&format!(" [{}]", i.options.join("|")));
+            }
+            if let Some(d) = &i.default {
+                s.push_str(&format!(" =default:{d}"));
+            }
+            s
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Run gh and return raw stdout as text; None on non-zero exit / spawn failure. The text sibling of
+/// [`gh_json`], used to read a raw file via the contents API and to tail a run log.
+fn gh_text(args: &[&str]) -> Option<String> {
+    let out = Command::new("gh").args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Read the repo's `manual-sol-artifacts` workflow AT `git_ref`, trying the `.yaml` then `.yml`
+/// spelling. Returns (filename, raw content) via the GitHub contents API (raw media type), so the
+/// dispatch filename + inputs are derived from the exact ref being deployed.
+fn read_workflow(slug: &str, git_ref: &str) -> Option<(String, String)> {
+    for file in ["manual-sol-artifacts.yaml", "manual-sol-artifacts.yml"] {
+        let path = format!("repos/{slug}/contents/.github/workflows/{file}?ref={git_ref}");
+        if let Some(text) = gh_text(&["api", &path, "-H", "Accept: application/vnd.github.raw"]) {
+            return Some((file.to_string(), text));
+        }
+    }
+    None
+}
+
+/// Newest `workflow_dispatch` run id for (workflow, branch), or None. `gh run list` returns
+/// newest-first; the `event` field is filtered in code (no dependence on a `--event` flag).
+fn latest_run_id(slug: &str, wf_file: &str, branch: &str) -> Option<u64> {
+    let j = gh_json(&[
+        "run", "list", "-R", slug, "--workflow", wf_file, "--branch", branch, "-L", "5", "--json",
+        "databaseId,event",
+    ])?;
+    j.as_array()?
+        .iter()
+        .filter(|r| r.get("event").and_then(|e| e.as_str()) == Some("workflow_dispatch"))
+        .filter_map(|r| r.get("databaseId").and_then(|d| d.as_u64()))
+        .next()
+}
+
+/// After dispatching, wait for the NEW run to register: poll the newest run id until it differs
+/// from the pre-dispatch snapshot `before`. Bounded (~2 min) so a lost dispatch doesn't hang.
+fn await_new_run(slug: &str, wf_file: &str, branch: &str, before: Option<u64>) -> Option<u64> {
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        if let Some(id) = latest_run_id(slug, wf_file, branch) {
+            if Some(id) != before {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+/// Poll a run to completion, streaming a short status line each tick. Bounded (~1h) so an
+/// indefinitely-stuck run resolves to InProgress rather than hanging forever.
+fn poll_run(slug: &str, run_id: u64) -> RunResult {
+    let id = run_id.to_string();
+    for _ in 0..240 {
+        match gh_json(&["run", "view", &id, "-R", slug, "--json", "status,conclusion"]) {
+            Some(j) => {
+                let status = j.get("status").and_then(|v| v.as_str());
+                let conclusion = j.get("conclusion").and_then(|v| v.as_str());
+                match classify_run(status, conclusion) {
+                    RunResult::InProgress => {
+                        println!("  … {} (run {run_id})", status.unwrap_or("pending"));
+                        std::thread::sleep(std::time::Duration::from_secs(15));
+                    }
+                    other => return other,
+                }
+            }
+            None => {
+                // Transient view error — wait and retry within the same bound.
+                std::thread::sleep(std::time::Duration::from_secs(15));
+            }
+        }
+    }
+    RunResult::InProgress
+}
+
+/// The last `n` lines of the failed step's log, for post-mortem on a failed deploy.
+fn failing_log_tail(slug: &str, run_id: u64, n: usize) -> Option<String> {
+    let id = run_id.to_string();
+    let text = gh_text(&["run", "view", &id, "-R", slug, "--log-failed"])?;
+    let all: Vec<&str> = text.lines().collect();
+    let start = all.len().saturating_sub(n);
+    Some(all[start..].join("\n"))
+}
+
+/// `--deploy <owner/repo> <pr> [--network <net>] [--dry-run]`: trigger the repo's sanctioned
+/// `manual-sol-artifacts` deploy FROM THE PR BRANCH (deploy-before-merge) and monitor it to
+/// completion. SINGLE attempt per invocation — on failure it surfaces the failing log tail and
+/// exits nonzero WITHOUT retrying (the "no fire-and-forget" rule: diagnose a failed deploy, never
+/// blind-retry). Zoltu CREATE2 is deterministic/idempotent, so a redeploy of identical bytecode is
+/// a safe no-op — no guard fights that. `--dry-run` prints the exact command and exits 0 without
+/// dispatching.
+fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i32 {
+    // 1. Resolve the PR head ref/branch — deploy is FROM THE BRANCH.
+    let Some(prj) = gh_json(&[
+        "pr",
+        "view",
+        pr,
+        "-R",
+        slug,
+        "--json",
+        "headRefName,headRefOid",
+    ]) else {
+        eprintln!("error: `gh pr view {slug}#{pr}` failed — cannot resolve the branch to deploy from");
+        return 1;
+    };
+    let branch = prj.get("headRefName").and_then(|v| v.as_str()).unwrap_or("");
+    let head = prj.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
+    if branch.is_empty() {
+        eprintln!("error: {slug}#{pr} has no head branch (headRefName) — cannot deploy");
+        return 1;
+    }
+    // 2. Read the workflow at that ref and DERIVE its dispatch inputs (never hardcode input names).
+    let Some((wf_file, wf_content)) = read_workflow(slug, branch) else {
+        eprintln!(
+            "error: no .github/workflows/manual-sol-artifacts.{{yaml,yml}} on {slug}@{branch} — this repo has no sanctioned deploy workflow"
+        );
+        return 1;
+    };
+    let decl = parse_dispatch_inputs(&wf_content);
+    let dispatch = match build_dispatch_inputs(&decl, network) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: cannot construct dispatch inputs for {wf_file}: {e}");
+            return 2;
+        }
+    };
+    let cmd = dispatch_command(&wf_file, slug, branch, &dispatch);
+    let inputs_disp = if dispatch.is_empty() {
+        "(none)".to_string()
+    } else {
+        dispatch
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    // 3. --dry-run: print the exact command that WOULD run, dispatch nothing.
+    if dry_run {
+        println!("[dry-run] deploy {slug}#{pr} @ {head} (branch {branch})");
+        println!("  workflow: {wf_file}");
+        println!("  declared inputs: {}", fmt_decl(&decl));
+        println!("  dispatch inputs: {inputs_disp}");
+        println!("  would run: {}", cmd.join(" "));
+        return 0;
+    }
+
+    // 3b. Dispatch ONCE. Snapshot the newest run first so the resulting run can be identified.
+    let before = latest_run_id(slug, &wf_file, branch);
+    let cmd_ref: Vec<&str> = cmd.iter().skip(1).map(String::as_str).collect(); // drop leading "gh"
+    println!("dispatching: {} (inputs: {inputs_disp})", cmd.join(" "));
+    if !gh_run(&cmd_ref) {
+        eprintln!("error: `gh workflow run` dispatch failed for {slug}#{pr}");
+        return 1;
+    }
+
+    // 4. Identify the resulting run and poll it to completion.
+    let Some(run_id) = await_new_run(slug, &wf_file, branch, before) else {
+        eprintln!(
+            "error: dispatched, but could not identify the resulting run within the wait window — check {slug}'s Actions tab"
+        );
+        return 1;
+    };
+    let run_url = format!("https://github.com/{slug}/actions/runs/{run_id}");
+    println!("run: {run_url}");
+    match poll_run(slug, run_id) {
+        // 5. Success — Zoltu deterministic CREATE2; point at the run + the regenerated pins.
+        RunResult::Success => {
+            println!("deploy OK: {slug}#{pr} @ {head} via {wf_file} ({inputs_disp}) — {run_url}");
+            println!(
+                "Zoltu deterministic CREATE2: idempotent — a redeploy of identical bytecode is a no-op at the same address."
+            );
+            println!(
+                "The regenerated deployment pins are the run's committed artifacts; re-run the PR's prod-pin tests to confirm they're green, then it's ready for the human's merge."
+            );
+            0
+        }
+        // 6. Failure — surface the failing log tail for diagnosis; do NOT retry.
+        RunResult::Failure => {
+            eprintln!("deploy FAILED: {slug}#{pr} — {run_url}");
+            eprintln!("--- failing step log (tail) ---");
+            match failing_log_tail(slug, run_id, 60) {
+                Some(tail) => eprintln!("{tail}"),
+                None => eprintln!("(could not fetch the failed-step log — open {run_url})"),
+            }
+            eprintln!(
+                "Single attempt per invocation — NOT retrying. Diagnose the cause above before re-invoking --deploy."
+            );
+            1
+        }
+        RunResult::InProgress => {
+            eprintln!("deploy status unresolved (timed out waiting for the run to finish): {run_url}");
+            2
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--queue") {
@@ -1185,6 +1697,31 @@ fn main() {
             std::process::exit(2);
         };
         std::process::exit(commit_closes_mode(slug, pr));
+    }
+    if args.get(1).map(String::as_str) == Some("--deploy") {
+        let rest = &args[2..];
+        let dry_run = rest.iter().any(|a| a == "--dry-run");
+        let mut network: Option<String> = None;
+        let mut positional: Vec<&str> = Vec::new();
+        let mut i = 0;
+        while i < rest.len() {
+            match rest[i].as_str() {
+                "--dry-run" => {}
+                "--network" => {
+                    i += 1;
+                    network = rest.get(i).cloned();
+                }
+                other => positional.push(other),
+            }
+            i += 1;
+        }
+        let (Some(&slug), Some(&pr)) = (positional.first(), positional.get(1)) else {
+            eprintln!(
+                "usage: pr-review-report --deploy <owner/repo> <pr> [--network <net>] [--dry-run]"
+            );
+            std::process::exit(2);
+        };
+        std::process::exit(deploy_mode(slug, pr, network.as_deref(), dry_run));
     }
     if args.get(1).map(String::as_str) == Some("--trusted-comments") {
         let rest = &args[2..];
@@ -1286,7 +1823,7 @@ fn main() {
     // No subcommand matched. GitHub is the source of truth — there is no local ledger to report; use
     // `--queue` for the review queue (the legacy no-arg report read the now-removed ledger).
     eprintln!(
-        "pr-review-report — subcommands: --queue [N] | --record-verdict <owner/repo> <pr> <verdict> [note] [--cost N] [--basis s] | --trusted-comments <owner/repo> <n> [--marker m] [--issue] | --commit-closes <owner/repo> <n> | --gc-clones <work-dir> [--dry-run] | --run-metrics <trace.jsonl>"
+        "pr-review-report — subcommands: --queue [N] | --record-verdict <owner/repo> <pr> <verdict> [note] [--cost N] [--basis s] | --trusted-comments <owner/repo> <n> [--marker m] [--issue] | --commit-closes <owner/repo> <n> | --deploy <owner/repo> <pr> [--network net] [--dry-run] | --gc-clones <work-dir> [--dry-run] | --run-metrics <trace.jsonl>"
     );
     std::process::exit(2);
 }
@@ -2201,5 +2738,277 @@ mod gc_tests {
             gc_decision(&st(true, Some(0), None, 14), 14),
             GcAction::Delete("no PR, idle 14d".into())
         );
+    }
+}
+
+#[cfg(test)]
+mod deploy_tests {
+    use super::{
+        build_dispatch_inputs, classify_run, dispatch_command, parse_dispatch_inputs, pick_selector,
+        RunResult, WorkflowInput,
+    };
+
+    // The real rain.erc4626.words workflow: a single `network` choice input, one option `base`.
+    const NETWORK_WF: &str = r#"name: Manual sol artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: 'Network to deploy to'
+        required: true
+        type: choice
+        options:
+          - base
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+"#;
+
+    // The real raindex workflow: a single `suite` choice input with several options.
+    const SUITE_WF: &str = r#"name: Manual sol artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Suite to deploy"
+        required: true
+        type: choice
+        options:
+          - raindex
+          - subparser
+          - route-processor
+jobs:
+  deploy:
+    uses: rainlanguage/rainix/.github/workflows/rainix-manual-sol-artifacts.yaml@main
+    with:
+      suite: ${{ inputs.suite }}
+    secrets: inherit
+"#;
+
+    // A hypothetical two-input workflow (selector + a second required input carrying a default).
+    const TWO_INPUT_WF: &str = r#"on:
+  workflow_dispatch:
+    inputs:
+      network:
+        required: true
+        type: choice
+        options:
+          - base
+          - flare
+      dry_run:
+        required: true
+        default: "false"
+jobs: {}
+"#;
+
+    // No workflow_dispatch at all → no inputs.
+    const NO_DISPATCH_WF: &str = r#"name: CI
+on:
+  push:
+    branches: [main]
+jobs: {}
+"#;
+
+    // --- parse_dispatch_inputs ------------------------------------------------------------------
+
+    #[test]
+    fn parses_single_network_input() {
+        let got = parse_dispatch_inputs(NETWORK_WF);
+        assert_eq!(
+            got,
+            vec![WorkflowInput {
+                name: "network".to_string(),
+                required: true,
+                default: None,
+                options: vec!["base".to_string()],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_suite_with_multiple_options() {
+        let got = parse_dispatch_inputs(SUITE_WF);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "suite");
+        assert!(got[0].required);
+        assert_eq!(
+            got[0].options,
+            vec!["raindex", "subparser", "route-processor"]
+        );
+        // The later `with:\n  suite:` block must NOT be mistaken for a second input.
+        assert_eq!(got.len(), 1, "only the dispatch input, not the with: mapping");
+    }
+
+    #[test]
+    fn parses_two_inputs_with_default() {
+        let got = parse_dispatch_inputs(TWO_INPUT_WF);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "network");
+        assert_eq!(got[0].options, vec!["base", "flare"]);
+        assert_eq!(got[1].name, "dry_run");
+        assert_eq!(got[1].default.as_deref(), Some("false"));
+        assert!(got[1].options.is_empty());
+    }
+
+    #[test]
+    fn no_dispatch_block_yields_no_inputs() {
+        assert!(parse_dispatch_inputs(NO_DISPATCH_WF).is_empty());
+        assert!(parse_dispatch_inputs("").is_empty());
+    }
+
+    // --- pick_selector --------------------------------------------------------------------------
+
+    #[test]
+    fn selector_prefers_a_named_selector_then_sole_input() {
+        let net = parse_dispatch_inputs(NETWORK_WF);
+        assert_eq!(pick_selector(&net), Some(0));
+        let suite = parse_dispatch_inputs(SUITE_WF);
+        assert_eq!(pick_selector(&suite), Some(0), "sole input is the selector");
+        let two = parse_dispatch_inputs(TWO_INPUT_WF);
+        assert_eq!(pick_selector(&two), Some(0), "`network` wins over `dry_run`");
+        // Two inputs, neither a selector-name → ambiguous.
+        let ambiguous = vec![
+            WorkflowInput {
+                name: "foo".into(),
+                required: true,
+                default: None,
+                options: vec![],
+            },
+            WorkflowInput {
+                name: "bar".into(),
+                required: true,
+                default: None,
+                options: vec![],
+            },
+        ];
+        assert_eq!(pick_selector(&ambiguous), None);
+    }
+
+    // --- build_dispatch_inputs ------------------------------------------------------------------
+
+    // Single-option selector, no --network → auto-picks the sole option (the erc4626.words case).
+    #[test]
+    fn builds_single_option_selector_without_network() {
+        let decl = parse_dispatch_inputs(NETWORK_WF);
+        assert_eq!(
+            build_dispatch_inputs(&decl, None).unwrap(),
+            vec![("network".to_string(), "base".to_string())]
+        );
+        // Explicit --network base is identical; a non-option value is rejected.
+        assert_eq!(
+            build_dispatch_inputs(&decl, Some("base")).unwrap(),
+            vec![("network".to_string(), "base".to_string())]
+        );
+        assert!(build_dispatch_inputs(&decl, Some("arbitrum")).is_err());
+    }
+
+    // Multi-option selector with no default REQUIRES --network (never guess among options).
+    #[test]
+    fn multi_option_selector_requires_network() {
+        let decl = parse_dispatch_inputs(SUITE_WF);
+        assert!(
+            build_dispatch_inputs(&decl, None).is_err(),
+            "must not guess among several suites"
+        );
+        assert_eq!(
+            build_dispatch_inputs(&decl, Some("subparser")).unwrap(),
+            vec![("suite".to_string(), "subparser".to_string())]
+        );
+        assert!(build_dispatch_inputs(&decl, Some("nonsuch")).is_err());
+    }
+
+    // Selector filled by --network; the OTHER required input filled from its default.
+    #[test]
+    fn fills_non_selector_required_from_default() {
+        let decl = parse_dispatch_inputs(TWO_INPUT_WF);
+        assert_eq!(
+            build_dispatch_inputs(&decl, Some("flare")).unwrap(),
+            vec![
+                ("network".to_string(), "flare".to_string()),
+                ("dry_run".to_string(), "false".to_string()),
+            ]
+        );
+    }
+
+    // No declared inputs → empty dispatch; but --network with no inputs is an error.
+    #[test]
+    fn no_inputs_dispatch_is_empty_and_rejects_network() {
+        assert!(build_dispatch_inputs(&[], None).unwrap().is_empty());
+        assert!(build_dispatch_inputs(&[], Some("base")).is_err());
+    }
+
+    // Ambiguous multi-input workflow + --network → error rather than a wrong deploy.
+    #[test]
+    fn ambiguous_selector_with_network_errors() {
+        let ambiguous = vec![
+            WorkflowInput {
+                name: "foo".into(),
+                required: true,
+                default: Some("x".into()),
+                options: vec![],
+            },
+            WorkflowInput {
+                name: "bar".into(),
+                required: true,
+                default: Some("y".into()),
+                options: vec![],
+            },
+        ];
+        assert!(build_dispatch_inputs(&ambiguous, Some("base")).is_err());
+    }
+
+    // --- dispatch_command -----------------------------------------------------------------------
+
+    #[test]
+    fn dispatch_command_builds_the_gh_argv() {
+        let inputs = vec![("network".to_string(), "base".to_string())];
+        assert_eq!(
+            dispatch_command("manual-sol-artifacts.yaml", "rainlanguage/rain.erc4626.words", "my-branch", &inputs),
+            vec![
+                "gh",
+                "workflow",
+                "run",
+                "manual-sol-artifacts.yaml",
+                "-R",
+                "rainlanguage/rain.erc4626.words",
+                "--ref",
+                "my-branch",
+                "-f",
+                "network=base",
+            ]
+        );
+        // No inputs → no -f flags.
+        assert_eq!(
+            dispatch_command("f.yml", "o/r", "b", &[]),
+            vec!["gh", "workflow", "run", "f.yml", "-R", "o/r", "--ref", "b"]
+        );
+    }
+
+    // --- classify_run ---------------------------------------------------------------------------
+
+    #[test]
+    fn classify_run_is_terminal_only_when_completed() {
+        assert_eq!(
+            classify_run(Some("completed"), Some("success")),
+            RunResult::Success
+        );
+        for c in ["failure", "cancelled", "timed_out", "action_required", "startup_failure"] {
+            assert_eq!(
+                classify_run(Some("completed"), Some(c)),
+                RunResult::Failure,
+                "conclusion {c} is a failure"
+            );
+        }
+        // Completed with no conclusion is not a success → Failure (never a false green).
+        assert_eq!(classify_run(Some("completed"), None), RunResult::Failure);
+        // Anything not-yet-completed is InProgress regardless of conclusion.
+        for s in ["queued", "in_progress", "waiting", "requested", "pending"] {
+            assert_eq!(
+                classify_run(Some(s), None),
+                RunResult::InProgress,
+                "status {s} is in progress"
+            );
+        }
+        assert_eq!(classify_run(None, None), RunResult::InProgress);
     }
 }
