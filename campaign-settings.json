@@ -4,6 +4,7 @@
       "Bash(nix:*)",
       "Bash(git:*)",
       "Bash(gh:*)",
+      "Bash(pr-review-report:*)",
       "Bash(forge:*)",
       "Bash(cargo:*)",
       "Bash(npm:*)",
