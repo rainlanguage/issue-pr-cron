@@ -55,7 +55,7 @@ LOG="$DIR/campaign.log"
 LOCK="$DIR/campaign.lock"
 RUNDIR="$DIR/runs"
 # close/design candidates are GitHub-native now (ai:close-candidate label via
-# `pr-review-report --flag-close-candidate`; design = human:design + awaiting-ruling comment).
+# `pr-review-report flag-close-candidate`; design = human:design + awaiting-ruling comment).
 # The old close-candidates.jsonl / design-candidates.jsonl local ledgers are retired.
 REVIEW_VERDICTS="$DIR/review-verdicts.jsonl"
 
@@ -151,7 +151,7 @@ if [ -s "$RUNLOG" ]; then
   grep -qi "session limit\|usage limit" "$RUNLOG" "$ERRLOG" 2>/dev/null && outcome="session-limit"
   mkdir -p "$DIR/metrics"
   # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
-  nix run "path:$DIR#pr-review-report" -- --run-metrics "$RUNLOG" 2>/dev/null \
+  nix run "path:$DIR#pr-review-report" -- run-metrics "$RUNLOG" 2>/dev/null \
     | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$USED_MODEL" --arg oc "$outcome" --argjson rc "$rc" \
       '. + {runId:$ts, role:"producer", model:$model, exitCode:$rc, outcome:$oc}' \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true

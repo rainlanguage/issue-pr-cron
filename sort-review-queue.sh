@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Print the human review queue sorted by verification cost (cheapest first).
-# Thin wrapper: delegates to `pr-review-report --queue` in pr-review-report-rs/,
+# Thin wrapper: delegates to `pr-review-report queue` in pr-review-report-rs/,
 # the single owner of ledger parsing (last-wins-by-position over
 # review-verdicts.jsonl) — one parser for the report AND the queue.
 #
