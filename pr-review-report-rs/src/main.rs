@@ -1130,6 +1130,11 @@ fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
     let (mut deleted, mut kept) = (0u32, 0u32);
     for dir in &dirs {
         let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+        // FULL status (untracked INCLUDED): an untracked file could be real uncommitted WIP, so gc
+        // must keep a clone with ANY dirt — never ignore untracked to reclaim more. Cleanliness is
+        // the PRODUCER's job (commit real work, gitignore ephemeral artifacts, keep temp files OUT of
+        // the clone, then delete the clone after submit) and the VETTER's gate (reject a PR whose
+        // checkout goes dirty), NOT gc's to guess. A dirty clone left here = a hygiene bug upstream.
         let clean = git_out(dir, &["status", "--porcelain"])
             .map(|s| s.is_empty())
             .unwrap_or(false);
@@ -1180,6 +1185,61 @@ fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
         dirs.len()
     );
     0
+}
+
+/// Args for `nix-collect-garbage`: `-d` (delete old generations + collect garbage), plus `--dry-run`
+/// when previewing. Split out so it is unit-testable without spawning nix.
+fn nix_gc_args(dry_run: bool) -> Vec<String> {
+    let mut a = vec!["-d".to_string()];
+    if dry_run {
+        a.push("--dry-run".to_string());
+    }
+    a
+}
+
+/// Garbage-collect the nix store via `nix-collect-garbage -d` (streams nix's own output). The
+/// `result/*` symlinks stay as GC roots, so built binaries survive. Returns nonzero on failure.
+fn nix_gc(dry_run: bool) -> i32 {
+    println!(
+        "== nix store gc ({}) ==",
+        if dry_run { "dry-run" } else { "delete-old + collect" }
+    );
+    match Command::new("nix-collect-garbage")
+        .args(nix_gc_args(dry_run))
+        .status()
+    {
+        Ok(s) if s.success() => 0,
+        Ok(s) => {
+            eprintln!("nix-collect-garbage exited with {:?}", s.code());
+            1
+        }
+        Err(e) => {
+            eprintln!("nix-collect-garbage failed to spawn ({e}); is nix on PATH?");
+            1
+        }
+    }
+}
+
+/// `--gc <work-dir> [--dry-run] [--max-age-days N] [--no-clones] [--no-nix]`: unified reclaim — the
+/// per-PR/issue work clones (gc_clones_mode) AND the nix store (nix_gc). Clones run first (they free
+/// the big per-clone dirs, streaming) then the store. Either half can be skipped. Nonzero if either
+/// half errors.
+fn gc_mode(work_dir: &str, max_age_days: u64, dry_run: bool, do_clones: bool, do_nix: bool) -> i32 {
+    let mut rc = 0;
+    if do_clones {
+        println!("== work clones ==");
+        let c = gc_clones_mode(work_dir, max_age_days, dry_run);
+        if c != 0 {
+            rc = c;
+        }
+    }
+    if do_nix {
+        let n = nix_gc(dry_run);
+        if n != 0 {
+            rc = n;
+        }
+    }
+    rc
 }
 // --- --deploy: the SOLE, constrained way the producer triggers a sanctioned Zoltu deploy ---------
 //
@@ -1775,6 +1835,37 @@ fn main() {
         };
         std::process::exit(gc_clones_mode(work_dir, max_age_days, dry_run));
     }
+    if args.get(1).map(String::as_str) == Some("--gc") {
+        let rest = &args[2..];
+        let dry_run = rest.iter().any(|a| a == "--dry-run");
+        let do_clones = !rest.iter().any(|a| a == "--no-clones");
+        let do_nix = !rest.iter().any(|a| a == "--no-nix");
+        let mut max_age_days: u64 = 30;
+        let mut positional: Vec<&str> = Vec::new();
+        let mut i = 0;
+        while i < rest.len() {
+            match rest[i].as_str() {
+                "--dry-run" | "--no-clones" | "--no-nix" => {}
+                "--max-age-days" => {
+                    i += 1;
+                    if let Some(v) = rest.get(i).and_then(|s| s.parse::<u64>().ok()) {
+                        max_age_days = v;
+                    }
+                }
+                other => positional.push(other),
+            }
+            i += 1;
+        }
+        // work-dir is required only when the clones half runs
+        let work_dir = positional.first().copied().unwrap_or("");
+        if do_clones && work_dir.is_empty() {
+            eprintln!(
+                "usage: pr-review-report --gc <work-dir> [--dry-run] [--max-age-days N] [--no-clones] [--no-nix]"
+            );
+            std::process::exit(2);
+        }
+        std::process::exit(gc_mode(work_dir, max_age_days, dry_run, do_clones, do_nix));
+    }
     if args.get(1).map(String::as_str) == Some("--run-metrics") {
         let Some(path) = args.get(2) else {
             eprintln!("usage: pr-review-report --run-metrics <trace.jsonl>");
@@ -1823,7 +1914,7 @@ fn main() {
     // No subcommand matched. GitHub is the source of truth — there is no local ledger to report; use
     // `--queue` for the review queue (the legacy no-arg report read the now-removed ledger).
     eprintln!(
-        "pr-review-report — subcommands: --queue [N] | --record-verdict <owner/repo> <pr> <verdict> [note] [--cost N] [--basis s] | --trusted-comments <owner/repo> <n> [--marker m] [--issue] | --commit-closes <owner/repo> <n> | --deploy <owner/repo> <pr> [--network net] [--dry-run] | --gc-clones <work-dir> [--dry-run] | --run-metrics <trace.jsonl>"
+        "pr-review-report — subcommands: --queue [N] | --record-verdict <owner/repo> <pr> <verdict> [note] [--cost N] [--basis s] | --trusted-comments <owner/repo> <n> [--marker m] [--issue] | --commit-closes <owner/repo> <n> | --deploy <owner/repo> <pr> [--network net] [--dry-run] | --gc-clones <work-dir> [--dry-run] | --gc <work-dir> [--dry-run] [--no-clones|--no-nix] | --run-metrics <trace.jsonl>"
     );
     std::process::exit(2);
 }
@@ -2644,7 +2735,9 @@ mod record_verdict_tests {
 
 #[cfg(test)]
 mod gc_tests {
-    use super::{gc_decision, parse_pr_state, parse_repo_slug, CloneState, GcAction, PrState};
+    use super::{
+        gc_decision, nix_gc_args, parse_pr_state, parse_repo_slug, CloneState, GcAction, PrState,
+    };
 
     fn st(clean: bool, unpushed: Option<u32>, pr: Option<PrState>, age_days: u64) -> CloneState {
         CloneState {
@@ -2653,6 +2746,12 @@ mod gc_tests {
             pr,
             age_days,
         }
+    }
+
+    #[test]
+    fn nix_gc_args_adds_dry_run_only_when_previewing() {
+        assert_eq!(nix_gc_args(false), vec!["-d"]);
+        assert_eq!(nix_gc_args(true), vec!["-d", "--dry-run"]);
     }
 
     #[test]
