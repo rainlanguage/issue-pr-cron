@@ -12,6 +12,7 @@
 
 use serde_json::Value;
 use std::process::Command;
+use clap::{Parser, Subcommand};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Ci {
@@ -396,6 +397,13 @@ fn closing_keywords(text: &str) -> Vec<u64> {
     let mut out: Vec<u64> = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
+        // `lower[i..]` below is a str slice that PANICS if `i` falls inside a multi-byte char (e.g.
+        // an em-dash in the commit message). Keywords are ASCII, so a keyword can only start at a
+        // char boundary — skip any non-boundary byte position.
+        if !lower.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
         // find the next keyword whose start is at a word boundary
         let at_boundary = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
         if at_boundary {
@@ -1880,203 +1888,163 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
     }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(String::as_str) == Some("--queue") {
-        let top = args
-            .get(2)
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(20);
-        queue_mode(top);
-        return;
-    }
-    if args.get(1).map(String::as_str) == Some("--commit-closes") {
-        let (Some(slug), Some(pr)) = (args.get(2), args.get(3)) else {
-            eprintln!("usage: pr-review-report --commit-closes <owner/repo> <pr>");
-            std::process::exit(2);
-        };
-        std::process::exit(commit_closes_mode(slug, pr));
-    }
-    if args.get(1).map(String::as_str) == Some("--deploy") {
-        let rest = &args[2..];
-        let dry_run = rest.iter().any(|a| a == "--dry-run");
-        let mut network: Option<String> = None;
-        let mut positional: Vec<&str> = Vec::new();
-        let mut i = 0;
-        while i < rest.len() {
-            match rest[i].as_str() {
-                "--dry-run" => {}
-                "--network" => {
-                    i += 1;
-                    network = rest.get(i).cloned();
-                }
-                other => positional.push(other),
-            }
-            i += 1;
-        }
-        let (Some(&slug), Some(&pr)) = (positional.first(), positional.get(1)) else {
-            eprintln!(
-                "usage: pr-review-report --deploy <owner/repo> <pr> [--network <net>] [--dry-run]"
-            );
-            std::process::exit(2);
-        };
-        std::process::exit(deploy_mode(slug, pr, network.as_deref(), dry_run));
-    }
-    if args.get(1).map(String::as_str) == Some("--trusted-comments") {
-        let rest = &args[2..];
-        let issue = rest.iter().any(|a| a == "--issue");
-        let mut marker: Option<&str> = None;
-        let mut positional: Vec<&str> = Vec::new();
-        let mut i = 0;
-        while i < rest.len() {
-            match rest[i].as_str() {
-                "--issue" => {}
-                "--marker" => {
-                    i += 1;
-                    marker = rest.get(i).map(String::as_str);
-                }
-                other => positional.push(other),
-            }
-            i += 1;
-        }
-        let (Some(&slug), Some(&n)) = (positional.first(), positional.get(1)) else {
-            eprintln!(
-                "usage: pr-review-report --trusted-comments <owner/repo> <n> [--marker <prefix>] [--issue]"
-            );
-            std::process::exit(2);
-        };
-        std::process::exit(trusted_comments_mode(slug, n, marker, issue));
-    }
-    if args.get(1).map(String::as_str) == Some("--gc-clones") {
-        let rest = &args[2..];
-        let dry_run = rest.iter().any(|a| a == "--dry-run");
-        let mut max_age_days: u64 = 30;
-        let mut positional: Vec<&str> = Vec::new();
-        let mut i = 0;
-        while i < rest.len() {
-            match rest[i].as_str() {
-                "--dry-run" => {}
-                "--max-age-days" => {
-                    i += 1;
-                    if let Some(v) = rest.get(i).and_then(|s| s.parse::<u64>().ok()) {
-                        max_age_days = v;
-                    }
-                }
-                other => positional.push(other),
-            }
-            i += 1;
-        }
-        let Some(&work_dir) = positional.first() else {
-            eprintln!(
-                "usage: pr-review-report --gc-clones <work-dir> [--dry-run] [--max-age-days N]"
-            );
-            std::process::exit(2);
-        };
-        std::process::exit(gc_clones_mode(work_dir, max_age_days, dry_run));
-    }
-    if args.get(1).map(String::as_str) == Some("--gc") {
-        let rest = &args[2..];
-        let dry_run = rest.iter().any(|a| a == "--dry-run");
-        let do_clones = !rest.iter().any(|a| a == "--no-clones");
-        let do_nix = !rest.iter().any(|a| a == "--no-nix");
-        let mut max_age_days: u64 = 30;
-        let mut positional: Vec<&str> = Vec::new();
-        let mut i = 0;
-        while i < rest.len() {
-            match rest[i].as_str() {
-                "--dry-run" | "--no-clones" | "--no-nix" => {}
-                "--max-age-days" => {
-                    i += 1;
-                    if let Some(v) = rest.get(i).and_then(|s| s.parse::<u64>().ok()) {
-                        max_age_days = v;
-                    }
-                }
-                other => positional.push(other),
-            }
-            i += 1;
-        }
-        // work-dir is required only when the clones half runs
-        let work_dir = positional.first().copied().unwrap_or("");
-        if do_clones && work_dir.is_empty() {
-            eprintln!(
-                "usage: pr-review-report --gc <work-dir> [--dry-run] [--max-age-days N] [--no-clones] [--no-nix]"
-            );
-            std::process::exit(2);
-        }
-        std::process::exit(gc_mode(work_dir, max_age_days, dry_run, do_clones, do_nix));
-    }
-    if args.get(1).map(String::as_str) == Some("--run-metrics") {
-        let Some(path) = args.get(2) else {
-            eprintln!("usage: pr-review-report --run-metrics <trace.jsonl>");
-            std::process::exit(2);
-        };
-        std::process::exit(run_metrics_mode(path));
-    }
-    if args.get(1).map(String::as_str) == Some("--record-verdict") {
-        let dry_run = args.iter().any(|a| a == "--dry-run");
-        // Extract `--cost <n>` / `--basis <s>` (flags with a value); everything else is positional.
-        let mut cost: Option<i64> = None;
-        let mut basis = String::new();
-        let mut positional: Vec<&str> = Vec::new();
-        let rest = &args[2..];
-        let mut i = 0;
-        while i < rest.len() {
-            match rest[i].as_str() {
-                "--dry-run" => {}
-                "--cost" => {
-                    i += 1;
-                    cost = rest.get(i).and_then(|s| s.parse::<i64>().ok());
-                }
-                "--basis" => {
-                    i += 1;
-                    basis = rest.get(i).cloned().unwrap_or_default();
-                }
-                other => positional.push(other),
-            }
-            i += 1;
-        }
-        let (Some(&slug), Some(&pr), Some(&verdict)) =
-            (positional.first(), positional.get(1), positional.get(2))
-        else {
-            eprintln!("usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close|relink> [note...] [--cost <n>] [--basis <s>] [--dry-run]");
-            std::process::exit(2);
-        };
-        let note = if positional.len() > 3 {
-            positional[3..].join(" ")
-        } else {
-            String::new()
-        };
-        std::process::exit(record_verdict_mode(
-            slug, pr, verdict, &note, cost, &basis, dry_run,
-        ));
-    }
-    if args.get(1).map(String::as_str) == Some("--flag-close-candidate") {
-        let dry_run = args.iter().any(|a| a == "--dry-run");
-        let positional: Vec<&str> = args[2..]
-            .iter()
-            .filter(|a| a.as_str() != "--dry-run")
-            .map(String::as_str)
-            .collect();
-        let (Some(&slug), Some(&issue)) = (positional.first(), positional.get(1)) else {
-            eprintln!(
-                "usage: pr-review-report --flag-close-candidate <owner/repo> <issue> \"<reason>\" [--dry-run]"
-            );
-            std::process::exit(2);
-        };
-        let reason = if positional.len() > 2 {
-            positional[2..].join(" ")
-        } else {
-            String::new()
-        };
-        std::process::exit(flag_close_candidate_mode(slug, issue, &reason, dry_run));
-    }
-    // No subcommand matched. GitHub is the source of truth — there is no local ledger to report; use
-    // `--queue` for the review queue (the legacy no-arg report read the now-removed ledger).
-    eprintln!(
-        "pr-review-report — subcommands: --queue [N] | --record-verdict <owner/repo> <pr> <verdict> [note] [--cost N] [--basis s] | --flag-close-candidate <owner/repo> <issue> \"<reason>\" [--dry-run] | --trusted-comments <owner/repo> <n> [--marker m] [--issue] | --commit-closes <owner/repo> <n> | --deploy <owner/repo> <pr> [--network net] [--dry-run] | --gc-clones <work-dir> [--dry-run] | --gc <work-dir> [--dry-run] [--no-clones|--no-nix] | --run-metrics <trace.jsonl>"
-    );
-    std::process::exit(2);
+/// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
+/// parsing, validation, and `--help`/usage (replacing the former hand-rolled `args.get(n)` dispatch).
+#[derive(Parser)]
+#[command(
+    name = "pr-review-report",
+    about = "issue-pr-cron pipeline tooling: review queue, verdicts, close-candidate flags, deploys, and gc."
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Cmd,
 }
+
+// Named `Cmd`, not `Command`, to avoid colliding with the `std::process::Command` imported above.
+#[derive(Subcommand, Debug, PartialEq)]
+enum Cmd {
+    /// Print the human review queue (ai:ready PRs), cheapest-first.
+    Queue {
+        /// How many to print (default 20).
+        n: Option<usize>,
+    },
+    /// Record an AI verdict as an ai:<verdict> label + a sha-bound comment.
+    RecordVerdict {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        /// ready | reject | design | close | relink
+        verdict: String,
+        /// One-line reason (trailing words are joined).
+        note: Vec<String>,
+        #[arg(long)]
+        cost: Option<i64>,
+        #[arg(long, default_value = "")]
+        basis: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Flag an ISSUE as a close-candidate: ai:close-candidate label + trusted reason comment.
+    FlagCloseCandidate {
+        /// owner/repo
+        slug: String,
+        issue: String,
+        /// Reason (trailing words are joined).
+        reason: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Print the trusted account's comments on a PR (or issue, with --issue), most-recent last.
+    TrustedComments {
+        /// owner/repo
+        slug: String,
+        n: String,
+        #[arg(long)]
+        marker: Option<String>,
+        #[arg(long)]
+        issue: bool,
+    },
+    /// Fail if a commit-message closing keyword references an issue absent from the PR's live closingIssuesReferences.
+    CommitCloses {
+        /// owner/repo
+        slug: String,
+        pr: String,
+    },
+    /// Trigger the repo's sanctioned Zoltu deploy (manual-sol-artifacts.yaml) for a PR's branch.
+    Deploy {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        #[arg(long)]
+        network: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Garbage-collect the per-PR/issue work clones directly under <work-dir>.
+    GcClones {
+        work_dir: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value_t = 30)]
+        max_age_days: u64,
+    },
+    /// Unified reclaim: the work clones (gc-clones) AND the nix store (nix-collect-garbage -d).
+    Gc {
+        /// Required unless --no-clones.
+        work_dir: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value_t = 30)]
+        max_age_days: u64,
+        #[arg(long)]
+        no_clones: bool,
+        #[arg(long)]
+        no_nix: bool,
+    },
+    /// Emit one enriched per-run metrics JSON line distilled from a stream-json trace.
+    RunMetrics { trace: String },
+}
+
+fn main() {
+    let code = match Cli::parse().command {
+        Cmd::Queue { n } => {
+            queue_mode(n.unwrap_or(20));
+            0
+        }
+        Cmd::RecordVerdict {
+            slug,
+            pr,
+            verdict,
+            note,
+            cost,
+            basis,
+            dry_run,
+        } => record_verdict_mode(&slug, &pr, &verdict, &note.join(" "), cost, &basis, dry_run),
+        Cmd::FlagCloseCandidate {
+            slug,
+            issue,
+            reason,
+            dry_run,
+        } => flag_close_candidate_mode(&slug, &issue, &reason.join(" "), dry_run),
+        Cmd::TrustedComments {
+            slug,
+            n,
+            marker,
+            issue,
+        } => trusted_comments_mode(&slug, &n, marker.as_deref(), issue),
+        Cmd::CommitCloses { slug, pr } => commit_closes_mode(&slug, &pr),
+        Cmd::Deploy {
+            slug,
+            pr,
+            network,
+            dry_run,
+        } => deploy_mode(&slug, &pr, network.as_deref(), dry_run),
+        Cmd::GcClones {
+            work_dir,
+            dry_run,
+            max_age_days,
+        } => gc_clones_mode(&work_dir, max_age_days, dry_run),
+        Cmd::Gc {
+            work_dir,
+            dry_run,
+            max_age_days,
+            no_clones,
+            no_nix,
+        } => {
+            let do_clones = !no_clones;
+            let do_nix = !no_nix;
+            let wd = work_dir.unwrap_or_default();
+            if do_clones && wd.is_empty() {
+                eprintln!("error: gc needs <work-dir> unless --no-clones is given");
+                std::process::exit(2);
+            }
+            gc_mode(&wd, max_age_days, dry_run, do_clones, do_nix)
+        }
+        Cmd::RunMetrics { trace } => run_metrics_mode(&trace),
+    };
+    std::process::exit(code);
+}
+
 #[cfg(test)]
 mod queue_tests {
     use super::*;
@@ -3299,5 +3267,354 @@ jobs: {}
             );
         }
         assert_eq!(classify_run(None, None), RunResult::InProgress);
+    }
+}
+
+// Pin the clap arg surface: every subcommand's name, positional ORDER, flags, and defaults, so a
+// silent regression in the derive (a dropped subcommand, a swapped positional, a renamed/lost flag,
+// a changed default, or the note/reason Vec swallowing a flag) fails the suite. Parses via the public
+// `Cli`, exactly as `main` does, so these assert the real dispatch contract.
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    use clap::Parser;
+
+    fn parse(args: &[&str]) -> Cmd {
+        Cli::try_parse_from(args)
+            .unwrap_or_else(|e| panic!("expected {args:?} to parse: {e}"))
+            .command
+    }
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    // All 9 subcommands are present and dispatch to the right variant on their kebab-case name.
+    #[test]
+    fn all_nine_subcommands_present() {
+        assert!(matches!(parse(&["prr", "queue"]), Cmd::Queue { .. }));
+        assert!(matches!(
+            parse(&["prr", "record-verdict", "o/r", "1", "ready"]),
+            Cmd::RecordVerdict { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "flag-close-candidate", "o/r", "1"]),
+            Cmd::FlagCloseCandidate { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "trusted-comments", "o/r", "1"]),
+            Cmd::TrustedComments { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "commit-closes", "o/r", "1"]),
+            Cmd::CommitCloses { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "deploy", "o/r", "1"]),
+            Cmd::Deploy { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "gc-clones", "/w"]),
+            Cmd::GcClones { .. }
+        ));
+        assert!(matches!(parse(&["prr", "gc", "/w"]), Cmd::Gc { .. }));
+        assert!(matches!(
+            parse(&["prr", "run-metrics", "t.jsonl"]),
+            Cmd::RunMetrics { .. }
+        ));
+    }
+
+    // queue: N is an optional usize. Omitted → None (so `main`'s `unwrap_or(20)` supplies the 20);
+    // given → Some(N). A clap-level default slipped onto `n` would make the omitted case Some and
+    // fail here.
+    #[test]
+    fn queue_n_is_optional() {
+        assert_eq!(parse(&["prr", "queue"]), Cmd::Queue { n: None });
+        assert_eq!(parse(&["prr", "queue", "5"]), Cmd::Queue { n: Some(5) });
+    }
+
+    // record-verdict positional ORDER: slug, then pr, then verdict. A swap of any two is a silent,
+    // severe bug (records against the wrong PR / label) — this pins the exact binding.
+    #[test]
+    fn record_verdict_positional_order() {
+        let c = parse(&["prr", "record-verdict", "owner/repo", "42", "ready"]);
+        assert_eq!(
+            c,
+            Cmd::RecordVerdict {
+                slug: "owner/repo".to_string(),
+                pr: "42".to_string(),
+                verdict: "ready".to_string(),
+                note: vec![],
+                cost: None,
+                basis: String::new(),
+                dry_run: false,
+            }
+        );
+    }
+
+    // The highest-risk spot: the trailing `note: Vec<String>` joins multi-word notes AND does NOT
+    // swallow the flags that follow it. A note followed by MULTIPLE flags must still bind each flag.
+    #[test]
+    fn record_verdict_note_joins_and_does_not_swallow_flags() {
+        let c = parse(&[
+            "prr",
+            "record-verdict",
+            "o/r",
+            "5",
+            "ready",
+            "my",
+            "note",
+            "here",
+            "--cost",
+            "100",
+            "--basis",
+            "org gate",
+            "--dry-run",
+        ]);
+        assert_eq!(
+            c,
+            Cmd::RecordVerdict {
+                slug: "o/r".to_string(),
+                pr: "5".to_string(),
+                verdict: "ready".to_string(),
+                note: s(&["my", "note", "here"]),
+                cost: Some(100),
+                basis: "org gate".to_string(),
+                dry_run: true,
+            }
+        );
+        // and the note joins to the exact string main forwards to record_verdict_mode
+        if let Cmd::RecordVerdict { note, .. } = c {
+            assert_eq!(note.join(" "), "my note here");
+        }
+    }
+
+    // An EMPTY note followed immediately by flags: note is [], flags still bind.
+    #[test]
+    fn record_verdict_empty_note_with_flags() {
+        let c = parse(&[
+            "prr",
+            "record-verdict",
+            "o/r",
+            "5",
+            "ready",
+            "--cost",
+            "5",
+            "--dry-run",
+        ]);
+        assert_eq!(
+            c,
+            Cmd::RecordVerdict {
+                slug: "o/r".to_string(),
+                pr: "5".to_string(),
+                verdict: "ready".to_string(),
+                note: vec![],
+                cost: Some(5),
+                basis: String::new(),
+                dry_run: true,
+            }
+        );
+    }
+
+    // record-verdict defaults with no flags: cost None, basis "" (the pinned default), dry_run false.
+    #[test]
+    fn record_verdict_flag_defaults() {
+        let c = parse(&["prr", "record-verdict", "o/r", "5", "reject", "bad"]);
+        assert_eq!(
+            c,
+            Cmd::RecordVerdict {
+                slug: "o/r".to_string(),
+                pr: "5".to_string(),
+                verdict: "reject".to_string(),
+                note: s(&["bad"]),
+                cost: None,
+                basis: String::new(),
+                dry_run: false,
+            }
+        );
+    }
+
+    // flag-close-candidate: slug, issue, then the trailing reason Vec; --dry-run does not get eaten.
+    #[test]
+    fn flag_close_candidate_reason_and_dry_run() {
+        assert_eq!(
+            parse(&[
+                "prr",
+                "flag-close-candidate",
+                "o/r",
+                "7",
+                "dup",
+                "of",
+                "#3",
+                "--dry-run",
+            ]),
+            Cmd::FlagCloseCandidate {
+                slug: "o/r".to_string(),
+                issue: "7".to_string(),
+                reason: s(&["dup", "of", "#3"]),
+                dry_run: true,
+            }
+        );
+        // empty reason is allowed at the parse layer (mode-level guard rejects it, not clap)
+        assert_eq!(
+            parse(&["prr", "flag-close-candidate", "o/r", "7"]),
+            Cmd::FlagCloseCandidate {
+                slug: "o/r".to_string(),
+                issue: "7".to_string(),
+                reason: vec![],
+                dry_run: false,
+            }
+        );
+    }
+
+    // trusted-comments: slug, n; --marker takes a value, --issue is a bare bool.
+    #[test]
+    fn trusted_comments_marker_and_issue() {
+        assert_eq!(
+            parse(&[
+                "prr",
+                "trusted-comments",
+                "o/r",
+                "9",
+                "--marker",
+                "🤖 ai:vetter",
+                "--issue",
+            ]),
+            Cmd::TrustedComments {
+                slug: "o/r".to_string(),
+                n: "9".to_string(),
+                marker: Some("🤖 ai:vetter".to_string()),
+                issue: true,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "trusted-comments", "o/r", "9"]),
+            Cmd::TrustedComments {
+                slug: "o/r".to_string(),
+                n: "9".to_string(),
+                marker: None,
+                issue: false,
+            }
+        );
+    }
+
+    #[test]
+    fn commit_closes_order() {
+        assert_eq!(
+            parse(&["prr", "commit-closes", "owner/repo", "88"]),
+            Cmd::CommitCloses {
+                slug: "owner/repo".to_string(),
+                pr: "88".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn deploy_network_and_dry_run() {
+        assert_eq!(
+            parse(&["prr", "deploy", "o/r", "12", "--network", "base", "--dry-run"]),
+            Cmd::Deploy {
+                slug: "o/r".to_string(),
+                pr: "12".to_string(),
+                network: Some("base".to_string()),
+                dry_run: true,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "deploy", "o/r", "12"]),
+            Cmd::Deploy {
+                slug: "o/r".to_string(),
+                pr: "12".to_string(),
+                network: None,
+                dry_run: false,
+            }
+        );
+    }
+
+    // gc-clones: work-dir is required; --max-age-days defaults to 30 (the pinned default).
+    #[test]
+    fn gc_clones_defaults_and_flags() {
+        assert_eq!(
+            parse(&["prr", "gc-clones", "/w"]),
+            Cmd::GcClones {
+                work_dir: "/w".to_string(),
+                dry_run: false,
+                max_age_days: 30,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "gc-clones", "/w", "--dry-run", "--max-age-days", "7"]),
+            Cmd::GcClones {
+                work_dir: "/w".to_string(),
+                dry_run: true,
+                max_age_days: 7,
+            }
+        );
+        // work-dir is mandatory for gc-clones (unlike gc); omitting it is a parse error.
+        assert!(Cli::try_parse_from(["prr", "gc-clones"]).is_err());
+    }
+
+    // gc: work-dir is OPTIONAL at the parse layer (the required-unless-`--no-clones` rule is enforced
+    // in main, after parsing). --max-age-days defaults to 30; --no-clones/--no-nix are bare bools.
+    #[test]
+    fn gc_workdir_optional_defaults_and_bools() {
+        assert_eq!(
+            parse(&["prr", "gc", "/w"]),
+            Cmd::Gc {
+                work_dir: Some("/w".to_string()),
+                dry_run: false,
+                max_age_days: 30,
+                no_clones: false,
+                no_nix: false,
+            }
+        );
+        // --no-clones with NO work-dir must still parse (main then allows it); this is the parse-layer
+        // precondition of the "required unless --no-clones" rule.
+        assert_eq!(
+            parse(&["prr", "gc", "--no-clones", "--no-nix"]),
+            Cmd::Gc {
+                work_dir: None,
+                dry_run: false,
+                max_age_days: 30,
+                no_clones: true,
+                no_nix: true,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "gc", "/w", "--dry-run", "--max-age-days", "5", "--no-nix"]),
+            Cmd::Gc {
+                work_dir: Some("/w".to_string()),
+                dry_run: true,
+                max_age_days: 5,
+                no_clones: false,
+                no_nix: true,
+            }
+        );
+    }
+
+    #[test]
+    fn run_metrics_trace() {
+        assert_eq!(
+            parse(&["prr", "run-metrics", "/path/to/trace.jsonl"]),
+            Cmd::RunMetrics {
+                trace: "/path/to/trace.jsonl".to_string(),
+            }
+        );
+    }
+
+    // The pre-conversion `--foo` dispatch forms are gone: clap must REJECT them as unknown args
+    // (this is the intended, correct new behavior — callers were migrated to the bare subcommand).
+    #[test]
+    fn old_dashed_dispatch_forms_are_rejected() {
+        for old in [
+            vec!["prr", "--queue"],
+            vec!["prr", "--record-verdict", "o/r", "1", "ready"],
+            vec!["prr", "--deploy", "o/r", "1"],
+            vec!["prr", "--gc", "/w"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&old).is_err(),
+                "old form {old:?} must be rejected"
+            );
+        }
     }
 }
