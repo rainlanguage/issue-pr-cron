@@ -38,6 +38,7 @@ set -u
 WORK_DIR="$HOME/code"          # where issue clones are made
 PR_ASSIGNEE=""                 # GitHub handle to assign opened PRs to (set in cron.env)
 MODEL="claude-fable-5"      # org default per 2026-07-04 directive: max-capability model for both crons
+FALLBACK_MODELS=""             # ordered fallback models tried on a MODEL quota/429 (set in cron.env) — keeps the pipeline moving
 MAXTIME="3h"                   # hard cap per run
 KEEP_RUNS=20                   # retained per-run traces
 # shellcheck disable=SC1091
@@ -99,25 +100,40 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 #   - bare `jq` means dedup is one jq pass, not the byte-grep pathology that stalls runs,
 #   - no nix git-hooks WARNING banner leaking into close-candidates.jsonl.
 # Stream every event as JSON. tee keeps the full trace even if the jq distiller is missing/errors.
-timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
-  --model "$MODEL" \
-  --settings "$DIR/campaign-settings.json" \
-  --permission-mode default \
-  --verbose --output-format stream-json \
-  --add-dir "$WORK_DIR" \
-  --add-dir "$DIR" \
-  2>"$ERRLOG" \
-  | tee "$RUNLOG" \
-  | { nix shell nixpkgs#jq --command jq --unbuffered -rc '
-        if .type=="assistant" then
-          (.message.content[]?
-            | if .type=="tool_use" then "  ▸ "+.name+"  "+(((.input.command // .input.description // (.input|tostring)))|tostring|gsub("\n";" ")|.[0:200])
-              elif .type=="text" then "  · "+((.text|gsub("\n";" "))|.[0:200])
-              else empty end)
-        elif .type=="result" then "  ⟹ "+(((.subtype//"done"))|ascii_upcase)+": "+(((.result//"")|gsub("\n";" "))|.[0:800])
-        else empty end
-      ' 2>/dev/null || cat >/dev/null ; } >> "$LOG"
-rc=${PIPESTATUS[0]}
+# Model fallback: try $MODEL, then each $FALLBACK_MODELS in order, advancing to the next ONLY when a
+# model is quota-limited (HTTP 429 / "reached your … limit"). Any other outcome (success, a nix/auth
+# startup failure, or a real error) stops the loop — so one model's exhausted quota can't stall the
+# pipeline, yet we never thrash through models on a failure that isn't about quota.
+USED_MODEL="$MODEL"
+rc=1
+for USED_MODEL in $MODEL $FALLBACK_MODELS; do
+  echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" >> "$LOG"
+  timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
+    --model "$USED_MODEL" \
+    --settings "$DIR/campaign-settings.json" \
+    --permission-mode default \
+    --verbose --output-format stream-json \
+    --add-dir "$WORK_DIR" \
+    --add-dir "$DIR" \
+    2>"$ERRLOG" \
+    | tee "$RUNLOG" \
+    | { nix shell nixpkgs#jq --command jq --unbuffered -rc '
+          if .type=="assistant" then
+            (.message.content[]?
+              | if .type=="tool_use" then "  ▸ "+.name+"  "+(((.input.command // .input.description // (.input|tostring)))|tostring|gsub("\n";" ")|.[0:200])
+                elif .type=="text" then "  · "+((.text|gsub("\n";" "))|.[0:200])
+                else empty end)
+          elif .type=="result" then "  ⟹ "+(((.subtype//"done"))|ascii_upcase)+": "+(((.result//"")|gsub("\n";" "))|.[0:800])
+          else empty end
+        ' 2>/dev/null || cat >/dev/null ; } >> "$LOG"
+  rc=${PIPESTATUS[0]}
+  # Advance to the next model ONLY on a usage/quota limit (429); any other outcome is final.
+  if grep -qiE '"api_error_status": ?429|reached your [^"]*limit|usage limit|session limit' "$RUNLOG" "$ERRLOG" 2>/dev/null; then
+    echo "  !! model $USED_MODEL is quota-limited (429) — falling back to next model" >> "$LOG"
+    continue
+  fi
+  break
+done
 
 # surface a startup/auth failure (no stdout events) directly into the main log
 if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
@@ -136,7 +152,7 @@ if [ -s "$RUNLOG" ]; then
   mkdir -p "$DIR/metrics"
   # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
   nix run "path:$DIR#pr-review-report" -- --run-metrics "$RUNLOG" 2>/dev/null \
-    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$MODEL" --arg oc "$outcome" --argjson rc "$rc" \
+    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$USED_MODEL" --arg oc "$outcome" --argjson rc "$rc" \
       '. + {runId:$ts, role:"producer", model:$model, exitCode:$rc, outcome:$oc}' \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
 fi

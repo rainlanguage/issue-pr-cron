@@ -30,6 +30,7 @@ set -u
 # --- deployment config (defaults; override in ./cron.env) ---
 PR_ASSIGNEE=""
 REVIEW_MODEL="claude-fable-5"   # org default per 2026-07-04 directive; override via cron.env if needed
+FALLBACK_MODELS=""              # ordered fallback models tried on a REVIEW_MODEL quota/429 (set in cron.env)
 REVIEW_MAXTIME="2h"
 REVIEW_KEEP_RUNS=20
 # shellcheck disable=SC1091
@@ -81,24 +82,37 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
 } >> "$LOG"
 
 # gh + jq on PATH (via nix shell) so the model uses BARE gh -> the read-only deny-list applies.
-timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
-  --model "$REVIEW_MODEL" \
-  --settings "$DIR/review-settings.json" \
-  --permission-mode default \
-  --verbose --output-format stream-json \
-  --add-dir "$DIR" \
-  2>"$ERRLOG" \
-  | tee "$RUNLOG" \
-  | { nix shell nixpkgs#jq --command jq --unbuffered -rc '
-        if .type=="assistant" then
-          (.message.content[]?
-            | if .type=="tool_use" then "  ▸ "+.name+"  "+(((.input.command // .input.description // (.input|tostring)))|tostring|gsub("\n";" ")|.[0:200])
-              elif .type=="text" then "  · "+((.text|gsub("\n";" "))|.[0:200])
-              else empty end)
-        elif .type=="result" then "  ⟹ "+(((.subtype//"done"))|ascii_upcase)+": "+(((.result//"")|gsub("\n";" "))|.[0:800])
-        else empty end
-      ' 2>/dev/null || cat >/dev/null ; } >> "$LOG"
-rc=${PIPESTATUS[0]}
+# Model fallback: try $REVIEW_MODEL, then each $FALLBACK_MODELS in order, advancing ONLY on a
+# quota/usage limit (HTTP 429) so one model's exhausted quota can't stall vetting. Any other outcome
+# (success, nix/auth startup failure, real error) is final.
+USED_MODEL="$REVIEW_MODEL"
+rc=1
+for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
+  echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" >> "$LOG"
+  timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
+    --model "$USED_MODEL" \
+    --settings "$DIR/review-settings.json" \
+    --permission-mode default \
+    --verbose --output-format stream-json \
+    --add-dir "$DIR" \
+    2>"$ERRLOG" \
+    | tee "$RUNLOG" \
+    | { nix shell nixpkgs#jq --command jq --unbuffered -rc '
+          if .type=="assistant" then
+            (.message.content[]?
+              | if .type=="tool_use" then "  ▸ "+.name+"  "+(((.input.command // .input.description // (.input|tostring)))|tostring|gsub("\n";" ")|.[0:200])
+                elif .type=="text" then "  · "+((.text|gsub("\n";" "))|.[0:200])
+                else empty end)
+          elif .type=="result" then "  ⟹ "+(((.subtype//"done"))|ascii_upcase)+": "+(((.result//"")|gsub("\n";" "))|.[0:800])
+          else empty end
+        ' 2>/dev/null || cat >/dev/null ; } >> "$LOG"
+  rc=${PIPESTATUS[0]}
+  if grep -qiE '"api_error_status": ?429|reached your [^"]*limit|usage limit|session limit' "$RUNLOG" "$ERRLOG" 2>/dev/null; then
+    echo "  !! model $USED_MODEL is quota-limited (429) — falling back to next model" >> "$LOG"
+    continue
+  fi
+  break
+done
 
 if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
   echo "  !! no event stream — likely auth/startup failure; stderr:" >> "$LOG"
@@ -113,7 +127,7 @@ if [ -s "$RUNLOG" ]; then
   mkdir -p "$DIR/metrics"
   # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
   nix run "path:$DIR#pr-review-report" -- --run-metrics "$RUNLOG" 2>/dev/null \
-    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$REVIEW_MODEL" --arg oc "$outcome" --argjson rc "$rc" \
+    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$USED_MODEL" --arg oc "$outcome" --argjson rc "$rc" \
       '. + {runId:$ts, role:"vetter", model:$model, exitCode:$rc, outcome:$oc}' \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
 fi
