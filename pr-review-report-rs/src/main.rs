@@ -969,6 +969,145 @@ fn record_verdict_mode(
     0
 }
 
+/// Pure plan for `--flag-close-candidate`: given the issue's live state, decide what to do.
+#[derive(Debug, PartialEq)]
+enum CloseFlagPlan {
+    AlreadyClosed,
+    RefuseHuman,
+    Flag { add_label: bool, post_comment: bool },
+}
+
+/// A human `human:keep-open` / `human:close-candidate` ruling is sacred (refuse); a CLOSED issue is
+/// moot; otherwise flag it, adding the label / posting the note only when not already present.
+fn close_candidate_plan(state: &str, labels: &[String], already_noted: bool) -> CloseFlagPlan {
+    if state == "CLOSED" {
+        return CloseFlagPlan::AlreadyClosed;
+    }
+    if labels
+        .iter()
+        .any(|l| l == "human:keep-open" || l == "human:close-candidate")
+    {
+        return CloseFlagPlan::RefuseHuman;
+    }
+    CloseFlagPlan::Flag {
+        add_label: !labels.iter().any(|l| l == "ai:close-candidate"),
+        post_comment: !already_noted,
+    }
+}
+
+/// `--flag-close-candidate <owner/repo> <issue> "<reason>" [--dry-run]`: the SOLE sanctioned way the
+/// producer flags a closeable ISSUE — applies the `ai:close-candidate` label + a trusted
+/// `🤖 ai:producer` reason comment, replacing the old local close-candidates.jsonl. GitHub state is
+/// the source of truth: a closed/fixed issue drops out of the `--state open` query automatically,
+/// re-flagging is idempotent, and a human `human:keep-open` / `human:close-candidate` ruling is
+/// sacred (the tool refuses, exit 3). The producer NEVER closes the issue — a human does that.
+fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: bool) -> i32 {
+    if reason.trim().is_empty() {
+        eprintln!(
+            "usage: pr-review-report --flag-close-candidate <owner/repo> <issue> \"<reason>\" [--dry-run]"
+        );
+        return 2;
+    }
+    let Some(j) = gh_json(&[
+        "issue", "view", issue, "-R", slug, "--json", "state,labels,comments",
+    ]) else {
+        eprintln!("error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data");
+        return 1;
+    };
+    let state = j.get("state").and_then(|s| s.as_str()).unwrap_or("");
+    let labels: Vec<String> = j
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let already_noted = j
+        .get("comments")
+        .and_then(|c| c.as_array())
+        .map(|a| {
+            a.iter().any(|c| {
+                c.get("body")
+                    .and_then(|b| b.as_str())
+                    .map(|b| b.contains("Close-candidate:"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+
+    let (add_label, post_comment) = match close_candidate_plan(state, &labels, already_noted) {
+        CloseFlagPlan::AlreadyClosed => {
+            println!("{slug}#{issue} already closed — nothing to flag");
+            return 0;
+        }
+        CloseFlagPlan::RefuseHuman => {
+            eprintln!(
+                "human decision present on {slug}#{issue} (keep-open / close-candidate); not overriding"
+            );
+            return 3;
+        }
+        CloseFlagPlan::Flag {
+            add_label,
+            post_comment,
+        } => (add_label, post_comment),
+    };
+    let comment = format!("🤖 ai:producer\nClose-candidate: {reason}");
+
+    if dry_run {
+        println!("[dry-run] flag {slug}#{issue} ai:close-candidate");
+        println!(
+            "  label: {}",
+            if add_label { "add" } else { "already present" }
+        );
+        println!(
+            "  comment: {}",
+            if post_comment {
+                format!("post -> {}", comment.replace('\n', " / "))
+            } else {
+                "skip (already noted)".to_string()
+            }
+        );
+        return 0;
+    }
+
+    let (color, desc) = label_meta("ai:close-candidate");
+    if !gh_run(&[
+        "label",
+        "create",
+        "ai:close-candidate",
+        "-R",
+        slug,
+        "--color",
+        color,
+        "--description",
+        desc,
+        "--force",
+    ]) {
+        eprintln!("warning: could not ensure label ai:close-candidate exists in {slug}");
+    }
+    if add_label
+        && !gh_run(&["issue", "edit", issue, "-R", slug, "--add-label", "ai:close-candidate"])
+    {
+        eprintln!("error: failed to add ai:close-candidate to {slug}#{issue}");
+        return 1;
+    }
+    if post_comment && !gh_run(&["issue", "comment", issue, "-R", slug, "--body", &comment]) {
+        eprintln!("error: labelled {slug}#{issue} but FAILED to post the reason comment");
+        return 1;
+    }
+    println!(
+        "flagged {slug}#{issue} ai:close-candidate{}",
+        if post_comment {
+            " [comment posted]"
+        } else {
+            " [comment deduped]"
+        }
+    );
+    0
+}
+
 /// `--trusted-comments`: print the comments on a PR (or issue, with `--issue`) authored by the
 /// trusted account, most-recent last, separated by a `---` line, optionally filtered to a `--marker`
 /// body prefix. Exit 0 if any trusted comment matched, 1 if none (so a caller can branch on "have I
@@ -1911,10 +2050,30 @@ fn main() {
             slug, pr, verdict, &note, cost, &basis, dry_run,
         ));
     }
+    if args.get(1).map(String::as_str) == Some("--flag-close-candidate") {
+        let dry_run = args.iter().any(|a| a == "--dry-run");
+        let positional: Vec<&str> = args[2..]
+            .iter()
+            .filter(|a| a.as_str() != "--dry-run")
+            .map(String::as_str)
+            .collect();
+        let (Some(&slug), Some(&issue)) = (positional.first(), positional.get(1)) else {
+            eprintln!(
+                "usage: pr-review-report --flag-close-candidate <owner/repo> <issue> \"<reason>\" [--dry-run]"
+            );
+            std::process::exit(2);
+        };
+        let reason = if positional.len() > 2 {
+            positional[2..].join(" ")
+        } else {
+            String::new()
+        };
+        std::process::exit(flag_close_candidate_mode(slug, issue, &reason, dry_run));
+    }
     // No subcommand matched. GitHub is the source of truth — there is no local ledger to report; use
     // `--queue` for the review queue (the legacy no-arg report read the now-removed ledger).
     eprintln!(
-        "pr-review-report — subcommands: --queue [N] | --record-verdict <owner/repo> <pr> <verdict> [note] [--cost N] [--basis s] | --trusted-comments <owner/repo> <n> [--marker m] [--issue] | --commit-closes <owner/repo> <n> | --deploy <owner/repo> <pr> [--network net] [--dry-run] | --gc-clones <work-dir> [--dry-run] | --gc <work-dir> [--dry-run] [--no-clones|--no-nix] | --run-metrics <trace.jsonl>"
+        "pr-review-report — subcommands: --queue [N] | --record-verdict <owner/repo> <pr> <verdict> [note] [--cost N] [--basis s] | --flag-close-candidate <owner/repo> <issue> \"<reason>\" [--dry-run] | --trusted-comments <owner/repo> <n> [--marker m] [--issue] | --commit-closes <owner/repo> <n> | --deploy <owner/repo> <pr> [--network net] [--dry-run] | --gc-clones <work-dir> [--dry-run] | --gc <work-dir> [--dry-run] [--no-clones|--no-nix] | --run-metrics <trace.jsonl>"
     );
     std::process::exit(2);
 }
@@ -1922,6 +2081,37 @@ fn main() {
 mod queue_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn close_candidate_plan_respects_state_human_and_dedup() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            close_candidate_plan("CLOSED", &s(&[]), false),
+            CloseFlagPlan::AlreadyClosed
+        );
+        assert_eq!(
+            close_candidate_plan("OPEN", &s(&["human:keep-open"]), false),
+            CloseFlagPlan::RefuseHuman
+        );
+        assert_eq!(
+            close_candidate_plan("OPEN", &s(&["human:close-candidate"]), false),
+            CloseFlagPlan::RefuseHuman
+        );
+        assert_eq!(
+            close_candidate_plan("OPEN", &s(&[]), false),
+            CloseFlagPlan::Flag {
+                add_label: true,
+                post_comment: true
+            }
+        );
+        assert_eq!(
+            close_candidate_plan("OPEN", &s(&["ai:close-candidate"]), true),
+            CloseFlagPlan::Flag {
+                add_label: false,
+                post_comment: false
+            }
+        );
+    }
 
     // --- presentable_state: the core presentability decision -----------------------------------
 

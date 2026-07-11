@@ -53,8 +53,9 @@ ORGS_HUMAN="$(printf '%s' "$ORGS" | sed -E 's/[[:space:]]+/, /g')"
 LOG="$DIR/campaign.log"
 LOCK="$DIR/campaign.lock"
 RUNDIR="$DIR/runs"
-CLOSE_CANDIDATES="$DIR/close-candidates.jsonl"
-DESIGN_CANDIDATES="$DIR/design-candidates.jsonl"
+# close/design candidates are GitHub-native now (ai:close-candidate label via
+# `pr-review-report --flag-close-candidate`; design = human:design + awaiting-ruling comment).
+# The old close-candidates.jsonl / design-candidates.jsonl local ledgers are retired.
 REVIEW_VERDICTS="$DIR/review-verdicts.jsonl"
 
 # --- kill switch ---
@@ -82,8 +83,6 @@ ERRLOG="$RUNDIR/$TS.err"
 
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
-              -e "s#{{CLOSE_CANDIDATES}}#$CLOSE_CANDIDATES#g" \
-              -e "s#{{DESIGN_CANDIDATES}}#$DESIGN_CANDIDATES#g" \
               -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
