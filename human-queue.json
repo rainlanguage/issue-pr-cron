@@ -561,11 +561,6 @@
         "title": "feat(deploy): deterministic V4 authoriser clone, pinned up-front (proposal, closes #248)"
       },
       {
-        "number": 31,
-        "repo": "rainlanguage/rain-org-health",
-        "title": "feat(dashboard): Pipeline FSM conformance panel (states + live counts + leak bucket)"
-      },
-      {
         "number": 32,
         "repo": "rainlanguage/rainlang-codemirror",
         "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
