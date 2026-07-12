@@ -63,7 +63,7 @@
     "closeCandidateIssues": 11,
     "design": 2,
     "leaks": 43,
-    "ready": 19,
+    "ready": 21,
     "totalProducerPrs": 162
   },
   "leaks": [
@@ -498,6 +498,16 @@
       }
     ],
     "ai:ready": [
+      {
+        "number": 423,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): gate DsfStrategy wallet chain switch behind user action"
+      },
+      {
+        "number": 422,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): guard NetworkSelector against concurrent network switches"
+      },
       {
         "number": 2804,
         "repo": "rainlanguage/raindex",
