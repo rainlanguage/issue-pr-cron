@@ -40,7 +40,7 @@ PR_ASSIGNEE=""                 # GitHub handle to assign opened PRs to (set in c
 MODEL="claude-fable-5"      # org default per 2026-07-04 directive: max-capability model for both crons
 FALLBACK_MODELS=""             # ordered fallback models tried on a MODEL quota/429 (set in cron.env) — keeps the pipeline moving
 MAXTIME="3h"                   # hard cap per run
-KEEP_RUNS=20                   # retained per-run traces
+KEEP_RUNS=2000                 # retained per-run traces (~1.8MB each → ~4GB/~11mo at 6/day; traces are the sole re-derivation source for future metrics and are NOT the disk hog — clones+nix store are, gc'd nightly)
 # shellcheck disable=SC1091
 [ -f "$DIR/cron.env" ] && . "$DIR/cron.env"
 

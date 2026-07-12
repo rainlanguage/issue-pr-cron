@@ -32,7 +32,7 @@ PR_ASSIGNEE=""
 REVIEW_MODEL="claude-fable-5"   # org default per 2026-07-04 directive; override via cron.env if needed
 FALLBACK_MODELS=""              # ordered fallback models tried on a REVIEW_MODEL quota/429 (set in cron.env)
 REVIEW_MAXTIME="2h"
-REVIEW_KEEP_RUNS=20
+REVIEW_KEEP_RUNS=2000          # ~1.8MB/trace → ~4GB/~11mo at 6/day; sole re-derivation source for future metrics (see campaign-run.sh KEEP_RUNS)
 # shellcheck disable=SC1091
 [ -f "$DIR/cron.env" ] && . "$DIR/cron.env"
 
