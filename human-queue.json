@@ -53,7 +53,7 @@
     "closeCandidateIssues": 9,
     "design": 2,
     "leaks": 38,
-    "ready": 19,
+    "ready": 20,
     "totalProducerPrs": 161
   },
   "leaks": [
@@ -454,6 +454,11 @@
     ],
     "ai:ready": [
       {
+        "number": 2804,
+        "repo": "rainlanguage/raindex",
+        "title": "fix(ci): green main — remove banned vm.skip usages, pin 0.1.13 deploy constants"
+      },
+      {
         "number": 66,
         "repo": "rainlanguage/raindex.interface",
         "title": "chore(release): bump [package].version to 0.1.4 for next-version Soldeer lifecycle"
@@ -550,6 +555,11 @@
       }
     ],
     "ai:reject": [
+      {
+        "number": 250,
+        "repo": "S01-Issuer/st0x.deploy",
+        "title": "feat(deploy): deterministic V4 authoriser clone, pinned up-front (proposal, closes #248)"
+      },
       {
         "number": 31,
         "repo": "rainlanguage/rain-org-health",
