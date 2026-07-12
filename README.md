@@ -20,6 +20,9 @@ stateDiagram-v2
     state "ai:reject" as reject
     state "ai:design" as design
     state "ai:close-candidate" as close
+    state "ai:blocked-deploy" as bdeploy
+    state "ai:blocked-infra" as binfra
+    state "ai:blocked-on" as bon
     state "presentable · in queue" as queue
     state "approved · human review" as approved
     state "merged" as merged
@@ -35,6 +38,15 @@ stateDiagram-v2
     approved --> merged : gh pr merge --admin · human word
     reject --> unvetted : producer reworks → head moves
     ready --> unvetted : head moves → re-vet · --backfill-comments
+
+    ready --> ready : producer deploy · red prod-pin → green
+    ready --> bdeploy : flag-blocked-deploy · deploy FAILED
+    unvetted --> binfra : flag-blocked-infra · infra/tooling gap OR can't classify
+    unvetted --> bon : flag-blocked-on · waiting on a dependency PR
+    bdeploy --> unvetted : human resolves deploy → re-work
+    binfra --> unvetted : human clears infra / models a new state → re-work
+    bon --> unvetted : dependency merges → producer re-works
+
     design --> [*] : human design ruling
     close --> [*] : human closes
     merged --> [*]
@@ -44,6 +56,18 @@ Every transition above is a `pr-review-report` subcommand. A raw `gh` / `git`
 state change from a prompt is a _loose_ transition — unenforced and untested —
 so the prompts route **all** GitHub I/O through the tool. That is what makes
 this an actual finite state machine rather than a picture of one.
+
+The producer never narrates a hand-off in prose. Anything it cannot land is a
+labeled transition into exactly one modeled state: `design`, `close-candidate`,
+`blocked-deploy`, `blocked-infra`, or `blocked-on`. Those five plus `ready` (the
+merge queue) are the **human-gated states** — the daily review queue, a plain
+label search, no prose scraping. `blocked-infra` is the **total-function
+fallback**: any situation the producer cannot classify into a state lands there
+with a free-text reason, so it can never act _outside_ the machine. Reviewing
+the `blocked-infra` queue is exactly where a human decides what needs to change
+to move each item back into a well-defined state — fix the infra, model a new
+state, or forbid the behavior; a recurring `blocked-infra` reason is the
+evidence to promote it to a first-class state.
 
 The three crons are **staggered by 2 h** so work flows downstream within each
 4-hour cycle (all times UTC):

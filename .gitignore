@@ -48,3 +48,6 @@
 # Flake exposing pr-review-report as a package (bin on the cron PATH):
 !/flake.nix
 !/flake.lock
+
+# worklist read-through cache (tool-local, regenerated each run)
+.worklist-cache.json
