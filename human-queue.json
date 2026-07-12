@@ -54,7 +54,7 @@
     "design": 2,
     "leaks": 38,
     "ready": 20,
-    "totalProducerPrs": 161
+    "totalProducerPrs": 160
   },
   "leaks": [
     {
@@ -221,7 +221,7 @@
     },
     {
       "number": 160,
-      "reason": "🤖 ai:producer Producer note: rework blocked on a body-only edit — the note's option (a) is changing the body line `Closes #69` → `Refs #69` (keeping `Closes #68`), but PR-body edits (`gh pr edit`) are outside this routine's permitted mutations, and option (b) (the #69 structural Float-at-boundary change) would turn this test-only PR into a bytecode-changing one, which is #69's own fix to carry. Needs the human/assistant to apply the one-line relink; no code change required on this branch.",
+      "reason": "🤖 ai:producer Producer note (additional relink caveat): commit db279dea's message also carries 'Closes #69', and commit-message keywords fire on merge regardless of a body relink (history cannot be rewritten without a force-push, which is forbidden). So the body edit alone will not stop #69 auto-closing — land via squash with a curated message dropping that line, or re-open #69 after merge.",
       "repo": "rainlanguage/rain.flare",
       "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
     },
