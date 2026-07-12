@@ -2620,6 +2620,13 @@ fn uncovered(
 /// PR search), a TERMINAL ci ("green"/"red", never "pending"/"nochecks" — an in-flight PR is always
 /// re-fetched), and within TTL. This can only ever SKIP a fetch for an unchanged settled PR; it never
 /// serves a PR whose `updatedAt` moved. Correctness holds with the cache empty or `--no-cache`.
+///
+/// DELIBERATE TRADEOFF (not a bug): the freshness key is `updatedAt` + terminal-CI + TTL, NOT the
+/// head OID. A CI *re-run on the SAME commit* that flips green↔red without bumping `updatedAt` can be
+/// served ≤TTL-stale. This is bounded and accepted: `worklist` is a TRIAGE load (what to work next),
+/// and merge-readiness is re-verified at head by the `queue` command before a human lands anything.
+/// Adding head-oid would not help this case (the commit is unchanged); shrink `WORKLIST_TTL_SECS` if a
+/// tighter bound is ever needed.
 fn cache_fresh(
     row_updated: &str,
     row_ci: &str,
@@ -2750,10 +2757,16 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         });
     let has_deploy_trigger = requires_redeploy || deploy_pin_red;
     let trusted = trusted_comments(detail, None);
+    // HEAD-SCOPED: a deploy counts as done ONLY when a trusted note records a deploy SUCCESS /
+    // deploy-confirmed AND names the CURRENT head SHA. A bare `deploy-confirmed` from a PRIOR head
+    // must NOT count — else a PR deploy-confirmed at head A, then pushed new bytecode (head B, flagged
+    // REQUIRES redeploy), would read done, skip the redeploy, and surface ready with UNDEPLOYED
+    // bytecode (defeats deploy-before-merge). The producer's deploy-confirmed note embeds the head SHA
+    // (campaign-prompt 3b (iv)) precisely so this head-scoped match works.
     let deploy_done_at_head = trusted.iter().any(|c| {
         (c.contains("deploy") && (c.contains("SUCCESS") || c.contains("deploy-confirmed")))
             && c.contains(head)
-    }) || trusted.iter().any(|c| c.contains("deploy-confirmed"));
+    });
     // parked: a design-clarification note, or a hand-off note, from the trusted producer account
     let design_flicked = trusted.iter().any(|c| {
         c.contains("design-clarification")
@@ -5039,6 +5052,143 @@ mod worklist_tests {
         let mut got = failing_check_names(&rollup);
         got.sort();
         assert_eq!(got, vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn failing_check_names_catches_every_failure_conclusion() {
+        // Every failing conclusion/state must be caught — not just FAILURE/ERROR. A mutation that
+        // drops any of TIMED_OUT/CANCELLED/ACTION_REQUIRED/STARTUP_FAILURE fails here.
+        let rollup = json!([
+            {"name":"f1","conclusion":"FAILURE"},
+            {"name":"f2","conclusion":"TIMED_OUT"},
+            {"name":"f3","conclusion":"CANCELLED"},
+            {"name":"f4","conclusion":"ACTION_REQUIRED"},
+            {"name":"f5","conclusion":"STARTUP_FAILURE"},
+            {"context":"f6","state":"ERROR"},
+            {"name":"ok","conclusion":"SUCCESS"},
+            {"name":"pend","status":"IN_PROGRESS"},
+        ]);
+        let mut got = failing_check_names(&rollup);
+        got.sort();
+        assert_eq!(
+            got,
+            ["f1", "f2", "f3", "f4", "f5", "f6"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_single_unresolved_thread_routes_to_coderabbit() {
+        // The threshold is > 0, not > 1: ONE open thread already routes to coderabbit-3e.
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.unresolved_threads = 1;
+        assert_eq!(next_action(&s), NextAction::Coderabbit3e);
+    }
+
+    #[test]
+    fn green_branch_precedence_is_conflict_then_threads_then_screenshot() {
+        // conflict wins over open threads AND a missing screenshot
+        let mut s = sig(Ci::Green, "DIRTY");
+        s.unresolved_threads = 3;
+        s.ui_missing_screenshot = true;
+        assert_eq!(next_action(&s), NextAction::Conflict3d);
+        // with no conflict, open threads win over a missing screenshot
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.unresolved_threads = 2;
+        s.ui_missing_screenshot = true;
+        assert_eq!(next_action(&s), NextAction::Coderabbit3e);
+        // screenshot is last
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.ui_missing_screenshot = true;
+        assert_eq!(next_action(&s), NextAction::Screenshot3c);
+    }
+
+    #[test]
+    fn ai_state_label_returns_the_first_when_two_slip_in() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            ai_state_label(&s(&["ai:design", "ai:ready"])),
+            Some("ai:design".to_string())
+        );
+        assert_eq!(
+            ai_state_label(&s(&["ai:ready", "ai:blocked-infra"])),
+            Some("ai:ready".to_string())
+        );
+    }
+
+    // --- worklist_row: the untested integration seam (pure — reads everything from `detail`) ------
+
+    #[test]
+    fn worklist_row_deploy_done_must_be_head_scoped() {
+        // A deploy-confirmed note at a PRIOR head (HEAD_A) must NOT mark the current head (HEAD_B)
+        // done: the PR pushed new bytecode (REQUIRES redeploy) and still needs the redeploy. Under
+        // the dropped un-head-scoped clause this returned green-ready with undeployed bytecode.
+        let detail = json!({
+            "number": 7, "url": "", "title": "t", "headRefOid": "HEAD_B",
+            "body": "REQUIRES redeploy at land",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [],
+            "comments": [{"author":{"login":"thedavidmeister"},
+                          "body":"🤖 ai:producer deploy-confirmed at HEAD_A"}]
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
+        // ...and WITH the note at the current head, the deploy IS done → green-ready.
+        let detail = json!({
+            "number": 7, "url": "", "title": "t", "headRefOid": "HEAD_B",
+            "body": "REQUIRES redeploy at land",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [],
+            "comments": [{"author":{"login":"thedavidmeister"},
+                          "body":"🤖 ai:producer deploy-confirmed at HEAD_B"}]
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "green-ready");
+    }
+
+    #[test]
+    fn worklist_row_red_prodpin_is_deploy() {
+        let detail = json!({
+            "number": 1, "headRefOid": "H",
+            "statusCheckRollup": [{"name":"rainix-sol / test / testProdDeployArbitrum",
+                                   "conclusion":"FAILURE","status":"COMPLETED"}],
+            "mergeStateStatus": "BLOCKED", "labels": [], "comments": []
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
+    }
+
+    #[test]
+    fn worklist_row_requires_redeploy_green_is_deploy() {
+        let detail = json!({
+            "number": 1, "headRefOid": "H", "body": "REQUIRES redeploy at land",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [], "comments": []
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
+    }
+
+    #[test]
+    fn worklist_row_still_red_handed_off_is_parked() {
+        // A red PR carrying a trusted hand-off note is parked — the producer does not re-touch it.
+        let detail = json!({
+            "number": 1, "headRefOid": "H",
+            "statusCheckRollup": [{"name":"unit","conclusion":"FAILURE","status":"COMPLETED"}],
+            "mergeStateStatus": "BLOCKED", "labels": [],
+            "comments": [{"author":{"login":"thedavidmeister"},
+                          "body":"🤖 ai:producer HAND OFF: infra red"}]
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "parked-skip");
+    }
+
+    #[test]
+    fn worklist_row_ui_missing_screenshot_routes() {
+        let detail = json!({
+            "number": 5, "headRefOid": "H",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [], "comments": [],
+            "files": [{"path":"packages/webapp/src/Foo.svelte"}]
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "screenshot-3c");
     }
 
     #[test]
