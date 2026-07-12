@@ -519,6 +519,11 @@ struct RunMetrics {
     // any non-zero value is a regression of the no-park rule (both tools are denied in settings).
     wakeup_calls: usize,
     first_mutation_index: Option<usize>,
+    // Wall-clock ms from the first timestamped trace event to the first org-mutation's result
+    // (the state-recovery window). Only `user` events carry a `timestamp`, so the mutation is
+    // anchored to the result of its tool call, not the assistant event that issued it. None when
+    // the run never mutated, or when the anchor timestamps are absent/unparseable.
+    startup_ms: Option<i64>,
     duration_ms: u64,
     num_turns: u64,
     tokens_in: u64,
@@ -565,12 +570,64 @@ fn is_mutation_tool(name: &str, input: &serde_json::Value) -> bool {
     MARKERS.iter().any(|m| cmd.contains(m))
 }
 
+/// Parse an ISO-8601 UTC timestamp (`YYYY-MM-DDTHH:MM:SS[.fff]Z`, e.g. `2026-07-05T09:02:04.035Z`)
+/// to epoch milliseconds. Self-contained (days-from-civil) so the crate keeps its zero date-lib
+/// footprint; the traces are all UTC (`Z`). None on any malformed input — never panics.
+fn iso_to_epoch_ms(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    // Fixed-width fields up to the seconds; anything shorter/misshaped is rejected.
+    if b.len() < 19
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+    {
+        return None;
+    }
+    let n = |a: usize, z: usize| s.get(a..z)?.parse::<i64>().ok();
+    let (y, mo, d) = (n(0, 4)?, n(5, 7)?, n(8, 10)?);
+    let (h, mi, sec) = (n(11, 13)?, n(14, 16)?, n(17, 19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    // Optional `.fff` fraction → milliseconds (pad/truncate to exactly 3 digits).
+    let ms = if b.get(19) == Some(&b'.') {
+        let frac: String = s[20..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .take(3)
+            .collect();
+        let mut f = frac.parse::<i64>().unwrap_or(0);
+        for _ in frac.len()..3 {
+            f *= 10;
+        }
+        f
+    } else {
+        0
+    };
+    // days_from_civil (Howard Hinnant): days since 1970-01-01 for a proleptic-Gregorian y-m-d.
+    let yy = if mo <= 2 { y - 1 } else { y };
+    let era = (if yy >= 0 { yy } else { yy - 399 }) / 400;
+    let yoe = yy - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some((days * 86400 + h * 3600 + mi * 60 + sec) * 1000 + ms)
+}
+
 /// Parse a stream-json trace: count tool calls in order, find the first mutation, and take
 /// the usage/duration/cost from the result event with the most turns (the main run — trailing
 /// short result events from continuations are ignored).
 fn run_metrics(content: &str) -> RunMetrics {
     let mut m = RunMetrics::default();
     let mut best_turns = 0u64;
+    // Wall-clock startup: anchor at the first timestamped event, close at the first mutation's
+    // result. Only `user` events carry a `timestamp`, so when the first mutation tool_use is
+    // seen we flag it and capture the NEXT user timestamp as the mutation's wall-clock anchor.
+    let mut first_ts: Option<i64> = None;
+    let mut mutation_ts: Option<i64> = None;
+    let mut mutation_pending = false;
     for line in content.lines() {
         let v: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
@@ -594,12 +651,30 @@ fn run_metrics(content: &str) -> RunMetrics {
                             if m.first_mutation_index.is_none() {
                                 if is_mutation_tool(name, input) {
                                     m.first_mutation_index = Some(m.tool_calls);
+                                    mutation_pending = true;
                                 } else {
                                     m.startup_tool_calls += 1;
                                 }
                             }
                             m.tool_calls += 1;
                         }
+                    }
+                }
+            }
+            Some("user") => {
+                // The only event type carrying a `timestamp`. First one seen anchors run start;
+                // once a mutation is pending, the next one closes the startup window.
+                if let Some(ts) = v
+                    .get("timestamp")
+                    .and_then(|t| t.as_str())
+                    .and_then(iso_to_epoch_ms)
+                {
+                    if first_ts.is_none() {
+                        first_ts = Some(ts);
+                    }
+                    if mutation_pending {
+                        mutation_ts = Some(ts);
+                        mutation_pending = false;
                     }
                 }
             }
@@ -628,6 +703,10 @@ fn run_metrics(content: &str) -> RunMetrics {
             _ => {}
         }
     }
+    m.startup_ms = match (first_ts, mutation_ts) {
+        (Some(start), Some(mut_ts)) => Some(mut_ts - start),
+        _ => None,
+    };
     m
 }
 
@@ -649,6 +728,7 @@ fn run_metrics_mode(path: &str) -> i32 {
         "startupPct": (m.startup_pct() * 10.0).round() / 10.0,
         "wakeupCalls": m.wakeup_calls,
         "firstMutationIndex": m.first_mutation_index,
+        "startupMs": m.startup_ms,
         "durationMs": m.duration_ms,
         "numTurns": m.num_turns,
         "tokensIn": m.tokens_in,
@@ -3703,7 +3783,7 @@ mod commit_closes_tests {
 
 #[cfg(test)]
 mod run_metrics_tests {
-    use super::{is_mutation_tool, run_metrics};
+    use super::{is_mutation_tool, iso_to_epoch_ms, run_metrics};
     use serde_json::json;
 
     fn tool_line(name: &str, cmd: &str) -> String {
@@ -3714,6 +3794,10 @@ mod run_metrics_tests {
     fn result_line(turns: u64, dur: u64, cost: f64) -> String {
         json!({"type":"result","num_turns":turns,"duration_ms":dur,"total_cost_usd":cost,
             "usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":9000,"cache_creation_input_tokens":50}}).to_string()
+    }
+    // A `user` event (a tool result) carrying the only timestamp in the stream.
+    fn user_line(ts: &str) -> String {
+        json!({"type":"user","timestamp":ts,"message":{"content":[]}}).to_string()
     }
 
     #[test]
@@ -3825,6 +3909,70 @@ mod run_metrics_tests {
         assert_eq!(m.startup_tool_calls, 1);
         assert_eq!(m.first_mutation_index, Some(1));
         assert_eq!(m.tool_calls, 4);
+    }
+
+    #[test]
+    fn iso_to_epoch_ms_parses_known_timestamps() {
+        assert_eq!(iso_to_epoch_ms("1970-01-01T00:00:00.000Z"), Some(0));
+        assert_eq!(
+            iso_to_epoch_ms("2026-07-05T09:02:04.035Z"),
+            Some(1783242124035)
+        );
+        // no fractional part → :00.000; and a date the days-from-civil math must get right
+        assert_eq!(iso_to_epoch_ms("2000-03-01T00:00:00Z"), Some(951868800000));
+    }
+
+    #[test]
+    fn iso_to_epoch_ms_rejects_malformed() {
+        assert_eq!(iso_to_epoch_ms(""), None);
+        assert_eq!(iso_to_epoch_ms("2026-07-05"), None); // no time
+        assert_eq!(iso_to_epoch_ms("2026/07/05T09:02:04Z"), None); // wrong separators
+        assert_eq!(iso_to_epoch_ms("2026-13-05T09:02:04Z"), None); // month out of range
+        assert_eq!(iso_to_epoch_ms("not-a-timestamp-at-all"), None);
+    }
+
+    #[test]
+    fn startup_ms_is_first_ts_to_first_mutation_result() {
+        // reads (with their result timestamps) then the first mutation, whose result timestamp
+        // closes the startup window. Only `user` events carry timestamps.
+        let trace = [
+            tool_line("Bash", "gh search prs --owner x"), // startup read
+            user_line("2026-07-05T09:00:00.000Z"),        // FIRST ts → run-start anchor
+            tool_line("Bash", "gh pr view 1 --json state"), // startup read
+            user_line("2026-07-05T09:00:05.000Z"),
+            tool_line("Bash", "gh pr create -R x"), // FIRST MUTATION
+            user_line("2026-07-05T09:00:12.500Z"),  // its result → closes the window (+12.5s)
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.first_mutation_index, Some(2));
+        assert_eq!(m.startup_ms, Some(12500));
+    }
+
+    #[test]
+    fn startup_ms_crosses_a_day_boundary() {
+        let trace = [
+            tool_line("Bash", "gh search prs"),
+            user_line("2026-07-05T23:59:59.500Z"), // anchor, late in the day
+            tool_line("Bash", "git commit -m x"),  // first mutation
+            user_line("2026-07-06T00:00:01.500Z"), // result, next day (+2s)
+        ]
+        .join("\n");
+        assert_eq!(run_metrics(&trace).startup_ms, Some(2000));
+    }
+
+    #[test]
+    fn startup_ms_is_none_without_a_mutation() {
+        let trace = [
+            tool_line("Bash", "gh search prs"),
+            user_line("2026-07-05T09:00:00.000Z"),
+            tool_line("Bash", "gh pr view 1 --json state"),
+            user_line("2026-07-05T09:00:05.000Z"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.first_mutation_index, None);
+        assert_eq!(m.startup_ms, None);
     }
 
     #[test]
