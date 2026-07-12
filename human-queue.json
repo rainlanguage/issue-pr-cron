@@ -47,13 +47,13 @@
     }
   ],
   "counts": {
-    "blockedDeploy": 6,
+    "blockedDeploy": 7,
     "blockedInfra": 7,
     "blockedOn": 4,
     "closeCandidateIssues": 9,
     "design": 2,
     "leaks": 38,
-    "ready": 20,
+    "ready": 19,
     "totalProducerPrs": 160
   },
   "leaks": [
@@ -288,6 +288,11 @@
   ],
   "states": {
     "ai:blocked-deploy": [
+      {
+        "number": 252,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "Deploy deterministically via Zoltu with no network selection"
+      },
       {
         "number": 245,
         "repo": "rainlanguage/rain.math.float",
@@ -527,11 +532,6 @@
         "number": 19,
         "repo": "rainlanguage/rain-org-health",
         "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
-      },
-      {
-        "number": 252,
-        "repo": "rainlanguage/rain.erc4626.words",
-        "title": "Deploy deterministically via Zoltu with no network selection"
       },
       {
         "number": 143,
