@@ -10,9 +10,9 @@
 //          pr-review-report --deploy <owner/repo> <pr> [--network <net>] [--dry-run]  # sanctioned Zoltu deploy of a PR branch
 // Config (env overrides cron.env in CWD, then default): ORG, ORGS (org scope for --queue), PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
 
+use clap::{Parser, Subcommand};
 use serde_json::Value;
 use std::process::Command;
-use clap::{Parser, Subcommand};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Ci {
@@ -265,7 +265,10 @@ mod org_tests {
 
     #[test]
     fn single_org() {
-        assert_eq!(parse_orgs("S01-Issuer"), ["--owner", "S01-Issuer"].map(String::from));
+        assert_eq!(
+            parse_orgs("S01-Issuer"),
+            ["--owner", "S01-Issuer"].map(String::from)
+        );
     }
 }
 
@@ -685,6 +688,15 @@ fn label_meta(label: &str) -> (&'static str, &'static str) {
             "fbca04",
             "AI vetter: sound code, needs Closes→Refs linkage fix",
         ),
+        "ai:blocked-deploy" => (
+            "d93f0b",
+            "AI producer: blocked on a deploy it can't complete (human)",
+        ),
+        "ai:blocked-infra" => (
+            "e99695",
+            "AI producer: blocked on an infra/tooling gap or can't classify (human)",
+        ),
+        "ai:blocked-on" => ("bfd4f2", "AI producer: blocked on a dependency PR"),
         _ => ("cccccc", "AI vetter verdict"),
     }
 }
@@ -1017,7 +1029,13 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         return 2;
     }
     let Some(j) = gh_json(&[
-        "issue", "view", issue, "-R", slug, "--json", "state,labels,comments",
+        "issue",
+        "view",
+        issue,
+        "-R",
+        slug,
+        "--json",
+        "state,labels,comments",
     ]) else {
         eprintln!("error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data");
         return 1;
@@ -1096,7 +1114,15 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         eprintln!("warning: could not ensure label ai:close-candidate exists in {slug}");
     }
     if add_label
-        && !gh_run(&["issue", "edit", issue, "-R", slug, "--add-label", "ai:close-candidate"])
+        && !gh_run(&[
+            "issue",
+            "edit",
+            issue,
+            "-R",
+            slug,
+            "--add-label",
+            "ai:close-candidate",
+        ])
     {
         eprintln!("error: failed to add ai:close-candidate to {slug}#{issue}");
         return 1;
@@ -1113,6 +1139,378 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
             " [comment deduped]"
         }
     );
+    0
+}
+
+/// The human-facing noun for a producer state-transition comment (`<noun>: <reason>`).
+fn state_noun(label: &str) -> &'static str {
+    match label {
+        "ai:blocked-deploy" => "Blocked-deploy",
+        "ai:blocked-infra" => "Blocked-infra",
+        "ai:blocked-on" => "Blocked-on",
+        "ai:design" => "Design-question",
+        _ => "State",
+    }
+}
+
+/// The producer's human-gated state labels — the states a hand-off can land in. `ai:ready` is the
+/// vetter's; the producer transitions to these via [`flag_state_mode`], never a bare prose note.
+const PRODUCER_STATE_LABELS: [&str; 4] = [
+    "ai:design",
+    "ai:blocked-deploy",
+    "ai:blocked-infra",
+    "ai:blocked-on",
+];
+
+/// Pure plan for a producer state-transition ([`flag_state_mode`]). Mirrors [`verdict_plan`]'s guard —
+/// a `human:*` label OR a native GitHub review is sacred (refuse) — then the label move (strip every
+/// sibling `ai:*` so the PR holds exactly ONE modeled state) and whether the reason comment is a
+/// dedup no-op (the identical `🤖 ai:producer` note is already posted). No head-sha requirement: a
+/// producer transition is not sha-bound (unlike a vetter verdict), so a PR with no head still flags.
+#[derive(Debug, PartialEq)]
+enum ProducerStatePlan {
+    RefuseHuman,
+    Flag {
+        to_remove: Vec<String>,
+        has_target: bool,
+        skip_comment: bool,
+    },
+}
+
+fn producer_state_plan(pr_json: &Value, target: &str, comment_body: &str) -> ProducerStatePlan {
+    if has_human_override(pr_json) || has_native_human_review(pr_json) {
+        return ProducerStatePlan::RefuseHuman;
+    }
+    let current: Vec<String> = pr_json
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let to_remove = labels_to_remove(&current, target);
+    let has_target = current.iter().any(|c| c == target);
+    let skip_comment = trusted_comments(pr_json, Some("🤖 ai:producer"))
+        .iter()
+        .any(|b| b == comment_body);
+    ProducerStatePlan::Flag {
+        to_remove,
+        has_target,
+        skip_comment,
+    }
+}
+
+/// `flag-blocked-{deploy,infra,on}` / `flag-design`: the producer's OWN state-transition — move a PR
+/// into exactly one modeled `ai:*` state carrying a `🤖 ai:producer` reason. This IS the FSM hand-off:
+/// the producer never narrates a hand-off as a standalone prose note; it transitions here and the
+/// prose rides as the reason. A human override (`human:*` label / native review) is sacred (exit 3);
+/// the transition strips sibling `ai:*` labels so a PR holds one state, and re-flagging is idempotent.
+fn flag_state_mode(slug: &str, pr: &str, target: &str, reason: &str, dry_run: bool) -> i32 {
+    if reason.trim().is_empty() {
+        eprintln!(
+            "usage: pr-review-report flag-<state> <owner/repo> <pr> \"<reason>\" [--dry-run]"
+        );
+        return 2;
+    }
+    let Some(pr_json) = gh_json(&[
+        "pr",
+        "view",
+        pr,
+        "-R",
+        slug,
+        "--json",
+        "labels,comments,reviewDecision",
+    ]) else {
+        eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
+        return 1;
+    };
+    let comment = format!("🤖 ai:producer\n{}: {reason}", state_noun(target));
+    let (to_remove, has_target, skip_comment) =
+        match producer_state_plan(&pr_json, target, &comment) {
+            ProducerStatePlan::RefuseHuman => {
+                eprintln!("human decision present on {slug}#{pr}; not overriding");
+                return 3;
+            }
+            ProducerStatePlan::Flag {
+                to_remove,
+                has_target,
+                skip_comment,
+            } => (to_remove, has_target, skip_comment),
+        };
+
+    if dry_run {
+        println!("[dry-run] {slug}#{pr} -> {target}");
+        println!(
+            "  target label: {target}{}",
+            if has_target { " (already present)" } else { "" }
+        );
+        println!(
+            "  labels to remove: {}",
+            if to_remove.is_empty() {
+                "(none)".to_string()
+            } else {
+                to_remove.join(", ")
+            }
+        );
+        println!(
+            "  comment: {}",
+            if skip_comment {
+                "skip (identical note already posted)".to_string()
+            } else {
+                format!("post -> {}", comment.replace('\n', " / "))
+            }
+        );
+        return 0;
+    }
+
+    let (color, desc) = label_meta(target);
+    if !gh_run(&[
+        "label",
+        "create",
+        target,
+        "-R",
+        slug,
+        "--color",
+        color,
+        "--description",
+        desc,
+        "--force",
+    ]) {
+        eprintln!("warning: could not ensure label {target} exists in {slug}");
+    }
+    if !has_target && !gh_run(&["pr", "edit", pr, "-R", slug, "--add-label", target]) {
+        eprintln!("error: failed to add {target} to {slug}#{pr}");
+        return 1;
+    }
+    for r in &to_remove {
+        if !gh_run(&["pr", "edit", pr, "-R", slug, "--remove-label", r]) {
+            eprintln!("warning: failed to remove label {r} from {slug}#{pr}");
+        }
+    }
+    if !skip_comment && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
+        eprintln!("error: labelled {slug}#{pr} {target} but FAILED to post the reason comment");
+        return 1;
+    }
+    println!(
+        "flagged {slug}#{pr} {target}{}{}",
+        if to_remove.is_empty() {
+            String::new()
+        } else {
+            format!(" (removed {})", to_remove.join(","))
+        },
+        if skip_comment {
+            " [comment deduped]"
+        } else {
+            " [comment posted]"
+        }
+    );
+    0
+}
+
+/// The first `ai:*` label a PR carries, if any (a PR should hold at most one — the FSM invariant).
+fn ai_state_label(labels: &[String]) -> Option<String> {
+    labels.iter().find(|l| l.starts_with("ai:")).cloned()
+}
+
+/// `human-queue`: the daily FSM-conformance review. Buckets every open producer PR by its modeled
+/// human-gated state (a plain label read from ONE search — never prose scraping), plus the open
+/// `ai:close-candidate` issues, plus a loud **leak** bucket = open producer PRs that carry a
+/// `🤖 ai:producer` comment but NO `ai:*` state label (the producer acting outside the FSM). The leak
+/// count is the conformance metric: it trends to zero as the producer is restricted to labeled
+/// transitions. Runtime is O(unlabeled producer PRs) extra `gh` calls for the leak/reason check.
+fn human_queue_mode(json_out: bool) -> i32 {
+    let assignee = std::env::var("PR_ASSIGNEE").unwrap_or_else(|_| "thedavidmeister".to_string());
+    // ONE search: every open producer PR with its labels — the label IS the state.
+    let mut args: Vec<String> = vec!["search".into(), "prs".into()];
+    args.extend(org_owner_args());
+    args.extend(
+        [
+            "--author",
+            &assignee,
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,title,labels",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let Some(prs) = gh_json(&argref).and_then(|v| v.as_array().cloned()) else {
+        eprintln!("error: `gh search prs --author {assignee}` failed — aborting rather than print a false-empty queue");
+        return 1;
+    };
+
+    // Bucket the PRs by their modeled state label; collect the unlabeled ones for the leak check.
+    let mut buckets: std::collections::BTreeMap<String, Vec<(String, u64, String)>> =
+        std::collections::BTreeMap::new();
+    let mut unlabeled: Vec<(String, u64, String)> = Vec::new();
+    for p in &prs {
+        let url = p
+            .get("url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string();
+        let Some(slug) = pr_slug(&url) else { continue };
+        let num = p.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+        let title = p
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let labels: Vec<String> = p
+            .get("labels")
+            .and_then(|l| l.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        match ai_state_label(&labels) {
+            Some(state) => buckets.entry(state).or_default().push((slug, num, title)),
+            None => unlabeled.push((slug, num, title)),
+        }
+    }
+
+    // Leak detection: an unlabeled PR the producer has commented on = a hand-off with no modeled
+    // state (the FSM leaking). An unlabeled PR with NO producer comment is just freshly-open/unvetted.
+    let mut leaks: Vec<(String, u64, String, String)> = Vec::new();
+    for (slug, num, title) in &unlabeled {
+        let Some(j) = gh_json(&[
+            "pr",
+            "view",
+            &num.to_string(),
+            "-R",
+            slug,
+            "--json",
+            "comments",
+        ]) else {
+            continue;
+        };
+        let notes = trusted_comments(&j, Some("🤖 ai:producer"));
+        if let Some(last) = notes.last() {
+            let reason = last.replace('\n', " ");
+            leaks.push((slug.clone(), *num, title.clone(), reason));
+        }
+    }
+
+    // The open close-candidate ISSUES (close-candidate is an issue-level flag).
+    let mut iargs: Vec<String> = vec!["search".into(), "issues".into()];
+    iargs.extend(org_owner_args());
+    iargs.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            "ai:close-candidate",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,title",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let iref: Vec<&str> = iargs.iter().map(String::as_str).collect();
+    let close_issues: Vec<(String, u64, String)> = gh_json(&iref)
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|i| {
+            let url = i.get("url").and_then(|u| u.as_str())?.to_string();
+            let num = i.get("number").and_then(|n| n.as_u64())?;
+            let title = i
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            let slug = url
+                .strip_prefix("https://github.com/")?
+                .split("/issues/")
+                .next()?
+                .to_string();
+            Some((slug, num, title))
+        })
+        .collect();
+
+    if json_out {
+        let bmap: serde_json::Map<String, Value> = buckets
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    Value::Array(
+                        v.iter()
+                            .map(
+                                |(s, n, t)| serde_json::json!({"repo": s, "number": n, "title": t}),
+                            )
+                            .collect(),
+                    ),
+                )
+            })
+            .collect();
+        let doc = serde_json::json!({
+            "states": bmap,
+            "closeCandidateIssues": close_issues.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
+            "leaks": leaks.iter().map(|(s,n,t,r)| serde_json::json!({"repo": s, "number": n, "title": t, "reason": r})).collect::<Vec<_>>(),
+            "counts": {
+                "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
+                "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
+                "blockedDeploy": buckets.get("ai:blocked-deploy").map(|v| v.len()).unwrap_or(0),
+                "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
+                "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
+                "closeCandidateIssues": close_issues.len(),
+                "leaks": leaks.len(),
+                "totalProducerPrs": prs.len(),
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        return 0;
+    }
+
+    // Human-readable daily review. Truncate on CHAR boundaries — titles/reasons carry unicode
+    // (em-dash, middle-dot, emoji), so a byte-index slice would panic mid-codepoint.
+    let clip = |s: &str, n: usize| s.chars().take(n).collect::<String>();
+    let show = |title: &str, items: &[(String, u64, String)]| {
+        println!("\n▓▓ {title}  ({})", items.len());
+        for (slug, num, t) in items {
+            println!("   https://github.com/{slug}/pull/{num}");
+            println!("      {}", clip(t, 66));
+        }
+    };
+    println!(
+        "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs) ===",
+        prs.len()
+    );
+    if let Some(v) = buckets.get("ai:ready") {
+        show("MERGE — ai:ready", v);
+    }
+    if let Some(v) = buckets.get("ai:design") {
+        show("RULE — ai:design", v);
+    }
+    if let Some(v) = buckets.get("ai:blocked-deploy") {
+        show("BLOCKED-DEPLOY", v);
+    }
+    if let Some(v) = buckets.get("ai:blocked-infra") {
+        show("BLOCKED-INFRA", v);
+    }
+    if let Some(v) = buckets.get("ai:blocked-on") {
+        show("BLOCKED-ON", v);
+    }
+    show("CLOSE — ai:close-candidate (issues)", &close_issues);
+    println!(
+        "\n⚠⚠ NOT IN ANY MODELED STATE (FSM leak — should trend to 0)  ({})",
+        leaks.len()
+    );
+    for (slug, num, t, reason) in &leaks {
+        println!("   https://github.com/{slug}/pull/{num}  {}", clip(t, 52));
+        println!("      {}", clip(reason, 140));
+    }
     0
 }
 
@@ -1349,7 +1747,11 @@ fn nix_gc_args(dry_run: bool) -> Vec<String> {
 fn nix_gc(dry_run: bool) -> i32 {
     println!(
         "== nix store gc ({}) ==",
-        if dry_run { "dry-run" } else { "delete-old + collect" }
+        if dry_run {
+            "dry-run"
+        } else {
+            "delete-old + collect"
+        }
     );
     match Command::new("nix-collect-garbage")
         .args(nix_gc_args(dry_run))
@@ -1716,7 +2118,17 @@ fn read_workflow(slug: &str, git_ref: &str) -> Option<(String, String)> {
 /// newest-first; the `event` field is filtered in code (no dependence on a `--event` flag).
 fn latest_run_id(slug: &str, wf_file: &str, branch: &str) -> Option<u64> {
     let j = gh_json(&[
-        "run", "list", "-R", slug, "--workflow", wf_file, "--branch", branch, "-L", "5", "--json",
+        "run",
+        "list",
+        "-R",
+        slug,
+        "--workflow",
+        wf_file,
+        "--branch",
+        branch,
+        "-L",
+        "5",
+        "--json",
         "databaseId,event",
     ])?;
     j.as_array()?
@@ -1745,7 +2157,15 @@ fn await_new_run(slug: &str, wf_file: &str, branch: &str, before: Option<u64>) -
 fn poll_run(slug: &str, run_id: u64) -> RunResult {
     let id = run_id.to_string();
     for _ in 0..240 {
-        match gh_json(&["run", "view", &id, "-R", slug, "--json", "status,conclusion"]) {
+        match gh_json(&[
+            "run",
+            "view",
+            &id,
+            "-R",
+            slug,
+            "--json",
+            "status,conclusion",
+        ]) {
             Some(j) => {
                 let status = j.get("status").and_then(|v| v.as_str());
                 let conclusion = j.get("conclusion").and_then(|v| v.as_str());
@@ -1793,10 +2213,15 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
         "--json",
         "headRefName,headRefOid",
     ]) else {
-        eprintln!("error: `gh pr view {slug}#{pr}` failed — cannot resolve the branch to deploy from");
+        eprintln!(
+            "error: `gh pr view {slug}#{pr}` failed — cannot resolve the branch to deploy from"
+        );
         return 1;
     };
-    let branch = prj.get("headRefName").and_then(|v| v.as_str()).unwrap_or("");
+    let branch = prj
+        .get("headRefName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let head = prj.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
     if branch.is_empty() {
         eprintln!("error: {slug}#{pr} has no head branch (headRefName) — cannot deploy");
@@ -1882,7 +2307,9 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
             1
         }
         RunResult::InProgress => {
-            eprintln!("deploy status unresolved (timed out waiting for the run to finish): {run_url}");
+            eprintln!(
+                "deploy status unresolved (timed out waiting for the run to finish): {run_url}"
+            );
             2
         }
     }
@@ -1983,6 +2410,722 @@ enum Cmd {
     },
     /// Emit one enriched per-run metrics JSON line distilled from a stream-json trace.
     RunMetrics { trace: String },
+    /// The producer's whole in-flight worklist in ONE call: own open PRs with CI/failing-checks/
+    /// mergeState/threads/closes/markers and a computed next_action. Replaces the hand-rolled startup.
+    Worklist {
+        #[arg(long)]
+        json: bool,
+        /// Bypass the read-through cache entirely (always fetch fresh).
+        #[arg(long)]
+        no_cache: bool,
+    },
+    /// Open issues NOT already covered by an open PR (the dedup the producer hand-rolled in `.jq`).
+    UncoveredIssues {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Producer transition: flag a PR into ai:blocked-deploy (a deploy the producer can't complete).
+    FlagBlockedDeploy {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        /// Reason (trailing words are joined).
+        reason: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Producer transition: flag a PR into ai:blocked-infra (infra/tooling gap OR can't-classify).
+    FlagBlockedInfra {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        reason: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Producer transition: flag a PR into ai:blocked-on (waiting on a dependency PR).
+    FlagBlockedOn {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        reason: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Producer transition: flag a PR into ai:design (raises a design question a human must rule).
+    FlagDesign {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        reason: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// The daily FSM-conformance review: every open item grouped by human-gated state, plus a
+    /// loud "NOT IN ANY MODELED STATE" leak bucket. The instrument for the daily status check.
+    HumanQueue {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// worklist + uncovered-issues — the producer's STATE-LOAD, done by the tool.
+//
+// Run data showed a producer spends ~half its tool calls hand-reconstructing GitHub
+// state every run (cross-org `gh search`, per-PR `gh pr view` loops, throwaway `.jq`
+// dedup) before doing any work. Cost scales with tool calls — each call re-reads the
+// whole ~95k-token context — so that startup was ~half the run's cost and wall-clock.
+// These two subcommands ARE the FSM's state-load: one call each, done in-process, so
+// the producer loads its whole in-flight worklist and its candidate new-issue set
+// without re-improvising enumeration in bash. This keeps state-load inside the tool,
+// per the "prompts only use the rust tool for I/O" doctrine.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The producer's next step for one of its own open PRs — the FSM state `worklist` computes so the
+/// producer knows WHICH PRs need action without re-deriving it from scratch each run.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum NextAction {
+    GreenReady,   // green + mergeable + no open threads -> present to the human (step 2z)
+    Deploy,       // red prod-pin/testProdDeploy*, or green "REQUIRES redeploy at land" (3b iv)
+    Conflict3d,   // DIRTY/BEHIND -> resolve conflicts (3d)
+    Coderabbit3e, // clean CI but unresolved review threads (3e)
+    Screenshot3c, // UI PR missing its screenshot (3c)
+    Needs3b,      // red, fixable, not parked (3b)
+    ParkedSkip,   // design-flicked / handed-off -> do NOT re-touch this run
+    Wait,         // CI still in flight -> nothing to do yet
+}
+
+impl NextAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            NextAction::GreenReady => "green-ready",
+            NextAction::Deploy => "deploy",
+            NextAction::Conflict3d => "conflict-3d",
+            NextAction::Coderabbit3e => "coderabbit-3e",
+            NextAction::Screenshot3c => "screenshot-3c",
+            NextAction::Needs3b => "needs-3b",
+            NextAction::ParkedSkip => "parked-skip",
+            NextAction::Wait => "wait",
+        }
+    }
+}
+
+/// The derived per-PR signals the pure classifier consumes. Separated from the gh JSON so
+/// `next_action` is unit-testable without a network.
+struct PrSignals {
+    ci: Ci,
+    merge_state: String,
+    unresolved_threads: usize,
+    has_deploy_trigger: bool,
+    deploy_done_at_head: bool,
+    parked: bool,
+    ui_missing_screenshot: bool,
+    /// The PR's modeled `ai:*` state label, if any. When it is a human-gated state (`ai:design` /
+    /// `ai:blocked-*` / `ai:close-candidate`), the label IS the state and the producer leaves the PR
+    /// parked — only un-labeled PRs are classified from CI/mergeState.
+    state_label: Option<String>,
+}
+
+/// PURE FSM classifier: given a PR's derived signals, what should the producer do with it this run?
+/// Priority is deliberate: an outstanding deploy is the only thing that greens a prod-pin (and a green
+/// "REQUIRES redeploy" PR is not truly landable), so it leads. Then red PRs (fix, or if parked skip).
+/// A pending CI just waits. Clean-CI PRs route conflict > open-threads > missing-screenshot, else they
+/// are green-ready for the human. A `parked` flag only suppresses re-touching a STILL-RED PR — a PR
+/// that has since gone green surfaces as green-ready regardless of past parking.
+fn next_action(s: &PrSignals) -> NextAction {
+    // A PR the producer has already moved into a modeled human-gated state (design / blocked-* /
+    // close-candidate) is PARKED for a human — the label IS the state, so the producer does not
+    // re-touch it and does not re-derive a state from CI. Only un-labeled PRs fall through to the
+    // CI/mergeState classifier below.
+    if let Some(l) = &s.state_label {
+        if PRODUCER_STATE_LABELS.contains(&l.as_str()) || l == "ai:close-candidate" {
+            return NextAction::ParkedSkip;
+        }
+    }
+    if s.has_deploy_trigger && !s.deploy_done_at_head {
+        return NextAction::Deploy;
+    }
+    match s.ci {
+        Ci::Red => {
+            if s.parked {
+                NextAction::ParkedSkip
+            } else {
+                NextAction::Needs3b
+            }
+        }
+        Ci::Pending => NextAction::Wait,
+        Ci::Green | Ci::NoChecks => {
+            let m = s.merge_state.as_str();
+            if m == "DIRTY" || m == "BEHIND" {
+                NextAction::Conflict3d
+            } else if s.unresolved_threads > 0 {
+                NextAction::Coderabbit3e
+            } else if s.ui_missing_screenshot {
+                NextAction::Screenshot3c
+            } else {
+                NextAction::GreenReady
+            }
+        }
+    }
+}
+
+/// Display names of the FAILING checks in a statusCheckRollup — so the producer knows which check to
+/// fix without a second `gh pr checks` call. Same fail-set as `classify_ci`.
+fn failing_check_names(rollup: &Value) -> Vec<String> {
+    let empty = Vec::new();
+    rollup
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|it| {
+            let concl = it.get("conclusion").and_then(|v| v.as_str());
+            let state = it.get("state").and_then(|v| v.as_str());
+            let failing = matches!(
+                concl,
+                Some("FAILURE")
+                    | Some("TIMED_OUT")
+                    | Some("CANCELLED")
+                    | Some("ACTION_REQUIRED")
+                    | Some("STARTUP_FAILURE")
+            ) || matches!(state, Some("FAILURE") | Some("ERROR"));
+            if failing {
+                it.get("name")
+                    .or_else(|| it.get("context"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Open issues NOT covered by any open PR. PURE: `covered` is the set of (repo, issue#) an open PR's
+/// closing keywords link, and coverage is SAME-REPO only (a `Closes #5` in repoA never covers repoB#5).
+fn uncovered(
+    issues: &[(String, u64)],
+    covered: &std::collections::HashSet<(String, u64)>,
+) -> Vec<(String, u64)> {
+    issues
+        .iter()
+        .filter(|k| !covered.contains(*k))
+        .cloned()
+        .collect()
+}
+
+/// Cache freshness for a stored PR row (the tool's own read-through cache — see `worklist_mode`).
+/// Serve the cached detail (skip the expensive per-PR fetch) IFF the PR is provably UNCHANGED and
+/// SETTLED: same `updatedAt` (bumped by any push/comment/label — the cheap signal available from the
+/// PR search), a TERMINAL ci ("green"/"red", never "pending"/"nochecks" — an in-flight PR is always
+/// re-fetched), and within TTL. This can only ever SKIP a fetch for an unchanged settled PR; it never
+/// serves a PR whose `updatedAt` moved. Correctness holds with the cache empty or `--no-cache`.
+///
+/// DELIBERATE TRADEOFF (not a bug): the freshness key is `updatedAt` + terminal-CI + TTL, NOT the
+/// head OID. A CI *re-run on the SAME commit* that flips green↔red without bumping `updatedAt` can be
+/// served ≤TTL-stale. This is bounded and accepted: `worklist` is a TRIAGE load (what to work next),
+/// and merge-readiness is re-verified at head by the `queue` command before a human lands anything.
+/// Adding head-oid would not help this case (the commit is unchanged); shrink `WORKLIST_TTL_SECS` if a
+/// tighter bound is ever needed.
+fn cache_fresh(
+    row_updated: &str,
+    row_ci: &str,
+    row_fetched: i64,
+    cur_updated: &str,
+    now: i64,
+    ttl: i64,
+) -> bool {
+    row_updated == cur_updated
+        && (row_ci == "green" || row_ci == "red")
+        && (now - row_fetched) < ttl
+}
+
+fn ci_str(ci: Ci) -> &'static str {
+    match ci {
+        Ci::Red => "red",
+        Ci::Pending => "pending",
+        Ci::NoChecks => "nochecks",
+        Ci::Green => "green",
+    }
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn pr_assignee() -> String {
+    std::env::var("PR_ASSIGNEE").unwrap_or_else(|_| "thedavidmeister".to_string())
+}
+
+fn worklist_cache_path() -> String {
+    std::env::var("WORKLIST_CACHE")
+        .unwrap_or_else(|_| "/home/gildlab/issue-pr-cron/.worklist-cache.json".to_string())
+}
+
+/// The JSON read-through cache: `{ "owner/repo#num": { updated_at, ci, fetched_at, detail } }`.
+/// A plain file (not sqlite) keeps this tool dependency-free — the cron depends on every subcommand
+/// building, and a ~hundreds-of-rows, single-process (flock'd), once-per-run cache needs none of
+/// sqlite's concurrency/indexing. `--no-cache` bypasses it; a missing/corrupt file = empty cache.
+fn load_cache() -> serde_json::Map<String, Value> {
+    std::fs::read_to_string(worklist_cache_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn save_cache(map: &serde_json::Map<String, Value>) {
+    if let Ok(s) = serde_json::to_string(&Value::Object(map.clone())) {
+        let _ = std::fs::write(worklist_cache_path(), s);
+    }
+}
+
+/// Fetch one PR's rich detail + its unresolved-review-thread count. `None` on a transient gh failure
+/// (the caller drops the PR from the list rather than reporting a false state).
+fn fetch_pr_detail(slug: &str, num: u64) -> Option<Value> {
+    let n = num.to_string();
+    let mut j = gh_json(&[
+        "pr", "view", &n, "-R", slug, "--json",
+        "number,title,url,mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,headRefOid,commits,closingIssuesReferences,createdAt,updatedAt,comments,labels,isDraft,body,files",
+    ])?;
+    let (owner, repo) = slug.split_once('/')?;
+    let q = format!(
+        "query{{repository(owner:\"{owner}\",name:\"{repo}\"){{pullRequest(number:{num}){{reviewThreads(first:50){{nodes{{isResolved}}}}}}}}}}"
+    );
+    let threads = gh_json(&["api", "graphql", "-f", &format!("query={q}")])
+        .and_then(|v| {
+            v.pointer("/data/repository/pullRequest/reviewThreads/nodes")
+                .and_then(|n| n.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter(|t| t.get("isResolved").and_then(|b| b.as_bool()) == Some(false))
+                        .count()
+                })
+        })
+        .unwrap_or(0);
+    if let Some(obj) = j.as_object_mut() {
+        obj.insert("unresolvedThreads".into(), Value::from(threads));
+    }
+    Some(j)
+}
+
+/// Derive a PR's signals + next_action from its detail JSON (pure given the JSON).
+fn worklist_row(slug: &str, detail: &Value) -> Value {
+    let rollup = detail
+        .get("statusCheckRollup")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let ci = classify_ci(&rollup);
+    let failing = failing_check_names(&rollup);
+    let merge_state = detail
+        .get("mergeStateStatus")
+        .and_then(|v| v.as_str())
+        .unwrap_or("UNKNOWN")
+        .to_string();
+    let threads = detail
+        .get("unresolvedThreads")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let closes: Vec<u64> = detail
+        .get("closingIssuesReferences")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| r.get("number").and_then(|n| n.as_u64()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let head = detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // markers — best-effort triage signals (the producer re-confirms from the log when it acts):
+    let body = detail.get("body").and_then(|v| v.as_str()).unwrap_or("");
+    let requires_redeploy = body.contains("REQUIRES redeploy at land")
+        || trusted_comments(detail, None)
+            .iter()
+            .any(|c| c.contains("REQUIRES redeploy at land"));
+    // a green PR flagged for redeploy, OR a red prod-pin check, is the deploy case
+    let deploy_pin_red = ci == Ci::Red
+        && failing.iter().any(|n| {
+            let n = n.to_ascii_lowercase();
+            n.contains("prod") && n.contains("deploy") || n.contains("testproddeploy")
+        });
+    let has_deploy_trigger = requires_redeploy || deploy_pin_red;
+    let trusted = trusted_comments(detail, None);
+    // HEAD-SCOPED: a deploy counts as done ONLY when a trusted note records a deploy SUCCESS /
+    // deploy-confirmed AND names the CURRENT head SHA. A bare `deploy-confirmed` from a PRIOR head
+    // must NOT count — else a PR deploy-confirmed at head A, then pushed new bytecode (head B, flagged
+    // REQUIRES redeploy), would read done, skip the redeploy, and surface ready with UNDEPLOYED
+    // bytecode (defeats deploy-before-merge). The producer's deploy-confirmed note embeds the head SHA
+    // (campaign-prompt 3b (iv)) precisely so this head-scoped match works.
+    let deploy_done_at_head = trusted.iter().any(|c| {
+        (c.contains("deploy") && (c.contains("SUCCESS") || c.contains("deploy-confirmed")))
+            && c.contains(head)
+    });
+    // parked: a design-clarification note, or a hand-off note, from the trusted producer account
+    let design_flicked = trusted.iter().any(|c| {
+        c.contains("design-clarification")
+            || c.contains("flick to design")
+            || c.contains("FLICK TO DESIGN")
+    });
+    let handed_off = trusted.iter().any(|c| {
+        c.contains("HAND OFF")
+            || c.contains("hand-off")
+            || c.contains("Producer note:") && c.contains("infra")
+    });
+    let has_3b_attempt = detail
+        .get("commits")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter().any(|c| {
+                c.pointer("/messageHeadline")
+                    .and_then(|m| m.as_str())
+                    .map(|m| m.contains("[3b-attempt]"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+    let parked = design_flicked || handed_off;
+    // UI PR missing a screenshot: touches a webapp/ui/site path AND no shots/<n>.png marker
+    let touches_ui = detail
+        .get("files")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter().any(|f| {
+                let p = f.get("path").and_then(|p| p.as_str()).unwrap_or("");
+                p.contains("packages/webapp")
+                    || p.contains("packages/ui-components")
+                    || (p.starts_with("site/") && p.ends_with(".html"))
+            })
+        })
+        .unwrap_or(false);
+    let num = detail.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
+    let has_shot = trusted.iter().any(|c| {
+        c.contains(&format!("shots/{num}.png")) || c.contains("screenshot pending (manual)")
+    });
+    let ui_missing_screenshot = touches_ui && !has_shot;
+
+    let labels: Vec<String> = detail
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let state_label = ai_state_label(&labels);
+    let sig = PrSignals {
+        ci,
+        merge_state: merge_state.clone(),
+        unresolved_threads: threads,
+        has_deploy_trigger,
+        deploy_done_at_head,
+        parked,
+        ui_missing_screenshot,
+        state_label: state_label.clone(),
+    };
+    let action = next_action(&sig);
+
+    serde_json::json!({
+        "repo": slug,
+        "number": num,
+        "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+        "title": detail.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        "ci": ci_str(ci),
+        "failingChecks": failing,
+        "mergeState": merge_state,
+        "unresolvedThreads": threads,
+        "closes": closes,
+        "createdAt": detail.get("createdAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "updatedAt": detail.get("updatedAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "isDraft": detail.get("isDraft").and_then(|v| v.as_bool()).unwrap_or(false),
+        "markers": {
+            "requiresRedeploy": requires_redeploy,
+            "deployDoneAtHead": deploy_done_at_head,
+            "designFlicked": design_flicked,
+            "handedOff": handed_off,
+            "has3bAttempt": has_3b_attempt,
+            "screenshotPending": has_shot,
+        },
+        "stateLabel": state_label,
+        "nextAction": action.as_str(),
+    })
+}
+
+fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
+    let assignee = pr_assignee();
+    let mut search: Vec<String> = vec!["search".into(), "prs".into()];
+    search.extend(org_owner_args());
+    search.extend(
+        [
+            "--author",
+            &assignee,
+            "--state",
+            "open",
+            "--limit",
+            "500",
+            "--json",
+            "number,repository,url,updatedAt",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&sref) else {
+        eprintln!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty worklist");
+        return 1;
+    };
+    let empty = Vec::new();
+    let arr = val.as_array().unwrap_or(&empty);
+
+    let mut cache = if use_cache {
+        load_cache()
+    } else {
+        serde_json::Map::new()
+    };
+    let now = now_unix();
+    let ttl: i64 = std::env::var("WORKLIST_TTL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10800); // 3h
+    let mut live_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut rows: Vec<Value> = Vec::new();
+
+    for p in arr {
+        let (Some(num), Some(repo)) = (
+            p.get("number").and_then(|n| n.as_u64()),
+            p.get("repository")
+                .and_then(|r| r.get("nameWithOwner"))
+                .and_then(|s| s.as_str()),
+        ) else {
+            continue;
+        };
+        let cur_updated = p.get("updatedAt").and_then(|u| u.as_str()).unwrap_or("");
+        let key = format!("{repo}#{num}");
+        live_keys.insert(key.clone());
+
+        // cache read-through
+        if use_cache {
+            if let Some(row) = cache.get(&key) {
+                let ru = row.get("updated_at").and_then(|v| v.as_str()).unwrap_or("");
+                let rci = row.get("ci").and_then(|v| v.as_str()).unwrap_or("");
+                let rf = row.get("fetched_at").and_then(|v| v.as_i64()).unwrap_or(0);
+                if cache_fresh(ru, rci, rf, cur_updated, now, ttl) {
+                    if let Some(d) = row.get("detail") {
+                        rows.push(worklist_row(repo, d));
+                        continue;
+                    }
+                }
+            }
+        }
+        // miss -> fetch fresh
+        let Some(detail) = fetch_pr_detail(repo, num) else {
+            continue;
+        };
+        let ci = ci_str(classify_ci(
+            detail.get("statusCheckRollup").unwrap_or(&Value::Null),
+        ));
+        if use_cache {
+            cache.insert(
+                key,
+                serde_json::json!({ "updated_at": cur_updated, "ci": ci, "fetched_at": now, "detail": detail }),
+            );
+        }
+        rows.push(worklist_row(repo, &detail));
+    }
+
+    if use_cache {
+        // eviction: drop merged/closed PRs (not in the live set) and any row older than 7d.
+        let hard = now - 7 * 24 * 3600;
+        cache.retain(|k, v| {
+            live_keys.contains(k)
+                && v.get("fetched_at").and_then(|f| f.as_i64()).unwrap_or(0) > hard
+        });
+        save_cache(&cache);
+    }
+
+    // sort: actionable first (by NextAction rank), then oldest updated first
+    rows.sort_by(|a, b| {
+        let ra = action_rank(a.get("nextAction").and_then(|s| s.as_str()).unwrap_or(""));
+        let rb = action_rank(b.get("nextAction").and_then(|s| s.as_str()).unwrap_or(""));
+        ra.cmp(&rb).then_with(|| {
+            a.get("updatedAt")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .cmp(b.get("updatedAt").and_then(|s| s.as_str()).unwrap_or(""))
+        })
+    });
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into())
+        );
+    } else {
+        println!("worklist: {} open PRs by {assignee}\n", rows.len());
+        for r in &rows {
+            let fc = r
+                .get("failingChecks")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            println!(
+                "  [{:>12}] {}#{}  ci={} merge={} threads={}{}",
+                r.get("nextAction").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
+                r.get("ci").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("mergeState").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("unresolvedThreads")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                if fc.is_empty() {
+                    String::new()
+                } else {
+                    format!("  failing=[{fc}]")
+                },
+            );
+        }
+    }
+    0
+}
+
+/// Rank a nextAction string for sort (mirrors NextAction::rank; kept string-keyed for the Value rows).
+fn action_rank(a: &str) -> u8 {
+    match a {
+        "deploy" => 0,
+        "needs-3b" => 1,
+        "conflict-3d" => 2,
+        "coderabbit-3e" => 3,
+        "screenshot-3c" => 4,
+        "green-ready" => 5,
+        "wait" => 6,
+        _ => 7, // parked-skip
+    }
+}
+
+fn uncovered_issues_mode(json_out: bool) -> i32 {
+    // open issues
+    let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
+    isearch.extend(org_owner_args());
+    isearch.extend(
+        [
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "number,repository,url,title,labels",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let iref: Vec<&str> = isearch.iter().map(String::as_str).collect();
+    let Some(ival) = gh_json(&iref) else {
+        eprintln!("error: `gh search issues` failed — aborting rather than report a falsely-empty issue set");
+        return 1;
+    };
+    // open PRs + their closing refs
+    let mut psearch: Vec<String> = vec!["search".into(), "prs".into()];
+    psearch.extend(org_owner_args());
+    psearch.extend(
+        [
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "number,repository,title,body,closingIssuesReferences",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let pref: Vec<&str> = psearch.iter().map(String::as_str).collect();
+    let Some(pval) = gh_json(&pref) else {
+        eprintln!("error: `gh search prs` failed — aborting");
+        return 1;
+    };
+
+    let mut covered: std::collections::HashSet<(String, u64)> = std::collections::HashSet::new();
+    for p in pval.as_array().unwrap_or(&Vec::new()) {
+        let Some(repo) = p
+            .get("repository")
+            .and_then(|r| r.get("nameWithOwner"))
+            .and_then(|s| s.as_str())
+        else {
+            continue;
+        };
+        // structured closingIssuesReferences (authoritative)
+        if let Some(refs) = p.get("closingIssuesReferences").and_then(|v| v.as_array()) {
+            for r in refs {
+                if let Some(n) = r.get("number").and_then(|n| n.as_u64()) {
+                    covered.insert((repo.to_string(), n));
+                }
+            }
+        }
+        // fallback: closing keywords in title+body (same repo only) — catches refs the index lags on
+        let text = format!(
+            "{} {}",
+            p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+            p.get("body").and_then(|b| b.as_str()).unwrap_or("")
+        );
+        for n in closing_keywords(&text) {
+            covered.insert((repo.to_string(), n));
+        }
+    }
+
+    let mut issues: Vec<(String, u64)> = Vec::new();
+    let mut meta: std::collections::HashMap<(String, u64), Value> =
+        std::collections::HashMap::new();
+    for it in ival.as_array().unwrap_or(&Vec::new()) {
+        let Some(repo) = it
+            .get("repository")
+            .and_then(|r| r.get("nameWithOwner"))
+            .and_then(|s| s.as_str())
+        else {
+            continue;
+        };
+        let Some(num) = it.get("number").and_then(|n| n.as_u64()) else {
+            continue;
+        };
+        let k = (repo.to_string(), num);
+        issues.push(k.clone());
+        meta.insert(k, it.clone());
+    }
+
+    let open = uncovered(&issues, &covered);
+    if json_out {
+        let arr: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_else(|_| "[]".into())
+        );
+    } else {
+        println!("uncovered issues (no open PR): {}\n", open.len());
+        for (repo, num) in &open {
+            let title = meta
+                .get(&(repo.clone(), *num))
+                .and_then(|m| m.get("title"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+            println!(
+                "  {repo}#{num}  {}",
+                &title.chars().take(70).collect::<String>()
+            );
+        }
+    }
+    0
 }
 
 fn main() {
@@ -2041,6 +3184,33 @@ fn main() {
             gc_mode(&wd, max_age_days, dry_run, do_clones, do_nix)
         }
         Cmd::RunMetrics { trace } => run_metrics_mode(&trace),
+        Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
+        Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::FlagBlockedDeploy {
+            slug,
+            pr,
+            reason,
+            dry_run,
+        } => flag_state_mode(&slug, &pr, "ai:blocked-deploy", &reason.join(" "), dry_run),
+        Cmd::FlagBlockedInfra {
+            slug,
+            pr,
+            reason,
+            dry_run,
+        } => flag_state_mode(&slug, &pr, "ai:blocked-infra", &reason.join(" "), dry_run),
+        Cmd::FlagBlockedOn {
+            slug,
+            pr,
+            reason,
+            dry_run,
+        } => flag_state_mode(&slug, &pr, "ai:blocked-on", &reason.join(" "), dry_run),
+        Cmd::FlagDesign {
+            slug,
+            pr,
+            reason,
+            dry_run,
+        } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), dry_run),
+        Cmd::HumanQueue { json } => human_queue_mode(json),
     };
     std::process::exit(code);
 }
@@ -2079,6 +3249,71 @@ mod queue_tests {
                 post_comment: false
             }
         );
+    }
+
+    #[test]
+    fn producer_state_plan_guards_human_and_dedups() {
+        let body = "🤖 ai:producer\nBlocked-infra: missing FLARE_RPC_URL";
+        // human:* label -> refuse
+        let j = json!({"labels":[{"name":"human:reject"}],"comments":[],"reviewDecision":null});
+        assert_eq!(
+            producer_state_plan(&j, "ai:blocked-infra", body),
+            ProducerStatePlan::RefuseHuman
+        );
+        // native human review -> refuse
+        let j = json!({"labels":[],"comments":[],"reviewDecision":"APPROVED"});
+        assert_eq!(
+            producer_state_plan(&j, "ai:blocked-infra", body),
+            ProducerStatePlan::RefuseHuman
+        );
+        // clean, carries a sibling ai:ready -> strip it, add target, post comment
+        let j = json!({"labels":[{"name":"ai:ready"}],"comments":[],"reviewDecision":null});
+        assert_eq!(
+            producer_state_plan(&j, "ai:blocked-infra", body),
+            ProducerStatePlan::Flag {
+                to_remove: vec!["ai:ready".to_string()],
+                has_target: false,
+                skip_comment: false,
+            }
+        );
+        // already flagged + identical trusted note present -> no-op (has_target, skip_comment)
+        let j = json!({
+            "labels":[{"name":"ai:blocked-infra"}],
+            "comments":[{"author":{"login":"thedavidmeister"},"body":body}],
+            "reviewDecision":null
+        });
+        assert_eq!(
+            producer_state_plan(&j, "ai:blocked-infra", body),
+            ProducerStatePlan::Flag {
+                to_remove: vec![],
+                has_target: true,
+                skip_comment: true,
+            }
+        );
+        // a spoofed note from an UNtrusted author does not dedup (still posts)
+        let j = json!({
+            "labels":[],
+            "comments":[{"author":{"login":"impostor"},"body":body}],
+            "reviewDecision":null
+        });
+        assert_eq!(
+            producer_state_plan(&j, "ai:blocked-infra", body),
+            ProducerStatePlan::Flag {
+                to_remove: vec![],
+                has_target: false,
+                skip_comment: false,
+            }
+        );
+    }
+
+    #[test]
+    fn ai_state_label_finds_first_ai_label() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            ai_state_label(&s(&["human:x", "ai:blocked-on", "misc"])),
+            Some("ai:blocked-on".to_string())
+        );
+        assert_eq!(ai_state_label(&s(&["human:x", "misc"])), None);
     }
 
     // --- presentable_state: the core presentability decision -----------------------------------
@@ -3001,8 +4236,8 @@ mod gc_tests {
 #[cfg(test)]
 mod deploy_tests {
     use super::{
-        build_dispatch_inputs, classify_run, dispatch_command, parse_dispatch_inputs, pick_selector,
-        RunResult, WorkflowInput,
+        build_dispatch_inputs, classify_run, dispatch_command, parse_dispatch_inputs,
+        pick_selector, RunResult, WorkflowInput,
     };
 
     // The real rain.erc4626.words workflow: a single `network` choice input, one option `base`.
@@ -3093,7 +4328,11 @@ jobs: {}
             vec!["raindex", "subparser", "route-processor"]
         );
         // The later `with:\n  suite:` block must NOT be mistaken for a second input.
-        assert_eq!(got.len(), 1, "only the dispatch input, not the with: mapping");
+        assert_eq!(
+            got.len(),
+            1,
+            "only the dispatch input, not the with: mapping"
+        );
     }
 
     #[test]
@@ -3122,7 +4361,11 @@ jobs: {}
         let suite = parse_dispatch_inputs(SUITE_WF);
         assert_eq!(pick_selector(&suite), Some(0), "sole input is the selector");
         let two = parse_dispatch_inputs(TWO_INPUT_WF);
-        assert_eq!(pick_selector(&two), Some(0), "`network` wins over `dry_run`");
+        assert_eq!(
+            pick_selector(&two),
+            Some(0),
+            "`network` wins over `dry_run`"
+        );
         // Two inputs, neither a selector-name → ambiguous.
         let ambiguous = vec![
             WorkflowInput {
@@ -3220,7 +4463,12 @@ jobs: {}
     fn dispatch_command_builds_the_gh_argv() {
         let inputs = vec![("network".to_string(), "base".to_string())];
         assert_eq!(
-            dispatch_command("manual-sol-artifacts.yaml", "rainlanguage/rain.erc4626.words", "my-branch", &inputs),
+            dispatch_command(
+                "manual-sol-artifacts.yaml",
+                "rainlanguage/rain.erc4626.words",
+                "my-branch",
+                &inputs
+            ),
             vec![
                 "gh",
                 "workflow",
@@ -3249,7 +4497,13 @@ jobs: {}
             classify_run(Some("completed"), Some("success")),
             RunResult::Success
         );
-        for c in ["failure", "cancelled", "timed_out", "action_required", "startup_failure"] {
+        for c in [
+            "failure",
+            "cancelled",
+            "timed_out",
+            "action_required",
+            "startup_failure",
+        ] {
             assert_eq!(
                 classify_run(Some("completed"), Some(c)),
                 RunResult::Failure,
@@ -3321,6 +4575,60 @@ mod cli_tests {
             parse(&["prr", "run-metrics", "t.jsonl"]),
             Cmd::RunMetrics { .. }
         ));
+    }
+
+    #[test]
+    fn fsm_state_subcommands_present() {
+        assert!(matches!(
+            parse(&[
+                "prr",
+                "flag-blocked-deploy",
+                "o/r",
+                "1",
+                "run",
+                "28",
+                "failed"
+            ]),
+            Cmd::FlagBlockedDeploy { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "flag-blocked-infra", "o/r", "1", "missing", "secret"]),
+            Cmd::FlagBlockedInfra { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "flag-blocked-on", "o/r", "1", "waiting", "on", "#9"]),
+            Cmd::FlagBlockedOn { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "flag-design", "o/r", "1", "version", "slot", "taken"]),
+            Cmd::FlagDesign { .. }
+        ));
+        assert!(matches!(
+            parse(&["prr", "human-queue"]),
+            Cmd::HumanQueue { .. }
+        ));
+    }
+
+    // The reason is variadic + joined; --dry-run is a flag, not swallowed into the reason.
+    #[test]
+    fn flag_blocked_reason_is_variadic_and_dry_run_is_a_flag() {
+        assert_eq!(
+            parse(&[
+                "prr",
+                "flag-blocked-infra",
+                "o/r",
+                "1",
+                "missing",
+                "FLARE_RPC_URL",
+                "--dry-run"
+            ]),
+            Cmd::FlagBlockedInfra {
+                slug: "o/r".to_string(),
+                pr: "1".to_string(),
+                reason: s(&["missing", "FLARE_RPC_URL"]),
+                dry_run: true,
+            }
+        );
     }
 
     // queue: N is an optional usize. Omitted → None (so `main`'s `unwrap_or(20)` supplies the 20);
@@ -3511,7 +4819,15 @@ mod cli_tests {
     #[test]
     fn deploy_network_and_dry_run() {
         assert_eq!(
-            parse(&["prr", "deploy", "o/r", "12", "--network", "base", "--dry-run"]),
+            parse(&[
+                "prr",
+                "deploy",
+                "o/r",
+                "12",
+                "--network",
+                "base",
+                "--dry-run"
+            ]),
             Cmd::Deploy {
                 slug: "o/r".to_string(),
                 pr: "12".to_string(),
@@ -3580,7 +4896,15 @@ mod cli_tests {
             }
         );
         assert_eq!(
-            parse(&["prr", "gc", "/w", "--dry-run", "--max-age-days", "5", "--no-nix"]),
+            parse(&[
+                "prr",
+                "gc",
+                "/w",
+                "--dry-run",
+                "--max-age-days",
+                "5",
+                "--no-nix"
+            ]),
             Cmd::Gc {
                 work_dir: Some("/w".to_string()),
                 dry_run: true,
@@ -3616,5 +4940,285 @@ mod cli_tests {
                 "old form {old:?} must be rejected"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod worklist_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sig(ci: Ci, merge: &str) -> PrSignals {
+        PrSignals {
+            ci,
+            merge_state: merge.to_string(),
+            unresolved_threads: 0,
+            has_deploy_trigger: false,
+            deploy_done_at_head: false,
+            parked: false,
+            ui_missing_screenshot: false,
+            state_label: None,
+        }
+    }
+
+    #[test]
+    fn modeled_state_label_short_circuits_to_parked() {
+        // A PR already in a human-gated state is parked for the human regardless of CI — even a
+        // deploy-trigger or a red-green signal does not override the label.
+        for label in [
+            "ai:design",
+            "ai:blocked-deploy",
+            "ai:blocked-infra",
+            "ai:blocked-on",
+            "ai:close-candidate",
+        ] {
+            let mut s = sig(Ci::Green, "CLEAN");
+            s.state_label = Some(label.to_string());
+            s.has_deploy_trigger = true; // would otherwise be Deploy
+            assert_eq!(
+                next_action(&s),
+                NextAction::ParkedSkip,
+                "label {label} should park"
+            );
+        }
+        // ai:ready is NOT a producer human-gated block — it classifies from CI as normal.
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.state_label = Some("ai:ready".to_string());
+        assert_eq!(next_action(&s), NextAction::GreenReady);
+    }
+
+    #[test]
+    fn green_clean_is_green_ready() {
+        assert_eq!(
+            next_action(&sig(Ci::Green, "CLEAN")),
+            NextAction::GreenReady
+        );
+        // BLOCKED = green but needs human approval -> still present it to the human.
+        assert_eq!(
+            next_action(&sig(Ci::Green, "BLOCKED")),
+            NextAction::GreenReady
+        );
+    }
+
+    #[test]
+    fn red_unparked_is_needs3b_parked_is_skip() {
+        assert_eq!(next_action(&sig(Ci::Red, "BLOCKED")), NextAction::Needs3b);
+        let mut s = sig(Ci::Red, "BLOCKED");
+        s.parked = true;
+        assert_eq!(next_action(&s), NextAction::ParkedSkip);
+    }
+
+    #[test]
+    fn deploy_trigger_leads_even_when_green() {
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.has_deploy_trigger = true;
+        assert_eq!(next_action(&s), NextAction::Deploy);
+        // ...unless the deploy already succeeded at head -> back to green-ready.
+        s.deploy_done_at_head = true;
+        assert_eq!(next_action(&s), NextAction::GreenReady);
+    }
+
+    #[test]
+    fn conflict_and_threads_and_screenshot_route() {
+        assert_eq!(
+            next_action(&sig(Ci::Green, "DIRTY")),
+            NextAction::Conflict3d
+        );
+        assert_eq!(
+            next_action(&sig(Ci::Green, "BEHIND")),
+            NextAction::Conflict3d
+        );
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.unresolved_threads = 2;
+        assert_eq!(next_action(&s), NextAction::Coderabbit3e);
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.ui_missing_screenshot = true;
+        assert_eq!(next_action(&s), NextAction::Screenshot3c);
+    }
+
+    #[test]
+    fn pending_ci_waits() {
+        assert_eq!(next_action(&sig(Ci::Pending, "UNKNOWN")), NextAction::Wait);
+    }
+
+    #[test]
+    fn failing_check_names_picks_only_failures() {
+        let rollup = json!([
+            {"name":"a","conclusion":"SUCCESS"},
+            {"name":"b","conclusion":"FAILURE"},
+            {"context":"c","state":"ERROR"},
+            {"name":"d","status":"IN_PROGRESS"},
+        ]);
+        let mut got = failing_check_names(&rollup);
+        got.sort();
+        assert_eq!(got, vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn failing_check_names_catches_every_failure_conclusion() {
+        // Every failing conclusion/state must be caught — not just FAILURE/ERROR. A mutation that
+        // drops any of TIMED_OUT/CANCELLED/ACTION_REQUIRED/STARTUP_FAILURE fails here.
+        let rollup = json!([
+            {"name":"f1","conclusion":"FAILURE"},
+            {"name":"f2","conclusion":"TIMED_OUT"},
+            {"name":"f3","conclusion":"CANCELLED"},
+            {"name":"f4","conclusion":"ACTION_REQUIRED"},
+            {"name":"f5","conclusion":"STARTUP_FAILURE"},
+            {"context":"f6","state":"ERROR"},
+            {"name":"ok","conclusion":"SUCCESS"},
+            {"name":"pend","status":"IN_PROGRESS"},
+        ]);
+        let mut got = failing_check_names(&rollup);
+        got.sort();
+        assert_eq!(
+            got,
+            ["f1", "f2", "f3", "f4", "f5", "f6"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_single_unresolved_thread_routes_to_coderabbit() {
+        // The threshold is > 0, not > 1: ONE open thread already routes to coderabbit-3e.
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.unresolved_threads = 1;
+        assert_eq!(next_action(&s), NextAction::Coderabbit3e);
+    }
+
+    #[test]
+    fn green_branch_precedence_is_conflict_then_threads_then_screenshot() {
+        // conflict wins over open threads AND a missing screenshot
+        let mut s = sig(Ci::Green, "DIRTY");
+        s.unresolved_threads = 3;
+        s.ui_missing_screenshot = true;
+        assert_eq!(next_action(&s), NextAction::Conflict3d);
+        // with no conflict, open threads win over a missing screenshot
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.unresolved_threads = 2;
+        s.ui_missing_screenshot = true;
+        assert_eq!(next_action(&s), NextAction::Coderabbit3e);
+        // screenshot is last
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.ui_missing_screenshot = true;
+        assert_eq!(next_action(&s), NextAction::Screenshot3c);
+    }
+
+    #[test]
+    fn ai_state_label_returns_the_first_when_two_slip_in() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            ai_state_label(&s(&["ai:design", "ai:ready"])),
+            Some("ai:design".to_string())
+        );
+        assert_eq!(
+            ai_state_label(&s(&["ai:ready", "ai:blocked-infra"])),
+            Some("ai:ready".to_string())
+        );
+    }
+
+    // --- worklist_row: the untested integration seam (pure — reads everything from `detail`) ------
+
+    #[test]
+    fn worklist_row_deploy_done_must_be_head_scoped() {
+        // A deploy-confirmed note at a PRIOR head (HEAD_A) must NOT mark the current head (HEAD_B)
+        // done: the PR pushed new bytecode (REQUIRES redeploy) and still needs the redeploy. Under
+        // the dropped un-head-scoped clause this returned green-ready with undeployed bytecode.
+        let detail = json!({
+            "number": 7, "url": "", "title": "t", "headRefOid": "HEAD_B",
+            "body": "REQUIRES redeploy at land",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [],
+            "comments": [{"author":{"login":"thedavidmeister"},
+                          "body":"🤖 ai:producer deploy-confirmed at HEAD_A"}]
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
+        // ...and WITH the note at the current head, the deploy IS done → green-ready.
+        let detail = json!({
+            "number": 7, "url": "", "title": "t", "headRefOid": "HEAD_B",
+            "body": "REQUIRES redeploy at land",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [],
+            "comments": [{"author":{"login":"thedavidmeister"},
+                          "body":"🤖 ai:producer deploy-confirmed at HEAD_B"}]
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "green-ready");
+    }
+
+    #[test]
+    fn worklist_row_red_prodpin_is_deploy() {
+        let detail = json!({
+            "number": 1, "headRefOid": "H",
+            "statusCheckRollup": [{"name":"rainix-sol / test / testProdDeployArbitrum",
+                                   "conclusion":"FAILURE","status":"COMPLETED"}],
+            "mergeStateStatus": "BLOCKED", "labels": [], "comments": []
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
+    }
+
+    #[test]
+    fn worklist_row_requires_redeploy_green_is_deploy() {
+        let detail = json!({
+            "number": 1, "headRefOid": "H", "body": "REQUIRES redeploy at land",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [], "comments": []
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
+    }
+
+    #[test]
+    fn worklist_row_still_red_handed_off_is_parked() {
+        // A red PR carrying a trusted hand-off note is parked — the producer does not re-touch it.
+        let detail = json!({
+            "number": 1, "headRefOid": "H",
+            "statusCheckRollup": [{"name":"unit","conclusion":"FAILURE","status":"COMPLETED"}],
+            "mergeStateStatus": "BLOCKED", "labels": [],
+            "comments": [{"author":{"login":"thedavidmeister"},
+                          "body":"🤖 ai:producer HAND OFF: infra red"}]
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "parked-skip");
+    }
+
+    #[test]
+    fn worklist_row_ui_missing_screenshot_routes() {
+        let detail = json!({
+            "number": 5, "headRefOid": "H",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [], "comments": [],
+            "files": [{"path":"packages/webapp/src/Foo.svelte"}]
+        });
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "screenshot-3c");
+    }
+
+    #[test]
+    fn uncovered_excludes_only_same_repo_covered() {
+        use std::collections::HashSet;
+        let issues = vec![
+            ("o/a".to_string(), 5u64),
+            ("o/a".to_string(), 6),
+            ("o/b".to_string(), 5),
+        ];
+        let mut covered = HashSet::new();
+        covered.insert(("o/a".to_string(), 5u64)); // covers a#5 only
+        let got = uncovered(&issues, &covered);
+        assert!(got.contains(&("o/a".to_string(), 6)));
+        assert!(got.contains(&("o/b".to_string(), 5))); // same number, different repo -> NOT covered
+        assert!(!got.contains(&("o/a".to_string(), 5)));
+        assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn cache_hit_only_when_unchanged_terminal_and_fresh() {
+        // baseline: same updatedAt, terminal green, within ttl -> HIT
+        assert!(cache_fresh("t1", "green", 100, "t1", 200, 10800));
+        assert!(cache_fresh("t1", "red", 100, "t1", 200, 10800));
+        // updatedAt moved -> MISS
+        assert!(!cache_fresh("t1", "green", 100, "t2", 200, 10800));
+        // non-terminal ci -> MISS even if unchanged + fresh
+        assert!(!cache_fresh("t1", "pending", 100, "t1", 200, 10800));
+        assert!(!cache_fresh("t1", "nochecks", 100, "t1", 200, 10800));
+        // past ttl -> MISS
+        assert!(!cache_fresh("t1", "green", 100, "t1", 100 + 10800, 10800));
     }
 }
