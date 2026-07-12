@@ -1,0 +1,747 @@
+{
+  "closeCandidateIssues": [
+    {
+      "number": 40,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "pr-review-report: constrained Zoltu-deploy subcommand so the producer can deploy the sanctioned way only"
+    },
+    {
+      "number": 3,
+      "repo": "S01-Issuer/st0x.atomic-bridge",
+      "title": "[AUDIT] [MEDIUM] ST0xPriceOracle.updatePrice admits future-dated timestamps; price() then bricks via arithmetic underflow"
+    },
+    {
+      "number": 499,
+      "repo": "rainlanguage/raindex",
+      "title": "Refactor Config & ConfigSource types for consistent key ordering"
+    },
+    {
+      "number": 498,
+      "repo": "rainlanguage/raindex",
+      "title": "Refactor reporting sentry errors - generic try/catch wrapper"
+    },
+    {
+      "number": 495,
+      "repo": "rainlanguage/raindex",
+      "title": "Tab based UI with multi window support"
+    },
+    {
+      "number": 482,
+      "repo": "rainlanguage/raindex",
+      "title": "Same transaction status notices for ledger & walletconnect transactions"
+    },
+    {
+      "number": 481,
+      "repo": "rainlanguage/raindex",
+      "title": "Refactor ModalExecute.svelte component to act like a generic \"input\" component"
+    },
+    {
+      "number": 476,
+      "repo": "rainlanguage/raindex",
+      "title": "Frontend testing harness & basic tests"
+    },
+    {
+      "number": 448,
+      "repo": "rainlanguage/raindex",
+      "title": "\"Cannot access unitialized variable\" - White Screen on Mac OS 11"
+    }
+  ],
+  "counts": {
+    "blockedDeploy": 6,
+    "blockedInfra": 7,
+    "blockedOn": 4,
+    "closeCandidateIssues": 9,
+    "design": 2,
+    "leaks": 38,
+    "ready": 19,
+    "totalProducerPrs": 161
+  },
+  "leaks": [
+    {
+      "number": 418,
+      "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(select): match options by optional optionKey instead of reference only"
+    },
+    {
+      "number": 414,
+      "reason": "🤖 ai:producer screenshot pending (manual): cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same ruling as the earlier 14-component batch). Visible delta: existing error box with the new 'Invalid account address' message; the Full Tx History link now always targets the lowercase /rewards/<address> route.",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix: validate account prop and canonicalize rewards link in AccountSummary"
+    },
+    {
+      "number": 413,
+      "reason": "🤖 ai:producer screenshot pending (manual): cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same ruling as the earlier 14-component batch). Visible delta: existing error box with the new 'Invalid account address' message; malformed-hash transfer rows render identically but without an href.",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix: validate account prop and transaction hash in AccountStatus"
+    },
+    {
+      "number": 412,
+      "reason": "🤖 ai:producer screenshot pending (manual): AccountStatus transfer-history list rendering is subgraph+wallet-gated; cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same ruling as the earlier 14-component batch).",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+    },
+    {
+      "number": 25,
+      "reason": "🤖 ai:producer Producer note: PR close-candidate — queued for human close review. Superseded by #22: per the 2026-07-04 rework note on #22 (\"land the parser fix + this suite together\"), this branch was merged into #22 and the two heads are now the identical commit (0e5cfe9); #22 carries the parser fix, the adapted \"1.\" revert pin, and Closes #24. Nothing unique remains here.",
+      "repo": "rainlanguage/rain.math.fixedpoint",
+      "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
+    },
+    {
+      "number": 397,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — added shared src/lib/utils/safeBigInt.ts (bigint passthrough, strict 0n fallback) and routed all four #331-named Leaderboard accesses (eligibleBalances[token.symbol], shares[token.symbol]?.rewardsAmount, shares[token.symbol]?.percentageShare, shares?.totalRewards) through it with optional chaining; new malformed-row render test (row missing shares + string eligibleBalances value) fails on unguarded code with \"TypeError: Cannot read properties of undefined (reading 'cysFLR') at Leaderboard.svelte:87\" (1 failed | 3 passed), and passes with the guards (6/6 green incl. helper unit tests). Same helper is introduced on PR #389; whichever lands second reconciles trivially (identical file).",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard"
+    },
+    {
+      "number": 393,
+      "reason": "🤖 ai:producer  Producer note: reworked per rework note — added the two discriminating tests. The branch was behind `main`, so `origin/main` was merged in first (clean merge, no conflicts). QA evidence block below (it belongs in the PR body per QA-GUIDE section 8, but body edits are outside this routine):  ## QA - Discriminating tests: `Leaderboard Component > should percent-encode the account in the row href when it contains URL metacharacters` and `RewardsPlaceholder Component > should carry rel=noopener noreferrer on the target=_blank docs link` — each fails on base (reverting `encodeURIComponent(entry.account)` back to raw `entry.account` interpolation → the percent-encode test failed with the raw href `/rewards/0xabc/../../admin?redirect=evil#frag'\"<>` rendered; removing `rel=\"noopener noreferrer\"` → the rel test failed with `rel` = null; each restored fix → 7/7 tests pass across both files) - Mutations applied: `src/lib/components/Leaderboard.svelte` href line → `encodeURIComponent(entry.account)` reverted to raw `entry.account` → killed by the percent-encode test; `src/lib/components/RewardsPlaceholder.svelte` docs link → `rel=\"noopener noreferrer\"` attribute removed → killed by the rel test - Oracle: the expected href is derived inside the test itself via `encodeURIComponent` applied to the fixture string `0xabc/../../admin?redirect=evil#frag'\"<>` (covering `/`, `?`, `#`, quotes, angle brackets), independent of the component markup; the rel expectation is the static attribute value `noopener noreferrer` - Category check: #329 asks encoded account href in Leaderboard, #339 asks rel on the target=_blank link in RewardsPlaceholder; covered both ",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
+    },
+    {
+      "number": 389,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — replaced the falsy-|| guard with the shared safe-bigint accessor (src/lib/utils/safeBigInt.ts: bigint passthrough, strict 0n fallback) on stats.shares?.totalRewards plus the other AccountStats subgraph-shape accesses (eligibleBalances, rewardsAmount, percentageShare) so the missing-shares fixture can render at all; new malformed-stats render test (missing shares + string eligibleBalances value) fails on base with \"TypeError: Cannot read properties of undefined (reading 'totalRewards') at AccountStats.svelte:65\" (1 failed | 2 passed), and passes with the guards (5/5 green incl. helper unit tests). Same helper is introduced on PR #397; whichever lands second reconciles trivially (identical file).",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
+    },
+    {
+      "number": 386,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — reset() now bumps inflightToken so an in-flight refresh resolving after reset cannot clobber state; discriminating test added (fails without the bump).",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
+    },
+    {
+      "number": 385,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — README now includes the root-level npm ci before the graphql-codegen step (the codegen previously ran with no root deps).",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "docs(setup): fix README setup steps and add missing env var"
+    },
+    {
+      "number": 196,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — added the asymmetric fork invariant (ETH-per-FLRETH >= 1e18, FLRETH-per-ETH <= 1e18) that fails under a getter swap; reciprocity kept as bonus; docs now cite the on-chain-verified direction. Fork verification rides on CI RPC env.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
+    },
+    {
+      "number": 2793,
+      "reason": "🤖 ai:producer Producer note: rework executed — (1) set_select_token now reuses a complete same-network yaml token record instead of refetching token_info: same token selected for input+output slots = 1 multicall instead of 2 (test_set_select_token_same_address_fetches_once, mock hit-count pinned; cross-network/incomplete records never shortcut, re-selection reuses its own record). (2) generate_approval_calldatas reads decimals from the deposits map instead of a per-token decimals() RPC: 1 -> 0, only the allowance read remains (test_generate_approval_calldatas_reuses_deposit_token_decimals, 0-hit + exact-amount pinned). Branch merged current with main; raindex_common suite locally green (1161 passed); all 7 mutants (reintroduced duplicate fetches, dropped guards, reordered removal, corrupted decimals) killed. With the earlier read_dispair dedup this covers all three fetch sources named in https://github.com/rainlanguage/raindex/issues/2776. Remaining CI reds are the known raindex main-state failures.",
+      "repo": "rainlanguage/raindex",
+      "title": "perf: eliminate redundant read_dispair calls in try_into_call"
+    },
+    {
+      "number": 2,
+      "reason": "🤖 ai:producer Producer note: REWORKED per the rework note — merged main ([merge-update] commit takes main's side, dropping the prose-grep design) and re-implemented the gate on top (commit 1c6fdb9):  - **pr-review-report** (typed input, no prose-grep): `count_unresolved_page`/`unresolved_threads` read `reviewThreads { isResolved }` via GraphQL with pagination; new `OPEN_THREADS` bucket via `apply_threads_gate` — only otherwise-presentable buckets (APPROVED/AIVET/STALE_VET/UNREVIEWED) are gated, unknown thread state on a gated bucket surfaces as FETCH_ERROR (never silently presentable); `--queue` excludes thread-dirty PRs fail-closed (`threads_presentable`), matching the existing mergeable check. - **campaign-prompt**: producer half folded into step 2z FLEET GREENNESS (THREAD RESOLUTION: fix → push `[3e-attempt]` (one per PR ever) → reply → `resolveReviewThread`); step 7 allow-list extended to thread replies/resolution on own PRs only, after the addressing commit. - **review-prompt**: OPEN-THREADS GATE sits beside the QA GATE; prose-grepping \"Actionable comments posted\" is explicitly forbidden; vetter records no verdict on thread-dirty PRs and reports them as \"open-threads (skipped)\".  QA evidence (PR body is pre-restructure; producer cannot edit bodies, so it lives here):  ``` ## QA - Discriminating tests: open_threads_tests T1-T9 (count_mixed_resolved_unresolved, count_empty_nodes_is_zero, count_propagates_next_cursor, count_malformed_is_none, gated_set_is_presentable_buckets_only, gate_routes_gated_buckets, gate_ignores_non_gated_buckets, queue_presentability_fail_closed, open_threads_key) — the tested functions do not exist on base, so each fails on base by construction (compile error); full suite 57/57 green on the branch. - Mutations applied: apply_threads_gate 'Some(_) => OpenThreads' → 'Some(_) => b' → killed by gate_routes_gated_buckets; count_unresolved_page '!isResolved' → 'isResolved' → killed by count_mixed_resolved_unresolved (+1); threads_presentable 'threads == Some(0)' → 'unwrap_or(0) == 0' → killed by queue_presentability_fail_closed; threads_gated minus Unreviewed → killed by gated_set_is_presentable_buckets_only. All restored; suite re-run green. - Oracle: GitHub GraphQL reviewThreads schema (isResolved/pageInfo) — fixtures hand-built from the documented response shape, independent of the implementation. - Category check: issue #1 asks CodeRabbit findings to block human review; covered via unresolved-thread state (supersedes prose-grep per rework note) across report buckets, queue filter, producer duty, and vetter gate. Caveat: the report-loop call-site wiring (apply_threads_gate around bucket_of) and the live GraphQL call are covered by the nix build + review, not unit tests — the pure logic is. ```  CI gate (`nix build .#pr-review-report`) passes locally on the pushed tree. ",
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved"
+    },
+    {
+      "number": 230,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — bare test/ import in ERC4626SubParserSplitExtern.wrapper.sol switched to the relative ./ form; no other changes.",
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "test(extern): assert sub-parser honors overridden extern() address"
+    },
+    {
+      "number": 178,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — LibFtsoV2LTS.t.sol now imports BLOCK_NUMBER directly from test/fork/ForkConstants.sol, the stale test derives the expected StalePrice timestamp from getFeedByIdInWei at the pinned fork block (no more bare 1729795768 literal), and FlareInterfacesProd.t.sol is pointed at ForkConstants.sol too. Verified locally against the live Flare RPC: full suite 60/60 green including all fork tests.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "refactor(tests): centralize fork block numbers in ForkConstants.sol"
+    },
+    {
+      "number": 177,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — added behavioral fee assertions around the setDefaultFee governance flow: calculateFeeByIds is read before propose (with vm.assume(fee != feeBefore)), asserted unchanged after propose but before timelock execution, and asserted equal to the newly set default after executeGovernanceCall. Note the assertion observes the default through a feed id with no per-feed and no category fee: live-chain probing at BLOCK_NUMBER showed category 0x01 has a category fee of 0 set, which shadows the default fee for all crypto feeds incl. ETH/USD (fee resolution is per-feed, then category, then default). Verified locally against the live Flare RPC: full suite 61/61 green including all fork tests.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "test(lts): exercise setDefaultFee through governance flow"
+    },
+    {
+      "number": 170,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — converted the 4 remaining bare src/ imports in script/BuildAuthoringMeta.sol and script/BuildPointers.sol to relative ../src/ paths; grep confirms zero bare src/-style imports remain repo-wide and forge build is green.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths"
+    },
+    {
+      "number": 325,
+      "reason": "🤖 ai:producer  Producer note: rework executed — rows covered (each against a REAL reentrant dependency, all mutation-validated): - 8: `testDepositAssetTransferFromReentrancyGuardFires` (hooked asset ERC20 re-enters from `_beforeDeposit` pull) - 9: `testWithdrawAssetTransferReentrancyGuardFires` (hooked asset ERC20 re-enters from `_afterWithdraw` push) - 11: `testDepositEthRefundReentryIsBenign` (reentry via post-guard `sendValue` refund → fresh independent deposit, distinct ids) - 12: `testDepositSwappedAuthorizerReceiptTransferGuardFires` (swapped authorizer re-enters from `authorizeReceiptTransfer3`) - 13: `testDepositSwappedAuthorizerAfterDepositGuardFires` (swapped authorizer re-enters from `_afterDeposit`) - 14: `testCertifyReentrantAuthorizerObservesWrittenCertification` (`certifiedUntil` written before `authorize`) - 15: `testShareTransferSwappedAuthorizerCannotOverspend` (unguarded share `_update` window → ERC20 underflow blocks overspend) - 16: `testConfiscateReceiptReentrantConfiscatorGuardFires` (confiscator re-enters from ERC1155 acceptance callback) - 19: `testPaymentMintReentrantPaymentTokenGuardFires` (reentrant payment token during payment-mint pull; supply cap intact) - 20: `testDepositOracleReentryIsBenignWithFreshPrice` (reentrant oracle in pre-guard `_nextId` → fresh price per deposit)  Rows found inapplicable: none.  Mutation validation (7 mutants, each killed by exactly the claiming tests, restored after): `_deposit` guard removed → 7 tests fail; `confiscateReceipt` guard removed → row 16 fails; `certifiedUntil` write reordered after authorize → row 14 fails; `_update` authorize removed → row 15 fails; guard widened to span refund + oracle read → rows 11/20 fail; per-site authorize removal at `authorizeReceiptTransfer3` / `_afterDeposit` → exactly rows 12 / 13(+19) fail.  Local suite: 392 passed, 1 pre-existing env-only failure (`PythInterfaceProdTest` needs `ARBITRUM_RPC_URL`, supplied in CI). All 14 reentrancy tests pass at 256 fuzz runs. ",
+      "repo": "rainlanguage/rain.vats",
+      "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
+    },
+    {
+      "number": 212,
+      "reason": "🤖 ai:producer Producer note: rework executed — verified each of the nine `Closes` against the actual diff.  - Kept `Closes`, covered by diff: #86, #103 (integrity() `@return` tags), #119, #124 (SubParser `@title`/`@notice` + `authoringMetaV2()` docs), #81 (added in rework: LibERC4626 named returns `assetsFloat`/`sharesFloat` + decimal re-encoding precision in `@return`), #92 (added in rework: ConvertToAssets `run()` round-DOWN direction note, mirroring ConvertToShares). - Downgraded to `Refs`: #95, #109, #111 — their asks (run() `@param operand`/`@return outputs`, ConvertToShares rounding direction) already landed on main via #246, so this diff has nothing honest to add; they are fixed-on-main close-candidates. - Also corrected in rework: this PR had documented the vault address input as Float-encoded; it travels as raw stack bits (org ruling, #242). Fixed in integrity `@return` lines and both authoring meta descriptions. - Merged origin/main into the branch, regenerated meta + pointers (DESCRIBED_BY_META_HASH, BYTECODE_HASH), forge test 123/123 green locally.",
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
+    },
+    {
+      "number": 324,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — ERC20PriceOracleReceiptVault spec suite added mirroring the OffchainAssetReceiptVault coverage; broken-oracle max* non-revert pinned.",
+      "repo": "rainlanguage/rain.vats",
+      "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault"
+    },
+    {
+      "number": 211,
+      "reason": "🤖 ai:producer Producer note: reworked per the rework note at head 2426420. (1) E2E integrity leg added — three parse2 bad-arity tests pin the exact ExternIntegrityInputsMismatch revert data through the real subparser+deploy path; mutation-validated (integrity mutated to (1,1) → all three fail on revert-data mismatch; 116/116 green on baseline). (2) Pairwise distinctness is unimplementable-as-green on this repo: the committed table is hex\"0c830c83\" — both words share ONE integrity pointer because their integrity functions are extensionally identical and solc deduplicates them; the test is renamed to the honest testIntegritySlotsAreAssigned (non-zero) and the distinctness question is raised on #210 as a design ruling (per the note's 'or argue on the issue' branch).",
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions"
+    },
+    {
+      "number": 209,
+      "reason": "🤖 ai:producer Producer note: reworked per the rework note — the enumeration is now genuinely single-source.  - Removed the hand-synced copies the PR had added: `FORK_VAULT_COUNT`, the per-vault `WT_*` imports, and `testForkVaultEnumeration`'s parallel address + label tables (which also duplicated the existing `allForkVaults()` loop at double fork cost). - `allForkVaults()` is now literally the single source: the `WT_*` constants had no consumer other than the registry itself, so their addresses were inlined into `allForkVaults()`. A vault address can now only exist in the one list that every consuming loop iterates — adding a vault is one edit and it is automatically fork-tested. Count is `.length`, labels come from `vm.toString` in the existing `testAllForkVaults` loop (unchanged). - Added `test/lib/LibFork.t.sol` with `testAllForkVaultsEnumeration`: asserts the registry is non-empty with no zero and no duplicate addresses. This is a real single-source lock without hand-copies, and it runs on every CI pass (no fork needed). - Verified locally: full `forge build` clean, new enumeration test passes. The fork loop itself rides on fork CI as before. - Per the note, #139's remaining legs (hand-pinned expected rates, fork-block pin policy) are left for issue refinement / a design ruling, not this mechanical test PR.  Branch also carries the previously-unpushed merge of origin/main (conflict resolution), now pushed.",
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
+    },
+    {
+      "number": 185,
+      "reason": "🤖 ai:producer Producer note: executed the 2026-07-04 rework note — `ERC4626WordsReadme.t.sol` no longer asserts hardcoded word-name literals. `testReadmeContainsEveryAuthoringMetaWordName` now decodes `LibERC4626SubParser.authoringMetaV2()` (`abi.decode(..., (AuthoringMetaV2[]))`, bytes32 word trimmed of zero padding) and iterates every declared word, asserting the README contains each decoded name, with guards that the meta is non-empty and no decoded name is empty. Source is the oracle: renames fail, new words are auto-covered.  Mutation proof (both killed, then restored): - README: every `erc4626-convert-to-assets` → `erc4626-convert-to-assetz` → `[FAIL: README must document word: erc4626-convert-to-assets]`. - Source: `authoringMetaV2()` word `\"erc4626-convert-to-assets\"` → `\"erc4626-shares-to-assets\"` with README untouched → `[FAIL: README must document word: erc4626-shares-to-assets]` — exactly the rename the old literal-based assertions stayed green on.  Also merged origin/main into the branch (clean, no conflicts) and updated the PR body: link is now `Refs #133` (word-names leg only; input-ordering and decimals prose remain open on the issue) with the QA evidence block.  Forge: baseline suite green before the rework (124 passed, 0 failed); full suite green after (123 passed, 0 failed — two literal tests replaced by one source-driven test); `forge fmt --check` clean on the touched file. Pushed 2a1740207f476cf90433aae1a697b8efe0fdb10c. ",
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "test(readme): assert README documents both ERC4626 word names"
+    },
+    {
+      "number": 2778,
+      "reason": "🤖 ai:producer Producer note: both red checks (rainix-sol/static + rs-static) are MAIN-STATE, not PR-caused — the no-vm.skip gate flags 5 pre-existing test/lib/deploy files on main (e.g. LibRaindexDeployTaggedConstants.t.sol:24); identical red on main HEAD. rainix-sol/test PASSES here. Greens when main resolves the vm.skip gate.",
+      "repo": "rainlanguage/raindex",
+      "title": "fix: mask signer row operand to low byte"
+    },
+    {
+      "number": 2777,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — ioratioAverage collapsed to the two-branch ternary `outputAmountSum === 0 ? 0 : ioratioSum / outputAmountSum`, finiteValues block deleted, zero-sum test comment describes current behavior only (commit d39af811c846acbe71e0dc0950eb8d6c17c00a68). Evidence: scoped vitest on src/lib/services/historicalOrderCharts.ts = 6/6 passed. Mutation-validation: (1) zero branch mutated to divide → 'charts zero when same-timestamp outputAmounts sum to zero' FAILED (expected 0, received NaN — old behavior reproduced); restored → PASSED. (2) weighted branch swapped to unweighted mean → 'handles the case where multiple trades have the same timestamp' FAILED (expected 0.21428571428571427 weighted, received 0.2916666666666667 unweighted); restored → PASSED, full suite 6/6 green. NOTE: the PR body line claiming the test 'equals the unweighted mean' still needs a body edit (this routine cannot run gh pr edit) — it should say the test asserts 0.",
+      "repo": "rainlanguage/raindex",
+      "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
+    },
+    {
+      "number": 163,
+      "reason": "🤖 ai:producer Producer note: executed the 2026-07-04 rework note + its update — added explicit boundary pins rate18=0, rate18=1e18, and the int224-coefficient overflow revert pin (testRunRateZero, testRunRateParityOne, testRunRateCoefficientOverflow; overflow asserts the exact CoefficientOverflow(2^223, -18) revert). Body already reads Closes #59 — no relink needed.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "test: add mock unit tests for LibOpSLFRCurrentExchangeRate run() and integrity()"
+    },
+    {
+      "number": 161,
+      "reason": "🤖 ai:producer Producer note: rework NOT executed as written — the note's premise conflicts with the rainix reusable contract. The rainix-sol reusable's test job maps secret RPC_URL_FLARE_FORK → job env FLARE_RPC_URL (rainix .github/workflows/rainix-sol-test.yaml: `FLARE_RPC_URL: ${{ secrets.RPC_URL_FLARE_FORK || vars.RPC_URL_FLARE_FORK }}`), and this repo's `secrets: inherit` already passes the secret through — so the branch's current `vm.envString(\"FLARE_RPC_URL\")` is the name the CI job env actually exposes, and this PR's checks are green with it. Reading `RPC_URL_FLARE_FORK` directly (the note's ask) would revert in CI because no env var of that name exists inside the job. Issue #67's intent (fork tests read the org fork-RPC secret, no public-RPC fallback) is satisfied through the mapping. Awaiting your ruling on env-name convention before any further change here.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
+    },
+    {
+      "number": 160,
+      "reason": "🤖 ai:producer Producer note: rework blocked on a body-only edit — the note's option (a) is changing the body line `Closes #69` → `Refs #69` (keeping `Closes #68`), but PR-body edits (`gh pr edit`) are outside this routine's permitted mutations, and option (b) (the #69 structural Float-at-boundary change) would turn this test-only PR into a bytecode-changing one, which is #69's own fix to carry. Needs the human/assistant to apply the one-line relink; no code change required on this branch.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
+    },
+    {
+      "number": 142,
+      "reason": "🤖 ai:producer  Producer note: reworked per rework note — conflict resolved via base merge (`8409d61`, merge of `origin/main`).  **Conflict resolution (4 files):** `src/lib/parse/LibFlareFtsoSubParser.sol` (took main's `sflr-exchange-rate` description — a strict superset of this branch's: same corrected text plus the \"A value less than 1 …\" clarifying sentence, so both sides' intent is preserved), plus generated artifacts `meta/FlareFtsoSubParserAuthoringMeta.rain.meta`, `meta/FlareFtsoWords.rain.meta`, `src/generated/FlareFtsoWords.pointers.sol` (took main's already-regenerated copies).  **Missing #97 rename:** already landed on `main` via `bcdb965` (\"Fix pervasive SLFR typo: rename to SFLR across source tree (closes #97)\") — that commit is what closed https://github.com/rainlanguage/rain.flare/issues/97. After the base merge this branch contains the complete rename: `OPCODE_SFLR_CURRENT_EXCHANGE_RATE` (FlareFtsoExtern.sol, FlareFtsoSubParser.sol) and `LibOpSFLRCurrentExchangeRate` (LibOpSFlrCurrentExchangeRate.sol — file name was already correct per the issue). `git grep SLFR` over the whole tree returns zero matches; no additional rename commit was needed.  **Pointers/meta:** no regeneration needed — post-merge `HEAD^{tree}` is byte-identical to `origin/main^{tree}` (`da9d5da`), so the committed artifacts are exactly main's regenerated ones; `copy-artifacts` CI is green on `8409d61` confirming consistency.  **Tests:** local `forge test` in the rainix sol-shell: 16 suites, 83 passed / 0 failed / 0 skipped; PR CI (`rainix-sol` test / static / legal, `copy-artifacts`) all green on `8409d61`; mergeability now CLEAN.  **Note for the human:** because main already absorbed all of this PR's content (rename + meta description + NatSpec), the PR's diff vs main is now **empty** — merging it is a no-op; keeping or closing it is a human call (not made here).  #95/#104 overlap with #136 noted — no Closes-set change made (body edits are outside this routine). ",
+      "repo": "rainlanguage/rain.flare",
+      "title": "fix: rename SLFR→SFLR typo, fix sflr-exchange-rate meta description and NatSpec"
+    },
+    {
+      "number": 139,
+      "reason": "🤖 ai:producer Producer note: 3d HAND-OFF — CONFLICTING again after a prior successful [merge-update]; this five-issue test-coverage PR (#55 #57 #58 #60 #61) touches four shared test files that sibling PRs keep landing into. Part of the flare test-file cluster that needs sequenced landing (land one sibling, producer reworks the next); re-merging every sibling each run just re-conflicts them.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "test: add staleness boundary, pair error propagation, InconsistentFtso, and sFLR arg-pin tests"
+    },
+    {
+      "number": 134,
+      "reason": "🤖 ai:producer Producer note: PR close-candidate — queued for human close review. The 2026-07-02 rework order (drop the four @custom:error lines, keep @dev/@param/@return) is now moot: main commit e88f0b0 (docs(natspec): add NatSpec to interfaces and op/price libs) already documents ftsoCurrentPriceUsd fully — @notice + raw-price/native-decimals return contract, caller-normalizes + DecimalsTooLarge guard warning, all four revert paths, both params, both named returns — with no @custom:error tags, exactly matching the ruling. Linked issue #96 is CLOSED. Nothing remains for this branch to land; reworking it would produce an empty/wording-only diff vs main. Not closing myself — human decision.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
+    },
+    {
+      "number": 128,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — conflicts resolved against main, LibFtsoV2LTS hunk dropped (superseded by merged #185, which closed #91). However, live state has moved past the rework note: the #86 coverage (`@return` docs on `buildOpcodeFunctionPointers`/`buildIntegrityFunctionPointers`) also landed on main via merged PR #193, which closed #86 on 2026-07-02. FlareFtsoExtern.sol was therefore also resolved to main's side rather than churning already-landed wording.  Evidence: `git diff origin/main...HEAD --stat` is EMPTY — the merged tree is content-identical to main, so no artifact regen was needed and test results are by construction identical to main's.  Consequence: this PR now has zero remaining unique diff. It is a CLOSE-CANDIDATE (both #86 and #91 are already closed by merged PRs #193 and #185), not a relink-to-#86 as the note anticipated. RELINK/CLOSE NEEDED (body edit / PR close is outside this routine): body currently says \"Closes #86 / Closes #91\" — both already closed; needs the human/assistant to close the PR (or edit the body if kept for any reason).",
+      "repo": "rainlanguage/rain.flare",
+      "title": "Add missing NatSpec to buildOpcode/Integrity pointers and ftsoV2LTSGetFeed"
+    },
+    {
+      "number": 22,
+      "reason": "🤖 ai:producer Producer note: executed the 2026-07-04 rework note — merged the #25 parser fix into this branch per the land-together instruction (fast-forward to 0e5cfe9; #25 was based on this branch's head, so its diff is fully absorbed and the two branches now point at the same commit), adapted the \"1.\" pin to expect revert on `ParseDecimalInvalidString` (`0x3e8e62d6`), kept both fractional-overflow tests and the \"1x\"/\"10x\" decimal-point-gate tests as-is. Test evidence: full suite green on the merged head (83 passed / 0 failed), `forge fmt --check` and `forge lint` clean; mutation validation — deleting the empty-fraction guard from `decimalStringTofixedPoint` (i.e. restoring the pre-fix parser) fails exactly the 3 discriminating tests (`testDecimalStringToFixedPointEmptyFraction`, `testDecimalStringToFixedPointEmptyFractionFuzz`, `testDecimalStringToFixedPointInvalidAfterInteger`) with `0x00000000… != 0x3e8e62d6…`, guard restored → 83/83 green. PR body updated: Closes #24, QA evidence block appended.",
+      "repo": "rainlanguage/rain.math.fixedpoint",
+      "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
+    },
+    {
+      "number": 2721,
+      "reason": "🤖 ai:producer Producer note: the three red checks are MAIN-STATE, not PR-caused — missing 0.1.13 soldeer deploy-constant pins (rainix-sol/test) and the no-vm.skip gate on 5 pre-existing main files (rainix-sol/static + rs-static); identical failures on main HEAD. Separate from the open human design hold on clearCustomRegistry, which remains the real gate.",
+      "repo": "rainlanguage/raindex",
+      "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
+    },
+    {
+      "number": 2720,
+      "reason": "🤖 ai:producer Producer note: the three red checks are MAIN-STATE, not PR-caused — missing 0.1.13 soldeer deploy-constant pins (rainix-sol/test) and the no-vm.skip gate on 5 pre-existing main files (rainix-sol/static + rs-static); identical failures on main HEAD. Separate from the open human design hold (typed discriminant, depends on #2327), which remains the real gate.",
+      "repo": "rainlanguage/raindex",
+      "title": "Retry SDK indexing on transient timeout before failing"
+    },
+    {
+      "number": 475,
+      "reason": "🤖 ai:producer Producer note: 3d merge-update DONE (as queued last run) — merged origin/main into this branch (db227f9f). Five files conflicted; resolution kept the V4-migration semantics and translated main's post-divergence additions into the V6 world: main's new initialize-overload/once-only construction tests ported (OZ5 InvalidInitialization replaces the v4 revert string), main's reentrancy helpers+tests retyped to EvaluableV4/bytes32 with the store helper matched to IInterpreterStoreV3.set so the guard path actually fires, bounded-key signed-context logic kept. The V5-era deployer-io guard tests (UnsupportedFlowInputs/InsufficientFlowOutputs) cover a code path V4 removes and are retired with an in-file note. Flow.pointers.sol regenerated. Local: forge build + full forge test green. PR should now show MERGEABLE.",
+      "repo": "rainlanguage/flow",
+      "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
+    },
+    {
+      "number": 372,
+      "reason": "🤖 ai:producer screenshot pending (manual): Lock.svelte displayed share amounts change with the decimals separation, but Lock is wallet/price-feed-gated; cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same ruling as the earlier 14-component batch).",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)"
+    },
+    {
+      "number": 369,
+      "reason": "🤖 ai:producer screenshot pending (manual): the LOCK button's freshness-gated disabled state is user-visible, but Lock is wallet/price-feed-gated; cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same ruling as the earlier 14-component batch).",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(lock): gate LOCK on price freshness, send 1% slippage as minSharesOut (A17-4)"
+    }
+  ],
+  "states": {
+    "ai:blocked-deploy": [
+      {
+        "number": 245,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "Guard displayExponent overflow in _toScientific (#185)"
+      },
+      {
+        "number": 244,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
+      },
+      {
+        "number": 537,
+        "repo": "rainlanguage/rainlang",
+        "title": "test: one contract per file (satisfy rainix single-contract gate)"
+      },
+      {
+        "number": 536,
+        "repo": "rainlanguage/rainlang",
+        "title": "test: mutation-harden LibOpConditions coverage"
+      },
+      {
+        "number": 534,
+        "repo": "rainlanguage/rainlang",
+        "title": "Add LibParseMeta.lookupWord unit test"
+      },
+      {
+        "number": 237,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "Add canonicalize(Float) -> Float for byte-equivalence use cases"
+      }
+    ],
+    "ai:blocked-infra": [
+      {
+        "number": 400,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
+      },
+      {
+        "number": 396,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
+      },
+      {
+        "number": 186,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix: view mutability, return names, meta description, and eval-order comments"
+      },
+      {
+        "number": 188,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "docs+test(meta): authoring-meta precision-loss constraint + index alignment tests"
+      },
+      {
+        "number": 125,
+        "repo": "rainlanguage/rain.flare",
+        "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
+      },
+      {
+        "number": 535,
+        "repo": "rainlanguage/rainlang",
+        "title": "pi constant word"
+      },
+      {
+        "number": 42,
+        "repo": "cyclofinance/cyclo.sol",
+        "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
+      }
+    ],
+    "ai:blocked-on": [
+      {
+        "number": 2798,
+        "repo": "rainlanguage/raindex",
+        "title": "docs: remove stale alloy-ethers-typecast references from ARCHITECTURE.md"
+      },
+      {
+        "number": 2796,
+        "repo": "rainlanguage/raindex",
+        "title": "Use IRaindexV6.TokenSelfTrade from raindex-interface 0.1.3"
+      },
+      {
+        "number": 2724,
+        "repo": "rainlanguage/raindex",
+        "title": "Pin all third-party GitHub Actions to commit SHAs"
+      },
+      {
+        "number": 2722,
+        "repo": "rainlanguage/raindex",
+        "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
+      }
+    ],
+    "ai:close-candidate": [
+      {
+        "number": 236,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "refactor(run): replace raw assembly input reads with Solidity indexing"
+      },
+      {
+        "number": 180,
+        "repo": "rainlanguage/rain.flare",
+        "title": "test(run): assert NegativeFixedDecimalConversion and LossyConversionFromFloat on bad timeout Float"
+      },
+      {
+        "number": 176,
+        "repo": "rainlanguage/rain.flare",
+        "title": "test(registry): assert getFtsoV2LTS and getFeeCalculator return non-zero"
+      },
+      {
+        "number": 174,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix(soldeer): include meta/ in published soldeer package"
+      },
+      {
+        "number": 204,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "fix(run): guard against under-length inputs arrays in convertToAssets/Shares"
+      },
+      {
+        "number": 154,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()"
+      },
+      {
+        "number": 141,
+        "repo": "rainlanguage/rain.flare",
+        "title": "test: assert UnexpectedOperand for all three disallowed-operand words"
+      },
+      {
+        "number": 126,
+        "repo": "rainlanguage/rain.flare",
+        "title": "Fix inverted call order: fetch symbolA before symbolB in run()"
+      },
+      {
+        "number": 119,
+        "repo": "rainlanguage/rain.flare",
+        "title": "Consolidate fork BLOCK_NUMBER pins into ForkConstants.sol"
+      },
+      {
+        "number": 242,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "Fix pow: surface ExponentOverflow instead of Panic(0x11) on negative-exp squaring"
+      },
+      {
+        "number": 28,
+        "repo": "rainlanguage/rain.strategies",
+        "title": "wip on folio"
+      },
+      {
+        "number": 12,
+        "repo": "rainlanguage/sushiswap",
+        "title": "DO NOT MERGE"
+      }
+    ],
+    "ai:design": [
+      {
+        "number": 2702,
+        "repo": "rainlanguage/raindex",
+        "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
+      },
+      {
+        "number": 150,
+        "repo": "S01-Issuer/st0x.deploy",
+        "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
+      }
+    ],
+    "ai:ready": [
+      {
+        "number": 66,
+        "repo": "rainlanguage/raindex.interface",
+        "title": "chore(release): bump [package].version to 0.1.4 for next-version Soldeer lifecycle"
+      },
+      {
+        "number": 113,
+        "repo": "rainlanguage/rain.interpreter.interface",
+        "title": "chore(release): bump [package].version to 0.1.3 for next-version Soldeer lifecycle"
+      },
+      {
+        "number": 13,
+        "repo": "rainlanguage/rain.local-db.remote",
+        "title": "ci: swap deprecated DeterminateSystems installer for nix-quick-install-action"
+      },
+      {
+        "number": 485,
+        "repo": "rainlanguage/flow",
+        "title": "ci: adopt rainix nix-cachix-setup composite in manual-sol-artifacts, drop deprecated DeterminateSystems nix installer"
+      },
+      {
+        "number": 357,
+        "repo": "rainlanguage/rain.webapp",
+        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
+      },
+      {
+        "number": 31,
+        "repo": "rainlanguage/sqlite-web",
+        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
+      },
+      {
+        "number": 13,
+        "repo": "rainlanguage/rain.subgraph.docker",
+        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
+      },
+      {
+        "number": 460,
+        "repo": "rainlanguage/rain.solver",
+        "title": "ci: adopt rainix nix-cachix-setup composite in report-downtime, drop deprecated DeterminateSystems nix installer"
+      },
+      {
+        "number": 13,
+        "repo": "rainlanguage/rain.subgraph.cli",
+        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
+      },
+      {
+        "number": 28,
+        "repo": "rainlanguage/rain.pyth",
+        "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
+      },
+      {
+        "number": 25,
+        "repo": "rainlanguage/rain-org-health",
+        "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
+      },
+      {
+        "number": 246,
+        "repo": "S01-Issuer/st0x.deploy",
+        "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant"
+      },
+      {
+        "number": 254,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
+      },
+      {
+        "number": 19,
+        "repo": "rainlanguage/rain-org-health",
+        "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
+      },
+      {
+        "number": 252,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "Deploy deterministically via Zoltu with no network selection"
+      },
+      {
+        "number": 143,
+        "repo": "rainlanguage/dotrain",
+        "title": "fix(parser): comment before next binding bleeds into previous content_position"
+      },
+      {
+        "number": 162,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix: add BuildPointers.sol to build prelude so pointers drift fails copy-artifacts"
+      },
+      {
+        "number": 444,
+        "repo": "rainlanguage/rain.solver",
+        "title": "test: mutation-harden gas/index unit coverage"
+      },
+      {
+        "number": 3,
+        "repo": "rainlanguage/rain.subgraph.docker",
+        "title": "2023 12 23 anvil"
+      }
+    ],
+    "ai:reject": [
+      {
+        "number": 31,
+        "repo": "rainlanguage/rain-org-health",
+        "title": "feat(dashboard): Pipeline FSM conformance panel (states + live counts + leak bucket)"
+      },
+      {
+        "number": 32,
+        "repo": "rainlanguage/rainlang-codemirror",
+        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
+      },
+      {
+        "number": 263,
+        "repo": "rainlanguage/rainix",
+        "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
+      },
+      {
+        "number": 34,
+        "repo": "rainlanguage/claude-audit-skills",
+        "title": "audit: require fork tests for state-changing scripts"
+      },
+      {
+        "number": 33,
+        "repo": "rainlanguage/claude-audit-skills",
+        "title": "audit: require re-derivation tests for derived constants"
+      },
+      {
+        "number": 32,
+        "repo": "rainlanguage/claude-audit-skills",
+        "title": "audit: deploy-version consistency — two distinct counters, deploy-keyed pins, no release-spanning"
+      },
+      {
+        "number": 410,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
+      },
+      {
+        "number": 409,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
+      },
+      {
+        "number": 406,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
+      },
+      {
+        "number": 404,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+      },
+      {
+        "number": 403,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+      },
+      {
+        "number": 402,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
+      },
+      {
+        "number": 401,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
+      },
+      {
+        "number": 399,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+      },
+      {
+        "number": 394,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
+      },
+      {
+        "number": 387,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(store): reject zero and null block.number from RPC"
+      },
+      {
+        "number": 252,
+        "repo": "rainlanguage/rainix",
+        "title": "feat(ci): assert all rainix-*.yaml reusables share one pinned RAINIX_SHA"
+      },
+      {
+        "number": 248,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "feat(parse): accept explicit + sign in e-notation exponent"
+      },
+      {
+        "number": 188,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix(lib): move DecimalsTooLarge guard into LibFtsoCurrentPriceUsd (#79)"
+      },
+      {
+        "number": 171,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix(staleness): use subtraction to avoid overflow for large timeout values"
+      },
+      {
+        "number": 169,
+        "repo": "rainlanguage/rain.flare",
+        "title": "docs(natspec): add NatSpec to interfaces and op libraries"
+      },
+      {
+        "number": 167,
+        "repo": "rainlanguage/rain.flare",
+        "title": "refactor(lts): use calculateFeeById for single feed fee calc"
+      },
+      {
+        "number": 2785,
+        "repo": "rainlanguage/raindex",
+        "title": "docs(natspec): correct stale calculateClearStateChange cap description"
+      },
+      {
+        "number": 194,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "chore: pin pragma, rename word-count constant, use relative test imports"
+      },
+      {
+        "number": 181,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "docs+test(rounding): document and assert floor-rounding direction in convertToAssets/Shares"
+      },
+      {
+        "number": 2779,
+        "repo": "rainlanguage/raindex",
+        "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
+      },
+      {
+        "number": 165,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix: convert bare src/ and test/ imports in test suite to relative paths"
+      },
+      {
+        "number": 164,
+        "repo": "rainlanguage/rain.flare",
+        "title": "docs: warn in ftsoV2LTSGetFeed NatSpec that excess msg.value is not refunded"
+      },
+      {
+        "number": 157,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix: rename SLFR typo to SFLR in constant, library, and doc comment"
+      },
+      {
+        "number": 153,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix: revert with ContractNotRegistered on zero-address registry lookup"
+      },
+      {
+        "number": 146,
+        "repo": "rainlanguage/rain.flare",
+        "title": "refactor: trim IStakedFlr to the single consumed function"
+      },
+      {
+        "number": 138,
+        "repo": "rainlanguage/rain.flare",
+        "title": "test: pin BYTECODE_HASH, assert word-opcode alignment, verify FLRETH rate reciprocity"
+      },
+      {
+        "number": 133,
+        "repo": "rainlanguage/rain.flare",
+        "title": "test: assert function pointer array length against OPCODE_FUNCTION_POINTERS_LENGTH"
+      },
+      {
+        "number": 130,
+        "repo": "rainlanguage/rain.flare",
+        "title": "test: assert authoringMetaV2 word names and descriptions"
+      },
+      {
+        "number": 294,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "feat: show re-up opportunity per receipt on unlock page"
+      },
+      {
+        "number": 60,
+        "repo": "rainlanguage/rain.strategies",
+        "title": "v5 for dynamic spread"
+      },
+      {
+        "number": 20,
+        "repo": "rainlanguage/rain.strategies",
+        "title": "2025 03 05 ds"
+      }
+    ],
+    "ai:relink": [
+      {
+        "number": 231,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "docs(assembly): document integrity() coupling in run() assembly reads"
+      }
+    ]
+  }
+}

@@ -45,6 +45,10 @@
 # Per-run pipeline metrics (accumulates across trace rotation; committed periodically):
 !/metrics/
 !/metrics/runs.jsonl
+# FSM-conformance snapshot (`pr-review-report human-queue --json`, overwritten each refresh);
+# the rain-org-health dashboard fetches it at runtime from the raw URL — no site redeploy:
+!/human-queue.json
+!/refresh-human-queue.sh
 # Flake exposing pr-review-report as a package (bin on the cron PATH):
 !/flake.nix
 !/flake.lock
