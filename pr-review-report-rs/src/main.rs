@@ -10,9 +10,9 @@
 //          pr-review-report --deploy <owner/repo> <pr> [--network <net>] [--dry-run]  # sanctioned Zoltu deploy of a PR branch
 // Config (env overrides cron.env in CWD, then default): ORG, ORGS (org scope for --queue), PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
 
+use clap::{Parser, Subcommand};
 use serde_json::Value;
 use std::process::Command;
-use clap::{Parser, Subcommand};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Ci {
@@ -265,7 +265,10 @@ mod org_tests {
 
     #[test]
     fn single_org() {
-        assert_eq!(parse_orgs("S01-Issuer"), ["--owner", "S01-Issuer"].map(String::from));
+        assert_eq!(
+            parse_orgs("S01-Issuer"),
+            ["--owner", "S01-Issuer"].map(String::from)
+        );
     }
 }
 
@@ -1026,7 +1029,13 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         return 2;
     }
     let Some(j) = gh_json(&[
-        "issue", "view", issue, "-R", slug, "--json", "state,labels,comments",
+        "issue",
+        "view",
+        issue,
+        "-R",
+        slug,
+        "--json",
+        "state,labels,comments",
     ]) else {
         eprintln!("error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data");
         return 1;
@@ -1105,7 +1114,15 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         eprintln!("warning: could not ensure label ai:close-candidate exists in {slug}");
     }
     if add_label
-        && !gh_run(&["issue", "edit", issue, "-R", slug, "--add-label", "ai:close-candidate"])
+        && !gh_run(&[
+            "issue",
+            "edit",
+            issue,
+            "-R",
+            slug,
+            "--add-label",
+            "ai:close-candidate",
+        ])
     {
         eprintln!("error: failed to add ai:close-candidate to {slug}#{issue}");
         return 1;
@@ -1250,7 +1267,16 @@ fn flag_state_mode(slug: &str, pr: &str, target: &str, reason: &str, dry_run: bo
 
     let (color, desc) = label_meta(target);
     if !gh_run(&[
-        "label", "create", target, "-R", slug, "--color", color, "--description", desc, "--force",
+        "label",
+        "create",
+        target,
+        "-R",
+        slug,
+        "--color",
+        color,
+        "--description",
+        desc,
+        "--force",
     ]) {
         eprintln!("warning: could not ensure label {target} exists in {slug}");
     }
@@ -1301,7 +1327,13 @@ fn human_queue_mode(json_out: bool) -> i32 {
     args.extend(org_owner_args());
     args.extend(
         [
-            "--author", &assignee, "--state", "open", "--limit", "1000", "--json",
+            "--author",
+            &assignee,
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
             "url,number,repository,title,labels",
         ]
         .iter()
@@ -1318,10 +1350,18 @@ fn human_queue_mode(json_out: bool) -> i32 {
         std::collections::BTreeMap::new();
     let mut unlabeled: Vec<(String, u64, String)> = Vec::new();
     for p in &prs {
-        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+        let url = p
+            .get("url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string();
         let Some(slug) = pr_slug(&url) else { continue };
         let num = p.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
-        let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let title = p
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
         let labels: Vec<String> = p
             .get("labels")
             .and_then(|l| l.as_array())
@@ -1341,8 +1381,15 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // state (the FSM leaking). An unlabeled PR with NO producer comment is just freshly-open/unvetted.
     let mut leaks: Vec<(String, u64, String, String)> = Vec::new();
     for (slug, num, title) in &unlabeled {
-        let Some(j) = gh_json(&["pr", "view", &num.to_string(), "-R", slug, "--json", "comments"])
-        else {
+        let Some(j) = gh_json(&[
+            "pr",
+            "view",
+            &num.to_string(),
+            "-R",
+            slug,
+            "--json",
+            "comments",
+        ]) else {
             continue;
         };
         let notes = trusted_comments(&j, Some("🤖 ai:producer"));
@@ -1357,7 +1404,13 @@ fn human_queue_mode(json_out: bool) -> i32 {
     iargs.extend(org_owner_args());
     iargs.extend(
         [
-            "--state", "open", "--label", "ai:close-candidate", "--limit", "1000", "--json",
+            "--state",
+            "open",
+            "--label",
+            "ai:close-candidate",
+            "--limit",
+            "1000",
+            "--json",
             "url,number,repository,title",
         ]
         .iter()
@@ -1371,8 +1424,16 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .filter_map(|i| {
             let url = i.get("url").and_then(|u| u.as_str())?.to_string();
             let num = i.get("number").and_then(|n| n.as_u64())?;
-            let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
-            let slug = url.strip_prefix("https://github.com/")?.split("/issues/").next()?.to_string();
+            let title = i
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            let slug = url
+                .strip_prefix("https://github.com/")?
+                .split("/issues/")
+                .next()?
+                .to_string();
             Some((slug, num, title))
         })
         .collect();
@@ -1385,7 +1446,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
                     k.clone(),
                     Value::Array(
                         v.iter()
-                            .map(|(s, n, t)| serde_json::json!({"repo": s, "number": n, "title": t}))
+                            .map(
+                                |(s, n, t)| serde_json::json!({"repo": s, "number": n, "title": t}),
+                            )
                             .collect(),
                     ),
                 )
@@ -1440,7 +1503,10 @@ fn human_queue_mode(json_out: bool) -> i32 {
         show("BLOCKED-ON", v);
     }
     show("CLOSE — ai:close-candidate (issues)", &close_issues);
-    println!("\n⚠⚠ NOT IN ANY MODELED STATE (FSM leak — should trend to 0)  ({})", leaks.len());
+    println!(
+        "\n⚠⚠ NOT IN ANY MODELED STATE (FSM leak — should trend to 0)  ({})",
+        leaks.len()
+    );
     for (slug, num, t, reason) in &leaks {
         println!("   https://github.com/{slug}/pull/{num}  {}", clip(t, 52));
         println!("      {}", clip(reason, 140));
@@ -1681,7 +1747,11 @@ fn nix_gc_args(dry_run: bool) -> Vec<String> {
 fn nix_gc(dry_run: bool) -> i32 {
     println!(
         "== nix store gc ({}) ==",
-        if dry_run { "dry-run" } else { "delete-old + collect" }
+        if dry_run {
+            "dry-run"
+        } else {
+            "delete-old + collect"
+        }
     );
     match Command::new("nix-collect-garbage")
         .args(nix_gc_args(dry_run))
@@ -2048,7 +2118,17 @@ fn read_workflow(slug: &str, git_ref: &str) -> Option<(String, String)> {
 /// newest-first; the `event` field is filtered in code (no dependence on a `--event` flag).
 fn latest_run_id(slug: &str, wf_file: &str, branch: &str) -> Option<u64> {
     let j = gh_json(&[
-        "run", "list", "-R", slug, "--workflow", wf_file, "--branch", branch, "-L", "5", "--json",
+        "run",
+        "list",
+        "-R",
+        slug,
+        "--workflow",
+        wf_file,
+        "--branch",
+        branch,
+        "-L",
+        "5",
+        "--json",
         "databaseId,event",
     ])?;
     j.as_array()?
@@ -2077,7 +2157,15 @@ fn await_new_run(slug: &str, wf_file: &str, branch: &str, before: Option<u64>) -
 fn poll_run(slug: &str, run_id: u64) -> RunResult {
     let id = run_id.to_string();
     for _ in 0..240 {
-        match gh_json(&["run", "view", &id, "-R", slug, "--json", "status,conclusion"]) {
+        match gh_json(&[
+            "run",
+            "view",
+            &id,
+            "-R",
+            slug,
+            "--json",
+            "status,conclusion",
+        ]) {
             Some(j) => {
                 let status = j.get("status").and_then(|v| v.as_str());
                 let conclusion = j.get("conclusion").and_then(|v| v.as_str());
@@ -2125,10 +2213,15 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
         "--json",
         "headRefName,headRefOid",
     ]) else {
-        eprintln!("error: `gh pr view {slug}#{pr}` failed — cannot resolve the branch to deploy from");
+        eprintln!(
+            "error: `gh pr view {slug}#{pr}` failed — cannot resolve the branch to deploy from"
+        );
         return 1;
     };
-    let branch = prj.get("headRefName").and_then(|v| v.as_str()).unwrap_or("");
+    let branch = prj
+        .get("headRefName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let head = prj.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
     if branch.is_empty() {
         eprintln!("error: {slug}#{pr} has no head branch (headRefName) — cannot deploy");
@@ -2214,7 +2307,9 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
             1
         }
         RunResult::InProgress => {
-            eprintln!("deploy status unresolved (timed out waiting for the run to finish): {run_url}");
+            eprintln!(
+                "deploy status unresolved (timed out waiting for the run to finish): {run_url}"
+            );
             2
         }
     }
@@ -2525,7 +2620,14 @@ fn uncovered(
 /// PR search), a TERMINAL ci ("green"/"red", never "pending"/"nochecks" — an in-flight PR is always
 /// re-fetched), and within TTL. This can only ever SKIP a fetch for an unchanged settled PR; it never
 /// serves a PR whose `updatedAt` moved. Correctness holds with the cache empty or `--no-cache`.
-fn cache_fresh(row_updated: &str, row_ci: &str, row_fetched: i64, cur_updated: &str, now: i64, ttl: i64) -> bool {
+fn cache_fresh(
+    row_updated: &str,
+    row_ci: &str,
+    row_fetched: i64,
+    cur_updated: &str,
+    now: i64,
+    ttl: i64,
+) -> bool {
     row_updated == cur_updated
         && (row_ci == "green" || row_ci == "red")
         && (now - row_fetched) < ttl
@@ -2590,7 +2692,11 @@ fn fetch_pr_detail(slug: &str, num: u64) -> Option<Value> {
         .and_then(|v| {
             v.pointer("/data/repository/pullRequest/reviewThreads/nodes")
                 .and_then(|n| n.as_array())
-                .map(|arr| arr.iter().filter(|t| t.get("isResolved").and_then(|b| b.as_bool()) == Some(false)).count())
+                .map(|arr| {
+                    arr.iter()
+                        .filter(|t| t.get("isResolved").and_then(|b| b.as_bool()) == Some(false))
+                        .count()
+                })
         })
         .unwrap_or(0);
     if let Some(obj) = j.as_object_mut() {
@@ -2601,52 +2707,94 @@ fn fetch_pr_detail(slug: &str, num: u64) -> Option<Value> {
 
 /// Derive a PR's signals + next_action from its detail JSON (pure given the JSON).
 fn worklist_row(slug: &str, detail: &Value) -> Value {
-    let rollup = detail.get("statusCheckRollup").cloned().unwrap_or(Value::Null);
+    let rollup = detail
+        .get("statusCheckRollup")
+        .cloned()
+        .unwrap_or(Value::Null);
     let ci = classify_ci(&rollup);
     let failing = failing_check_names(&rollup);
-    let merge_state = detail.get("mergeStateStatus").and_then(|v| v.as_str()).unwrap_or("UNKNOWN").to_string();
-    let threads = detail.get("unresolvedThreads").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let merge_state = detail
+        .get("mergeStateStatus")
+        .and_then(|v| v.as_str())
+        .unwrap_or("UNKNOWN")
+        .to_string();
+    let threads = detail
+        .get("unresolvedThreads")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let closes: Vec<u64> = detail
         .get("closingIssuesReferences")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|r| r.get("number").and_then(|n| n.as_u64())).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| r.get("number").and_then(|n| n.as_u64()))
+                .collect()
+        })
         .unwrap_or_default();
-    let head = detail.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
+    let head = detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     // markers — best-effort triage signals (the producer re-confirms from the log when it acts):
     let body = detail.get("body").and_then(|v| v.as_str()).unwrap_or("");
     let requires_redeploy = body.contains("REQUIRES redeploy at land")
-        || trusted_comments(detail, None).iter().any(|c| c.contains("REQUIRES redeploy at land"));
+        || trusted_comments(detail, None)
+            .iter()
+            .any(|c| c.contains("REQUIRES redeploy at land"));
     // a green PR flagged for redeploy, OR a red prod-pin check, is the deploy case
-    let deploy_pin_red = ci == Ci::Red && failing.iter().any(|n| {
-        let n = n.to_ascii_lowercase();
-        n.contains("prod") && n.contains("deploy") || n.contains("testproddeploy")
-    });
+    let deploy_pin_red = ci == Ci::Red
+        && failing.iter().any(|n| {
+            let n = n.to_ascii_lowercase();
+            n.contains("prod") && n.contains("deploy") || n.contains("testproddeploy")
+        });
     let has_deploy_trigger = requires_redeploy || deploy_pin_red;
     let trusted = trusted_comments(detail, None);
     let deploy_done_at_head = trusted.iter().any(|c| {
-        (c.contains("deploy") && (c.contains("SUCCESS") || c.contains("deploy-confirmed"))) && c.contains(head)
+        (c.contains("deploy") && (c.contains("SUCCESS") || c.contains("deploy-confirmed")))
+            && c.contains(head)
     }) || trusted.iter().any(|c| c.contains("deploy-confirmed"));
     // parked: a design-clarification note, or a hand-off note, from the trusted producer account
-    let design_flicked = trusted.iter().any(|c| c.contains("design-clarification") || c.contains("flick to design") || c.contains("FLICK TO DESIGN"));
-    let handed_off = trusted.iter().any(|c| c.contains("HAND OFF") || c.contains("hand-off") || c.contains("Producer note:") && c.contains("infra"));
+    let design_flicked = trusted.iter().any(|c| {
+        c.contains("design-clarification")
+            || c.contains("flick to design")
+            || c.contains("FLICK TO DESIGN")
+    });
+    let handed_off = trusted.iter().any(|c| {
+        c.contains("HAND OFF")
+            || c.contains("hand-off")
+            || c.contains("Producer note:") && c.contains("infra")
+    });
     let has_3b_attempt = detail
         .get("commits")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().any(|c| c.pointer("/messageHeadline").and_then(|m| m.as_str()).map(|m| m.contains("[3b-attempt]")).unwrap_or(false)))
+        .map(|a| {
+            a.iter().any(|c| {
+                c.pointer("/messageHeadline")
+                    .and_then(|m| m.as_str())
+                    .map(|m| m.contains("[3b-attempt]"))
+                    .unwrap_or(false)
+            })
+        })
         .unwrap_or(false);
     let parked = design_flicked || handed_off;
     // UI PR missing a screenshot: touches a webapp/ui/site path AND no shots/<n>.png marker
     let touches_ui = detail
         .get("files")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().any(|f| {
-            let p = f.get("path").and_then(|p| p.as_str()).unwrap_or("");
-            p.contains("packages/webapp") || p.contains("packages/ui-components") || (p.starts_with("site/") && p.ends_with(".html"))
-        }))
+        .map(|a| {
+            a.iter().any(|f| {
+                let p = f.get("path").and_then(|p| p.as_str()).unwrap_or("");
+                p.contains("packages/webapp")
+                    || p.contains("packages/ui-components")
+                    || (p.starts_with("site/") && p.ends_with(".html"))
+            })
+        })
         .unwrap_or(false);
     let num = detail.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
-    let has_shot = trusted.iter().any(|c| c.contains(&format!("shots/{num}.png")) || c.contains("screenshot pending (manual)"));
+    let has_shot = trusted.iter().any(|c| {
+        c.contains(&format!("shots/{num}.png")) || c.contains("screenshot pending (manual)")
+    });
     let ui_missing_screenshot = touches_ui && !has_shot;
 
     let labels: Vec<String> = detail
@@ -2702,9 +2850,18 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
     let mut search: Vec<String> = vec!["search".into(), "prs".into()];
     search.extend(org_owner_args());
     search.extend(
-        ["--author", &assignee, "--state", "open", "--limit", "500", "--json", "number,repository,url,updatedAt"]
-            .iter()
-            .map(|s| s.to_string()),
+        [
+            "--author",
+            &assignee,
+            "--state",
+            "open",
+            "--limit",
+            "500",
+            "--json",
+            "number,repository,url,updatedAt",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
     );
     let sref: Vec<&str> = search.iter().map(String::as_str).collect();
     let Some(val) = gh_json(&sref) else {
@@ -2714,17 +2871,28 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
     let empty = Vec::new();
     let arr = val.as_array().unwrap_or(&empty);
 
-    let mut cache = if use_cache { load_cache() } else { serde_json::Map::new() };
+    let mut cache = if use_cache {
+        load_cache()
+    } else {
+        serde_json::Map::new()
+    };
     let now = now_unix();
-    let ttl: i64 = std::env::var("WORKLIST_TTL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(10800); // 3h
+    let ttl: i64 = std::env::var("WORKLIST_TTL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10800); // 3h
     let mut live_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut rows: Vec<Value> = Vec::new();
 
     for p in arr {
         let (Some(num), Some(repo)) = (
             p.get("number").and_then(|n| n.as_u64()),
-            p.get("repository").and_then(|r| r.get("nameWithOwner")).and_then(|s| s.as_str()),
-        ) else { continue };
+            p.get("repository")
+                .and_then(|r| r.get("nameWithOwner"))
+                .and_then(|s| s.as_str()),
+        ) else {
+            continue;
+        };
         let cur_updated = p.get("updatedAt").and_then(|u| u.as_str()).unwrap_or("");
         let key = format!("{repo}#{num}");
         live_keys.insert(key.clone());
@@ -2744,8 +2912,12 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
             }
         }
         // miss -> fetch fresh
-        let Some(detail) = fetch_pr_detail(repo, num) else { continue };
-        let ci = ci_str(classify_ci(detail.get("statusCheckRollup").unwrap_or(&Value::Null)));
+        let Some(detail) = fetch_pr_detail(repo, num) else {
+            continue;
+        };
+        let ci = ci_str(classify_ci(
+            detail.get("statusCheckRollup").unwrap_or(&Value::Null),
+        ));
         if use_cache {
             cache.insert(
                 key,
@@ -2758,7 +2930,10 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
     if use_cache {
         // eviction: drop merged/closed PRs (not in the live set) and any row older than 7d.
         let hard = now - 7 * 24 * 3600;
-        cache.retain(|k, v| live_keys.contains(k) && v.get("fetched_at").and_then(|f| f.as_i64()).unwrap_or(0) > hard);
+        cache.retain(|k, v| {
+            live_keys.contains(k)
+                && v.get("fetched_at").and_then(|f| f.as_i64()).unwrap_or(0) > hard
+        });
         save_cache(&cache);
     }
 
@@ -2767,17 +2942,31 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
         let ra = action_rank(a.get("nextAction").and_then(|s| s.as_str()).unwrap_or(""));
         let rb = action_rank(b.get("nextAction").and_then(|s| s.as_str()).unwrap_or(""));
         ra.cmp(&rb).then_with(|| {
-            a.get("updatedAt").and_then(|s| s.as_str()).unwrap_or("")
+            a.get("updatedAt")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
                 .cmp(b.get("updatedAt").and_then(|s| s.as_str()).unwrap_or(""))
         })
     });
 
     if json_out {
-        println!("{}", serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into()));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into())
+        );
     } else {
         println!("worklist: {} open PRs by {assignee}\n", rows.len());
         for r in &rows {
-            let fc = r.get("failingChecks").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default();
+            let fc = r
+                .get("failingChecks")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
             println!(
                 "  [{:>12}] {}#{}  ci={} merge={} threads={}{}",
                 r.get("nextAction").and_then(|v| v.as_str()).unwrap_or(""),
@@ -2785,8 +2974,14 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
                 r.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
                 r.get("ci").and_then(|v| v.as_str()).unwrap_or(""),
                 r.get("mergeState").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("unresolvedThreads").and_then(|v| v.as_u64()).unwrap_or(0),
-                if fc.is_empty() { String::new() } else { format!("  failing=[{fc}]") },
+                r.get("unresolvedThreads")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                if fc.is_empty() {
+                    String::new()
+                } else {
+                    format!("  failing=[{fc}]")
+                },
             );
         }
     }
@@ -2812,8 +3007,16 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
     isearch.extend(org_owner_args());
     isearch.extend(
-        ["--state", "open", "--limit", "1000", "--json", "number,repository,url,title,labels"]
-            .iter().map(|s| s.to_string()),
+        [
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "number,repository,url,title,labels",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
     );
     let iref: Vec<&str> = isearch.iter().map(String::as_str).collect();
     let Some(ival) = gh_json(&iref) else {
@@ -2824,8 +3027,16 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     let mut psearch: Vec<String> = vec!["search".into(), "prs".into()];
     psearch.extend(org_owner_args());
     psearch.extend(
-        ["--state", "open", "--limit", "1000", "--json", "number,repository,title,body,closingIssuesReferences"]
-            .iter().map(|s| s.to_string()),
+        [
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "number,repository,title,body,closingIssuesReferences",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
     );
     let pref: Vec<&str> = psearch.iter().map(String::as_str).collect();
     let Some(pval) = gh_json(&pref) else {
@@ -2835,7 +3046,13 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
 
     let mut covered: std::collections::HashSet<(String, u64)> = std::collections::HashSet::new();
     for p in pval.as_array().unwrap_or(&Vec::new()) {
-        let Some(repo) = p.get("repository").and_then(|r| r.get("nameWithOwner")).and_then(|s| s.as_str()) else { continue };
+        let Some(repo) = p
+            .get("repository")
+            .and_then(|r| r.get("nameWithOwner"))
+            .and_then(|s| s.as_str())
+        else {
+            continue;
+        };
         // structured closingIssuesReferences (authoritative)
         if let Some(refs) = p.get("closingIssuesReferences").and_then(|v| v.as_array()) {
             for r in refs {
@@ -2856,10 +3073,19 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     }
 
     let mut issues: Vec<(String, u64)> = Vec::new();
-    let mut meta: std::collections::HashMap<(String, u64), Value> = std::collections::HashMap::new();
+    let mut meta: std::collections::HashMap<(String, u64), Value> =
+        std::collections::HashMap::new();
     for it in ival.as_array().unwrap_or(&Vec::new()) {
-        let Some(repo) = it.get("repository").and_then(|r| r.get("nameWithOwner")).and_then(|s| s.as_str()) else { continue };
-        let Some(num) = it.get("number").and_then(|n| n.as_u64()) else { continue };
+        let Some(repo) = it
+            .get("repository")
+            .and_then(|r| r.get("nameWithOwner"))
+            .and_then(|s| s.as_str())
+        else {
+            continue;
+        };
+        let Some(num) = it.get("number").and_then(|n| n.as_u64()) else {
+            continue;
+        };
         let k = (repo.to_string(), num);
         issues.push(k.clone());
         meta.insert(k, it.clone());
@@ -2868,12 +3094,22 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     let open = uncovered(&issues, &covered);
     if json_out {
         let arr: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
-        println!("{}", serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_else(|_| "[]".into()));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_else(|_| "[]".into())
+        );
     } else {
         println!("uncovered issues (no open PR): {}\n", open.len());
         for (repo, num) in &open {
-            let title = meta.get(&(repo.clone(), *num)).and_then(|m| m.get("title")).and_then(|t| t.as_str()).unwrap_or("");
-            println!("  {repo}#{num}  {}", &title.chars().take(70).collect::<String>());
+            let title = meta
+                .get(&(repo.clone(), *num))
+                .and_then(|m| m.get("title"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+            println!(
+                "  {repo}#{num}  {}",
+                &title.chars().take(70).collect::<String>()
+            );
         }
     }
     0
@@ -3987,8 +4223,8 @@ mod gc_tests {
 #[cfg(test)]
 mod deploy_tests {
     use super::{
-        build_dispatch_inputs, classify_run, dispatch_command, parse_dispatch_inputs, pick_selector,
-        RunResult, WorkflowInput,
+        build_dispatch_inputs, classify_run, dispatch_command, parse_dispatch_inputs,
+        pick_selector, RunResult, WorkflowInput,
     };
 
     // The real rain.erc4626.words workflow: a single `network` choice input, one option `base`.
@@ -4079,7 +4315,11 @@ jobs: {}
             vec!["raindex", "subparser", "route-processor"]
         );
         // The later `with:\n  suite:` block must NOT be mistaken for a second input.
-        assert_eq!(got.len(), 1, "only the dispatch input, not the with: mapping");
+        assert_eq!(
+            got.len(),
+            1,
+            "only the dispatch input, not the with: mapping"
+        );
     }
 
     #[test]
@@ -4108,7 +4348,11 @@ jobs: {}
         let suite = parse_dispatch_inputs(SUITE_WF);
         assert_eq!(pick_selector(&suite), Some(0), "sole input is the selector");
         let two = parse_dispatch_inputs(TWO_INPUT_WF);
-        assert_eq!(pick_selector(&two), Some(0), "`network` wins over `dry_run`");
+        assert_eq!(
+            pick_selector(&two),
+            Some(0),
+            "`network` wins over `dry_run`"
+        );
         // Two inputs, neither a selector-name → ambiguous.
         let ambiguous = vec![
             WorkflowInput {
@@ -4206,7 +4450,12 @@ jobs: {}
     fn dispatch_command_builds_the_gh_argv() {
         let inputs = vec![("network".to_string(), "base".to_string())];
         assert_eq!(
-            dispatch_command("manual-sol-artifacts.yaml", "rainlanguage/rain.erc4626.words", "my-branch", &inputs),
+            dispatch_command(
+                "manual-sol-artifacts.yaml",
+                "rainlanguage/rain.erc4626.words",
+                "my-branch",
+                &inputs
+            ),
             vec![
                 "gh",
                 "workflow",
@@ -4235,7 +4484,13 @@ jobs: {}
             classify_run(Some("completed"), Some("success")),
             RunResult::Success
         );
-        for c in ["failure", "cancelled", "timed_out", "action_required", "startup_failure"] {
+        for c in [
+            "failure",
+            "cancelled",
+            "timed_out",
+            "action_required",
+            "startup_failure",
+        ] {
             assert_eq!(
                 classify_run(Some("completed"), Some(c)),
                 RunResult::Failure,
@@ -4312,7 +4567,15 @@ mod cli_tests {
     #[test]
     fn fsm_state_subcommands_present() {
         assert!(matches!(
-            parse(&["prr", "flag-blocked-deploy", "o/r", "1", "run", "28", "failed"]),
+            parse(&[
+                "prr",
+                "flag-blocked-deploy",
+                "o/r",
+                "1",
+                "run",
+                "28",
+                "failed"
+            ]),
             Cmd::FlagBlockedDeploy { .. }
         ));
         assert!(matches!(
@@ -4327,14 +4590,25 @@ mod cli_tests {
             parse(&["prr", "flag-design", "o/r", "1", "version", "slot", "taken"]),
             Cmd::FlagDesign { .. }
         ));
-        assert!(matches!(parse(&["prr", "human-queue"]), Cmd::HumanQueue { .. }));
+        assert!(matches!(
+            parse(&["prr", "human-queue"]),
+            Cmd::HumanQueue { .. }
+        ));
     }
 
     // The reason is variadic + joined; --dry-run is a flag, not swallowed into the reason.
     #[test]
     fn flag_blocked_reason_is_variadic_and_dry_run_is_a_flag() {
         assert_eq!(
-            parse(&["prr", "flag-blocked-infra", "o/r", "1", "missing", "FLARE_RPC_URL", "--dry-run"]),
+            parse(&[
+                "prr",
+                "flag-blocked-infra",
+                "o/r",
+                "1",
+                "missing",
+                "FLARE_RPC_URL",
+                "--dry-run"
+            ]),
             Cmd::FlagBlockedInfra {
                 slug: "o/r".to_string(),
                 pr: "1".to_string(),
@@ -4532,7 +4806,15 @@ mod cli_tests {
     #[test]
     fn deploy_network_and_dry_run() {
         assert_eq!(
-            parse(&["prr", "deploy", "o/r", "12", "--network", "base", "--dry-run"]),
+            parse(&[
+                "prr",
+                "deploy",
+                "o/r",
+                "12",
+                "--network",
+                "base",
+                "--dry-run"
+            ]),
             Cmd::Deploy {
                 slug: "o/r".to_string(),
                 pr: "12".to_string(),
@@ -4601,7 +4883,15 @@ mod cli_tests {
             }
         );
         assert_eq!(
-            parse(&["prr", "gc", "/w", "--dry-run", "--max-age-days", "5", "--no-nix"]),
+            parse(&[
+                "prr",
+                "gc",
+                "/w",
+                "--dry-run",
+                "--max-age-days",
+                "5",
+                "--no-nix"
+            ]),
             Cmd::Gc {
                 work_dir: Some("/w".to_string()),
                 dry_run: true,
@@ -4686,9 +4976,15 @@ mod worklist_tests {
 
     #[test]
     fn green_clean_is_green_ready() {
-        assert_eq!(next_action(&sig(Ci::Green, "CLEAN")), NextAction::GreenReady);
+        assert_eq!(
+            next_action(&sig(Ci::Green, "CLEAN")),
+            NextAction::GreenReady
+        );
         // BLOCKED = green but needs human approval -> still present it to the human.
-        assert_eq!(next_action(&sig(Ci::Green, "BLOCKED")), NextAction::GreenReady);
+        assert_eq!(
+            next_action(&sig(Ci::Green, "BLOCKED")),
+            NextAction::GreenReady
+        );
     }
 
     #[test]
@@ -4711,8 +5007,14 @@ mod worklist_tests {
 
     #[test]
     fn conflict_and_threads_and_screenshot_route() {
-        assert_eq!(next_action(&sig(Ci::Green, "DIRTY")), NextAction::Conflict3d);
-        assert_eq!(next_action(&sig(Ci::Green, "BEHIND")), NextAction::Conflict3d);
+        assert_eq!(
+            next_action(&sig(Ci::Green, "DIRTY")),
+            NextAction::Conflict3d
+        );
+        assert_eq!(
+            next_action(&sig(Ci::Green, "BEHIND")),
+            NextAction::Conflict3d
+        );
         let mut s = sig(Ci::Green, "CLEAN");
         s.unresolved_threads = 2;
         assert_eq!(next_action(&s), NextAction::Coderabbit3e);
