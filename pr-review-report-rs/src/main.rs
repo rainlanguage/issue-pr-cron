@@ -1394,12 +1394,372 @@ fn ai_state_label(labels: &[String]) -> Option<String> {
     labels.iter().find(|l| l.starts_with("ai:")).cloned()
 }
 
-/// `human-queue`: the daily FSM-conformance review. Buckets every open producer PR by its modeled
-/// human-gated state (a plain label read from ONE search — never prose scraping), plus the open
-/// `ai:close-candidate` issues, plus a loud **leak** bucket = open producer PRs that carry a
-/// `🤖 ai:producer` comment but NO `ai:*` state label (the producer acting outside the FSM). The leak
-/// count is the conformance metric: it trends to zero as the producer is restricted to labeled
-/// transitions. Runtime is O(unlabeled producer PRs) extra `gh` calls for the leak/reason check.
+// ─────────────────────────────────────────────────────────────────────────────
+// reworked-reject — the TRANSIENT-reject transition back to ready-to-vet.
+//
+// A human reject is not a terminal state: once a rework provably follows it, the PR re-enters the
+// existing vet → queue → human lifecycle. `reworked-reject` clears `human:reject` AND every stale
+// `ai:*` verdict (the code changed → it must be re-vetted from scratch), but ONLY on structural proof
+// that a rework FOLLOWED the reject: the PR head commit's date must be STRICTLY NEWER than the
+// `human:reject` label event. This is the one sanctioned carve-out from "never remove a `human:*`
+// label" — guarded so it can never silently undo a human's still-standing reject.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Parse a GitHub RFC3339 UTC timestamp (`2026-07-12T10:30:00Z`) into a comparable
+/// `(year, month, day, hour, min, sec)` tuple whose natural `Ord` is chronological. Tolerates a
+/// trailing `Z` and fractional seconds; assumes UTC (GitHub always emits `Z`). Returns `None` if the
+/// leading `YYYY-MM-DDTHH:MM:SS` shape doesn't parse — the caller then fails safe (refuses).
+fn parse_rfc3339_utc(s: &str) -> Option<(i64, u32, u32, u32, u32, u32)> {
+    let (date, rest) = s.trim().split_once('T')?;
+    // Drop the timezone / fractional-seconds tail; the leading HH:MM:SS is all we compare on.
+    let time = rest.split(['Z', '+', '.']).next()?;
+    let mut d = date.split('-');
+    let y: i64 = d.next()?.parse().ok()?;
+    let mo: u32 = d.next()?.parse().ok()?;
+    let da: u32 = d.next()?.parse().ok()?;
+    let mut t = time.split(':');
+    let h: u32 = t.next()?.parse().ok()?;
+    let mi: u32 = t.next()?.parse().ok()?;
+    let se: u32 = t.next().unwrap_or("0").parse().ok()?;
+    Some((y, mo, da, h, mi, se))
+}
+
+/// The most-recent `created_at` of a `labeled` event applying `label`, from a GitHub
+/// `issues/{n}/events` array (`event=="labeled"` && `label.name==<label>`). PURE (takes the parsed
+/// JSON) so the label-event extraction is unit-testable. `None` when no such event exists — a reject
+/// re-applied after a removal correctly wins, since the LATEST application is the one a rework must
+/// post-date.
+fn latest_labeled_event_date(events: Option<&Value>, label: &str) -> Option<String> {
+    events?
+        .as_array()?
+        .iter()
+        .filter(|e| {
+            e.get("event").and_then(|v| v.as_str()) == Some("labeled")
+                && e.pointer("/label/name").and_then(|v| v.as_str()) == Some(label)
+        })
+        .filter_map(|e| {
+            e.get("created_at")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .max_by(|a, b| match (parse_rfc3339_utc(a), parse_rfc3339_utc(b)) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            _ => a.cmp(b),
+        })
+}
+
+/// The `reworked-reject` gate outcome.
+#[derive(Debug, PartialEq)]
+enum ReworkedRejectDecision {
+    /// Head commit strictly newer than the reject event → clear `human:reject` + stale `ai:*`.
+    Clear,
+    /// Head commit not newer than the reject event → no rework followed; the human's reject stands.
+    RefuseNotReworked,
+    /// No `human:reject` label event found → nothing to transition (misuse / already cleared).
+    RefuseNoReject,
+    /// The head commit date could not be read/parsed → fail safe (never clear without proof).
+    RefuseNoHeadDate,
+}
+
+/// PURE gate: may `reworked-reject` clear `human:reject`? Only when the PR head commit was made
+/// STRICTLY AFTER the `human:reject` label was applied (proving a rework followed the reject). Equal
+/// or older head ⇒ refuse; a missing reject event or an unparsable head date ⇒ refuse. The reject is
+/// never cleared without positive proof of a later rework (fail safe: the human's decision holds).
+fn reworked_reject_decision(
+    head_commit_date: Option<&str>,
+    reject_event_date: Option<&str>,
+) -> ReworkedRejectDecision {
+    let Some(reject) = reject_event_date else {
+        return ReworkedRejectDecision::RefuseNoReject;
+    };
+    let (Some(head), Some(reject)) = (
+        head_commit_date.and_then(parse_rfc3339_utc),
+        parse_rfc3339_utc(reject),
+    ) else {
+        return ReworkedRejectDecision::RefuseNoHeadDate;
+    };
+    if head > reject {
+        ReworkedRejectDecision::Clear
+    } else {
+        ReworkedRejectDecision::RefuseNotReworked
+    }
+}
+
+/// `reworked-reject <owner/repo> <pr> [--dry-run]`: return a reworked `human:reject` PR to
+/// ready-to-vet by REMOVING `human:reject` AND every stale `ai:*` verdict label (the code changed →
+/// re-vet from scratch). GUARDED (see [`reworked_reject_decision`]): the PR head commit must strictly
+/// post-date the `human:reject` label event, else it REFUSES (non-zero exit) and the reject stands.
+/// The producer calls this as its FINAL step after pushing a rework commit for a `human:reject` PR
+/// carrying a trusted "Rework note"; the now-unlabeled head re-enters the vetter's normal re-vet loop.
+fn reworked_reject_mode(slug: &str, pr: &str, dry_run: bool) -> i32 {
+    let Some(prj) = gh_json(&[
+        "pr",
+        "view",
+        pr,
+        "-R",
+        slug,
+        "--json",
+        "headRefOid,labels,commits",
+    ]) else {
+        eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
+        return 1;
+    };
+    let labels: Vec<String> = prj
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !labels.iter().any(|l| l == "human:reject") {
+        eprintln!(
+            "error: {slug}#{pr} does not carry human:reject — nothing to transition (reworked-reject only clears an active human reject)"
+        );
+        return 5;
+    }
+    // Head commit date = the branch tip's committedDate (commits are oldest→newest, so `.last()`).
+    let head_date = prj
+        .get("commits")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.last())
+        .and_then(|c| {
+            c.get("committedDate")
+                .or_else(|| c.get("authoredDate"))
+                .and_then(|d| d.as_str())
+        });
+    // The `human:reject` label event, from the issue-events timeline (PRs are issues for this API).
+    let events = gh_json(&[
+        "api",
+        "--paginate",
+        &format!("repos/{slug}/issues/{pr}/events"),
+    ]);
+    let reject_date = latest_labeled_event_date(events.as_ref(), "human:reject");
+
+    match reworked_reject_decision(head_date, reject_date.as_deref()) {
+        ReworkedRejectDecision::RefuseNotReworked => {
+            eprintln!(
+                "refusing: {slug}#{pr} head commit ({}) does NOT post-date the human:reject event ({}) — no rework followed the reject; not clearing human:reject",
+                head_date.unwrap_or("?"),
+                reject_date.as_deref().unwrap_or("?"),
+            );
+            4
+        }
+        ReworkedRejectDecision::RefuseNoReject => {
+            eprintln!(
+                "refusing: no `human:reject` labeled event found on {slug}#{pr} — cannot prove a rework followed a reject"
+            );
+            4
+        }
+        ReworkedRejectDecision::RefuseNoHeadDate => {
+            eprintln!(
+                "error: could not read the head commit date for {slug}#{pr} — not clearing human:reject on incomplete data"
+            );
+            1
+        }
+        ReworkedRejectDecision::Clear => {
+            // Remove every stale ai:* verdict FIRST, then human:reject LAST — so a mid-sequence gh
+            // failure leaves the sacred human:reject in place (fail safe: the PR stays parked rather
+            // than half-cleared). The PR ends carrying neither → ready-to-vet.
+            let mut to_remove: Vec<String> = labels
+                .iter()
+                .filter(|l| l.starts_with("ai:"))
+                .cloned()
+                .collect();
+            to_remove.push("human:reject".to_string());
+            if dry_run {
+                println!("[dry-run] reworked-reject {slug}#{pr} — rework post-dates the reject");
+                println!(
+                    "  head commit: {}  >  human:reject event: {}",
+                    head_date.unwrap_or("?"),
+                    reject_date.as_deref().unwrap_or("?")
+                );
+                println!("  labels to remove: {}", to_remove.join(", "));
+                println!(
+                    "  result: no human:reject, no ai:* → ready-to-vet (vetter re-vets at head)"
+                );
+                return 0;
+            }
+            let mut ok = true;
+            for r in &to_remove {
+                if !gh_run(&["pr", "edit", pr, "-R", slug, "--remove-label", r]) {
+                    eprintln!("warning: failed to remove label {r} from {slug}#{pr}");
+                    ok = false;
+                }
+            }
+            if !ok {
+                eprintln!(
+                    "error: {slug}#{pr} — one or more labels failed to clear; the PR may still carry human:reject/ai:*"
+                );
+                return 1;
+            }
+            println!(
+                "reworked-reject {slug}#{pr}: cleared {} → ready-to-vet (un-vetted at head)",
+                to_remove.join(",")
+            );
+            0
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// lane bucketing — the FSM's full inventory, grouped by lane for the dashboard.
+//
+// `human-queue --json` emits EVERY modeled state's inventory, not just the human-action ones, so the
+// dashboard can show where PRs pile up. Each producer PR lands in exactly ONE lane bucket by FSM
+// precedence (a human decision dominates a stale ai:* label; a producer-blocked hand-off next; then
+// an ai:ready PR splits ready↔awaiting-re-vet on head drift; then the other vetter verdicts; a
+// label-less PR is a leak if the producer commented, else un-vetted).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The four FSM lanes, plus the `Leak` anti-lane (escaped the machine — not a modeled state).
+#[derive(Debug, PartialEq, Eq)]
+enum Lane {
+    VetLifecycle,
+    VetterVerdicts,
+    ProducerBlocked,
+    HumanDecisions,
+    Leak,
+}
+
+impl Lane {
+    fn key(&self) -> &'static str {
+        match self {
+            Lane::VetLifecycle => "vet-lifecycle",
+            Lane::VetterVerdicts => "vetter-verdicts",
+            Lane::ProducerBlocked => "producer-blocked",
+            Lane::HumanDecisions => "human-decisions",
+            Lane::Leak => "leak",
+        }
+    }
+}
+
+/// The `human:*` decisions, in precedence order (a PR should carry at most one).
+const HUMAN_DECISION_LABELS: [&str; 3] = ["human:reject", "human:design", "human:close-candidate"];
+/// The vetter's non-`ready` verdict labels (the `ready` split is handled separately by head drift).
+const VETTER_VERDICT_LABELS: [&str; 4] =
+    ["ai:reject", "ai:relink", "ai:design", "ai:close-candidate"];
+
+/// PURE: the single (lane, state) a producer PR belongs to, by FSM precedence.
+/// - `ready_vetted_at_head`: for an `ai:ready` PR, `Some(false)` if the head moved past the last
+///   `ai:vetter` verdict (→ `awaiting-re-vet`), else `Some(true)`/`None` keeps it in `ai:ready`.
+///   (Only `ai:ready` is head-drift-split — the established `queue`/`vetted_at_head` notion — because
+///   the other verdict labels can be producer-originated and carry no `ai:vetter` comment.)
+/// - `producer_commented`: for a label-less PR, whether a trusted `🤖 ai:producer` comment is present
+///   (a leak — the producer acted outside the FSM); a label-less PR without one is `un-vetted`.
+fn classify_lane(
+    labels: &[String],
+    ready_vetted_at_head: Option<bool>,
+    producer_commented: bool,
+) -> (Lane, String) {
+    let has = |name: &str| labels.iter().any(|l| l == name);
+    for h in HUMAN_DECISION_LABELS {
+        if has(h) {
+            return (Lane::HumanDecisions, h.to_string());
+        }
+    }
+    for b in PRODUCER_STATE_LABELS {
+        if b != "ai:design" && has(b) {
+            return (Lane::ProducerBlocked, b.to_string());
+        }
+    }
+    if has("ai:ready") {
+        return if ready_vetted_at_head == Some(false) {
+            (Lane::VetLifecycle, "awaiting-re-vet".to_string())
+        } else {
+            (Lane::VetterVerdicts, "ai:ready".to_string())
+        };
+    }
+    for v in VETTER_VERDICT_LABELS {
+        if has(v) {
+            return (Lane::VetterVerdicts, v.to_string());
+        }
+    }
+    if producer_commented {
+        (Lane::Leak, "leak".to_string())
+    } else {
+        (Lane::VetLifecycle, "un-vetted".to_string())
+    }
+}
+
+/// A producer PR reduced to what lane bucketing needs — free of gh JSON so [`lanes_doc`] is
+/// unit-testable without a network.
+struct QueuePr {
+    repo: String,
+    number: u64,
+    title: String,
+    url: String,
+    labels: Vec<String>,
+    /// For an `ai:ready` PR: `Some(false)` when the head has moved past its last verdict. `None`
+    /// when not computed (non-`ai:ready` PRs never need it).
+    ready_vetted_at_head: Option<bool>,
+    /// For a label-less PR: whether a trusted `🤖 ai:producer` comment is present (the leak signal).
+    producer_commented: bool,
+}
+
+/// PURE: build the lane-grouped inventory `{ <lane>: { <state>: { count, prs:[{repo,number,url,title}] } } }`
+/// from the classified PRs. Every state key appears with a stable, sorted PR list. The `Leak` lane is
+/// emitted too (as `leak`), but the top-level `leaks` key stays the canonical leak view for
+/// backward-compat.
+fn lanes_doc(prs: &[QueuePr]) -> Value {
+    // lane -> state -> Vec<pr Value>, both levels sorted (BTreeMap) for a stable snapshot diff.
+    let mut lanes: std::collections::BTreeMap<
+        &'static str,
+        std::collections::BTreeMap<String, Vec<Value>>,
+    > = std::collections::BTreeMap::new();
+    for p in prs {
+        let (lane, state) = classify_lane(&p.labels, p.ready_vetted_at_head, p.producer_commented);
+        lanes
+            .entry(lane.key())
+            .or_default()
+            .entry(state)
+            .or_default()
+            .push(serde_json::json!({
+                "repo": p.repo,
+                "number": p.number,
+                "url": p.url,
+                "title": p.title,
+            }));
+    }
+    let doc: serde_json::Map<String, Value> = lanes
+        .into_iter()
+        .map(|(lane, states)| {
+            let smap: serde_json::Map<String, Value> = states
+                .into_iter()
+                .map(|(state, items)| {
+                    (
+                        state,
+                        serde_json::json!({ "count": items.len(), "prs": items }),
+                    )
+                })
+                .collect();
+            (lane.to_string(), Value::Object(smap))
+        })
+        .collect();
+    Value::Object(doc)
+}
+
+/// Flat per-state counts derived from the lane doc, for a dashboard reading `counts` for tiles.
+/// Lane-based (each PR counted once, human-override dominant) — distinct from the legacy label-based
+/// counts (`ready`/`design`/`blocked*`) which are kept unchanged for backward-compat.
+fn lane_state_count(lanes: &Value, lane: &str, state: &str) -> usize {
+    lanes
+        .pointer(&format!("/{lane}/{state}/count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize
+}
+
+/// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
+/// modeled state's PRs, grouped into four lanes (`vet-lifecycle` / `vetter-verdicts` /
+/// `producer-blocked` / `human-decisions`) so the dashboard can render where PRs pile up, not just
+/// the human-action states — plus the open `ai:close-candidate` issues and a loud **leak** bucket =
+/// open producer PRs that carry a `🤖 ai:producer` comment but NO `ai:*`/`human:*` label (the
+/// producer acting outside the FSM). The leak count is the conformance metric: it trends to zero as
+/// the producer is restricted to labeled transitions. The legacy `states`/`counts`/`leaks` keys are
+/// kept UNCHANGED for the dashboard's existing reads; the new `lanes` object + additive `counts` keys
+/// are the full-machine view. Runtime is O(unlabeled + ai:ready producer PRs) extra `gh` calls (the
+/// leak/reason check, plus the head-drift check that splits ai:ready ↔ awaiting-re-vet).
 fn human_queue_mode(json_out: bool) -> i32 {
     let assignee = std::env::var("PR_ASSIGNEE").unwrap_or_else(|_| "thedavidmeister".to_string());
     // ONE search: every open producer PR with its labels — the label IS the state.
@@ -1425,10 +1785,12 @@ fn human_queue_mode(json_out: bool) -> i32 {
         return 1;
     };
 
-    // Bucket the PRs by their modeled state label; collect the unlabeled ones for the leak check.
+    // One pass: the legacy label bucket (`states`, unchanged) + a per-PR `(slug,num,title,url,labels)`
+    // record the lane classifier consumes. `unlabeled` = PRs with no `ai:*` label (leak candidates).
     let mut buckets: std::collections::BTreeMap<String, Vec<(String, u64, String)>> =
         std::collections::BTreeMap::new();
     let mut unlabeled: Vec<(String, u64, String)> = Vec::new();
+    let mut records: Vec<(String, u64, String, String, Vec<String>)> = Vec::new();
     for p in &prs {
         let url = p
             .get("url")
@@ -1452,9 +1814,15 @@ fn human_queue_mode(json_out: bool) -> i32 {
             })
             .unwrap_or_default();
         match ai_state_label(&labels) {
-            Some(state) => buckets.entry(state).or_default().push((slug, num, title)),
-            None => unlabeled.push((slug, num, title)),
+            Some(state) => {
+                buckets
+                    .entry(state)
+                    .or_default()
+                    .push((slug.clone(), num, title.clone()))
+            }
+            None => unlabeled.push((slug.clone(), num, title.clone())),
         }
+        records.push((slug, num, title, url, labels));
     }
 
     // Leak detection: an unlabeled PR the producer has commented on = a hand-off with no modeled
@@ -1478,6 +1846,53 @@ fn human_queue_mode(json_out: bool) -> i32 {
             leaks.push((slug.clone(), *num, title.clone(), reason));
         }
     }
+
+    // Head-drift split for ai:ready PRs: an ai:ready PR whose head moved past its last ai:vetter
+    // verdict is awaiting-re-vet, not ready (the established `queue`/`vetted_at_head` notion). Fetch
+    // only the ai:ready PRs that would actually reach the ai:ready lane branch (no dominating
+    // human:* / ai:blocked-* label) — one `gh pr view` each.
+    let leak_keys: std::collections::HashSet<(String, u64)> =
+        leaks.iter().map(|(s, n, _, _)| (s.clone(), *n)).collect();
+    let dominated = |labels: &[String]| {
+        let has = |name: &str| labels.iter().any(|l| l == name);
+        HUMAN_DECISION_LABELS.iter().any(|h| has(h))
+            || PRODUCER_STATE_LABELS
+                .iter()
+                .any(|b| *b != "ai:design" && has(b))
+    };
+    let mut ready_vetted: std::collections::HashMap<(String, u64), bool> =
+        std::collections::HashMap::new();
+    for (slug, num, _t, _u, labels) in &records {
+        if labels.iter().any(|l| l == "ai:ready") && !dominated(labels) {
+            if let Some(j) = gh_json(&[
+                "pr",
+                "view",
+                &num.to_string(),
+                "-R",
+                slug,
+                "--json",
+                "headRefOid,comments",
+            ]) {
+                let head = j.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
+                ready_vetted.insert((slug.clone(), *num), vetted_at_head(&j, head));
+            }
+        }
+    }
+
+    // The full lane-grouped inventory (each PR bucketed once, by FSM precedence).
+    let queue_prs: Vec<QueuePr> = records
+        .iter()
+        .map(|(slug, num, title, url, labels)| QueuePr {
+            repo: slug.clone(),
+            number: *num,
+            title: title.clone(),
+            url: url.clone(),
+            labels: labels.clone(),
+            ready_vetted_at_head: ready_vetted.get(&(slug.clone(), *num)).copied(),
+            producer_commented: leak_keys.contains(&(slug.clone(), *num)),
+        })
+        .collect();
+    let lanes = lanes_doc(&queue_prs);
 
     // The open close-candidate ISSUES (close-candidate is an issue-level flag).
     let mut iargs: Vec<String> = vec!["search".into(), "issues".into()];
@@ -1536,9 +1951,11 @@ fn human_queue_mode(json_out: bool) -> i32 {
             .collect();
         let doc = serde_json::json!({
             "states": bmap,
+            "lanes": lanes,
             "closeCandidateIssues": close_issues.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
             "leaks": leaks.iter().map(|(s,n,t,r)| serde_json::json!({"repo": s, "number": n, "title": t, "reason": r})).collect::<Vec<_>>(),
             "counts": {
+                // Legacy label-based counts (UNCHANGED — the dashboard reads these).
                 "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
                 "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
                 "blockedDeploy": buckets.get("ai:blocked-deploy").map(|v| v.len()).unwrap_or(0),
@@ -1547,6 +1964,16 @@ fn human_queue_mode(json_out: bool) -> i32 {
                 "closeCandidateIssues": close_issues.len(),
                 "leaks": leaks.len(),
                 "totalProducerPrs": prs.len(),
+                // Additive lane-based counts (each PR counted once, human-override dominant) — the
+                // states previously invisible to the dashboard.
+                "unvetted": lane_state_count(&lanes, "vet-lifecycle", "un-vetted"),
+                "awaitingReVet": lane_state_count(&lanes, "vet-lifecycle", "awaiting-re-vet"),
+                "reject": lane_state_count(&lanes, "vetter-verdicts", "ai:reject"),
+                "relink": lane_state_count(&lanes, "vetter-verdicts", "ai:relink"),
+                "closeCandidatePrs": lane_state_count(&lanes, "vetter-verdicts", "ai:close-candidate"),
+                "humanReject": lane_state_count(&lanes, "human-decisions", "human:reject"),
+                "humanDesign": lane_state_count(&lanes, "human-decisions", "human:design"),
+                "humanCloseCandidate": lane_state_count(&lanes, "human-decisions", "human:close-candidate"),
             }
         });
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
@@ -1563,16 +1990,59 @@ fn human_queue_mode(json_out: bool) -> i32 {
             println!("      {}", clip(t, 66));
         }
     };
+    // Print a lane/state bucket straight from the lane doc (the states without a legacy label bucket).
+    let show_lane = |title: &str, lane: &str, state: &str| {
+        let empty = Vec::new();
+        let items = lanes
+            .pointer(&format!("/{lane}/{state}/prs"))
+            .and_then(|v| v.as_array())
+            .unwrap_or(&empty);
+        println!("\n▓▓ {title}  ({})", items.len());
+        for it in items {
+            let url = it.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let t = it.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            println!("   {url}");
+            println!("      {}", clip(t, 66));
+        }
+    };
     println!(
         "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs) ===",
         prs.len()
     );
+    // vet-lifecycle
+    show_lane(
+        "UN-VETTED — awaiting first vet",
+        "vet-lifecycle",
+        "un-vetted",
+    );
+    show_lane(
+        "AWAITING-RE-VET — ai:ready head moved, re-vet needed",
+        "vet-lifecycle",
+        "awaiting-re-vet",
+    );
+    // vetter-verdicts
     if let Some(v) = buckets.get("ai:ready") {
         show("MERGE — ai:ready", v);
     }
+    show_lane(
+        "REWORK — ai:reject (producer reworks)",
+        "vetter-verdicts",
+        "ai:reject",
+    );
+    show_lane(
+        "RELINK — ai:relink (Closes→Refs)",
+        "vetter-verdicts",
+        "ai:relink",
+    );
     if let Some(v) = buckets.get("ai:design") {
         show("RULE — ai:design", v);
     }
+    show_lane(
+        "CLOSE — ai:close-candidate (PRs)",
+        "vetter-verdicts",
+        "ai:close-candidate",
+    );
+    // producer-blocked
     if let Some(v) = buckets.get("ai:blocked-deploy") {
         show("BLOCKED-DEPLOY", v);
     }
@@ -1582,6 +2052,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
     if let Some(v) = buckets.get("ai:blocked-on") {
         show("BLOCKED-ON", v);
     }
+    // human-decisions
+    show_lane("HUMAN-REJECT", "human-decisions", "human:reject");
+    show_lane("HUMAN-DESIGN", "human-decisions", "human:design");
+    show_lane(
+        "HUMAN-CLOSE-CANDIDATE",
+        "human-decisions",
+        "human:close-candidate",
+    );
     show("CLOSE — ai:close-candidate (issues)", &close_issues);
     println!(
         "\n⚠⚠ NOT IN ANY MODELED STATE (FSM leak — should trend to 0)  ({})",
@@ -2595,6 +3073,15 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Producer transition: a reworked human:reject PR back to ready-to-vet. Clears human:reject +
+    /// every stale ai:* verdict — GUARDED on the head commit post-dating the human:reject event.
+    ReworkedReject {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// The daily FSM-conformance review: every open item grouped by human-gated state, plus a
     /// loud "NOT IN ANY MODELED STATE" leak bucket. The instrument for the daily status check.
     HumanQueue {
@@ -3340,6 +3827,7 @@ fn main() {
             reason,
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), dry_run),
+        Cmd::ReworkedReject { slug, pr, dry_run } => reworked_reject_mode(&slug, &pr, dry_run),
         Cmd::HumanQueue { json } => human_queue_mode(json),
     };
     std::process::exit(code);
@@ -4822,6 +5310,18 @@ mod cli_tests {
             Cmd::FlagDesign { .. }
         ));
         assert!(matches!(
+            parse(&["prr", "reworked-reject", "o/r", "1"]),
+            Cmd::ReworkedReject { .. }
+        ));
+        assert_eq!(
+            parse(&["prr", "reworked-reject", "o/r", "1", "--dry-run"]),
+            Cmd::ReworkedReject {
+                slug: "o/r".to_string(),
+                pr: "1".to_string(),
+                dry_run: true,
+            }
+        );
+        assert!(matches!(
             parse(&["prr", "human-queue"]),
             Cmd::HumanQueue { .. }
         ));
@@ -5453,5 +5953,223 @@ mod worklist_tests {
         assert!(!cache_fresh("t1", "nochecks", 100, "t1", 200, 10800));
         // past ttl -> MISS
         assert!(!cache_fresh("t1", "green", 100, "t1", 100 + 10800, 10800));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FSM-completeness tests: the transient reworked-reject gate + full-inventory lane bucketing.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod fsm_completeness_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    // --- reworked-reject gate (the pure date comparison) ---------------------------------------
+
+    #[test]
+    fn parse_rfc3339_orders_chronologically() {
+        // Later timestamp parses to a strictly greater tuple, across every field boundary.
+        let base = parse_rfc3339_utc("2026-07-12T10:30:00Z").unwrap();
+        assert!(parse_rfc3339_utc("2026-07-12T10:30:01Z").unwrap() > base); // +1s
+        assert!(parse_rfc3339_utc("2026-07-12T11:00:00Z").unwrap() > base); // +hour
+        assert!(parse_rfc3339_utc("2026-07-13T00:00:00Z").unwrap() > base); // +day
+        assert!(parse_rfc3339_utc("2027-01-01T00:00:00Z").unwrap() > base); // +year
+        assert!(parse_rfc3339_utc("2026-07-12T10:29:59Z").unwrap() < base); // earlier
+                                                                            // Fractional seconds + missing Z are tolerated (the leading Y-M-DTH:M:S is what compares).
+        assert_eq!(
+            parse_rfc3339_utc("2026-07-12T10:30:00.123Z"),
+            Some((2026, 7, 12, 10, 30, 0))
+        );
+        assert_eq!(parse_rfc3339_utc("not a date"), None);
+    }
+
+    #[test]
+    fn reworked_reject_clears_only_when_head_strictly_postdates_reject() {
+        // Head commit AFTER the reject event -> Clear (a rework provably followed the reject).
+        assert_eq!(
+            reworked_reject_decision(Some("2026-07-12T10:00:01Z"), Some("2026-07-12T10:00:00Z")),
+            ReworkedRejectDecision::Clear
+        );
+        // Head commit BEFORE the reject -> refuse; the reject stands (this is the dead-end example:
+        // a stale head that predates the human reject must NOT clear it).
+        assert_eq!(
+            reworked_reject_decision(Some("2026-07-12T09:59:59Z"), Some("2026-07-12T10:00:00Z")),
+            ReworkedRejectDecision::RefuseNotReworked
+        );
+        // EQUAL timestamps -> refuse (strict `>`; equality is not "strictly newer", fail safe).
+        assert_eq!(
+            reworked_reject_decision(Some("2026-07-12T10:00:00Z"), Some("2026-07-12T10:00:00Z")),
+            ReworkedRejectDecision::RefuseNotReworked
+        );
+        // No reject event at all -> nothing to transition.
+        assert_eq!(
+            reworked_reject_decision(Some("2026-07-12T10:00:01Z"), None),
+            ReworkedRejectDecision::RefuseNoReject
+        );
+        // Unreadable / missing head date -> fail safe, never clear on incomplete data.
+        assert_eq!(
+            reworked_reject_decision(None, Some("2026-07-12T10:00:00Z")),
+            ReworkedRejectDecision::RefuseNoHeadDate
+        );
+        assert_eq!(
+            reworked_reject_decision(Some("garbage"), Some("2026-07-12T10:00:00Z")),
+            ReworkedRejectDecision::RefuseNoHeadDate
+        );
+    }
+
+    #[test]
+    fn latest_labeled_event_picks_the_most_recent_matching_label() {
+        // Two human:reject applications (removed then re-applied): the LATEST wins; a labeled event
+        // for a DIFFERENT label and a non-labeled event are both ignored.
+        let events = json!([
+            {"event": "labeled",   "label": {"name": "human:reject"}, "created_at": "2026-07-10T08:00:00Z"},
+            {"event": "unlabeled", "label": {"name": "human:reject"}, "created_at": "2026-07-11T08:00:00Z"},
+            {"event": "labeled",   "label": {"name": "ai:ready"},     "created_at": "2026-07-13T08:00:00Z"},
+            {"event": "labeled",   "label": {"name": "human:reject"}, "created_at": "2026-07-12T08:00:00Z"}
+        ]);
+        assert_eq!(
+            latest_labeled_event_date(Some(&events), "human:reject").as_deref(),
+            Some("2026-07-12T08:00:00Z")
+        );
+        // No matching label -> None (RefuseNoReject downstream).
+        assert_eq!(
+            latest_labeled_event_date(Some(&events), "human:design"),
+            None
+        );
+        assert_eq!(latest_labeled_event_date(None, "human:reject"), None);
+    }
+
+    // --- all-state lane bucketing --------------------------------------------------------------
+
+    #[test]
+    fn classify_lane_maps_every_state_by_precedence() {
+        // human decision dominates a stale ai:* label.
+        assert_eq!(
+            classify_lane(&s(&["ai:ready", "human:reject"]), Some(true), false),
+            (Lane::HumanDecisions, "human:reject".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["human:design"]), None, false),
+            (Lane::HumanDecisions, "human:design".to_string())
+        );
+        // producer-blocked next.
+        assert_eq!(
+            classify_lane(&s(&["ai:blocked-infra"]), None, false),
+            (Lane::ProducerBlocked, "ai:blocked-infra".to_string())
+        );
+        // ai:ready splits on head drift: vetted-at-head stays ready, moved head -> awaiting-re-vet.
+        assert_eq!(
+            classify_lane(&s(&["ai:ready"]), Some(true), false),
+            (Lane::VetterVerdicts, "ai:ready".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["ai:ready"]), Some(false), false),
+            (Lane::VetLifecycle, "awaiting-re-vet".to_string())
+        );
+        // other vetter verdicts (ai:design is a verdict lane, NOT producer-blocked).
+        assert_eq!(
+            classify_lane(&s(&["ai:reject"]), None, false),
+            (Lane::VetterVerdicts, "ai:reject".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["ai:relink"]), None, false),
+            (Lane::VetterVerdicts, "ai:relink".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["ai:design"]), None, false),
+            (Lane::VetterVerdicts, "ai:design".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["ai:close-candidate"]), None, false),
+            (Lane::VetterVerdicts, "ai:close-candidate".to_string())
+        );
+        // label-less: leak if the producer commented, else un-vetted.
+        assert_eq!(
+            classify_lane(&s(&[]), None, true),
+            (Lane::Leak, "leak".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&[]), None, false),
+            (Lane::VetLifecycle, "un-vetted".to_string())
+        );
+    }
+
+    fn qpr(
+        num: u64,
+        labels: &[&str],
+        ready_vetted_at_head: Option<bool>,
+        producer_commented: bool,
+    ) -> QueuePr {
+        QueuePr {
+            repo: "o/r".to_string(),
+            number: num,
+            title: format!("pr {num}"),
+            url: format!("https://github.com/o/r/pull/{num}"),
+            labels: s(labels),
+            ready_vetted_at_head,
+            producer_commented,
+        }
+    }
+
+    #[test]
+    fn lanes_doc_emits_every_state_with_the_right_members() {
+        let prs = vec![
+            qpr(1, &[], None, false),                     // un-vetted
+            qpr(2, &["ai:ready"], Some(false), false),    // awaiting-re-vet
+            qpr(3, &["ai:ready"], Some(true), false),     // ai:ready
+            qpr(4, &["ai:reject"], None, false),          // ai:reject
+            qpr(5, &["ai:relink"], None, false),          // ai:relink
+            qpr(6, &["ai:design"], None, false),          // ai:design
+            qpr(7, &["ai:close-candidate"], None, false), // ai:close-candidate (PR)
+            qpr(8, &["ai:blocked-deploy"], None, false),  // producer-blocked
+            qpr(9, &["ai:blocked-infra"], None, false),
+            qpr(10, &["ai:blocked-on"], None, false),
+            qpr(11, &["human:reject"], None, false), // human decisions
+            qpr(12, &["human:design"], None, false),
+            qpr(13, &["human:close-candidate"], None, false),
+            qpr(14, &[], None, true),             // leak
+            qpr(15, &["ai:reject"], None, false), // a second ai:reject member
+        ];
+        let doc = lanes_doc(&prs);
+
+        // every state present, counts correct, membership disjoint (#15 joins #4 under ai:reject).
+        let count = |lane: &str, st: &str| lane_state_count(&doc, lane, st);
+        assert_eq!(count("vet-lifecycle", "un-vetted"), 1);
+        assert_eq!(count("vet-lifecycle", "awaiting-re-vet"), 1);
+        assert_eq!(count("vetter-verdicts", "ai:ready"), 1);
+        assert_eq!(count("vetter-verdicts", "ai:reject"), 2);
+        assert_eq!(count("vetter-verdicts", "ai:relink"), 1);
+        assert_eq!(count("vetter-verdicts", "ai:design"), 1);
+        assert_eq!(count("vetter-verdicts", "ai:close-candidate"), 1);
+        assert_eq!(count("producer-blocked", "ai:blocked-deploy"), 1);
+        assert_eq!(count("producer-blocked", "ai:blocked-infra"), 1);
+        assert_eq!(count("producer-blocked", "ai:blocked-on"), 1);
+        assert_eq!(count("human-decisions", "human:reject"), 1);
+        assert_eq!(count("human-decisions", "human:design"), 1);
+        assert_eq!(count("human-decisions", "human:close-candidate"), 1);
+        assert_eq!(count("leak", "leak"), 1);
+
+        // the PR list carries {repo, number, url, title}; the awaiting-re-vet member is #2.
+        let arv = doc.pointer("/vet-lifecycle/awaiting-re-vet/prs/0").unwrap();
+        assert_eq!(arv.get("number").and_then(|v| v.as_u64()), Some(2));
+        assert_eq!(arv.get("repo").and_then(|v| v.as_str()), Some("o/r"));
+        assert_eq!(
+            arv.get("url").and_then(|v| v.as_str()),
+            Some("https://github.com/o/r/pull/2")
+        );
+        assert!(arv.get("title").is_some());
+
+        // total across lanes == number of PRs (each bucketed exactly once).
+        let mut total = 0usize;
+        for (_, states) in doc.as_object().unwrap() {
+            for (_, b) in states.as_object().unwrap() {
+                total += b.get("count").and_then(|v| v.as_u64()).unwrap() as usize;
+            }
+        }
+        assert_eq!(total, prs.len());
     }
 }

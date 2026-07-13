@@ -16,29 +16,45 @@ stateDiagram-v2
     direction LR
     state "open issue" as issue
     state "un-vetted PR" as unvetted
+    state "awaiting re-vet" as revet
     state "ai:ready" as ready
     state "ai:reject" as reject
+    state "ai:relink" as relink
     state "ai:design" as design
-    state "ai:close-candidate" as close
+    state "ai:close-candidate (PR)" as close
     state "ai:blocked-deploy" as bdeploy
     state "ai:blocked-infra" as binfra
     state "ai:blocked-on" as bon
+    state "human:reject" as hreject
+    state "human:design" as hdesign
+    state "human:close-candidate" as hclose
     state "presentable · in queue" as queue
     state "approved · human review" as approved
     state "merged" as merged
 
     [*] --> issue
     issue --> unvetted : producer opens PR
-    unvetted --> ready : vetter --record-verdict
-    unvetted --> reject : vetter --record-verdict
-    unvetted --> design : vetter --record-verdict
-    unvetted --> close : vetter --record-verdict
-    ready --> queue : --queue · green·mergeable·vetted@head
+
+    %% vet lifecycle — the vetter is the sole verdict transition fn
+    unvetted --> ready : vetter record-verdict
+    unvetted --> reject : vetter record-verdict
+    unvetted --> relink : vetter record-verdict
+    unvetted --> design : vetter record-verdict
+    unvetted --> close : vetter record-verdict
+    ready --> revet : head moves (producer fix)
+    revet --> ready : vetter re-vets
+    revet --> reject : vetter re-vets
+
+    %% ready → the human merge queue
+    ready --> queue : queue · green·mergeable·vetted@head
     queue --> approved : human review = APPROVED
     approved --> merged : gh pr merge --admin · human word
-    reject --> unvetted : producer reworks → head moves
-    ready --> unvetted : head moves → re-vet · --backfill-comments
 
+    %% vetter verdicts route back to the producer, then re-vet
+    reject --> unvetted : producer reworks → head moves → re-vet
+    relink --> unvetted : producer relinks Closes→Refs → re-vet
+
+    %% producer deploy + blocked hand-offs → human resolves → re-work
     ready --> ready : producer deploy · red prod-pin → green
     ready --> bdeploy : flag-blocked-deploy · deploy FAILED
     unvetted --> binfra : flag-blocked-infra · infra/tooling gap OR can't classify
@@ -46,6 +62,14 @@ stateDiagram-v2
     bdeploy --> unvetted : human resolves deploy → re-work
     binfra --> unvetted : human clears infra / models a new state → re-work
     bon --> unvetted : dependency merges → producer re-works
+
+    %% human decisions are sacred — the vetter never re-verdicts these
+    ready --> hreject : human reject + Rework note
+    ready --> hdesign : human design ruling
+    ready --> hclose : human close-candidate
+    hreject --> unvetted : producer reworks → reworked-reject clears labels → re-vet
+    hdesign --> [*] : human rules
+    hclose --> [*] : human closes
 
     design --> [*] : human design ruling
     close --> [*] : human closes
@@ -56,6 +80,39 @@ Every transition above is a `pr-review-report` subcommand. A raw `gh` / `git`
 state change from a prompt is a _loose_ transition — unenforced and untested —
 so the prompts route **all** GitHub I/O through the tool. That is what makes
 this an actual finite state machine rather than a picture of one.
+
+The machine has **no dead-ends**: every state has an exit back into the
+lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle
+(`un-vetted → vetting → awaiting re-vet`) re-runs the vetter whenever a PR's
+head moves, so a reworked PR is always re-judged against its current code. The
+**human reject is TRANSIENT**, not terminal: when a human applies `human:reject`
+and a trusted "Rework note", the producer executes the rework, pushes a fix
+commit, and then calls **`pr-review-report reworked-reject <owner/repo> <n>`**
+as its final step. That subcommand REMOVES `human:reject` **and any stale `ai:*`
+verdict** (the code changed → re-vet from scratch), returning the PR to
+ready-to-vet so it re-enters the normal vet → queue → human loop. It is guarded:
+it clears `human:reject` **only** when the PR head commit provably
+**post-dates** the `human:reject` label event (the one sanctioned carve-out from
+"never remove a `human:*` label"); a head that does not post-date the reject is
+refused, so a still-standing human reject is never silently undone.
+
+`human-queue --json` emits the **full** inventory — every modeled state's PRs,
+grouped into four lanes so the dashboard can show where PRs pile up:
+
+- **vet-lifecycle** — `un-vetted` (open PRs awaiting a first verdict) and
+  `awaiting-re-vet` (an `ai:ready` PR whose head moved past its last vetter
+  verdict).
+- **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:relink`, `ai:design`,
+  `ai:close-candidate`.
+- **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-infra`,
+  `ai:blocked-on`.
+- **human-decisions** — `human:reject`, `human:design`, `human:close-candidate`.
+
+Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
+stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved
+unchanged; `lanes` and the additive `counts` keys (`reject`, `relink`,
+`closeCandidatePrs`, `humanReject`, `humanDesign`, `humanCloseCandidate`,
+`unvetted`, `awaitingReVet`) are the full-machine view the dashboard renders.
 
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
