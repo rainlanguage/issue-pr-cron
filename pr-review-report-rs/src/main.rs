@@ -3142,6 +3142,11 @@ struct PrSignals {
     deploy_done_at_head: bool,
     parked: bool,
     ui_missing_screenshot: bool,
+    /// The PR carries a human decision label (`human:reject` / `human:design` /
+    /// `human:close-candidate`). A human decision is SACRED and blocks routine producer action, so
+    /// such a PR is always parked — even when it also carries a stale `ai:*` label (a `human:reject`
+    /// PR keeps its old `ai:ready` until `reworked-reject` clears it).
+    has_human_override: bool,
     /// The PR's modeled `ai:*` state label, if any. When it is a human-gated state (`ai:design` /
     /// `ai:blocked-*` / `ai:close-candidate`), the label IS the state and the producer leaves the PR
     /// parked — only un-labeled PRs are classified from CI/mergeState.
@@ -3155,6 +3160,14 @@ struct PrSignals {
 /// are green-ready for the human. A `parked` flag only suppresses re-touching a STILL-RED PR — a PR
 /// that has since gone green surfaces as green-ready regardless of past parking.
 fn next_action(s: &PrSignals) -> NextAction {
+    // A human decision (`human:reject`/`human:design`/`human:close-candidate`) is SACRED and blocks
+    // routine producer action — park it regardless of any stale `ai:*` label it also carries (a
+    // `human:reject` PR keeps its old `ai:ready` until `reworked-reject` clears it; a rework note is
+    // handled by the reject-work-order path, not this routine classifier). This MUST come first so a
+    // human-overridden PR is never re-derived from CI/mergeState.
+    if s.has_human_override {
+        return NextAction::ParkedSkip;
+    }
     // A PR the producer has already moved into a modeled human-gated state (design / blocked-* /
     // close-candidate) is PARKED for a human — the label IS the state, so the producer does not
     // re-touch it and does not re-derive a state from CI. Only un-labeled PRs fall through to the
@@ -3384,10 +3397,16 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
     // REQUIRES redeploy), would read done, skip the redeploy, and surface ready with UNDEPLOYED
     // bytecode (defeats deploy-before-merge). The producer's deploy-confirmed note embeds the head SHA
     // (campaign-prompt 3b (iv)) precisely so this head-scoped match works.
-    let deploy_done_at_head = trusted.iter().any(|c| {
-        (c.contains("deploy") && (c.contains("SUCCESS") || c.contains("deploy-confirmed")))
-            && c.contains(head)
-    });
+    // Match the note's SHA against the current head — the full oid OR its >=12-char prefix, so a
+    // deploy-confirmed note that embedded a SHORT sha still counts as head-scoped. Guard on a
+    // non-empty head so a missing headRefOid can never read as "deployed" (which would skip a
+    // real redeploy and surface undeployed bytecode as ready).
+    let head_short = if head.len() >= 12 { &head[..12] } else { head };
+    let deploy_done_at_head = !head.is_empty()
+        && trusted.iter().any(|c| {
+            (c.contains("deploy") && (c.contains("SUCCESS") || c.contains("deploy-confirmed")))
+                && (c.contains(head) || c.contains(head_short))
+        });
     // parked: a design-clarification note, or a hand-off note, from the trusted producer account
     let design_flicked = trusted.iter().any(|c| {
         c.contains("design-clarification")
@@ -3441,6 +3460,10 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         })
         .unwrap_or_default();
     let state_label = ai_state_label(&labels);
+    // A human decision label beats any stale `ai:*` label — it BLOCKS routine producer action.
+    let has_human_override = labels
+        .iter()
+        .any(|l| l == "human:reject" || l == "human:design" || l == "human:close-candidate");
     let sig = PrSignals {
         ci,
         merge_state: merge_state.clone(),
@@ -3449,6 +3472,7 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         deploy_done_at_head,
         parked,
         ui_missing_screenshot,
+        has_human_override,
         state_label: state_label.clone(),
     };
     let action = next_action(&sig);
@@ -3475,6 +3499,7 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
             "screenshotPending": has_shot,
         },
         "stateLabel": state_label,
+        "humanOverride": has_human_override,
         "nextAction": action.as_str(),
     })
 }
@@ -5690,6 +5715,7 @@ mod worklist_tests {
             deploy_done_at_head: false,
             parked: false,
             ui_missing_screenshot: false,
+            has_human_override: false,
             state_label: None,
         }
     }
@@ -5718,6 +5744,24 @@ mod worklist_tests {
         let mut s = sig(Ci::Green, "CLEAN");
         s.state_label = Some("ai:ready".to_string());
         assert_eq!(next_action(&s), NextAction::GreenReady);
+    }
+
+    #[test]
+    fn human_override_parks_over_stale_ai_label_ci_and_deploy() {
+        // Control: a red PR carrying a stale `ai:ready` (no human override) routes to Needs3b — the
+        // pre-fix behaviour that mis-routed human-decided PRs as routine work.
+        let mut s = sig(Ci::Red, "DIRTY");
+        s.state_label = Some("ai:ready".to_string());
+        assert_eq!(
+            next_action(&s),
+            NextAction::Needs3b,
+            "control: no human override → a red PR routes to 3b"
+        );
+        // A human decision BLOCKS routine action: the PR is parked regardless of the stale
+        // `ai:ready`, the red CI, AND a deploy trigger (otherwise checked before CI).
+        s.has_human_override = true;
+        s.has_deploy_trigger = true;
+        assert_eq!(next_action(&s), NextAction::ParkedSkip);
     }
 
     #[test]
