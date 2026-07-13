@@ -5924,6 +5924,33 @@ mod worklist_tests {
     }
 
     #[test]
+    fn worklist_row_deploy_done_accepts_12_char_short_sha() {
+        // A deploy-confirmed note embedding a 12-char SHORT sha marks a 40-char head done — the
+        // >=12-char-prefix branch. The other head-scoped tests use <12-char heads (head_short == head),
+        // so this is the only case that exercises the prefix match.
+        let head = "abcdef0123456789abcdef0123456789abcdef01"; // 40 chars; 12-char prefix = abcdef012345
+        let done = json!({
+            "number": 7, "url": "", "title": "t", "headRefOid": head,
+            "body": "REQUIRES redeploy at land",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [],
+            "comments": [{"author":{"login":"thedavidmeister"},
+                          "body":"🤖 ai:producer deploy-confirmed at abcdef012345"}]
+        });
+        assert_eq!(worklist_row("o/r", &done)["nextAction"], "green-ready");
+        // A short sha that does NOT prefix the head is not head-scoped → the redeploy still stands.
+        let notdone = json!({
+            "number": 7, "url": "", "title": "t", "headRefOid": head,
+            "body": "REQUIRES redeploy at land",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [],
+            "comments": [{"author":{"login":"thedavidmeister"},
+                          "body":"🤖 ai:producer deploy-confirmed at 999999999999"}]
+        });
+        assert_eq!(worklist_row("o/r", &notdone)["nextAction"], "deploy");
+    }
+
+    #[test]
     fn worklist_row_red_prodpin_is_deploy() {
         let detail = json!({
             "number": 1, "headRefOid": "H",
