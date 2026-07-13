@@ -65,6 +65,14 @@ if [ -f "$DIR/DISABLED" ]; then
   exit 0
 fi
 
+# --- weekly-budget pace gate (skip when our known usage runs ahead of pace toward the
+# reset; inert until USAGE_USED_PCT/USAGE_RESET_AT are set in cron.env — see usage-gate.sh) ---
+if [ -x "$DIR/usage-gate.sh" ]; then
+  _ug="$("$DIR/usage-gate.sh")"; _ugrc=$?
+  echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
+  [ "$_ugrc" -eq 10 ] && exit 0
+fi
+
 # --- single-run lock (non-blocking: skip this tick if a prior run is still going) ---
 exec 9>"$LOCK"
 if ! flock -n 9; then

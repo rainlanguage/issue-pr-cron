@@ -53,6 +53,14 @@ if [ -f "$DIR/review-DISABLED" ]; then
   echo "$(date -u +%FT%TZ) SKIP: review-DISABLED flag present" >> "$LOG"; exit 0
 fi
 
+# --- weekly-budget pace gate (shared with the producer cron; inert until USAGE_* set in
+# cron.env — see usage-gate.sh) ---
+if [ -x "$DIR/usage-gate.sh" ]; then
+  _ug="$("$DIR/usage-gate.sh")"; _ugrc=$?
+  echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
+  [ "$_ugrc" -eq 10 ] && exit 0
+fi
+
 # --- single-run lock (non-blocking) ---
 exec 9>"$LOCK"
 if ! flock -n 9; then

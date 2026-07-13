@@ -10,6 +10,8 @@
 !/campaign-prompt.txt
 !/campaign-settings.json
 !/cron.env.example
+# weekly-budget pace gate (pre-flight called by both runners):
+!/usage-gate.sh
 !/pr-review-report.sh
 # Rust rewrite of pr-review-report.sh (target/ ignored by the project's own .gitignore):
 !/pr-review-report-rs/
