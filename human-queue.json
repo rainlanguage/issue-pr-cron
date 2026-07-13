@@ -11,6 +11,11 @@
       "title": "[AUDIT] [MEDIUM] ST0xPriceOracle.updatePrice admits future-dated timestamps; price() then bricks via arithmetic underflow"
     },
     {
+      "number": 546,
+      "repo": "rainlanguage/raindex",
+      "title": "Add link to telegram on sidebar"
+    },
+    {
       "number": 531,
       "repo": "rainlanguage/raindex",
       "title": "can't generate rainlang if there are elided bindings"
@@ -100,11 +105,11 @@
     "blockedDeploy": 7,
     "blockedInfra": 11,
     "blockedOn": 4,
-    "closeCandidateIssues": 19,
+    "closeCandidateIssues": 20,
     "design": 2,
     "leaks": 46,
     "ready": 20,
-    "totalProducerPrs": 163
+    "totalProducerPrs": 165
   },
   "leaks": [
     {
@@ -163,7 +168,7 @@
     },
     {
       "number": 397,
-      "reason": "🤖 ai:producer Producer note: reworked per rework note — added shared src/lib/utils/safeBigInt.ts (bigint passthrough, strict 0n fallback) and routed all four #331-named Leaderboard accesses (eligibleBalances[token.symbol], shares[token.symbol]?.rewardsAmount, shares[token.symbol]?.percentageShare, shares?.totalRewards) through it with optional chaining; new malformed-row render test (row missing shares + string eligibleBalances value) fails on unguarded code with \"TypeError: Cannot read properties of undefined (reading 'cysFLR') at Leaderboard.svelte:87\" (1 failed | 3 passed), and passes with the guards (6/6 green incl. helper unit tests). Same helper is introduced on PR #389; whichever lands second reconciles trivially (identical file).",
+      "reason": "🤖 ai:producer Producer note: rework executed — completed the reworked branch and mutation-validated every guard per-access. State: shared `src/lib/utils/safeBigInt.ts` (bigint passthrough, strict `0n` fallback) guards all four #331-named accesses in `Leaderboard.svelte` (`eligibleBalances?.[token.symbol]`, `shares?.[token.symbol]?.rewardsAmount`, `shares?.[token.symbol]?.percentageShare`, `shares?.totalRewards`); malformed-row render test (row missing `shares` + string `eligibleBalances` value) plus `safeBigInt` unit tests. Merged `origin/main` into the branch (merge, not rebase) and pushed `5cbc1d8` `[merge-update]`.  ## QA - Discriminating tests: `Leaderboard.test.ts > should render zero fallbacks instead of crashing on a malformed row`, `safeBigInt.test.ts` — fails on base (unguarded code: `TypeError: Cannot read properties of undefined (reading 'cysFLR')`, 1 failed | 3 passed; see prior producer note) - Mutations applied (each reverted individually at merged HEAD, scoped vitest, then restored):   - `Leaderboard.svelte:81` eligibleBalances guard → `entry.eligibleBalances[token.symbol] || 0n` → KILLED: malformed-row test fails at the zero-fallback count assertion (string `\"123000000000000000000\"` slips past `||` and renders non-zero) — 1 failed | 3 passed   - `Leaderboard.svelte:88` rewardsAmount guard → `entry.shares[token.symbol]?.rewardsAmount || 0n` → KILLED: `TypeError: Cannot read properties of undefined (reading 'cysFLR')` at Leaderboard.svelte:88 — 1 failed | 3 passed   - `Leaderboard.svelte:93` percentageShare guard → `entry.shares[token.symbol]?.percentageShare || 0n` → KILLED: same TypeError (reading 'cysFLR') — 1 failed | 3 passed   - `Leaderboard.svelte:100` totalRewards guard → `entry.shares.totalRewards` → KILLED: `TypeError: Cannot read properties of undefined (reading 'totalRewards')` — 1 failed | 3 passed   - `safeBigInt.ts:11` → `return value as bigint` (drop the typeof guard) → KILLED twice over: helper unit test (`expected undefined to be 0n`) AND malformed-row render test — 2 failed | 4 passed - Oracle: zero-fallback display values derived from the fixture by hand (missing/malformed field ⇒ `0.0000`, valid bigint `200n * ONE` ⇒ `200.0000`), independent of the component code - Category check: #331 names Leaderboard.svelte accesses at (pre-fix) lines 73, 79, 84, 91 — all four are routed through the shared `safeBigInt` with optional chaining; no other subgraph-shape numeric access remains unguarded in the component - All guards restored: scoped suite 6/6 green (2 files); branch CI was fully green (test / lint / build_site / Cloudflare Pages) on `8c297b4` before the `[merge-update]` push, which re-runs it ",
       "repo": "cyclofinance/cyclo.site",
       "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard"
     },
@@ -181,7 +186,7 @@
     },
     {
       "number": 389,
-      "reason": "🤖 ai:producer Producer note: reworked per rework note — replaced the falsy-|| guard with the shared safe-bigint accessor (src/lib/utils/safeBigInt.ts: bigint passthrough, strict 0n fallback) on stats.shares?.totalRewards plus the other AccountStats subgraph-shape accesses (eligibleBalances, rewardsAmount, percentageShare) so the missing-shares fixture can render at all; new malformed-stats render test (missing shares + string eligibleBalances value) fails on base with \"TypeError: Cannot read properties of undefined (reading 'totalRewards') at AccountStats.svelte:65\" (1 failed | 2 passed), and passes with the guards (5/5 green incl. helper unit tests). Same helper is introduced on PR #397; whichever lands second reconciles trivially (identical file).",
+      "reason": "🤖 ai:producer Producer note: rework executed — the totalRewards guard is now a component-local safe-bigint fallback in AccountStats (commit 46ab6f0).  What changed: - `formatEther(safeBigInt(stats.shares?.totalRewards))` where `safeBigInt` is a local `typeof value === \"bigint\" ? value : 0n` check defined in the component script. Optional chaining covers a missing `shares` object; the typeof check keeps non-bigint truthy garbage (e.g. a decimal string) out of `formatEther`. - Removed the shared `src/lib/utils/safeBigInt.ts` + its test that an earlier attempt on this branch had added — the shared accessor for this patch family is owned by https://github.com/cyclofinance/cyclo.site/pull/397, so this fix stays local to AccountStats to avoid sibling conflicts. - Added a malformed-stats fixture test for a non-bigint truthy (string) `totalRewards` alongside the existing missing-`shares` fixture; both assert the zero-fallback render.  Evidence (stands in for the QA-GUIDE §8 block since the PR body cannot be edited): - Fails-on-base: with the base (`origin/main`) `AccountStats.svelte` swapped in, both malformed-stats tests FAIL — `should render zero fallbacks instead of crashing on malformed stats` throws `TypeError: Cannot read properties of undefined (reading 'totalRewards')`, and `should render a zero total when totalRewards is a non-bigint truthy value` renders `20` instead of `0` (2 failed | 2 passed). - Mutation: reverting the guard to the rejected form `stats.shares.totalRewards || 0n` → same 2 tests FAIL (missing-shares TypeError; string totalRewards renders `20`); restoring the guard → 4/4 pass. - Scoped vitest on `src/lib/components/AccountStats.test.ts`: 4 passed (4); pre-commit prettier hook: Passed. - Branch also carries a [merge-update] of main (conflicts in Lock.svelte/Lock.test.ts resolved keeping both sides' coverage).",
       "repo": "cyclofinance/cyclo.site",
       "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
     },
@@ -253,7 +258,7 @@
     },
     {
       "number": 324,
-      "reason": "🤖 ai:producer Producer note: reworked per rework note — ERC20PriceOracleReceiptVault spec suite added mirroring the OffchainAssetReceiptVault coverage; broken-oracle max* non-revert pinned.",
+      "reason": "🤖 ai:producer Producer note: rework executed — `ERC20PriceOracleReceiptVault` ERC-4626 spec suite in place mirroring every `OffchainAssetReceiptVault` clause plus the motivating broken-oracle cases, now merge-updated to `main` (rain-factory 0.1.5 bump + untracked pre-commit config) and mutation-validated with recorded evidence.  **Coverage** — `test/src/concrete/vault/ERC20PriceOracleReceiptVault.erc4626spec.t.sol` (11 tests, each clause of #303 mirrored from the `OffchainAssetReceiptVault` suite):  - `max*` MUST NOT revert for any input: `testMaxWithdrawAnyIdDoesNotRevert`, `testMaxWithdrawZeroIdDoesNotRevert` (the `id == 0` zero-share-ratio divide-by-zero edge), `testMaxRedeemAnyIdDoesNotRevert`, `testMaxDepositAnyOwnerDoesNotRevert`, `testMaxMintAnyOwnerDoesNotRevert` - `max*` MUST NOT revert under a broken oracle (the motivating case): `testMaxFunctionsDoNotRevertWhenOracleReverts` (empty vault; proves the broken-oracle premise by expecting the oracle error from `previewDeposit` first), `testMaxFunctionsDoNotRevertWhenOracleRevertsAfterDeposit` (owner holds shares/receipts; `max*` still report the real amounts because withdrawal pricing comes from the receipt id, never the bricked oracle) - `convertToShares`/`convertToAssets` inverse round-trip, fuzzed receipt-id share ratio, round-trip never creates value in either direction: `testConvertToRoundTrip` - `asset()` immutable across deposit/withdraw: `testAssetImmutableAfterOperations` - `preview*` matches the corresponding mutating call under the same state: `testPreviewDepositMatchesDeposit`, `testPreviewRedeemMatchesRedeem`  **Mutation evidence** (break covered source line → tests FAIL; restore → PASS):  1. `ReceiptVault.maxWithdraw` zero-share-ratio guard disabled (`shareRatio == 0` → `== 1`): killed by `testMaxFunctionsDoNotRevertWhenOracleReverts`, `testMaxWithdrawAnyIdDoesNotRevert`, `testMaxWithdrawZeroIdDoesNotRevert` — all with `Panic(0x12)` division-by-zero, the exact defect #303/#302 flagged. 2. `ReceiptVault.maxDeposit` `type(uint256).max` → `0`: killed by both broken-oracle tests (`assertion failed: 0 != 2^256-1`). 3. `ReceiptVault.maxRedeem` `balanceOf(owner, id)` → `balanceOf(owner, id) / 2`: killed by `testMaxFunctionsDoNotRevertWhenOracleRevertsAfterDeposit` (`shares/2 != shares`).  Source restored after each mutation; final tree matches HEAD exactly.  **Merge-update** (`4254086`): merged `origin/main` (merge, no rebase). Modify/delete conflict on generated `.pre-commit-config.yaml` resolved by accepting main's deletion (main untracks the generated symlink). Full suite post-merge: 398 passed, 0 code failures (sole failure is `testPythGetPriceNoOlderThan`, a fork test requiring the CI-only `ARBITRUM_RPC_URL` secret — environmental, unrelated). `forge fmt --check` clean on both spec test files. ",
       "repo": "rainlanguage/rain.vats",
       "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault"
     },
@@ -301,7 +306,7 @@
     },
     {
       "number": 160,
-      "reason": "🤖 ai:producer Producer note (additional relink caveat): commit db279dea's message also carries 'Closes #69', and commit-message keywords fire on merge regardless of a body relink (history cannot be rewritten without a force-push, which is forbidden). So the body edit alone will not stop #69 auto-closing — land via squash with a curated message dropping that line, or re-open #69 after merge.",
+      "reason": "🤖 ai:producer Producer note (REQUIRES redeploy at land): commit 18712ec changes FlareFtsoWords deployed bytecode — ftsoV2LTSGetFeed now returns a scale-tagged Float at the LTS boundary. The full prelude was regenerated at this head (BuildAuthoringMeta → rain meta build → BuildPointers → forge fmt) and the committed pointers/meta snapshot is UNCHANGED, so CI stays green — but the words contract's deterministic Zoltu (CREATE2) address moves with the new bytecode and is currently undeployed, and this repo has no on-chain pin test to go red. Route the routine redeploy via pr-review-report deploy from this branch (deploy-before-merge) once review settles; do not land before the deploy-confirmed note names the landing head.",
       "repo": "rainlanguage/rain.flare",
       "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
     },
