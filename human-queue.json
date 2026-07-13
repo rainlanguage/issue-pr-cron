@@ -98,11 +98,11 @@
   ],
   "counts": {
     "blockedDeploy": 7,
-    "blockedInfra": 7,
+    "blockedInfra": 11,
     "blockedOn": 4,
     "closeCandidateIssues": 19,
     "design": 2,
-    "leaks": 44,
+    "leaks": 45,
     "ready": 21,
     "totalProducerPrs": 162
   },
@@ -283,7 +283,7 @@
     },
     {
       "number": 2777,
-      "reason": "🤖 ai:producer Producer note: reworked per rework note — ioratioAverage collapsed to the two-branch ternary `outputAmountSum === 0 ? 0 : ioratioSum / outputAmountSum`, finiteValues block deleted, zero-sum test comment describes current behavior only (commit d39af811c846acbe71e0dc0950eb8d6c17c00a68). Evidence: scoped vitest on src/lib/services/historicalOrderCharts.ts = 6/6 passed. Mutation-validation: (1) zero branch mutated to divide → 'charts zero when same-timestamp outputAmounts sum to zero' FAILED (expected 0, received NaN — old behavior reproduced); restored → PASSED. (2) weighted branch swapped to unweighted mean → 'handles the case where multiple trades have the same timestamp' FAILED (expected 0.21428571428571427 weighted, received 0.2916666666666667 unweighted); restored → PASSED, full suite 6/6 green. NOTE: the PR body line claiming the test 'equals the unweighted mean' still needs a body edit (this routine cannot run gh pr edit) — it should say the test asserts 0.",
+      "reason": "🤖 ai:producer Producer note: rework is already executed and evidenced at head d39af81; the three red checks are pre-existing MAIN red, not PR-caused — rainix no-skips static gate (vm.skip x5 in test/lib/deploy, fails rainix-sol/static + rs-static) and missing 0.1.13 soldeer deploy-constant pins (testAllPublishedSoldeerTagsHaveAFullConstantSuite; 687 other sol tests pass). Both are fixed by #2804 (green, ai:ready); this PR greens on a branch update once it lands. flag-blocked-on was refused by the guard (human decision present), so recording the classification here.",
       "repo": "rainlanguage/raindex",
       "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
     },
@@ -354,6 +354,12 @@
       "title": "Retry SDK indexing on transient timeout before failing"
     },
     {
+      "number": 2719,
+      "reason": "🤖 ai:producer Producer note: all three red checks are pre-existing MAIN red, not PR-caused — rainix no-skips static gate (vm.skip x5 in test/lib/deploy, fails rainix-sol/static + rs-static) and missing 0.1.13 soldeer deploy-constant pins (testAllPublishedSoldeerTagsHaveAFullConstantSuite; 687 other sol tests pass). Both are fixed by #2804 (green, ai:ready); this PR greens on a branch update once it lands. flag-blocked-on was refused by the guard (human decision present), so recording the classification here. Parked under human:reject — no rework note to execute.",
+      "repo": "rainlanguage/raindex",
+      "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
+    },
+    {
       "number": 475,
       "reason": "🤖 ai:producer Producer note: 3d merge-update DONE (as queued last run) — merged origin/main into this branch (db227f9f). Five files conflicted; resolution kept the V4-migration semantics and translated main's post-divergence additions into the V6 world: main's new initialize-overload/once-only construction tests ported (OZ5 InvalidInitialization replaces the v4 revert string), main's reentrancy helpers+tests retyped to EvaluableV4/bytes32 with the store helper matched to IInterpreterStoreV3.set so the guard path actually fires, bounded-key signed-context logic kept. The V5-era deployer-io guard tests (UnsupportedFlowInputs/InsufficientFlowOutputs) cover a code path V4 removes and are retired with an in-file note. Flow.pointers.sol regenerated. Local: forge build + full forge test green. PR should now show MERGEABLE.",
       "repo": "rainlanguage/flow",
@@ -412,6 +418,21 @@
     ],
     "ai:blocked-infra": [
       {
+        "number": 410,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
+      },
+      {
+        "number": 409,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
+      },
+      {
+        "number": 406,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
+      },
+      {
         "number": 400,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
@@ -445,6 +466,11 @@
         "number": 42,
         "repo": "cyclofinance/cyclo.sol",
         "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
+      },
+      {
+        "number": 294,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "feat: show re-up opportunity per receipt on unlock page"
       }
     ],
     "ai:blocked-on": [
@@ -682,21 +708,6 @@
         "title": "audit: deploy-version consistency — two distinct counters, deploy-keyed pins, no release-spanning"
       },
       {
-        "number": 410,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
-      },
-      {
-        "number": 409,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
-      },
-      {
-        "number": 406,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
-      },
-      {
         "number": 404,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
@@ -820,11 +831,6 @@
         "number": 130,
         "repo": "rainlanguage/rain.flare",
         "title": "test: assert authoringMetaV2 word names and descriptions"
-      },
-      {
-        "number": 294,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "feat: show re-up opportunity per receipt on unlock page"
       },
       {
         "number": 60,
