@@ -86,15 +86,16 @@ lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle
 (`un-vetted → vetting → awaiting re-vet`) re-runs the vetter whenever a PR's
 head moves, so a reworked PR is always re-judged against its current code. The
 **human reject is TRANSIENT**, not terminal: when a human applies `human:reject`
-+ a trusted "Rework note", the producer executes the rework, pushes a fix
-commit, and then calls **`pr-review-report reworked-reject <owner/repo> <n>`** as
-its final step. That subcommand REMOVES `human:reject` **and any stale `ai:*`
-verdict** (the code changed → re-vet from scratch), returning the PR to
-ready-to-vet so it re-enters the normal vet → queue → human loop. It is guarded:
-it clears `human:reject` **only** when the PR head commit provably **post-dates**
-the `human:reject` label event (the one sanctioned carve-out from "never remove a
-`human:*` label"); a head that does not post-date the reject is refused, so a
-still-standing human reject is never silently undone.
+
+- a trusted "Rework note", the producer executes the rework, pushes a fix
+  commit, and then calls **`pr-review-report reworked-reject <owner/repo> <n>`**
+  as its final step. That subcommand REMOVES `human:reject` **and any stale
+  `ai:*` verdict** (the code changed → re-vet from scratch), returning the PR to
+  ready-to-vet so it re-enters the normal vet → queue → human loop. It is
+  guarded: it clears `human:reject` **only** when the PR head commit provably
+  **post-dates** the `human:reject` label event (the one sanctioned carve-out
+  from "never remove a `human:*` label"); a head that does not post-date the
+  reject is refused, so a still-standing human reject is never silently undone.
 
 `human-queue --json` emits the **full** inventory — every modeled state's PRs,
 grouped into four lanes so the dashboard can show where PRs pile up:
@@ -106,8 +107,7 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   `ai:close-candidate`.
 - **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-infra`,
   `ai:blocked-on`.
-- **human-decisions** — `human:reject`, `human:design`,
-  `human:close-candidate`.
+- **human-decisions** — `human:reject`, `human:design`, `human:close-candidate`.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved
