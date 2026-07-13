@@ -116,8 +116,8 @@
     "ready": 20,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 165,
-    "unvetted": 6
+    "totalProducerPrs": 166,
+    "unvetted": 7
   },
   "lanes": {
     "human-decisions": {
@@ -722,8 +722,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 6,
+        "count": 7,
         "prs": [
+          {
+            "number": 50,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "worklist next_action: park human-decided PRs (+ harden deploy-note-vs-head)",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/50"
+          },
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
