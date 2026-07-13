@@ -102,7 +102,7 @@
     "blockedOn": 4,
     "closeCandidateIssues": 19,
     "design": 2,
-    "leaks": 45,
+    "leaks": 46,
     "ready": 20,
     "totalProducerPrs": 162
   },
@@ -205,7 +205,7 @@
     },
     {
       "number": 2793,
-      "reason": "🤖 ai:producer Producer note: rework executed — (1) set_select_token now reuses a complete same-network yaml token record instead of refetching token_info: same token selected for input+output slots = 1 multicall instead of 2 (test_set_select_token_same_address_fetches_once, mock hit-count pinned; cross-network/incomplete records never shortcut, re-selection reuses its own record). (2) generate_approval_calldatas reads decimals from the deposits map instead of a per-token decimals() RPC: 1 -> 0, only the allowance read remains (test_generate_approval_calldatas_reuses_deposit_token_decimals, 0-hit + exact-amount pinned). Branch merged current with main; raindex_common suite locally green (1161 passed); all 7 mutants (reintroduced duplicate fetches, dropped guards, reordered removal, corrupted decimals) killed. With the earlier read_dispair dedup this covers all three fetch sources named in https://github.com/rainlanguage/raindex/issues/2776. Remaining CI reds are the known raindex main-state failures.",
+      "reason": "🤖 ai:producer Producer note: post-rework CI triage. test-js-bindings was the one PR-caused red — the approval-calldata dedup left sequence-based decimals mocks stale in builder.test.ts, so the allowance reads consumed the 0x12 decimals responses (allowance became 18 wei, emitting an extra approval: 2 != 1). Fixed by 1bbbc20ba fix(ci): test-js-bindings drop stale decimals mocks after approval-calldata dedup [3b-attempt]. The remaining reds (rainix-sol/static, rainix-sol/test, rs-static) are red inherited from main (rainix no-skips vm.skip gate on 5 pre-existing test/lib/deploy files + missing 0.1.13 soldeer constant pins), not PR-caused; fixed by https://github.com/rainlanguage/raindex/pull/2804 (green, ai:ready); greens on branch update once it lands. flag-blocked-on refused (human decision present), so classification posted as comment.",
       "repo": "rainlanguage/raindex",
       "title": "perf: eliminate redundant read_dispair calls in try_into_call"
     },
@@ -328,6 +328,12 @@
       "reason": "🤖 ai:producer Producer note: reworked per rework note — conflicts resolved against main, LibFtsoV2LTS hunk dropped (superseded by merged #185, which closed #91). However, live state has moved past the rework note: the #86 coverage (`@return` docs on `buildOpcodeFunctionPointers`/`buildIntegrityFunctionPointers`) also landed on main via merged PR #193, which closed #86 on 2026-07-02. FlareFtsoExtern.sol was therefore also resolved to main's side rather than churning already-landed wording.  Evidence: `git diff origin/main...HEAD --stat` is EMPTY — the merged tree is content-identical to main, so no artifact regen was needed and test results are by construction identical to main's.  Consequence: this PR now has zero remaining unique diff. It is a CLOSE-CANDIDATE (both #86 and #91 are already closed by merged PRs #193 and #185), not a relink-to-#86 as the note anticipated. RELINK/CLOSE NEEDED (body edit / PR close is outside this routine): body currently says \"Closes #86 / Closes #91\" — both already closed; needs the human/assistant to close the PR (or edit the body if kept for any reason).",
       "repo": "rainlanguage/rain.flare",
       "title": "Add missing NatSpec to buildOpcode/Integrity pointers and ftsoV2LTSGetFeed"
+    },
+    {
+      "number": 112,
+      "reason": "🤖 ai:producer Producer note: merge-conflict resolution attempted (merging origin/main into amt/flreth-registry) and aborted — the PR is fully superseded on main. After resolving the sole conflict (test/src/lib/registry/LibFlareContractRegistry.t.sol, identical testGetFeeCalculator differing only in a local variable name), the merged tree's entire diff vs origin/main was two duplicate import lines; deduplicating them (required to compile) leaves an EMPTY diff. Main already carries this PR's tests (testGetFtsoV2LTS, testGetFeeCalculator, testRegistryNameLiterals) via sibling landings. Nothing remains for this branch to land — close-candidate for human review; not re-resolving. Not closing myself — human decision.",
+      "repo": "rainlanguage/rain.flare",
+      "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
     },
     {
       "number": 22,
