@@ -116,8 +116,8 @@
     "ready": 20,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 165,
-    "unvetted": 6
+    "totalProducerPrs": 167,
+    "unvetted": 8
   },
   "lanes": {
     "human-decisions": {
@@ -722,8 +722,20 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 6,
+        "count": 8,
         "prs": [
+          {
+            "number": 61,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "scan.yml: rebase-retry the health.json push (race-proof the scan)",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/61"
+          },
+          {
+            "number": 60,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Audit panel: never-audited repos show +N unaudited src LOC (closes #37)",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/60"
+          },
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
