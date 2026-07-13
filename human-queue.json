@@ -116,8 +116,8 @@
     "ready": 20,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 166,
-    "unvetted": 7
+    "totalProducerPrs": 165,
+    "unvetted": 6
   },
   "lanes": {
     "human-decisions": {
@@ -722,14 +722,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 7,
+        "count": 6,
         "prs": [
-          {
-            "number": 57,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Audit panel: red drift text when the diff since audit is too big (closes #56)",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/57"
-          },
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
