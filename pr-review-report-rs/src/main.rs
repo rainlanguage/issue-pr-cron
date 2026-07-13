@@ -3180,7 +3180,7 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
             "--limit",
             "1000",
             "--json",
-            "number,repository,title,body,closingIssuesReferences",
+            "number,repository,title,body",
         ]
         .iter()
         .map(|s| s.to_string()),
@@ -3200,15 +3200,10 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
         else {
             continue;
         };
-        // structured closingIssuesReferences (authoritative)
-        if let Some(refs) = p.get("closingIssuesReferences").and_then(|v| v.as_array()) {
-            for r in refs {
-                if let Some(n) = r.get("number").and_then(|n| n.as_u64()) {
-                    covered.insert((repo.to_string(), n));
-                }
-            }
-        }
-        // fallback: closing keywords in title+body (same repo only) — catches refs the index lags on
+        // Closing keywords in title+body (same repo). `gh search prs` CANNOT return
+        // `closingIssuesReferences` (that field is `gh pr view`-only — requesting it makes the
+        // whole search error out), so closing-keyword extraction IS the coverage signal — the same
+        // signal the producer's hand-rolled `jq` dedup used.
         let text = format!(
             "{} {}",
             p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
