@@ -205,7 +205,7 @@
     },
     {
       "number": 2793,
-      "reason": "🤖 ai:producer Producer note: post-rework CI triage. test-js-bindings was the one PR-caused red — the approval-calldata dedup left sequence-based decimals mocks stale in builder.test.ts, so the allowance reads consumed the 0x12 decimals responses (allowance became 18 wei, emitting an extra approval: 2 != 1). Fixed by 1bbbc20ba fix(ci): test-js-bindings drop stale decimals mocks after approval-calldata dedup [3b-attempt]. The remaining reds (rainix-sol/static, rainix-sol/test, rs-static) are red inherited from main (rainix no-skips vm.skip gate on 5 pre-existing test/lib/deploy files + missing 0.1.13 soldeer constant pins), not PR-caused; fixed by https://github.com/rainlanguage/raindex/pull/2804 (green, ai:ready); greens on branch update once it lands. flag-blocked-on refused (human decision present), so classification posted as comment.",
+      "reason": "🤖 ai:producer Producer note (state change — correction to the prior note): the [3b-attempt] fix 1bbbc20ba did NOT green test-js-bindings — the check re-ran at that exact head (run 29226076755, 2026-07-13) and still fails at test/js_api/builder.test.ts:1451 with the same signature (expected 1 approval call, received 2). One fix attempt is spent, so back-off forbids a second push. flag-blocked-infra was refused (human decision present), so this stays parked under human:reject for human re-adjudication. The other three reds remain the main-state trio fixed by #2804.",
       "repo": "rainlanguage/raindex",
       "title": "perf: eliminate redundant read_dispair calls in try_into_call"
     },
