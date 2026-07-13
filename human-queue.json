@@ -116,8 +116,8 @@
     "ready": 20,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 166,
-    "unvetted": 7
+    "totalProducerPrs": 167,
+    "unvetted": 8
   },
   "lanes": {
     "human-decisions": {
@@ -722,13 +722,19 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 7,
+        "count": 8,
         "prs": [
           {
-            "number": 50,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "worklist next_action: park human-decided PRs (+ harden deploy-note-vs-head)",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/50"
+            "number": 49,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Scheduled scan workflow: auto-refresh site/health.json (no scan in PRs)",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/49"
+          },
+          {
+            "number": 46,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Protofire scanner: recognize a commit SHA in the audit PDF filename as the anchor",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/46"
           },
           {
             "number": 426,
