@@ -116,8 +116,8 @@
     "ready": 20,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 167,
-    "unvetted": 8
+    "totalProducerPrs": 166,
+    "unvetted": 7
   },
   "lanes": {
     "human-decisions": {
@@ -722,19 +722,13 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 8,
+        "count": 7,
         "prs": [
           {
-            "number": 51,
+            "number": 57,
             "repo": "rainlanguage/rain-org-health",
-            "title": "Protofire: commit-anchor classification + panel display (supersedes #46)",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/51"
-          },
-          {
-            "number": 50,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Protofire panel: link the drift figures to the GitHub compare diff (audited-ref...HEAD)",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/50"
+            "title": "Audit panel: red drift text when the diff since audit is too big (closes #56)",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/57"
           },
           {
             "number": 426,
