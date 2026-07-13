@@ -1822,8 +1822,10 @@ fn nix_gc_args(dry_run: bool) -> Vec<String> {
     a
 }
 
-/// Garbage-collect the nix store via `nix-collect-garbage -d` (streams nix's own output). The
-/// `result/*` symlinks stay as GC roots, so built binaries survive. Returns nonzero on failure.
+/// Garbage-collect the nix store via `nix-collect-garbage -d` (streams nix's own output). Only
+/// invoked under disk pressure (see `gc_mode` / `should_nix_gc`): a `-d` sweep evicts the warm
+/// rainix/chromium build cache, so we pay that cost only when the disk actually needs the space.
+/// The `result/*` symlinks stay as GC roots, so built binaries survive. Returns nonzero on failure.
 fn nix_gc(dry_run: bool) -> i32 {
     println!(
         "== nix store gc ({}) ==",
@@ -1849,11 +1851,45 @@ fn nix_gc(dry_run: bool) -> i32 {
     }
 }
 
-/// `--gc <work-dir> [--dry-run] [--max-age-days N] [--no-clones] [--no-nix]`: unified reclaim — the
-/// per-PR/issue work clones (gc_clones_mode) AND the nix store (nix_gc). Clones run first (they free
-/// the big per-clone dirs, streaming) then the store. Either half can be skipped. Nonzero if either
-/// half errors.
-fn gc_mode(work_dir: &str, max_age_days: u64, dry_run: bool, do_clones: bool, do_nix: bool) -> i32 {
+/// Disk-usage percentage (the `Use%`/`Capacity` column) of the filesystem holding `path`, via
+/// `df -P <path>`. `None` on any failure (spawn error, non-zero exit, unparseable output). Parsing
+/// keys off the single token ending in `%`, so it survives spaces in the device/mount name.
+fn disk_usage_pct(path: &str) -> Option<u8> {
+    let out = Command::new("df").arg("-P").arg(path).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Skip the header row; the data row carries the `NN%` capacity token.
+    let data = text.lines().nth(1)?;
+    let pct = data.split_whitespace().find(|t| t.ends_with('%'))?;
+    pct.trim_end_matches('%').parse().ok()
+}
+
+/// Whether the nix store should be garbage-collected. Yes when disk usage is at or above the
+/// threshold; and yes when usage can't be determined (`None`) — under uncertainty, guarding against
+/// a full disk beats keeping the build cache warm.
+fn should_nix_gc(usage: Option<u8>, threshold: u8) -> bool {
+    match usage {
+        Some(u) => u >= threshold,
+        None => true,
+    }
+}
+
+/// `--gc <work-dir> [--dry-run] [--max-age-days N] [--no-clones] [--no-nix] [--nix-threshold PCT]`:
+/// unified reclaim — the per-PR/issue work clones (gc_clones_mode) AND, only under disk pressure,
+/// the nix store (nix_gc). Clones run first (they free the big per-clone dirs, streaming) and always
+/// run when enabled. The store is collected only when disk usage of the work-dir (or `/nix/store`)
+/// is at/above `nix_threshold` percent, or usage can't be determined; otherwise the warm build cache
+/// is kept. Either half can be skipped. Nonzero if either half errors.
+fn gc_mode(
+    work_dir: &str,
+    max_age_days: u64,
+    dry_run: bool,
+    do_clones: bool,
+    do_nix: bool,
+    nix_threshold: u8,
+) -> i32 {
     let mut rc = 0;
     if do_clones {
         println!("== work clones ==");
@@ -1863,9 +1899,23 @@ fn gc_mode(work_dir: &str, max_age_days: u64, dry_run: bool, do_clones: bool, do
         }
     }
     if do_nix {
-        let n = nix_gc(dry_run);
-        if n != 0 {
-            rc = n;
+        let path = if work_dir.is_empty() {
+            "/nix/store"
+        } else {
+            work_dir
+        };
+        let usage = disk_usage_pct(path);
+        if should_nix_gc(usage, nix_threshold) {
+            let n = nix_gc(dry_run);
+            if n != 0 {
+                rc = n;
+            }
+        } else if let Some(pct) = usage {
+            // Below threshold with a known figure — skip the store sweep and keep the cache warm.
+            // (usage is Some here: None routes to should_nix_gc == true above.)
+            println!(
+                "nix store gc SKIPPED — disk {pct}% < {nix_threshold}% threshold (cache kept warm)"
+            );
         }
     }
     rc
@@ -2475,7 +2525,8 @@ enum Cmd {
         #[arg(long, default_value_t = 30)]
         max_age_days: u64,
     },
-    /// Unified reclaim: the work clones (gc-clones) AND the nix store (nix-collect-garbage -d).
+    /// Unified reclaim: the work clones (gc-clones), always; the nix store (nix-collect-garbage -d)
+    /// only when the disk is under pressure (usage >= --nix-threshold), so the build cache stays warm.
     Gc {
         /// Required unless --no-clones.
         work_dir: Option<String>,
@@ -2487,6 +2538,9 @@ enum Cmd {
         no_clones: bool,
         #[arg(long)]
         no_nix: bool,
+        /// Only run the nix store gc when disk usage is at/above this percent (default 85).
+        #[arg(long, default_value_t = 85)]
+        nix_threshold: u8,
     },
     /// Emit one enriched per-run metrics JSON line distilled from a stream-json trace.
     RunMetrics { trace: String },
@@ -3253,6 +3307,7 @@ fn main() {
             max_age_days,
             no_clones,
             no_nix,
+            nix_threshold,
         } => {
             let do_clones = !no_clones;
             let do_nix = !no_nix;
@@ -3261,7 +3316,7 @@ fn main() {
                 eprintln!("error: gc needs <work-dir> unless --no-clones is given");
                 std::process::exit(2);
             }
-            gc_mode(&wd, max_age_days, dry_run, do_clones, do_nix)
+            gc_mode(&wd, max_age_days, dry_run, do_clones, do_nix, nix_threshold)
         }
         Cmd::RunMetrics { trace } => run_metrics_mode(&trace),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
@@ -4277,7 +4332,8 @@ mod record_verdict_tests {
 #[cfg(test)]
 mod gc_tests {
     use super::{
-        gc_decision, nix_gc_args, parse_pr_state, parse_repo_slug, CloneState, GcAction, PrState,
+        gc_decision, nix_gc_args, parse_pr_state, parse_repo_slug, should_nix_gc, CloneState,
+        GcAction, PrState,
     };
 
     fn st(clean: bool, unpushed: Option<u32>, pr: Option<PrState>, age_days: u64) -> CloneState {
@@ -4293,6 +4349,25 @@ mod gc_tests {
     fn nix_gc_args_adds_dry_run_only_when_previewing() {
         assert_eq!(nix_gc_args(false), vec!["-d"]);
         assert_eq!(nix_gc_args(true), vec!["-d", "--dry-run"]);
+    }
+
+    // The nix store is collected only under disk pressure: at/above the threshold, GC. Strictly
+    // below, keep the cache warm. When usage is unknown (None), GC for safety — a possibly-full
+    // disk is the worse outcome than a cold cache.
+    #[test]
+    fn should_nix_gc_gates_on_threshold_and_fails_safe() {
+        // Below threshold → skip (keep cache warm).
+        assert!(!should_nix_gc(Some(64), 85));
+        assert!(!should_nix_gc(Some(84), 85));
+        // At the threshold → collect (boundary is inclusive).
+        assert!(should_nix_gc(Some(85), 85));
+        // Above threshold → collect.
+        assert!(should_nix_gc(Some(90), 85));
+        assert!(should_nix_gc(Some(100), 85));
+        // Unknown usage → collect for safety.
+        assert!(should_nix_gc(None, 85));
+        // A 0 threshold always collects; even at 0% usage 0 >= 0 holds.
+        assert!(should_nix_gc(Some(0), 0));
     }
 
     #[test]
@@ -5029,6 +5104,7 @@ mod cli_tests {
                 max_age_days: 30,
                 no_clones: false,
                 no_nix: false,
+                nix_threshold: 85,
             }
         );
         // --no-clones with NO work-dir must still parse (main then allows it); this is the parse-layer
@@ -5041,6 +5117,7 @@ mod cli_tests {
                 max_age_days: 30,
                 no_clones: true,
                 no_nix: true,
+                nix_threshold: 85,
             }
         );
         assert_eq!(
@@ -5059,6 +5136,19 @@ mod cli_tests {
                 max_age_days: 5,
                 no_clones: false,
                 no_nix: true,
+                nix_threshold: 85,
+            }
+        );
+        // --nix-threshold overrides the 85 default.
+        assert_eq!(
+            parse(&["prr", "gc", "/w", "--nix-threshold", "50"]),
+            Cmd::Gc {
+                work_dir: Some("/w".to_string()),
+                dry_run: false,
+                max_age_days: 30,
+                no_clones: false,
+                no_nix: false,
+                nix_threshold: 50,
             }
         );
     }
