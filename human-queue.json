@@ -11,6 +11,46 @@
       "title": "[AUDIT] [MEDIUM] ST0xPriceOracle.updatePrice admits future-dated timestamps; price() then bricks via arithmetic underflow"
     },
     {
+      "number": 531,
+      "repo": "rainlanguage/raindex",
+      "title": "can't generate rainlang if there are elided bindings"
+    },
+    {
+      "number": 528,
+      "repo": "rainlanguage/raindex",
+      "title": "cmd + s should save order"
+    },
+    {
+      "number": 527,
+      "repo": "rainlanguage/raindex",
+      "title": "link to relevant observable plot docs near the yaml while i'm trying to write charts"
+    },
+    {
+      "number": 525,
+      "repo": "rainlanguage/raindex",
+      "title": "pasting an order into the editor when an order was already charted etc. doesn't clear what was previously done"
+    },
+    {
+      "number": 523,
+      "repo": "rainlanguage/raindex",
+      "title": "nothing visual happens in the app when an order is successfully deployed"
+    },
+    {
+      "number": 522,
+      "repo": "rainlanguage/raindex",
+      "title": "undefined deployer address"
+    },
+    {
+      "number": 519,
+      "repo": "rainlanguage/raindex",
+      "title": "add order screen should be prefilled to a minimal skeleton to an order"
+    },
+    {
+      "number": 512,
+      "repo": "rainlanguage/raindex",
+      "title": "orderbooks should fallback to the network they are named for"
+    },
+    {
       "number": 499,
       "repo": "rainlanguage/raindex",
       "title": "Refactor Config & ConfigSource types for consistent key ordering"
@@ -60,9 +100,9 @@
     "blockedDeploy": 7,
     "blockedInfra": 7,
     "blockedOn": 4,
-    "closeCandidateIssues": 11,
+    "closeCandidateIssues": 19,
     "design": 2,
-    "leaks": 43,
+    "leaks": 44,
     "ready": 21,
     "totalProducerPrs": 162
   },
@@ -105,7 +145,7 @@
     },
     {
       "number": 407,
-      "reason": "🤖 ai:producer  Producer note: reworked per rework note — added the two pinning tests (#360 rerender, #358 malformed-balance fallback), restored the explanatory guard/calculation comments the original diff deleted, and merged current `main` into the branch (clean merge; this also brings the branch past the #394-adjacent changes on `main`).  **What changed** (commit 8b9e549)  - `src/lib/components/ReceiptsTable.test.ts`:   - `re-renders rows when the receipts prop is updated (#360)` — mounts ReceiptsTable, updates the `receipts` prop via `rerender`, asserts row values and row count update.   - `renders the \"0.00000\" fallback for malformed balances instead of throwing (#358)` — rows whose `balance` arrives as `undefined` / `\"\"` render the `0.00000` fallback in the held/total cells instead of throwing. - `src/lib/components/ReceiptsTable.svelte`: restored the `// Guard against undefined values`, `// Calculate totals: (balance * 10^18) / tokenId ...`, and `// Calculate per-receipt: 10^36 / tokenId ...` comments; no behavior change.  **QA evidence**  Mutation validation 1 — reverted `$: mappedReceipts` to `const mappedReceipts` (the #360 bug): the new rerender test fails, rest pass:  ``` FAIL  src/lib/components/ReceiptsTable.test.ts > ReceiptsTable Component > re-renders rows when the receipts prop is updated (#360) Error: expect(element).toHaveTextContent() Expected element to have text content:   2.50000 Received:   1.00000  ❯ src/lib/components/ReceiptsTable.test.ts:90:49  Tests  1 failed | 3 passed (4) ```  Mutation validation 2 — reverted the held-cell template to direct `formatUnits(receipt.balance, token.decimals)` (the #358 bug): the new fallback test fails with the exact production failure mode, rest pass:  ``` FAIL  src/lib/components/ReceiptsTable.test.ts > ReceiptsTable Component > renders the \"0.00000\" fallback for malformed balances instead of throwing (#358) TypeError: Cannot read properties of undefined (reading 'toString')  ❯ Module.formatUnits node_modules/viem/utils/unit/formatUnits.ts:17:23  ❯ Array.create_default_slot_8 src/lib/components/ReceiptsTable.svelte:85:21  Tests  1 failed | 3 passed (4) ```  Both mutants restored; suite results on the fixed code:  - Scoped: `npx vitest run src/lib/components/ReceiptsTable.test.ts` — 4/4 pass. - Full: `npx vitest run` — 53 files, 285/285 pass. ",
+      "reason": "🤖 ai:producer  Producer note: `Deploy to Cloudflare Pages` on 8b9e549 failed during `npm install` with `npm error code ECONNRESET` (registry network reset on the runner) before any build step ran — while `build_site` and `test` on the same head passed their own installs and builds. Classified transient network flake, not a code failure. Pushed the one authorized empty retrigger be52dab (`fix(ci): Deploy to Cloudflare Pages empty-commit retrigger (flaky) [3b-attempt]`); per back-off policy this check gets no further pushes from the producer — if it reds again on the retrigger it hands off as infra.",
       "repo": "cyclofinance/cyclo.site",
       "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
     },
@@ -294,6 +334,12 @@
       "reason": "🤖 ai:producer Producer note: executed the 2026-07-04 rework note — merged the #25 parser fix into this branch per the land-together instruction (fast-forward to 0e5cfe9; #25 was based on this branch's head, so its diff is fully absorbed and the two branches now point at the same commit), adapted the \"1.\" pin to expect revert on `ParseDecimalInvalidString` (`0x3e8e62d6`), kept both fractional-overflow tests and the \"1x\"/\"10x\" decimal-point-gate tests as-is. Test evidence: full suite green on the merged head (83 passed / 0 failed), `forge fmt --check` and `forge lint` clean; mutation validation — deleting the empty-fraction guard from `decimalStringTofixedPoint` (i.e. restoring the pre-fix parser) fails exactly the 3 discriminating tests (`testDecimalStringToFixedPointEmptyFraction`, `testDecimalStringToFixedPointEmptyFractionFuzz`, `testDecimalStringToFixedPointInvalidAfterInteger`) with `0x00000000… != 0x3e8e62d6…`, guard restored → 83/83 green. PR body updated: Closes #24, QA evidence block appended.",
       "repo": "rainlanguage/rain.math.fixedpoint",
       "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
+    },
+    {
+      "number": 354,
+      "reason": "🤖 ai:producer  Producer note: correction to the previous note's last line — the `flag-blocked-on` transition was refused by tooling (\"human decision present on rainlanguage/rain.webapp#354; not overriding\"), so no `ai:blocked-on` label was applied and the PR stays in `human:reject` for human re-adjudication. The dependency itself stands as stated: the screenshots check needs rainlanguage/rainix#263 to land on rainix main first.",
+      "repo": "rainlanguage/rain.webapp",
+      "title": "Boolean GUI presets emit rainlang 1/0 + Storybook preset-buttons story (rainix#262 pilot)"
     },
     {
       "number": 2721,
