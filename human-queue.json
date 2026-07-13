@@ -103,7 +103,7 @@
     "closeCandidateIssues": 19,
     "design": 2,
     "leaks": 45,
-    "ready": 21,
+    "ready": 20,
     "totalProducerPrs": 162
   },
   "leaks": [
@@ -669,11 +669,6 @@
         "number": 444,
         "repo": "rainlanguage/rain.solver",
         "title": "test: mutation-harden gas/index unit coverage"
-      },
-      {
-        "number": 3,
-        "repo": "rainlanguage/rain.subgraph.docker",
-        "title": "2023 12 23 anvil"
       }
     ],
     "ai:reject": [
@@ -841,6 +836,11 @@
         "number": 20,
         "repo": "rainlanguage/rain.strategies",
         "title": "2025 03 05 ds"
+      },
+      {
+        "number": 3,
+        "repo": "rainlanguage/rain.subgraph.docker",
+        "title": "2023 12 23 anvil"
       }
     ],
     "ai:relink": [
