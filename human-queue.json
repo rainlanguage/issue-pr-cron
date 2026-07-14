@@ -113,11 +113,11 @@
     "humanDesign": 6,
     "humanReject": 65,
     "leaks": 46,
-    "ready": 20,
+    "ready": 18,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 166,
-    "unvetted": 7
+    "totalProducerPrs": 163,
+    "unvetted": 6
   },
   "lanes": {
     "human-decisions": {
@@ -722,14 +722,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 7,
+        "count": 6,
         "prs": [
-          {
-            "number": 60,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Audit panel: never-audited repos show +N unaudited src LOC (closes #37)",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/60"
-          },
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
@@ -865,20 +859,8 @@
         ]
       },
       "ai:ready": {
-        "count": 17,
+        "count": 15,
         "prs": [
-          {
-            "number": 423,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): gate DsfStrategy wallet chain switch behind user action",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/423"
-          },
-          {
-            "number": 422,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): guard NetworkSelector against concurrent network switches",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/422"
-          },
           {
             "number": 2804,
             "repo": "rainlanguage/raindex",
@@ -1657,16 +1639,6 @@
       }
     ],
     "ai:ready": [
-      {
-        "number": 423,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix(component): gate DsfStrategy wallet chain switch behind user action"
-      },
-      {
-        "number": 422,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix(component): guard NetworkSelector against concurrent network switches"
-      },
       {
         "number": 2804,
         "repo": "rainlanguage/raindex",
