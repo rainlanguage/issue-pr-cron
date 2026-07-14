@@ -1,16 +1,6 @@
 {
   "closeCandidateIssues": [
     {
-      "number": 40,
-      "repo": "rainlanguage/issue-pr-cron",
-      "title": "pr-review-report: constrained Zoltu-deploy subcommand so the producer can deploy the sanctioned way only"
-    },
-    {
-      "number": 3,
-      "repo": "S01-Issuer/st0x.atomic-bridge",
-      "title": "[AUDIT] [MEDIUM] ST0xPriceOracle.updatePrice admits future-dated timestamps; price() then bricks via arithmetic underflow"
-    },
-    {
       "number": 546,
       "repo": "rainlanguage/raindex",
       "title": "Add link to telegram on sidebar"
@@ -106,17 +96,17 @@
     "blockedDeploy": 7,
     "blockedInfra": 11,
     "blockedOn": 4,
-    "closeCandidateIssues": 20,
-    "closeCandidatePrs": 12,
+    "closeCandidateIssues": 18,
+    "closeCandidatePrs": 10,
     "design": 2,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 65,
     "leaks": 46,
-    "ready": 18,
+    "ready": 17,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 163,
+    "totalProducerPrs": 160,
     "unvetted": 6
   },
   "lanes": {
@@ -765,20 +755,8 @@
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 12,
+        "count": 10,
         "prs": [
-          {
-            "number": 236,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "refactor(run): replace raw assembly input reads with Solidity indexing",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/236"
-          },
-          {
-            "number": 180,
-            "repo": "rainlanguage/rain.flare",
-            "title": "test(run): assert NegativeFixedDecimalConversion and LossyConversionFromFloat on bad timeout Float",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/180"
-          },
           {
             "number": 176,
             "repo": "rainlanguage/rain.flare",
@@ -859,19 +837,13 @@
         ]
       },
       "ai:ready": {
-        "count": 15,
+        "count": 14,
         "prs": [
           {
             "number": 2804,
             "repo": "rainlanguage/raindex",
             "title": "fix(ci): green main — remove banned vm.skip usages, pin 0.1.13 deploy constants",
             "url": "https://github.com/rainlanguage/raindex/pull/2804"
-          },
-          {
-            "number": 66,
-            "repo": "rainlanguage/raindex.interface",
-            "title": "chore(release): bump [package].version to 0.1.4 for next-version Soldeer lifecycle",
-            "url": "https://github.com/rainlanguage/raindex.interface/pull/66"
           },
           {
             "number": 113,
@@ -1566,16 +1538,6 @@
     ],
     "ai:close-candidate": [
       {
-        "number": 236,
-        "repo": "rainlanguage/rain.erc4626.words",
-        "title": "refactor(run): replace raw assembly input reads with Solidity indexing"
-      },
-      {
-        "number": 180,
-        "repo": "rainlanguage/rain.flare",
-        "title": "test(run): assert NegativeFixedDecimalConversion and LossyConversionFromFloat on bad timeout Float"
-      },
-      {
         "number": 176,
         "repo": "rainlanguage/rain.flare",
         "title": "test(registry): assert getFtsoV2LTS and getFeeCalculator return non-zero"
@@ -1643,11 +1605,6 @@
         "number": 2804,
         "repo": "rainlanguage/raindex",
         "title": "fix(ci): green main — remove banned vm.skip usages, pin 0.1.13 deploy constants"
-      },
-      {
-        "number": 66,
-        "repo": "rainlanguage/raindex.interface",
-        "title": "chore(release): bump [package].version to 0.1.4 for next-version Soldeer lifecycle"
       },
       {
         "number": 113,
