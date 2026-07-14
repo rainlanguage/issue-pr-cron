@@ -93,7 +93,7 @@
   ],
   "counts": {
     "awaitingReVet": 0,
-    "blockedDeploy": 7,
+    "blockedDeploy": 6,
     "blockedInfra": 11,
     "blockedOn": 4,
     "closeCandidateIssues": 18,
@@ -101,12 +101,12 @@
     "design": 2,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
-    "humanReject": 63,
-    "leaks": 45,
-    "ready": 14,
+    "humanReject": 66,
+    "leaks": 47,
+    "ready": 4,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 150,
+    "totalProducerPrs": 142,
     "unvetted": 7
   },
   "lanes": {
@@ -153,8 +153,14 @@
         ]
       },
       "human:reject": {
-        "count": 63,
+        "count": 66,
         "prs": [
+          {
+            "number": 28,
+            "repo": "rainlanguage/rain.pyth",
+            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
+          },
           {
             "number": 199,
             "repo": "rainlanguage/rain.flare",
@@ -172,6 +178,12 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/421"
+          },
+          {
+            "number": 254,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254"
           },
           {
             "number": 418,
@@ -426,6 +438,12 @@
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/162"
           },
           {
+            "number": 244,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/244"
+          },
+          {
             "number": 2777,
             "repo": "rainlanguage/raindex",
             "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts",
@@ -551,7 +569,7 @@
     },
     "producer-blocked": {
       "ai:blocked-deploy": {
-        "count": 7,
+        "count": 6,
         "prs": [
           {
             "number": 252,
@@ -564,12 +582,6 @@
             "repo": "rainlanguage/rain.math.float",
             "title": "Guard displayExponent overflow in _toScientific (#185)",
             "url": "https://github.com/rainlanguage/rain.math.float/pull/245"
-          },
-          {
-            "number": 244,
-            "repo": "rainlanguage/rain.math.float",
-            "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/244"
           },
           {
             "number": 537,
@@ -795,73 +807,13 @@
         ]
       },
       "ai:ready": {
-        "count": 11,
+        "count": 1,
         "prs": [
-          {
-            "number": 485,
-            "repo": "rainlanguage/flow",
-            "title": "ci: adopt rainix nix-cachix-setup composite in manual-sol-artifacts, drop deprecated DeterminateSystems nix installer",
-            "url": "https://github.com/rainlanguage/flow/pull/485"
-          },
-          {
-            "number": 357,
-            "repo": "rainlanguage/rain.webapp",
-            "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer",
-            "url": "https://github.com/rainlanguage/rain.webapp/pull/357"
-          },
-          {
-            "number": 31,
-            "repo": "rainlanguage/sqlite-web",
-            "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer",
-            "url": "https://github.com/rainlanguage/sqlite-web/pull/31"
-          },
-          {
-            "number": 13,
-            "repo": "rainlanguage/rain.subgraph.docker",
-            "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer",
-            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/13"
-          },
-          {
-            "number": 460,
-            "repo": "rainlanguage/rain.solver",
-            "title": "ci: adopt rainix nix-cachix-setup composite in report-downtime, drop deprecated DeterminateSystems nix installer",
-            "url": "https://github.com/rainlanguage/rain.solver/pull/460"
-          },
-          {
-            "number": 13,
-            "repo": "rainlanguage/rain.subgraph.cli",
-            "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer",
-            "url": "https://github.com/rainlanguage/rain.subgraph.cli/pull/13"
-          },
-          {
-            "number": 28,
-            "repo": "rainlanguage/rain.pyth",
-            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
-          },
           {
             "number": 246,
             "repo": "S01-Issuer/st0x.deploy",
             "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant",
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/246"
-          },
-          {
-            "number": 254,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254"
-          },
-          {
-            "number": 162,
-            "repo": "rainlanguage/rain.flare",
-            "title": "fix: add BuildPointers.sol to build prelude so pointers drift fails copy-artifacts",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/162"
-          },
-          {
-            "number": 444,
-            "repo": "rainlanguage/rain.solver",
-            "title": "test: mutation-harden gas/index unit coverage",
-            "url": "https://github.com/rainlanguage/rain.solver/pull/444"
           }
         ]
       },
@@ -1083,6 +1035,12 @@
   },
   "leaks": [
     {
+      "number": 254,
+      "reason": "🤖 ai:producer Producer note (deploy confirmed — GREEN-READY): dispatched the sanctioned Zoltu deploy from this branch (manual-sol-artifacts.yaml, network=base) at head 3280c0fafe969f36b0311926ee6d190f088176e0 — run https://github.com/rainlanguage/rain.erc4626.words/actions/runs/29161005997 succeeded. The rainlang-0.1.8 bytecode is now deployed at its deterministic CREATE2 address on base (idempotent — identical bytecode redeploys as a no-op). The 'REQUIRES redeploy at land' flag is now satisfied; this PR is GREEN-READY for the human to merge.",
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
+    },
+    {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
       "repo": "cyclofinance/cyclo.site",
@@ -1251,6 +1209,12 @@
       "title": "fix: mask signer row operand to low byte"
     },
     {
+      "number": 244,
+      "reason": "🤖 ai:producer Blocked-deploy: Blocked on the same deploy-infra failure as #237 (see its ai:blocked-deploy note): red rainix-sol test is testProdDeployment* pins only; this bytecode-changing PR needs its own pre-merge suite=decimal-float deploy from this branch, and the deployer EOA 0x6698…9a88 is unfunded on flare (0 FLR) / underfunded on polygon (0.26 vs ~5 POL), so all-network deploys fail at broadcast (evidence: float run 29194586792, rainlang runs 29194199681/28649455061/28648086583). Fund the EOA, then dispatch.",
+      "repo": "rainlanguage/rain.math.float",
+      "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
+    },
+    {
       "number": 2777,
       "reason": "🤖 ai:producer Producer note: rework is already executed and evidenced at head d39af81; the three red checks are pre-existing MAIN red, not PR-caused — rainix no-skips static gate (vm.skip x5 in test/lib/deploy, fails rainix-sol/static + rs-static) and missing 0.1.13 soldeer deploy-constant pins (testAllPublishedSoldeerTagsHaveAFullConstantSuite; 687 other sol tests pass). Both are fixed by #2804 (green, ai:ready); this PR greens on a branch update once it lands. flag-blocked-on was refused by the guard (human decision present), so recording the classification here.",
       "repo": "rainlanguage/raindex",
@@ -1364,11 +1328,6 @@
         "number": 245,
         "repo": "rainlanguage/rain.math.float",
         "title": "Guard displayExponent overflow in _toScientific (#185)"
-      },
-      {
-        "number": 244,
-        "repo": "rainlanguage/rain.math.float",
-        "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
       },
       {
         "number": 537,
@@ -1506,41 +1465,6 @@
     ],
     "ai:ready": [
       {
-        "number": 485,
-        "repo": "rainlanguage/flow",
-        "title": "ci: adopt rainix nix-cachix-setup composite in manual-sol-artifacts, drop deprecated DeterminateSystems nix installer"
-      },
-      {
-        "number": 357,
-        "repo": "rainlanguage/rain.webapp",
-        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
-      },
-      {
-        "number": 31,
-        "repo": "rainlanguage/sqlite-web",
-        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
-      },
-      {
-        "number": 13,
-        "repo": "rainlanguage/rain.subgraph.docker",
-        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
-      },
-      {
-        "number": 460,
-        "repo": "rainlanguage/rain.solver",
-        "title": "ci: adopt rainix nix-cachix-setup composite in report-downtime, drop deprecated DeterminateSystems nix installer"
-      },
-      {
-        "number": 13,
-        "repo": "rainlanguage/rain.subgraph.cli",
-        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
-      },
-      {
-        "number": 28,
-        "repo": "rainlanguage/rain.pyth",
-        "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
-      },
-      {
         "number": 25,
         "repo": "rainlanguage/rain-org-health",
         "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
@@ -1551,11 +1475,6 @@
         "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant"
       },
       {
-        "number": 254,
-        "repo": "rainlanguage/rain.erc4626.words",
-        "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
-      },
-      {
         "number": 19,
         "repo": "rainlanguage/rain-org-health",
         "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
@@ -1564,16 +1483,6 @@
         "number": 143,
         "repo": "rainlanguage/dotrain",
         "title": "fix(parser): comment before next binding bleeds into previous content_position"
-      },
-      {
-        "number": 162,
-        "repo": "rainlanguage/rain.flare",
-        "title": "fix: add BuildPointers.sol to build prelude so pointers drift fails copy-artifacts"
-      },
-      {
-        "number": 444,
-        "repo": "rainlanguage/rain.solver",
-        "title": "test: mutation-harden gas/index unit coverage"
       }
     ],
     "ai:reject": [
