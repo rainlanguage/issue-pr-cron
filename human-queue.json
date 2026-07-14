@@ -106,8 +106,8 @@
     "ready": 4,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 142,
-    "unvetted": 7
+    "totalProducerPrs": 145,
+    "unvetted": 10
   },
   "lanes": {
     "human-decisions": {
@@ -712,13 +712,31 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 7,
+        "count": 10,
         "prs": [
           {
-            "number": 270,
-            "repo": "rainlanguage/rainix",
-            "title": "fix(prettier-bundle): bump svelte to 5 so prettier can format Svelte 5 syntax",
-            "url": "https://github.com/rainlanguage/rainix/pull/270"
+            "number": 25,
+            "repo": "rainlanguage/rain.verify",
+            "title": "chore(audit): remove reconciled legacy audit-run MD trees (2 runs)",
+            "url": "https://github.com/rainlanguage/rain.verify/pull/25"
+          },
+          {
+            "number": 250,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "chore(audit): remove reconciled legacy audit-run MD trees (2 runs)",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/250"
+          },
+          {
+            "number": 543,
+            "repo": "rainlanguage/rainlang",
+            "title": "chore(audit): file the Payant report under audit/payant/",
+            "url": "https://github.com/rainlanguage/rainlang/pull/543"
+          },
+          {
+            "number": 14,
+            "repo": "rainlanguage/rain.lib.typecast",
+            "title": "chore(audit): move Protofire PDF into audit/protofire/ with commit anchor",
+            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/14"
           },
           {
             "number": 426,
