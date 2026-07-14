@@ -103,11 +103,11 @@
     "humanDesign": 6,
     "humanReject": 65,
     "leaks": 46,
-    "ready": 16,
+    "ready": 15,
     "reject": 33,
     "relink": 1,
     "totalProducerPrs": 157,
-    "unvetted": 6
+    "unvetted": 7
   },
   "lanes": {
     "human-decisions": {
@@ -712,8 +712,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 6,
+        "count": 7,
         "prs": [
+          {
+            "number": 2808,
+            "repo": "rainlanguage/raindex",
+            "title": "fix(deploy): snapshot-derived tagged constants + drop skip-test duplicates",
+            "url": "https://github.com/rainlanguage/raindex/pull/2808"
+          },
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
@@ -825,14 +831,8 @@
         ]
       },
       "ai:ready": {
-        "count": 13,
+        "count": 12,
         "prs": [
-          {
-            "number": 2804,
-            "repo": "rainlanguage/raindex",
-            "title": "fix(ci): green main — remove banned vm.skip usages, pin 0.1.13 deploy constants",
-            "url": "https://github.com/rainlanguage/raindex/pull/2804"
-          },
           {
             "number": 13,
             "repo": "rainlanguage/rain.local-db.remote",
@@ -1573,11 +1573,6 @@
       }
     ],
     "ai:ready": [
-      {
-        "number": 2804,
-        "repo": "rainlanguage/raindex",
-        "title": "fix(ci): green main — remove banned vm.skip usages, pin 0.1.13 deploy constants"
-      },
       {
         "number": 13,
         "repo": "rainlanguage/rain.local-db.remote",
