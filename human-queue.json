@@ -97,17 +97,17 @@
     "blockedInfra": 11,
     "blockedOn": 4,
     "closeCandidateIssues": 18,
-    "closeCandidatePrs": 8,
+    "closeCandidatePrs": 6,
     "design": 2,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
-    "humanReject": 65,
+    "humanReject": 64,
     "leaks": 46,
     "ready": 15,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 157,
-    "unvetted": 7
+    "totalProducerPrs": 153,
+    "unvetted": 6
   },
   "lanes": {
     "human-decisions": {
@@ -153,7 +153,7 @@
         ]
       },
       "human:reject": {
-        "count": 65,
+        "count": 64,
         "prs": [
           {
             "number": 199,
@@ -406,12 +406,6 @@
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209"
-          },
-          {
-            "number": 205,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "consolidate run() length guard: UnexpectedInputs check for convertToAssets/convertToShares (supersedes #154, #204)",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/205"
           },
           {
             "number": 197,
@@ -712,14 +706,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 7,
+        "count": 6,
         "prs": [
-          {
-            "number": 2808,
-            "repo": "rainlanguage/raindex",
-            "title": "fix(deploy): snapshot-derived tagged constants + drop skip-test duplicates",
-            "url": "https://github.com/rainlanguage/raindex/pull/2808"
-          },
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
@@ -761,7 +749,7 @@
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 8,
+        "count": 6,
         "prs": [
           {
             "number": 204,
@@ -774,18 +762,6 @@
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/154"
-          },
-          {
-            "number": 141,
-            "repo": "rainlanguage/rain.flare",
-            "title": "test: assert UnexpectedOperand for all three disallowed-operand words",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/141"
-          },
-          {
-            "number": 126,
-            "repo": "rainlanguage/rain.flare",
-            "title": "Fix inverted call order: fetch symbolA before symbolB in run()",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/126"
           },
           {
             "number": 119,
@@ -1528,16 +1504,6 @@
         "number": 154,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()"
-      },
-      {
-        "number": 141,
-        "repo": "rainlanguage/rain.flare",
-        "title": "test: assert UnexpectedOperand for all three disallowed-operand words"
-      },
-      {
-        "number": 126,
-        "repo": "rainlanguage/rain.flare",
-        "title": "Fix inverted call order: fetch symbolA before symbolB in run()"
       },
       {
         "number": 119,
