@@ -97,17 +97,17 @@
     "blockedInfra": 11,
     "blockedOn": 4,
     "closeCandidateIssues": 18,
-    "closeCandidatePrs": 6,
+    "closeCandidatePrs": 4,
     "design": 2,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
-    "humanReject": 64,
-    "leaks": 46,
-    "ready": 15,
+    "humanReject": 63,
+    "leaks": 45,
+    "ready": 14,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 153,
-    "unvetted": 6
+    "totalProducerPrs": 150,
+    "unvetted": 7
   },
   "lanes": {
     "human-decisions": {
@@ -153,7 +153,7 @@
         ]
       },
       "human:reject": {
-        "count": 64,
+        "count": 63,
         "prs": [
           {
             "number": 199,
@@ -352,12 +352,6 @@
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "build(sh): include BuildPointers.sol and forge fmt in build.sh",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/220"
-          },
-          {
-            "number": 178,
-            "repo": "rainlanguage/rain.flare",
-            "title": "refactor(tests): centralize fork block numbers in ForkConstants.sol",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/178"
           },
           {
             "number": 177,
@@ -706,8 +700,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 6,
+        "count": 7,
         "prs": [
+          {
+            "number": 270,
+            "repo": "rainlanguage/rainix",
+            "title": "fix(prettier-bundle): bump svelte to 5 so prettier can format Svelte 5 syntax",
+            "url": "https://github.com/rainlanguage/rainix/pull/270"
+          },
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
@@ -749,7 +749,7 @@
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 6,
+        "count": 4,
         "prs": [
           {
             "number": 204,
@@ -764,12 +764,6 @@
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/154"
           },
           {
-            "number": 119,
-            "repo": "rainlanguage/rain.flare",
-            "title": "Consolidate fork BLOCK_NUMBER pins into ForkConstants.sol",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/119"
-          },
-          {
             "number": 242,
             "repo": "rainlanguage/rain.math.float",
             "title": "Fix pow: surface ExponentOverflow instead of Panic(0x11) on negative-exp squaring",
@@ -780,12 +774,6 @@
             "repo": "rainlanguage/rain.strategies",
             "title": "wip on folio",
             "url": "https://github.com/rainlanguage/rain.strategies/pull/28"
-          },
-          {
-            "number": 12,
-            "repo": "rainlanguage/sushiswap",
-            "title": "DO NOT MERGE",
-            "url": "https://github.com/rainlanguage/sushiswap/pull/12"
           }
         ]
       },
@@ -807,14 +795,8 @@
         ]
       },
       "ai:ready": {
-        "count": 12,
+        "count": 11,
         "prs": [
-          {
-            "number": 13,
-            "repo": "rainlanguage/rain.local-db.remote",
-            "title": "ci: swap deprecated DeterminateSystems installer for nix-quick-install-action",
-            "url": "https://github.com/rainlanguage/rain.local-db.remote/pull/13"
-          },
           {
             "number": 485,
             "repo": "rainlanguage/flow",
@@ -1215,12 +1197,6 @@
       "title": "test(extern): assert sub-parser honors overridden extern() address"
     },
     {
-      "number": 178,
-      "reason": "🤖 ai:producer Producer note: reworked per rework note — LibFtsoV2LTS.t.sol now imports BLOCK_NUMBER directly from test/fork/ForkConstants.sol, the stale test derives the expected StalePrice timestamp from getFeedByIdInWei at the pinned fork block (no more bare 1729795768 literal), and FlareInterfacesProd.t.sol is pointed at ForkConstants.sol too. Verified locally against the live Flare RPC: full suite 60/60 green including all fork tests.",
-      "repo": "rainlanguage/rain.flare",
-      "title": "refactor(tests): centralize fork block numbers in ForkConstants.sol"
-    },
-    {
       "number": 177,
       "reason": "🤖 ai:producer Producer note: reworked per rework note — added behavioral fee assertions around the setDefaultFee governance flow: calculateFeeByIds is read before propose (with vm.assume(fee != feeBefore)), asserted unchanged after propose but before timelock execution, and asserted equal to the newly set default after executeGovernanceCall. Note the assertion observes the default through a feed id with no per-feed and no category fee: live-chain probing at BLOCK_NUMBER showed category 0x01 has a category fee of 0 set, which shadows the default fee for all crypto feeds incl. ETH/USD (fee resolution is per-feed, then category, then default). Verified locally against the live Flare RPC: full suite 61/61 green including all fork tests.",
       "repo": "rainlanguage/rain.flare",
@@ -1506,11 +1482,6 @@
         "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()"
       },
       {
-        "number": 119,
-        "repo": "rainlanguage/rain.flare",
-        "title": "Consolidate fork BLOCK_NUMBER pins into ForkConstants.sol"
-      },
-      {
         "number": 242,
         "repo": "rainlanguage/rain.math.float",
         "title": "Fix pow: surface ExponentOverflow instead of Panic(0x11) on negative-exp squaring"
@@ -1519,11 +1490,6 @@
         "number": 28,
         "repo": "rainlanguage/rain.strategies",
         "title": "wip on folio"
-      },
-      {
-        "number": 12,
-        "repo": "rainlanguage/sushiswap",
-        "title": "DO NOT MERGE"
       }
     ],
     "ai:design": [
@@ -1539,11 +1505,6 @@
       }
     ],
     "ai:ready": [
-      {
-        "number": 13,
-        "repo": "rainlanguage/rain.local-db.remote",
-        "title": "ci: swap deprecated DeterminateSystems installer for nix-quick-install-action"
-      },
       {
         "number": 485,
         "repo": "rainlanguage/flow",
