@@ -106,8 +106,8 @@
     "ready": 4,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 143,
-    "unvetted": 8
+    "totalProducerPrs": 142,
+    "unvetted": 7
   },
   "lanes": {
     "human-decisions": {
@@ -712,14 +712,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 8,
+        "count": 7,
         "prs": [
-          {
-            "number": 133,
-            "repo": "rainlanguage/rain.metadata",
-            "title": "chore(audit): move Protofire PDF into audit/protofire/ with commit anchor",
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/133"
-          },
           {
             "number": 253,
             "repo": "rainlanguage/rain.math.float",
