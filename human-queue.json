@@ -106,8 +106,8 @@
     "ready": 4,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 142,
-    "unvetted": 7
+    "totalProducerPrs": 143,
+    "unvetted": 8
   },
   "lanes": {
     "human-decisions": {
@@ -712,8 +712,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 7,
+        "count": 8,
         "prs": [
+          {
+            "number": 32,
+            "repo": "rainlanguage/rain.sol.codegen",
+            "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints",
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32"
+          },
           {
             "number": 253,
             "repo": "rainlanguage/rain.math.float",
