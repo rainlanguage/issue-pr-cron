@@ -106,8 +106,8 @@
     "ready": 4,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 144,
-    "unvetted": 9
+    "totalProducerPrs": 145,
+    "unvetted": 10
   },
   "lanes": {
     "human-decisions": {
@@ -712,13 +712,19 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 9,
+        "count": 10,
         "prs": [
           {
-            "number": 74,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "feat(scan): audit campaign planner — order the dependency tree leaf-first",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/74"
+            "number": 549,
+            "repo": "rainlanguage/rainlang",
+            "title": "refactor(test): one contract per file — fixes rainix-sol/static on main",
+            "url": "https://github.com/rainlanguage/rainlang/pull/549"
+          },
+          {
+            "number": 548,
+            "repo": "rainlanguage/rainlang",
+            "title": "docs(audit): add the Protofire report under audit/protofire/",
+            "url": "https://github.com/rainlanguage/rainlang/pull/548"
           },
           {
             "number": 32,
