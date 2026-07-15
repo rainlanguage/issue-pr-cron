@@ -106,8 +106,8 @@
     "ready": 4,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 144,
-    "unvetted": 9
+    "totalProducerPrs": 145,
+    "unvetted": 10
   },
   "lanes": {
     "human-decisions": {
@@ -712,8 +712,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 9,
+        "count": 10,
         "prs": [
+          {
+            "number": 29,
+            "repo": "rainlanguage/rain.sol.codegen",
+            "title": "feat: add LibSnapshot.deployRecordString — the complete deploy-record shape",
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/29"
+          },
           {
             "number": 253,
             "repo": "rainlanguage/rain.math.float",
