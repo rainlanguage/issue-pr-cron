@@ -106,8 +106,8 @@
     "ready": 4,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 144,
-    "unvetted": 9
+    "totalProducerPrs": 143,
+    "unvetted": 8
   },
   "lanes": {
     "human-decisions": {
@@ -712,25 +712,19 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 9,
+        "count": 8,
         "prs": [
+          {
+            "number": 133,
+            "repo": "rainlanguage/rain.metadata",
+            "title": "chore(audit): move Protofire PDF into audit/protofire/ with commit anchor",
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/133"
+          },
           {
             "number": 253,
             "repo": "rainlanguage/rain.math.float",
             "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
             "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
-          },
-          {
-            "number": 25,
-            "repo": "rainlanguage/rain.verify",
-            "title": "chore(audit): remove reconciled legacy audit-run MD trees (2 runs)",
-            "url": "https://github.com/rainlanguage/rain.verify/pull/25"
-          },
-          {
-            "number": 543,
-            "repo": "rainlanguage/rainlang",
-            "title": "chore(audit): file the Payant report under audit/payant/",
-            "url": "https://github.com/rainlanguage/rainlang/pull/543"
           },
           {
             "number": 426,
