@@ -106,8 +106,8 @@
     "ready": 4,
     "reject": 33,
     "relink": 1,
-    "totalProducerPrs": 145,
-    "unvetted": 10
+    "totalProducerPrs": 144,
+    "unvetted": 9
   },
   "lanes": {
     "human-decisions": {
@@ -712,14 +712,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 10,
+        "count": 9,
         "prs": [
-          {
-            "number": 46,
-            "repo": "rainlanguage/claude-audit-skills",
-            "title": "fix(audit): flag deploying repos with NO release record, and stop prescribing the banned skip",
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/46"
-          },
           {
             "number": 253,
             "repo": "rainlanguage/rain.math.float",
