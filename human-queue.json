@@ -715,10 +715,10 @@
         "count": 9,
         "prs": [
           {
-            "number": 251,
+            "number": 253,
             "repo": "rainlanguage/rain.math.float",
-            "title": "fix(test): drop vm.skip in tagged-constants test to satisfy no-skip gate",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/251"
+            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
           },
           {
             "number": 25,
