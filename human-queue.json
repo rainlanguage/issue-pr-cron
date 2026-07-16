@@ -1,14 +1,74 @@
 {
   "closeCandidateIssues": [
     {
+      "number": 30,
+      "repo": "rainlanguage/rain.dia",
+      "title": "[AUDIT-I03] [info] Verbose console2 logging in fork price assertions"
+    },
+    {
+      "number": 12,
+      "repo": "rainlanguage/rain.dia",
+      "title": "[AUDIT-M07] [medium] Fork-pin docs still cite block 46061133 while LibFork is 47365950"
+    },
+    {
       "number": 248,
       "repo": "S01-Issuer/st0x.deploy",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
+      "number": 111,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "run() missing @return and operand @param documentation"
+    },
+    {
+      "number": 98,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "Short, non-descriptive local names vaultFloat/sharesFloat are acceptable but the raw-assembly read of inputs[0]/inputs[1] has no length asse"
+    },
+    {
+      "number": 96,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "run() reads inputs via raw assembly with no length guard (leaky abstraction)"
+    },
+    {
+      "number": 95,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "run() NatSpec omits @return and the operand parameter, understating the function contract"
+    },
+    {
+      "number": 559,
+      "repo": "rainlanguage/raindex",
+      "title": "the ob yaml frontmatter is not versioned"
+    },
+    {
+      "number": 550,
+      "repo": "rainlanguage/raindex",
+      "title": "deposit modal balance is broken and/or confusing"
+    },
+    {
+      "number": 549,
+      "repo": "rainlanguage/raindex",
+      "title": "it is somehow possible to deploy orders from the app without the source attached"
+    },
+    {
       "number": 546,
       "repo": "rainlanguage/raindex",
       "title": "Add link to telegram on sidebar"
+    },
+    {
+      "number": 544,
+      "repo": "rainlanguage/raindex",
+      "title": "error decoding for toasts"
+    },
+    {
+      "number": 543,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to set data type for charting"
+    },
+    {
+      "number": 541,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to debug without specifying charts"
     },
     {
       "number": 531,
@@ -98,21 +158,21 @@
   ],
   "counts": {
     "awaitingReVet": 0,
-    "blockedDeploy": 6,
+    "blockedDeploy": 7,
     "blockedInfra": 11,
-    "blockedOn": 4,
-    "closeCandidateIssues": 19,
-    "closeCandidatePrs": 4,
+    "blockedOn": 5,
+    "closeCandidateIssues": 31,
+    "closeCandidatePrs": 5,
     "design": 4,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
-    "humanReject": 66,
+    "humanReject": 57,
     "leaks": 47,
     "ready": 6,
-    "reject": 34,
+    "reject": 32,
     "relink": 1,
-    "totalProducerPrs": 143,
-    "unvetted": 3
+    "totalProducerPrs": 146,
+    "unvetted": 6
   },
   "lanes": {
     "human-decisions": {
@@ -158,7 +218,7 @@
         ]
       },
       "human:reject": {
-        "count": 66,
+        "count": 57,
         "prs": [
           {
             "number": 28,
@@ -183,12 +243,6 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/421"
-          },
-          {
-            "number": 254,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254"
           },
           {
             "number": 418,
@@ -293,18 +347,6 @@
             "url": "https://github.com/cyclofinance/cyclo.site/pull/388"
           },
           {
-            "number": 386,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(store): add inflightToken concurrency guard to blockNumberStore",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/386"
-          },
-          {
-            "number": 385,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "docs(setup): fix README setup steps and add missing env var",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/385"
-          },
-          {
             "number": 196,
             "repo": "rainlanguage/rain.flare",
             "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test",
@@ -341,12 +383,6 @@
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
           },
           {
-            "number": 230,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "test(extern): assert sub-parser honors overridden extern() address",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/230"
-          },
-          {
             "number": 226,
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests",
@@ -369,18 +405,6 @@
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "build(sh): include BuildPointers.sol and forge fmt in build.sh",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/220"
-          },
-          {
-            "number": 177,
-            "repo": "rainlanguage/rain.flare",
-            "title": "test(lts): exercise setDefaultFee through governance flow",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/177"
-          },
-          {
-            "number": 170,
-            "repo": "rainlanguage/rain.flare",
-            "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/170"
           },
           {
             "number": 325,
@@ -449,12 +473,6 @@
             "url": "https://github.com/rainlanguage/rain.math.float/pull/244"
           },
           {
-            "number": 2777,
-            "repo": "rainlanguage/raindex",
-            "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts",
-            "url": "https://github.com/rainlanguage/raindex/pull/2777"
-          },
-          {
             "number": 163,
             "repo": "rainlanguage/rain.flare",
             "title": "test: add mock unit tests for LibOpSLFRCurrentExchangeRate run() and integrity()",
@@ -497,22 +515,10 @@
             "url": "https://github.com/rainlanguage/rain.flare/pull/134"
           },
           {
-            "number": 130,
-            "repo": "rainlanguage/rain.flare",
-            "title": "test: assert authoringMetaV2 word names and descriptions",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/130"
-          },
-          {
             "number": 129,
             "repo": "rainlanguage/rain.flare",
             "title": "Add NatSpec and fix misleading return-param names in interfaces",
             "url": "https://github.com/rainlanguage/rain.flare/pull/129"
-          },
-          {
-            "number": 128,
-            "repo": "rainlanguage/rain.flare",
-            "title": "Add missing NatSpec to buildOpcode/Integrity pointers and ftsoV2LTSGetFeed",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/128"
           },
           {
             "number": 112,
@@ -561,8 +567,56 @@
     },
     "leak": {
       "leak": {
-        "count": 1,
+        "count": 9,
         "prs": [
+          {
+            "number": 254,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254"
+          },
+          {
+            "number": 386,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(store): add inflightToken concurrency guard to blockNumberStore",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/386"
+          },
+          {
+            "number": 385,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "docs(setup): fix README setup steps and add missing env var",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/385"
+          },
+          {
+            "number": 230,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "test(extern): assert sub-parser honors overridden extern() address",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/230"
+          },
+          {
+            "number": 177,
+            "repo": "rainlanguage/rain.flare",
+            "title": "test(lts): exercise setDefaultFee through governance flow",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/177"
+          },
+          {
+            "number": 170,
+            "repo": "rainlanguage/rain.flare",
+            "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/170"
+          },
+          {
+            "number": 2777,
+            "repo": "rainlanguage/raindex",
+            "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts",
+            "url": "https://github.com/rainlanguage/raindex/pull/2777"
+          },
+          {
+            "number": 130,
+            "repo": "rainlanguage/rain.flare",
+            "title": "test: assert authoringMetaV2 word names and descriptions",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/130"
+          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
@@ -574,8 +628,14 @@
     },
     "producer-blocked": {
       "ai:blocked-deploy": {
-        "count": 6,
+        "count": 7,
         "prs": [
+          {
+            "number": 253,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
+          },
           {
             "number": 252,
             "repo": "rainlanguage/rain.erc4626.words",
@@ -686,13 +746,19 @@
         ]
       },
       "ai:blocked-on": {
-        "count": 4,
+        "count": 5,
         "prs": [
           {
             "number": 2798,
             "repo": "rainlanguage/raindex",
             "title": "docs: remove stale alloy-ethers-typecast references from ARCHITECTURE.md",
             "url": "https://github.com/rainlanguage/raindex/pull/2798"
+          },
+          {
+            "number": 248,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "feat(parse): accept explicit + sign in e-notation exponent",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/248"
           },
           {
             "number": 2796,
@@ -717,8 +783,26 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 3,
+        "count": 6,
         "prs": [
+          {
+            "number": 36,
+            "repo": "rainlanguage/rain.dia",
+            "title": "Restore dia-price parse->eval happy path; fix stale encoding-drift comment",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/36"
+          },
+          {
+            "number": 259,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259"
+          },
+          {
+            "number": 255,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/255"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -742,7 +826,7 @@
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 4,
+        "count": 5,
         "prs": [
           {
             "number": 204,
@@ -755,6 +839,12 @@
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/154"
+          },
+          {
+            "number": 128,
+            "repo": "rainlanguage/rain.flare",
+            "title": "Add missing NatSpec to buildOpcode/Integrity pointers and ftsoV2LTSGetFeed",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/128"
           },
           {
             "number": 242,
@@ -823,19 +913,13 @@
         ]
       },
       "ai:reject": {
-        "count": 34,
+        "count": 32,
         "prs": [
           {
             "number": 32,
             "repo": "rainlanguage/rain.sol.codegen",
             "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints",
             "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32"
-          },
-          {
-            "number": 253,
-            "repo": "rainlanguage/rain.math.float",
-            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
           },
           {
             "number": 426,
@@ -926,12 +1010,6 @@
             "repo": "rainlanguage/rainix",
             "title": "feat(ci): assert all rainix-*.yaml reusables share one pinned RAINIX_SHA",
             "url": "https://github.com/rainlanguage/rainix/pull/252"
-          },
-          {
-            "number": 248,
-            "repo": "rainlanguage/rain.math.float",
-            "title": "feat(parse): accept explicit + sign in e-notation exponent",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/248"
           },
           {
             "number": 188,
@@ -1047,7 +1125,7 @@
   "leaks": [
     {
       "number": 254,
-      "reason": "🤖 ai:producer Producer note (deploy confirmed — GREEN-READY): dispatched the sanctioned Zoltu deploy from this branch (manual-sol-artifacts.yaml, network=base) at head 3280c0fafe969f36b0311926ee6d190f088176e0 — run https://github.com/rainlanguage/rain.erc4626.words/actions/runs/29161005997 succeeded. The rainlang-0.1.8 bytecode is now deployed at its deterministic CREATE2 address on base (idempotent — identical bytecode redeploys as a no-op). The 'REQUIRES redeploy at land' flag is now satisfied; this PR is GREEN-READY for the human to merge.",
+      "reason": "🤖 ai:producer Producer note: deploy-confirmed at ea2907406a7665303ad8c67fe525dece11526eea — rainlang-0.1.8 bytecode deployed per network; prod pins green from here per the rework note. Merged main into the branch (merge, not rebase), regenerated pointers to fixpoint (BYTECODE_HASH 0x0a07a596bb57481c456ce00ec00e4f71f5715501359647e3a1e58c232ef53624), full suite 139/139 green locally. Zoltu deploy run: https://github.com/rainlanguage/rain.erc4626.words/actions/runs/29488256774 (network=base).",
       "repo": "rainlanguage/rain.erc4626.words",
       "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
     },
@@ -1227,7 +1305,7 @@
     },
     {
       "number": 2777,
-      "reason": "🤖 ai:producer Producer note: rework is already executed and evidenced at head d39af81; the three red checks are pre-existing MAIN red, not PR-caused — rainix no-skips static gate (vm.skip x5 in test/lib/deploy, fails rainix-sol/static + rs-static) and missing 0.1.13 soldeer deploy-constant pins (testAllPublishedSoldeerTagsHaveAFullConstantSuite; 687 other sol tests pass). Both are fixed by #2804 (green, ai:ready); this PR greens on a branch update once it lands. flag-blocked-on was refused by the guard (human decision present), so recording the classification here.",
+      "reason": "🤖 ai:producer Producer note: rework per the Rework note is pushed at d39af811c (ternary collapse, dead finiteValues branch deleted, test comment updated; 6/6 tests pass) and human:reject is cleared for re-vet. Remaining: the PR body's two 'unweighted mean' claims are stale-false and the producer cannot edit PR bodies — a minimally corrected body (only those two clauses changed) is staged at /home/gildlab/code/pr2777-body-corrected.md for a human `gh pr edit 2777 --body-file <file>`.",
       "repo": "rainlanguage/raindex",
       "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
     },
@@ -1268,10 +1346,10 @@
       "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
     },
     {
-      "number": 128,
-      "reason": "🤖 ai:producer Producer note: reworked per rework note — conflicts resolved against main, LibFtsoV2LTS hunk dropped (superseded by merged #185, which closed #91). However, live state has moved past the rework note: the #86 coverage (`@return` docs on `buildOpcodeFunctionPointers`/`buildIntegrityFunctionPointers`) also landed on main via merged PR #193, which closed #86 on 2026-07-02. FlareFtsoExtern.sol was therefore also resolved to main's side rather than churning already-landed wording.  Evidence: `git diff origin/main...HEAD --stat` is EMPTY — the merged tree is content-identical to main, so no artifact regen was needed and test results are by construction identical to main's.  Consequence: this PR now has zero remaining unique diff. It is a CLOSE-CANDIDATE (both #86 and #91 are already closed by merged PRs #193 and #185), not a relink-to-#86 as the note anticipated. RELINK/CLOSE NEEDED (body edit / PR close is outside this routine): body currently says \"Closes #86 / Closes #91\" — both already closed; needs the human/assistant to close the PR (or edit the body if kept for any reason).",
+      "number": 130,
+      "reason": "🤖 ai:producer Producer note: state change — sibling PR #173 (pointer/authoring tests for #81/#84) has MERGED into main, but issue #84 is still OPEN. Producer rework queued: diff this branch's authoringMetaV2 word-name/description assertions against what #173 landed, keep only the remainder #84 still needs (or flag close-candidate if #173 fully covers it), against current main.",
       "repo": "rainlanguage/rain.flare",
-      "title": "Add missing NatSpec to buildOpcode/Integrity pointers and ftsoV2LTSGetFeed"
+      "title": "test: assert authoringMetaV2 word names and descriptions"
     },
     {
       "number": 112,
@@ -1311,7 +1389,7 @@
     },
     {
       "number": 475,
-      "reason": "🤖 ai:producer Producer note: 3d merge-update DONE (as queued last run) — merged origin/main into this branch (db227f9f). Five files conflicted; resolution kept the V4-migration semantics and translated main's post-divergence additions into the V6 world: main's new initialize-overload/once-only construction tests ported (OZ5 InvalidInitialization replaces the v4 revert string), main's reentrancy helpers+tests retyped to EvaluableV4/bytes32 with the store helper matched to IInterpreterStoreV3.set so the guard path actually fires, bounded-key signed-context logic kept. The V5-era deployer-io guard tests (UnsupportedFlowInputs/InsufficientFlowOutputs) cover a code path V4 removes and are retired with an in-file note. Flow.pointers.sol regenerated. Local: forge build + full forge test green. PR should now show MERGEABLE.",
+      "reason": "🤖 ai:producer Producer note: 3d merge-update DONE — merged origin/main (6b2dc7e, PR #485 nix-cachix CI adoption) into this branch. One conflict: .github/workflows/manual-sol-artifacts.yaml — kept this PR's rainix reusable-workflow call (rainix-manual-sol-artifacts.yaml@main), which already opens with the same nix-cachix-setup composite main adopted inline, so main's newer CI shape is fully subsumed. No source/test/pointer changes were involved (merge tree-diff vs previous head is empty), so no Flow.pointers.sol regen needed. Local verify: forge soldeer install + full forge test green (55 passed, 0 failed), matching the pre-merge all-green CI baseline. Pushed cea9445; PR shows MERGEABLE.",
       "repo": "rainlanguage/flow",
       "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
     },
@@ -1330,6 +1408,11 @@
   ],
   "states": {
     "ai:blocked-deploy": [
+      {
+        "number": 253,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
+      },
       {
         "number": 252,
         "repo": "rainlanguage/rain.erc4626.words",
@@ -1425,6 +1508,11 @@
         "title": "docs: remove stale alloy-ethers-typecast references from ARCHITECTURE.md"
       },
       {
+        "number": 248,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "feat(parse): accept explicit + sign in e-notation exponent"
+      },
+      {
         "number": 2796,
         "repo": "rainlanguage/raindex",
         "title": "Use IRaindexV6.TokenSelfTrade from raindex-interface 0.1.3"
@@ -1450,6 +1538,11 @@
         "number": 154,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()"
+      },
+      {
+        "number": 128,
+        "repo": "rainlanguage/rain.flare",
+        "title": "Add missing NatSpec to buildOpcode/Integrity pointers and ftsoV2LTSGetFeed"
       },
       {
         "number": 242,
@@ -1521,11 +1614,6 @@
         "number": 32,
         "repo": "rainlanguage/rain.sol.codegen",
         "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
-      },
-      {
-        "number": 253,
-        "repo": "rainlanguage/rain.math.float",
-        "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
       },
       {
         "number": 426,
@@ -1603,11 +1691,6 @@
         "title": "feat(ci): assert all rainix-*.yaml reusables share one pinned RAINIX_SHA"
       },
       {
-        "number": 248,
-        "repo": "rainlanguage/rain.math.float",
-        "title": "feat(parse): accept explicit + sign in e-notation exponent"
-      },
-      {
         "number": 188,
         "repo": "rainlanguage/rain.flare",
         "title": "fix(lib): move DecimalsTooLarge guard into LibFtsoCurrentPriceUsd (#79)"
@@ -1681,11 +1764,6 @@
         "number": 133,
         "repo": "rainlanguage/rain.flare",
         "title": "test: assert function pointer array length against OPCODE_FUNCTION_POINTERS_LENGTH"
-      },
-      {
-        "number": 130,
-        "repo": "rainlanguage/rain.flare",
-        "title": "test: assert authoringMetaV2 word names and descriptions"
       },
       {
         "number": 20,
