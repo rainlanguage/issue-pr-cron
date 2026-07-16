@@ -103,11 +103,11 @@
     "humanDesign": 6,
     "humanReject": 66,
     "leaks": 47,
-    "ready": 4,
-    "reject": 33,
+    "ready": 6,
+    "reject": 36,
     "relink": 1,
-    "totalProducerPrs": 145,
-    "unvetted": 10
+    "totalProducerPrs": 144,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -712,49 +712,13 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 10,
+        "count": 4,
         "prs": [
           {
-            "number": 75,
+            "number": 77,
             "repo": "rainlanguage/rain-org-health",
-            "title": "Make the audit graph's pan, zoom and trace real",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/75"
-          },
-          {
-            "number": 548,
-            "repo": "rainlanguage/rainlang",
-            "title": "docs(audit): add the Protofire report under audit/protofire/",
-            "url": "https://github.com/rainlanguage/rainlang/pull/548"
-          },
-          {
-            "number": 32,
-            "repo": "rainlanguage/rain.sol.codegen",
-            "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints",
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32"
-          },
-          {
-            "number": 253,
-            "repo": "rainlanguage/rain.math.float",
-            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
-          },
-          {
-            "number": 426,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/426"
-          },
-          {
-            "number": 425,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "Fix #327: make Footer per-network token rows reactive on allTokens",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/425"
-          },
-          {
-            "number": 424,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "refactor: single zero-address constant source in balancesStore",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
+            "title": "Let the browser do the zooming",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/77"
           },
           {
             "number": 31,
@@ -825,8 +789,20 @@
         ]
       },
       "ai:ready": {
-        "count": 1,
+        "count": 3,
         "prs": [
+          {
+            "number": 425,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "Fix #327: make Footer per-network token rows reactive on allTokens",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/425"
+          },
+          {
+            "number": 424,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "refactor: single zero-address constant source in balancesStore",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
+          },
           {
             "number": 246,
             "repo": "S01-Issuer/st0x.deploy",
@@ -836,8 +812,26 @@
         ]
       },
       "ai:reject": {
-        "count": 33,
+        "count": 36,
         "prs": [
+          {
+            "number": 32,
+            "repo": "rainlanguage/rain.sol.codegen",
+            "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints",
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32"
+          },
+          {
+            "number": 253,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
+          },
+          {
+            "number": 426,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/426"
+          },
           {
             "number": 250,
             "repo": "S01-Issuer/st0x.deploy",
@@ -1483,6 +1477,16 @@
     ],
     "ai:ready": [
       {
+        "number": 425,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
+      },
+      {
+        "number": 424,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "refactor: single zero-address constant source in balancesStore"
+      },
+      {
         "number": 25,
         "repo": "rainlanguage/rain-org-health",
         "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
@@ -1504,6 +1508,21 @@
       }
     ],
     "ai:reject": [
+      {
+        "number": 32,
+        "repo": "rainlanguage/rain.sol.codegen",
+        "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
+      },
+      {
+        "number": 253,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
+      },
+      {
+        "number": 426,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+      },
       {
         "number": 250,
         "repo": "S01-Issuer/st0x.deploy",
