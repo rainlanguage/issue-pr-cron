@@ -53,8 +53,9 @@ if [ -f "$DIR/review-DISABLED" ]; then
   echo "$(date -u +%FT%TZ) SKIP: review-DISABLED flag present" >> "$LOG"; exit 0
 fi
 
-# --- weekly-budget pace gate (shared with the producer cron; inert until USAGE_* set in
-# cron.env — see usage-gate.sh) ---
+# --- weekly-budget pace gate: skip this tick when usage is over the ceiling or
+# running ahead of a linear burn toward the reset. Reads /api/oauth/usage
+# itself — see usage-gate.sh ---
 if [ -x "$DIR/usage-gate.sh" ]; then
   _ug="$("$DIR/usage-gate.sh")"; _ugrc=$?
   echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
