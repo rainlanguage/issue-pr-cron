@@ -715,10 +715,10 @@
         "count": 4,
         "prs": [
           {
-            "number": 77,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Let the browser do the zooming",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/77"
+            "number": 1,
+            "repo": "rainlanguage/rain.vats.flare",
+            "title": "Flare price oracles extracted from rain.vats",
+            "url": "https://github.com/rainlanguage/rain.vats.flare/pull/1"
           },
           {
             "number": 31,
