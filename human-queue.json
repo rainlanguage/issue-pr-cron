@@ -1,6 +1,11 @@
 {
   "closeCandidateIssues": [
     {
+      "number": 248,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
+    },
+    {
       "number": 546,
       "repo": "rainlanguage/raindex",
       "title": "Add link to telegram on sidebar"
@@ -96,18 +101,18 @@
     "blockedDeploy": 6,
     "blockedInfra": 11,
     "blockedOn": 4,
-    "closeCandidateIssues": 18,
+    "closeCandidateIssues": 19,
     "closeCandidatePrs": 4,
-    "design": 2,
+    "design": 4,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 66,
     "leaks": 47,
     "ready": 6,
-    "reject": 36,
+    "reject": 34,
     "relink": 1,
-    "totalProducerPrs": 144,
-    "unvetted": 4
+    "totalProducerPrs": 143,
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -712,14 +717,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 4,
+        "count": 3,
         "prs": [
-          {
-            "number": 1,
-            "repo": "rainlanguage/rain.vats.flare",
-            "title": "Flare price oracles extracted from rain.vats",
-            "url": "https://github.com/rainlanguage/rain.vats.flare/pull/1"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -772,7 +771,7 @@
         ]
       },
       "ai:design": {
-        "count": 2,
+        "count": 4,
         "prs": [
           {
             "number": 2702,
@@ -785,6 +784,18 @@
             "repo": "S01-Issuer/st0x.deploy",
             "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)",
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/150"
+          },
+          {
+            "number": 60,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "v5 for dynamic spread",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/60"
+          },
+          {
+            "number": 3,
+            "repo": "rainlanguage/rain.subgraph.docker",
+            "title": "2023 12 23 anvil",
+            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3"
           }
         ]
       },
@@ -812,7 +823,7 @@
         ]
       },
       "ai:reject": {
-        "count": 36,
+        "count": 34,
         "prs": [
           {
             "number": 32,
@@ -1013,22 +1024,10 @@
             "url": "https://github.com/rainlanguage/rain.flare/pull/133"
           },
           {
-            "number": 60,
-            "repo": "rainlanguage/rain.strategies",
-            "title": "v5 for dynamic spread",
-            "url": "https://github.com/rainlanguage/rain.strategies/pull/60"
-          },
-          {
             "number": 20,
             "repo": "rainlanguage/rain.strategies",
             "title": "2025 03 05 ds",
             "url": "https://github.com/rainlanguage/rain.strategies/pull/20"
-          },
-          {
-            "number": 3,
-            "repo": "rainlanguage/rain.subgraph.docker",
-            "title": "2023 12 23 anvil",
-            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3"
           }
         ]
       },
@@ -1473,6 +1472,16 @@
         "number": 150,
         "repo": "S01-Issuer/st0x.deploy",
         "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
+      },
+      {
+        "number": 60,
+        "repo": "rainlanguage/rain.strategies",
+        "title": "v5 for dynamic spread"
+      },
+      {
+        "number": 3,
+        "repo": "rainlanguage/rain.subgraph.docker",
+        "title": "2023 12 23 anvil"
       }
     ],
     "ai:ready": [
@@ -1679,19 +1688,9 @@
         "title": "test: assert authoringMetaV2 word names and descriptions"
       },
       {
-        "number": 60,
-        "repo": "rainlanguage/rain.strategies",
-        "title": "v5 for dynamic spread"
-      },
-      {
         "number": 20,
         "repo": "rainlanguage/rain.strategies",
         "title": "2025 03 05 ds"
-      },
-      {
-        "number": 3,
-        "repo": "rainlanguage/rain.subgraph.docker",
-        "title": "2023 12 23 anvil"
       }
     ],
     "ai:relink": [
