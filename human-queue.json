@@ -788,7 +788,7 @@
           {
             "number": 87,
             "repo": "rainlanguage/rain-org-health",
-            "title": "Draw current dependency edges legibly (minor fix; does NOT fix the all-red graph)",
+            "title": "Judge pins against the published revision; draw current edges legibly (closes #86)",
             "url": "https://github.com/rainlanguage/rain-org-health/pull/87"
           },
           {
