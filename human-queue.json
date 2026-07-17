@@ -171,8 +171,8 @@
     "ready": 6,
     "reject": 32,
     "relink": 1,
-    "totalProducerPrs": 145,
-    "unvetted": 5
+    "totalProducerPrs": 146,
+    "unvetted": 6
   },
   "lanes": {
     "human-decisions": {
@@ -783,8 +783,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 5,
+        "count": 6,
         "prs": [
+          {
+            "number": 5,
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "title": "Add version-hygiene CI",
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/5"
+          },
           {
             "number": 259,
             "repo": "rainlanguage/rain.erc4626.words",
