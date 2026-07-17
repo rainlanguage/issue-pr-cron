@@ -171,8 +171,8 @@
     "ready": 6,
     "reject": 32,
     "relink": 1,
-    "totalProducerPrs": 146,
-    "unvetted": 6
+    "totalProducerPrs": 145,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -783,14 +783,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 6,
+        "count": 5,
         "prs": [
-          {
-            "number": 87,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Judge pins against the published revision; draw current edges legibly (closes #86)",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/87"
-          },
           {
             "number": 259,
             "repo": "rainlanguage/rain.erc4626.words",
