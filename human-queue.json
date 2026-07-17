@@ -221,8 +221,8 @@
     "ready": 11,
     "reject": 34,
     "relink": 1,
-    "totalProducerPrs": 146,
-    "unvetted": 3
+    "totalProducerPrs": 149,
+    "unvetted": 6
   },
   "lanes": {
     "human-decisions": {
@@ -620,10 +620,10 @@
         "count": 1,
         "prs": [
           {
-            "number": 475,
-            "repo": "rainlanguage/flow",
-            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows",
-            "url": "https://github.com/rainlanguage/flow/pull/475"
+            "number": 53,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/53"
           }
         ]
       }
@@ -808,8 +808,26 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 6,
         "prs": [
+          {
+            "number": 55,
+            "repo": "rainlanguage/rain.dia",
+            "title": "Consolidate pointer codegen to canonical script/Build.sol",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/55"
+          },
+          {
+            "number": 54,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): exercise ZeroDiaPrice revert path for unknown and empty keys",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/54"
+          },
+          {
+            "number": 475,
+            "repo": "rainlanguage/flow",
+            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows",
+            "url": "https://github.com/rainlanguage/flow/pull/475"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1179,6 +1197,12 @@
   },
   "leaks": [
     {
+      "number": 53,
+      "reason": "🤖 ai:producer  Producer note: scope narrowed — the elapsed == staleAfter acceptance test was removed because that boundary is under a pending human design ruling (#9, fail-safe-at-equality convention); this PR now pins only the uncontested stale-revert path issue #7 asks for. Body correction (body is permission-blocked from editing): the §8 mutation line claiming the '>' → '>=' mutant is killed no longer applies — that mutant is deliberately left surviving, as killing it requires pinning the contested boundary. ",
+      "repo": "rainlanguage/rain.dia",
+      "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
+    },
+    {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
       "repo": "cyclofinance/cyclo.site",
@@ -1393,12 +1417,6 @@
       "reason": "🤖 ai:producer Producer note: all three red checks are pre-existing MAIN red, not PR-caused — rainix no-skips static gate (vm.skip x5 in test/lib/deploy, fails rainix-sol/static + rs-static) and missing 0.1.13 soldeer deploy-constant pins (testAllPublishedSoldeerTagsHaveAFullConstantSuite; 687 other sol tests pass). Both are fixed by #2804 (green, ai:ready); this PR greens on a branch update once it lands. flag-blocked-on was refused by the guard (human decision present), so recording the classification here. Parked under human:reject — no rework note to execute.",
       "repo": "rainlanguage/raindex",
       "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
-    },
-    {
-      "number": 475,
-      "reason": "🤖 ai:producer Producer note: 3d merge-update DONE — merged origin/main (6b2dc7e, PR #485 nix-cachix CI adoption) into this branch. One conflict: .github/workflows/manual-sol-artifacts.yaml — kept this PR's rainix reusable-workflow call (rainix-manual-sol-artifacts.yaml@main), which already opens with the same nix-cachix-setup composite main adopted inline, so main's newer CI shape is fully subsumed. No source/test/pointer changes were involved (merge tree-diff vs previous head is empty), so no Flow.pointers.sol regen needed. Local verify: forge soldeer install + full forge test green (55 passed, 0 failed), matching the pre-merge all-green CI baseline. Pushed cea9445; PR shows MERGEABLE.",
-      "repo": "rainlanguage/flow",
-      "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
     },
     {
       "number": 372,
