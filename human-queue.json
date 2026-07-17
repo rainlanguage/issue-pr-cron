@@ -207,22 +207,22 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 2,
+    "awaitingReVet": 0,
     "blockedDeploy": 7,
     "blockedInfra": 11,
     "blockedOn": 6,
     "closeCandidateIssues": 41,
-    "closeCandidatePrs": 7,
+    "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 57,
     "leaks": 39,
-    "ready": 11,
-    "reject": 34,
+    "ready": 14,
+    "reject": 33,
     "relink": 1,
     "totalProducerPrs": 149,
-    "unvetted": 6
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -620,10 +620,10 @@
         "count": 1,
         "prs": [
           {
-            "number": 53,
-            "repo": "rainlanguage/rain.dia",
-            "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/53"
+            "number": 475,
+            "repo": "rainlanguage/flow",
+            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows",
+            "url": "https://github.com/rainlanguage/flow/pull/475"
           }
         ]
       }
@@ -790,44 +790,9 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 2,
-        "prs": [
-          {
-            "number": 425,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "Fix #327: make Footer per-network token rows reactive on allTokens",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/425"
-          },
-          {
-            "number": 424,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "refactor: single zero-address constant source in balancesStore",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 6,
+        "count": 3,
         "prs": [
-          {
-            "number": 55,
-            "repo": "rainlanguage/rain.dia",
-            "title": "Consolidate pointer codegen to canonical script/Build.sol",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/55"
-          },
-          {
-            "number": 54,
-            "repo": "rainlanguage/rain.dia",
-            "title": "test(dia): exercise ZeroDiaPrice revert path for unknown and empty keys",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/54"
-          },
-          {
-            "number": 475,
-            "repo": "rainlanguage/flow",
-            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows",
-            "url": "https://github.com/rainlanguage/flow/pull/475"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -851,13 +816,19 @@
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 7,
+        "count": 8,
         "prs": [
           {
             "number": 177,
             "repo": "rainlanguage/rain.flare",
             "title": "test(lts): exercise setDefaultFee through governance flow",
             "url": "https://github.com/rainlanguage/rain.flare/pull/177"
+          },
+          {
+            "number": 2785,
+            "repo": "rainlanguage/raindex",
+            "title": "docs(natspec): correct stale calculateClearStateChange cap description",
+            "url": "https://github.com/rainlanguage/raindex/pull/2785"
           },
           {
             "number": 204,
@@ -933,8 +904,20 @@
         ]
       },
       "ai:ready": {
-        "count": 6,
+        "count": 11,
         "prs": [
+          {
+            "number": 55,
+            "repo": "rainlanguage/rain.dia",
+            "title": "Consolidate pointer codegen to canonical script/Build.sol",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/55"
+          },
+          {
+            "number": 54,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): exercise ZeroDiaPrice revert path for unknown and empty keys",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/54"
+          },
           {
             "number": 259,
             "repo": "rainlanguage/rain.erc4626.words",
@@ -948,6 +931,18 @@
             "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
           },
           {
+            "number": 425,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "Fix #327: make Footer per-network token rows reactive on allTokens",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/425"
+          },
+          {
+            "number": 424,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "refactor: single zero-address constant source in balancesStore",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
+          },
+          {
             "number": 246,
             "repo": "S01-Issuer/st0x.deploy",
             "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant",
@@ -958,6 +953,12 @@
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254"
+          },
+          {
+            "number": 387,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(store): reject zero and null block.number from RPC",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/387"
           },
           {
             "number": 230,
@@ -974,8 +975,14 @@
         ]
       },
       "ai:reject": {
-        "count": 34,
+        "count": 33,
         "prs": [
+          {
+            "number": 53,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/53"
+          },
           {
             "number": 5,
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1061,12 +1068,6 @@
             "url": "https://github.com/cyclofinance/cyclo.site/pull/394"
           },
           {
-            "number": 387,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(store): reject zero and null block.number from RPC",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/387"
-          },
-          {
             "number": 386,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(store): add inflightToken concurrency guard to blockNumberStore",
@@ -1107,12 +1108,6 @@
             "repo": "rainlanguage/rain.flare",
             "title": "refactor(lts): use calculateFeeById for single feed fee calc",
             "url": "https://github.com/rainlanguage/rain.flare/pull/167"
-          },
-          {
-            "number": 2785,
-            "repo": "rainlanguage/raindex",
-            "title": "docs(natspec): correct stale calculateClearStateChange cap description",
-            "url": "https://github.com/rainlanguage/raindex/pull/2785"
           },
           {
             "number": 194,
@@ -1196,12 +1191,6 @@
     }
   },
   "leaks": [
-    {
-      "number": 53,
-      "reason": "🤖 ai:producer  Producer note: scope narrowed — the elapsed == staleAfter acceptance test was removed because that boundary is under a pending human design ruling (#9, fail-safe-at-equality convention); this PR now pins only the uncontested stale-revert path issue #7 asks for. Body correction (body is permission-blocked from editing): the §8 mutation line claiming the '>' → '>=' mutant is killed no longer applies — that mutant is deliberately left surviving, as killing it requires pinning the contested boundary. ",
-      "repo": "rainlanguage/rain.dia",
-      "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
-    },
     {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
@@ -1419,6 +1408,12 @@
       "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
     },
     {
+      "number": 475,
+      "reason": "🤖 ai:producer Producer note: 3d merge-update DONE — merged origin/main (6b2dc7e, PR #485 nix-cachix CI adoption) into this branch. One conflict: .github/workflows/manual-sol-artifacts.yaml — kept this PR's rainix reusable-workflow call (rainix-manual-sol-artifacts.yaml@main), which already opens with the same nix-cachix-setup composite main adopted inline, so main's newer CI shape is fully subsumed. No source/test/pointer changes were involved (merge tree-diff vs previous head is empty), so no Flow.pointers.sol regen needed. Local verify: forge soldeer install + full forge test green (55 passed, 0 failed), matching the pre-merge all-green CI baseline. Pushed cea9445; PR shows MERGEABLE.",
+      "repo": "rainlanguage/flow",
+      "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
+    },
+    {
       "number": 372,
       "reason": "🤖 ai:producer  Producer note: reworked per rework note — added divergent-decimals coverage (6-decimal underlying paired with the 18-decimal share) so the decimals/underlyingDecimals split is now proven by tests, not just asserted; also merged current `main` into the branch (one textual conflict in `Lock.test.ts` imports, resolved as the union, plus `main`'s new auto-switch-guard fixture given the now-required `underlyingDecimals` field).  **What changed**  - Merge commit 3dc6ee4: `origin/main` merged in (branch was 2 months stale); `Lock.svelte` auto-merged cleanly with all four underlying-context call sites still on `underlyingDecimals` and both share-output sites on `decimals`. - Commit f4e1edc: new `describe(\"Lock component with divergent share/underlying decimals\")` in `src/lib/components/Lock.test.ts` with a `decimals: 18, underlyingDecimals: 6` token. Every assertion is an exact value that differs between the two fields:   - typed input parses with `underlyingDecimals`: typing `1.5` submits `assets === parseUnits(\"1.5\", 6)` (1_500_000n), not 1.5e18;   - underlying balance readouts (`your-balance`, `underlying-balance`) format a 1_234_567n balance as exactly `1.234567`, not `0.000000000001234567`;   - MAX fill round-trips the exact underlying balance: input fills `1.234567` and submit sends `assets === 1_234_567n`;   - calculated share output (`calculated-cysflr` desktop + mobile) formats a 5e18 quote as exactly `5`, not `5000000000000`.    A note on harness topology (the PR body's earlier blocker): the tests drive the component through the `selectedCyToken` handle imported from `$lib/stores` — under the vitest-setup mock that resolves to the same writable the component subscribes to (the test-file `mockSelectedCyToken` import is a separate module instance and does not propagate). The divergent token is also placed in `allTokens`, otherwise the token `Select`'s `bind:selected` resets the selection to the first production token on render.  **QA evidence**  Each of the six decimals call sites in `Lock.svelte` was mutated to the other field, one at a time; every mutant is killed (run scoped to the new describe: 4 tests, 15 skipped):  1. `assets` parseUnits → `decimals`: `2 failed | 2 passed` — input-parse and MAX tests fail with `Unable to find an element by: [data-testid=\"disclaimer-modal\"]` (the 18-decimal parse reads as insufficient funds, LOCK stays disabled). 2. `your-balance` formatUnits → `decimals`: `1 failed | 3 passed` — `AssertionError: expected '0.000000000001234567' to be '1.234567'`. 3. MAX fill formatUnits → `decimals`: `1 failed | 3 passed` — `AssertionError: expected '0.000000000001234567' to be '1.234567'` (input value). 4. `underlying-balance` label formatUnits → `decimals`: `1 failed | 3 passed` — `AssertionError: expected 'sFLR Balance: 0.000000000001234567' to be 'sFLR Balance: 1.234567'`. 5. desktop share output formatUnits → `underlyingDecimals`: `1 failed | 3 passed` — `AssertionError: expected '5000000000000' to be '5'`. 6. mobile share output formatUnits → `underlyingDecimals`: `1 failed | 3 passed` — `AssertionError: expected '5000000000000' to be '5'`.  All mutants reverted; results on the fixed code:  - Scoped: `npx vitest run src/lib/components/Lock.test.ts` — 19/19 pass. - Full: `npx vitest run` — 53 files, 287/287 pass. - `npm run check` — 0 errors, 0 warnings; `npm run lint-check` — clean; prettier — clean. ",
       "repo": "cyclofinance/cyclo.site",
@@ -1565,6 +1560,11 @@
         "title": "test(lts): exercise setDefaultFee through governance flow"
       },
       {
+        "number": 2785,
+        "repo": "rainlanguage/raindex",
+        "title": "docs(natspec): correct stale calculateClearStateChange cap description"
+      },
+      {
         "number": 204,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "fix(run): guard against under-length inputs arrays in convertToAssets/Shares"
@@ -1624,6 +1624,16 @@
     ],
     "ai:ready": [
       {
+        "number": 55,
+        "repo": "rainlanguage/rain.dia",
+        "title": "Consolidate pointer codegen to canonical script/Build.sol"
+      },
+      {
+        "number": 54,
+        "repo": "rainlanguage/rain.dia",
+        "title": "test(dia): exercise ZeroDiaPrice revert path for unknown and empty keys"
+      },
+      {
         "number": 259,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
@@ -1664,6 +1674,11 @@
         "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
       },
       {
+        "number": 387,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(store): reject zero and null block.number from RPC"
+      },
+      {
         "number": 143,
         "repo": "rainlanguage/dotrain",
         "title": "fix(parser): comment before next binding bleeds into previous content_position"
@@ -1680,6 +1695,11 @@
       }
     ],
     "ai:reject": [
+      {
+        "number": 53,
+        "repo": "rainlanguage/rain.dia",
+        "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
+      },
       {
         "number": 5,
         "repo": "rainlanguage/adversarial-mutation-test",
@@ -1751,11 +1771,6 @@
         "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
       },
       {
-        "number": 387,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix(store): reject zero and null block.number from RPC"
-      },
-      {
         "number": 386,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
@@ -1789,11 +1804,6 @@
         "number": 167,
         "repo": "rainlanguage/rain.flare",
         "title": "refactor(lts): use calculateFeeById for single feed fee calc"
-      },
-      {
-        "number": 2785,
-        "repo": "rainlanguage/raindex",
-        "title": "docs(natspec): correct stale calculateClearStateChange cap description"
       },
       {
         "number": 194,
