@@ -21,6 +21,11 @@
       "title": "run() missing @return and operand @param documentation"
     },
     {
+      "number": 109,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "Rounding direction of convertToShares is undocumented and uncontrolled relative to the non-interactive-party rule"
+    },
+    {
       "number": 98,
       "repo": "rainlanguage/rain.erc4626.words",
       "title": "Short, non-descriptive local names vaultFloat/sharesFloat are acceptable but the raw-assembly read of inputs[0]/inputs[1] has no length asse"
@@ -34,6 +39,51 @@
       "number": 95,
       "repo": "rainlanguage/rain.erc4626.words",
       "title": "run() NatSpec omits @return and the operand parameter, understating the function contract"
+    },
+    {
+      "number": 93,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
+    },
+    {
+      "number": 591,
+      "repo": "rainlanguage/raindex",
+      "title": "Orderbook for the network needs to be mentioned explicitly in `orders` section in yml"
+    },
+    {
+      "number": 589,
+      "repo": "rainlanguage/raindex",
+      "title": "trading chart should indicate direction somehow"
+    },
+    {
+      "number": 588,
+      "repo": "rainlanguage/raindex",
+      "title": "io ratio is backwards on the order page"
+    },
+    {
+      "number": 576,
+      "repo": "rainlanguage/raindex",
+      "title": "hover states in the sidebar are weird"
+    },
+    {
+      "number": 574,
+      "repo": "rainlanguage/raindex",
+      "title": "probably makes more sense to show the tx.origin on trades in the order page as msg.sender is just whatever arb contract mediated the trade"
+    },
+    {
+      "number": 573,
+      "repo": "rainlanguage/raindex",
+      "title": "changing the orderbook address in the settings doesn't update the vaults, so if you have the same vault ID in two different orderbooks it shows deposits/withdrawals from the previous ob"
+    },
+    {
+      "number": 572,
+      "repo": "rainlanguage/raindex",
+      "title": "every time we do anything the wallet gets disconnected for no reason"
+    },
+    {
+      "number": 570,
+      "repo": "rainlanguage/raindex",
+      "title": "withdraw button on vault asks to connect wallet even if already connected"
     },
     {
       "number": 559,
@@ -157,19 +207,19 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
-    "blockedDeploy": 6,
+    "awaitingReVet": 2,
+    "blockedDeploy": 7,
     "blockedInfra": 11,
-    "blockedOn": 5,
-    "closeCandidateIssues": 31,
+    "blockedOn": 6,
+    "closeCandidateIssues": 41,
     "closeCandidatePrs": 7,
-    "design": 4,
+    "design": 5,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 57,
     "leaks": 39,
-    "ready": 12,
-    "reject": 36,
+    "ready": 11,
+    "reject": 34,
     "relink": 1,
     "totalProducerPrs": 146,
     "unvetted": 3
@@ -580,7 +630,7 @@
     },
     "producer-blocked": {
       "ai:blocked-deploy": {
-        "count": 6,
+        "count": 7,
         "prs": [
           {
             "number": 252,
@@ -593,6 +643,12 @@
             "repo": "rainlanguage/rain.math.float",
             "title": "Guard displayExponent overflow in _toScientific (#185)",
             "url": "https://github.com/rainlanguage/rain.math.float/pull/245"
+          },
+          {
+            "number": 2779,
+            "repo": "rainlanguage/raindex",
+            "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder",
+            "url": "https://github.com/rainlanguage/raindex/pull/2779"
           },
           {
             "number": 537,
@@ -692,8 +748,14 @@
         ]
       },
       "ai:blocked-on": {
-        "count": 5,
+        "count": 6,
         "prs": [
+          {
+            "number": 255,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/255"
+          },
           {
             "number": 2798,
             "repo": "rainlanguage/raindex",
@@ -728,6 +790,23 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 2,
+        "prs": [
+          {
+            "number": 425,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "Fix #327: make Footer per-network token rows reactive on allTokens",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/425"
+          },
+          {
+            "number": 424,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "refactor: single zero-address constant source in balancesStore",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 3,
         "prs": [
@@ -801,8 +880,14 @@
         ]
       },
       "ai:design": {
-        "count": 4,
+        "count": 5,
         "prs": [
+          {
+            "number": 426,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/426"
+          },
           {
             "number": 2702,
             "repo": "rainlanguage/raindex",
@@ -830,7 +915,7 @@
         ]
       },
       "ai:ready": {
-        "count": 9,
+        "count": 6,
         "prs": [
           {
             "number": 259,
@@ -839,28 +924,10 @@
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259"
           },
           {
-            "number": 255,
-            "repo": "rainlanguage/rain.math.float",
-            "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/255"
-          },
-          {
             "number": 253,
             "repo": "rainlanguage/rain.math.float",
             "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
             "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
-          },
-          {
-            "number": 425,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "Fix #327: make Footer per-network token rows reactive on allTokens",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/425"
-          },
-          {
-            "number": 424,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "refactor: single zero-address constant source in balancesStore",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
           },
           {
             "number": 246,
@@ -889,7 +956,7 @@
         ]
       },
       "ai:reject": {
-        "count": 36,
+        "count": 34,
         "prs": [
           {
             "number": 5,
@@ -902,12 +969,6 @@
             "repo": "rainlanguage/rain.sol.codegen",
             "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints",
             "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32"
-          },
-          {
-            "number": 426,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/426"
           },
           {
             "number": 250,
@@ -1046,12 +1107,6 @@
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "docs+test(rounding): document and assert floor-rounding direction in convertToAssets/Shares",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/181"
-          },
-          {
-            "number": 2779,
-            "repo": "rainlanguage/raindex",
-            "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder",
-            "url": "https://github.com/rainlanguage/raindex/pull/2779"
           },
           {
             "number": 2777,
@@ -1371,6 +1426,11 @@
         "title": "Guard displayExponent overflow in _toScientific (#185)"
       },
       {
+        "number": 2779,
+        "repo": "rainlanguage/raindex",
+        "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
+      },
+      {
         "number": 537,
         "repo": "rainlanguage/rainlang",
         "title": "test: one contract per file (satisfy rainix single-contract gate)"
@@ -1450,6 +1510,11 @@
     ],
     "ai:blocked-on": [
       {
+        "number": 255,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients"
+      },
+      {
         "number": 2798,
         "repo": "rainlanguage/raindex",
         "title": "docs: remove stale alloy-ethers-typecast references from ARCHITECTURE.md"
@@ -1514,6 +1579,11 @@
     ],
     "ai:design": [
       {
+        "number": 426,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+      },
+      {
         "number": 2702,
         "repo": "rainlanguage/raindex",
         "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
@@ -1539,11 +1609,6 @@
         "number": 259,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
-      },
-      {
-        "number": 255,
-        "repo": "rainlanguage/rain.math.float",
-        "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients"
       },
       {
         "number": 253,
@@ -1606,11 +1671,6 @@
         "number": 32,
         "repo": "rainlanguage/rain.sol.codegen",
         "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
-      },
-      {
-        "number": 426,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
       },
       {
         "number": 250,
@@ -1726,11 +1786,6 @@
         "number": 181,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "docs+test(rounding): document and assert floor-rounding direction in convertToAssets/Shares"
-      },
-      {
-        "number": 2779,
-        "repo": "rainlanguage/raindex",
-        "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
       },
       {
         "number": 2777,
