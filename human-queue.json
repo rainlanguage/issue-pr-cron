@@ -171,8 +171,8 @@
     "ready": 6,
     "reject": 32,
     "relink": 1,
-    "totalProducerPrs": 146,
-    "unvetted": 6
+    "totalProducerPrs": 149,
+    "unvetted": 9
   },
   "lanes": {
     "human-decisions": {
@@ -783,8 +783,26 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 6,
+        "count": 9,
         "prs": [
+          {
+            "number": 92,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Read the audit stamp from .audit/runs.jsonl (last whole-repo line)",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/92"
+          },
+          {
+            "number": 49,
+            "repo": "rainlanguage/claude-audit-skills",
+            "title": "Audit run stamp: append-only .audit/runs.jsonl (0.15.0)",
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/49"
+          },
+          {
+            "number": 29,
+            "repo": "rainlanguage/rain.math.binary",
+            "title": "audit: record run stamp (.audit/runs.jsonl) + scope",
+            "url": "https://github.com/rainlanguage/rain.math.binary/pull/29"
+          },
           {
             "number": 5,
             "repo": "rainlanguage/adversarial-mutation-test",
