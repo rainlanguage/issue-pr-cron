@@ -207,10 +207,10 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
-    "blockedDeploy": 7,
+    "awaitingReVet": 1,
+    "blockedDeploy": 8,
     "blockedInfra": 11,
-    "blockedOn": 6,
+    "blockedOn": 8,
     "closeCandidateIssues": 41,
     "closeCandidatePrs": 8,
     "design": 5,
@@ -218,8 +218,8 @@
     "humanDesign": 6,
     "humanReject": 57,
     "leaks": 39,
-    "ready": 14,
-    "reject": 33,
+    "ready": 12,
+    "reject": 32,
     "relink": 1,
     "totalProducerPrs": 149,
     "unvetted": 3
@@ -630,8 +630,14 @@
     },
     "producer-blocked": {
       "ai:blocked-deploy": {
-        "count": 7,
+        "count": 8,
         "prs": [
+          {
+            "number": 253,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
+          },
           {
             "number": 252,
             "repo": "rainlanguage/rain.erc4626.words",
@@ -748,8 +754,20 @@
         ]
       },
       "ai:blocked-on": {
-        "count": 6,
+        "count": 8,
         "prs": [
+          {
+            "number": 54,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): exercise ZeroDiaPrice revert path for unknown and empty keys",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/54"
+          },
+          {
+            "number": 53,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/53"
+          },
           {
             "number": 255,
             "repo": "rainlanguage/rain.math.float",
@@ -790,6 +808,17 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 1,
+        "prs": [
+          {
+            "number": 55,
+            "repo": "rainlanguage/rain.dia",
+            "title": "Consolidate pointer codegen to canonical script/Build.sol",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/55"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 3,
         "prs": [
@@ -904,31 +933,13 @@
         ]
       },
       "ai:ready": {
-        "count": 11,
+        "count": 8,
         "prs": [
-          {
-            "number": 55,
-            "repo": "rainlanguage/rain.dia",
-            "title": "Consolidate pointer codegen to canonical script/Build.sol",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/55"
-          },
-          {
-            "number": 54,
-            "repo": "rainlanguage/rain.dia",
-            "title": "test(dia): exercise ZeroDiaPrice revert path for unknown and empty keys",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/54"
-          },
           {
             "number": 259,
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259"
-          },
-          {
-            "number": 253,
-            "repo": "rainlanguage/rain.math.float",
-            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/253"
           },
           {
             "number": 425,
@@ -975,14 +986,8 @@
         ]
       },
       "ai:reject": {
-        "count": 33,
+        "count": 32,
         "prs": [
-          {
-            "number": 53,
-            "repo": "rainlanguage/rain.dia",
-            "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/53"
-          },
           {
             "number": 5,
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1429,6 +1434,11 @@
   "states": {
     "ai:blocked-deploy": [
       {
+        "number": 253,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
+      },
+      {
         "number": 252,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "Deploy deterministically via Zoltu with no network selection"
@@ -1522,6 +1532,16 @@
       }
     ],
     "ai:blocked-on": [
+      {
+        "number": 54,
+        "repo": "rainlanguage/rain.dia",
+        "title": "test(dia): exercise ZeroDiaPrice revert path for unknown and empty keys"
+      },
+      {
+        "number": 53,
+        "repo": "rainlanguage/rain.dia",
+        "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
+      },
       {
         "number": 255,
         "repo": "rainlanguage/rain.math.float",
@@ -1629,19 +1649,9 @@
         "title": "Consolidate pointer codegen to canonical script/Build.sol"
       },
       {
-        "number": 54,
-        "repo": "rainlanguage/rain.dia",
-        "title": "test(dia): exercise ZeroDiaPrice revert path for unknown and empty keys"
-      },
-      {
         "number": 259,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
-      },
-      {
-        "number": 253,
-        "repo": "rainlanguage/rain.math.float",
-        "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
       },
       {
         "number": 425,
@@ -1695,11 +1705,6 @@
       }
     ],
     "ai:reject": [
-      {
-        "number": 53,
-        "repo": "rainlanguage/rain.dia",
-        "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
-      },
       {
         "number": 5,
         "repo": "rainlanguage/adversarial-mutation-test",
