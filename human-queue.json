@@ -46,6 +46,31 @@
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
+      "number": 684,
+      "repo": "rainlanguage/raindex",
+      "title": "Raindex App Linux Release Error."
+    },
+    {
+      "number": 248,
+      "repo": "rainlanguage/rainlang",
+      "title": "move codegen logic to a dedicated repo"
+    },
+    {
+      "number": 247,
+      "repo": "rainlanguage/rainlang",
+      "title": "numeric stack that can handle numbers across different OOMs and also negative numbers"
+    },
+    {
+      "number": 243,
+      "repo": "rainlanguage/rainlang",
+      "title": "Contract deployment for base network failing"
+    },
+    {
+      "number": 661,
+      "repo": "rainlanguage/raindex",
+      "title": "should select a tab when clicking on \"words\" on add order screen"
+    },
+    {
       "number": 651,
       "repo": "rainlanguage/raindex",
       "title": "malformed vault id error should be clearer"
@@ -171,6 +196,11 @@
       "title": "can't generate rainlang if there are elided bindings"
     },
     {
+      "number": 529,
+      "repo": "rainlanguage/raindex",
+      "title": "if there's no elided bindings i shouldn't have to specify runs to generate a chart (should imply 1 run)"
+    },
+    {
       "number": 528,
       "repo": "rainlanguage/raindex",
       "title": "cmd + s should save order"
@@ -276,17 +306,17 @@
     "blockedDeploy": 9,
     "blockedInfra": 12,
     "blockedOn": 10,
-    "closeCandidateIssues": 54,
+    "closeCandidateIssues": 60,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
-    "humanReject": 57,
-    "leaks": 39,
+    "humanReject": 56,
+    "leaks": 41,
     "ready": 18,
     "reject": 29,
     "relink": 1,
-    "totalProducerPrs": 156,
+    "totalProducerPrs": 157,
     "unvetted": 3
   },
   "lanes": {
@@ -333,14 +363,8 @@
         ]
       },
       "human:reject": {
-        "count": 57,
+        "count": 56,
         "prs": [
-          {
-            "number": 28,
-            "repo": "rainlanguage/rain.pyth",
-            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
-          },
           {
             "number": 199,
             "repo": "rainlanguage/rain.flare",
@@ -682,8 +706,20 @@
     },
     "leak": {
       "leak": {
-        "count": 1,
+        "count": 3,
         "prs": [
+          {
+            "number": 256,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/256"
+          },
+          {
+            "number": 28,
+            "repo": "rainlanguage/rain.pyth",
+            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
+          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
@@ -1299,6 +1335,18 @@
   },
   "leaks": [
     {
+      "number": 256,
+      "reason": "🤖 ai:producer Producer note: relationship to https://github.com/rainlanguage/rain.math.float/pull/253 — that open, ready-vetted PR migrates all deploy pins to the per-release snapshot canon (closes #252) and retires the flat-constants model + gate test this PR patches. #253 is deploy-blocked on the sustained estimateGas RPC outage; this PR is the minimal constants-only fix that greens main NOW without needing any deploy. When #253 lands it supersedes these flat _0_1_7 pins (its merge resolves to deleting the flat model).",
+      "repo": "rainlanguage/rain.math.float",
+      "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
+    },
+    {
+      "number": 28,
+      "reason": "🤖 ai:producer Producer note: rework pushed (cdd84a2) answering the rework note point by point.  1. **Divergence resolved at the rainix level, not papered over**: rainix deprecated `soldeer-generate-cmd` as a documented no-op — the version bump no longer regenerates any artifacts. Every committed artifact (pointers via BuildPointers, authoring meta via `script/build.sh` in the default devshell where `rain` lives) is built by the PR that defines the version's content and diff-checked by copy-artifacts on main. This PR now drops the input entirely, so there is no release-time regeneration path that could diverge from `script/build.sh`, and no partial forge-only subset remains. 2. **The rainix-level gap no longer exists**: the reusable resolved it by removing bump-time generation rather than adding a devshell input; nothing left to raise. 3. **Trigger confirmed**: the soldeer package is src/-only — `.soldeerignore` excludes both `.github` and `foundry.toml` — and `rainix-static soldeer-gate` additionally blanks the `[package].version` line before comparing. Merging this PR therefore publishes nothing (src/ is byte-identical to published 0.1.0); 0.1.1 publishes on the next src content change. 4. **`forge fmt` scope**: moot — the command is gone.  ## QA - Discriminating tests: none — CI-config-only change (drops a documented no-op input + updates the comment); there is no executable surface to mutation-test. - Mutations applied: n/a (YAML config; behavior owned by the rainix reusable, verified from its source at rainlanguage/rainix `.github/workflows/rainix-autopublish.yaml` and `rainix-static/src/soldeer_gate.rs`). - Oracle: the reusable's own input docs (\"DEPRECATED / no-op … consumers should drop it\") and the soldeer-gate source (version-line blanking, src-only tarball via .soldeerignore). - Category check: issue #27 asks for the next-version soldeer lifecycle; covered — lifecycle adopted with `[package].version` as next (0.1.1), no self-publish on merge, no bump-time regeneration. ",
+      "repo": "rainlanguage/rain.pyth",
+      "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
+    },
+    {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
       "repo": "cyclofinance/cyclo.site",
@@ -1438,7 +1486,7 @@
     },
     {
       "number": 244,
-      "reason": "🤖 ai:producer Blocked-deploy: Blocked on the same deploy-infra failure as #237 (see its ai:blocked-deploy note): red rainix-sol test is testProdDeployment* pins only; this bytecode-changing PR needs its own pre-merge suite=decimal-float deploy from this branch, and the deployer EOA 0x6698…9a88 is unfunded on flare (0 FLR) / underfunded on polygon (0.26 vs ~5 POL), so all-network deploys fail at broadcast (evidence: float run 29194586792, rainlang runs 29194199681/28649455061/28648086583). Fund the EOA, then dispatch.",
+      "reason": "🤖 ai:producer Blocked-deploy: head 85e9757 needs a pre-merge suite=decimal-float Zoltu deploy of 0xA051048f1Bc0bc59a0CAA21C642fc51BF9ae145C, but the repo's deploy RPC has a sustained eth_estimateGas 'execution reverted, data: 0x' outage on large-calldata deploy txs — every manual-sol-artifacts run since 2026-05-10 failed with this signature (latest evidence run 29487488034, 2026-07-16, on PR #253). Dispatching now would blind-retry a diagnosed outage; needs a human RPC swap/fix, then deploy.",
       "repo": "rainlanguage/rain.math.float",
       "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
     },
