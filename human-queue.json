@@ -322,7 +322,7 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 1,
+    "awaitingReVet": 0,
     "blockedDeploy": 11,
     "blockedInfra": 13,
     "blockedOn": 10,
@@ -333,11 +333,11 @@
     "humanDesign": 6,
     "humanReject": 55,
     "leaks": 38,
-    "ready": 19,
+    "ready": 21,
     "reject": 29,
     "relink": 1,
     "totalProducerPrs": 160,
-    "unvetted": 5
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -953,32 +953,9 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 1,
-        "prs": [
-          {
-            "number": 28,
-            "repo": "rainlanguage/rain.pyth",
-            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 5,
+        "count": 3,
         "prs": [
-          {
-            "number": 428,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/428"
-          },
-          {
-            "number": 260,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "docs(op): document convertToAssets rounding direction in run() NatSpec",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/260"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1090,8 +1067,20 @@
         ]
       },
       "ai:ready": {
-        "count": 15,
+        "count": 18,
         "prs": [
+          {
+            "number": 428,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428"
+          },
+          {
+            "number": 260,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "docs(op): document convertToAssets rounding direction in run() NatSpec",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/260"
+          },
           {
             "number": 58,
             "repo": "rainlanguage/rain.dia",
@@ -1133,6 +1122,12 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "refactor: single zero-address constant source in balancesStore",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
+          },
+          {
+            "number": 28,
+            "repo": "rainlanguage/rain.pyth",
+            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
           },
           {
             "number": 246,
@@ -1853,6 +1848,16 @@
       }
     ],
     "ai:ready": [
+      {
+        "number": 428,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
+      },
+      {
+        "number": 260,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "docs(op): document convertToAssets rounding direction in run() NatSpec"
+      },
       {
         "number": 58,
         "repo": "rainlanguage/rain.dia",
