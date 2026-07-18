@@ -1,6 +1,11 @@
 {
   "closeCandidateIssues": [
     {
+      "number": 45,
+      "repo": "rainlanguage/rain.dia",
+      "title": "[AUDIT-I06] [info] Audit-fix PR branches are parallel siblings, not stacked"
+    },
+    {
       "number": 30,
       "repo": "rainlanguage/rain.dia",
       "title": "[AUDIT-I03] [info] Verbose console2 logging in fork price assertions"
@@ -44,6 +49,11 @@
       "number": 93,
       "repo": "rainlanguage/rain.erc4626.words",
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
+    },
+    {
+      "number": 706,
+      "repo": "rainlanguage/raindex",
+      "title": "test the post eval lib from ob v4"
     },
     {
       "number": 684,
@@ -104,6 +114,11 @@
       "number": 620,
       "repo": "rainlanguage/raindex",
       "title": "pin all deps"
+    },
+    {
+      "number": 595,
+      "repo": "rainlanguage/raindex",
+      "title": "Show the connected wallet's current balance when making a deposit"
     },
     {
       "number": 593,
@@ -299,14 +314,19 @@
       "number": 132,
       "repo": "rainlanguage/raindex",
       "title": "include the sha or similar in the name of the assets when doing builds off main"
+    },
+    {
+      "number": 103,
+      "repo": "rainlanguage/raindex",
+      "title": "refactor subgraph client to use new subgraph implementation in rain.orderbook repo"
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
+    "awaitingReVet": 1,
     "blockedDeploy": 11,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 60,
+    "closeCandidateIssues": 64,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
@@ -316,8 +336,8 @@
     "ready": 19,
     "reject": 29,
     "relink": 1,
-    "totalProducerPrs": 158,
-    "unvetted": 3
+    "totalProducerPrs": 159,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -933,9 +953,26 @@
       }
     },
     "vet-lifecycle": {
-      "un-vetted": {
-        "count": 3,
+      "awaiting-re-vet": {
+        "count": 1,
         "prs": [
+          {
+            "number": 28,
+            "repo": "rainlanguage/rain.pyth",
+            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
+          }
+        ]
+      },
+      "un-vetted": {
+        "count": 4,
+        "prs": [
+          {
+            "number": 260,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "docs(op): document convertToAssets rounding direction in run() NatSpec",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/260"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1047,7 +1084,7 @@
         ]
       },
       "ai:ready": {
-        "count": 16,
+        "count": 15,
         "prs": [
           {
             "number": 58,
@@ -1090,12 +1127,6 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "refactor: single zero-address constant source in balancesStore",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
-          },
-          {
-            "number": 28,
-            "repo": "rainlanguage/rain.pyth",
-            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
           },
           {
             "number": 246,
