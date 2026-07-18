@@ -346,8 +346,8 @@
     "ready": 21,
     "reject": 29,
     "relink": 1,
-    "totalProducerPrs": 160,
-    "unvetted": 3
+    "totalProducerPrs": 163,
+    "unvetted": 6
   },
   "lanes": {
     "human-decisions": {
@@ -975,8 +975,26 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 6,
         "prs": [
+          {
+            "number": 63,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/63"
+          },
+          {
+            "number": 62,
+            "repo": "rainlanguage/rain.dia",
+            "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/62"
+          },
+          {
+            "number": 61,
+            "repo": "rainlanguage/rain.dia",
+            "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/61"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
