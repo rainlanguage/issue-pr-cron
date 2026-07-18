@@ -303,20 +303,20 @@
   ],
   "counts": {
     "awaitingReVet": 0,
-    "blockedDeploy": 9,
-    "blockedInfra": 12,
+    "blockedDeploy": 11,
+    "blockedInfra": 13,
     "blockedOn": 10,
     "closeCandidateIssues": 60,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
-    "humanReject": 56,
-    "leaks": 41,
-    "ready": 18,
+    "humanReject": 55,
+    "leaks": 38,
+    "ready": 19,
     "reject": 29,
     "relink": 1,
-    "totalProducerPrs": 157,
+    "totalProducerPrs": 158,
     "unvetted": 3
   },
   "lanes": {
@@ -363,7 +363,7 @@
         ]
       },
       "human:reject": {
-        "count": 56,
+        "count": 55,
         "prs": [
           {
             "number": 199,
@@ -606,12 +606,6 @@
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/162"
           },
           {
-            "number": 244,
-            "repo": "rainlanguage/rain.math.float",
-            "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/244"
-          },
-          {
             "number": 163,
             "repo": "rainlanguage/rain.flare",
             "title": "test: add mock unit tests for LibOpSLFRCurrentExchangeRate run() and integrity()",
@@ -706,20 +700,8 @@
     },
     "leak": {
       "leak": {
-        "count": 3,
+        "count": 1,
         "prs": [
-          {
-            "number": 256,
-            "repo": "rainlanguage/rain.math.float",
-            "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants",
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/256"
-          },
-          {
-            "number": 28,
-            "repo": "rainlanguage/rain.pyth",
-            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
-          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
@@ -731,8 +713,14 @@
     },
     "producer-blocked": {
       "ai:blocked-deploy": {
-        "count": 9,
+        "count": 11,
         "prs": [
+          {
+            "number": 256,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/256"
+          },
           {
             "number": 57,
             "repo": "rainlanguage/rain.dia",
@@ -764,6 +752,12 @@
             "url": "https://github.com/rainlanguage/raindex/pull/2779"
           },
           {
+            "number": 244,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/244"
+          },
+          {
             "number": 537,
             "repo": "rainlanguage/rainlang",
             "title": "test: one contract per file (satisfy rainix single-contract gate)",
@@ -790,8 +784,14 @@
         ]
       },
       "ai:blocked-infra": {
-        "count": 12,
+        "count": 13,
         "prs": [
+          {
+            "number": 60,
+            "repo": "rainlanguage/rain.dia",
+            "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/60"
+          },
           {
             "number": 410,
             "repo": "cyclofinance/cyclo.site",
@@ -1047,7 +1047,7 @@
         ]
       },
       "ai:ready": {
-        "count": 15,
+        "count": 16,
         "prs": [
           {
             "number": 58,
@@ -1090,6 +1090,12 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "refactor: single zero-address constant source in balancesStore",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/424"
+          },
+          {
+            "number": 28,
+            "repo": "rainlanguage/rain.pyth",
+            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
           },
           {
             "number": 246,
@@ -1335,18 +1341,6 @@
   },
   "leaks": [
     {
-      "number": 256,
-      "reason": "🤖 ai:producer Producer note: relationship to https://github.com/rainlanguage/rain.math.float/pull/253 — that open, ready-vetted PR migrates all deploy pins to the per-release snapshot canon (closes #252) and retires the flat-constants model + gate test this PR patches. #253 is deploy-blocked on the sustained estimateGas RPC outage; this PR is the minimal constants-only fix that greens main NOW without needing any deploy. When #253 lands it supersedes these flat _0_1_7 pins (its merge resolves to deleting the flat model).",
-      "repo": "rainlanguage/rain.math.float",
-      "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
-    },
-    {
-      "number": 28,
-      "reason": "🤖 ai:producer Producer note: rework pushed (cdd84a2) answering the rework note point by point.  1. **Divergence resolved at the rainix level, not papered over**: rainix deprecated `soldeer-generate-cmd` as a documented no-op — the version bump no longer regenerates any artifacts. Every committed artifact (pointers via BuildPointers, authoring meta via `script/build.sh` in the default devshell where `rain` lives) is built by the PR that defines the version's content and diff-checked by copy-artifacts on main. This PR now drops the input entirely, so there is no release-time regeneration path that could diverge from `script/build.sh`, and no partial forge-only subset remains. 2. **The rainix-level gap no longer exists**: the reusable resolved it by removing bump-time generation rather than adding a devshell input; nothing left to raise. 3. **Trigger confirmed**: the soldeer package is src/-only — `.soldeerignore` excludes both `.github` and `foundry.toml` — and `rainix-static soldeer-gate` additionally blanks the `[package].version` line before comparing. Merging this PR therefore publishes nothing (src/ is byte-identical to published 0.1.0); 0.1.1 publishes on the next src content change. 4. **`forge fmt` scope**: moot — the command is gone.  ## QA - Discriminating tests: none — CI-config-only change (drops a documented no-op input + updates the comment); there is no executable surface to mutation-test. - Mutations applied: n/a (YAML config; behavior owned by the rainix reusable, verified from its source at rainlanguage/rainix `.github/workflows/rainix-autopublish.yaml` and `rainix-static/src/soldeer_gate.rs`). - Oracle: the reusable's own input docs (\"DEPRECATED / no-op … consumers should drop it\") and the soldeer-gate source (version-line blanking, src-only tarball via .soldeerignore). - Category check: issue #27 asks for the next-version soldeer lifecycle; covered — lifecycle adopted with `[package].version` as next (0.1.1), no self-publish on merge, no bump-time regeneration. ",
-      "repo": "rainlanguage/rain.pyth",
-      "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
-    },
-    {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
       "repo": "cyclofinance/cyclo.site",
@@ -1485,12 +1479,6 @@
       "title": "fix: mask signer row operand to low byte"
     },
     {
-      "number": 244,
-      "reason": "🤖 ai:producer Blocked-deploy: head 85e9757 needs a pre-merge suite=decimal-float Zoltu deploy of 0xA051048f1Bc0bc59a0CAA21C642fc51BF9ae145C, but the repo's deploy RPC has a sustained eth_estimateGas 'execution reverted, data: 0x' outage on large-calldata deploy txs — every manual-sol-artifacts run since 2026-05-10 failed with this signature (latest evidence run 29487488034, 2026-07-16, on PR #253). Dispatching now would blind-retry a diagnosed outage; needs a human RPC swap/fix, then deploy.",
-      "repo": "rainlanguage/rain.math.float",
-      "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
-    },
-    {
       "number": 163,
       "reason": "🤖 ai:producer Producer note: executed the 2026-07-04 rework note + its update — added explicit boundary pins rate18=0, rate18=1e18, and the int224-coefficient overflow revert pin (testRunRateZero, testRunRateParityOne, testRunRateCoefficientOverflow; overflow asserts the exact CoefficientOverflow(2^223, -18) revert). Body already reads Closes #59 — no relink needed.",
       "repo": "rainlanguage/rain.flare",
@@ -1584,6 +1572,11 @@
   "states": {
     "ai:blocked-deploy": [
       {
+        "number": 256,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
+      },
+      {
         "number": 57,
         "repo": "rainlanguage/rain.dia",
         "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
@@ -1609,6 +1602,11 @@
         "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
       },
       {
+        "number": 244,
+        "repo": "rainlanguage/rain.math.float",
+        "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
+      },
+      {
         "number": 537,
         "repo": "rainlanguage/rainlang",
         "title": "test: one contract per file (satisfy rainix single-contract gate)"
@@ -1630,6 +1628,11 @@
       }
     ],
     "ai:blocked-infra": [
+      {
+        "number": 60,
+        "repo": "rainlanguage/rain.dia",
+        "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
+      },
       {
         "number": 410,
         "repo": "cyclofinance/cyclo.site",
@@ -1847,6 +1850,11 @@
         "number": 424,
         "repo": "cyclofinance/cyclo.site",
         "title": "refactor: single zero-address constant source in balancesStore"
+      },
+      {
+        "number": 28,
+        "repo": "rainlanguage/rain.pyth",
+        "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
       },
       {
         "number": 25,
