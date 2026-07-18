@@ -46,6 +46,41 @@
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
+      "number": 637,
+      "repo": "rainlanguage/raindex",
+      "title": "useless error when `orderbook` is missing on an order in yaml"
+    },
+    {
+      "number": 632,
+      "repo": "rainlanguage/raindex",
+      "title": "sometimes the QR code for wallet connect doesn't show"
+    },
+    {
+      "number": 629,
+      "repo": "rainlanguage/raindex",
+      "title": "Tauri command for decoding errors"
+    },
+    {
+      "number": 622,
+      "repo": "rainlanguage/raindex",
+      "title": "order page should show the orderbook that it is deployed on"
+    },
+    {
+      "number": 620,
+      "repo": "rainlanguage/raindex",
+      "title": "pin all deps"
+    },
+    {
+      "number": 593,
+      "repo": "rainlanguage/raindex",
+      "title": "Add balance of vault to order detail page"
+    },
+    {
+      "number": 592,
+      "repo": "rainlanguage/raindex",
+      "title": "Fix inverted IO ratio on orders page"
+    },
+    {
       "number": 591,
       "repo": "rainlanguage/raindex",
       "title": "Orderbook for the network needs to be mentioned explicitly in `orders` section in yml"
@@ -211,18 +246,18 @@
     "blockedDeploy": 8,
     "blockedInfra": 11,
     "blockedOn": 8,
-    "closeCandidateIssues": 41,
+    "closeCandidateIssues": 48,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 57,
-    "leaks": 39,
+    "leaks": 40,
     "ready": 12,
     "reject": 32,
     "relink": 1,
-    "totalProducerPrs": 149,
-    "unvetted": 3
+    "totalProducerPrs": 152,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -617,8 +652,14 @@
     },
     "leak": {
       "leak": {
-        "count": 1,
+        "count": 2,
         "prs": [
+          {
+            "number": 427,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/427"
+          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
@@ -820,8 +861,20 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 5,
         "prs": [
+          {
+            "number": 31,
+            "repo": "rainlanguage/rain.math.binary",
+            "title": "docs: ctpop NatSpec, accurate H01 comment, correct README publish section",
+            "url": "https://github.com/rainlanguage/rain.math.binary/pull/31"
+          },
+          {
+            "number": 30,
+            "repo": "rainlanguage/rain.math.binary",
+            "title": "test: pin mask constants by re-derivation, lone-high-bit case, relative src import",
+            "url": "https://github.com/rainlanguage/rain.math.binary/pull/30"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1196,6 +1249,12 @@
     }
   },
   "leaks": [
+    {
+      "number": 427,
+      "reason": "🤖 ai:producer screenshot pending (manual): ReceiptModal renders new user-visible button states (CONNECT WALLET / WRONG NETWORK); cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same stack as the prior 14-component batch on #394/#404/#412-414 — repeated focused attempts documented there), so the render evidence is deferred to a human/preview capture. The Cloudflare preview deploy on this PR shows the modal behind the wallet gate. ",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
+    },
     {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
