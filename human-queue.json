@@ -337,7 +337,7 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 2,
+    "awaitingReVet": 0,
     "blockedDeploy": 12,
     "blockedInfra": 13,
     "blockedOn": 10,
@@ -347,12 +347,12 @@
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 55,
-    "leaks": 40,
-    "ready": 24,
-    "reject": 29,
+    "leaks": 38,
+    "ready": 25,
+    "reject": 32,
     "relink": 1,
     "totalProducerPrs": 168,
-    "unvetted": 5
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -735,20 +735,8 @@
     },
     "leak": {
       "leak": {
-        "count": 3,
+        "count": 1,
         "prs": [
-          {
-            "number": 433,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): leaderboard heading reflects the actual row count",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/433"
-          },
-          {
-            "number": 432,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(components): render generic error copy instead of raw error messages",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/432"
-          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
@@ -986,38 +974,9 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 2,
-        "prs": [
-          {
-            "number": 63,
-            "repo": "rainlanguage/rain.dia",
-            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/63"
-          },
-          {
-            "number": 62,
-            "repo": "rainlanguage/rain.dia",
-            "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/62"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 5,
+        "count": 3,
         "prs": [
-          {
-            "number": 431,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): remove inert min/step attributes from the amount text input",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/431"
-          },
-          {
-            "number": 430,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "refactor(component): drop misleading optional chain on required stats prop",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/430"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1129,13 +1088,31 @@
         ]
       },
       "ai:ready": {
-        "count": 19,
+        "count": 22,
         "prs": [
+          {
+            "number": 431,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): remove inert min/step attributes from the amount text input",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/431"
+          },
+          {
+            "number": 430,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "refactor(component): drop misleading optional chain on required stats prop",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/430"
+          },
           {
             "number": 429,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/429"
+          },
+          {
+            "number": 63,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/63"
           },
           {
             "number": 428,
@@ -1248,8 +1225,26 @@
         ]
       },
       "ai:reject": {
-        "count": 29,
+        "count": 32,
         "prs": [
+          {
+            "number": 433,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): leaderboard heading reflects the actual row count",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/433"
+          },
+          {
+            "number": 432,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(components): render generic error copy instead of raw error messages",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/432"
+          },
+          {
+            "number": 62,
+            "repo": "rainlanguage/rain.dia",
+            "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/62"
+          },
           {
             "number": 55,
             "repo": "rainlanguage/rain.dia",
@@ -1440,18 +1435,6 @@
     }
   },
   "leaks": [
-    {
-      "number": 433,
-      "reason": "🤖 ai:producer Before/after render with a 2-row fetchTopRewards response (top = main: heading hardcodes 'Top 50 Accounts'; bottom = this PR: 'Top 2 Accounts'):  ![before/after](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/cyclo.site-433.png)",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(component): leaderboard heading reflects the actual row count"
-    },
-    {
-      "number": 432,
-      "reason": "🤖 ai:producer Before/after render (top = main: raw upstream error text leaked to the page; bottom = this PR: generic copy). All four components mounted in a mock harness with their fetchers rejecting `Error(\"HTTP 500 from https://internal.example/subgraph\")`:  ![before/after](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/cyclo.site-432.png)",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(components): render generic error copy instead of raw error messages"
-    },
     {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
@@ -1934,6 +1917,16 @@
     ],
     "ai:ready": [
       {
+        "number": 431,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): remove inert min/step attributes from the amount text input"
+      },
+      {
+        "number": 430,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "refactor(component): drop misleading optional chain on required stats prop"
+      },
+      {
         "number": 429,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
@@ -1942,11 +1935,6 @@
         "number": 63,
         "repo": "rainlanguage/rain.dia",
         "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-      },
-      {
-        "number": 62,
-        "repo": "rainlanguage/rain.dia",
-        "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
       },
       {
         "number": 428,
@@ -2055,6 +2043,21 @@
       }
     ],
     "ai:reject": [
+      {
+        "number": 433,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): leaderboard heading reflects the actual row count"
+      },
+      {
+        "number": 432,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(components): render generic error copy instead of raw error messages"
+      },
+      {
+        "number": 62,
+        "repo": "rainlanguage/rain.dia",
+        "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
+      },
       {
         "number": 55,
         "repo": "rainlanguage/rain.dia",
