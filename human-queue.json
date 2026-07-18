@@ -51,6 +51,11 @@
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
+      "number": 24,
+      "repo": "rainlanguage/rain.internal",
+      "title": "Cyclo launch"
+    },
+    {
       "number": 843,
       "repo": "rainlanguage/raindex",
       "title": "need to be able to get logs out of the app somehow"
@@ -332,22 +337,22 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 3,
-    "blockedDeploy": 11,
+    "awaitingReVet": 2,
+    "blockedDeploy": 12,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 66,
+    "closeCandidateIssues": 67,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 55,
-    "leaks": 38,
-    "ready": 25,
+    "leaks": 40,
+    "ready": 24,
     "reject": 29,
     "relink": 1,
-    "totalProducerPrs": 164,
-    "unvetted": 3
+    "totalProducerPrs": 168,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -730,8 +735,20 @@
     },
     "leak": {
       "leak": {
-        "count": 1,
+        "count": 3,
         "prs": [
+          {
+            "number": 433,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): leaderboard heading reflects the actual row count",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/433"
+          },
+          {
+            "number": 432,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(components): render generic error copy instead of raw error messages",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/432"
+          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
@@ -743,8 +760,14 @@
     },
     "producer-blocked": {
       "ai:blocked-deploy": {
-        "count": 11,
+        "count": 12,
         "prs": [
+          {
+            "number": 61,
+            "repo": "rainlanguage/rain.dia",
+            "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/61"
+          },
           {
             "number": 256,
             "repo": "rainlanguage/rain.math.float",
@@ -964,7 +987,7 @@
     },
     "vet-lifecycle": {
       "awaiting-re-vet": {
-        "count": 3,
+        "count": 2,
         "prs": [
           {
             "number": 63,
@@ -977,18 +1000,24 @@
             "repo": "rainlanguage/rain.dia",
             "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec",
             "url": "https://github.com/rainlanguage/rain.dia/pull/62"
-          },
-          {
-            "number": 61,
-            "repo": "rainlanguage/rain.dia",
-            "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/61"
           }
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 5,
         "prs": [
+          {
+            "number": 431,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): remove inert min/step attributes from the amount text input",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/431"
+          },
+          {
+            "number": 430,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "refactor(component): drop misleading optional chain on required stats prop",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/430"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1412,6 +1441,18 @@
   },
   "leaks": [
     {
+      "number": 433,
+      "reason": "🤖 ai:producer Before/after render with a 2-row fetchTopRewards response (top = main: heading hardcodes 'Top 50 Accounts'; bottom = this PR: 'Top 2 Accounts'):  ![before/after](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/cyclo.site-433.png)",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(component): leaderboard heading reflects the actual row count"
+    },
+    {
+      "number": 432,
+      "reason": "🤖 ai:producer Before/after render (top = main: raw upstream error text leaked to the page; bottom = this PR: generic copy). All four components mounted in a mock harness with their fetchers rejecting `Error(\"HTTP 500 from https://internal.example/subgraph\")`:  ![before/after](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/cyclo.site-432.png)",
+      "repo": "cyclofinance/cyclo.site",
+      "title": "fix(components): render generic error copy instead of raw error messages"
+    },
+    {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
       "repo": "cyclofinance/cyclo.site",
@@ -1642,6 +1683,11 @@
   ],
   "states": {
     "ai:blocked-deploy": [
+      {
+        "number": 61,
+        "repo": "rainlanguage/rain.dia",
+        "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+      },
       {
         "number": 256,
         "repo": "rainlanguage/rain.math.float",
@@ -1901,11 +1947,6 @@
         "number": 62,
         "repo": "rainlanguage/rain.dia",
         "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
-      },
-      {
-        "number": 61,
-        "repo": "rainlanguage/rain.dia",
-        "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
       },
       {
         "number": 428,
