@@ -51,6 +51,16 @@
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
+      "number": 843,
+      "repo": "rainlanguage/raindex",
+      "title": "need to be able to get logs out of the app somehow"
+    },
+    {
+      "number": 732,
+      "repo": "rainlanguage/raindex",
+      "title": "Vault list page - decrease vaultid chars"
+    },
+    {
       "number": 706,
       "repo": "rainlanguage/raindex",
       "title": "test the post eval lib from ob v4"
@@ -322,11 +332,11 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
+    "awaitingReVet": 1,
     "blockedDeploy": 11,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 64,
+    "closeCandidateIssues": 66,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
@@ -953,6 +963,17 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 1,
+        "prs": [
+          {
+            "number": 428,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 3,
         "prs": [
@@ -1067,14 +1088,8 @@
         ]
       },
       "ai:ready": {
-        "count": 18,
+        "count": 17,
         "prs": [
-          {
-            "number": 428,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/428"
-          },
           {
             "number": 260,
             "repo": "rainlanguage/rain.erc4626.words",
