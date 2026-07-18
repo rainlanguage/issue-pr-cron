@@ -242,7 +242,7 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 1,
+    "awaitingReVet": 0,
     "blockedDeploy": 8,
     "blockedInfra": 11,
     "blockedOn": 8,
@@ -252,12 +252,12 @@
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 57,
-    "leaks": 40,
-    "ready": 12,
-    "reject": 32,
+    "leaks": 39,
+    "ready": 16,
+    "reject": 31,
     "relink": 1,
     "totalProducerPrs": 152,
-    "unvetted": 5
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -652,14 +652,8 @@
     },
     "leak": {
       "leak": {
-        "count": 2,
+        "count": 1,
         "prs": [
-          {
-            "number": 427,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/427"
-          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
@@ -849,32 +843,9 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 1,
-        "prs": [
-          {
-            "number": 55,
-            "repo": "rainlanguage/rain.dia",
-            "title": "Consolidate pointer codegen to canonical script/Build.sol",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/55"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 5,
+        "count": 3,
         "prs": [
-          {
-            "number": 31,
-            "repo": "rainlanguage/rain.math.binary",
-            "title": "docs: ctpop NatSpec, accurate H01 comment, correct README publish section",
-            "url": "https://github.com/rainlanguage/rain.math.binary/pull/31"
-          },
-          {
-            "number": 30,
-            "repo": "rainlanguage/rain.math.binary",
-            "title": "test: pin mask constants by re-derivation, lone-high-bit case, relative src import",
-            "url": "https://github.com/rainlanguage/rain.math.binary/pull/30"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -986,8 +957,26 @@
         ]
       },
       "ai:ready": {
-        "count": 8,
+        "count": 13,
         "prs": [
+          {
+            "number": 427,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/427"
+          },
+          {
+            "number": 31,
+            "repo": "rainlanguage/rain.math.binary",
+            "title": "docs: ctpop NatSpec, accurate H01 comment, correct README publish section",
+            "url": "https://github.com/rainlanguage/rain.math.binary/pull/31"
+          },
+          {
+            "number": 30,
+            "repo": "rainlanguage/rain.math.binary",
+            "title": "test: pin mask constants by re-derivation, lone-high-bit case, relative src import",
+            "url": "https://github.com/rainlanguage/rain.math.binary/pull/30"
+          },
           {
             "number": 259,
             "repo": "rainlanguage/rain.erc4626.words",
@@ -1019,6 +1008,18 @@
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254"
           },
           {
+            "number": 404,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/404"
+          },
+          {
+            "number": 394,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/394"
+          },
+          {
             "number": 387,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(store): reject zero and null block.number from RPC",
@@ -1039,8 +1040,14 @@
         ]
       },
       "ai:reject": {
-        "count": 32,
+        "count": 31,
         "prs": [
+          {
+            "number": 55,
+            "repo": "rainlanguage/rain.dia",
+            "title": "Consolidate pointer codegen to canonical script/Build.sol",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/55"
+          },
           {
             "number": 5,
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1090,12 +1097,6 @@
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/32"
           },
           {
-            "number": 404,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/404"
-          },
-          {
             "number": 403,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)",
@@ -1118,12 +1119,6 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/399"
-          },
-          {
-            "number": 394,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/394"
           },
           {
             "number": 386,
@@ -1249,12 +1244,6 @@
     }
   },
   "leaks": [
-    {
-      "number": 427,
-      "reason": "🤖 ai:producer screenshot pending (manual): ReceiptModal renders new user-visible button states (CONNECT WALLET / WRONG NETWORK); cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same stack as the prior 14-component batch on #394/#404/#412-414 — repeated focused attempts documented there), so the render evidence is deferred to a human/preview capture. The Cloudflare preview deploy on this PR shows the modal behind the wallet gate. ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-    },
     {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
@@ -1703,9 +1692,19 @@
     ],
     "ai:ready": [
       {
-        "number": 55,
-        "repo": "rainlanguage/rain.dia",
-        "title": "Consolidate pointer codegen to canonical script/Build.sol"
+        "number": 427,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
+      },
+      {
+        "number": 31,
+        "repo": "rainlanguage/rain.math.binary",
+        "title": "docs: ctpop NatSpec, accurate H01 comment, correct README publish section"
+      },
+      {
+        "number": 30,
+        "repo": "rainlanguage/rain.math.binary",
+        "title": "test: pin mask constants by re-derivation, lone-high-bit case, relative src import"
       },
       {
         "number": 259,
@@ -1743,6 +1742,16 @@
         "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
       },
       {
+        "number": 404,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+      },
+      {
+        "number": 394,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
+      },
+      {
         "number": 387,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(store): reject zero and null block.number from RPC"
@@ -1764,6 +1773,11 @@
       }
     ],
     "ai:reject": [
+      {
+        "number": 55,
+        "repo": "rainlanguage/rain.dia",
+        "title": "Consolidate pointer codegen to canonical script/Build.sol"
+      },
       {
         "number": 5,
         "repo": "rainlanguage/adversarial-mutation-test",
@@ -1805,11 +1819,6 @@
         "title": "audit: deploy-version consistency — two distinct counters, deploy-keyed pins, no release-spanning"
       },
       {
-        "number": 404,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
-      },
-      {
         "number": 403,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
@@ -1828,11 +1837,6 @@
         "number": 399,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
-      },
-      {
-        "number": 394,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
       },
       {
         "number": 386,
