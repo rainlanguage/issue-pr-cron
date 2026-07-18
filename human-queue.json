@@ -332,7 +332,7 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
+    "awaitingReVet": 3,
     "blockedDeploy": 11,
     "blockedInfra": 13,
     "blockedOn": 10,
@@ -963,6 +963,29 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 3,
+        "prs": [
+          {
+            "number": 63,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/63"
+          },
+          {
+            "number": 62,
+            "repo": "rainlanguage/rain.dia",
+            "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/62"
+          },
+          {
+            "number": 61,
+            "repo": "rainlanguage/rain.dia",
+            "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/61"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 3,
         "prs": [
@@ -1077,31 +1100,13 @@
         ]
       },
       "ai:ready": {
-        "count": 22,
+        "count": 19,
         "prs": [
           {
             "number": 429,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/429"
-          },
-          {
-            "number": 63,
-            "repo": "rainlanguage/rain.dia",
-            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/63"
-          },
-          {
-            "number": 62,
-            "repo": "rainlanguage/rain.dia",
-            "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/62"
-          },
-          {
-            "number": 61,
-            "repo": "rainlanguage/rain.dia",
-            "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel",
-            "url": "https://github.com/rainlanguage/rain.dia/pull/61"
           },
           {
             "number": 428,
