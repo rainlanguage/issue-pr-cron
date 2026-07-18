@@ -336,8 +336,8 @@
     "ready": 19,
     "reject": 29,
     "relink": 1,
-    "totalProducerPrs": 159,
-    "unvetted": 4
+    "totalProducerPrs": 160,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -965,8 +965,14 @@
         ]
       },
       "un-vetted": {
-        "count": 4,
+        "count": 5,
         "prs": [
+          {
+            "number": 428,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428"
+          },
           {
             "number": 260,
             "repo": "rainlanguage/rain.erc4626.words",
