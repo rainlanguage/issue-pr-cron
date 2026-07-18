@@ -46,6 +46,16 @@
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
+      "number": 651,
+      "repo": "rainlanguage/raindex",
+      "title": "malformed vault id error should be clearer"
+    },
+    {
+      "number": 642,
+      "repo": "rainlanguage/raindex",
+      "title": "walletconnect not connecting on linux build"
+    },
+    {
       "number": 637,
       "repo": "rainlanguage/raindex",
       "title": "useless error when `orderbook` is missing on an order in yaml"
@@ -226,9 +236,19 @@
       "title": "Frontend testing harness & basic tests"
     },
     {
+      "number": 474,
+      "repo": "rainlanguage/raindex",
+      "title": "if you quit without saving your work the app happily exits and deletes the work"
+    },
+    {
       "number": 448,
       "repo": "rainlanguage/raindex",
       "title": "\"Cannot access unitialized variable\" - White Screen on Mac OS 11"
+    },
+    {
+      "number": 446,
+      "repo": "rainlanguage/raindex",
+      "title": "Add titles for axes in charts"
     },
     {
       "number": 437,
@@ -236,17 +256,27 @@
       "title": "Generic deposit modal should use dropdown to select token from config, instead of text input"
     },
     {
+      "number": 290,
+      "repo": "rainlanguage/raindex",
+      "title": "Select a ledger address rather than requiring user to enter derivation index"
+    },
+    {
       "number": 272,
       "repo": "rainlanguage/raindex",
       "title": "don't close deposit modal on ledger error"
+    },
+    {
+      "number": 132,
+      "repo": "rainlanguage/raindex",
+      "title": "include the sha or similar in the name of the assets when doing builds off main"
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
+    "awaitingReVet": 1,
     "blockedDeploy": 8,
-    "blockedInfra": 11,
+    "blockedInfra": 12,
     "blockedOn": 8,
-    "closeCandidateIssues": 48,
+    "closeCandidateIssues": 54,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
@@ -254,7 +284,7 @@
     "humanReject": 57,
     "leaks": 39,
     "ready": 16,
-    "reject": 31,
+    "reject": 30,
     "relink": 1,
     "totalProducerPrs": 152,
     "unvetted": 3
@@ -718,7 +748,7 @@
         ]
       },
       "ai:blocked-infra": {
-        "count": 11,
+        "count": 12,
         "prs": [
           {
             "number": 410,
@@ -749,6 +779,12 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/396"
+          },
+          {
+            "number": 385,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "docs(setup): fix README setup steps and add missing env var",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/385"
           },
           {
             "number": 186,
@@ -843,6 +879,17 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 1,
+        "prs": [
+          {
+            "number": 427,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/427"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 3,
         "prs": [
@@ -957,14 +1004,8 @@
         ]
       },
       "ai:ready": {
-        "count": 13,
+        "count": 12,
         "prs": [
-          {
-            "number": 427,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/427"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.math.binary",
@@ -1040,7 +1081,7 @@
         ]
       },
       "ai:reject": {
-        "count": 31,
+        "count": 30,
         "prs": [
           {
             "number": 55,
@@ -1125,12 +1166,6 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(store): add inflightToken concurrency guard to blockNumberStore",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/386"
-          },
-          {
-            "number": 385,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "docs(setup): fix README setup steps and add missing env var",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/385"
           },
           {
             "number": 252,
@@ -1549,6 +1584,11 @@
         "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
       },
       {
+        "number": 385,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "docs(setup): fix README setup steps and add missing env var"
+      },
+      {
         "number": 186,
         "repo": "rainlanguage/rain.flare",
         "title": "fix: view mutability, return names, meta description, and eval-order comments"
@@ -1842,11 +1882,6 @@
         "number": 386,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
-      },
-      {
-        "number": 385,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "docs(setup): fix README setup steps and add missing env var"
       },
       {
         "number": 252,
