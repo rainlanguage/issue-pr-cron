@@ -273,9 +273,9 @@
   ],
   "counts": {
     "awaitingReVet": 1,
-    "blockedDeploy": 8,
+    "blockedDeploy": 9,
     "blockedInfra": 12,
-    "blockedOn": 8,
+    "blockedOn": 10,
     "closeCandidateIssues": 54,
     "closeCandidatePrs": 8,
     "design": 5,
@@ -286,8 +286,8 @@
     "ready": 16,
     "reject": 30,
     "relink": 1,
-    "totalProducerPrs": 152,
-    "unvetted": 3
+    "totalProducerPrs": 156,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -695,8 +695,14 @@
     },
     "producer-blocked": {
       "ai:blocked-deploy": {
-        "count": 8,
+        "count": 9,
         "prs": [
+          {
+            "number": 57,
+            "repo": "rainlanguage/rain.dia",
+            "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/57"
+          },
           {
             "number": 253,
             "repo": "rainlanguage/rain.math.float",
@@ -825,8 +831,20 @@
         ]
       },
       "ai:blocked-on": {
-        "count": 8,
+        "count": 10,
         "prs": [
+          {
+            "number": 59,
+            "repo": "rainlanguage/rain.dia",
+            "title": "fix(ci): drop stale submodule prelude steps from manual-sol-artifacts",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/59"
+          },
+          {
+            "number": 56,
+            "repo": "rainlanguage/rain.dia",
+            "title": "test: assert committed PARSE_META against LibGenParseMeta regeneration",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/56"
+          },
           {
             "number": 54,
             "repo": "rainlanguage/rain.dia",
@@ -891,8 +909,14 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "number": 58,
+            "repo": "rainlanguage/rain.dia",
+            "title": "fix(ci): conform main to rainix one-contract and Build.sol gates",
+            "url": "https://github.com/rainlanguage/rain.dia/pull/58"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1517,6 +1541,11 @@
   "states": {
     "ai:blocked-deploy": [
       {
+        "number": 57,
+        "repo": "rainlanguage/rain.dia",
+        "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
+      },
+      {
         "number": 253,
         "repo": "rainlanguage/rain.math.float",
         "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
@@ -1620,6 +1649,16 @@
       }
     ],
     "ai:blocked-on": [
+      {
+        "number": 59,
+        "repo": "rainlanguage/rain.dia",
+        "title": "fix(ci): drop stale submodule prelude steps from manual-sol-artifacts"
+      },
+      {
+        "number": 56,
+        "repo": "rainlanguage/rain.dia",
+        "title": "test: assert committed PARSE_META against LibGenParseMeta regeneration"
+      },
       {
         "number": 54,
         "repo": "rainlanguage/rain.dia",
