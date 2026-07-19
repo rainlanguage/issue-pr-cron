@@ -366,8 +366,8 @@
     "ready": 25,
     "reject": 32,
     "relink": 1,
-    "totalProducerPrs": 172,
-    "unvetted": 5
+    "totalProducerPrs": 174,
+    "unvetted": 7
   },
   "lanes": {
     "human-decisions": {
@@ -984,8 +984,20 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 5,
+        "count": 7,
         "prs": [
+          {
+            "number": 50,
+            "repo": "rainlanguage/claude-audit-skills",
+            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming",
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50"
+          },
+          {
+            "number": 118,
+            "repo": "rainlanguage/rainlang.interface",
+            "title": "test: pin sourceCount(hex\"00\") == 0 explicitly",
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/118"
+          },
           {
             "number": 102,
             "repo": "rainlanguage/rain-org-health",
