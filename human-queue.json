@@ -357,17 +357,17 @@
     "blockedInfra": 13,
     "blockedOn": 10,
     "closeCandidateIssues": 70,
-    "closeCandidatePrs": 8,
-    "design": 5,
+    "closeCandidatePrs": 9,
+    "design": 6,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 30,
-    "leaks": 41,
-    "ready": 25,
-    "reject": 32,
-    "relink": 1,
+    "leaks": 17,
+    "ready": 47,
+    "reject": 35,
+    "relink": 2,
     "totalProducerPrs": 174,
-    "unvetted": 7
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -600,157 +600,13 @@
     },
     "leak": {
       "leak": {
-        "count": 25,
+        "count": 1,
         "prs": [
-          {
-            "number": 25,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/25"
-          },
-          {
-            "number": 19,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "fix(metrics): escape data fields before tooltip HTML interpolation",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/19"
-          },
-          {
-            "number": 408,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/408"
-          },
-          {
-            "number": 407,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/407"
-          },
-          {
-            "number": 405,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/405"
-          },
-          {
-            "number": 398,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
-          },
-          {
-            "number": 397,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/397"
-          },
-          {
-            "number": 395,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/395"
-          },
-          {
-            "number": 393,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/393"
-          },
-          {
-            "number": 389,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/389"
-          },
-          {
-            "number": 196,
-            "repo": "rainlanguage/rain.flare",
-            "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/196"
-          },
-          {
-            "number": 143,
-            "repo": "rainlanguage/dotrain",
-            "title": "fix(parser): comment before next binding bleeds into previous content_position",
-            "url": "https://github.com/rainlanguage/dotrain/pull/143"
-          },
-          {
-            "number": 2793,
-            "repo": "rainlanguage/raindex",
-            "title": "perf: eliminate redundant read_dispair calls in try_into_call",
-            "url": "https://github.com/rainlanguage/raindex/pull/2793"
-          },
-          {
-            "number": 2,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
-          },
-          {
-            "number": 325,
-            "repo": "rainlanguage/rain.vats",
-            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types",
-            "url": "https://github.com/rainlanguage/rain.vats/pull/325"
-          },
-          {
-            "number": 212,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212"
-          },
-          {
-            "number": 324,
-            "repo": "rainlanguage/rain.vats",
-            "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault",
-            "url": "https://github.com/rainlanguage/rain.vats/pull/324"
-          },
-          {
-            "number": 211,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/211"
-          },
-          {
-            "number": 209,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209"
-          },
-          {
-            "number": 185,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "test(readme): assert README documents both ERC4626 word names",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185"
-          },
-          {
-            "number": 161,
-            "repo": "rainlanguage/rain.flare",
-            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/161"
-          },
-          {
-            "number": 160,
-            "repo": "rainlanguage/rain.flare",
-            "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/160"
-          },
-          {
-            "number": 142,
-            "repo": "rainlanguage/rain.flare",
-            "title": "fix: rename SLFR→SFLR typo, fix sflr-exchange-rate meta description and NatSpec",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/142"
-          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
             "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows",
             "url": "https://github.com/rainlanguage/flow/pull/475"
-          },
-          {
-            "number": 372,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/372"
           }
         ]
       }
@@ -984,32 +840,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 7,
+        "count": 3,
         "prs": [
-          {
-            "number": 50,
-            "repo": "rainlanguage/claude-audit-skills",
-            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming",
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50"
-          },
-          {
-            "number": 118,
-            "repo": "rainlanguage/rainlang.interface",
-            "title": "test: pin sourceCount(hex\"00\") == 0 explicitly",
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/118"
-          },
-          {
-            "number": 102,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Deployments: cross-check tokens vs the migration's productionReceiptVaults()",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/102"
-          },
-          {
-            "number": 137,
-            "repo": "rainlanguage/rain.flare",
-            "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/137"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1033,7 +865,7 @@
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 8,
+        "count": 9,
         "prs": [
           {
             "number": 177,
@@ -1066,6 +898,12 @@
             "url": "https://github.com/rainlanguage/rain.flare/pull/165"
           },
           {
+            "number": 142,
+            "repo": "rainlanguage/rain.flare",
+            "title": "fix: rename SLFR→SFLR typo, fix sflr-exchange-rate meta description and NatSpec",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/142"
+          },
+          {
             "number": 128,
             "repo": "rainlanguage/rain.flare",
             "title": "Add missing NatSpec to buildOpcode/Integrity pointers and ftsoV2LTSGetFeed",
@@ -1086,13 +924,19 @@
         ]
       },
       "ai:design": {
-        "count": 5,
+        "count": 6,
         "prs": [
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/426"
+          },
+          {
+            "number": 161,
+            "repo": "rainlanguage/rain.flare",
+            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/161"
           },
           {
             "number": 2702,
@@ -1121,8 +965,14 @@
         ]
       },
       "ai:ready": {
-        "count": 25,
+        "count": 47,
         "prs": [
+          {
+            "number": 118,
+            "repo": "rainlanguage/rainlang.interface",
+            "title": "test: pin sourceCount(hex\"00\") == 0 explicitly",
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/118"
+          },
           {
             "number": 435,
             "repo": "cyclofinance/cyclo.site",
@@ -1226,6 +1076,12 @@
             "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
           },
           {
+            "number": 25,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/25"
+          },
+          {
             "number": 246,
             "repo": "S01-Issuer/st0x.deploy",
             "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant",
@@ -1238,10 +1094,52 @@
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254"
           },
           {
+            "number": 19,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "fix(metrics): escape data fields before tooltip HTML interpolation",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/19"
+          },
+          {
+            "number": 408,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/408"
+          },
+          {
+            "number": 407,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/407"
+          },
+          {
+            "number": 405,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/405"
+          },
+          {
             "number": 404,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix: case-insensitive symbol lookup in AccountStats (#312)",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/404"
+          },
+          {
+            "number": 398,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
+          },
+          {
+            "number": 397,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/397"
+          },
+          {
+            "number": 395,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/395"
           },
           {
             "number": 394,
@@ -1250,10 +1148,40 @@
             "url": "https://github.com/cyclofinance/cyclo.site/pull/394"
           },
           {
+            "number": 393,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/393"
+          },
+          {
+            "number": 389,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/389"
+          },
+          {
             "number": 387,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(store): reject zero and null block.number from RPC",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/387"
+          },
+          {
+            "number": 196,
+            "repo": "rainlanguage/rain.flare",
+            "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/196"
+          },
+          {
+            "number": 143,
+            "repo": "rainlanguage/dotrain",
+            "title": "fix(parser): comment before next binding bleeds into previous content_position",
+            "url": "https://github.com/rainlanguage/dotrain/pull/143"
+          },
+          {
+            "number": 2,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
           },
           {
             "number": 230,
@@ -1268,16 +1196,76 @@
             "url": "https://github.com/rainlanguage/rain.flare/pull/170"
           },
           {
+            "number": 325,
+            "repo": "rainlanguage/rain.vats",
+            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types",
+            "url": "https://github.com/rainlanguage/rain.vats/pull/325"
+          },
+          {
+            "number": 212,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212"
+          },
+          {
+            "number": 324,
+            "repo": "rainlanguage/rain.vats",
+            "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault",
+            "url": "https://github.com/rainlanguage/rain.vats/pull/324"
+          },
+          {
+            "number": 211,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/211"
+          },
+          {
+            "number": 185,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "test(readme): assert README documents both ERC4626 word names",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185"
+          },
+          {
+            "number": 160,
+            "repo": "rainlanguage/rain.flare",
+            "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/160"
+          },
+          {
+            "number": 137,
+            "repo": "rainlanguage/rain.flare",
+            "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/137"
+          },
+          {
             "number": 130,
             "repo": "rainlanguage/rain.flare",
             "title": "test: assert authoringMetaV2 word names and descriptions",
             "url": "https://github.com/rainlanguage/rain.flare/pull/130"
+          },
+          {
+            "number": 372,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/372"
           }
         ]
       },
       "ai:reject": {
-        "count": 32,
+        "count": 35,
         "prs": [
+          {
+            "number": 50,
+            "repo": "rainlanguage/claude-audit-skills",
+            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming",
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50"
+          },
+          {
+            "number": 102,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Deployments: cross-check tokens vs the migration's productionReceiptVaults()",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/102"
+          },
           {
             "number": 436,
             "repo": "cyclofinance/cyclo.site",
@@ -1387,6 +1375,12 @@
             "url": "https://github.com/rainlanguage/rainix/pull/252"
           },
           {
+            "number": 2793,
+            "repo": "rainlanguage/raindex",
+            "title": "perf: eliminate redundant read_dispair calls in try_into_call",
+            "url": "https://github.com/rainlanguage/raindex/pull/2793"
+          },
+          {
             "number": 188,
             "repo": "rainlanguage/rain.flare",
             "title": "fix(lib): move DecimalsTooLarge guard into LibFtsoCurrentPriceUsd (#79)",
@@ -1473,13 +1467,19 @@
         ]
       },
       "ai:relink": {
-        "count": 1,
+        "count": 2,
         "prs": [
           {
             "number": 231,
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "docs(assembly): document integrity() coupling in run() assembly reads",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/231"
+          },
+          {
+            "number": 209,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209"
           }
         ]
       }
@@ -1487,22 +1487,10 @@
   },
   "leaks": [
     {
-      "number": 25,
-      "reason": "🤖 ai:producer Producer note: reworked per rework note — `site/health.json` regenerated with a current roh-scan (commit 6397ec7, generatedAt 2026-07-12T21:27:50Z: 581 open issues org-wide, 482 uncovered / 99 covered by an open PR), so the Open-issue queue section renders real content instead of the regenerate placeholder. Screenshot of the rendered section (stat tiles + uncovered-first queue, sorted by age), captured with the repo's own `nix run .#screenshot` harness against this branch + the fresh data:  ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/rain-org-health-25.png) ",
-      "repo": "rainlanguage/rain-org-health",
-      "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
-    },
-    {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
       "repo": "cyclofinance/cyclo.site",
       "title": "fix(select): match options by optional optionKey instead of reference only"
-    },
-    {
-      "number": 19,
-      "reason": "🤖 ai:producer  Producer note: rework executed — head 4049109 implements the Rework note in full; this pass independently re-verified it at the DOM level with a jsdom harness (hostile payload `<img src=x onerror=alert(1)>` fed through every data field), no further code change needed.  Renderers converted / confirmed escaping-by-construction (`createElement`/`createElementNS` + `textContent`/`setAttribute`/`.href` — zero data→`innerHTML`):  - meta line (`data.org`, `generatedAt`) — `textContent` - summary tiles (`renderTiles`) — `textContent` - signal summary rows (`renderSummary`) — `textContent`; `title`/`data-sig` set via DOM properties - repo list + signal chips (`render`) — `textContent`, `.href` property - pipeline FSM (`renderFsm` / `itemsFor`): leak titles + reasons, close-candidate titles, ai:ready titles + reasons — text nodes (detail lists clicked open in the harness) - producer-metrics tiles (`renderPmTiles`) — `textContent` - metrics chart + tooltip (`renderPmChart`): runId (raw fall-through when unparseable), tool-call counts, outcome — text nodes (tooltip driven via mousemove) - metrics note (`loadMetrics`) — `replaceChildren` with text nodes  Injection verification — all 22 assertions green:  - payload lands verbatim as `textContent` at every site above - document has zero `<img>` elements, zero `[onerror]` attributes, only the one inline `<script>`; no `alert()` fired - serialization round-trip resurrects no markup (raw `<` survives only inside quoted attribute values — inert) - `escapeHtml`: 0 occurrences; remaining `innerHTML` uses are clears (`\"\"`) and two static literals with no interpolation; no `insertAdjacentHTML`/`outerHTML`/`document.write`  Branch is 0 commits behind master, all checks green (rs-static, rs-test ubuntu + macos), no unresolved review threads. Ready for re-review. ",
-      "repo": "rainlanguage/rain-org-health",
-      "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
     },
     {
       "number": 414,
@@ -1529,114 +1517,6 @@
       "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
     },
     {
-      "number": 408,
-      "reason": "🤖 ai:producer  Producer note: reworked per rework note — eliminated the second source of truth for pool amounts using the note's primary form: `EpochConfig.poolRflr` is now a `bigint` referencing the canonical pool constants (`DEC25_REWARD_POOL`/`JAN26_REWARD_POOL`/`FEB26_REWARD_POOL`/`MAR26_REWARD_POOL`), and `RewardsInfo` formats it at render time via `formatUnits` + `Intl.NumberFormat`. Change a pool constant and /rewards now follows automatically. Date strings remain as-is in `REWARD_EPOCHS` (sole source, per the note). Render tests added asserting the derived values appear.  ## QA evidence  **Tests added** (`src/lib/components/RewardsInfo.test.ts`; `data-testid=\"reward-epochs\"` added to the epoch list for targeting):  - `sources each epoch pool from the canonical reward pool constants` — identity check: `REWARD_EPOCHS[i].poolRflr` equals the four canonical bigint constants in order - `renders one entry per epoch with the pool amount derived from its bigint constant` — renders the component and asserts each `<li>` shows the label, dates, and `formatted(poolRflr) rFLR` - `renders the exact formatted pool strings for the current constants` — pins today's exact strings: `1,000,000 rFLR`, `500,000 rFLR` twice, `300,000 rFLR`  **Mutation proof — fails on the hand-written-strings behavior the fix removed.**  Mutation 1: reverted `poolRflr` to the PR's previous hand-written display strings (`\"1,000,000\"`, ...) and the component to printing them raw. 2/4 tests fail:  ``` FAIL src/lib/components/RewardsInfo.test.ts > RewardsInfo Component > sources each epoch pool from the canonical reward pool constants AssertionError: expected [ '1,000,000', '500,000', …(2) ] to deeply equal [ 1000000000000000000000000n, …(3) ] FAIL src/lib/components/RewardsInfo.test.ts > RewardsInfo Component > renders one entry per epoch with the pool amount derived from its bigint constant Tests  2 failed | 2 passed (4) ```  (The exact-strings test alone passes under this mutation — hand-written strings agree with the constants *today* — which is exactly why the derivation + identity tests are the enforcers, not just string pins.)  Mutation 2: simulated the silent-lie failure mode — kept the fix but hand-wrote a stale `\"900,000\"` display for the December epoch. 2/4 tests fail:  ``` FAIL src/lib/components/RewardsInfo.test.ts > RewardsInfo Component > renders one entry per epoch with the pool amount derived from its bigint constant AssertionError: expected 'December 2025: December 1, 2025 00:00…' to contain '1,000,000 rFLR' FAIL src/lib/components/RewardsInfo.test.ts > RewardsInfo Component > renders the exact formatted pool strings for the current constants AssertionError: expected 'December 2025: December 1, 2025 00:00…' to contain '1,000,000 rFLR' Tests  2 failed | 2 passed (4) ```  Fix restored after each mutation.  **Scoped suite result:** 4/4 passed (`RewardsInfo.test.ts` is the only consumer of `REWARD_EPOCHS`/`EpochConfig`):  ```  Test Files  1 passed (1)       Tests  4 passed (4) ```  Prettier/pre-commit pass on the changed files. Branch merged with `origin/main` (clean merge) before the rework. ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
-    },
-    {
-      "number": 407,
-      "reason": "🤖 ai:producer  Producer note: `Deploy to Cloudflare Pages` on 8b9e549 failed during `npm install` with `npm error code ECONNRESET` (registry network reset on the runner) before any build step ran — while `build_site` and `test` on the same head passed their own installs and builds. Classified transient network flake, not a code failure. Pushed the one authorized empty retrigger be52dab (`fix(ci): Deploy to Cloudflare Pages empty-commit retrigger (flaky) [3b-attempt]`); per back-off policy this check gets no further pushes from the producer — if it reds again on the retrigger it hands off as infra.",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
-    },
-    {
-      "number": 405,
-      "reason": "🤖 ai:producer  Producer note: reworked per rework note — pinned both previously-untested behaviors of the shared `Input.svelte` with discriminating tests: (1) programmatic `bind:amount` updates (initial and post-mount) now asserted to route through `handleDecimalSeparator`, via a new `InputTest.svelte` bind harness; (2) the default validator now asserted to reject both `\"\"` and a lone `\".\"` (surfacing \"Invalid amount\") while leaving the bound `amount` untouched. To make the `\"\"` rejection hold, the default validator was tightened to also reject the empty string (it previously only rejected `\".\"` and NaN), matching the org empty-fraction ruling and the #330 proposed fix.  ## QA evidence  **Tests added** (`src/lib/components/Input.test.ts`, plus `src/lib/components/InputTest.svelte` bind:amount harness):  - `external amount updates > sanitizes the initial amount through handleDecimalSeparator` - `external amount updates > routes programmatic bind:amount updates through handleDecimalSeparator` - `default validator > rejects a lone '.' set via bind:amount and leaves amount untouched` - `default validator > rejects an empty string set via bind:amount and leaves amount untouched`  **Mutation proof — fails on pre-fix behavior.**  Mutation A: reverted the external-update fix (raw `displayValue = amount.toString()` initializer + old reactive sync block from main), kept the validator. 4/4 new tests fail:  ``` FAIL src/lib/components/Input.test.ts > Input > external amount updates > sanitizes the initial amount through handleDecimalSeparator AssertionError: expected '1,5' to be '1.5' // Object.is equality FAIL src/lib/components/Input.test.ts > Input > external amount updates > routes programmatic bind:amount updates through handleDecimalSeparator AssertionError: expected '1,5e10abc' to be '1.510' // Object.is equality FAIL src/lib/components/Input.test.ts > Input > default validator > rejects a lone '.' set via bind:amount and leaves amount untouched FAIL src/lib/components/Input.test.ts > Input > default validator > rejects an empty string set via bind:amount and leaves amount untouched Tests  4 failed | 7 passed (11) ```  Mutation B: reverted the default validator to main's no-op `() => undefined`, kept the external-update fix. Both default-validator tests fail:  ``` FAIL src/lib/components/Input.test.ts > Input > default validator > rejects a lone '.' set via bind:amount and leaves amount untouched TestingLibraryElementError: Unable to find an element with the text: Invalid amount. FAIL src/lib/components/Input.test.ts > Input > default validator > rejects an empty string set via bind:amount and leaves amount untouched TestingLibraryElementError: Unable to find an element with the text: Invalid amount. Tests  2 failed | 9 passed (11) ```  Fix restored after each mutation; suite green again.  **Scoped suite result:** 62/62 passed across the component and its consumers — `Input.test.ts` (11), `handleDecimalSeparator.test.ts`, `Lock.test.ts` (15), `DsfStrategy.test.ts`, `DcaStrategy.test.ts`:  ```  Test Files  5 passed (5)       Tests  62 passed (62) ```  Prettier/pre-commit pass on the changed files. Branch merged with `origin/main` (clean merge) before the rework. ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
-    },
-    {
-      "number": 398,
-      "reason": "🤖 ai:producer  Producer note: reworked per rework note — added three discriminating tests to `DsfStrategy.test.ts` pinning each gate fix (#332 multiplier/timePerEpoch validation, #335 rotateDepositAmount gating, #336 the previously-dead overrideDepositAmount guard). Each fails on the pre-fix code; the pre-existing 14-test suite passes on both sides, confirming the gates were unpinned before. Branch merged up to current `main`. Tests only; no component changes.  ## QA evidence  **Tests added** (all in `src/lib/components/DsfStrategy.test.ts`)  1. Issue #332 — `it.each` over the three period inputs × two invalid values (6 cases): `should show a validation error and disable Deploy when <next-trade-multiplier-input|cost-basis-multiplier-input|time-per-epoch-input> is set to <\"0\"|\"\">`. Asserts Deploy enabled before, then the rendered validation error (`Period must be greater than 0` / `Period is required`, the observable of the bound error flag) AND Deploy disabled after. (The Input component's decimal sanitizer strips `-`, so `\"0\"` and `\"\"` are the invalid states reachable through the input.) 2. Issue #335 — `should disable Deploy when the rotate deposit amount is empty or zero`: custom deposit on, amount-token deposit filled, rotate deposit empty → disabled; rotate `\"0\"` → error text + disabled; rotate `\"25\"` → enabled (proves the gate is the rotate value). 3. Issue #336 — `should disable Deploy when the override deposit amount is zero`: custom deposit on, rotate deposit valid, override deposit `\"0\"` (the `0n` state where the old `overrideDepositAmount == undefined` check could never fire) → error text + disabled; `\"50\"` → enabled.  **Fails-on-base proof** — with `src/lib/components/DsfStrategy.svelte` and `src/lib/trade/validateDeploymentArgs.ts` reverted to the `origin/main` (pre-fix) versions and the new tests in place:  ``` Tests  8 failed | 14 passed (22) ❯ should show a validation error and disable Deploy when next-trade-multiplier-input is set to \"0\"   → Unable to find an element with the text: Period must be greater than 0. ❯ should show a validation error and disable Deploy when next-trade-multiplier-input is set to \"\"   → Unable to find an element with the text: Period is required. ❯ should show a validation error and disable Deploy when cost-basis-multiplier-input is set to \"0\"   → Unable to find an element with the text: Period must be greater than 0. ❯ should show a validation error and disable Deploy when cost-basis-multiplier-input is set to \"\"   → Unable to find an element with the text: Period is required. ❯ should show a validation error and disable Deploy when time-per-epoch-input is set to \"0\"   → Unable to find an element with the text: Period must be greater than 0. ❯ should show a validation error and disable Deploy when time-per-epoch-input is set to \"\"   → Unable to find an element with the text: Period is required. ❯ should disable Deploy when the rotate deposit amount is empty or zero   → expect(element).toBeDisabled()        // Deploy was ENABLED with rotate deposit empty ❯ should disable Deploy when the override deposit amount is zero   → Unable to find an element with the text: Override deposit amount must be greater than 0. ```  All 8 new tests fail on pre-fix code — one per gate change, including the `toBeDisabled()` failure showing Deploy stayed clickable with an empty rotate deposit — and all 14 pre-existing tests still pass on pre-fix code (the suite previously could not see these gates). With the fix restored: 22/22 pass.  **Oracle:** expected behavior derives from the deploy-gate contract (Deploy must be disabled while any deployment argument is absent or non-positive) and the validator messages in `src/lib/trade/validateDeploymentArgs.ts`, not from the `disableDeploy` expression under test.  **Category check:** rework note asks three discriminating tests, one per issue (#332, #335, #336), each failing on pre-fix code; covered — #332 across all three period inputs and both invalid-value kinds, #335 across both empty and zero rotate deposits plus the enabling counter-case, #336 at the exact previously-unreachable `0n` state plus the enabling counter-case.  **Scoped suite:** `npm test -- run src/lib/components/DsfStrategy.test.ts` — 22/22 pass (14 pre-existing + 8 new) on the fixed code; prettier and eslint clean. ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
-    },
-    {
-      "number": 397,
-      "reason": "🤖 ai:producer Producer note: rework executed — completed the reworked branch and mutation-validated every guard per-access. State: shared `src/lib/utils/safeBigInt.ts` (bigint passthrough, strict `0n` fallback) guards all four #331-named accesses in `Leaderboard.svelte` (`eligibleBalances?.[token.symbol]`, `shares?.[token.symbol]?.rewardsAmount`, `shares?.[token.symbol]?.percentageShare`, `shares?.totalRewards`); malformed-row render test (row missing `shares` + string `eligibleBalances` value) plus `safeBigInt` unit tests. Merged `origin/main` into the branch (merge, not rebase) and pushed `5cbc1d8` `[merge-update]`.  ## QA - Discriminating tests: `Leaderboard.test.ts > should render zero fallbacks instead of crashing on a malformed row`, `safeBigInt.test.ts` — fails on base (unguarded code: `TypeError: Cannot read properties of undefined (reading 'cysFLR')`, 1 failed | 3 passed; see prior producer note) - Mutations applied (each reverted individually at merged HEAD, scoped vitest, then restored):   - `Leaderboard.svelte:81` eligibleBalances guard → `entry.eligibleBalances[token.symbol] || 0n` → KILLED: malformed-row test fails at the zero-fallback count assertion (string `\"123000000000000000000\"` slips past `||` and renders non-zero) — 1 failed | 3 passed   - `Leaderboard.svelte:88` rewardsAmount guard → `entry.shares[token.symbol]?.rewardsAmount || 0n` → KILLED: `TypeError: Cannot read properties of undefined (reading 'cysFLR')` at Leaderboard.svelte:88 — 1 failed | 3 passed   - `Leaderboard.svelte:93` percentageShare guard → `entry.shares[token.symbol]?.percentageShare || 0n` → KILLED: same TypeError (reading 'cysFLR') — 1 failed | 3 passed   - `Leaderboard.svelte:100` totalRewards guard → `entry.shares.totalRewards` → KILLED: `TypeError: Cannot read properties of undefined (reading 'totalRewards')` — 1 failed | 3 passed   - `safeBigInt.ts:11` → `return value as bigint` (drop the typeof guard) → KILLED twice over: helper unit test (`expected undefined to be 0n`) AND malformed-row render test — 2 failed | 4 passed - Oracle: zero-fallback display values derived from the fixture by hand (missing/malformed field ⇒ `0.0000`, valid bigint `200n * ONE` ⇒ `200.0000`), independent of the component code - Category check: #331 names Leaderboard.svelte accesses at (pre-fix) lines 73, 79, 84, 91 — all four are routed through the shared `safeBigInt` with optional chaining; no other subgraph-shape numeric access remains unguarded in the component - All guards restored: scoped suite 6/6 green (2 files); branch CI was fully green (test / lint / build_site / Cloudflare Pages) on `8c297b4` before the `[merge-update]` push, which re-runs it ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard"
-    },
-    {
-      "number": 395,
-      "reason": "🤖 ai:producer  Producer note: reworked per rework note — added the missing route-detection table test ((path, expected-active) pairs across all nav entries, discriminating against the old bare-literal comparison) and the desktop no-toggleMenu assertion (per-link render asserting the mobile overlay stays closed when each desktop link is clicked). Branch merged up to current `main`. No component changes; tests only.  ## QA evidence  **Tests added**  - `src/lib/components/NavButtons.activeRoute.test.ts` — new table test `NavButtons active-route detection > marks the right entry active for <path>`: 18 (path, expected-active) rows across App/Docs/Rewards/Trade/Chart, covering trailingSlash=always pathnames (`/lock/`, `/unlock/`, `/docs/`, `/docs/tokenomics/`, `/rewards/`), base-prefixed pathnames (base mocked to `/cyclo`), no-active routes, and prefix look-alikes (`/lockdown/`, `/docsy/`). - `src/lib/components/NavButtons.test.ts` — new `it.each` over all five desktop links: `should not open the mobile menu when the desktop <id> link is clicked`, asserting the mobile overlay stays closed after clicking each desktop link.  **Mutation proof (fails on the old behavior)**  Mutation 1 — reverted the `class:underline` bindings to the old bare-literal comparisons (`$page.url.pathname === \"/lock\" || ... === \"/unlock\"`, `.startsWith(\"/docs\")`, `=== \"/rewards\"`): table test kills it, 9/18 rows fail:  ``` Tests  9 failed | 9 passed (18) FAIL ... marks the right entry active for /lock/   → expect(element).toHaveClass(\"underline\")   Expected the element to have class:     underline   Received:     text-lg text-white sm:ml-4 sm:block sm:text-xl FAIL ... marks the right entry active for /docsy/   → expect(element).not.toHaveClass(\"underline\")   Expected the element not to have class:     underline   Received:     text-lg text-white sm:ml-4 sm:block sm:text-xl underline ```  (also failed: `/unlock/`, `/rewards/`, `/cyclo/lock/`, `/cyclo/unlock/`, `/cyclo/docs/`, `/cyclo/docs/guide/`, `/cyclo/rewards/` — the `/docsy/` row additionally catches the old `startsWith(\"/docs\")` over-match.)  Mutation 2 — re-added `on:click={toggleMenu}` to the four desktop links (Docs/Rewards/Trade/Chart): no-call test kills it, exactly the four de-wired links fail:  ``` Tests  4 failed | 10 passed (14) FAIL ... should not open the mobile menu when the desktop docs-button link is clicked   → expect(element).not.toBeInTheDocument()   expected document not to contain element, found <a     data-testid=\"app-button-mobile\" href=\"/lock\" ...> instead FAIL ... should not open the mobile menu when the desktop rewards-button link is clicked FAIL ... should not open the mobile menu when the desktop trade-button link is clicked FAIL ... should not open the mobile menu when the desktop chart-button link is clicked ```  **Oracle:** expected active states derive from the nav information architecture (App owns `/lock` + `/unlock`, Docs owns the `/docs` subtree, Rewards owns `/rewards`, Trade/Chart have no active affordance) plus `svelte.config.js` `trailingSlash: \"always\"` and SvelteKit base-path semantics — independent of the component's comparison code.  **Category check:** rework note asks (a) route-detection table test failing under the old bare-literal comparison, (b) desktop no-toggleMenu-call assertion; covered (a) with the 18-row table (equality entries, the docs startsWith entry, over-match guards), (b) across all five desktop links, not just the named ones.  **Scoped suite:** `npm test -- run src/lib/components/NavButtons` — 32/32 pass (18 table rows + 14 in `NavButtons.test.ts`) with the fix restored. ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
-    },
-    {
-      "number": 393,
-      "reason": "🤖 ai:producer  Producer note: reworked per rework note — added the two discriminating tests. The branch was behind `main`, so `origin/main` was merged in first (clean merge, no conflicts). QA evidence block below (it belongs in the PR body per QA-GUIDE section 8, but body edits are outside this routine):  ## QA - Discriminating tests: `Leaderboard Component > should percent-encode the account in the row href when it contains URL metacharacters` and `RewardsPlaceholder Component > should carry rel=noopener noreferrer on the target=_blank docs link` — each fails on base (reverting `encodeURIComponent(entry.account)` back to raw `entry.account` interpolation → the percent-encode test failed with the raw href `/rewards/0xabc/../../admin?redirect=evil#frag'\"<>` rendered; removing `rel=\"noopener noreferrer\"` → the rel test failed with `rel` = null; each restored fix → 7/7 tests pass across both files) - Mutations applied: `src/lib/components/Leaderboard.svelte` href line → `encodeURIComponent(entry.account)` reverted to raw `entry.account` → killed by the percent-encode test; `src/lib/components/RewardsPlaceholder.svelte` docs link → `rel=\"noopener noreferrer\"` attribute removed → killed by the rel test - Oracle: the expected href is derived inside the test itself via `encodeURIComponent` applied to the fixture string `0xabc/../../admin?redirect=evil#frag'\"<>` (covering `/`, `?`, `#`, quotes, angle brackets), independent of the component markup; the rel expectation is the static attribute value `noopener noreferrer` - Category check: #329 asks encoded account href in Leaderboard, #339 asks rel on the target=_blank link in RewardsPlaceholder; covered both ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
-    },
-    {
-      "number": 389,
-      "reason": "🤖 ai:producer Producer note: rework executed — the totalRewards guard is now a component-local safe-bigint fallback in AccountStats (commit 46ab6f0).  What changed: - `formatEther(safeBigInt(stats.shares?.totalRewards))` where `safeBigInt` is a local `typeof value === \"bigint\" ? value : 0n` check defined in the component script. Optional chaining covers a missing `shares` object; the typeof check keeps non-bigint truthy garbage (e.g. a decimal string) out of `formatEther`. - Removed the shared `src/lib/utils/safeBigInt.ts` + its test that an earlier attempt on this branch had added — the shared accessor for this patch family is owned by https://github.com/cyclofinance/cyclo.site/pull/397, so this fix stays local to AccountStats to avoid sibling conflicts. - Added a malformed-stats fixture test for a non-bigint truthy (string) `totalRewards` alongside the existing missing-`shares` fixture; both assert the zero-fallback render.  Evidence (stands in for the QA-GUIDE §8 block since the PR body cannot be edited): - Fails-on-base: with the base (`origin/main`) `AccountStats.svelte` swapped in, both malformed-stats tests FAIL — `should render zero fallbacks instead of crashing on malformed stats` throws `TypeError: Cannot read properties of undefined (reading 'totalRewards')`, and `should render a zero total when totalRewards is a non-bigint truthy value` renders `20` instead of `0` (2 failed | 2 passed). - Mutation: reverting the guard to the rejected form `stats.shares.totalRewards || 0n` → same 2 tests FAIL (missing-shares TypeError; string totalRewards renders `20`); restoring the guard → 4/4 pass. - Scoped vitest on `src/lib/components/AccountStats.test.ts`: 4 passed (4); pre-commit prettier hook: Passed. - Branch also carries a [merge-update] of main (conflicts in Lock.svelte/Lock.test.ts resolved keeping both sides' coverage).",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
-    },
-    {
-      "number": 196,
-      "reason": "🤖 ai:producer Producer note: reworked per rework note — added the asymmetric fork invariant (ETH-per-FLRETH >= 1e18, FLRETH-per-ETH <= 1e18) that fails under a getter swap; reciprocity kept as bonus; docs now cite the on-chain-verified direction. Fork verification rides on CI RPC env.",
-      "repo": "rainlanguage/rain.flare",
-      "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
-    },
-    {
-      "number": 143,
-      "reason": "🤖 ai:producer Producer note: rework executed per Rework note — comment-only bindings now trim the content_position end bound against the original text (semantic branch, not a blind clamp), restoring the pre-fix valid range covering the comment. All 4 repro cases confirmed inverted on the old code ([10,8], [10,8], [16,8], [11,8]) and now resolve to [10,17], [10,17], [16,27], [11,18]. Added test_comment_only_binding_content_position_not_inverted and test_comment_at_start_of_binding_content_preserved; both mutation-validated (branch removal / start-bound swap each fail the respective test). Both CodeRabbit threads replied-to and resolved; full dotrain suite, fmt and clippy green. Pushed ca47dae.",
-      "repo": "rainlanguage/dotrain",
-      "title": "fix(parser): comment before next binding bleeds into previous content_position"
-    },
-    {
-      "number": 2793,
-      "reason": "🤖 ai:producer Producer note (state change — correction to the prior note): the [3b-attempt] fix 1bbbc20ba did NOT green test-js-bindings — the check re-ran at that exact head (run 29226076755, 2026-07-13) and still fails at test/js_api/builder.test.ts:1451 with the same signature (expected 1 approval call, received 2). One fix attempt is spent, so back-off forbids a second push. flag-blocked-infra was refused (human decision present), so this stays parked under human:reject for human re-adjudication. The other three reds remain the main-state trio fixed by #2804.",
-      "repo": "rainlanguage/raindex",
-      "title": "perf: eliminate redundant read_dispair calls in try_into_call"
-    },
-    {
-      "number": 2,
-      "reason": "🤖 ai:producer Producer note: REWORKED per the rework note — merged main ([merge-update] commit takes main's side, dropping the prose-grep design) and re-implemented the gate on top (commit 1c6fdb9):  - **pr-review-report** (typed input, no prose-grep): `count_unresolved_page`/`unresolved_threads` read `reviewThreads { isResolved }` via GraphQL with pagination; new `OPEN_THREADS` bucket via `apply_threads_gate` — only otherwise-presentable buckets (APPROVED/AIVET/STALE_VET/UNREVIEWED) are gated, unknown thread state on a gated bucket surfaces as FETCH_ERROR (never silently presentable); `--queue` excludes thread-dirty PRs fail-closed (`threads_presentable`), matching the existing mergeable check. - **campaign-prompt**: producer half folded into step 2z FLEET GREENNESS (THREAD RESOLUTION: fix → push `[3e-attempt]` (one per PR ever) → reply → `resolveReviewThread`); step 7 allow-list extended to thread replies/resolution on own PRs only, after the addressing commit. - **review-prompt**: OPEN-THREADS GATE sits beside the QA GATE; prose-grepping \"Actionable comments posted\" is explicitly forbidden; vetter records no verdict on thread-dirty PRs and reports them as \"open-threads (skipped)\".  QA evidence (PR body is pre-restructure; producer cannot edit bodies, so it lives here):  ``` ## QA - Discriminating tests: open_threads_tests T1-T9 (count_mixed_resolved_unresolved, count_empty_nodes_is_zero, count_propagates_next_cursor, count_malformed_is_none, gated_set_is_presentable_buckets_only, gate_routes_gated_buckets, gate_ignores_non_gated_buckets, queue_presentability_fail_closed, open_threads_key) — the tested functions do not exist on base, so each fails on base by construction (compile error); full suite 57/57 green on the branch. - Mutations applied: apply_threads_gate 'Some(_) => OpenThreads' → 'Some(_) => b' → killed by gate_routes_gated_buckets; count_unresolved_page '!isResolved' → 'isResolved' → killed by count_mixed_resolved_unresolved (+1); threads_presentable 'threads == Some(0)' → 'unwrap_or(0) == 0' → killed by queue_presentability_fail_closed; threads_gated minus Unreviewed → killed by gated_set_is_presentable_buckets_only. All restored; suite re-run green. - Oracle: GitHub GraphQL reviewThreads schema (isResolved/pageInfo) — fixtures hand-built from the documented response shape, independent of the implementation. - Category check: issue #1 asks CodeRabbit findings to block human review; covered via unresolved-thread state (supersedes prose-grep per rework note) across report buckets, queue filter, producer duty, and vetter gate. Caveat: the report-loop call-site wiring (apply_threads_gate around bucket_of) and the live GraphQL call are covered by the nix build + review, not unit tests — the pure logic is. ```  CI gate (`nix build .#pr-review-report`) passes locally on the pushed tree. ",
-      "repo": "rainlanguage/issue-pr-cron",
-      "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved"
-    },
-    {
-      "number": 325,
-      "reason": "🤖 ai:producer  Producer note: rework executed — rows covered (each against a REAL reentrant dependency, all mutation-validated): - 8: `testDepositAssetTransferFromReentrancyGuardFires` (hooked asset ERC20 re-enters from `_beforeDeposit` pull) - 9: `testWithdrawAssetTransferReentrancyGuardFires` (hooked asset ERC20 re-enters from `_afterWithdraw` push) - 11: `testDepositEthRefundReentryIsBenign` (reentry via post-guard `sendValue` refund → fresh independent deposit, distinct ids) - 12: `testDepositSwappedAuthorizerReceiptTransferGuardFires` (swapped authorizer re-enters from `authorizeReceiptTransfer3`) - 13: `testDepositSwappedAuthorizerAfterDepositGuardFires` (swapped authorizer re-enters from `_afterDeposit`) - 14: `testCertifyReentrantAuthorizerObservesWrittenCertification` (`certifiedUntil` written before `authorize`) - 15: `testShareTransferSwappedAuthorizerCannotOverspend` (unguarded share `_update` window → ERC20 underflow blocks overspend) - 16: `testConfiscateReceiptReentrantConfiscatorGuardFires` (confiscator re-enters from ERC1155 acceptance callback) - 19: `testPaymentMintReentrantPaymentTokenGuardFires` (reentrant payment token during payment-mint pull; supply cap intact) - 20: `testDepositOracleReentryIsBenignWithFreshPrice` (reentrant oracle in pre-guard `_nextId` → fresh price per deposit)  Rows found inapplicable: none.  Mutation validation (7 mutants, each killed by exactly the claiming tests, restored after): `_deposit` guard removed → 7 tests fail; `confiscateReceipt` guard removed → row 16 fails; `certifiedUntil` write reordered after authorize → row 14 fails; `_update` authorize removed → row 15 fails; guard widened to span refund + oracle read → rows 11/20 fail; per-site authorize removal at `authorizeReceiptTransfer3` / `_afterDeposit` → exactly rows 12 / 13(+19) fail.  Local suite: 392 passed, 1 pre-existing env-only failure (`PythInterfaceProdTest` needs `ARBITRUM_RPC_URL`, supplied in CI). All 14 reentrancy tests pass at 256 fuzz runs. ",
-      "repo": "rainlanguage/rain.vats",
-      "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
-    },
-    {
-      "number": 212,
-      "reason": "🤖 ai:producer Producer note: rework executed — verified each of the nine `Closes` against the actual diff.  - Kept `Closes`, covered by diff: #86, #103 (integrity() `@return` tags), #119, #124 (SubParser `@title`/`@notice` + `authoringMetaV2()` docs), #81 (added in rework: LibERC4626 named returns `assetsFloat`/`sharesFloat` + decimal re-encoding precision in `@return`), #92 (added in rework: ConvertToAssets `run()` round-DOWN direction note, mirroring ConvertToShares). - Downgraded to `Refs`: #95, #109, #111 — their asks (run() `@param operand`/`@return outputs`, ConvertToShares rounding direction) already landed on main via #246, so this diff has nothing honest to add; they are fixed-on-main close-candidates. - Also corrected in rework: this PR had documented the vault address input as Float-encoded; it travels as raw stack bits (org ruling, #242). Fixed in integrity `@return` lines and both authoring meta descriptions. - Merged origin/main into the branch, regenerated meta + pointers (DESCRIBED_BY_META_HASH, BYTECODE_HASH), forge test 123/123 green locally.",
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
-    },
-    {
-      "number": 324,
-      "reason": "🤖 ai:producer Producer note: rework executed — `ERC20PriceOracleReceiptVault` ERC-4626 spec suite in place mirroring every `OffchainAssetReceiptVault` clause plus the motivating broken-oracle cases, now merge-updated to `main` (rain-factory 0.1.5 bump + untracked pre-commit config) and mutation-validated with recorded evidence.  **Coverage** — `test/src/concrete/vault/ERC20PriceOracleReceiptVault.erc4626spec.t.sol` (11 tests, each clause of #303 mirrored from the `OffchainAssetReceiptVault` suite):  - `max*` MUST NOT revert for any input: `testMaxWithdrawAnyIdDoesNotRevert`, `testMaxWithdrawZeroIdDoesNotRevert` (the `id == 0` zero-share-ratio divide-by-zero edge), `testMaxRedeemAnyIdDoesNotRevert`, `testMaxDepositAnyOwnerDoesNotRevert`, `testMaxMintAnyOwnerDoesNotRevert` - `max*` MUST NOT revert under a broken oracle (the motivating case): `testMaxFunctionsDoNotRevertWhenOracleReverts` (empty vault; proves the broken-oracle premise by expecting the oracle error from `previewDeposit` first), `testMaxFunctionsDoNotRevertWhenOracleRevertsAfterDeposit` (owner holds shares/receipts; `max*` still report the real amounts because withdrawal pricing comes from the receipt id, never the bricked oracle) - `convertToShares`/`convertToAssets` inverse round-trip, fuzzed receipt-id share ratio, round-trip never creates value in either direction: `testConvertToRoundTrip` - `asset()` immutable across deposit/withdraw: `testAssetImmutableAfterOperations` - `preview*` matches the corresponding mutating call under the same state: `testPreviewDepositMatchesDeposit`, `testPreviewRedeemMatchesRedeem`  **Mutation evidence** (break covered source line → tests FAIL; restore → PASS):  1. `ReceiptVault.maxWithdraw` zero-share-ratio guard disabled (`shareRatio == 0` → `== 1`): killed by `testMaxFunctionsDoNotRevertWhenOracleReverts`, `testMaxWithdrawAnyIdDoesNotRevert`, `testMaxWithdrawZeroIdDoesNotRevert` — all with `Panic(0x12)` division-by-zero, the exact defect #303/#302 flagged. 2. `ReceiptVault.maxDeposit` `type(uint256).max` → `0`: killed by both broken-oracle tests (`assertion failed: 0 != 2^256-1`). 3. `ReceiptVault.maxRedeem` `balanceOf(owner, id)` → `balanceOf(owner, id) / 2`: killed by `testMaxFunctionsDoNotRevertWhenOracleRevertsAfterDeposit` (`shares/2 != shares`).  Source restored after each mutation; final tree matches HEAD exactly.  **Merge-update** (`4254086`): merged `origin/main` (merge, no rebase). Modify/delete conflict on generated `.pre-commit-config.yaml` resolved by accepting main's deletion (main untracks the generated symlink). Full suite post-merge: 398 passed, 0 code failures (sole failure is `testPythGetPriceNoOlderThan`, a fork test requiring the CI-only `ARBITRUM_RPC_URL` secret — environmental, unrelated). `forge fmt --check` clean on both spec test files. ",
-      "repo": "rainlanguage/rain.vats",
-      "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault"
-    },
-    {
-      "number": 211,
-      "reason": "🤖 ai:producer Producer note: reworked per the rework note at head 2426420. (1) E2E integrity leg added — three parse2 bad-arity tests pin the exact ExternIntegrityInputsMismatch revert data through the real subparser+deploy path; mutation-validated (integrity mutated to (1,1) → all three fail on revert-data mismatch; 116/116 green on baseline). (2) Pairwise distinctness is unimplementable-as-green on this repo: the committed table is hex\"0c830c83\" — both words share ONE integrity pointer because their integrity functions are extensionally identical and solc deduplicates them; the test is renamed to the honest testIntegritySlotsAreAssigned (non-zero) and the distinctness question is raised on #210 as a design ruling (per the note's 'or argue on the issue' branch).",
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions"
-    },
-    {
-      "number": 209,
-      "reason": "🤖 ai:producer Producer note: reworked per the rework note — the enumeration is now genuinely single-source.  - Removed the hand-synced copies the PR had added: `FORK_VAULT_COUNT`, the per-vault `WT_*` imports, and `testForkVaultEnumeration`'s parallel address + label tables (which also duplicated the existing `allForkVaults()` loop at double fork cost). - `allForkVaults()` is now literally the single source: the `WT_*` constants had no consumer other than the registry itself, so their addresses were inlined into `allForkVaults()`. A vault address can now only exist in the one list that every consuming loop iterates — adding a vault is one edit and it is automatically fork-tested. Count is `.length`, labels come from `vm.toString` in the existing `testAllForkVaults` loop (unchanged). - Added `test/lib/LibFork.t.sol` with `testAllForkVaultsEnumeration`: asserts the registry is non-empty with no zero and no duplicate addresses. This is a real single-source lock without hand-copies, and it runs on every CI pass (no fork needed). - Verified locally: full `forge build` clean, new enumeration test passes. The fork loop itself rides on fork CI as before. - Per the note, #139's remaining legs (hand-pinned expected rates, fork-block pin policy) are left for issue refinement / a design ruling, not this mechanical test PR.  Branch also carries the previously-unpushed merge of origin/main (conflict resolution), now pushed.",
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
-    },
-    {
-      "number": 185,
-      "reason": "🤖 ai:producer Producer note: executed the 2026-07-04 rework note — `ERC4626WordsReadme.t.sol` no longer asserts hardcoded word-name literals. `testReadmeContainsEveryAuthoringMetaWordName` now decodes `LibERC4626SubParser.authoringMetaV2()` (`abi.decode(..., (AuthoringMetaV2[]))`, bytes32 word trimmed of zero padding) and iterates every declared word, asserting the README contains each decoded name, with guards that the meta is non-empty and no decoded name is empty. Source is the oracle: renames fail, new words are auto-covered.  Mutation proof (both killed, then restored): - README: every `erc4626-convert-to-assets` → `erc4626-convert-to-assetz` → `[FAIL: README must document word: erc4626-convert-to-assets]`. - Source: `authoringMetaV2()` word `\"erc4626-convert-to-assets\"` → `\"erc4626-shares-to-assets\"` with README untouched → `[FAIL: README must document word: erc4626-shares-to-assets]` — exactly the rename the old literal-based assertions stayed green on.  Also merged origin/main into the branch (clean, no conflicts) and updated the PR body: link is now `Refs #133` (word-names leg only; input-ordering and decimals prose remain open on the issue) with the QA evidence block.  Forge: baseline suite green before the rework (124 passed, 0 failed); full suite green after (123 passed, 0 failed — two literal tests replaced by one source-driven test); `forge fmt --check` clean on the touched file. Pushed 2a1740207f476cf90433aae1a697b8efe0fdb10c. ",
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "test(readme): assert README documents both ERC4626 word names"
-    },
-    {
       "number": 2778,
       "reason": "🤖 ai:producer Producer note: both red checks (rainix-sol/static + rs-static) are MAIN-STATE, not PR-caused — the no-vm.skip gate flags 5 pre-existing test/lib/deploy files on main (e.g. LibRaindexDeployTaggedConstants.t.sol:24); identical red on main HEAD. rainix-sol/test PASSES here. Greens when main resolves the vm.skip gate.",
       "repo": "rainlanguage/raindex",
@@ -1647,24 +1527,6 @@
       "reason": "🤖 ai:producer Producer note: executed the 2026-07-04 rework note + its update — added explicit boundary pins rate18=0, rate18=1e18, and the int224-coefficient overflow revert pin (testRunRateZero, testRunRateParityOne, testRunRateCoefficientOverflow; overflow asserts the exact CoefficientOverflow(2^223, -18) revert). Body already reads Closes #59 — no relink needed.",
       "repo": "rainlanguage/rain.flare",
       "title": "test: add mock unit tests for LibOpSLFRCurrentExchangeRate run() and integrity()"
-    },
-    {
-      "number": 161,
-      "reason": "🤖 ai:producer Producer note: rework NOT executed as written — the note's premise conflicts with the rainix reusable contract. The rainix-sol reusable's test job maps secret RPC_URL_FLARE_FORK → job env FLARE_RPC_URL (rainix .github/workflows/rainix-sol-test.yaml: `FLARE_RPC_URL: ${{ secrets.RPC_URL_FLARE_FORK || vars.RPC_URL_FLARE_FORK }}`), and this repo's `secrets: inherit` already passes the secret through — so the branch's current `vm.envString(\"FLARE_RPC_URL\")` is the name the CI job env actually exposes, and this PR's checks are green with it. Reading `RPC_URL_FLARE_FORK` directly (the note's ask) would revert in CI because no env var of that name exists inside the job. Issue #67's intent (fork tests read the org fork-RPC secret, no public-RPC fallback) is satisfied through the mapping. Awaiting your ruling on env-name convention before any further change here.",
-      "repo": "rainlanguage/rain.flare",
-      "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
-    },
-    {
-      "number": 160,
-      "reason": "🤖 ai:producer Producer note (REQUIRES redeploy at land): commit 18712ec changes FlareFtsoWords deployed bytecode — ftsoV2LTSGetFeed now returns a scale-tagged Float at the LTS boundary. The full prelude was regenerated at this head (BuildAuthoringMeta → rain meta build → BuildPointers → forge fmt) and the committed pointers/meta snapshot is UNCHANGED, so CI stays green — but the words contract's deterministic Zoltu (CREATE2) address moves with the new bytecode and is currently undeployed, and this repo has no on-chain pin test to go red. Route the routine redeploy via pr-review-report deploy from this branch (deploy-before-merge) once review settles; do not land before the deploy-confirmed note names the landing head.",
-      "repo": "rainlanguage/rain.flare",
-      "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
-    },
-    {
-      "number": 142,
-      "reason": "🤖 ai:producer  Producer note: reworked per rework note — conflict resolved via base merge (`8409d61`, merge of `origin/main`).  **Conflict resolution (4 files):** `src/lib/parse/LibFlareFtsoSubParser.sol` (took main's `sflr-exchange-rate` description — a strict superset of this branch's: same corrected text plus the \"A value less than 1 …\" clarifying sentence, so both sides' intent is preserved), plus generated artifacts `meta/FlareFtsoSubParserAuthoringMeta.rain.meta`, `meta/FlareFtsoWords.rain.meta`, `src/generated/FlareFtsoWords.pointers.sol` (took main's already-regenerated copies).  **Missing #97 rename:** already landed on `main` via `bcdb965` (\"Fix pervasive SLFR typo: rename to SFLR across source tree (closes #97)\") — that commit is what closed https://github.com/rainlanguage/rain.flare/issues/97. After the base merge this branch contains the complete rename: `OPCODE_SFLR_CURRENT_EXCHANGE_RATE` (FlareFtsoExtern.sol, FlareFtsoSubParser.sol) and `LibOpSFLRCurrentExchangeRate` (LibOpSFlrCurrentExchangeRate.sol — file name was already correct per the issue). `git grep SLFR` over the whole tree returns zero matches; no additional rename commit was needed.  **Pointers/meta:** no regeneration needed — post-merge `HEAD^{tree}` is byte-identical to `origin/main^{tree}` (`da9d5da`), so the committed artifacts are exactly main's regenerated ones; `copy-artifacts` CI is green on `8409d61` confirming consistency.  **Tests:** local `forge test` in the rainix sol-shell: 16 suites, 83 passed / 0 failed / 0 skipped; PR CI (`rainix-sol` test / static / legal, `copy-artifacts`) all green on `8409d61`; mergeability now CLEAN.  **Note for the human:** because main already absorbed all of this PR's content (rename + meta description + NatSpec), the PR's diff vs main is now **empty** — merging it is a no-op; keeping or closing it is a human call (not made here).  #95/#104 overlap with #136 noted — no Closes-set change made (body edits are outside this routine). ",
-      "repo": "rainlanguage/rain.flare",
-      "title": "fix: rename SLFR→SFLR typo, fix sflr-exchange-rate meta description and NatSpec"
     },
     {
       "number": 139,
@@ -1719,12 +1581,6 @@
       "reason": "🤖 ai:producer Producer note: 3d merge-update DONE — merged origin/main (6b2dc7e, PR #485 nix-cachix CI adoption) into this branch. One conflict: .github/workflows/manual-sol-artifacts.yaml — kept this PR's rainix reusable-workflow call (rainix-manual-sol-artifacts.yaml@main), which already opens with the same nix-cachix-setup composite main adopted inline, so main's newer CI shape is fully subsumed. No source/test/pointer changes were involved (merge tree-diff vs previous head is empty), so no Flow.pointers.sol regen needed. Local verify: forge soldeer install + full forge test green (55 passed, 0 failed), matching the pre-merge all-green CI baseline. Pushed cea9445; PR shows MERGEABLE.",
       "repo": "rainlanguage/flow",
       "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
-    },
-    {
-      "number": 372,
-      "reason": "🤖 ai:producer  Producer note: reworked per rework note — added divergent-decimals coverage (6-decimal underlying paired with the 18-decimal share) so the decimals/underlyingDecimals split is now proven by tests, not just asserted; also merged current `main` into the branch (one textual conflict in `Lock.test.ts` imports, resolved as the union, plus `main`'s new auto-switch-guard fixture given the now-required `underlyingDecimals` field).  **What changed**  - Merge commit 3dc6ee4: `origin/main` merged in (branch was 2 months stale); `Lock.svelte` auto-merged cleanly with all four underlying-context call sites still on `underlyingDecimals` and both share-output sites on `decimals`. - Commit f4e1edc: new `describe(\"Lock component with divergent share/underlying decimals\")` in `src/lib/components/Lock.test.ts` with a `decimals: 18, underlyingDecimals: 6` token. Every assertion is an exact value that differs between the two fields:   - typed input parses with `underlyingDecimals`: typing `1.5` submits `assets === parseUnits(\"1.5\", 6)` (1_500_000n), not 1.5e18;   - underlying balance readouts (`your-balance`, `underlying-balance`) format a 1_234_567n balance as exactly `1.234567`, not `0.000000000001234567`;   - MAX fill round-trips the exact underlying balance: input fills `1.234567` and submit sends `assets === 1_234_567n`;   - calculated share output (`calculated-cysflr` desktop + mobile) formats a 5e18 quote as exactly `5`, not `5000000000000`.    A note on harness topology (the PR body's earlier blocker): the tests drive the component through the `selectedCyToken` handle imported from `$lib/stores` — under the vitest-setup mock that resolves to the same writable the component subscribes to (the test-file `mockSelectedCyToken` import is a separate module instance and does not propagate). The divergent token is also placed in `allTokens`, otherwise the token `Select`'s `bind:selected` resets the selection to the first production token on render.  **QA evidence**  Each of the six decimals call sites in `Lock.svelte` was mutated to the other field, one at a time; every mutant is killed (run scoped to the new describe: 4 tests, 15 skipped):  1. `assets` parseUnits → `decimals`: `2 failed | 2 passed` — input-parse and MAX tests fail with `Unable to find an element by: [data-testid=\"disclaimer-modal\"]` (the 18-decimal parse reads as insufficient funds, LOCK stays disabled). 2. `your-balance` formatUnits → `decimals`: `1 failed | 3 passed` — `AssertionError: expected '0.000000000001234567' to be '1.234567'`. 3. MAX fill formatUnits → `decimals`: `1 failed | 3 passed` — `AssertionError: expected '0.000000000001234567' to be '1.234567'` (input value). 4. `underlying-balance` label formatUnits → `decimals`: `1 failed | 3 passed` — `AssertionError: expected 'sFLR Balance: 0.000000000001234567' to be 'sFLR Balance: 1.234567'`. 5. desktop share output formatUnits → `underlyingDecimals`: `1 failed | 3 passed` — `AssertionError: expected '5000000000000' to be '5'`. 6. mobile share output formatUnits → `underlyingDecimals`: `1 failed | 3 passed` — `AssertionError: expected '5000000000000' to be '5'`.  All mutants reverted; results on the fixed code:  - Scoped: `npx vitest run src/lib/components/Lock.test.ts` — 19/19 pass. - Full: `npx vitest run` — 53 files, 287/287 pass. - `npm run check` — 0 errors, 0 warnings; `npm run lint-check` — clean; prettier — clean. ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)"
     },
     {
       "number": 369,
@@ -1942,6 +1798,11 @@
         "title": "fix: convert bare src/ and test/ imports in test suite to relative paths"
       },
       {
+        "number": 142,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix: rename SLFR→SFLR typo, fix sflr-exchange-rate meta description and NatSpec"
+      },
+      {
         "number": 128,
         "repo": "rainlanguage/rain.flare",
         "title": "Add missing NatSpec to buildOpcode/Integrity pointers and ftsoV2LTSGetFeed"
@@ -1962,6 +1823,11 @@
         "number": 426,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+      },
+      {
+        "number": 161,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
       },
       {
         "number": 2702,
@@ -1985,6 +1851,11 @@
       }
     ],
     "ai:ready": [
+      {
+        "number": 118,
+        "repo": "rainlanguage/rainlang.interface",
+        "title": "test: pin sourceCount(hex\"00\") == 0 explicitly"
+      },
       {
         "number": 435,
         "repo": "cyclofinance/cyclo.site",
@@ -2071,6 +1942,11 @@
         "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
       },
       {
+        "number": 25,
+        "repo": "rainlanguage/rain-org-health",
+        "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
+      },
+      {
         "number": 246,
         "repo": "S01-Issuer/st0x.deploy",
         "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant"
@@ -2081,9 +1957,44 @@
         "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
       },
       {
+        "number": 19,
+        "repo": "rainlanguage/rain-org-health",
+        "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
+      },
+      {
+        "number": 408,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
+      },
+      {
+        "number": 407,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
+      },
+      {
+        "number": 405,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
+      },
+      {
         "number": 404,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+      },
+      {
+        "number": 398,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
+      },
+      {
+        "number": 397,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard"
+      },
+      {
+        "number": 395,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
       },
       {
         "number": 394,
@@ -2091,9 +2002,34 @@
         "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
       },
       {
+        "number": 393,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
+      },
+      {
+        "number": 389,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
+      },
+      {
         "number": 387,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(store): reject zero and null block.number from RPC"
+      },
+      {
+        "number": 196,
+        "repo": "rainlanguage/rain.flare",
+        "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
+      },
+      {
+        "number": 143,
+        "repo": "rainlanguage/dotrain",
+        "title": "fix(parser): comment before next binding bleeds into previous content_position"
+      },
+      {
+        "number": 2,
+        "repo": "rainlanguage/issue-pr-cron",
+        "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved"
       },
       {
         "number": 230,
@@ -2106,12 +2042,62 @@
         "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths"
       },
       {
+        "number": 325,
+        "repo": "rainlanguage/rain.vats",
+        "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
+      },
+      {
+        "number": 212,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
+      },
+      {
+        "number": 324,
+        "repo": "rainlanguage/rain.vats",
+        "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault"
+      },
+      {
+        "number": 211,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions"
+      },
+      {
+        "number": 185,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "test(readme): assert README documents both ERC4626 word names"
+      },
+      {
+        "number": 160,
+        "repo": "rainlanguage/rain.flare",
+        "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
+      },
+      {
+        "number": 137,
+        "repo": "rainlanguage/rain.flare",
+        "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert"
+      },
+      {
         "number": 130,
         "repo": "rainlanguage/rain.flare",
         "title": "test: assert authoringMetaV2 word names and descriptions"
+      },
+      {
+        "number": 372,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)"
       }
     ],
     "ai:reject": [
+      {
+        "number": 50,
+        "repo": "rainlanguage/claude-audit-skills",
+        "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
+      },
+      {
+        "number": 102,
+        "repo": "rainlanguage/rain-org-health",
+        "title": "Deployments: cross-check tokens vs the migration's productionReceiptVaults()"
+      },
       {
         "number": 436,
         "repo": "cyclofinance/cyclo.site",
@@ -2203,6 +2189,11 @@
         "title": "feat(ci): assert all rainix-*.yaml reusables share one pinned RAINIX_SHA"
       },
       {
+        "number": 2793,
+        "repo": "rainlanguage/raindex",
+        "title": "perf: eliminate redundant read_dispair calls in try_into_call"
+      },
+      {
         "number": 188,
         "repo": "rainlanguage/rain.flare",
         "title": "fix(lib): move DecimalsTooLarge guard into LibFtsoCurrentPriceUsd (#79)"
@@ -2278,6 +2269,11 @@
         "number": 231,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "docs(assembly): document integrity() coupling in run() assembly reads"
+      },
+      {
+        "number": 209,
+        "repo": "rainlanguage/rain.erc4626.words",
+        "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
       }
     ]
   }
