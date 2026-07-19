@@ -51,6 +51,16 @@
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
+      "number": 2,
+      "repo": "rainlanguage/decentralicense",
+      "title": "tracking SPDX"
+    },
+    {
+      "number": 928,
+      "repo": "rainlanguage/raindex",
+      "title": "disconnect wallet connect just spins for several minutes"
+    },
+    {
       "number": 24,
       "repo": "rainlanguage/rain.internal",
       "title": "Cyclo launch"
@@ -124,6 +134,11 @@
       "number": 629,
       "repo": "rainlanguage/raindex",
       "title": "Tauri command for decoding errors"
+    },
+    {
+      "number": 623,
+      "repo": "rainlanguage/raindex",
+      "title": "implement/test context properly for obv4 associated actions"
     },
     {
       "number": 622,
@@ -352,18 +367,18 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
-    "blockedDeploy": 12,
+    "awaitingReVet": 9,
+    "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 70,
+    "closeCandidateIssues": 73,
     "closeCandidatePrs": 9,
     "design": 6,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 30,
     "leaks": 17,
-    "ready": 47,
+    "ready": 46,
     "reject": 35,
     "relink": 2,
     "totalProducerPrs": 174,
@@ -613,7 +628,7 @@
     },
     "producer-blocked": {
       "ai:blocked-deploy": {
-        "count": 12,
+        "count": 13,
         "prs": [
           {
             "number": 61,
@@ -662,6 +677,12 @@
             "repo": "rainlanguage/rain.math.float",
             "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow",
             "url": "https://github.com/rainlanguage/rain.math.float/pull/244"
+          },
+          {
+            "number": 160,
+            "repo": "rainlanguage/rain.flare",
+            "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/160"
           },
           {
             "number": 537,
@@ -839,6 +860,65 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 9,
+        "prs": [
+          {
+            "number": 408,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/408"
+          },
+          {
+            "number": 407,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/407"
+          },
+          {
+            "number": 405,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/405"
+          },
+          {
+            "number": 397,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/397"
+          },
+          {
+            "number": 395,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/395"
+          },
+          {
+            "number": 393,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/393"
+          },
+          {
+            "number": 389,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/389"
+          },
+          {
+            "number": 2,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
+          },
+          {
+            "number": 372,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/372"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 3,
         "prs": [
@@ -965,7 +1045,7 @@
         ]
       },
       "ai:ready": {
-        "count": 47,
+        "count": 37,
         "prs": [
           {
             "number": 118,
@@ -1100,24 +1180,6 @@
             "url": "https://github.com/rainlanguage/rain-org-health/pull/19"
           },
           {
-            "number": 408,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/408"
-          },
-          {
-            "number": 407,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/407"
-          },
-          {
-            "number": 405,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/405"
-          },
-          {
             "number": 404,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix: case-insensitive symbol lookup in AccountStats (#312)",
@@ -1130,34 +1192,10 @@
             "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
           },
           {
-            "number": 397,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/397"
-          },
-          {
-            "number": 395,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/395"
-          },
-          {
             "number": 394,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/394"
-          },
-          {
-            "number": 393,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/393"
-          },
-          {
-            "number": 389,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/389"
           },
           {
             "number": 387,
@@ -1176,12 +1214,6 @@
             "repo": "rainlanguage/dotrain",
             "title": "fix(parser): comment before next binding bleeds into previous content_position",
             "url": "https://github.com/rainlanguage/dotrain/pull/143"
-          },
-          {
-            "number": 2,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
           },
           {
             "number": 230,
@@ -1226,12 +1258,6 @@
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185"
           },
           {
-            "number": 160,
-            "repo": "rainlanguage/rain.flare",
-            "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/160"
-          },
-          {
             "number": 137,
             "repo": "rainlanguage/rain.flare",
             "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert",
@@ -1242,12 +1268,6 @@
             "repo": "rainlanguage/rain.flare",
             "title": "test: assert authoringMetaV2 word names and descriptions",
             "url": "https://github.com/rainlanguage/rain.flare/pull/130"
-          },
-          {
-            "number": 372,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/372"
           }
         ]
       },
@@ -1630,6 +1650,11 @@
         "number": 244,
         "repo": "rainlanguage/rain.math.float",
         "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
+      },
+      {
+        "number": 160,
+        "repo": "rainlanguage/rain.flare",
+        "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
       },
       {
         "number": 537,
@@ -2065,11 +2090,6 @@
         "number": 185,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "test(readme): assert README documents both ERC4626 word names"
-      },
-      {
-        "number": 160,
-        "repo": "rainlanguage/rain.flare",
-        "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
       },
       {
         "number": 137,
