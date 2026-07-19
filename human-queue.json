@@ -342,7 +342,7 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 1,
+    "awaitingReVet": 0,
     "blockedDeploy": 12,
     "blockedInfra": 13,
     "blockedOn": 10,
@@ -354,10 +354,10 @@
     "humanReject": 55,
     "leaks": 38,
     "ready": 28,
-    "reject": 31,
+    "reject": 32,
     "relink": 1,
     "totalProducerPrs": 171,
-    "unvetted": 4
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -979,26 +979,9 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 1,
-        "prs": [
-          {
-            "number": 435,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(receipts): preserve display precision by truncating the decimal string",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/435"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 4,
+        "count": 3,
         "prs": [
-          {
-            "number": 436,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/436"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1110,8 +1093,14 @@
         ]
       },
       "ai:ready": {
-        "count": 24,
+        "count": 25,
         "prs": [
+          {
+            "number": 435,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(receipts): preserve display precision by truncating the decimal string",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/435"
+          },
           {
             "number": 434,
             "repo": "cyclofinance/cyclo.site",
@@ -1259,8 +1248,14 @@
         ]
       },
       "ai:reject": {
-        "count": 31,
+        "count": 32,
         "prs": [
+          {
+            "number": 436,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/436"
+          },
           {
             "number": 432,
             "repo": "cyclofinance/cyclo.site",
@@ -2086,6 +2081,11 @@
       }
     ],
     "ai:reject": [
+      {
+        "number": 436,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
+      },
       {
         "number": 432,
         "repo": "cyclofinance/cyclo.site",
