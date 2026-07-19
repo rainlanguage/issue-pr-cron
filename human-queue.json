@@ -61,6 +61,11 @@
       "title": "need to be able to get logs out of the app somehow"
     },
     {
+      "number": 839,
+      "repo": "rainlanguage/raindex",
+      "title": "elided bindings have 0 injected into them when going to prod"
+    },
+    {
       "number": 732,
       "repo": "rainlanguage/raindex",
       "title": "Vault list page - decrease vaultid chars"
@@ -341,7 +346,7 @@
     "blockedDeploy": 12,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 67,
+    "closeCandidateIssues": 68,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
@@ -351,8 +356,8 @@
     "ready": 28,
     "reject": 31,
     "relink": 1,
-    "totalProducerPrs": 170,
-    "unvetted": 3
+    "totalProducerPrs": 171,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -986,8 +991,14 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "number": 436,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/436"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
