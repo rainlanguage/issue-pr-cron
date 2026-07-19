@@ -331,6 +331,16 @@
       "title": "don't close deposit modal on ledger error"
     },
     {
+      "number": 229,
+      "repo": "rainlanguage/raindex",
+      "title": "Refactor front-end caching and pagination of list queries to support chart data"
+    },
+    {
+      "number": 159,
+      "repo": "rainlanguage/raindex",
+      "title": "Pagination with end page"
+    },
+    {
       "number": 132,
       "repo": "rainlanguage/raindex",
       "title": "include the sha or similar in the name of the assets when doing builds off main"
@@ -346,18 +356,18 @@
     "blockedDeploy": 12,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 68,
+    "closeCandidateIssues": 70,
     "closeCandidatePrs": 8,
     "design": 5,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
-    "humanReject": 55,
-    "leaks": 38,
-    "ready": 28,
+    "humanReject": 30,
+    "leaks": 41,
+    "ready": 25,
     "reject": 32,
     "relink": 1,
-    "totalProducerPrs": 171,
-    "unvetted": 3
+    "totalProducerPrs": 172,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -403,19 +413,13 @@
         ]
       },
       "human:reject": {
-        "count": 55,
+        "count": 30,
         "prs": [
           {
             "number": 199,
             "repo": "rainlanguage/rain.flare",
             "title": "test: assert authoringMetaV2 descriptions state correct operand input counts",
             "url": "https://github.com/rainlanguage/rain.flare/pull/199"
-          },
-          {
-            "number": 25,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/25"
           },
           {
             "number": 421,
@@ -428,12 +432,6 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(select): match options by optional optionKey instead of reference only",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/418"
-          },
-          {
-            "number": 19,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "fix(metrics): escape data fields before tooltip HTML interpolation",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/19"
           },
           {
             "number": 414,
@@ -454,48 +452,6 @@
             "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25"
           },
           {
-            "number": 408,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/408"
-          },
-          {
-            "number": 407,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/407"
-          },
-          {
-            "number": 405,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/405"
-          },
-          {
-            "number": 398,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
-          },
-          {
-            "number": 397,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/397"
-          },
-          {
-            "number": 395,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/395"
-          },
-          {
-            "number": 393,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/393"
-          },
-          {
             "number": 392,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(component): sanitize href schemes and auto-add noopener in HrefButton",
@@ -514,22 +470,10 @@
             "url": "https://github.com/cyclofinance/cyclo.site/pull/390"
           },
           {
-            "number": 389,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/389"
-          },
-          {
             "number": 388,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(component): catch getAndStartDataFetcher rejection in DataFetcherProvider",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/388"
-          },
-          {
-            "number": 196,
-            "repo": "rainlanguage/rain.flare",
-            "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/196"
           },
           {
             "number": 251,
@@ -538,28 +482,10 @@
             "url": "https://github.com/rainlanguage/rainix/pull/251"
           },
           {
-            "number": 143,
-            "repo": "rainlanguage/dotrain",
-            "title": "fix(parser): comment before next binding bleeds into previous content_position",
-            "url": "https://github.com/rainlanguage/dotrain/pull/143"
-          },
-          {
-            "number": 2793,
-            "repo": "rainlanguage/raindex",
-            "title": "perf: eliminate redundant read_dispair calls in try_into_call",
-            "url": "https://github.com/rainlanguage/raindex/pull/2793"
-          },
-          {
             "number": 238,
             "repo": "rainlanguage/rainix",
             "title": "feat(deploy): add shared check-published-deploy-constants script",
             "url": "https://github.com/rainlanguage/rainix/pull/238"
-          },
-          {
-            "number": 2,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
           },
           {
             "number": 226,
@@ -586,52 +512,16 @@
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/220"
           },
           {
-            "number": 325,
-            "repo": "rainlanguage/rain.vats",
-            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types",
-            "url": "https://github.com/rainlanguage/rain.vats/pull/325"
-          },
-          {
-            "number": 212,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212"
-          },
-          {
-            "number": 324,
-            "repo": "rainlanguage/rain.vats",
-            "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault",
-            "url": "https://github.com/rainlanguage/rain.vats/pull/324"
-          },
-          {
             "number": 323,
             "repo": "rainlanguage/rain.vats",
             "title": "docs(natspec): document authorizer-trust assumption in call-sites",
             "url": "https://github.com/rainlanguage/rain.vats/pull/323"
           },
           {
-            "number": 211,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/211"
-          },
-          {
-            "number": 209,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209"
-          },
-          {
             "number": 197,
             "repo": "rainlanguage/rain.erc4626.words",
             "title": "refactor: consolidate duplicate decimals() into IDecimalsMinimal",
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/197"
-          },
-          {
-            "number": 185,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "test(readme): assert README documents both ERC4626 word names",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185"
           },
           {
             "number": 171,
@@ -652,34 +542,10 @@
             "url": "https://github.com/rainlanguage/rain.flare/pull/163"
           },
           {
-            "number": 161,
-            "repo": "rainlanguage/rain.flare",
-            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/161"
-          },
-          {
-            "number": 160,
-            "repo": "rainlanguage/rain.flare",
-            "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/160"
-          },
-          {
-            "number": 142,
-            "repo": "rainlanguage/rain.flare",
-            "title": "fix: rename SLFR→SFLR typo, fix sflr-exchange-rate meta description and NatSpec",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/142"
-          },
-          {
             "number": 139,
             "repo": "rainlanguage/rain.flare",
             "title": "test: add staleness boundary, pair error propagation, InconsistentFtso, and sFLR arg-pin tests",
             "url": "https://github.com/rainlanguage/rain.flare/pull/139"
-          },
-          {
-            "number": 137,
-            "repo": "rainlanguage/rain.flare",
-            "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert",
-            "url": "https://github.com/rainlanguage/rain.flare/pull/137"
           },
           {
             "number": 134,
@@ -724,12 +590,6 @@
             "url": "https://github.com/rainlanguage/raindex/pull/2719"
           },
           {
-            "number": 372,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/372"
-          },
-          {
             "number": 369,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(lock): gate LOCK on price freshness, send 1% slippage as minSharesOut (A17-4)",
@@ -740,13 +600,157 @@
     },
     "leak": {
       "leak": {
-        "count": 1,
+        "count": 25,
         "prs": [
+          {
+            "number": 25,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/25"
+          },
+          {
+            "number": 19,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "fix(metrics): escape data fields before tooltip HTML interpolation",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/19"
+          },
+          {
+            "number": 408,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/408"
+          },
+          {
+            "number": 407,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/407"
+          },
+          {
+            "number": 405,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/405"
+          },
+          {
+            "number": 398,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
+          },
+          {
+            "number": 397,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/397"
+          },
+          {
+            "number": 395,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/395"
+          },
+          {
+            "number": 393,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/393"
+          },
+          {
+            "number": 389,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/389"
+          },
+          {
+            "number": 196,
+            "repo": "rainlanguage/rain.flare",
+            "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/196"
+          },
+          {
+            "number": 143,
+            "repo": "rainlanguage/dotrain",
+            "title": "fix(parser): comment before next binding bleeds into previous content_position",
+            "url": "https://github.com/rainlanguage/dotrain/pull/143"
+          },
+          {
+            "number": 2793,
+            "repo": "rainlanguage/raindex",
+            "title": "perf: eliminate redundant read_dispair calls in try_into_call",
+            "url": "https://github.com/rainlanguage/raindex/pull/2793"
+          },
+          {
+            "number": 2,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
+          },
+          {
+            "number": 325,
+            "repo": "rainlanguage/rain.vats",
+            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types",
+            "url": "https://github.com/rainlanguage/rain.vats/pull/325"
+          },
+          {
+            "number": 212,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212"
+          },
+          {
+            "number": 324,
+            "repo": "rainlanguage/rain.vats",
+            "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault",
+            "url": "https://github.com/rainlanguage/rain.vats/pull/324"
+          },
+          {
+            "number": 211,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/211"
+          },
+          {
+            "number": 209,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209"
+          },
+          {
+            "number": 185,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "test(readme): assert README documents both ERC4626 word names",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185"
+          },
+          {
+            "number": 161,
+            "repo": "rainlanguage/rain.flare",
+            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/161"
+          },
+          {
+            "number": 160,
+            "repo": "rainlanguage/rain.flare",
+            "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/160"
+          },
+          {
+            "number": 142,
+            "repo": "rainlanguage/rain.flare",
+            "title": "fix: rename SLFR→SFLR typo, fix sflr-exchange-rate meta description and NatSpec",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/142"
+          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
             "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows",
             "url": "https://github.com/rainlanguage/flow/pull/475"
+          },
+          {
+            "number": 372,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/372"
           }
         ]
       }
@@ -980,8 +984,20 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 3,
+        "count": 5,
         "prs": [
+          {
+            "number": 102,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Deployments: cross-check tokens vs the migration's productionReceiptVaults()",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/102"
+          },
+          {
+            "number": 137,
+            "repo": "rainlanguage/rain.flare",
+            "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert",
+            "url": "https://github.com/rainlanguage/rain.flare/pull/137"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1459,10 +1475,22 @@
   },
   "leaks": [
     {
+      "number": 25,
+      "reason": "🤖 ai:producer Producer note: reworked per rework note — `site/health.json` regenerated with a current roh-scan (commit 6397ec7, generatedAt 2026-07-12T21:27:50Z: 581 open issues org-wide, 482 uncovered / 99 covered by an open PR), so the Open-issue queue section renders real content instead of the regenerate placeholder. Screenshot of the rendered section (stat tiles + uncovered-first queue, sorted by age), captured with the repo's own `nix run .#screenshot` harness against this branch + the fresh data:  ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/rain-org-health-25.png) ",
+      "repo": "rainlanguage/rain-org-health",
+      "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
+    },
+    {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
       "repo": "cyclofinance/cyclo.site",
       "title": "fix(select): match options by optional optionKey instead of reference only"
+    },
+    {
+      "number": 19,
+      "reason": "🤖 ai:producer  Producer note: rework executed — head 4049109 implements the Rework note in full; this pass independently re-verified it at the DOM level with a jsdom harness (hostile payload `<img src=x onerror=alert(1)>` fed through every data field), no further code change needed.  Renderers converted / confirmed escaping-by-construction (`createElement`/`createElementNS` + `textContent`/`setAttribute`/`.href` — zero data→`innerHTML`):  - meta line (`data.org`, `generatedAt`) — `textContent` - summary tiles (`renderTiles`) — `textContent` - signal summary rows (`renderSummary`) — `textContent`; `title`/`data-sig` set via DOM properties - repo list + signal chips (`render`) — `textContent`, `.href` property - pipeline FSM (`renderFsm` / `itemsFor`): leak titles + reasons, close-candidate titles, ai:ready titles + reasons — text nodes (detail lists clicked open in the harness) - producer-metrics tiles (`renderPmTiles`) — `textContent` - metrics chart + tooltip (`renderPmChart`): runId (raw fall-through when unparseable), tool-call counts, outcome — text nodes (tooltip driven via mousemove) - metrics note (`loadMetrics`) — `replaceChildren` with text nodes  Injection verification — all 22 assertions green:  - payload lands verbatim as `textContent` at every site above - document has zero `<img>` elements, zero `[onerror]` attributes, only the one inline `<script>`; no `alert()` fired - serialization round-trip resurrects no markup (raw `<` survives only inside quoted attribute values — inert) - `escapeHtml`: 0 occurrences; remaining `innerHTML` uses are clears (`\"\"`) and two static literals with no interpolation; no `insertAdjacentHTML`/`outerHTML`/`document.write`  Branch is 0 commits behind master, all checks green (rs-static, rs-test ubuntu + macos), no unresolved review threads. Ready for re-review. ",
+      "repo": "rainlanguage/rain-org-health",
+      "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
     },
     {
       "number": 414,
@@ -1541,6 +1569,12 @@
       "reason": "🤖 ai:producer Producer note: reworked per rework note — added the asymmetric fork invariant (ETH-per-FLRETH >= 1e18, FLRETH-per-ETH <= 1e18) that fails under a getter swap; reciprocity kept as bonus; docs now cite the on-chain-verified direction. Fork verification rides on CI RPC env.",
       "repo": "rainlanguage/rain.flare",
       "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
+    },
+    {
+      "number": 143,
+      "reason": "🤖 ai:producer Producer note: rework executed per Rework note — comment-only bindings now trim the content_position end bound against the original text (semantic branch, not a blind clamp), restoring the pre-fix valid range covering the comment. All 4 repro cases confirmed inverted on the old code ([10,8], [10,8], [16,8], [11,8]) and now resolve to [10,17], [10,17], [16,27], [11,18]. Added test_comment_only_binding_content_position_not_inverted and test_comment_at_start_of_binding_content_preserved; both mutation-validated (branch removal / start-bound swap each fail the respective test). Both CodeRabbit threads replied-to and resolved; full dotrain suite, fmt and clippy green. Pushed ca47dae.",
+      "repo": "rainlanguage/dotrain",
+      "title": "fix(parser): comment before next binding bleeds into previous content_position"
     },
     {
       "number": 2793,
@@ -2025,11 +2059,6 @@
         "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
       },
       {
-        "number": 25,
-        "repo": "rainlanguage/rain-org-health",
-        "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
-      },
-      {
         "number": 246,
         "repo": "S01-Issuer/st0x.deploy",
         "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant"
@@ -2038,11 +2067,6 @@
         "number": 254,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
-      },
-      {
-        "number": 19,
-        "repo": "rainlanguage/rain-org-health",
-        "title": "fix(metrics): escape data fields before tooltip HTML interpolation"
       },
       {
         "number": 404,
@@ -2058,11 +2082,6 @@
         "number": 387,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(store): reject zero and null block.number from RPC"
-      },
-      {
-        "number": 143,
-        "repo": "rainlanguage/dotrain",
-        "title": "fix(parser): comment before next binding bleeds into previous content_position"
       },
       {
         "number": 230,
