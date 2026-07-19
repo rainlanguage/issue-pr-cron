@@ -379,10 +379,10 @@
     "humanReject": 30,
     "leaks": 17,
     "ready": 46,
-    "reject": 35,
+    "reject": 34,
     "relink": 2,
     "totalProducerPrs": 174,
-    "unvetted": 3
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -920,8 +920,14 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "number": 55,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "fix(uncovered-issues): coverage from native closingIssuesReferences, not body regex",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/55"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1272,19 +1278,13 @@
         ]
       },
       "ai:reject": {
-        "count": 35,
+        "count": 34,
         "prs": [
           {
             "number": 50,
             "repo": "rainlanguage/claude-audit-skills",
             "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming",
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50"
-          },
-          {
-            "number": 102,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Deployments: cross-check tokens vs the migration's productionReceiptVaults()",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/102"
           },
           {
             "number": 436,
@@ -2112,11 +2112,6 @@
         "number": 50,
         "repo": "rainlanguage/claude-audit-skills",
         "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
-      },
-      {
-        "number": 102,
-        "repo": "rainlanguage/rain-org-health",
-        "title": "Deployments: cross-check tokens vs the migration's productionReceiptVaults()"
       },
       {
         "number": 436,
