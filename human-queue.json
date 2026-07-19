@@ -378,10 +378,10 @@
     "humanDesign": 6,
     "humanReject": 30,
     "leaks": 17,
-    "ready": 46,
+    "ready": 44,
     "reject": 34,
     "relink": 2,
-    "totalProducerPrs": 174,
+    "totalProducerPrs": 172,
     "unvetted": 4
   },
   "lanes": {
@@ -1051,7 +1051,7 @@
         ]
       },
       "ai:ready": {
-        "count": 37,
+        "count": 35,
         "prs": [
           {
             "number": 118,
@@ -1124,18 +1124,6 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/427"
-          },
-          {
-            "number": 31,
-            "repo": "rainlanguage/rain.math.binary",
-            "title": "docs: ctpop NatSpec, accurate H01 comment, correct README publish section",
-            "url": "https://github.com/rainlanguage/rain.math.binary/pull/31"
-          },
-          {
-            "number": 30,
-            "repo": "rainlanguage/rain.math.binary",
-            "title": "test: pin mask constants by re-derivation, lone-high-bit case, relative src import",
-            "url": "https://github.com/rainlanguage/rain.math.binary/pull/30"
           },
           {
             "number": 259,
@@ -1935,16 +1923,6 @@
         "number": 427,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-      },
-      {
-        "number": 31,
-        "repo": "rainlanguage/rain.math.binary",
-        "title": "docs: ctpop NatSpec, accurate H01 comment, correct README publish section"
-      },
-      {
-        "number": 30,
-        "repo": "rainlanguage/rain.math.binary",
-        "title": "test: pin mask constants by re-derivation, lone-high-bit case, relative src import"
       },
       {
         "number": 259,
