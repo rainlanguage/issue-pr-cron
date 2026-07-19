@@ -351,8 +351,8 @@
     "ready": 25,
     "reject": 32,
     "relink": 1,
-    "totalProducerPrs": 168,
-    "unvetted": 3
+    "totalProducerPrs": 169,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -975,8 +975,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "number": 434,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(prices): make DataFetcher provider reactive to network switch",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/434"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
