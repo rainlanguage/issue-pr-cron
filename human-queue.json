@@ -348,11 +348,11 @@
     "humanDesign": 6,
     "humanReject": 55,
     "leaks": 38,
-    "ready": 25,
+    "ready": 26,
     "reject": 32,
     "relink": 1,
     "totalProducerPrs": 169,
-    "unvetted": 4
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -975,14 +975,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 4,
+        "count": 3,
         "prs": [
-          {
-            "number": 434,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(prices): make DataFetcher provider reactive to network switch",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/434"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1094,8 +1088,14 @@
         ]
       },
       "ai:ready": {
-        "count": 22,
+        "count": 23,
         "prs": [
+          {
+            "number": 434,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(prices): make DataFetcher provider reactive to network switch",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/434"
+          },
           {
             "number": 431,
             "repo": "cyclofinance/cyclo.site",
@@ -1922,6 +1922,11 @@
       }
     ],
     "ai:ready": [
+      {
+        "number": 434,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(prices): make DataFetcher provider reactive to network switch"
+      },
       {
         "number": 431,
         "repo": "cyclofinance/cyclo.site",
