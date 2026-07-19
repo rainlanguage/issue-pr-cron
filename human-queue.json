@@ -337,7 +337,7 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
+    "awaitingReVet": 1,
     "blockedDeploy": 12,
     "blockedInfra": 13,
     "blockedOn": 10,
@@ -974,6 +974,17 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 1,
+        "prs": [
+          {
+            "number": 435,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(receipts): preserve display precision by truncating the decimal string",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/435"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 3,
         "prs": [
@@ -1088,14 +1099,8 @@
         ]
       },
       "ai:ready": {
-        "count": 25,
+        "count": 24,
         "prs": [
-          {
-            "number": 435,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(receipts): preserve display precision by truncating the decimal string",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/435"
-          },
           {
             "number": 434,
             "repo": "cyclofinance/cyclo.site",
