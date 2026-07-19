@@ -224,20 +224,35 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
 /// exactly the orgs the prompts do. Falls back to the historical default pair when unset (so a
 /// bare local invocation still works). Returns flattened `--owner <org>` args, ready to splice
 /// into a `gh search` arg list.
-fn parse_orgs(raw: &str) -> Vec<String> {
+fn org_names(raw: &str) -> Vec<String> {
     let orgs: Vec<String> = raw
         .split(|c: char| c.is_whitespace() || c == ',')
         .filter(|s| !s.is_empty())
         .map(String::from)
         .collect();
-    let orgs = if orgs.is_empty() {
+    if orgs.is_empty() {
         vec!["rainlanguage".to_string(), "cyclofinance".to_string()]
     } else {
         orgs
-    };
-    orgs.into_iter()
+    }
+}
+
+fn parse_orgs(raw: &str) -> Vec<String> {
+    org_names(raw)
+        .into_iter()
         .flat_map(|o| ["--owner".to_string(), o])
         .collect()
+}
+
+/// The GraphQL `search` qualifier string for the org scope — same `ORGS` source as
+/// `org_owner_args`, rendered as `is:pr is:open org:<a> org:<b> …`.
+fn org_search_query() -> String {
+    let mut q = String::from("is:pr is:open");
+    for o in org_names(&std::env::var("ORGS").unwrap_or_default()) {
+        q.push_str(" org:");
+        q.push_str(&o);
+    }
+    q
 }
 
 fn org_owner_args() -> Vec<String> {
@@ -269,6 +284,12 @@ mod org_tests {
             parse_orgs("S01-Issuer"),
             ["--owner", "S01-Issuer"].map(String::from)
         );
+    }
+
+    #[test]
+    fn org_names_defaults_and_splits() {
+        assert_eq!(super::org_names(""), ["rainlanguage", "cyclofinance"]);
+        assert_eq!(super::org_names("a, b\tc"), ["a", "b", "c"]);
     }
 }
 
@@ -3031,7 +3052,8 @@ enum Cmd {
         #[arg(long)]
         no_cache: bool,
     },
-    /// Open issues NOT already covered by an open PR (the dedup the producer hand-rolled in `.jq`).
+    /// Open issues NOT already covered by an open PR — coverage from GitHub's native
+    /// `closingIssuesReferences` (the same references the merge resolves), not body regexing.
     UncoveredIssues {
         #[arg(long)]
         json: bool,
@@ -3235,8 +3257,79 @@ fn failing_check_names(rollup: &Value) -> Vec<String> {
         .collect()
 }
 
-/// Open issues NOT covered by any open PR. PURE: `covered` is the set of (repo, issue#) an open PR's
-/// closing keywords link, and coverage is SAME-REPO only (a `Closes #5` in repoA never covers repoB#5).
+/// PURE: the covered set from GraphQL PR-search nodes — one (repo, issue#) per native
+/// `closingIssuesReferences` entry, keyed by the ISSUE's repository (a cross-repo reference
+/// covers the referenced repo, not the PR's). PR title/body text is deliberately NOT parsed:
+/// GitHub's resolved references are the coverage signal, so the URL form
+/// (`Closes https://github.com/o/r/issues/5`) and `o/r#5` cover exactly what GitHub will
+/// auto-close at merge, and a title-only keyword (which GitHub never links) counts nothing.
+fn covered_from_search_prs(nodes: &[Value]) -> std::collections::HashSet<(String, u64)> {
+    let mut covered = std::collections::HashSet::new();
+    for pr in nodes {
+        let Some(refs) = pr
+            .pointer("/closingIssuesReferences/nodes")
+            .and_then(|n| n.as_array())
+        else {
+            continue;
+        };
+        for r in refs {
+            let (Some(repo), Some(num)) = (
+                r.pointer("/repository/nameWithOwner")
+                    .and_then(|s| s.as_str()),
+                r.get("number").and_then(|n| n.as_u64()),
+            ) else {
+                continue;
+            };
+            covered.insert((repo.to_string(), num));
+        }
+    }
+    covered
+}
+
+/// All open PRs in the org scope with their native `closingIssuesReferences`, one paged GraphQL
+/// search. `None` if any page fails — the caller must abort rather than treat unseen coverage as
+/// uncovered (a false uncovered row makes the producer open a duplicate PR).
+fn search_open_prs_closing_refs() -> Option<Vec<Value>> {
+    const QUERY: &str = "query($q:String!,$c:String){search(query:$q,type:ISSUE,first:100,after:$c){pageInfo{hasNextPage endCursor}nodes{... on PullRequest{closingIssuesReferences(first:50){nodes{number repository{nameWithOwner}}}}}}}";
+    let q = format!("q={}", org_search_query());
+    let query = format!("query={QUERY}");
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    // `search` serves at most 1000 results (10 pages of 100) — the same cap as the previous
+    // `gh search prs --limit 1000` path.
+    for _ in 0..10 {
+        let mut args: Vec<&str> = vec!["api", "graphql", "-f", &query, "-f", &q];
+        let cf;
+        if let Some(c) = &cursor {
+            cf = format!("c={c}");
+            args.push("-f");
+            args.push(&cf);
+        }
+        let v = gh_json(&args)?;
+        let search = v.pointer("/data/search")?;
+        if let Some(arr) = search.get("nodes").and_then(|n| n.as_array()) {
+            nodes.extend(arr.iter().cloned());
+        }
+        let next = search
+            .pointer("/pageInfo/hasNextPage")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
+        cursor = search
+            .pointer("/pageInfo/endCursor")
+            .and_then(|s| s.as_str())
+            .map(String::from);
+        if !next || cursor.is_none() {
+            return Some(nodes);
+        }
+    }
+    eprintln!(
+        "warning: open-PR search truncated at the 1000-result search cap — coverage from PRs beyond it is unseen"
+    );
+    Some(nodes)
+}
+
+/// Open issues NOT covered by any open PR. PURE: `covered` is the (repo, issue#) set an open PR's
+/// native closing references link (see `covered_from_search_prs`).
 fn uncovered(
     issues: &[(String, u64)],
     covered: &std::collections::HashSet<(String, u64)>,
@@ -3682,49 +3775,17 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
         eprintln!("error: `gh search issues` failed — aborting rather than report a falsely-empty issue set");
         return 1;
     };
-    // open PRs + their closing refs
-    let mut psearch: Vec<String> = vec!["search".into(), "prs".into()];
-    psearch.extend(org_owner_args());
-    psearch.extend(
-        [
-            "--state",
-            "open",
-            "--limit",
-            "1000",
-            "--json",
-            "number,repository,title,body",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    let pref: Vec<&str> = psearch.iter().map(String::as_str).collect();
-    let Some(pval) = gh_json(&pref) else {
-        eprintln!("error: `gh search prs` failed — aborting");
+    // open PRs + their NATIVE closing references (GraphQL). The REST `gh search prs` cannot
+    // return `closingIssuesReferences`, and regexing title+body missed the URL and cross-repo
+    // reference forms GitHub honors while over-counting title keywords GitHub ignores — the
+    // native references are what actually auto-close at merge.
+    let Some(pr_nodes) = search_open_prs_closing_refs() else {
+        eprintln!(
+            "error: open-PR closing-references search failed — aborting rather than report covered issues as uncovered"
+        );
         return 1;
     };
-
-    let mut covered: std::collections::HashSet<(String, u64)> = std::collections::HashSet::new();
-    for p in pval.as_array().unwrap_or(&Vec::new()) {
-        let Some(repo) = p
-            .get("repository")
-            .and_then(|r| r.get("nameWithOwner"))
-            .and_then(|s| s.as_str())
-        else {
-            continue;
-        };
-        // Closing keywords in title+body (same repo). `gh search prs` CANNOT return
-        // `closingIssuesReferences` (that field is `gh pr view`-only — requesting it makes the
-        // whole search error out), so closing-keyword extraction IS the coverage signal — the same
-        // signal the producer's hand-rolled `jq` dedup used.
-        let text = format!(
-            "{} {}",
-            p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
-            p.get("body").and_then(|b| b.as_str()).unwrap_or("")
-        );
-        for n in closing_keywords(&text) {
-            covered.insert((repo.to_string(), n));
-        }
-    }
+    let covered = covered_from_search_prs(&pr_nodes);
 
     let mut issues: Vec<(String, u64)> = Vec::new();
     let mut meta: std::collections::HashMap<(String, u64), Value> =
@@ -6010,6 +6071,65 @@ mod worklist_tests {
         assert!(got.contains(&("o/b".to_string(), 5))); // same number, different repo -> NOT covered
         assert!(!got.contains(&("o/a".to_string(), 5)));
         assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn covered_from_native_refs_same_and_cross_repo() {
+        // Native references arrive already resolved, whatever textual form produced them
+        // (`#N`, `o/r#N`, or the full-URL form issue #54 hit on cyclo.site#406). Coverage is
+        // the union across ALL PR nodes, not the first.
+        let nodes = vec![
+            json!({
+                "closingIssuesReferences": {"nodes": [
+                    {"number": 318, "repository": {"nameWithOwner": "cyclofinance/cyclo.site"}},
+                    {"number": 7, "repository": {"nameWithOwner": "rainlanguage/other"}}
+                ]}
+            }),
+            json!({
+                "closingIssuesReferences": {"nodes": [
+                    {"number": 12, "repository": {"nameWithOwner": "rainlanguage/second-pr"}}
+                ]}
+            }),
+        ];
+        let covered = covered_from_search_prs(&nodes);
+        assert!(covered.contains(&("cyclofinance/cyclo.site".to_string(), 318)));
+        assert!(covered.contains(&("rainlanguage/other".to_string(), 7)));
+        assert!(covered.contains(&("rainlanguage/second-pr".to_string(), 12)));
+        assert_eq!(covered.len(), 3);
+    }
+
+    #[test]
+    fn covered_keyed_by_issue_repo_not_pr_repo() {
+        // A cross-repo reference covers the ISSUE's repo; the PR's own repository (present in
+        // the node) must not leak into the key.
+        let nodes = vec![json!({
+            "repository": {"nameWithOwner": "o/pr-repo"},
+            "closingIssuesReferences": {"nodes": [
+                {"number": 9, "repository": {"nameWithOwner": "o/issue-repo"}}
+            ]}
+        })];
+        let covered = covered_from_search_prs(&nodes);
+        assert!(covered.contains(&("o/issue-repo".to_string(), 9)));
+        assert!(!covered.contains(&("o/pr-repo".to_string(), 9)));
+    }
+
+    #[test]
+    fn no_native_refs_means_no_coverage() {
+        // Body/title keyword text contributes nothing — only resolved references count (a
+        // title-only `Closes #5`, which GitHub never links, is exactly this shape). Empty
+        // union members from the search (non-PR nodes) and malformed reference entries
+        // (missing number or repository) are tolerated without contributing coverage.
+        let nodes = vec![
+            json!({"title": "Closes #5", "body": "Fixes #6",
+                   "closingIssuesReferences": {"nodes": []}}),
+            json!({}),
+            json!({"closingIssuesReferences": {"nodes": [
+                {"repository": {"nameWithOwner": "o/r"}},
+                {"number": 3},
+                {}
+            ]}}),
+        ];
+        assert!(covered_from_search_prs(&nodes).is_empty());
     }
 
     #[test]
