@@ -347,9 +347,9 @@
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 55,
-    "leaks": 39,
-    "ready": 26,
-    "reject": 32,
+    "leaks": 38,
+    "ready": 28,
+    "reject": 31,
     "relink": 1,
     "totalProducerPrs": 170,
     "unvetted": 3
@@ -735,14 +735,8 @@
     },
     "leak": {
       "leak": {
-        "count": 2,
+        "count": 1,
         "prs": [
-          {
-            "number": 435,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(receipts): preserve display precision by truncating the decimal string",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/435"
-          },
           {
             "number": 475,
             "repo": "rainlanguage/flow",
@@ -1094,13 +1088,25 @@
         ]
       },
       "ai:ready": {
-        "count": 23,
+        "count": 25,
         "prs": [
+          {
+            "number": 435,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(receipts): preserve display precision by truncating the decimal string",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/435"
+          },
           {
             "number": 434,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(prices): make DataFetcher provider reactive to network switch",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/434"
+          },
+          {
+            "number": 433,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): leaderboard heading reflects the actual row count",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/433"
           },
           {
             "number": 431,
@@ -1237,14 +1243,8 @@
         ]
       },
       "ai:reject": {
-        "count": 32,
+        "count": 31,
         "prs": [
-          {
-            "number": 433,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): leaderboard heading reflects the actual row count",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/433"
-          },
           {
             "number": 432,
             "repo": "cyclofinance/cyclo.site",
@@ -1447,12 +1447,6 @@
     }
   },
   "leaks": [
-    {
-      "number": 435,
-      "reason": "🤖 ai:producer Before/after render of the ReceiptsTable figures (top = main `Number(formatUnits(...)).toFixed(5)`, bottom = this PR `trimToDecimals(...)`). Small holding shows the rounding→truncation shift (0.03693→0.03692); the large-holding row shows the IEEE-754 corruption the fix removes (e.g. `12345678901234568.00000`→`12345678901234567.89012`).  ![before/after](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/cyclo.site-435.png) ",
-      "repo": "cyclofinance/cyclo.site",
-      "title": "fix(receipts): preserve display precision by truncating the decimal string"
-    },
     {
       "number": 418,
       "reason": "🤖 ai:producer Producer note: svelte-check type errors fixed per vetter diagnosis (196e7c375690d9644cdbe7c1cc884827f949bec8) — optionKey captured in local const; svelte-check 0 errors locally. Also fixed two latent failures in the same lint job that svelte-check had masked: added the missing eslint-disable-next-line for the generic T on the optionKey prop (no-undef) and applied the repo prettier hook formatting to Select.test.ts. Full local run: svelte-check 0 errors, Select tests 5/5, eslint clean, prettier hook passed.",
@@ -1935,9 +1929,19 @@
     ],
     "ai:ready": [
       {
+        "number": 435,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(receipts): preserve display precision by truncating the decimal string"
+      },
+      {
         "number": 434,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(prices): make DataFetcher provider reactive to network switch"
+      },
+      {
+        "number": 433,
+        "repo": "cyclofinance/cyclo.site",
+        "title": "fix(component): leaderboard heading reflects the actual row count"
       },
       {
         "number": 431,
@@ -2066,11 +2070,6 @@
       }
     ],
     "ai:reject": [
-      {
-        "number": 433,
-        "repo": "cyclofinance/cyclo.site",
-        "title": "fix(component): leaderboard heading reflects the actual row count"
-      },
       {
         "number": 432,
         "repo": "cyclofinance/cyclo.site",
