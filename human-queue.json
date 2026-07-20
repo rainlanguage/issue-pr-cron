@@ -6,6 +6,11 @@
       "title": "[AUDIT-I06] [info] Audit-fix PR branches are parallel siblings, not stacked"
     },
     {
+      "number": 42,
+      "repo": "rainlanguage/rain.dia",
+      "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
+    },
+    {
       "number": 30,
       "repo": "rainlanguage/rain.dia",
       "title": "[AUDIT-I03] [info] Verbose console2 logging in fork price assertions"
@@ -49,6 +54,16 @@
       "number": 93,
       "repo": "rainlanguage/rain.erc4626.words",
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
+    },
+    {
+      "number": 2174,
+      "repo": "rainlanguage/raindex",
+      "title": "Invalid values shown on stack in the strategy studio."
+    },
+    {
+      "number": 958,
+      "repo": "rainlanguage/raindex",
+      "title": "don't have \"utils\" folder in tauri-app/src/lib/utils"
     },
     {
       "number": 2,
@@ -341,14 +356,39 @@
       "title": "Select a ledger address rather than requiring user to enter derivation index"
     },
     {
+      "number": 279,
+      "repo": "rainlanguage/raindex",
+      "title": "Polling on all pages"
+    },
+    {
       "number": 272,
       "repo": "rainlanguage/raindex",
       "title": "don't close deposit modal on ledger error"
     },
     {
+      "number": 239,
+      "repo": "rainlanguage/raindex",
+      "title": "Error displayed twice on deposit "
+    },
+    {
       "number": 229,
       "repo": "rainlanguage/raindex",
       "title": "Refactor front-end caching and pagination of list queries to support chart data"
+    },
+    {
+      "number": 213,
+      "repo": "rainlanguage/raindex",
+      "title": "Add logging to tauri app"
+    },
+    {
+      "number": 184,
+      "repo": "rainlanguage/raindex",
+      "title": "Frontmatter lint errors do not underline the text that caused the error"
+    },
+    {
+      "number": 183,
+      "repo": "rainlanguage/raindex",
+      "title": "Disable \"Add Order\" button when linting finds problems"
     },
     {
       "number": 159,
@@ -371,7 +411,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 73,
+    "closeCandidateIssues": 81,
     "closeCandidatePrs": 9,
     "design": 6,
     "humanCloseCandidate": 0,
