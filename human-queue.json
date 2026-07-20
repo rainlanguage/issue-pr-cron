@@ -11,16 +11,6 @@
       "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
     },
     {
-      "number": 30,
-      "repo": "rainlanguage/rain.dia",
-      "title": "[AUDIT-I03] [info] Verbose console2 logging in fork price assertions"
-    },
-    {
-      "number": 12,
-      "repo": "rainlanguage/rain.dia",
-      "title": "[AUDIT-M07] [medium] Fork-pin docs still cite block 46061133 while LibFork is 47365950"
-    },
-    {
       "number": 248,
       "repo": "S01-Issuer/st0x.deploy",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
@@ -406,7 +396,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 80,
+    "closeCandidateIssues": 78,
     "closeCandidatePrs": 9,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -416,8 +406,8 @@
     "ready": 46,
     "reject": 33,
     "relink": 2,
-    "totalProducerPrs": 172,
-    "unvetted": 3
+    "totalProducerPrs": 173,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -896,8 +886,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "number": 47,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "test(bytes): mutation-validated coverage",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/47"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
