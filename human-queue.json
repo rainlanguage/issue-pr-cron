@@ -406,8 +406,8 @@
     "ready": 46,
     "reject": 33,
     "relink": 2,
-    "totalProducerPrs": 174,
-    "unvetted": 5
+    "totalProducerPrs": 178,
+    "unvetted": 9
   },
   "lanes": {
     "human-decisions": {
@@ -886,8 +886,32 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 5,
+        "count": 9,
         "prs": [
+          {
+            "number": 53,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "test(stack-s5): mutation-validated coverage",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/53"
+          },
+          {
+            "number": 52,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "test(stack-s2): mutation-validated coverage",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/52"
+          },
+          {
+            "number": 51,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "test(stack-s3): mutation-validated coverage",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/51"
+          },
+          {
+            "number": 49,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "test(pointer-core): mutation-validated coverage",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/49"
+          },
           {
             "number": 48,
             "repo": "rainlanguage/rain.solmem",
