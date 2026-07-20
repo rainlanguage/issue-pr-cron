@@ -71,11 +71,6 @@
       "title": "tracking SPDX"
     },
     {
-      "number": 928,
-      "repo": "rainlanguage/raindex",
-      "title": "disconnect wallet connect just spins for several minutes"
-    },
-    {
       "number": 24,
       "repo": "rainlanguage/rain.internal",
       "title": "Cyclo launch"
@@ -411,7 +406,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 81,
+    "closeCandidateIssues": 80,
     "closeCandidatePrs": 9,
     "design": 6,
     "humanCloseCandidate": 0,
