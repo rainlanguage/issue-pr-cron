@@ -406,8 +406,8 @@
     "ready": 46,
     "reject": 33,
     "relink": 2,
-    "totalProducerPrs": 179,
-    "unvetted": 10
+    "totalProducerPrs": 183,
+    "unvetted": 14
   },
   "lanes": {
     "human-decisions": {
@@ -886,8 +886,32 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 10,
+        "count": 14,
         "prs": [
+          {
+            "number": 60,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Document the audit/ directory and its filename anchor convention",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/60"
+          },
+          {
+            "number": 59,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Warn that unsafeCopyWordsTo can silently overflow",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/59"
+          },
+          {
+            "number": 58,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Say that toIndexSigned needs relative, not absolute, alignment",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/58"
+          },
+          {
+            "number": 57,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Read the extend length before overwriting base's length word",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/57"
+          },
           {
             "number": 56,
             "repo": "rainlanguage/rain.solmem",
