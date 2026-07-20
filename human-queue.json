@@ -419,9 +419,9 @@
     "humanReject": 30,
     "leaks": 17,
     "ready": 46,
-    "reject": 34,
+    "reject": 33,
     "relink": 2,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 172,
     "unvetted": 3
   },
   "lanes": {
@@ -1307,14 +1307,8 @@
         ]
       },
       "ai:reject": {
-        "count": 34,
+        "count": 33,
         "prs": [
-          {
-            "number": 106,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Audit: count comment LOC apart, and stop it marking a repo stale",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/106"
-          },
           {
             "number": 436,
             "repo": "cyclofinance/cyclo.site",
@@ -2137,11 +2131,6 @@
       }
     ],
     "ai:reject": [
-      {
-        "number": 106,
-        "repo": "rainlanguage/rain-org-health",
-        "title": "Audit: count comment LOC apart, and stop it marking a repo stale"
-      },
       {
         "number": 436,
         "repo": "cyclofinance/cyclo.site",
