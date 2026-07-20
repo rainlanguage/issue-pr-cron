@@ -406,8 +406,8 @@
     "ready": 46,
     "reject": 33,
     "relink": 2,
-    "totalProducerPrs": 173,
-    "unvetted": 4
+    "totalProducerPrs": 174,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -886,8 +886,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 4,
+        "count": 5,
         "prs": [
+          {
+            "number": 48,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "test(bytes32): mutation-validated coverage",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/48"
+          },
           {
             "number": 47,
             "repo": "rainlanguage/rain.solmem",
