@@ -406,8 +406,8 @@
     "ready": 46,
     "reject": 33,
     "relink": 2,
-    "totalProducerPrs": 178,
-    "unvetted": 9
+    "totalProducerPrs": 179,
+    "unvetted": 10
   },
   "lanes": {
     "human-decisions": {
@@ -886,8 +886,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 9,
+        "count": 10,
         "prs": [
+          {
+            "number": 56,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Record the adversarial mutation scan of v0.1.3",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/56"
+          },
           {
             "number": 53,
             "repo": "rainlanguage/rain.solmem",
