@@ -407,7 +407,7 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
+    "awaitingReVet": 1,
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
@@ -421,8 +421,8 @@
     "ready": 49,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 177,
-    "unvetted": 3
+    "totalProducerPrs": 178,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -900,9 +900,26 @@
       }
     },
     "vet-lifecycle": {
-      "un-vetted": {
-        "count": 3,
+      "awaiting-re-vet": {
+        "count": 1,
         "prs": [
+          {
+            "number": 246,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/246"
+          }
+        ]
+      },
+      "un-vetted": {
+        "count": 4,
+        "prs": [
+          {
+            "number": 117,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Read the governed vaults from the token table they now derive from",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/117"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1032,7 +1049,7 @@
         ]
       },
       "ai:ready": {
-        "count": 49,
+        "count": 48,
         "prs": [
           {
             "number": 60,
@@ -1159,12 +1176,6 @@
             "repo": "rainlanguage/rain.pyth",
             "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)",
             "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
-          },
-          {
-            "number": 246,
-            "repo": "S01-Issuer/st0x.deploy",
-            "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant",
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/246"
           },
           {
             "number": 254,
