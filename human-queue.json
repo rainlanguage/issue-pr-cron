@@ -407,22 +407,22 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 2,
+    "awaitingReVet": 0,
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
     "closeCandidateIssues": 81,
     "closeCandidatePrs": 9,
-    "design": 6,
+    "design": 7,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 30,
     "leaks": 17,
-    "ready": 46,
+    "ready": 49,
     "reject": 33,
-    "relink": 2,
+    "relink": 3,
     "totalProducerPrs": 177,
-    "unvetted": 8
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -900,56 +900,9 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 2,
-        "prs": [
-          {
-            "number": 398,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
-          },
-          {
-            "number": 212,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 8,
+        "count": 3,
         "prs": [
-          {
-            "number": 60,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Document the audit/ directory and its filename anchor convention",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/60"
-          },
-          {
-            "number": 59,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Warn that unsafeCopyWordsTo can silently overflow",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/59"
-          },
-          {
-            "number": 58,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Say that toIndexSigned needs relative, not absolute, alignment",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/58"
-          },
-          {
-            "number": 57,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Read the extend length before overwriting base's length word",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/57"
-          },
-          {
-            "number": 56,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Record the adversarial mutation scan of v0.1.3",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/56"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
@@ -1032,13 +985,19 @@
         ]
       },
       "ai:design": {
-        "count": 6,
+        "count": 7,
         "prs": [
           {
             "number": 426,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/426"
+          },
+          {
+            "number": 25,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/25"
           },
           {
             "number": 161,
@@ -1073,8 +1032,26 @@
         ]
       },
       "ai:ready": {
-        "count": 44,
+        "count": 49,
         "prs": [
+          {
+            "number": 60,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Document the audit/ directory and its filename anchor convention",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/60"
+          },
+          {
+            "number": 58,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Say that toIndexSigned needs relative, not absolute, alignment",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/58"
+          },
+          {
+            "number": 56,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Record the adversarial mutation scan of v0.1.3",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/56"
+          },
           {
             "number": 55,
             "repo": "rainlanguage/issue-pr-cron",
@@ -1184,12 +1161,6 @@
             "url": "https://github.com/rainlanguage/rain.pyth/pull/28"
           },
           {
-            "number": 25,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/25"
-          },
-          {
             "number": 246,
             "repo": "S01-Issuer/st0x.deploy",
             "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant",
@@ -1230,6 +1201,12 @@
             "repo": "cyclofinance/cyclo.site",
             "title": "fix: case-insensitive symbol lookup in AccountStats (#312)",
             "url": "https://github.com/cyclofinance/cyclo.site/pull/404"
+          },
+          {
+            "number": 398,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
           },
           {
             "number": 397,
@@ -1280,6 +1257,12 @@
             "url": "https://github.com/rainlanguage/dotrain/pull/143"
           },
           {
+            "number": 2793,
+            "repo": "rainlanguage/raindex",
+            "title": "perf: eliminate redundant read_dispair calls in try_into_call",
+            "url": "https://github.com/rainlanguage/raindex/pull/2793"
+          },
+          {
             "number": 2,
             "repo": "rainlanguage/issue-pr-cron",
             "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
@@ -1302,6 +1285,12 @@
             "repo": "rainlanguage/rain.vats",
             "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types",
             "url": "https://github.com/rainlanguage/rain.vats/pull/325"
+          },
+          {
+            "number": 212,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212"
           },
           {
             "number": 324,
@@ -1344,6 +1333,12 @@
       "ai:reject": {
         "count": 33,
         "prs": [
+          {
+            "number": 59,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Warn that unsafeCopyWordsTo can silently overflow",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/59"
+          },
           {
             "number": 436,
             "repo": "cyclofinance/cyclo.site",
@@ -1453,12 +1448,6 @@
             "url": "https://github.com/rainlanguage/rainix/pull/252"
           },
           {
-            "number": 2793,
-            "repo": "rainlanguage/raindex",
-            "title": "perf: eliminate redundant read_dispair calls in try_into_call",
-            "url": "https://github.com/rainlanguage/raindex/pull/2793"
-          },
-          {
             "number": 188,
             "repo": "rainlanguage/rain.flare",
             "title": "fix(lib): move DecimalsTooLarge guard into LibFtsoCurrentPriceUsd (#79)",
@@ -1545,8 +1534,14 @@
         ]
       },
       "ai:relink": {
-        "count": 2,
+        "count": 3,
         "prs": [
+          {
+            "number": 57,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "Read the extend length before overwriting base's length word",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/57"
+          },
           {
             "number": 231,
             "repo": "rainlanguage/rain.erc4626.words",
@@ -1908,6 +1903,11 @@
         "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
       },
       {
+        "number": 25,
+        "repo": "rainlanguage/rain-org-health",
+        "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
+      },
+      {
         "number": 161,
         "repo": "rainlanguage/rain.flare",
         "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
@@ -1934,6 +1934,21 @@
       }
     ],
     "ai:ready": [
+      {
+        "number": 60,
+        "repo": "rainlanguage/rain.solmem",
+        "title": "Document the audit/ directory and its filename anchor convention"
+      },
+      {
+        "number": 58,
+        "repo": "rainlanguage/rain.solmem",
+        "title": "Say that toIndexSigned needs relative, not absolute, alignment"
+      },
+      {
+        "number": 56,
+        "repo": "rainlanguage/rain.solmem",
+        "title": "Record the adversarial mutation scan of v0.1.3"
+      },
       {
         "number": 55,
         "repo": "rainlanguage/issue-pr-cron",
@@ -2025,11 +2040,6 @@
         "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
       },
       {
-        "number": 25,
-        "repo": "rainlanguage/rain-org-health",
-        "title": "feat(scan+site): surface org-wide open-issue backlog with covered/uncovered split"
-      },
-      {
         "number": 246,
         "repo": "S01-Issuer/st0x.deploy",
         "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant"
@@ -2110,6 +2120,11 @@
         "title": "fix(parser): comment before next binding bleeds into previous content_position"
       },
       {
+        "number": 2793,
+        "repo": "rainlanguage/raindex",
+        "title": "perf: eliminate redundant read_dispair calls in try_into_call"
+      },
+      {
         "number": 2,
         "repo": "rainlanguage/issue-pr-cron",
         "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved"
@@ -2166,6 +2181,11 @@
       }
     ],
     "ai:reject": [
+      {
+        "number": 59,
+        "repo": "rainlanguage/rain.solmem",
+        "title": "Warn that unsafeCopyWordsTo can silently overflow"
+      },
       {
         "number": 436,
         "repo": "cyclofinance/cyclo.site",
@@ -2257,11 +2277,6 @@
         "title": "feat(ci): assert all rainix-*.yaml reusables share one pinned RAINIX_SHA"
       },
       {
-        "number": 2793,
-        "repo": "rainlanguage/raindex",
-        "title": "perf: eliminate redundant read_dispair calls in try_into_call"
-      },
-      {
         "number": 188,
         "repo": "rainlanguage/rain.flare",
         "title": "fix(lib): move DecimalsTooLarge guard into LibFtsoCurrentPriceUsd (#79)"
@@ -2333,6 +2348,11 @@
       }
     ],
     "ai:relink": [
+      {
+        "number": 57,
+        "repo": "rainlanguage/rain.solmem",
+        "title": "Read the extend length before overwriting base's length word"
+      },
       {
         "number": 231,
         "repo": "rainlanguage/rain.erc4626.words",
