@@ -915,10 +915,10 @@
         "count": 4,
         "prs": [
           {
-            "number": 117,
+            "number": 118,
             "repo": "rainlanguage/rain-org-health",
-            "title": "Read the governed vaults from the token table they now derive from",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/117"
+            "title": "Show Ethereum's in-use beacons alongside Base's",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/118"
           },
           {
             "number": 31,
