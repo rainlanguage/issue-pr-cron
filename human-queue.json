@@ -421,8 +421,8 @@
     "ready": 49,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 178,
-    "unvetted": 4
+    "totalProducerPrs": 179,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -912,13 +912,19 @@
         ]
       },
       "un-vetted": {
-        "count": 4,
+        "count": 5,
         "prs": [
           {
-            "number": 119,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Read which authoriser clone is live instead of asserting it",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/119"
+            "number": 64,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "feat(fsm): work-clone lifecycle as an MCP capability — the guarded replacement for a denied `rm -rf`",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/64"
+          },
+          {
+            "number": 63,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "feat(fsm): serve the vetter's transitions over MCP + add its in-process state-load",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/63"
           },
           {
             "number": 31,
