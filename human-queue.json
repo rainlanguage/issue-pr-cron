@@ -11,6 +11,11 @@
       "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
     },
     {
+      "number": 17,
+      "repo": "rainlanguage/rain.dia",
+      "title": "[AUDIT-L01] [low] intOrAStringToString does not validate V3 truthy bits"
+    },
+    {
       "number": 248,
       "repo": "S01-Issuer/st0x.deploy",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
@@ -49,6 +54,16 @@
       "number": 2174,
       "repo": "rainlanguage/raindex",
       "title": "Invalid values shown on stack in the strategy studio."
+    },
+    {
+      "number": 969,
+      "repo": "rainlanguage/raindex",
+      "title": "`Words` tab errors for nested scenarios within the front matter."
+    },
+    {
+      "number": 221,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "Unreadable error messages on WalletConnect tx reject"
     },
     {
       "number": 958,
@@ -396,7 +411,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 78,
+    "closeCandidateIssues": 81,
     "closeCandidatePrs": 9,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -406,8 +421,8 @@
     "ready": 46,
     "reject": 33,
     "relink": 2,
-    "totalProducerPrs": 183,
-    "unvetted": 14
+    "totalProducerPrs": 177,
+    "unvetted": 8
   },
   "lanes": {
     "human-decisions": {
@@ -886,7 +901,7 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 14,
+        "count": 8,
         "prs": [
           {
             "number": 60,
@@ -917,42 +932,6 @@
             "repo": "rainlanguage/rain.solmem",
             "title": "Record the adversarial mutation scan of v0.1.3",
             "url": "https://github.com/rainlanguage/rain.solmem/pull/56"
-          },
-          {
-            "number": 53,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "test(stack-s5): mutation-validated coverage",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/53"
-          },
-          {
-            "number": 52,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "test(stack-s2): mutation-validated coverage",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/52"
-          },
-          {
-            "number": 51,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "test(stack-s3): mutation-validated coverage",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/51"
-          },
-          {
-            "number": 49,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "test(pointer-core): mutation-validated coverage",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/49"
-          },
-          {
-            "number": 48,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "test(bytes32): mutation-validated coverage",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/48"
-          },
-          {
-            "number": 47,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "test(bytes): mutation-validated coverage",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/47"
           },
           {
             "number": 31,
