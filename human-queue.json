@@ -407,7 +407,7 @@
     }
   ],
   "counts": {
-    "awaitingReVet": 0,
+    "awaitingReVet": 2,
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
@@ -900,6 +900,23 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 2,
+        "prs": [
+          {
+            "number": 398,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
+          },
+          {
+            "number": 212,
+            "repo": "rainlanguage/rain.erc4626.words",
+            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 8,
         "prs": [
@@ -1056,7 +1073,7 @@
         ]
       },
       "ai:ready": {
-        "count": 46,
+        "count": 44,
         "prs": [
           {
             "number": 55,
@@ -1215,12 +1232,6 @@
             "url": "https://github.com/cyclofinance/cyclo.site/pull/404"
           },
           {
-            "number": 398,
-            "repo": "cyclofinance/cyclo.site",
-            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy",
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/398"
-          },
-          {
             "number": 397,
             "repo": "cyclofinance/cyclo.site",
             "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard",
@@ -1291,12 +1302,6 @@
             "repo": "rainlanguage/rain.vats",
             "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types",
             "url": "https://github.com/rainlanguage/rain.vats/pull/325"
-          },
-          {
-            "number": 212,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212"
           },
           {
             "number": 324,
