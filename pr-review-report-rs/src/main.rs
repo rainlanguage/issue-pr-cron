@@ -2618,10 +2618,11 @@ fn clone_name_in_root(root: &str, input: &str) -> Result<String, String> {
     } else {
         s
     };
+    // No second `rest.is_empty()` check here: the root-itself case is already decided above, before
+    // the prefix is stripped, so nothing can reach this point with an empty remainder. A mutation
+    // pass proved a check here was unreachable — dead code in a guard reads as protection that is
+    // not actually protecting anything.
     let rest = rest.trim_end_matches('/');
-    if rest.is_empty() {
-        return Err(bad("that is the root itself, not a clone in it"));
-    }
     if rest.contains('/') {
         return Err(bad("not a direct child of the root"));
     }
@@ -2658,6 +2659,11 @@ fn clone_in_roots(roots: &[String], input: &str) -> Result<(String, String), Str
 ///
 /// That last check is the one that makes a mistake cheap: only a git clone is ever deletable, so no
 /// argument — however malformed — reaches ordinary data.
+///
+/// This is a SECOND layer: `clone_name_in_root` should already have rejected anything that is not a
+/// plain component. It is written to hold on its own anyway (and tested that way, called directly
+/// with names the first layer would never emit), so relaxing the first layer cannot silently make
+/// the root or its ancestors deletable.
 fn resolve_existing_clone(root: &str, name: &str) -> Result<std::path::PathBuf, String> {
     let root_real = std::fs::canonicalize(root)
         .map_err(|e| format!("work-clone root {root} is not readable: {e}"))?;
@@ -8887,6 +8893,27 @@ mod mcp_tests {
         assert!(clone_name_in_root("./code", "x").is_err());
     }
 
+    // The `..` check must be the one doing the work, not a coincidence of the later "direct child"
+    // rule: a traversal has to be REPORTED as a traversal. Otherwise relaxing the direct-child rule
+    // (e.g. to allow a nested clone dir) would silently re-open traversal.
+    #[test]
+    fn a_traversal_is_refused_as_a_traversal_not_incidentally() {
+        let root = "/home/gildlab/code";
+        for bad in [
+            "..",
+            "../etc",
+            "/home/gildlab/code/../../etc",
+            "/home/gildlab/code/x/../../y",
+            "a/../../b",
+        ] {
+            let e = clone_name_in_root(root, bad).unwrap_err();
+            assert!(
+                e.contains("`..` traversal"),
+                "{bad:?} must be refused FOR the traversal, got: {e}"
+            );
+        }
+    }
+
     #[test]
     fn a_clone_resolves_against_any_configured_root_and_reports_them_all() {
         let roots = vec!["/work".to_string(), "/install".to_string()];
@@ -9118,6 +9145,34 @@ mod mcp_tests {
         assert!(root.join("not-a-clone/precious.txt").exists());
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&escape);
+    }
+
+    // `resolve_existing_clone` is the SECOND layer, so it is tested on its own terms — called
+    // directly with names `clone_name_in_root` would never emit. Reached only through the first
+    // layer, its root/ancestor check is untestable, and an untested guard is not a guard.
+    #[test]
+    fn the_filesystem_guard_refuses_the_root_and_its_ancestors_on_its_own() {
+        // Layout: <parent>/.git (so the ancestor LOOKS like a clone) and <parent>/root/<clone>.
+        let parent = tmp_root("second-layer");
+        std::fs::create_dir_all(parent.join(".git")).unwrap();
+        std::fs::write(parent.join("irreplaceable.txt"), "everything").unwrap();
+        let root = parent.join("root");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let rs = root.to_string_lossy().to_string();
+        mk_clone(&root, "legit");
+
+        // The ancestor is a directory, is not a symlink, and has a `.git` — every OTHER check
+        // passes. Only "must be a direct child of the root" stands between it and deletion.
+        let e = resolve_existing_clone(&rs, "..").unwrap_err();
+        assert!(e.contains("outside"), "{e}");
+        // The root itself, likewise.
+        let e = resolve_existing_clone(&rs, ".").unwrap_err();
+        assert!(e.contains("outside"), "{e}");
+        // …and the legitimate child still resolves, so the guard is not simply refusing everything.
+        assert!(resolve_existing_clone(&rs, "legit").is_ok());
+
+        assert!(parent.join("irreplaceable.txt").exists());
+        let _ = std::fs::remove_dir_all(&parent);
     }
 
     #[test]
