@@ -18,6 +18,10 @@
 !/review-run.sh
 !/review-prompt.txt
 !/review-settings.json
+# MCP-only vetter surface (issue #52): opt-in via VETTER_MCP=1 in cron.env.
+!/review-prompt-mcp.txt
+!/review-settings-mcp.json
+!/review-mcp.json
 !/merge-run.sh
 !/merge-prompt.txt
 !/merge-settings.json

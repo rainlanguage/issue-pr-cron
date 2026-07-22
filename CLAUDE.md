@@ -40,6 +40,25 @@ transition functions:
 | `--commit-closes <owner/repo> <n>`                         | closing-keyword vs. `closingIssuesReferences` drift check                                               |
 | `--backfill-comments`                                      | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment) |
 | `--gc-clones <work-dir>`                                   | reclaim merged/closed work-clones (state cleanup)                                                       |
+| `unvetted [--json] [--include-skipped]`                    | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals     |
+| `mcp`                                                      | serve the vetter's transitions over MCP (stdio) — the FSM as a tool surface, not as prose               |
+
+## The FSM as a tool surface (MCP)
+
+`pr-review-report mcp` speaks MCP over stdio and exposes the **vetter's** whole
+job as four tools — `unvetted` (state-load), `pr_context` (read one PR),
+`pr_checkout` (local source for the audit lens), `record_verdict` (the only
+write). Run with `--mcp-config review-mcp.json --strict-mcp-config` and
+`review-settings-mcp.json`, the vetter has **no Bash at all**: the tools are
+`mcp__fsm__*` and a non-FSM operation is unrepresentable rather than merely
+denied (a Bash deny-list is prefix-matched and bypassable). The transition
+guards — verdict vocabulary, mandatory in-range cost, well-formed PR ref,
+human-sacred refusal — live in `validate_call` / `verdict_plan`, tested once,
+instead of being re-asserted in prose.
+
+Opt-in and OFF by default: set `VETTER_MCP=1` in `cron.env`. The surface is kept
+deliberately small — a wrapper per `gh` command would cost more context than the
+prose it replaces.
 
 ## Invariants
 

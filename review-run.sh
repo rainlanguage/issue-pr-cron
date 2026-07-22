@@ -32,6 +32,8 @@ PR_ASSIGNEE=""
 REVIEW_MODEL="claude-fable-5"   # org default per 2026-07-04 directive; override via cron.env if needed
 FALLBACK_MODELS=""              # ordered fallback models tried on a REVIEW_MODEL quota/429 (set in cron.env)
 REVIEW_MAXTIME="2h"
+WORK_DIR="$HOME/code"          # where the audit lens checks PRs out (review-prompt {{WORK_DIR}})
+VETTER_MCP=0                   # 1 = run the vetter on the FSM MCP surface, no Bash (see below)
 REVIEW_KEEP_RUNS=2000          # ~1.8MB/trace → ~4GB/~11mo at 6/day; sole re-derivation source for future metrics (see campaign-run.sh KEEP_RUNS)
 # shellcheck disable=SC1091
 [ -f "$DIR/cron.env" ] && . "$DIR/cron.env"
@@ -78,16 +80,39 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
 
+# --- tool surface: bare-gh (default) or MCP-only (issue #52) ---------------------------------
+# VETTER_MCP=1 in cron.env runs the vetter against the FSM MCP server in pr-review-report:
+# the whole tool surface becomes `mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}`
+# (+ Read/Grep/Glob/Skill) with NO Bash at all, so a non-FSM operation is unrepresentable rather
+# than merely denied — a Bash deny-list is prefix-matched and bypassable (`nix shell … --command`).
+# `--strict-mcp-config` keeps every other MCP configuration on the box out of the run.
+# Default is 0: the live cron behaviour is unchanged until this is flipped deliberately.
+MCP_ARGS=()
+if [ "$VETTER_MCP" = "1" ]; then
+  PROMPT_FILE="$DIR/review-prompt-mcp.txt"
+  SETTINGS_FILE="$DIR/review-settings-mcp.json"
+  MCP_ARGS=(--mcp-config "$DIR/review-mcp.json" --strict-mcp-config)
+else
+  PROMPT_FILE="$DIR/review-prompt.txt"
+  SETTINGS_FILE="$DIR/review-settings.json"
+fi
+
+# The vetter's audit lens checks PRs out under WORK_DIR (prompt {{WORK_DIR}}; the MCP `pr_checkout`
+# tool reads the env var), so it must exist and be exported.
+mkdir -p "$WORK_DIR"
+export WORK_DIR
+
 # substitute deployment values into the prompt template
 PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
-              "$DIR/review-prompt.txt")"
+              -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
+              "$PROMPT_FILE")"
 
 {
   echo "================================================================="
-  echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(hostname)) trace=$RUNLOG"
+  echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, mcp=$VETTER_MCP, host=$(hostname)) trace=$RUNLOG"
 } >> "$LOG"
 
 # gh + jq on PATH (via nix shell) so the model uses BARE gh -> the read-only deny-list applies.
@@ -100,10 +125,12 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
   echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" >> "$LOG"
   timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
     --model "$USED_MODEL" \
-    --settings "$DIR/review-settings.json" \
+    --settings "$SETTINGS_FILE" \
+    ${MCP_ARGS[@]+"${MCP_ARGS[@]}"} \
     --permission-mode default \
     --verbose --output-format stream-json \
     --add-dir "$DIR" \
+    --add-dir "$WORK_DIR" \
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
     | { nix shell nixpkgs#jq --command jq --unbuffered -rc '

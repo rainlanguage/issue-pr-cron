@@ -939,6 +939,10 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
 /// `--record-verdict <owner/repo> <pr> <verdict> [note...]`: record an AI verdict as the
 /// `ai:<verdict>` label (exactly one AI verdict at a time) + a SHA-bound `🤖 ai:vetter` comment.
 /// The ONE writer of AI verdicts (shared by the vetter); never overrides a human verdict.
+///
+/// Thin CLI shell over [`record_verdict_apply`]: it OWNS the printing so the core can be reused by a
+/// caller that must not write to stdout (the MCP server — a stray stdout line corrupts its JSON-RPC
+/// stream). Exit codes are unchanged: 0 ok, 1 error, 2 usage, 3 human-decision refusal.
 #[allow(clippy::too_many_arguments)]
 fn record_verdict_mode(
     slug: &str,
@@ -949,11 +953,32 @@ fn record_verdict_mode(
     basis: &str,
     dry_run: bool,
 ) -> i32 {
+    match record_verdict_apply(slug, pr, verdict, note, cost, basis, dry_run) {
+        Ok(msg) => {
+            println!("{msg}");
+            0
+        }
+        Err((code, msg)) => {
+            eprintln!("{msg}");
+            code
+        }
+    }
+}
+
+/// The verdict write itself. Returns the human-readable success report, or `(exit code, message)`.
+/// Writes NOTHING to stdout — non-fatal warnings still go to stderr, which is safe for every caller.
+#[allow(clippy::too_many_arguments)]
+fn record_verdict_apply(
+    slug: &str,
+    pr: &str,
+    verdict: &str,
+    note: &str,
+    cost: Option<i64>,
+    basis: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
     let Some(target) = verdict_label(verdict) else {
-        eprintln!(
-            "usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close|relink> [note...] [--cost <n>] [--basis <s>] [--dry-run]"
-        );
-        return 2;
+        return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close|relink> [note...] [--cost <n>] [--basis <s>] [--dry-run]".to_string()));
     };
     let Some(pr_json) = gh_json(&[
         "pr",
@@ -964,19 +989,23 @@ fn record_verdict_mode(
         "--json",
         "headRefOid,labels,comments,reviewDecision",
     ]) else {
-        eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
-        return 1;
+        return Err((
+            1,
+            format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
+        ));
     };
     let (to_remove, has_target, sha, skip) = match verdict_plan(&pr_json, target, verdict) {
         VerdictPlan::RefuseHuman => {
-            eprintln!("human verdict present on {slug}#{pr}; not overriding");
-            return 3;
+            return Err((
+                3,
+                format!("human verdict present on {slug}#{pr}; not overriding"),
+            ));
         }
         VerdictPlan::NoSha => {
-            eprintln!(
-                "error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"
-            );
-            return 1;
+            return Err((
+                1,
+                format!("error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"),
+            ));
         }
         VerdictPlan::Record {
             to_remove,
@@ -988,35 +1017,24 @@ fn record_verdict_mode(
     let comment = verdict_comment(&sha, verdict, note, cost, basis);
 
     if dry_run {
-        println!("[dry-run] {slug}#{pr} @ {sha}");
-        println!(
-            "  target label: {target}{}",
-            if has_target { " (already present)" } else { "" }
-        );
-        println!(
-            "  labels to remove: {}",
+        return Ok(format!(
+            "[dry-run] {slug}#{pr} @ {sha}\n  target label: {target}{}\n  labels to remove: {}\n  comment: {}\n  cost: {}",
+            if has_target { " (already present)" } else { "" },
             if to_remove.is_empty() {
                 "(none)".to_string()
             } else {
                 to_remove.join(", ")
-            }
-        );
-        println!(
-            "  comment: {}",
+            },
             if skip {
                 "skip (same verdict + sha already posted)".to_string()
             } else {
                 format!("post -> {}", comment.replace('\n', " / "))
-            }
-        );
-        println!(
-            "  cost: {}",
+            },
             match cost {
                 Some(c) => format!("{c} ({basis}) -> embedded in the comment"),
                 None => "(none)".to_string(),
             }
-        );
-        return 0;
+        ));
     }
 
     let (color, desc) = label_meta(target);
@@ -1035,8 +1053,7 @@ fn record_verdict_mode(
         eprintln!("warning: could not ensure label {target} exists in {slug}");
     }
     if !has_target && !gh_run(&["pr", "edit", pr, "-R", slug, "--add-label", target]) {
-        eprintln!("error: failed to add {target} to {slug}#{pr}");
-        return 1;
+        return Err((1, format!("error: failed to add {target} to {slug}#{pr}")));
     }
     for r in &to_remove {
         if !gh_run(&["pr", "edit", pr, "-R", slug, "--remove-label", r]) {
@@ -1046,10 +1063,14 @@ fn record_verdict_mode(
     // A swallowed comment failure would report success with the SHA-bound rationale never posted.
     // The cost now travels INSIDE this comment (verdict_comment embeds it) — there is no cost sidecar.
     if !skip && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
-        eprintln!("error: recorded {target} on {slug}#{pr} but FAILED to post the verdict comment");
-        return 1;
+        return Err((
+            1,
+            format!(
+                "error: recorded {target} on {slug}#{pr} but FAILED to post the verdict comment"
+            ),
+        ));
     }
-    println!(
+    Ok(format!(
         "recorded {target} on {slug}#{pr}{}{}{}",
         if to_remove.is_empty() {
             String::new()
@@ -1065,8 +1086,7 @@ fn record_verdict_mode(
             Some(c) => format!(" [cost {c}]"),
             None => String::new(),
         }
-    );
-    0
+    ))
 }
 
 /// Pure plan for `--flag-close-candidate`: given the issue's live state, decide what to do.
@@ -2923,6 +2943,847 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// unvetted (the VETTER's state-load, #59) + the FSM MCP server (#52).
+//
+// The producer's state-load already lives in the tool (`worklist` / `uncovered-issues`); the vetter
+// had none, so `review-prompt.txt` made the MODEL enumerate PRs and run a `gh pr view` per candidate
+// inside its context — 61% of all vetter Bash output bytes across 32 traces. `unvetted` computes the
+// same decision in-process: one call, one struct, no per-PR shelling.
+//
+// The MCP server exposes exactly that state-load plus the vetter's other three moves as typed tools,
+// so the vetter can run with NO Bash at all: a non-FSM operation is then unrepresentable rather than
+// merely forbidden by prose (Bash deny-lists are prefix-matched and bypassable). The surface is
+// deliberately TINY — every tool schema rides in the preamble on every API call, so one wrapper per
+// `gh` command would spend back what the prose removal saves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What the vetter must do with ONE open PR this run.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum VetAction {
+    Vet,
+    SkipHuman,
+    SkipDraft,
+    SkipVetted,
+}
+
+impl VetAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            VetAction::Vet => "vet",
+            VetAction::SkipHuman => "skip-human-decided",
+            VetAction::SkipDraft => "skip-draft",
+            VetAction::SkipVetted => "skip-vetted-at-head",
+        }
+    }
+}
+
+/// PURE vet-lifecycle transition guard. **THE ORDER IS THE GUARD**: the human-sacred check resolves
+/// BEFORE any head/vetted comparison, so a moved head can never reopen a human-decided PR (on
+/// 2026-07-04 a run re-vetted human-rejected rain.erc4626.words#162 after a merge-main commit moved
+/// its head — that exact sequence is what this ordering forbids). `human_sacred` covers BOTH forms of
+/// human decision: a `human:*` label and a native `APPROVED`/`CHANGES_REQUESTED` review.
+fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAction {
+    if human_sacred {
+        return VetAction::SkipHuman;
+    }
+    if is_draft {
+        return VetAction::SkipDraft;
+    }
+    if vetted_at_head {
+        VetAction::SkipVetted
+    } else {
+        VetAction::Vet
+    }
+}
+
+/// PURE: vet-first ordering — lower sorts first. The prompt's "vet green+mergeable ones first" rule,
+/// computed here instead of costing a `gh pr view` per PR inside the model loop. CI/mergeability is
+/// NEVER a reason to withhold a verdict (that stays a prompt-level judgement rule); it only decides
+/// which un-vetted PR is closest to merge and therefore worth vetting first.
+fn vet_priority(ci: Ci, merge: Merge) -> u8 {
+    match (ci, merge) {
+        (Ci::Green, Merge::Mergeable) => 0,
+        (Ci::NoChecks, Merge::Mergeable) => 1,
+        (Ci::Green | Ci::NoChecks, _) => 2,
+        (Ci::Pending, _) => 3,
+        (Ci::Red, _) => 4,
+    }
+}
+
+fn merge_str(m: Merge) -> &'static str {
+    match m {
+        Merge::Mergeable => "MERGEABLE",
+        Merge::Conflicting => "CONFLICTING",
+        Merge::Unknown => "UNKNOWN",
+    }
+}
+
+fn parse_merge(v: Option<&str>) -> Merge {
+    match v {
+        Some("MERGEABLE") => Merge::Mergeable,
+        Some("CONFLICTING") => Merge::Conflicting,
+        _ => Merge::Unknown,
+    }
+}
+
+fn label_names(v: &Value) -> Vec<String> {
+    v.get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// PURE: one candidate's `unvetted` row + its action + its vet-first sort key, derived from the PR
+/// detail JSON. Everything issue #59 asks for per candidate — `headRefOid`, `labels`,
+/// `reviewDecision`, human-sacred flag, vetted-at-head flag, `ci`, `mergeable` — in one place.
+fn unvetted_row(
+    slug: &str,
+    num: u64,
+    url: &str,
+    title: &str,
+    detail: &Value,
+) -> (VetAction, u8, Value) {
+    let head = detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let human_sacred = has_human_override(detail) || has_native_human_review(detail);
+    let vetted = vetted_at_head(detail, head);
+    let is_draft = detail
+        .get("isDraft")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let ci = classify_ci(detail.get("statusCheckRollup").unwrap_or(&Value::Null));
+    let merge = parse_merge(detail.get("mergeable").and_then(|v| v.as_str()));
+    let action = vet_action(is_draft, human_sacred, vetted);
+    let review_decision = detail
+        .get("reviewDecision")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let row = serde_json::json!({
+        "pr": format!("{slug}#{num}"),
+        "url": url,
+        "title": title,
+        "headRefOid": head,
+        "labels": label_names(detail),
+        "reviewDecision": review_decision,
+        "humanSacred": human_sacred,
+        "vettedAtHead": vetted,
+        "ci": ci_str(ci),
+        "mergeable": merge_str(merge),
+        "isDraft": is_draft,
+        "action": action.as_str(),
+    });
+    (action, vet_priority(ci, merge), row)
+}
+
+/// PURE: the `unvetted` document from classified rows. `prs` holds the PRs to VET, in vet-first order
+/// (priority, then a stable pr key); the skipped ones are counted, and only listed when
+/// `include_skipped` — a skipped PR needs no per-PR reasoning, and every listed row costs context.
+fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value {
+    let mut vet: Vec<(u8, String, Value)> = Vec::new();
+    let mut skipped: Vec<Value> = Vec::new();
+    let (mut n_draft, mut n_human, mut n_vetted) = (0usize, 0usize, 0usize);
+    for (action, prio, row) in rows {
+        match action {
+            VetAction::Vet => {
+                let key = row
+                    .get("pr")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                vet.push((*prio, key, row.clone()));
+            }
+            other => {
+                match other {
+                    VetAction::SkipDraft => n_draft += 1,
+                    VetAction::SkipHuman => n_human += 1,
+                    _ => n_vetted += 1,
+                }
+                skipped.push(row.clone());
+            }
+        }
+    }
+    vet.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    let prs: Vec<Value> = vet.into_iter().map(|(_, _, r)| r).collect();
+    let mut doc = serde_json::json!({
+        "counts": {
+            "open": rows.len(),
+            "vet": prs.len(),
+            "skipDraft": n_draft,
+            "skipHumanDecided": n_human,
+            "skipVettedAtHead": n_vetted,
+        },
+        "prs": prs,
+    });
+    if include_skipped {
+        doc.as_object_mut()
+            .expect("object")
+            .insert("skipped".into(), Value::Array(skipped));
+    }
+    doc
+}
+
+/// Live `unvetted` state-load: ONE org-wide search + one `gh pr view` per open non-draft PR whose
+/// labels don't already carry a human decision. Errors (rather than returning a falsely-empty set) if
+/// the search fails — an empty vet queue must never be an API failure in disguise.
+fn unvetted_fetch(include_skipped: bool) -> Result<Value, String> {
+    let assignee = pr_assignee();
+    let mut args: Vec<String> = vec!["search".into(), "prs".into()];
+    args.extend(org_owner_args());
+    args.extend(
+        [
+            "--author",
+            &assignee,
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,title,isDraft,labels",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let prs = gh_json(&argref)
+        .and_then(|v| v.as_array().cloned())
+        .ok_or_else(|| {
+            format!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty vet queue")
+        })?;
+
+    let mut rows: Vec<(VetAction, u8, Value)> = Vec::new();
+    for p in &prs {
+        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        let (Some(slug), Some(num)) = (pr_slug(url), p.get("number").and_then(|n| n.as_u64()))
+        else {
+            continue;
+        };
+        let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        let is_draft = p.get("isDraft").and_then(|d| d.as_bool()).unwrap_or(false);
+        // Cheap pre-filter: a draft or an already-human-decided PR is skipped straight from the
+        // search JSON — no per-PR fetch. (A native human REVIEW is invisible to search, so every
+        // remaining PR is still fetched and re-checked below, human-first.)
+        if is_draft || has_human_override(p) {
+            let action = vet_action(is_draft, has_human_override(p), false);
+            rows.push((
+                action,
+                4,
+                serde_json::json!({
+                    "pr": format!("{slug}#{num}"),
+                    "url": url,
+                    "title": title,
+                    "labels": label_names(p),
+                    "isDraft": is_draft,
+                    "action": action.as_str(),
+                }),
+            ));
+            continue;
+        }
+        let Some(detail) = gh_json(&[
+            "pr",
+            "view",
+            &num.to_string(),
+            "-R",
+            &slug,
+            "--json",
+            "headRefOid,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
+        ]) else {
+            return Err(format!(
+                "error: `gh pr view {slug}#{num}` failed — aborting rather than report an incomplete vet queue"
+            ));
+        };
+        rows.push(unvetted_row(&slug, num, url, title, &detail));
+    }
+    Ok(unvetted_doc(&rows, include_skipped))
+}
+
+fn unvetted_mode(json_out: bool, include_skipped: bool) -> i32 {
+    let doc = match unvetted_fetch(include_skipped) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    if json_out {
+        println!("{doc}");
+        return 0;
+    }
+    let c = &doc["counts"];
+    println!(
+        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head)",
+        c["vet"], c["open"], c["skipDraft"], c["skipHumanDecided"], c["skipVettedAtHead"]
+    );
+    for p in doc["prs"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [{} · {}]  {}",
+            p["pr"].as_str().unwrap_or(""),
+            p["ci"].as_str().unwrap_or("?"),
+            p["mergeable"].as_str().unwrap_or("?"),
+            p["title"].as_str().unwrap_or("")
+        );
+    }
+    0
+}
+
+/// Default cap on the diff a single `pr_context` returns. A diff is the vetter's biggest single read;
+/// past this the model is reading a generated-artifact dump, not a reviewable change.
+const DEFAULT_MAX_DIFF_BYTES: usize = 300_000;
+/// Hard ceiling a caller may raise `max_diff_bytes` to.
+const MAX_MAX_DIFF_BYTES: u64 = 4_000_000;
+
+/// PURE: truncate to at most `max` BYTES on a char boundary (never panics on multi-byte input);
+/// returns (text, truncated?).
+fn truncate_utf8(s: &str, max: usize) -> (String, bool) {
+    if s.len() <= max {
+        return (s.to_string(), false);
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (s[..end].to_string(), true)
+}
+
+/// PURE: the whole review bundle for ONE PR — what `gh pr view` + `gh pr diff` + an `gh issue view`
+/// per linked issue used to cost inside the model's context, in a single document. Comments are the
+/// TRUSTED ones only (author-verified, per the provenance invariant), so a spoofed `🤖 ai:vetter`
+/// marker from a third party can never be read as a prior verdict.
+fn pr_context_doc(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    diff: &str,
+    issues: &[Value],
+    max_diff_bytes: usize,
+) -> Value {
+    let head = detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let ci = classify_ci(detail.get("statusCheckRollup").unwrap_or(&Value::Null));
+    let merge = parse_merge(detail.get("mergeable").and_then(|v| v.as_str()));
+    let files: Vec<Value> = detail
+        .get("files")
+        .and_then(|f| f.as_array())
+        .map(|a| {
+            a.iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "path": f.get("path").and_then(|p| p.as_str()).unwrap_or(""),
+                        "additions": f.get("additions").and_then(|x| x.as_u64()).unwrap_or(0),
+                        "deletions": f.get("deletions").and_then(|x| x.as_u64()).unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let closes: Vec<u64> = detail
+        .get("closingIssuesReferences")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| r.get("number").and_then(|n| n.as_u64()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let (diff_text, truncated) = truncate_utf8(diff, max_diff_bytes);
+    serde_json::json!({
+        "pr": format!("{slug}#{num}"),
+        "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+        "title": detail.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        "body": detail.get("body").and_then(|v| v.as_str()).unwrap_or(""),
+        "headRefOid": head,
+        "isDraft": detail.get("isDraft").and_then(|v| v.as_bool()).unwrap_or(false),
+        "labels": label_names(detail),
+        "reviewDecision": detail.get("reviewDecision").and_then(|v| v.as_str()).filter(|s| !s.is_empty()),
+        "humanSacred": has_human_override(detail) || has_native_human_review(detail),
+        "vettedAtHead": vetted_at_head(detail, head),
+        "ci": ci_str(ci),
+        "mergeable": merge_str(merge),
+        "additions": detail.get("additions").and_then(|v| v.as_u64()).unwrap_or(0),
+        "deletions": detail.get("deletions").and_then(|v| v.as_u64()).unwrap_or(0),
+        "files": files,
+        "closes": closes,
+        "issues": issues,
+        "vetterComments": trusted_comments(detail, Some("🤖 ai:vetter")),
+        "producerComments": trusted_comments(detail, Some("🤖 ai:producer")),
+        "diffBytes": diff.len(),
+        "diffTruncated": truncated,
+        "diff": diff_text,
+    })
+}
+
+/// Live `pr_context`: the PR detail, its diff, and every issue it Closes/Refs — three `gh` shapes,
+/// one call, none of it re-derived in the model's context.
+fn pr_context_fetch(slug: &str, num: u64, max_diff_bytes: usize) -> Result<Value, String> {
+    let n = num.to_string();
+    let detail = gh_json(&[
+        "pr", "view", &n, "-R", slug, "--json",
+        "number,title,body,url,headRefOid,isDraft,labels,reviewDecision,mergeable,statusCheckRollup,additions,deletions,files,closingIssuesReferences,comments",
+    ])
+    .ok_or_else(|| format!("error: `gh pr view {slug}#{num}` failed"))?;
+    let diff = gh_text(&["pr", "diff", &n, "-R", slug])
+        .ok_or_else(|| format!("error: `gh pr diff {slug}#{num}` failed"))?;
+    let mut issues: Vec<Value> = Vec::new();
+    for r in detail
+        .get("closingIssuesReferences")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let Some(inum) = r.get("number").and_then(|n| n.as_u64()) else {
+            continue;
+        };
+        // A linked issue can live in another repo of the org; the reference carries its own repo.
+        let islug = r
+            .pointer("/repository/nameWithOwner")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| slug.to_string());
+        let Some(mut iss) = gh_json(&[
+            "issue",
+            "view",
+            &inum.to_string(),
+            "-R",
+            &islug,
+            "--json",
+            "number,title,body,labels,state",
+        ]) else {
+            continue;
+        };
+        if let Some(o) = iss.as_object_mut() {
+            o.insert("repo".into(), Value::String(islug));
+        }
+        issues.push(iss);
+    }
+    Ok(pr_context_doc(
+        slug,
+        num,
+        &detail,
+        &diff,
+        &issues,
+        max_diff_bytes,
+    ))
+}
+
+/// The throwaway work-clone root for the vetter's audit lens (`WORK_DIR`, else the system temp dir).
+fn vet_work_dir() -> String {
+    std::env::var("WORK_DIR").unwrap_or_else(|_| {
+        std::env::temp_dir()
+            .to_string_lossy()
+            .trim_end_matches('/')
+            .to_string()
+    })
+}
+
+/// PURE: the per-PR throwaway clone path — the `vet-<repo>-<n>` convention `gc-clones` already
+/// reclaims, so an MCP-driven checkout is garbage-collected exactly like a hand-rolled one.
+fn checkout_dir(work_dir: &str, slug: &str, num: u64) -> String {
+    let repo = slug.rsplit('/').next().unwrap_or(slug);
+    format!("{}/vet-{repo}-{num}", work_dir.trim_end_matches('/'))
+}
+
+/// Run `gh` for its exit status only, optionally inside `dir`, capturing BOTH streams (nothing leaks
+/// to this process's stdout — the MCP JSON-RPC stream lives there).
+fn gh_quiet(dir: Option<&std::path::Path>, args: &[&str]) -> Result<(), String> {
+    let mut cmd = Command::new("gh");
+    cmd.args(args);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| format!("failed to run gh {}: {e}", args.join(" ")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let tail: Vec<&str> = err.lines().rev().take(5).collect();
+    Err(format!(
+        "gh {} failed: {}",
+        args.join(" "),
+        tail.into_iter().rev().collect::<Vec<_>>().join(" / ")
+    ))
+}
+
+/// Check a PR out into its throwaway clone so the `audit` skill has SOURCE to read. LOCAL read only:
+/// a shallow clone plus `gh pr checkout` — never a push, a commit, or any GitHub write. Reuses an
+/// existing clone (fetching the PR head into it) rather than re-cloning.
+fn pr_checkout_exec(slug: &str, num: u64) -> Result<Value, String> {
+    let dir = checkout_dir(&vet_work_dir(), slug, num);
+    let path = std::path::Path::new(&dir);
+    let reused = path.join(".git").is_dir();
+    if !reused {
+        if path.exists() {
+            return Err(format!(
+                "{dir} exists but is not a git clone — refusing to touch it"
+            ));
+        }
+        gh_quiet(None, &["repo", "clone", slug, &dir, "--", "--depth", "1"])?;
+    }
+    gh_quiet(
+        Some(path),
+        &["pr", "checkout", &num.to_string(), "-R", slug],
+    )?;
+    Ok(serde_json::json!({
+        "pr": format!("{slug}#{num}"),
+        "dir": dir,
+        "reused": reused,
+        "note": "local read-only checkout for the audit lens; reclaimed by `pr-review-report gc-clones`",
+    }))
+}
+
+// ─── MCP: the FSM as a tool surface ──────────────────────────────────────────
+
+/// Server name. It becomes the middle segment of every exposed tool name — Claude Code presents an
+/// MCP tool as `mcp__<server>__<tool>` and permission-matches it as `mcp__<server>__*` — so it is
+/// SHORT on purpose: that string is repeated per tool in every request preamble.
+const MCP_SERVER_NAME: &str = "fsm";
+const MCP_SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Protocol revisions this server speaks, newest first. The negotiated version is the client's
+/// requested one when we know it, else [`MCP_PROTOCOL_DEFAULT`] — which every current client accepts.
+const MCP_PROTOCOL_SUPPORTED: [&str; 5] = [
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+    "2024-10-07",
+];
+const MCP_PROTOCOL_DEFAULT: &str = "2025-06-18";
+
+/// PURE: MCP version negotiation — echo the client's requested revision when supported, else offer
+/// ours. Answering with an UNKNOWN revision is what makes a client hang up mid-handshake.
+fn mcp_protocol_version(requested: Option<&str>) -> &'static str {
+    requested
+        .and_then(|v| MCP_PROTOCOL_SUPPORTED.iter().find(|s| **s == v).copied())
+        .unwrap_or(MCP_PROTOCOL_DEFAULT)
+}
+
+/// The vetter's verdicts — the ONLY values `record_verdict` accepts. Anything else (`approve`,
+/// `merge`, `close-issue`, …) is not a transition of this machine and is refused.
+const VETTER_VERDICTS: [&str; 5] = ["ready", "reject", "relink", "design", "close"];
+/// Cost is a 0-1000 vibes score; a value outside it is a mis-scaled score, not a cost.
+const COST_RANGE: std::ops::RangeInclusive<i64> = 0..=1000;
+/// `basis` is a 3-8 word phrase naming the cost driver; a paragraph there is a note in the wrong slot.
+const MAX_BASIS_WORDS: usize = 12;
+
+/// The TOOL SURFACE. Descriptions are one line each on purpose: every schema here is re-sent in the
+/// preamble of every API call, so the surface must replace more prose than it adds.
+fn mcp_tools() -> Value {
+    serde_json::json!([
+        {
+            "name": "unvetted",
+            "description": "State-load: the open PRs to vet this run, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. Human-decided, draft and vetted-at-head PRs are already excluded.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why."}
+                }
+            }
+        },
+        {
+            "name": "pr_context",
+            "description": "Everything needed to judge one PR: title, body, files, additions/deletions, headRefOid, ci, mergeable, the full diff, every linked issue's title/body/labels, and the trusted ai:vetter/ai:producer comments.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pr": {"type": "string", "description": "owner/repo#number"},
+                    "max_diff_bytes": {"type": "integer", "description": "Diff cap, default 300000."}
+                },
+                "required": ["pr"]
+            }
+        },
+        {
+            "name": "pr_checkout",
+            "description": "Check the PR head out into a throwaway local clone so the audit skill can read source. Local read only — no GitHub write. Returns its dir.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"pr": {"type": "string", "description": "owner/repo#number"}},
+                "required": ["pr"]
+            }
+        },
+        {
+            "name": "record_verdict",
+            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost. Refuses if a human has decided the PR.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pr": {"type": "string", "description": "owner/repo#number"},
+                    "verdict": {"type": "string", "enum": ["ready", "reject", "relink", "design", "close"]},
+                    "note": {"type": "string", "description": "One line naming the issue number(s) and the specific reason."},
+                    "cost": {"type": "integer", "description": "Human verification cost, 0-1000."},
+                    "basis": {"type": "string", "description": "3-8 words naming the cost driver."}
+                },
+                "required": ["pr", "verdict", "note", "cost", "basis"]
+            }
+        }
+    ])
+}
+
+/// A VALIDATED transition. Constructing one is the only way to reach an effect, so an invalid
+/// transition cannot be represented — the point of #52.
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum McpCall {
+    Unvetted {
+        include_skipped: bool,
+    },
+    PrContext {
+        slug: String,
+        num: u64,
+        max_diff_bytes: usize,
+    },
+    PrCheckout {
+        slug: String,
+        num: u64,
+    },
+    RecordVerdict {
+        slug: String,
+        num: u64,
+        verdict: String,
+        note: String,
+        cost: i64,
+        basis: String,
+    },
+}
+
+/// PURE: `owner/repo#number` → (slug, number). One string keeps the schemas small AND makes the
+/// "always use the PR's ACTUAL owner/repo" rule structural — there is no org to guess wrong.
+fn parse_pr_ref(s: &str) -> Result<(String, u64), String> {
+    let bad =
+        || format!("bad pr ref {s:?} — want owner/repo#number, e.g. rainlanguage/rain.flare#170");
+    let (slug, num) = s.trim().split_once('#').ok_or_else(bad)?;
+    let num: u64 = num.trim().parse().map_err(|_| bad())?;
+    let mut parts = slug.trim().split('/');
+    let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(bad());
+    };
+    if owner.is_empty() || repo.is_empty() || num == 0 {
+        return Err(bad());
+    }
+    Ok((format!("{owner}/{repo}"), num))
+}
+
+fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    match args.get(key).and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => Ok(s),
+        _ => Err(format!("missing required string argument {key:?}")),
+    }
+}
+
+/// PURE: the TRANSITION GUARD. Maps (tool name, arguments) to a validated [`McpCall`], or to the
+/// error the model sees. Every rule the vetter prompt used to state in prose — the verdict
+/// vocabulary, a mandatory cost in range, a note that says something, a phrase-length basis, a
+/// well-formed PR reference — is enforced HERE, once, tested.
+fn validate_call(name: &str, args: &Value) -> Result<McpCall, String> {
+    match name {
+        "unvetted" => Ok(McpCall::Unvetted {
+            include_skipped: args
+                .get("include_skipped")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        }),
+        "pr_context" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            let max_diff_bytes = match args.get("max_diff_bytes") {
+                None | Some(Value::Null) => DEFAULT_MAX_DIFF_BYTES,
+                Some(v) => match v.as_u64() {
+                    Some(n) if n > 0 && n <= MAX_MAX_DIFF_BYTES => n as usize,
+                    _ => {
+                        return Err(format!(
+                            "max_diff_bytes must be an integer in 1..={MAX_MAX_DIFF_BYTES}"
+                        ))
+                    }
+                },
+            };
+            Ok(McpCall::PrContext {
+                slug,
+                num,
+                max_diff_bytes,
+            })
+        }
+        "pr_checkout" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            Ok(McpCall::PrCheckout { slug, num })
+        }
+        "record_verdict" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            let verdict = req_str(args, "verdict")?.trim().to_string();
+            if !VETTER_VERDICTS.contains(&verdict.as_str()) {
+                return Err(format!(
+                    "{verdict:?} is not a verdict of this machine — use one of: {}",
+                    VETTER_VERDICTS.join(", ")
+                ));
+            }
+            let note = req_str(args, "note")?.trim().to_string();
+            let cost = args
+                .get("cost")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| "cost is required: an integer 0-1000 (human verification cost)".to_string())?;
+            if !COST_RANGE.contains(&cost) {
+                return Err(format!("cost {cost} is out of range — an integer 0-1000"));
+            }
+            let basis = req_str(args, "basis")?.trim().to_string();
+            if basis.split_whitespace().count() > MAX_BASIS_WORDS {
+                return Err(format!(
+                    "basis must be at most {MAX_BASIS_WORDS} words naming the cost driver (put the reasoning in note)"
+                ));
+            }
+            Ok(McpCall::RecordVerdict {
+                slug,
+                num,
+                verdict,
+                note,
+                cost,
+                basis,
+            })
+        }
+        _ => Err(format!(
+            "no such tool {name:?} — this server exposes exactly: unvetted, pr_context, pr_checkout, record_verdict"
+        )),
+    }
+}
+
+fn jsonrpc_result(id: Value, result: Value) -> Value {
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})
+}
+
+fn jsonrpc_error(id: Value, code: i64, message: &str) -> Value {
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
+}
+
+/// A `tools/call` result. A REFUSED transition is a successful JSON-RPC response carrying
+/// `isError: true` — the model reads the reason and corrects, exactly as it would a tool's own error.
+fn tool_result(text: String, is_error: bool) -> Value {
+    serde_json::json!({
+        "content": [{"type": "text", "text": text}],
+        "isError": is_error,
+    })
+}
+
+/// Handle ONE JSON-RPC message. Pure apart from `exec`, which performs a validated call — so the
+/// whole protocol surface (handshake, listing, dispatch, refusals) is unit-testable with a fake exec.
+/// `None` = a notification, which is never answered.
+fn mcp_handle(
+    req: &Value,
+    exec: &mut dyn FnMut(McpCall) -> Result<String, String>,
+) -> Option<Value> {
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let id = match req.get("id") {
+        None | Some(Value::Null) => return None,
+        Some(v) => v.clone(),
+    };
+    match method {
+        "initialize" => Some(jsonrpc_result(
+            id,
+            serde_json::json!({
+                "protocolVersion": mcp_protocol_version(
+                    req.pointer("/params/protocolVersion").and_then(|v| v.as_str())
+                ),
+                "capabilities": {"tools": {"listChanged": false}},
+                "serverInfo": {"name": MCP_SERVER_NAME, "version": MCP_SERVER_VERSION},
+            }),
+        )),
+        "tools/list" => Some(jsonrpc_result(
+            id,
+            serde_json::json!({"tools": mcp_tools()}),
+        )),
+        "tools/call" => {
+            let name = req
+                .pointer("/params/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let args = req
+                .pointer("/params/arguments")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let out = match validate_call(name, &args) {
+                Err(e) => tool_result(e, true),
+                Ok(call) => match exec(call) {
+                    Ok(text) => tool_result(text, false),
+                    Err(e) => tool_result(e, true),
+                },
+            };
+            Some(jsonrpc_result(id, out))
+        }
+        "ping" => Some(jsonrpc_result(id, serde_json::json!({}))),
+        // resources/prompts are not offered (no such capability was advertised).
+        _ => Some(jsonrpc_error(
+            id,
+            -32601,
+            &format!("method not found: {method}"),
+        )),
+    }
+}
+
+/// Perform a validated transition. The ONLY effectful half of the server; every guard already ran.
+fn mcp_exec(call: McpCall) -> Result<String, String> {
+    match call {
+        McpCall::Unvetted { include_skipped } => {
+            unvetted_fetch(include_skipped).map(|d| d.to_string())
+        }
+        McpCall::PrContext {
+            slug,
+            num,
+            max_diff_bytes,
+        } => pr_context_fetch(&slug, num, max_diff_bytes).map(|d| d.to_string()),
+        McpCall::PrCheckout { slug, num } => pr_checkout_exec(&slug, num).map(|d| d.to_string()),
+        McpCall::RecordVerdict {
+            slug,
+            num,
+            verdict,
+            note,
+            cost,
+            basis,
+        } => record_verdict_apply(
+            &slug,
+            &num.to_string(),
+            &verdict,
+            &note,
+            Some(cost),
+            &basis,
+            false,
+        )
+        .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+    }
+}
+
+/// `pr-review-report mcp` — speak MCP over stdio (newline-delimited JSON-RPC 2.0 on stdin/stdout).
+/// STDOUT IS THE PROTOCOL: nothing else may print there, which is why the verdict write goes through
+/// [`record_verdict_apply`] rather than the printing CLI mode.
+fn mcp_serve() -> i32 {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let resp = match serde_json::from_str::<Value>(line) {
+            Ok(req) => mcp_handle(&req, &mut mcp_exec),
+            Err(e) => Some(jsonrpc_error(
+                Value::Null,
+                -32700,
+                &format!("parse error: {e}"),
+            )),
+        };
+        if let Some(r) = resp {
+            if writeln!(out, "{r}").is_err() || out.flush().is_err() {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
 /// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
 /// parsing, validation, and `--help`/usage (replacing the former hand-rolled `args.get(n)` dispatch).
 #[derive(Parser)]
@@ -3088,6 +3949,18 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// The VETTER's state-load in ONE call: the open PRs to vet this run (vet-first order), each with
+    /// headRefOid/labels/reviewDecision/humanSacred/vettedAtHead/ci/mergeable.
+    Unvetted {
+        #[arg(long)]
+        json: bool,
+        /// Also list the skipped PRs (draft / human-decided / vetted-at-head) and why.
+        #[arg(long)]
+        include_skipped: bool,
+    },
+    /// Speak MCP over stdio, exposing the vetter's FSM transitions as tools — an agent restricted to
+    /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`.
+    Mcp,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3854,6 +4727,11 @@ fn main() {
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), dry_run),
         Cmd::ReworkedReject { slug, pr, dry_run } => reworked_reject_mode(&slug, &pr, dry_run),
         Cmd::HumanQueue { json } => human_queue_mode(json),
+        Cmd::Unvetted {
+            json,
+            include_skipped,
+        } => unvetted_mode(json, include_skipped),
+        Cmd::Mcp => mcp_serve(),
     };
     std::process::exit(code);
 }
@@ -4581,23 +5459,92 @@ mod settings_tests {
     // Files live at the repo root, one dir up from the crate. The flake package build runs tests with
     // a filtered src that omits them, so the read is skipped there; the rs-test gate (cargo test at the
     // repo root) has the files and enforces the assertion.
-    fn deny_list(rel: &str) -> Option<Vec<String>> {
+    fn read_json(rel: &str) -> Option<Value> {
         let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
         let text = std::fs::read_to_string(&path).ok()?;
-        let v: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}"));
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+    }
+
+    fn perm_list(rel: &str, which: &str) -> Option<Vec<String>> {
+        let v = read_json(rel)?;
         Some(
-            v["permissions"]["deny"]
+            v["permissions"][which]
                 .as_array()
-                .unwrap_or_else(|| panic!("{path}: permissions.deny is not an array"))
+                .unwrap_or_else(|| panic!("{rel}: permissions.{which} is not an array"))
                 .iter()
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect(),
         )
     }
 
+    fn deny_list(rel: &str) -> Option<Vec<String>> {
+        perm_list(rel, "deny")
+    }
+
+    // The MCP-mode settings only mean anything if every allowed tool name is one the server actually
+    // exposes: Claude Code presents an MCP tool as `mcp__<server>__<tool>`, and a subtly wrong name
+    // fails at run time looking exactly like the tool not existing. This pins the three sides
+    // together — the server name in `review-mcp.json`, the tool names the binary emits from
+    // `tools/list`, and the allow-list the cron would run with.
+    #[test]
+    fn mcp_wiring_names_match_the_server() {
+        let Some(cfg) = read_json("review-mcp.json") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let servers = cfg["mcpServers"].as_object().expect("mcpServers object");
+        assert_eq!(servers.len(), 1, "one server: the FSM");
+        let (name, spec) = servers.iter().next().unwrap();
+        assert_eq!(
+            name,
+            super::MCP_SERVER_NAME,
+            "server key must be the name the binary reports"
+        );
+        assert_eq!(spec["command"], serde_json::json!("pr-review-report"));
+        assert_eq!(spec["args"], serde_json::json!(["mcp"]));
+
+        let expected: Vec<String> = super::mcp_tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| format!("mcp__{name}__{}", t["name"].as_str().unwrap()))
+            .collect();
+        let allow = perm_list("review-settings-mcp.json", "allow").expect("mcp settings");
+        let allowed_mcp: Vec<String> = allow
+            .iter()
+            .filter(|a| a.starts_with("mcp__"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            allowed_mcp, expected,
+            "the allow-list must name exactly the tools the server exposes"
+        );
+    }
+
+    // MCP mode's whole claim is that a non-FSM operation is UNREPRESENTABLE: no Bash at all, so no
+    // raw `gh`/`git`, and no prefix-matched deny-list to route around.
+    #[test]
+    fn mcp_vetter_has_no_bash() {
+        let Some(deny) = deny_list("review-settings-mcp.json") else {
+            return;
+        };
+        assert!(
+            deny.iter().any(|d| d == "Bash"),
+            "MCP mode must deny Bash outright"
+        );
+        let allow = perm_list("review-settings-mcp.json", "allow").unwrap();
+        assert!(
+            !allow.iter().any(|a| a == "Bash" || a.starts_with("Bash(")),
+            "MCP mode must not allow any Bash form"
+        );
+    }
+
     #[test]
     fn both_crons_deny_scheduling_tools() {
-        for f in ["campaign-settings.json", "review-settings.json"] {
+        for f in [
+            "campaign-settings.json",
+            "review-settings.json",
+            "review-settings-mcp.json",
+        ] {
             let Some(deny) = deny_list(f) else {
                 continue; // settings not checked out (nix build sandbox) — enforced by the rs-test gate
             };
@@ -6242,5 +7189,698 @@ mod fsm_completeness_tests {
             }
         }
         assert_eq!(total, prs.len());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// unvetted (the vetter's state-load) + the MCP FSM surface.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod vetter_state_load_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn vetter_comment(sha: &str, verdict: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": format!("🤖 ai:vetter\nReviewed {sha}: {verdict} — note\ncost 300 — small diff"),
+        })
+    }
+
+    // --- vet_action: the vet-lifecycle transition guard -----------------------------------------
+
+    #[test]
+    fn un_vetted_pr_is_vetted() {
+        assert_eq!(vet_action(false, false, false), VetAction::Vet);
+    }
+
+    #[test]
+    fn vetted_at_head_is_skipped_and_a_moved_head_re_opens_it() {
+        assert_eq!(vet_action(false, false, true), VetAction::SkipVetted);
+        // head moved past the last verdict (vetted_at_head false) -> back in the vet queue.
+        assert_eq!(vet_action(false, false, false), VetAction::Vet);
+    }
+
+    #[test]
+    fn drafts_are_left_un_vetted() {
+        assert_eq!(vet_action(true, false, false), VetAction::SkipDraft);
+    }
+
+    // THE ordering invariant: the human-sacred check resolves BEFORE any head/vetted comparison.
+    // rain.erc4626.words#162 (2026-07-04) was re-vetted after a merge-main commit moved the head of a
+    // human-REJECTED PR. Here that PR is human-sacred AND head-moved (vetted_at_head=false) — the one
+    // input combination that produced the violation — and it must still skip.
+    #[test]
+    fn a_human_decision_survives_a_moved_head() {
+        assert_eq!(vet_action(false, true, false), VetAction::SkipHuman);
+        assert_eq!(vet_action(false, true, true), VetAction::SkipHuman);
+        assert_eq!(vet_action(true, true, false), VetAction::SkipHuman);
+    }
+
+    // --- vet_priority: closest-to-merge first ---------------------------------------------------
+
+    #[test]
+    fn green_and_mergeable_vets_first_red_last() {
+        let mut order = [
+            ("red", vet_priority(Ci::Red, Merge::Mergeable)),
+            ("pending", vet_priority(Ci::Pending, Merge::Mergeable)),
+            (
+                "green-conflicting",
+                vet_priority(Ci::Green, Merge::Conflicting),
+            ),
+            (
+                "nochecks-mergeable",
+                vet_priority(Ci::NoChecks, Merge::Mergeable),
+            ),
+            ("green-mergeable", vet_priority(Ci::Green, Merge::Mergeable)),
+        ];
+        order.sort_by_key(|(_, p)| *p);
+        assert_eq!(
+            order.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            vec![
+                "green-mergeable",
+                "nochecks-mergeable",
+                "green-conflicting",
+                "pending",
+                "red"
+            ]
+        );
+        // a green+UNKNOWN-mergeability PR still outranks pending/red (it may just be unsettled).
+        assert!(
+            vet_priority(Ci::Green, Merge::Unknown) < vet_priority(Ci::Pending, Merge::Mergeable)
+        );
+    }
+
+    // --- unvetted_row: the per-candidate struct #59 asks for ------------------------------------
+
+    #[test]
+    fn row_reports_every_field_and_vets_an_unvetted_pr() {
+        let detail = json!({
+            "headRefOid": "abc123",
+            "labels": [{"name": "ai:reject"}],
+            "reviewDecision": "",
+            "mergeable": "MERGEABLE",
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
+            "comments": [],
+            "isDraft": false,
+        });
+        let (action, prio, row) =
+            unvetted_row("o/r", 7, "https://github.com/o/r/pull/7", "t", &detail);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(prio, 0);
+        assert_eq!(row["pr"], json!("o/r#7"));
+        assert_eq!(row["headRefOid"], json!("abc123"));
+        assert_eq!(row["labels"], json!(["ai:reject"]));
+        assert_eq!(row["reviewDecision"], Value::Null); // empty string normalises to null
+        assert_eq!(row["humanSacred"], json!(false));
+        assert_eq!(row["vettedAtHead"], json!(false));
+        assert_eq!(row["ci"], json!("green"));
+        assert_eq!(row["mergeable"], json!("MERGEABLE"));
+        assert_eq!(row["action"], json!("vet"));
+    }
+
+    #[test]
+    fn row_is_vetted_at_head_only_when_a_trusted_comment_pins_the_current_head() {
+        let with = |comments: Value, head: &str| {
+            json!({
+                "headRefOid": head,
+                "labels": [{"name": "ai:ready"}],
+                "reviewDecision": null,
+                "mergeable": "MERGEABLE",
+                "statusCheckRollup": [],
+                "comments": comments,
+                "isDraft": false,
+            })
+        };
+        // trusted comment pinning the CURRENT head -> vetted, skipped.
+        let d = with(json!([vetter_comment("abc123", "ready")]), "abc123");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &d);
+        assert_eq!(action, VetAction::SkipVetted);
+        assert_eq!(row["vettedAtHead"], json!(true));
+
+        // same comment, head has MOVED -> un-vetted, re-vet.
+        let d = with(json!([vetter_comment("abc123", "ready")]), "def456");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &d);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(row["vettedAtHead"], json!(false));
+
+        // a SPOOFED vetter comment from an untrusted author at the current head is NOT a verdict —
+        // treating it as one would wrongly skip a genuinely un-vetted PR.
+        let spoof = json!([{
+            "author": {"login": "impostor"},
+            "body": "🤖 ai:vetter\nReviewed abc123: ready — looks good",
+        }]);
+        let d = with(spoof, "abc123");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &d);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(row["vettedAtHead"], json!(false));
+
+        // an ai:ready LABEL with no matching trusted comment is un-vetted, not "already decided".
+        let d = with(json!([]), "abc123");
+        assert_eq!(unvetted_row("o/r", 1, "u", "t", &d).0, VetAction::Vet);
+    }
+
+    #[test]
+    fn both_forms_of_human_decision_are_sacred_even_at_a_moved_head() {
+        // (a) a human:* LABEL, with no vetter comment at the current head (head moved).
+        let labelled = json!({
+            "headRefOid": "newhead",
+            "labels": [{"name": "human:reject"}, {"name": "ai:ready"}],
+            "reviewDecision": null,
+            "mergeable": "MERGEABLE",
+            "statusCheckRollup": [],
+            "comments": [vetter_comment("oldhead", "ready")],
+            "isDraft": false,
+        });
+        let (action, _, row) = unvetted_row("o/r", 2, "u", "t", &labelled);
+        assert_eq!(action, VetAction::SkipHuman);
+        assert_eq!(row["humanSacred"], json!(true));
+
+        // (b) a NATIVE review decision, which no label carries.
+        for decision in ["APPROVED", "CHANGES_REQUESTED"] {
+            let native = json!({
+                "headRefOid": "newhead",
+                "labels": [],
+                "reviewDecision": decision,
+                "mergeable": "MERGEABLE",
+                "statusCheckRollup": [],
+                "comments": [],
+                "isDraft": false,
+            });
+            let (action, _, row) = unvetted_row("o/r", 3, "u", "t", &native);
+            assert_eq!(action, VetAction::SkipHuman, "{decision} must be sacred");
+            assert_eq!(row["humanSacred"], json!(true));
+        }
+
+        // A NON-decision review state (REVIEW_REQUIRED) is not a human decision.
+        let pending = json!({
+            "headRefOid": "h", "labels": [], "reviewDecision": "REVIEW_REQUIRED",
+            "mergeable": "MERGEABLE", "statusCheckRollup": [], "comments": [], "isDraft": false,
+        });
+        assert_eq!(unvetted_row("o/r", 4, "u", "t", &pending).0, VetAction::Vet);
+    }
+
+    // --- unvetted_doc: counts, ordering, and what is (not) listed -------------------------------
+
+    #[test]
+    fn doc_lists_only_vet_rows_in_vet_first_order_and_counts_the_rest() {
+        let row = |pr: &str, action: VetAction, prio: u8| {
+            (action, prio, json!({"pr": pr, "action": action.as_str()}))
+        };
+        let rows = vec![
+            row("o/r#3", VetAction::Vet, 4), // red
+            row("o/r#1", VetAction::SkipDraft, 4),
+            row("o/r#4", VetAction::Vet, 0), // green + mergeable -> first
+            row("o/r#5", VetAction::SkipHuman, 4),
+            row("o/r#6", VetAction::SkipVetted, 4),
+            row("o/r#2", VetAction::Vet, 0), // ties break on the pr key
+        ];
+        let doc = unvetted_doc(&rows, false);
+        assert_eq!(doc["counts"]["open"], json!(6));
+        assert_eq!(doc["counts"]["vet"], json!(3));
+        assert_eq!(doc["counts"]["skipDraft"], json!(1));
+        assert_eq!(doc["counts"]["skipHumanDecided"], json!(1));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(1));
+        let order: Vec<&str> = doc["prs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["pr"].as_str().unwrap())
+            .collect();
+        assert_eq!(order, vec!["o/r#2", "o/r#4", "o/r#3"]);
+        // skipped PRs cost context and need no reasoning -> absent unless asked for.
+        assert!(doc.get("skipped").is_none());
+
+        let doc = unvetted_doc(&rows, true);
+        assert_eq!(doc["skipped"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn empty_state_load_is_a_well_formed_empty_doc() {
+        let doc = unvetted_doc(&[], false);
+        assert_eq!(doc["counts"]["open"], json!(0));
+        assert_eq!(doc["counts"]["vet"], json!(0));
+        assert_eq!(doc["prs"], json!([]));
+    }
+
+    // --- pr_context_doc: the one-call review bundle ---------------------------------------------
+
+    #[test]
+    fn truncate_utf8_never_splits_a_char() {
+        assert_eq!(truncate_utf8("abc", 10), ("abc".to_string(), false));
+        // "é" is 2 bytes: a 3-byte cap lands mid-char and must back off to the boundary.
+        let (t, cut) = truncate_utf8("aéb", 3);
+        assert!(cut);
+        assert_eq!(t, "aé");
+        let (t, cut) = truncate_utf8("aéb", 2);
+        assert!(cut);
+        assert_eq!(t, "a");
+        // exact fit is not a truncation.
+        assert_eq!(truncate_utf8("abcd", 4), ("abcd".to_string(), false));
+    }
+
+    #[test]
+    fn context_bundles_diff_files_issues_and_only_trusted_comments() {
+        let detail = json!({
+            "number": 9,
+            "title": "fix rounding",
+            "body": "Closes #88",
+            "url": "https://github.com/o/r/pull/9",
+            "headRefOid": "cafe1234",
+            "isDraft": false,
+            "labels": [{"name": "ai:ready"}],
+            "reviewDecision": null,
+            "mergeable": "CONFLICTING",
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "FAILURE"}],
+            "additions": 12,
+            "deletions": 3,
+            "files": [{"path": "src/lib.rs", "additions": 12, "deletions": 3}],
+            "closingIssuesReferences": [{"number": 88}],
+            "comments": [
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter\nReviewed cafe1234: ready"},
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer\npushed a fix"},
+                {"author": {"login": "impostor"}, "body": "🤖 ai:vetter\nReviewed cafe1234: ready"},
+                {"author": {"login": "someone"}, "body": "drive-by chatter"},
+            ],
+        });
+        let issues =
+            vec![json!({"number": 88, "title": "rounding is wrong", "body": "…", "state": "OPEN"})];
+        let doc = pr_context_doc("o/r", 9, &detail, "diff --git a b\n+x\n", &issues, 300_000);
+
+        assert_eq!(doc["pr"], json!("o/r#9"));
+        assert_eq!(doc["headRefOid"], json!("cafe1234"));
+        assert_eq!(doc["ci"], json!("red"));
+        assert_eq!(doc["mergeable"], json!("CONFLICTING"));
+        assert_eq!(doc["closes"], json!([88]));
+        assert_eq!(doc["issues"][0]["title"], json!("rounding is wrong"));
+        assert_eq!(doc["files"][0]["path"], json!("src/lib.rs"));
+        assert_eq!(doc["additions"], json!(12));
+        assert_eq!(doc["vettedAtHead"], json!(true));
+        assert_eq!(doc["humanSacred"], json!(false));
+        assert!(doc["diff"].as_str().unwrap().contains("+x"));
+        assert_eq!(doc["diffTruncated"], json!(false));
+        // provenance: exactly ONE vetter comment (the trusted one) and ONE producer comment; the
+        // spoofed marker and the third-party chatter are not in the bundle at all.
+        assert_eq!(doc["vetterComments"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["producerComments"].as_array().unwrap().len(), 1);
+        assert!(!doc.to_string().contains("drive-by chatter"));
+    }
+
+    #[test]
+    fn context_flags_a_truncated_diff_and_keeps_the_true_size() {
+        let detail = json!({"headRefOid": "h", "comments": [], "labels": []});
+        let big = "x".repeat(500);
+        let doc = pr_context_doc("o/r", 1, &detail, &big, &[], 100);
+        assert_eq!(doc["diff"].as_str().unwrap().len(), 100);
+        assert_eq!(doc["diffTruncated"], json!(true));
+        assert_eq!(doc["diffBytes"], json!(500));
+    }
+
+    #[test]
+    fn checkout_dir_matches_the_gc_reclaimed_convention() {
+        assert_eq!(
+            checkout_dir("/work", "rainlanguage/rain.flare", 170),
+            "/work/vet-rain.flare-170"
+        );
+        assert_eq!(checkout_dir("/work/", "o/r", 1), "/work/vet-r-1");
+    }
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A recording fake for the effectful half: every VALIDATED call lands here, so a test can assert
+    /// both what reached the effect and — crucially — what did NOT.
+    struct FakeExec {
+        calls: std::cell::RefCell<Vec<McpCall>>,
+        reply: Result<String, String>,
+    }
+
+    impl FakeExec {
+        fn ok() -> Self {
+            FakeExec {
+                calls: std::cell::RefCell::new(Vec::new()),
+                reply: Ok("{\"ok\":true}".to_string()),
+            }
+        }
+        fn failing(msg: &str) -> Self {
+            FakeExec {
+                calls: std::cell::RefCell::new(Vec::new()),
+                reply: Err(msg.to_string()),
+            }
+        }
+        fn handle(&self, req: &Value) -> Option<Value> {
+            let mut f = |c: McpCall| {
+                self.calls.borrow_mut().push(c);
+                self.reply.clone()
+            };
+            mcp_handle(req, &mut f)
+        }
+        fn calls(&self) -> Vec<McpCall> {
+            self.calls.borrow().iter().cloned().collect()
+        }
+    }
+
+    fn call(name: &str, args: Value) -> Value {
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": name, "arguments": args}})
+    }
+
+    fn is_error(resp: &Value) -> bool {
+        resp["result"]["isError"].as_bool().unwrap_or(false)
+    }
+
+    fn text(resp: &Value) -> String {
+        resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    // --- handshake ------------------------------------------------------------------------------
+
+    #[test]
+    fn initialize_negotiates_a_version_the_client_knows() {
+        // A supported request is echoed back verbatim.
+        assert_eq!(mcp_protocol_version(Some("2024-11-05")), "2024-11-05");
+        assert_eq!(mcp_protocol_version(Some("2025-11-25")), "2025-11-25");
+        // An unknown/absent revision falls back to one we speak — never to the client's unknown
+        // string, which is what makes a client abort the handshake.
+        assert_eq!(
+            mcp_protocol_version(Some("1999-01-01")),
+            MCP_PROTOCOL_DEFAULT
+        );
+        assert_eq!(mcp_protocol_version(None), MCP_PROTOCOL_DEFAULT);
+        assert!(MCP_PROTOCOL_SUPPORTED.contains(&MCP_PROTOCOL_DEFAULT));
+    }
+
+    #[test]
+    fn initialize_advertises_tools_and_identity() {
+        let f = FakeExec::ok();
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                            "params": {"protocolVersion": "2025-06-18"}}))
+            .expect("initialize is a request, not a notification");
+        assert_eq!(resp["jsonrpc"], json!("2.0"));
+        assert_eq!(resp["id"], json!(0));
+        assert_eq!(resp["result"]["protocolVersion"], json!("2025-06-18"));
+        // the tools capability must be advertised or no client ever calls tools/list.
+        assert!(resp["result"]["capabilities"]["tools"].is_object());
+        assert_eq!(resp["result"]["serverInfo"]["name"], json!("fsm"));
+    }
+
+    #[test]
+    fn a_notification_is_never_answered() {
+        let f = FakeExec::ok();
+        // `notifications/initialized` carries no id; replying to it is a protocol violation.
+        assert!(f
+            .handle(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .is_none());
+        assert!(f
+            .handle(&json!({"jsonrpc": "2.0", "id": null, "method": "notifications/cancelled"}))
+            .is_none());
+    }
+
+    #[test]
+    fn an_unknown_method_is_a_jsonrpc_error_not_a_tool_result() {
+        let f = FakeExec::ok();
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 4, "method": "resources/list"}))
+            .unwrap();
+        assert_eq!(resp["error"]["code"], json!(-32601));
+        assert!(resp.get("result").is_none());
+    }
+
+    // --- the surface itself ---------------------------------------------------------------------
+
+    #[test]
+    fn tools_list_is_exactly_the_vetter_fsm_surface() {
+        let f = FakeExec::ok();
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+            .unwrap();
+        let tools = resp["result"]["tools"].as_array().unwrap().clone();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec!["unvetted", "pr_context", "pr_checkout", "record_verdict"]
+        );
+        // Every tool is callable: a name, a one-line description, an object schema.
+        for t in &tools {
+            assert!(!t["description"].as_str().unwrap().is_empty());
+            assert_eq!(t["inputSchema"]["type"], json!("object"));
+        }
+        // The surface stays SMALL on purpose (#52: schemas ride in every request's preamble).
+        assert!(tools.len() <= 6, "keep the tool surface small");
+
+        let rv = tools
+            .iter()
+            .find(|t| t["name"] == json!("record_verdict"))
+            .unwrap();
+        let required: Vec<&str> = rv["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        // cost is REQUIRED by the schema — the prompt could only ask for it.
+        assert!(required.contains(&"cost"));
+        assert!(required.contains(&"verdict"));
+        let verdicts: Vec<&str> = rv["inputSchema"]["properties"]["verdict"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(verdicts, VETTER_VERDICTS.to_vec());
+    }
+
+    // --- pr refs --------------------------------------------------------------------------------
+
+    #[test]
+    fn pr_refs_parse_only_in_owner_repo_number_form() {
+        assert_eq!(
+            parse_pr_ref("rainlanguage/rain.flare#170"),
+            Ok(("rainlanguage/rain.flare".to_string(), 170))
+        );
+        assert_eq!(parse_pr_ref("  o/r#1  "), Ok(("o/r".to_string(), 1)));
+        for bad in [
+            "rain.flare#170", // no owner — the org must never be guessed
+            "o/r",            // no number
+            "o/r#",
+            "o/r#abc",
+            "o/r#0", // PR numbers start at 1
+            "o/r#-1",
+            "a/b/c#1", // not a slug
+            "/r#1",
+            "o/#1",
+            "",
+        ] {
+            assert!(parse_pr_ref(bad).is_err(), "{bad:?} must not parse");
+        }
+    }
+
+    // --- the transition guard -------------------------------------------------------------------
+
+    #[test]
+    fn a_verdict_outside_the_vocabulary_is_refused_and_never_reaches_the_effect() {
+        let f = FakeExec::ok();
+        for bogus in ["approve", "merge", "close-candidate", "READY", "ready!", ""] {
+            let resp = f
+                .handle(&call(
+                    "record_verdict",
+                    json!({"pr": "o/r#1", "verdict": bogus, "note": "n", "cost": 10, "basis": "b"}),
+                ))
+                .unwrap();
+            assert!(is_error(&resp), "{bogus:?} must be refused");
+        }
+        // The refusal is structural: nothing reached the write path.
+        assert!(f.calls().is_empty());
+    }
+
+    #[test]
+    fn record_verdict_requires_a_scored_cost_a_note_and_a_short_basis() {
+        let f = FakeExec::ok();
+        let base = |extra: Value| {
+            let mut m = json!({"pr": "o/r#1", "verdict": "ready", "note": "closes #88 — pinned by test", "cost": 300, "basis": "small diff"});
+            for (k, v) in extra.as_object().unwrap() {
+                m.as_object_mut().unwrap().insert(k.clone(), v.clone());
+            }
+            m
+        };
+        // cost is mandatory and 0-1000.
+        for bad in [
+            json!({"cost": null}),
+            json!({"cost": 1001}),
+            json!({"cost": -1}),
+            json!({"cost": "300"}),
+        ] {
+            let resp = f
+                .handle(&call("record_verdict", base(bad.clone())))
+                .unwrap();
+            assert!(is_error(&resp), "cost {bad} must be refused");
+        }
+        // a note that says nothing is refused; so is a basis that is a paragraph.
+        assert!(is_error(
+            &f.handle(&call("record_verdict", base(json!({"note": "   "}))))
+                .unwrap()
+        ));
+        assert!(is_error(&f
+            .handle(&call(
+                "record_verdict",
+                base(json!({"basis": "one two three four five six seven eight nine ten eleven twelve thirteen"}))
+            ))
+            .unwrap()));
+        assert!(f.calls().is_empty(), "no invalid verdict reached the write");
+
+        // the boundaries themselves are legal.
+        for good in [
+            json!({"cost": 0}),
+            json!({"cost": 1000}),
+            json!({"basis": "docs-only"}),
+        ] {
+            let resp = f
+                .handle(&call("record_verdict", base(good.clone())))
+                .unwrap();
+            assert!(!is_error(&resp), "{good} must be accepted");
+        }
+        assert_eq!(f.calls().len(), 3);
+    }
+
+    #[test]
+    fn a_valid_verdict_reaches_the_write_exactly_as_given() {
+        let f = FakeExec::ok();
+        let resp = f
+            .handle(&call(
+                "record_verdict",
+                json!({"pr": "cyclofinance/cyclo.site#369", "verdict": "reject", "note": "closes #12 — no discriminating test", "cost": 640, "basis": "accounting path"}),
+            ))
+            .unwrap();
+        assert!(!is_error(&resp));
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::RecordVerdict {
+                slug: "cyclofinance/cyclo.site".to_string(),
+                num: 369,
+                verdict: "reject".to_string(),
+                note: "closes #12 — no discriminating test".to_string(),
+                cost: 640,
+                basis: "accounting path".to_string(),
+            }]
+        );
+    }
+
+    // The human-sacred backstop lives in the shared write path (verdict_plan → RefuseHuman, exit 3);
+    // the MCP layer must SURFACE that refusal to the model rather than swallow it into a success.
+    #[test]
+    fn a_human_decided_pr_refusal_comes_back_as_a_tool_error() {
+        // the guard itself, on the JSON the write path reads:
+        let human = json!({"labels": [{"name": "human:reject"}], "comments": [], "headRefOid": "h", "reviewDecision": null});
+        assert_eq!(
+            verdict_plan(&human, "ai:ready", "ready"),
+            VerdictPlan::RefuseHuman
+        );
+        let approved =
+            json!({"labels": [], "comments": [], "headRefOid": "h", "reviewDecision": "APPROVED"});
+        assert_eq!(
+            verdict_plan(&approved, "ai:ready", "ready"),
+            VerdictPlan::RefuseHuman
+        );
+
+        // …and its surfacing:
+        let f = FakeExec::failing("human verdict present on o/r#1; not overriding [exit 3]");
+        let resp = f
+            .handle(&call(
+                "record_verdict",
+                json!({"pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b"}),
+            ))
+            .unwrap();
+        assert!(is_error(&resp));
+        assert!(text(&resp).contains("not overriding"));
+    }
+
+    #[test]
+    fn tools_outside_the_surface_do_not_exist() {
+        let f = FakeExec::ok();
+        for name in [
+            "merge",
+            "gh",
+            "record-verdict", // the CLI spelling is not the tool name
+            "flag_close_candidate",
+            "worklist",
+            "",
+        ] {
+            let resp = f.handle(&call(name, json!({}))).unwrap();
+            assert!(is_error(&resp), "{name:?} must not exist");
+            assert!(
+                text(&resp).contains("unvetted"),
+                "the error names the real surface"
+            );
+        }
+        assert!(f.calls().is_empty());
+    }
+
+    #[test]
+    fn read_tools_validate_their_arguments() {
+        let f = FakeExec::ok();
+        // a missing/ill-formed pr ref never reaches a fetch.
+        assert!(is_error(&f.handle(&call("pr_context", json!({}))).unwrap()));
+        assert!(is_error(
+            &f.handle(&call("pr_context", json!({"pr": "r#1"}))).unwrap()
+        ));
+        assert!(is_error(
+            &f.handle(&call("pr_checkout", json!({"pr": 12}))).unwrap()
+        ));
+        // an absurd diff cap is refused rather than silently clamped.
+        assert!(is_error(
+            &f.handle(&call(
+                "pr_context",
+                json!({"pr": "o/r#1", "max_diff_bytes": 0})
+            ))
+            .unwrap()
+        ));
+        assert!(is_error(
+            &f.handle(&call(
+                "pr_context",
+                json!({"pr": "o/r#1", "max_diff_bytes": 99_000_000u64})
+            ))
+            .unwrap()
+        ));
+        assert!(f.calls().is_empty());
+
+        // defaults: no cap given -> the documented default; unvetted lists only what needs vetting.
+        f.handle(&call("pr_context", json!({"pr": "o/r#1"})))
+            .unwrap();
+        f.handle(&call("unvetted", json!({}))).unwrap();
+        f.handle(&call("unvetted", json!({"include_skipped": true})))
+            .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::PrContext {
+                    slug: "o/r".to_string(),
+                    num: 1,
+                    max_diff_bytes: DEFAULT_MAX_DIFF_BYTES
+                },
+                McpCall::Unvetted {
+                    include_skipped: false
+                },
+                McpCall::Unvetted {
+                    include_skipped: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_effect_failure_is_reported_not_swallowed() {
+        let f = FakeExec::failing("error: `gh pr diff o/r#1` failed");
+        let resp = f
+            .handle(&call("pr_context", json!({"pr": "o/r#1"})))
+            .unwrap();
+        assert!(is_error(&resp));
+        assert!(text(&resp).contains("gh pr diff"));
     }
 }
