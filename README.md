@@ -93,10 +93,11 @@ gap by serving the vetter's transitions over MCP (stdio):
 | `pr_context`     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call            |
 | `pr_checkout`    | local read-only clone of the PR head, so the `audit` skill has source                                        |
 | `record_verdict` | the only write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                               |
+| `clone_release`  | dispose of a checkout it is finished with (guarded — see below)                                              |
 
 Run with `--mcp-config review-mcp.json --strict-mcp-config` and
 `review-settings-mcp.json`, the vetter's entire tool surface is
-`mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}` plus
+`mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict,clone_release}` plus
 `Read`/`Grep`/`Glob`/`Skill`/`ToolSearch` — **no Bash**, so there is no raw `gh`
 or `git` to reach for. The guards (verdict vocabulary, a mandatory 0-1000 cost,
 a well-formed `owner/repo#n`, the human-sacred refusal) are enforced in the
@@ -105,6 +106,41 @@ server and unit-tested rather than restated in the prompt.
 **Opt-in, off by default:** set `VETTER_MCP=1` in `cron.env` and the runner uses
 `review-prompt-mcp.txt` + `review-settings-mcp.json`; unset, the vetter runs
 exactly as it does today.
+
+### Work-clone lifecycle as an MCP surface (always on)
+
+`pr-review-report mcp --profile producer` serves the **producer's** clone
+lifecycle: `clone_create`, `clone_release`, `clone_list`, `clone_gc`. Unlike the
+vetter's surface this one is **additive** — the producer keeps its Bash, and is
+wired unconditionally (`--mcp-config campaign-mcp.json`, no
+`--strict-mcp-config`), because what it gains is an operation it could not
+previously perform at all:
+
+`campaign-settings.json` denies `Bash(rm -rf /:*)`. Deny rules are
+**prefix-matched**, so that also denied `rm -rf /home/gildlab/code/<clone>` —
+every work-clone path — while `campaign-prompt.txt` mandated exactly that
+deletion the moment a PR was pushed. The two contradicted each other for months;
+the clone directory grew to **195 GB** and disk-full is the documented cause of
+the producer's silent-death failure mode (#56).
+
+The fix is not a wider deny rule (that fixes the instance and keeps the shape).
+It is that **the model no longer supplies a path to delete** — it names a clone,
+and the name is resolved in Rust before any syscall:
+
+- exactly one path component directly under a configured root (`WORK_DIR`, plus
+  `INSTALL_DIR`, where the vetter's `vet-*` clones were stranded); roots come
+  from the environment, never from a tool argument;
+- no `..` anywhere, no absolute path outside the root (including the
+  sibling-prefix trick that fooled the deny rule), never the root itself or an
+  ancestor, never a `.`-prefixed entry, never a symlink;
+- the target must contain `.git` — **only a git work clone is ever deletable**,
+  so no malformed argument can reach ordinary data.
+
+Release refuses **unconditionally** on commits that exist only in the clone (or
+an unknown push state); uncommitted changes refuse too, overridable with
+`discard_uncommitted` once the caller has confirmed the dirt is build output.
+`clone_gc` remains the unattended backstop with the old, deliberately
+conservative rule — it deletes only what it can prove is finished.
 
 The machine has **no dead-ends**: every state has an exit back into the
 lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle
@@ -206,7 +242,8 @@ rules in `campaign-prompt.txt` (step 7 / 7a).
 | `review-prompt.txt`        | The AI-vetting instructions fed to the model.                                                                                                                                                                                                   |
 | `review-settings.json`     | Tool allow/deny for the vetter — every GitHub write (incl. `gh pr review`/approve, `gh api`) is denied; the only write is `pr-review-report record-verdict`.                                                                                    |
 | `review-mcp.json`          | MCP config for the opt-in MCP surface: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                  |
-| `review-settings-mcp.json` | Tool allow/deny for `VETTER_MCP=1`: the four `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                         |
+| `review-settings-mcp.json` | Tool allow/deny for `VETTER_MCP=1`: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                         |
+| `campaign-mcp.json`        | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                        |
 | `review-prompt-mcp.txt`    | The vetter prompt for the MCP surface — the same judgement gates with the `gh` command recipes removed (they are tool schemas now).                                                                                                             |
 | `merge-run.sh`             | Merge runner — drives human-approved PRs to merge. Dry-run by default (`MERGE_DRY_RUN`). Logs to `merge.log`. Kill-switch `merge-DISABLED`.                                                                                                     |
 | `merge-prompt.txt`         | The merge instructions: only human-approved PRs, read every failing check before admin-merge-over-env-reds, never deploy/force-push/touch-issues.                                                                                               |

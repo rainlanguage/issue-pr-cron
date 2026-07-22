@@ -98,9 +98,13 @@ else
 fi
 
 # The vetter's audit lens checks PRs out under WORK_DIR (prompt {{WORK_DIR}}; the MCP `pr_checkout`
-# tool reads the env var), so it must exist and be exported.
+# tool reads the env var), so it must exist and be exported. INSTALL_DIR is the SECOND clone root the
+# FSM server knows about: for months the {{WORK_DIR}} substitution below was missing here, the vetter
+# improvised a checkout path, and `vet-*` clones piled up in the install dir — where a WORK_DIR-only
+# sweep never looked. Both roots come from the environment, so no tool argument can name its own.
 mkdir -p "$WORK_DIR"
 export WORK_DIR
+export INSTALL_DIR="$DIR"
 
 # substitute deployment values into the prompt template
 PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \

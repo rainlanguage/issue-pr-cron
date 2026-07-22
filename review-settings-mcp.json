@@ -5,6 +5,7 @@
       "mcp__fsm__pr_context",
       "mcp__fsm__pr_checkout",
       "mcp__fsm__record_verdict",
+      "mcp__fsm__clone_release",
       "Read",
       "Glob",
       "Grep",

@@ -2236,36 +2236,74 @@ fn clone_age_days(dir: &std::path::Path) -> u64 {
         .unwrap_or(0)
 }
 
-/// `--gc-clones <work-dir> [--dry-run] [--max-age-days N]`: garbage-collect the per-PR/issue work
-/// clones directly under <work-dir>. A clone is deleted only when it is clean + fully pushed AND its
-/// checked-out branch's PR is merged/closed (or it has no PR and has been idle past the age cap);
-/// clones with uncommitted/unpushed work or an open PR are always kept. Prints one line per clone.
-fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
-    let Ok(entries) = std::fs::read_dir(work_dir) else {
-        eprintln!("error: cannot read work-dir {work_dir}");
-        return 2;
-    };
+/// What the sweep did to (or would do to) one clone. `bytes` is the on-disk size, measured only for
+/// a clone the sweep is deleting — walking every kept clone would cost a full stat of the whole
+/// work-dir for a number nobody acts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GcRecord {
+    root: String,
+    name: String,
+    /// `deleted` | `would-delete` | `kept` | `error`
+    outcome: &'static str,
+    reason: String,
+    bytes: u64,
+}
+
+/// Recursive on-disk size in bytes, symlinks counted as their own (tiny) entry and NEVER followed —
+/// a symlink into `/nix/store` must not be reported as if the store lived inside the clone.
+/// Unreadable entries contribute 0 rather than aborting the walk: this is a reporting figure.
+fn dir_size_bytes(root: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let Ok(md) = e.metadata() else { continue }; // read_dir metadata does NOT follow symlinks
+            if md.is_dir() {
+                stack.push(e.path());
+            } else {
+                total += md.len();
+            }
+        }
+    }
+    total
+}
+
+/// Sweep ONE root: decide and (unless `dry_run`) act on every work clone directly under it,
+/// reporting each decision to `on` as it is made. Errors only when the root itself is unreadable —
+/// an individual clone's failure is a record, not an abort.
+fn gc_clones_sweep(
+    work_dir: &str,
+    max_age_days: u64,
+    dry_run: bool,
+    on: &mut dyn FnMut(&GcRecord),
+) -> Result<Vec<GcRecord>, String> {
+    let entries =
+        std::fs::read_dir(work_dir).map_err(|e| format!("cannot read work-dir {work_dir}: {e}"))?;
     let mut dirs: Vec<std::path::PathBuf> = entries
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.join(".git").is_dir())
         .collect();
     dirs.sort();
-    let (mut deleted, mut kept) = (0u32, 0u32);
+    let mut out = Vec::with_capacity(dirs.len());
     for dir in &dirs {
-        let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+        let name = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .to_string();
         // FULL status (untracked INCLUDED): an untracked file could be real uncommitted WIP, so gc
         // must keep a clone with ANY dirt — never ignore untracked to reclaim more. Cleanliness is
         // the PRODUCER's job (commit real work, gitignore ephemeral artifacts, keep temp files OUT of
-        // the clone, then delete the clone after submit) and the VETTER's gate (reject a PR whose
+        // the clone, then release the clone after submit) and the VETTER's gate (reject a PR whose
         // checkout goes dirty), NOT gc's to guess. A dirty clone left here = a hygiene bug upstream.
-        let clean = git_out(dir, &["status", "--porcelain"])
-            .map(|s| s.is_empty())
-            .unwrap_or(false);
-        // Unpushed commits = on HEAD but on NO remote-tracking branch. This works WITHOUT a configured
-        // upstream (unlike `@{u}..HEAD`, which errors on an upstream-less branch); a git error stays
-        // `None` (not 0) so gc_decision fails safe and keeps a clone whose push-state is unknown.
-        let unpushed = git_out(dir, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
-            .and_then(|s| s.parse::<u32>().ok());
+        // Same reading as `clone_release`'s, from ONE function: the unattended sweep and the attended
+        // release must never disagree about whether a clone still holds work.
+        let local = local_clone_state(dir);
+        let clean = local.dirt.as_deref().map(|d| d.is_empty()).unwrap_or(false);
+        let unpushed = local.unpushed;
         // Only pay for the `gh pr list` network round-trip once the clone is otherwise deletable: a
         // dirty or unpushed clone is KEPT regardless of its PR state, so skipping the call for it is
         // what keeps a full pass over hundreds of clones from dragging past any timeout.
@@ -2280,34 +2318,124 @@ fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
             pr,
             age_days: clone_age_days(dir),
         };
-        match gc_decision(&state, max_age_days) {
+        let rec = match gc_decision(&state, max_age_days) {
             GcAction::Delete(reason) => {
+                let bytes = dir_size_bytes(dir);
                 if dry_run {
-                    println!("would delete  {name}  ({reason})");
-                    deleted += 1;
-                } else if std::fs::remove_dir_all(dir).is_ok() {
-                    println!("deleted       {name}  ({reason})");
-                    deleted += 1;
+                    GcRecord {
+                        root: work_dir.to_string(),
+                        name,
+                        outcome: "would-delete",
+                        reason,
+                        bytes,
+                    }
                 } else {
-                    eprintln!("error deleting {name}");
-                    kept += 1;
+                    match std::fs::remove_dir_all(dir) {
+                        Ok(()) => GcRecord {
+                            root: work_dir.to_string(),
+                            name,
+                            outcome: "deleted",
+                            reason,
+                            bytes,
+                        },
+                        Err(e) => GcRecord {
+                            root: work_dir.to_string(),
+                            name,
+                            outcome: "error",
+                            reason: format!("{reason}, but delete failed: {e}"),
+                            bytes: 0,
+                        },
+                    }
                 }
             }
-            GcAction::Keep(reason) => {
-                println!("kept          {name}  ({reason})");
-                kept += 1;
+            GcAction::Keep(reason) => GcRecord {
+                root: work_dir.to_string(),
+                name,
+                outcome: "kept",
+                reason,
+                bytes: 0,
+            },
+        };
+        on(&rec);
+        out.push(rec);
+    }
+    Ok(out)
+}
+
+/// PURE: human-readable size. Reported next to every reclaim figure so "what would this free" is
+/// answerable from the sweep's own output instead of a separate `du`.
+fn human_bytes(b: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = b as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{b} B")
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
+}
+
+/// `gc-clones <work-dir>... [--dry-run] [--max-age-days N]`: garbage-collect the per-PR/issue work
+/// clones directly under EACH <work-dir>. A clone is deleted only when it is clean + fully pushed AND
+/// its checked-out branch's PR is merged/closed (or it has no PR and has been idle past the age cap);
+/// clones with uncommitted/unpushed work or an open PR are always kept. Prints one line per clone.
+///
+/// Several roots are accepted because clones do not all land in `WORK_DIR`: `review-run.sh` did not
+/// substitute `{{WORK_DIR}}` into the vetter prompt, so `vet-*` clones accumulated in the INSTALL
+/// dir, which a single-root sweep never looked at.
+fn gc_clones_mode(work_dirs: &[String], max_age_days: u64, dry_run: bool) -> i32 {
+    let (mut deleted, mut kept, mut scanned, mut freed) = (0u32, 0u32, 0usize, 0u64);
+    let mut rc = 0;
+    for work_dir in work_dirs {
+        if work_dirs.len() > 1 {
+            println!("== {work_dir} ==");
+        }
+        // Stream each decision immediately: on a full disk the deletes free space AS WE GO, and
+        // progress stays visible so a long run never looks hung or gets cut off mid-scan.
+        let mut print = |r: &GcRecord| {
+            let label = match r.outcome {
+                "deleted" => "deleted      ",
+                "would-delete" => "would delete ",
+                "kept" => "kept         ",
+                _ => "ERROR        ",
+            };
+            let size = if r.bytes > 0 {
+                format!(" [{}]", human_bytes(r.bytes))
+            } else {
+                String::new()
+            };
+            println!("{label} {}  ({}){size}", r.name, r.reason);
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        };
+        match gc_clones_sweep(work_dir, max_age_days, dry_run, &mut print) {
+            Err(e) => {
+                eprintln!("error: {e}");
+                rc = 2;
+            }
+            Ok(recs) => {
+                scanned += recs.len();
+                for r in &recs {
+                    match r.outcome {
+                        "deleted" | "would-delete" => {
+                            deleted += 1;
+                            freed += r.bytes;
+                        }
+                        _ => kept += 1,
+                    }
+                }
             }
         }
-        // Stream each decision immediately: on a full disk the deletes above free space AS WE GO, and
-        // progress stays visible so a long run never looks hung or gets cut off mid-scan.
-        let _ = std::io::Write::flush(&mut std::io::stdout());
     }
     let verb = if dry_run { "would gc" } else { "gc" };
     println!(
-        "{verb}: {deleted} deleted, {kept} kept ({} clones)",
-        dirs.len()
+        "{verb}: {deleted} deleted, {kept} kept ({scanned} clones, {} reclaimed)",
+        human_bytes(freed)
     );
-    0
+    rc
 }
 
 /// Args for `nix-collect-garbage`: `-d` (delete old generations + collect garbage), plus `--dry-run`
@@ -2381,7 +2509,7 @@ fn should_nix_gc(usage: Option<u8>, threshold: u8) -> bool {
 /// is at/above `nix_threshold` percent, or usage can't be determined; otherwise the warm build cache
 /// is kept. Either half can be skipped. Nonzero if either half errors.
 fn gc_mode(
-    work_dir: &str,
+    work_dirs: &[String],
     max_age_days: u64,
     dry_run: bool,
     do_clones: bool,
@@ -2391,16 +2519,15 @@ fn gc_mode(
     let mut rc = 0;
     if do_clones {
         println!("== work clones ==");
-        let c = gc_clones_mode(work_dir, max_age_days, dry_run);
+        let c = gc_clones_mode(work_dirs, max_age_days, dry_run);
         if c != 0 {
             rc = c;
         }
     }
     if do_nix {
-        let path = if work_dir.is_empty() {
-            "/nix/store"
-        } else {
-            work_dir
+        let path = match work_dirs.first() {
+            Some(d) if !d.is_empty() => d.as_str(),
+            _ => "/nix/store",
         };
         let usage = disk_usage_pct(path);
         if should_nix_gc(usage, nix_threshold) {
@@ -2418,6 +2545,415 @@ fn gc_mode(
     }
     rc
 }
+
+// ─── work-clone lifecycle: a GUARDED filesystem surface, not a shell command ─────────────────────
+//
+// Creating and destroying work clones used to be the model composing shell: `git clone`, then
+// `rm -rf <clonedir>` the moment the work was pushed (campaign-prompt step 6c). That delete was
+// never actually possible — `campaign-settings.json` denies `Bash(rm -rf /:*)` and deny rules are
+// PREFIX-matched, so it also matched `rm -rf /home/gildlab/code/<anything>`, i.e. every work-clone
+// path (#56). The instruction and the permission rule contradicted each other for months and the
+// box filled up.
+//
+// Widening the deny rule would fix that instance and leave the shape of the problem: an unbounded
+// `rm -rf` whose safety is a string-matching rule. Here the delete is a TOOL instead. The model
+// names a CLONE; it never supplies a path to remove. Every name is resolved through the guards
+// below before any syscall, so "delete something outside the work roots" is not expressible.
+
+/// The roots a work clone may live directly under, in preference order (`clone_create` always builds
+/// in the first). `WORK_DIR` is where both runners put clones. `INSTALL_DIR` is the cron's own
+/// checkout, included because it accumulated `vet-*` clones for months: `review-run.sh` did not
+/// substitute `{{WORK_DIR}}` into the vetter prompt, so the vetter improvised its checkout path and
+/// landed in cwd. Roots come from the ENVIRONMENT and never from a tool argument — a model-supplied
+/// root would make every guard below vacuous.
+fn clone_roots() -> Vec<String> {
+    let mut roots = vec![vet_work_dir()];
+    if let Ok(d) = std::env::var("INSTALL_DIR") {
+        let d = d.trim_end_matches('/').to_string();
+        if !d.is_empty() && !roots.contains(&d) {
+            roots.push(d);
+        }
+    }
+    roots
+}
+
+/// PURE: resolve `input` — a bare clone name, or an absolute path under `root` — to the single path
+/// COMPONENT naming a work clone directly inside `root`. This is the whole path guard's first half,
+/// and it runs before ANY filesystem call, so a refusal here cannot have an effect.
+///
+/// Refused: an absolute path outside `root` (including the sibling-prefix trick, `/x/codeEVIL` for
+/// root `/x/code`), `..` in any position, a nested path, the root itself, `.`-prefixed entries
+/// (`.git` is not a work clone), an embedded NUL, and the empty string.
+fn clone_name_in_root(root: &str, input: &str) -> Result<String, String> {
+    let root = root.trim_end_matches('/');
+    if root.is_empty() || !root.starts_with('/') {
+        return Err(format!(
+            "work-clone root {root:?} is not an absolute path — refusing to resolve anything under it"
+        ));
+    }
+    let bad = |why: &str| {
+        format!("refusing {input:?}: {why}. Name one work clone directly under {root} (e.g. \"raindex-2444\")")
+    };
+    let s = input.trim();
+    if s.is_empty() {
+        return Err(bad("empty name"));
+    }
+    if s.contains('\0') {
+        return Err(bad("embedded NUL"));
+    }
+    // `..` ANYWHERE is refused up front, before any prefix arithmetic — so a traversal can never be
+    // laundered through an otherwise root-prefixed path (`/x/code/../../etc`).
+    if std::path::Path::new(s)
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(bad("`..` traversal"));
+    }
+    let rest = if s.starts_with('/') {
+        if s.trim_end_matches('/') == root {
+            return Err(bad("that is the root itself, not a clone in it"));
+        }
+        s.strip_prefix(&format!("{root}/"))
+            .ok_or_else(|| bad("absolute path outside the work-clone root"))?
+    } else {
+        s
+    };
+    let rest = rest.trim_end_matches('/');
+    if rest.is_empty() {
+        return Err(bad("that is the root itself, not a clone in it"));
+    }
+    if rest.contains('/') {
+        return Err(bad("not a direct child of the root"));
+    }
+    if rest.starts_with('.') {
+        return Err(bad("`.`-prefixed entries are never work clones"));
+    }
+    Ok(rest.to_string())
+}
+
+/// PURE: the same resolution against SEVERAL roots — first root that accepts the name wins. The
+/// error names every root, so a model that guessed the wrong one is told where clones actually live.
+fn clone_in_roots(roots: &[String], input: &str) -> Result<(String, String), String> {
+    let mut first_err = None;
+    for root in roots {
+        match clone_name_in_root(root, input) {
+            Ok(name) => return Ok((root.trim_end_matches('/').to_string(), name)),
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+    Err(match first_err {
+        Some(e) => format!("{e} (work-clone roots: {})", roots.join(", ")),
+        None => "no work-clone root is configured (WORK_DIR is unset)".to_string(),
+    })
+}
+
+/// The path guard's second half: the checks that genuinely need the filesystem. Given an
+/// already-name-resolved (root, name), confirm the target is a real work clone we may touch —
+/// it exists, is a DIRECTORY and not a symlink, canonicalises to a DIRECT CHILD of the canonical
+/// root (so a symlinked component cannot smuggle the path elsewhere), and contains `.git`.
+///
+/// That last check is the one that makes a mistake cheap: only a git clone is ever deletable, so no
+/// argument — however malformed — reaches ordinary data.
+fn resolve_existing_clone(root: &str, name: &str) -> Result<std::path::PathBuf, String> {
+    let root_real = std::fs::canonicalize(root)
+        .map_err(|e| format!("work-clone root {root} is not readable: {e}"))?;
+    let path = root_real.join(name);
+    let md = std::fs::symlink_metadata(&path)
+        .map_err(|_| format!("no work clone {name:?} under {root}"))?;
+    if md.file_type().is_symlink() {
+        return Err(format!(
+            "refusing {name:?}: it is a SYMLINK, not a work clone — releasing it would act on whatever it points at"
+        ));
+    }
+    if !md.is_dir() {
+        return Err(format!("refusing {name:?}: not a directory"));
+    }
+    let real = std::fs::canonicalize(&path)
+        .map_err(|e| format!("cannot resolve {}: {e}", path.display()))?;
+    if real == root_real || real.parent() != Some(root_real.as_path()) {
+        return Err(format!(
+            "refusing {name:?}: it resolves to {} — outside {}",
+            real.display(),
+            root_real.display()
+        ));
+    }
+    if !real.join(".git").exists() {
+        return Err(format!(
+            "refusing {name:?}: no .git — this tool only ever touches git work clones"
+        ));
+    }
+    Ok(real)
+}
+
+/// A clone's local git state, as the release decision sees it. `unpushed: None` means git could not
+/// answer, which is treated exactly like "possibly unpushed".
+struct LocalCloneState {
+    unpushed: Option<u32>,
+    dirt: Option<String>,
+    branch: String,
+}
+
+fn local_clone_state(path: &std::path::Path) -> LocalCloneState {
+    // Unpushed commits = on HEAD but on NO remote-tracking branch. This works WITHOUT a configured
+    // upstream (unlike `@{u}..HEAD`, which errors on an upstream-less branch); a git error stays
+    // `None` (not 0) so the decision fails safe on a clone whose push-state is unknown.
+    let unpushed = match git_out(path, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        Some(n) => Some(n),
+        // …with ONE exception. An UNBORN HEAD — a clone interrupted before its first checkout — also
+        // makes `rev-list HEAD` fail, and that is not an unknown state: there are no commits at all,
+        // so there is nothing that could be lost. Without this, a half-finished clone is immortal.
+        None if git_out(path, &["rev-parse", "--git-dir"]).is_some()
+            && git_out(path, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_none() =>
+        {
+            Some(0)
+        }
+        None => None,
+    };
+    LocalCloneState {
+        unpushed,
+        dirt: git_out(path, &["status", "--porcelain"]),
+        branch: git_out(path, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default(),
+    }
+}
+
+/// PURE: may this clone be released, given its local state and whether the caller explicitly
+/// accepted losing uncommitted changes? Split out from the filesystem so the whole refusal ladder is
+/// unit-testable.
+///
+/// - Commits that exist ONLY here are unrecoverable, so they refuse UNCONDITIONALLY — there is no
+///   flag, because a flag is a thing a model under time pressure sets.
+/// - An unknown push state is treated as unpushed (the same fail-safe `gc_decision` uses).
+/// - Uncommitted changes refuse too, but `discard_uncommitted` overrides: in practice this dirt is
+///   build/tooling output (`Cargo.lock` churn, generated pointers) that the producer is told to
+///   gitignore, and refusing it outright is what leaves the clone on disk forever.
+fn release_decision(s: &LocalCloneState, discard_uncommitted: bool) -> Result<(), String> {
+    match s.unpushed {
+        None => {
+            return Err(
+                "push state could not be determined — refusing to release (no flag overrides this)"
+                    .to_string(),
+            )
+        }
+        Some(n) if n > 0 => {
+            return Err(format!(
+                "{n} commit(s) exist only in this clone — push them first. No flag overrides this: the work would be unrecoverable"
+            ))
+        }
+        Some(_) => {}
+    }
+    let Some(dirt) = &s.dirt else {
+        return Err(
+            "`git status` failed — refusing to release a clone whose state is unknown".to_string(),
+        );
+    };
+    if !dirt.is_empty() && !discard_uncommitted {
+        let lines: Vec<&str> = dirt.lines().collect();
+        let shown: Vec<&str> = lines.iter().take(10).copied().collect();
+        return Err(format!(
+            "{} uncommitted change(s) — commit and push them, or pass discard_uncommitted:true once you have confirmed they are build/tooling output:\n{}{}",
+            lines.len(),
+            shown.join("\n"),
+            if lines.len() > shown.len() { "\n…" } else { "" }
+        ));
+    }
+    Ok(())
+}
+
+/// Release ONE work clone: the tool that replaces `rm -rf <clonedir>`. Every guard above runs first;
+/// the size is measured before the delete so the trace records what was actually reclaimed.
+fn clone_release_exec(root: &str, name: &str, discard_uncommitted: bool) -> Result<Value, String> {
+    let path = resolve_existing_clone(root, name)?;
+    let state = local_clone_state(&path);
+    release_decision(&state, discard_uncommitted)
+        .map_err(|why| format!("refusing to release {name:?}: {why}"))?;
+    let bytes = dir_size_bytes(&path);
+    let discarded = state.dirt.as_deref().unwrap_or("").lines().count();
+    std::fs::remove_dir_all(&path).map_err(|e| format!("could not release {name:?}: {e}"))?;
+    Ok(serde_json::json!({
+        "released": name,
+        "dir": path.to_string_lossy(),
+        "branch": state.branch,
+        "bytes": bytes,
+        "size": human_bytes(bytes),
+        "discardedUncommitted": discarded,
+    }))
+}
+
+/// Create (or re-sync) a work clone. Same guard as release for the NAME; the destination may not
+/// exist yet, so existence is the one check that differs. A re-sync is `fetch` + `checkout -f -B` +
+/// `clean -fdx` — campaign-prompt step 4's recipe, moved into the binary so it can carry a guard the
+/// shell version could not: a clone holding UNPUSHED commits is never re-synced over.
+fn clone_create_exec(
+    root: &str,
+    name: &str,
+    slug: &str,
+    branch: &str,
+    base: Option<&str>,
+) -> Result<Value, String> {
+    std::fs::create_dir_all(root)
+        .map_err(|e| format!("cannot create work-clone root {root}: {e}"))?;
+    let root_real = std::fs::canonicalize(root)
+        .map_err(|e| format!("work-clone root {root} is not readable: {e}"))?;
+    let path = root_real.join(name);
+    let existed = std::fs::symlink_metadata(&path).is_ok();
+    if existed {
+        // Reuse the FULL guard: a pre-existing entry that is a symlink, a file, or not a clone is
+        // refused rather than clobbered.
+        let path = resolve_existing_clone(root, name)?;
+        let state = local_clone_state(&path);
+        if !matches!(state.unpushed, Some(0)) {
+            return Err(format!(
+                "refusing to re-sync {name:?}: it holds commits that are not on any remote (or its push state is unknown) — push them, or use a different clone name"
+            ));
+        }
+        git_run(&path, &["fetch", "origin", "--prune"])?;
+    } else {
+        gh_quiet(
+            None,
+            &[
+                "repo",
+                "clone",
+                slug,
+                &path.to_string_lossy(),
+                "--",
+                "--no-single-branch",
+            ],
+        )?;
+    }
+    let base = match base {
+        Some(b) => b.to_string(),
+        None => default_branch_of(&path)?,
+    };
+    git_run(
+        &path,
+        &["checkout", "-f", "-B", branch, &format!("origin/{base}")],
+    )?;
+    git_run(&path, &["clean", "-fdx"])?;
+    Ok(serde_json::json!({
+        "dir": path.to_string_lossy(),
+        "repo": slug,
+        "branch": branch,
+        "base": base,
+        "resynced": existed,
+        "note": "release it with clone_release the moment the work is on GitHub",
+    }))
+}
+
+/// `git -C <dir> <args>` for effect, surfacing git's own stderr on failure. Distinct from `git_out`,
+/// which swallows failures into `None` because its callers WANT a fail-safe unknown.
+fn git_run(dir: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to run git {}: {e}", args.join(" ")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let tail: Vec<&str> = err.lines().rev().take(5).collect();
+    Err(format!(
+        "git {} failed: {}",
+        args.join(" "),
+        tail.into_iter().rev().collect::<Vec<_>>().join(" / ")
+    ))
+}
+
+/// The clone's default branch, read from the remote HEAD it already fetched (no network round-trip,
+/// no assumption that it is called `main`).
+fn default_branch_of(dir: &std::path::Path) -> Result<String, String> {
+    if let Some(s) = git_out(
+        dir,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    ) {
+        if let Some(b) = s.rsplit('/').next() {
+            if !b.is_empty() {
+                return Ok(b.to_string());
+            }
+        }
+    }
+    // `--no-single-branch` clones set origin/HEAD; a clone that predates that may not have it.
+    git_out(dir, &["remote", "set-head", "origin", "--auto"])
+        .and_then(|_| {
+            git_out(
+                dir,
+                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            )
+        })
+        .and_then(|s| s.rsplit('/').next().map(String::from))
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| "could not determine the repo's default branch — pass `base`".to_string())
+}
+
+/// Every work clone under every configured root, with the state that decides whether it is
+/// releasable. Read-only: the answer to "what is on this box and who owns it".
+fn clone_list_exec(roots: &[String]) -> Result<Value, String> {
+    let mut out = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        let mut dirs: Vec<std::path::PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.join(".git").is_dir())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+            let state = local_clone_state(&dir);
+            out.push(serde_json::json!({
+                "name": name,
+                "root": root,
+                "branch": state.branch,
+                "unpushed": state.unpushed,
+                "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
+                "ageDays": clone_age_days(&dir),
+                "releasable": release_decision(&state, false).is_ok(),
+            }));
+        }
+    }
+    Ok(serde_json::json!({"roots": roots, "clones": out}))
+}
+
+/// The unattended sweep, as a tool. Same decision function as the CLI (`gc_decision`), across every
+/// configured root, returning what it did instead of printing it — STDOUT is the MCP protocol.
+fn clone_gc_exec(roots: &[String], max_age_days: u64, dry_run: bool) -> Result<Value, String> {
+    let mut recs = Vec::new();
+    let mut errors = Vec::new();
+    for root in roots {
+        match gc_clones_sweep(root, max_age_days, dry_run, &mut |_r| {}) {
+            Ok(mut r) => recs.append(&mut r),
+            Err(e) => errors.push(e),
+        }
+    }
+    let freed: u64 = recs.iter().map(|r| r.bytes).sum();
+    let deleted = recs
+        .iter()
+        .filter(|r| r.outcome == "deleted" || r.outcome == "would-delete")
+        .count();
+    Ok(serde_json::json!({
+        "dryRun": dry_run,
+        "roots": roots,
+        "scanned": recs.len(),
+        "deleted": deleted,
+        "kept": recs.len() - deleted,
+        "bytesReclaimed": freed,
+        "reclaimed": human_bytes(freed),
+        "errors": errors,
+        "clones": recs.iter().map(|r| serde_json::json!({
+            "name": r.name, "root": r.root, "outcome": r.outcome,
+            "reason": r.reason, "bytes": r.bytes,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 // --- --deploy: the SOLE, constrained way the producer triggers a sanctioned Zoltu deploy ---------
 //
 // Org prod deploys are Zoltu deterministic CREATE2 (address = f(bytecode); idempotent;
@@ -3473,10 +4009,67 @@ const VETTER_VERDICTS: [&str; 5] = ["ready", "reject", "relink", "design", "clos
 const COST_RANGE: std::ops::RangeInclusive<i64> = 0..=1000;
 /// `basis` is a 3-8 word phrase naming the cost driver; a paragraph there is a note in the wrong slot.
 const MAX_BASIS_WORDS: usize = 12;
+/// The sweep's idle-clone age cap, and the bounds a tool caller may move it within. 0 would delete
+/// every PR-less clone the instant it appeared, including one being built right now.
+const GC_MAX_AGE_DEFAULT: u64 = 30;
+const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
+
+/// WHICH ROLE this server is serving. The two roles are different state machines that happen to
+/// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
+/// not a permission — `tools/list` returns only the profile's tools, so the producer never sees
+/// `record_verdict` (the vetter's write) and the vetter never sees `clone_create`, and neither pays
+/// preamble for the other's schemas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpProfile {
+    Vetter,
+    Producer,
+}
+
+impl McpProfile {
+    fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "vetter" => Ok(McpProfile::Vetter),
+            "producer" => Ok(McpProfile::Producer),
+            _ => Err(format!("unknown profile {s:?} — use vetter or producer")),
+        }
+    }
+    /// The tool names this profile exposes, in listing order.
+    fn tool_names(self) -> &'static [&'static str] {
+        match self {
+            // `clone_release` is on BOTH: `pr_checkout` creates a clone, so the vetter needs the
+            // move that disposes of it — otherwise every vetted PR leaks a checkout until the sweep.
+            McpProfile::Vetter => &[
+                "unvetted",
+                "pr_context",
+                "pr_checkout",
+                "record_verdict",
+                "clone_release",
+            ],
+            McpProfile::Producer => &["clone_create", "clone_release", "clone_list", "clone_gc"],
+        }
+    }
+}
 
 /// The TOOL SURFACE. Descriptions are one line each on purpose: every schema here is re-sent in the
 /// preamble of every API call, so the surface must replace more prose than it adds.
-fn mcp_tools() -> Value {
+fn mcp_tools(profile: McpProfile) -> Value {
+    let names = profile.tool_names();
+    let all = mcp_all_tools();
+    let all = all.as_array().expect("tool table is an array");
+    Value::Array(
+        names
+            .iter()
+            .map(|n| {
+                all.iter()
+                    .find(|t| t["name"] == Value::String((*n).to_string()))
+                    .unwrap_or_else(|| panic!("profile names an undefined tool {n:?}"))
+                    .clone()
+            })
+            .collect(),
+    )
+}
+
+fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
@@ -3523,6 +4116,48 @@ fn mcp_tools() -> Value {
                 },
                 "required": ["pr", "verdict", "note", "cost", "basis"]
             }
+        },
+        {
+            "name": "clone_create",
+            "description": "Make (or re-sync to current base) the per-issue work clone. Returns its dir. Refuses to re-sync over unpushed commits.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo"},
+                    "name": {"type": "string", "description": "Clone dir name, e.g. raindex-2444. One path segment; the root is fixed."},
+                    "branch": {"type": "string", "description": "Branch to create/reset, e.g. 2026-07-22-issue-2444."},
+                    "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
+                },
+                "required": ["repo", "name", "branch"]
+            }
+        },
+        {
+            "name": "clone_release",
+            "description": "Dispose of a work clone the moment its work is on GitHub. This replaces `rm -rf`. Refuses unpushed commits outright; refuses uncommitted changes unless discard_uncommitted.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "clone": {"type": "string", "description": "Clone dir name (or its full path under the work root)."},
+                    "discard_uncommitted": {"type": "boolean", "description": "Release even with uncommitted changes — only once you have confirmed they are build/tooling output."}
+                },
+                "required": ["clone"]
+            }
+        },
+        {
+            "name": "clone_list",
+            "description": "Every work clone on this box: name, branch, unpushed/uncommitted counts, age, and whether it is releasable now.",
+            "inputSchema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "clone_gc",
+            "description": "End-of-run sweep of every work root: deletes only clean, fully-pushed clones whose PR is merged/closed, or PR-less clones idle past the age cap. Reports bytes reclaimed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "dry_run": {"type": "boolean", "description": "Report the decisions without deleting."},
+                    "max_age_days": {"type": "integer", "description": "Idle cap for PR-less clones, 1-365 (default 30)."}
+                }
+            }
         }
     ])
 }
@@ -3550,6 +4185,25 @@ enum McpCall {
         note: String,
         cost: i64,
         basis: String,
+    },
+    /// `root`/`name` are the OUTPUT of the path guard, not the model's argument: by the time this
+    /// value exists, the name is known to be a single non-hidden component under a configured root.
+    CloneCreate {
+        root: String,
+        name: String,
+        slug: String,
+        branch: String,
+        base: Option<String>,
+    },
+    CloneRelease {
+        root: String,
+        name: String,
+        discard_uncommitted: bool,
+    },
+    CloneList,
+    CloneGc {
+        max_age_days: u64,
+        dry_run: bool,
     },
 }
 
@@ -3581,7 +4235,20 @@ fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 /// error the model sees. Every rule the vetter prompt used to state in prose — the verdict
 /// vocabulary, a mandatory cost in range, a note that says something, a phrase-length basis, a
 /// well-formed PR reference — is enforced HERE, once, tested.
-fn validate_call(name: &str, args: &Value) -> Result<McpCall, String> {
+fn validate_call(
+    profile: McpProfile,
+    roots: &[String],
+    name: &str,
+    args: &Value,
+) -> Result<McpCall, String> {
+    // A tool the profile does not expose does not exist for this role — checked FIRST, so the
+    // producer cannot reach `record_verdict` and the vetter cannot reach `clone_create` by name.
+    if !profile.tool_names().contains(&name) {
+        return Err(format!(
+            "no such tool {name:?} — this server exposes exactly: {}",
+            profile.tool_names().join(", ")
+        ));
+    }
     match name {
         "unvetted" => Ok(McpCall::Unvetted {
             include_skipped: args
@@ -3622,10 +4289,9 @@ fn validate_call(name: &str, args: &Value) -> Result<McpCall, String> {
                 ));
             }
             let note = req_str(args, "note")?.trim().to_string();
-            let cost = args
-                .get("cost")
-                .and_then(|v| v.as_i64())
-                .ok_or_else(|| "cost is required: an integer 0-1000 (human verification cost)".to_string())?;
+            let cost = args.get("cost").and_then(|v| v.as_i64()).ok_or_else(|| {
+                "cost is required: an integer 0-1000 (human verification cost)".to_string()
+            })?;
             if !COST_RANGE.contains(&cost) {
                 return Err(format!("cost {cost} is out of range — an integer 0-1000"));
             }
@@ -3644,9 +4310,76 @@ fn validate_call(name: &str, args: &Value) -> Result<McpCall, String> {
                 basis,
             })
         }
-        _ => Err(format!(
-            "no such tool {name:?} — this server exposes exactly: unvetted, pr_context, pr_checkout, record_verdict"
-        )),
+        // --- work-clone lifecycle. The path guard runs HERE, before any effect exists, which is why
+        // a refused clone argument can be proven to have touched nothing.
+        "clone_create" => {
+            let slug = req_str(args, "repo")?.trim().to_string();
+            let mut parts = slug.split('/');
+            let (Some(o), Some(r), None) = (parts.next(), parts.next(), parts.next()) else {
+                return Err(format!("bad repo {slug:?} — want owner/repo"));
+            };
+            if o.is_empty() || r.is_empty() {
+                return Err(format!("bad repo {slug:?} — want owner/repo"));
+            }
+            // clone_create always builds in the FIRST root (WORK_DIR); the extra roots exist so
+            // already-stranded clones can be listed/released, not so new ones can be placed there.
+            let root = roots.first().ok_or_else(|| {
+                "no work-clone root is configured (WORK_DIR is unset)".to_string()
+            })?;
+            let name = clone_name_in_root(root, req_str(args, "name")?)?;
+            let branch = req_str(args, "branch")?.trim().to_string();
+            if branch.contains(char::is_whitespace) || branch.starts_with('-') {
+                return Err(format!("bad branch {branch:?}"));
+            }
+            let base = match args.get("base") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(req_str(args, "base")?.trim().to_string()),
+            };
+            Ok(McpCall::CloneCreate {
+                root: root.trim_end_matches('/').to_string(),
+                name,
+                slug,
+                branch,
+                base,
+            })
+        }
+        "clone_release" => {
+            let (root, name) = clone_in_roots(roots, req_str(args, "clone")?)?;
+            Ok(McpCall::CloneRelease {
+                root,
+                name,
+                discard_uncommitted: args
+                    .get("discard_uncommitted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        }
+        "clone_list" => Ok(McpCall::CloneList),
+        "clone_gc" => {
+            let max_age_days = match args.get("max_age_days") {
+                None | Some(Value::Null) => GC_MAX_AGE_DEFAULT,
+                Some(v) => match v.as_u64() {
+                    Some(n) if GC_MAX_AGE_RANGE.contains(&n) => n,
+                    _ => {
+                        return Err(format!(
+                            "max_age_days must be an integer in {}..={}",
+                            GC_MAX_AGE_RANGE.start(),
+                            GC_MAX_AGE_RANGE.end()
+                        ))
+                    }
+                },
+            };
+            Ok(McpCall::CloneGc {
+                max_age_days,
+                dry_run: args
+                    .get("dry_run")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        }
+        // Unreachable while `tool_names()` and this match agree (pinned by a test). An Err rather
+        // than a panic: a listed-but-unhandled tool must not take the whole server down.
+        _ => Err(format!("tool {name:?} is listed but not implemented")),
     }
 }
 
@@ -3671,6 +4404,8 @@ fn tool_result(text: String, is_error: bool) -> Value {
 /// whole protocol surface (handshake, listing, dispatch, refusals) is unit-testable with a fake exec.
 /// `None` = a notification, which is never answered.
 fn mcp_handle(
+    profile: McpProfile,
+    roots: &[String],
     req: &Value,
     exec: &mut dyn FnMut(McpCall) -> Result<String, String>,
 ) -> Option<Value> {
@@ -3692,7 +4427,7 @@ fn mcp_handle(
         )),
         "tools/list" => Some(jsonrpc_result(
             id,
-            serde_json::json!({"tools": mcp_tools()}),
+            serde_json::json!({"tools": mcp_tools(profile)}),
         )),
         "tools/call" => {
             let name = req
@@ -3703,7 +4438,7 @@ fn mcp_handle(
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
-            let out = match validate_call(name, &args) {
+            let out = match validate_call(profile, roots, name, &args) {
                 Err(e) => tool_result(e, true),
                 Ok(call) => match exec(call) {
                     Ok(text) => tool_result(text, false),
@@ -3724,6 +4459,7 @@ fn mcp_handle(
 
 /// Perform a validated transition. The ONLY effectful half of the server; every guard already ran.
 fn mcp_exec(call: McpCall) -> Result<String, String> {
+    let roots = clone_roots();
     match call {
         McpCall::Unvetted { include_skipped } => {
             unvetted_fetch(include_skipped).map(|d| d.to_string())
@@ -3751,14 +4487,34 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             false,
         )
         .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::CloneCreate {
+            root,
+            name,
+            slug,
+            branch,
+            base,
+        } => {
+            clone_create_exec(&root, &name, &slug, &branch, base.as_deref()).map(|d| d.to_string())
+        }
+        McpCall::CloneRelease {
+            root,
+            name,
+            discard_uncommitted,
+        } => clone_release_exec(&root, &name, discard_uncommitted).map(|d| d.to_string()),
+        McpCall::CloneList => clone_list_exec(&roots).map(|d| d.to_string()),
+        McpCall::CloneGc {
+            max_age_days,
+            dry_run,
+        } => clone_gc_exec(&roots, max_age_days, dry_run).map(|d| d.to_string()),
     }
 }
 
 /// `pr-review-report mcp` — speak MCP over stdio (newline-delimited JSON-RPC 2.0 on stdin/stdout).
 /// STDOUT IS THE PROTOCOL: nothing else may print there, which is why the verdict write goes through
 /// [`record_verdict_apply`] rather than the printing CLI mode.
-fn mcp_serve() -> i32 {
+fn mcp_serve(profile: McpProfile) -> i32 {
     use std::io::{BufRead, Write};
+    let roots = clone_roots();
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
     for line in stdin.lock().lines() {
@@ -3768,7 +4524,7 @@ fn mcp_serve() -> i32 {
             continue;
         }
         let resp = match serde_json::from_str::<Value>(line) {
-            Ok(req) => mcp_handle(&req, &mut mcp_exec),
+            Ok(req) => mcp_handle(profile, &roots, &req, &mut mcp_exec),
             Err(e) => Some(jsonrpc_error(
                 Value::Null,
                 -32700,
@@ -3856,9 +4612,12 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Garbage-collect the per-PR/issue work clones directly under <work-dir>.
+    /// Garbage-collect the per-PR/issue work clones directly under each <work-dir>.
     GcClones {
-        work_dir: String,
+        /// One or more clone roots. More than one because clones do not all land in WORK_DIR — the
+        /// vetter's `vet-*` clones accumulated in the INSTALL dir, which a single-root sweep missed.
+        #[arg(required = true, num_args = 1..)]
+        work_dirs: Vec<String>,
         #[arg(long)]
         dry_run: bool,
         #[arg(long, default_value_t = 30)]
@@ -3867,8 +4626,8 @@ enum Cmd {
     /// Unified reclaim: the work clones (gc-clones), always; the nix store (nix-collect-garbage -d)
     /// only when the disk is under pressure (usage >= --nix-threshold), so the build cache stays warm.
     Gc {
-        /// Required unless --no-clones.
-        work_dir: Option<String>,
+        /// One or more clone roots. Required unless --no-clones.
+        work_dirs: Vec<String>,
         #[arg(long)]
         dry_run: bool,
         #[arg(long, default_value_t = 30)]
@@ -3958,9 +4717,13 @@ enum Cmd {
         #[arg(long)]
         include_skipped: bool,
     },
-    /// Speak MCP over stdio, exposing the vetter's FSM transitions as tools — an agent restricted to
-    /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`.
-    Mcp,
+    /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
+    /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
+    Mcp {
+        /// Which role's surface to serve: `vetter` (default) or `producer`.
+        #[arg(long, default_value = "vetter")]
+        profile: String,
+    },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4677,12 +5440,12 @@ fn main() {
             dry_run,
         } => deploy_mode(&slug, &pr, network.as_deref(), dry_run),
         Cmd::GcClones {
-            work_dir,
+            work_dirs,
             dry_run,
             max_age_days,
-        } => gc_clones_mode(&work_dir, max_age_days, dry_run),
+        } => gc_clones_mode(&work_dirs, max_age_days, dry_run),
         Cmd::Gc {
-            work_dir,
+            work_dirs,
             dry_run,
             max_age_days,
             no_clones,
@@ -4691,12 +5454,18 @@ fn main() {
         } => {
             let do_clones = !no_clones;
             let do_nix = !no_nix;
-            let wd = work_dir.unwrap_or_default();
-            if do_clones && wd.is_empty() {
+            if do_clones && work_dirs.is_empty() {
                 eprintln!("error: gc needs <work-dir> unless --no-clones is given");
                 std::process::exit(2);
             }
-            gc_mode(&wd, max_age_days, dry_run, do_clones, do_nix, nix_threshold)
+            gc_mode(
+                &work_dirs,
+                max_age_days,
+                dry_run,
+                do_clones,
+                do_nix,
+                nix_threshold,
+            )
         }
         Cmd::RunMetrics { trace } => run_metrics_mode(&trace),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
@@ -4731,7 +5500,13 @@ fn main() {
             json,
             include_skipped,
         } => unvetted_mode(json, include_skipped),
-        Cmd::Mcp => mcp_serve(),
+        Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
+            Ok(p) => mcp_serve(p),
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        },
     };
     std::process::exit(code);
 }
@@ -5488,36 +6263,94 @@ mod settings_tests {
     // `tools/list`, and the allow-list the cron would run with.
     #[test]
     fn mcp_wiring_names_match_the_server() {
-        let Some(cfg) = read_json("review-mcp.json") else {
-            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
-        };
-        let servers = cfg["mcpServers"].as_object().expect("mcpServers object");
-        assert_eq!(servers.len(), 1, "one server: the FSM");
-        let (name, spec) = servers.iter().next().unwrap();
-        assert_eq!(
-            name,
-            super::MCP_SERVER_NAME,
-            "server key must be the name the binary reports"
-        );
-        assert_eq!(spec["command"], serde_json::json!("pr-review-report"));
-        assert_eq!(spec["args"], serde_json::json!(["mcp"]));
+        for (cfg_file, settings_file, args, profile) in [
+            (
+                "review-mcp.json",
+                "review-settings-mcp.json",
+                serde_json::json!(["mcp"]),
+                super::McpProfile::Vetter,
+            ),
+            (
+                "campaign-mcp.json",
+                "campaign-settings.json",
+                serde_json::json!(["mcp", "--profile", "producer"]),
+                super::McpProfile::Producer,
+            ),
+        ] {
+            let Some(cfg) = read_json(cfg_file) else {
+                return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            let servers = cfg["mcpServers"].as_object().expect("mcpServers object");
+            assert_eq!(servers.len(), 1, "{cfg_file}: one server: the FSM");
+            let (name, spec) = servers.iter().next().unwrap();
+            assert_eq!(
+                name,
+                super::MCP_SERVER_NAME,
+                "{cfg_file}: server key must be the name the binary reports"
+            );
+            assert_eq!(spec["command"], serde_json::json!("pr-review-report"));
+            assert_eq!(spec["args"], args, "{cfg_file}: profile flag must match");
 
-        let expected: Vec<String> = super::mcp_tools()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| format!("mcp__{name}__{}", t["name"].as_str().unwrap()))
-            .collect();
-        let allow = perm_list("review-settings-mcp.json", "allow").expect("mcp settings");
-        let allowed_mcp: Vec<String> = allow
-            .iter()
-            .filter(|a| a.starts_with("mcp__"))
-            .cloned()
-            .collect();
-        assert_eq!(
-            allowed_mcp, expected,
-            "the allow-list must name exactly the tools the server exposes"
+            let expected: Vec<String> = super::mcp_tools(profile)
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| format!("mcp__{name}__{}", t["name"].as_str().unwrap()))
+                .collect();
+            let allow = perm_list(settings_file, "allow").expect("settings");
+            let allowed_mcp: Vec<String> = allow
+                .iter()
+                .filter(|a| a.starts_with("mcp__"))
+                .cloned()
+                .collect();
+            assert_eq!(
+                allowed_mcp, expected,
+                "{settings_file}: the allow-list must name exactly the tools the server exposes"
+            );
+        }
+    }
+
+    // The producer keeps Bash (it builds, tests and pushes), so its MCP tools have to be REACHABLE
+    // rather than merely present: Claude Code defers MCP schemas behind ToolSearch, and a run that
+    // cannot call ToolSearch sees them as nonexistent (the failure #63 hit).
+    #[test]
+    fn the_producer_can_reach_its_mcp_tools() {
+        let Some(allow) = perm_list("campaign-settings.json", "allow") else {
+            return;
+        };
+        assert!(
+            allow.iter().any(|a| a == "ToolSearch"),
+            "MCP tool schemas are deferred; without ToolSearch the clone tools are unreachable"
         );
+    }
+
+    // The whole point of the clone tools: the producer prompt must no longer mandate a `rm -rf` that
+    // the deny-list prefix-matches into unusability (#56).
+    #[test]
+    fn the_producer_prompt_releases_clones_through_the_tool_not_rm_rf() {
+        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
+            return;
+        };
+        assert!(
+            !prompt.contains("rm -rf <clonedir>"),
+            "campaign-prompt must not mandate `rm -rf <clonedir>` — a prefix-matched deny rule makes \
+             it impossible to follow, which is how 195 GB accumulated (#56)"
+        );
+        assert!(
+            prompt.contains("never `rm -rf` a clone"),
+            "the prompt must say so explicitly, not merely omit the old instruction"
+        );
+        // Every clone-lifecycle move the producer makes is named as a tool.
+        for tool in [
+            "mcp__fsm__clone_create",
+            "mcp__fsm__clone_release",
+            "mcp__fsm__clone_gc",
+        ] {
+            assert!(prompt.contains(tool), "the prompt must name {tool}");
+        }
+        // …and the old shell recipes for those moves are gone.
+        assert!(!prompt.contains("pr-review-report gc-clones"));
+        assert!(!prompt.contains("git -C <dir> fetch origin &&"));
     }
 
     // MCP mode's whole claim is that a non-FSM operation is UNREPRESENTABLE: no Bash at all, so no
@@ -6542,7 +7375,7 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc-clones", "/w"]),
             Cmd::GcClones {
-                work_dir: "/w".to_string(),
+                work_dirs: s(&["/w"]),
                 dry_run: false,
                 max_age_days: 30,
             }
@@ -6550,9 +7383,19 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc-clones", "/w", "--dry-run", "--max-age-days", "7"]),
             Cmd::GcClones {
-                work_dir: "/w".to_string(),
+                work_dirs: s(&["/w"]),
                 dry_run: true,
                 max_age_days: 7,
+            }
+        );
+        // SEVERAL roots in one sweep: the vetter's stranded `vet-*` clones live in the install dir,
+        // not WORK_DIR, so a one-root sweep never reclaimed them.
+        assert_eq!(
+            parse(&["prr", "gc-clones", "/w", "/install", "--dry-run"]),
+            Cmd::GcClones {
+                work_dirs: s(&["/w", "/install"]),
+                dry_run: true,
+                max_age_days: 30,
             }
         );
         // work-dir is mandatory for gc-clones (unlike gc); omitting it is a parse error.
@@ -6566,7 +7409,7 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc", "/w"]),
             Cmd::Gc {
-                work_dir: Some("/w".to_string()),
+                work_dirs: s(&["/w"]),
                 dry_run: false,
                 max_age_days: 30,
                 no_clones: false,
@@ -6579,7 +7422,7 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc", "--no-clones", "--no-nix"]),
             Cmd::Gc {
-                work_dir: None,
+                work_dirs: vec![],
                 dry_run: false,
                 max_age_days: 30,
                 no_clones: true,
@@ -6598,7 +7441,7 @@ mod cli_tests {
                 "--no-nix"
             ]),
             Cmd::Gc {
-                work_dir: Some("/w".to_string()),
+                work_dirs: s(&["/w"]),
                 dry_run: true,
                 max_age_days: 5,
                 no_clones: false,
@@ -6610,7 +7453,7 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc", "/w", "--nix-threshold", "50"]),
             Cmd::Gc {
-                work_dir: Some("/w".to_string()),
+                work_dirs: s(&["/w"]),
                 dry_run: false,
                 max_age_days: 30,
                 no_clones: false,
@@ -7516,6 +8359,8 @@ mod mcp_tests {
     struct FakeExec {
         calls: std::cell::RefCell<Vec<McpCall>>,
         reply: Result<String, String>,
+        profile: McpProfile,
+        roots: Vec<String>,
     }
 
     impl FakeExec {
@@ -7523,20 +8368,32 @@ mod mcp_tests {
             FakeExec {
                 calls: std::cell::RefCell::new(Vec::new()),
                 reply: Ok("{\"ok\":true}".to_string()),
+                profile: McpProfile::Vetter,
+                roots: vec!["/work".to_string()],
             }
         }
         fn failing(msg: &str) -> Self {
             FakeExec {
-                calls: std::cell::RefCell::new(Vec::new()),
                 reply: Err(msg.to_string()),
+                ..FakeExec::ok()
             }
+        }
+        fn producer() -> Self {
+            FakeExec {
+                profile: McpProfile::Producer,
+                ..FakeExec::ok()
+            }
+        }
+        fn with_roots(mut self, roots: &[&str]) -> Self {
+            self.roots = roots.iter().map(|r| r.to_string()).collect();
+            self
         }
         fn handle(&self, req: &Value) -> Option<Value> {
             let mut f = |c: McpCall| {
                 self.calls.borrow_mut().push(c);
                 self.reply.clone()
             };
-            mcp_handle(req, &mut f)
+            mcp_handle(self.profile, &self.roots, req, &mut f)
         }
         fn calls(&self) -> Vec<McpCall> {
             self.calls.borrow().iter().cloned().collect()
@@ -7625,7 +8482,14 @@ mod mcp_tests {
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
-            vec!["unvetted", "pr_context", "pr_checkout", "record_verdict"]
+            vec![
+                "unvetted",
+                "pr_context",
+                "pr_checkout",
+                "record_verdict",
+                // `pr_checkout` creates a clone, so the vetter owns the move that disposes of it.
+                "clone_release"
+            ]
         );
         // Every tool is callable: a name, a one-line description, an object schema.
         for t in &tools {
@@ -7811,6 +8675,10 @@ mod mcp_tests {
             "flag_close_candidate",
             "worklist",
             "",
+            // the producer's clone-management tools are not the vetter's moves
+            "clone_create",
+            "clone_gc",
+            "clone_list",
         ] {
             let resp = f.handle(&call(name, json!({}))).unwrap();
             assert!(is_error(&resp), "{name:?} must not exist");
@@ -7882,5 +8750,530 @@ mod mcp_tests {
             .unwrap();
         assert!(is_error(&resp));
         assert!(text(&resp).contains("gh pr diff"));
+    }
+
+    // --- profiles -------------------------------------------------------------------------------
+
+    #[test]
+    fn the_producer_surface_is_clone_lifecycle_and_nothing_else() {
+        let f = FakeExec::producer();
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+            .unwrap();
+        let tools = resp["result"]["tools"].as_array().unwrap().clone();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec!["clone_create", "clone_release", "clone_list", "clone_gc"]
+        );
+        for t in &tools {
+            assert!(!t["description"].as_str().unwrap().is_empty());
+            assert_eq!(t["inputSchema"]["type"], json!("object"));
+        }
+    }
+
+    // A profile is a real boundary, not a listing cosmetic: the vetter's WRITE must be unreachable
+    // from the producer's server even when it is named directly.
+    #[test]
+    fn a_profile_boundary_is_enforced_on_the_call_not_just_the_listing() {
+        let p = FakeExec::producer();
+        for vetter_only in ["record_verdict", "unvetted", "pr_context", "pr_checkout"] {
+            let resp = p.handle(&call(vetter_only, json!({"pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b"}))).unwrap();
+            assert!(is_error(&resp), "{vetter_only} must not exist for producer");
+            assert!(text(&resp).contains("clone_create"));
+        }
+        assert!(
+            p.calls().is_empty(),
+            "no vetter transition reached an effect"
+        );
+
+        let v = FakeExec::ok();
+        for producer_only in ["clone_create", "clone_gc", "clone_list"] {
+            let resp = v
+                .handle(&call(
+                    producer_only,
+                    json!({"repo": "o/r", "name": "x", "branch": "b"}),
+                ))
+                .unwrap();
+            assert!(is_error(&resp), "{producer_only} must not exist for vetter");
+        }
+        assert!(v.calls().is_empty());
+    }
+
+    // Every tool the profiles LIST must be handled by the guard: a listed-but-unvalidated name would
+    // be an advertised tool that always errors.
+    #[test]
+    fn every_listed_tool_is_handled_by_the_guard() {
+        for profile in [McpProfile::Vetter, McpProfile::Producer] {
+            for name in profile.tool_names() {
+                let err = validate_call(profile, &["/work".to_string()], name, &json!({}))
+                    .err()
+                    .unwrap_or_default();
+                assert!(
+                    !err.contains("no such tool") && !err.contains("listed but not implemented"),
+                    "{profile:?}/{name} is listed but unhandled: {err}"
+                );
+            }
+        }
+    }
+
+    // --- the path guard: a refused clone argument never reaches an effect -------------------------
+
+    #[test]
+    fn a_clone_name_must_be_one_component_inside_the_root() {
+        let root = "/home/gildlab/code";
+        // the only accepted shapes: a bare name, or the full path of a direct child.
+        assert_eq!(
+            clone_name_in_root(root, "raindex-2444"),
+            Ok("raindex-2444".to_string())
+        );
+        assert_eq!(
+            clone_name_in_root(root, "/home/gildlab/code/raindex-2444"),
+            Ok("raindex-2444".to_string())
+        );
+        assert_eq!(
+            clone_name_in_root(root, "  /home/gildlab/code/vet-x-1/  "),
+            Ok("vet-x-1".to_string())
+        );
+        // a trailing slash on the ROOT is the same root.
+        assert_eq!(
+            clone_name_in_root("/home/gildlab/code/", "x"),
+            Ok("x".to_string())
+        );
+
+        for (bad, why) in [
+            ("", "empty"),
+            ("   ", "empty"),
+            (".", "hidden/dot"),
+            ("..", "traversal"),
+            ("../etc", "traversal"),
+            ("../../../etc/passwd", "traversal"),
+            (
+                "/home/gildlab/code/../../etc",
+                "traversal laundered through the root prefix",
+            ),
+            (
+                "/home/gildlab/code/x/../../y",
+                "traversal after a valid component",
+            ),
+            ("/etc", "absolute, outside"),
+            ("/etc/passwd", "absolute, outside"),
+            ("/", "the filesystem root"),
+            ("/home/gildlab", "an ANCESTOR of the root"),
+            ("/home/gildlab/code", "the root itself"),
+            ("/home/gildlab/code/", "the root itself"),
+            // the sibling-prefix trick: `/home/gildlab/codeEVIL` shares a string prefix with the root
+            // but is a different directory. This is the exact class of bug the deny rule had.
+            (
+                "/home/gildlab/codeEVIL/x",
+                "sibling sharing a string prefix",
+            ),
+            ("/home/gildlab/code2", "sibling sharing a string prefix"),
+            ("a/b", "nested"),
+            ("raindex-2444/target", "nested"),
+            ("//etc", "nested/absolute"),
+            (".git", "dot-prefixed"),
+            (".ssh", "dot-prefixed"),
+            ("x\0y", "embedded NUL"),
+        ] {
+            assert!(
+                clone_name_in_root(root, bad).is_err(),
+                "{bad:?} must be refused ({why})"
+            );
+        }
+        // a root that is not absolute is refused outright — it would resolve against an inherited cwd.
+        assert!(clone_name_in_root("code", "x").is_err());
+        assert!(clone_name_in_root("", "x").is_err());
+        assert!(clone_name_in_root("./code", "x").is_err());
+    }
+
+    #[test]
+    fn a_clone_resolves_against_any_configured_root_and_reports_them_all() {
+        let roots = vec!["/work".to_string(), "/install".to_string()];
+        assert_eq!(
+            clone_in_roots(&roots, "raindex-1"),
+            Ok(("/work".to_string(), "raindex-1".to_string()))
+        );
+        // the stranded vet-* clones: named by full path in the SECOND root.
+        assert_eq!(
+            clone_in_roots(&roots, "/install/vet-rain.flare-170"),
+            Ok(("/install".to_string(), "vet-rain.flare-170".to_string()))
+        );
+        let err = clone_in_roots(&roots, "/etc/passwd").unwrap_err();
+        assert!(err.contains("/work") && err.contains("/install"), "{err}");
+        assert!(clone_in_roots(&[], "x").is_err());
+    }
+
+    // The refusal standard used for invalid verdicts, applied to the dangerous tool: an argument the
+    // guard rejects must record ZERO calls — there is no effect for it to have partially performed.
+    #[test]
+    fn a_refused_clone_argument_reaches_no_effect() {
+        let f = FakeExec::producer().with_roots(&["/work"]);
+        for bad in [
+            json!({"clone": "/etc"}),
+            json!({"clone": "/"}),
+            json!({"clone": ".."}),
+            json!({"clone": "../../etc"}),
+            json!({"clone": "/work/../../etc"}),
+            json!({"clone": "/work"}),
+            json!({"clone": "/workEVIL/x"}),
+            json!({"clone": "sub/dir"}),
+            json!({"clone": ".git"}),
+            json!({"clone": ""}),
+            json!({}),
+            json!({"clone": 7}),
+        ] {
+            let resp = f.handle(&call("clone_release", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(
+            f.calls().is_empty(),
+            "a refused clone argument performed no effect at all"
+        );
+
+        // …and the accepted shapes DO reach the effect, with the guard's output — not the raw string.
+        f.handle(&call("clone_release", json!({"clone": "raindex-2444"})))
+            .unwrap();
+        f.handle(&call(
+            "clone_release",
+            json!({"clone": "/work/vet-x-1", "discard_uncommitted": true}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::CloneRelease {
+                    root: "/work".to_string(),
+                    name: "raindex-2444".to_string(),
+                    discard_uncommitted: false,
+                },
+                McpCall::CloneRelease {
+                    root: "/work".to_string(),
+                    name: "vet-x-1".to_string(),
+                    discard_uncommitted: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn clone_create_validates_the_repo_the_name_and_the_branch() {
+        let f = FakeExec::producer().with_roots(&["/work", "/install"]);
+        for bad in [
+            json!({"repo": "raindex", "name": "x", "branch": "b"}), // no owner
+            json!({"repo": "a/b/c", "name": "x", "branch": "b"}),
+            json!({"repo": "/b", "name": "x", "branch": "b"}),
+            json!({"repo": "o/r", "name": "../x", "branch": "b"}),
+            json!({"repo": "o/r", "name": "/etc", "branch": "b"}),
+            json!({"repo": "o/r", "name": "a/b", "branch": "b"}),
+            json!({"repo": "o/r", "name": "x"}),   // no branch
+            json!({"repo": "o/r", "branch": "b"}), // no name
+            json!({"name": "x", "branch": "b"}),   // no repo
+            json!({"repo": "o/r", "name": "x", "branch": "--upload-pack=evil"}),
+            json!({"repo": "o/r", "name": "x", "branch": "two words"}),
+        ] {
+            let resp = f.handle(&call("clone_create", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(f.calls().is_empty());
+
+        // a new clone is ALWAYS built in the first root, never in the legacy install root.
+        f.handle(&call(
+            "clone_create",
+            json!({"repo": "rainlanguage/raindex", "name": "raindex-2444", "branch": "2026-07-22-issue-2444"}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::CloneCreate {
+                root: "/work".to_string(),
+                name: "raindex-2444".to_string(),
+                slug: "rainlanguage/raindex".to_string(),
+                branch: "2026-07-22-issue-2444".to_string(),
+                base: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn clone_gc_bounds_its_age_cap() {
+        let f = FakeExec::producer();
+        for bad in [
+            json!({"max_age_days": 0}), // would delete a clone the moment it exists
+            json!({"max_age_days": -1}),
+            json!({"max_age_days": 100000}),
+            json!({"max_age_days": "30"}),
+        ] {
+            let resp = f.handle(&call("clone_gc", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(f.calls().is_empty());
+        f.handle(&call("clone_gc", json!({}))).unwrap();
+        f.handle(&call(
+            "clone_gc",
+            json!({"dry_run": true, "max_age_days": 1}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::CloneGc {
+                    max_age_days: GC_MAX_AGE_DEFAULT,
+                    dry_run: false
+                },
+                McpCall::CloneGc {
+                    max_age_days: 1,
+                    dry_run: true
+                },
+            ]
+        );
+    }
+
+    // --- the release decision --------------------------------------------------------------------
+
+    fn st(unpushed: Option<u32>, dirt: Option<&str>) -> LocalCloneState {
+        LocalCloneState {
+            unpushed,
+            dirt: dirt.map(String::from),
+            branch: "b".to_string(),
+        }
+    }
+
+    #[test]
+    fn unpushed_work_refuses_release_and_no_flag_overrides_it() {
+        for discard in [false, true] {
+            assert!(release_decision(&st(Some(1), Some("")), discard).is_err());
+            assert!(release_decision(&st(Some(9), Some("")), discard).is_err());
+            // git could not answer -> treated as unpushed, the same fail-safe gc uses.
+            assert!(release_decision(&st(None, Some("")), discard).is_err());
+            // …and a clone whose STATUS is unknown is refused too.
+            assert!(release_decision(&st(Some(0), None), discard).is_err());
+        }
+        let e = release_decision(&st(Some(3), Some("")), true).unwrap_err();
+        assert!(
+            e.contains("3 commit(s)") && e.contains("No flag overrides"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn uncommitted_changes_refuse_unless_the_caller_accepts_losing_them() {
+        let dirty = st(Some(0), Some(" M Cargo.lock\n?? out/\n"));
+        let e = release_decision(&dirty, false).unwrap_err();
+        assert!(e.contains("2 uncommitted change(s)"), "{e}");
+        assert!(e.contains("Cargo.lock"), "the refusal SHOWS the dirt: {e}");
+        assert!(release_decision(&dirty, true).is_ok());
+        // clean + pushed releases without any flag.
+        assert!(release_decision(&st(Some(0), Some("")), false).is_ok());
+    }
+
+    // --- the filesystem half of the guard --------------------------------------------------------
+
+    /// A disposable root with a real (empty but valid) git clone in it.
+    fn tmp_root(tag: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("prr-clone-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+    fn mk_clone(root: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let d = root.join(name);
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        std::fs::write(d.join("README.md"), "x").unwrap();
+        d
+    }
+
+    #[test]
+    fn only_a_real_git_clone_directly_under_the_root_resolves() {
+        let root = tmp_root("resolve");
+        let rs = root.to_string_lossy().to_string();
+        let good = mk_clone(&root, "raindex-1");
+        assert_eq!(
+            resolve_existing_clone(&rs, "raindex-1").unwrap(),
+            std::fs::canonicalize(&good).unwrap()
+        );
+
+        // a plain directory with no .git is NOT a work clone — this is what keeps a malformed
+        // argument away from ordinary data.
+        std::fs::create_dir_all(root.join("not-a-clone/deep")).unwrap();
+        std::fs::write(root.join("not-a-clone/precious.txt"), "keep me").unwrap();
+        let e = resolve_existing_clone(&rs, "not-a-clone").unwrap_err();
+        assert!(e.contains("no .git"), "{e}");
+
+        // a FILE is refused; a missing entry is refused.
+        std::fs::write(root.join("a-file"), "x").unwrap();
+        assert!(resolve_existing_clone(&rs, "a-file").is_err());
+        assert!(resolve_existing_clone(&rs, "nope").is_err());
+
+        // a SYMLINK — even one pointing at a genuine clone — is refused: deleting it would act on
+        // whatever it points at, which is the escape the guard exists to close.
+        let escape = tmp_root("resolve-escape");
+        let outside = mk_clone(&escape, "outside-clone");
+        std::os::unix::fs::symlink(&outside, root.join("sneaky")).unwrap();
+        let e = resolve_existing_clone(&rs, "sneaky").unwrap_err();
+        assert!(e.contains("SYMLINK"), "{e}");
+        // …and it is still there afterwards. A refusal has ZERO filesystem effect.
+        assert!(outside.exists());
+        assert!(root.join("not-a-clone/precious.txt").exists());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&escape);
+    }
+
+    #[test]
+    fn release_refuses_a_non_clone_without_touching_it() {
+        let root = tmp_root("release-refuse");
+        let rs = root.to_string_lossy().to_string();
+        std::fs::create_dir_all(root.join("precious")).unwrap();
+        std::fs::write(root.join("precious/data.txt"), "irreplaceable").unwrap();
+
+        for name in ["precious", "..", "/etc", "nope"] {
+            let (r, n) = match clone_in_roots(std::slice::from_ref(&rs), name) {
+                Ok(v) => v,
+                Err(_) => continue, // refused by the pure guard, before any path exists
+            };
+            assert!(clone_release_exec(&r, &n, true).is_err(), "{name}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join("precious/data.txt")).unwrap(),
+            "irreplaceable",
+            "a refused release left the directory byte-for-byte intact"
+        );
+        // The root itself is never removed, whatever is asked.
+        assert!(root.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_real_release_removes_the_clone_and_reports_what_it_reclaimed() {
+        let root = tmp_root("release-ok");
+        let rs = root.to_string_lossy().to_string();
+        // A real repo, so the git guards run against git rather than a stub.
+        let d = root.join("throwaway");
+        std::fs::create_dir_all(&d).unwrap();
+        if git_run(&d, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // no git in this sandbox
+        }
+        std::fs::write(d.join("f.txt"), vec![b'x'; 4096]).unwrap();
+
+        // A brand-new repo has an UNBORN HEAD — no commits, so nothing can be lost — but untracked
+        // files, so it is DIRTY: release refuses until the caller accepts losing them.
+        let e = clone_release_exec(&rs, "throwaway", false).unwrap_err();
+        assert!(e.contains("uncommitted"), "{e}");
+        assert!(d.exists(), "the refusal did not delete anything");
+
+        let out = clone_release_exec(&rs, "throwaway", true).unwrap();
+        assert!(!d.exists(), "the clone is gone");
+        assert!(root.exists(), "the root is not");
+        assert!(out["bytes"].as_u64().unwrap() >= 4096, "{out}");
+        assert_eq!(out["released"], json!("throwaway"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_committed_but_unpushed_clone_is_never_released() {
+        let root = tmp_root("release-unpushed");
+        let rs = root.to_string_lossy().to_string();
+        let d = root.join("wip");
+        std::fs::create_dir_all(&d).unwrap();
+        if git_run(&d, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let _ = git_run(&d, &["config", "user.email", "t@t"]);
+        let _ = git_run(&d, &["config", "user.name", "t"]);
+        std::fs::write(d.join("f.txt"), "work").unwrap();
+        git_run(&d, &["add", "-A"]).unwrap();
+        git_run(&d, &["-c", "commit.gpgsign=false", "commit", "-qm", "wip"]).unwrap();
+
+        // clean tree, one commit on no remote: refused even with the discard flag set.
+        for discard in [false, true] {
+            let e = clone_release_exec(&rs, "wip", discard).unwrap_err();
+            assert!(e.contains("exist only in this clone"), "{e}");
+        }
+        assert!(d.join("f.txt").exists(), "the commit is still on disk");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // An interrupted clone (a `.git` with no commit yet) is NOT an unknown push state — there is
+    // nothing in it to lose. Reading it as unknown made every half-finished clone immortal, since
+    // both the sweep and release fail safe on `None`.
+    #[test]
+    fn an_unborn_head_reads_as_zero_unpushed_not_as_unknown() {
+        let root = tmp_root("unborn");
+        let d = root.join("half-cloned");
+        std::fs::create_dir_all(&d).unwrap();
+        if git_run(&d, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        assert_eq!(local_clone_state(&d).unpushed, Some(0));
+        // …while a directory that is not a repo at all stays genuinely unknown.
+        let notrepo = root.join("not-a-repo");
+        std::fs::create_dir_all(&notrepo).unwrap();
+        assert_eq!(local_clone_state(&notrepo).unpushed, None);
+        assert!(release_decision(&local_clone_state(&notrepo), true).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the sweep --------------------------------------------------------------------------------
+
+    #[test]
+    fn the_sweep_only_considers_git_clones_directly_under_a_root() {
+        let root = tmp_root("sweep");
+        let rs = root.to_string_lossy().to_string();
+        mk_clone(&root, "a-clone");
+        std::fs::create_dir_all(root.join("plain-dir/nested")).unwrap();
+        std::fs::write(root.join("loose-file"), "x").unwrap();
+        // a clone one level too deep is NOT a candidate.
+        mk_clone(&root.join("plain-dir"), "deep-clone");
+
+        let mut seen = Vec::new();
+        let recs = gc_clones_sweep(&rs, 30, true, &mut |r| seen.push(r.name.clone())).unwrap();
+        assert_eq!(
+            recs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            vec!["a-clone"]
+        );
+        assert_eq!(
+            seen,
+            vec!["a-clone"],
+            "every decision is streamed as it is made"
+        );
+        // dry-run touches nothing.
+        assert!(root.join("a-clone").exists());
+        assert!(root.join("plain-dir/nested").exists());
+        assert!(root.join("loose-file").exists());
+        // an unreadable root is an error, not a silent zero-clone success.
+        assert!(gc_clones_sweep("/no/such/root", 30, true, &mut |_| {}).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dir_size_counts_files_and_never_follows_symlinks() {
+        let root = tmp_root("size");
+        std::fs::create_dir_all(root.join("d/sub")).unwrap();
+        std::fs::write(root.join("d/a"), vec![b'x'; 1000]).unwrap();
+        std::fs::write(root.join("d/sub/b"), vec![b'x'; 2000]).unwrap();
+        assert_eq!(dir_size_bytes(&root.join("d")), 3000);
+        // a symlink to a big tree outside must not be counted as if it lived inside.
+        std::fs::write(root.join("huge"), vec![b'x'; 100_000]).unwrap();
+        std::os::unix::fs::symlink(root.join("huge"), root.join("d/link")).unwrap();
+        let with_link = dir_size_bytes(&root.join("d"));
+        assert!(
+            with_link < 4000,
+            "a symlink must not pull its target's size in: {with_link}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn human_bytes_is_readable_at_every_scale() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(999), "999 B");
+        assert_eq!(human_bytes(1024), "1.0 KB");
+        assert_eq!(human_bytes(1536), "1.5 KB");
+        assert_eq!(human_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(human_bytes(195 * 1024 * 1024 * 1024), "195.0 GB");
     }
 }

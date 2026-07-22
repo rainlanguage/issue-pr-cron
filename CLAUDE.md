@@ -39,16 +39,23 @@ transition functions:
 | `--trusted-comments <owner/repo> <n> [--marker] [--issue]` | author-verified comment read — the only trusted way to read a comment                                   |
 | `--commit-closes <owner/repo> <n>`                         | closing-keyword vs. `closingIssuesReferences` drift check                                               |
 | `--backfill-comments`                                      | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment) |
-| `--gc-clones <work-dir>`                                   | reclaim merged/closed work-clones (state cleanup)                                                       |
+| `gc-clones <work-dir>...`                                  | reclaim merged/closed work-clones across one or more clone roots (state cleanup)                        |
 | `unvetted [--json] [--include-skipped]`                    | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals     |
-| `mcp`                                                      | serve the vetter's transitions over MCP (stdio) — the FSM as a tool surface, not as prose               |
+| `mcp [--profile vetter\|producer]`                         | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                   |
 
 ## The FSM as a tool surface (MCP)
 
-`pr-review-report mcp` speaks MCP over stdio and exposes the **vetter's** whole
-job as four tools — `unvetted` (state-load), `pr_context` (read one PR),
-`pr_checkout` (local source for the audit lens), `record_verdict` (the only
-write). Run with `--mcp-config review-mcp.json --strict-mcp-config` and
+`pr-review-report mcp` speaks MCP over stdio. `--profile` picks the role, and a
+profile is a **surface** filter, not a permission: `tools/list` returns only
+that role's tools, so neither role pays preamble for the other's schemas and
+neither can name the other's transitions.
+
+| Profile            | Tools                                                                      |
+| ------------------ | -------------------------------------------------------------------------- |
+| `vetter` (default) | `unvetted`, `pr_context`, `pr_checkout`, `record_verdict`, `clone_release` |
+| `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`                  |
+
+Run with `--mcp-config review-mcp.json --strict-mcp-config` and
 `review-settings-mcp.json`, the vetter has **no Bash at all**: the tools are
 `mcp__fsm__*` and a non-FSM operation is unrepresentable rather than merely
 denied (a Bash deny-list is prefix-matched and bypassable). The transition
@@ -56,9 +63,54 @@ guards — verdict vocabulary, mandatory in-range cost, well-formed PR ref,
 human-sacred refusal — live in `validate_call` / `verdict_plan`, tested once,
 instead of being re-asserted in prose.
 
-Opt-in and OFF by default: set `VETTER_MCP=1` in `cron.env`. The surface is kept
-deliberately small — a wrapper per `gh` command would cost more context than the
-prose it replaces.
+The vetter surface is opt-in and OFF by default: set `VETTER_MCP=1` in
+`cron.env`. The producer's server (`campaign-mcp.json`) is **additive** — no
+`--strict-mcp-config`, it keeps its Bash — and is always on, because what it
+gains is a clone lifecycle it could not previously perform at all.
+
+## Work-clone lifecycle
+
+A work clone is created and destroyed through **tools**, never through shell.
+`clone_create` clones or re-syncs `<root>/<name>`; `clone_release` disposes of
+one; `clone_gc` is the end-of-run backstop sweep; `clone_list` reports what is
+on the box. The roots come from the environment (`WORK_DIR`, plus `INSTALL_DIR`
+because stranded `vet-*` clones live there) and **never** from a tool argument —
+a model-supplied root would make every guard vacuous.
+
+Why a tool: `campaign-settings.json` denies `Bash(rm -rf /:*)`, deny rules are
+**prefix-matched**, and so it also denied `rm -rf $WORK_DIR/<clone>` — the exact
+deletion `campaign-prompt.txt` mandated. The instruction was impossible to
+follow for months and the box grew to 195 GB of clones (#56). Widening the rule
+would fix that instance and keep the shape of the problem; moving the delete
+behind a tool means "remove something outside the work roots" is not
+expressible.
+
+The path guards, in `clone_name_in_root` + `resolve_existing_clone`:
+
+- exactly **one path component** directly under a configured root — a bare name
+  or the full path of a direct child, nothing else;
+- **no `..`** in any position, checked before any prefix arithmetic;
+- **no absolute path outside the root**, including the sibling-prefix trick
+  (`/home/gildlab/codeEVIL` shares a string prefix with `/home/gildlab/code` —
+  the same class of bug as the deny rule itself);
+- **never the root itself**, an ancestor of it, or a `.`-prefixed entry;
+- **never a symlink**, and the canonical path must still be a direct child, so a
+  symlinked component cannot smuggle the target elsewhere;
+- **must contain `.git`** — only a git work clone is ever deletable, so no
+  malformed argument reaches ordinary data.
+
+And the release decision, in `release_decision` (shared with the sweep, so the
+attended release and the unattended sweep never disagree about whether a clone
+still holds work):
+
+- commits that exist **only** in the clone refuse **unconditionally** — there is
+  no override flag, because a flag is a thing a model under time pressure sets;
+- an unknown push state is treated as unpushed (fail safe) — except an **unborn
+  HEAD**, which is not unknown: a clone with no commits has nothing to lose, and
+  reading it as unknown made every interrupted clone immortal;
+- uncommitted changes refuse too, but `discard_uncommitted: true` overrides,
+  because in practice that dirt is build output and refusing it outright is what
+  leaves the clone on disk forever.
 
 ## Invariants
 
