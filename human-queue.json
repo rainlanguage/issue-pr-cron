@@ -421,8 +421,8 @@
     "ready": 49,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 177,
-    "unvetted": 3
+    "totalProducerPrs": 178,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -912,8 +912,14 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "number": 65,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "Finish retiring the local ledgers",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/65"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
