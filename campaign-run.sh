@@ -85,6 +85,13 @@ fi
 mkdir -p "$WORK_DIR" "$RUNDIR"
 cd "$WORK_DIR" || exit 1
 
+# The FSM MCP server reads both clone roots from the environment, never from a tool argument — a
+# model-supplied root would make its path guard vacuous. WORK_DIR is where clones belong; INSTALL_DIR
+# is swept too because it collected `vet-*` clones for months (review-run.sh did not substitute
+# {{WORK_DIR}} into the vetter prompt, so the vetter checked out into its cwd).
+export WORK_DIR
+export INSTALL_DIR="$DIR"
+
 # rotate per-run traces (keep newest $KEEP_RUNS .jsonl + their .err sidecars)
 find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d" " -f2- | tail -n +$((KEEP_RUNS + 1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -97,6 +104,7 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
+              -e "s#{{INSTALL_DIR}}#$DIR#g" \
               "$DIR/campaign-prompt.txt")"
 
 {
@@ -108,6 +116,11 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 #   - bare `gh ...` is subject to campaign-settings.json's deny-list (nix-wrapped gh bypasses it),
 #   - bare `jq` means dedup is one jq pass, not the byte-grep pathology that stalls runs,
 #   - no nix git-hooks WARNING banner leaking into close-candidates.jsonl.
+# `--mcp-config campaign-mcp.json` adds the FSM server's PRODUCER profile: clone_create /
+# clone_release / clone_list / clone_gc. Work-clone lifecycle is a TOOL rather than shell because the
+# `Bash(rm -rf /:*)` deny rule is prefix-matched and so also denied `rm -rf $WORK_DIR/<clone>` — the
+# very deletion campaign-prompt mandated (#56). NO `--strict-mcp-config` here, unlike the vetter: the
+# producer keeps its Bash and whatever servers its skill plugins bring, and this server is ADDITIVE.
 # Stream every event as JSON. tee keeps the full trace even if the jq distiller is missing/errors.
 # Model fallback: try $MODEL, then each $FALLBACK_MODELS in order, advancing to the next ONLY when a
 # model is quota-limited (HTTP 429 / "reached your … limit"). Any other outcome (success, a nix/auth
@@ -120,6 +133,7 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
   timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
     --model "$USED_MODEL" \
     --settings "$DIR/campaign-settings.json" \
+    --mcp-config "$DIR/campaign-mcp.json" \
     --permission-mode default \
     --verbose --output-format stream-json \
     --add-dir "$WORK_DIR" \

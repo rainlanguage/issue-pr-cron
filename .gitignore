@@ -20,6 +20,8 @@
 !/review-prompt.txt
 !/review-settings.json
 !/review-mcp.json
+# Producer's clone-lifecycle MCP surface (additive; the producer keeps its Bash):
+!/campaign-mcp.json
 !/merge-run.sh
 !/merge-prompt.txt
 !/merge-settings.json
