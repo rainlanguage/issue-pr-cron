@@ -59,17 +59,17 @@ The vetter profile is the vetter's **only** tool surface: `review-run.sh` always
 passes `--mcp-config review-mcp.json --strict-mcp-config` with
 `review-settings.json`, so the vetter has **no Bash at all** — the tools are
 `mcp__fsm__*` and a non-FSM operation is unrepresentable rather than merely
-denied (a Bash deny-list is prefix-matched and bypassable). There is no
-non-MCP vetter prompt or settings file, and no flag that selects one. The
-transition guards — verdict vocabulary, mandatory in-range cost, well-formed PR
-ref, human-sacred refusal — live in `validate_call` / `verdict_plan`, tested
-once, instead of being re-asserted in prose.
+denied (a Bash deny-list is prefix-matched and bypassable). There is no non-MCP
+vetter prompt or settings file, and no flag that selects one. The transition
+guards — verdict vocabulary, mandatory in-range cost, well-formed PR ref,
+human-sacred refusal — live in `validate_call` / `verdict_plan`, tested once,
+instead of being re-asserted in prose.
 
 The vetter's surface **replaces** its Bash, so it is `--strict-mcp-config` and
 there is no non-MCP prompt or settings file to fall back to. The producer's
-server (`campaign-mcp.json`) is **additive** — no `--strict-mcp-config`, it keeps
-its Bash — because what it gains is a clone lifecycle it could not previously
-perform at all. Neither is selectable at run time.
+server (`campaign-mcp.json`) is **additive** — no `--strict-mcp-config`, it
+keeps its Bash — because what it gains is a clone lifecycle it could not
+previously perform at all. Neither is selectable at run time.
 
 The vetter's surface is also deliberately **read-only on the filesystem**: it
 reads the `pr_checkout` clone, it never builds or runs anything in it.
