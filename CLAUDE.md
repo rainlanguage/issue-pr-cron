@@ -48,17 +48,24 @@ transition functions:
 `pr-review-report mcp` speaks MCP over stdio and exposes the **vetter's** whole
 job as four tools — `unvetted` (state-load), `pr_context` (read one PR),
 `pr_checkout` (local source for the audit lens), `record_verdict` (the only
-write). Run with `--mcp-config review-mcp.json --strict-mcp-config` and
-`review-settings-mcp.json`, the vetter has **no Bash at all**: the tools are
+write). This is the vetter's **only** tool surface: `review-run.sh` always
+passes `--mcp-config review-mcp.json --strict-mcp-config` with
+`review-settings.json`, so the vetter has **no Bash at all** — the tools are
 `mcp__fsm__*` and a non-FSM operation is unrepresentable rather than merely
-denied (a Bash deny-list is prefix-matched and bypassable). The transition
-guards — verdict vocabulary, mandatory in-range cost, well-formed PR ref,
-human-sacred refusal — live in `validate_call` / `verdict_plan`, tested once,
-instead of being re-asserted in prose.
+denied (a Bash deny-list is prefix-matched and bypassable). There is no
+non-MCP vetter prompt or settings file, and no flag that selects one. The
+transition guards — verdict vocabulary, mandatory in-range cost, well-formed PR
+ref, human-sacred refusal — live in `validate_call` / `verdict_plan`, tested
+once, instead of being re-asserted in prose.
 
-Opt-in and OFF by default: set `VETTER_MCP=1` in `cron.env`. The surface is kept
-deliberately small — a wrapper per `gh` command would cost more context than the
-prose it replaces.
+The surface is kept deliberately small — a wrapper per `gh` command would cost
+more context than the prose it replaces. It is also deliberately **read-only on
+the filesystem**: the vetter reads the `pr_checkout` clone, it never builds or
+runs anything in it. Clean-by-construction work clones are the producer's
+obligation (`campaign-prompt.txt` step 6b) and, for rainix Solidity repos, the
+`rainix-copy-artifacts` workflow's `git diff --exit-code`; re-running a PR's
+tests is CI's job. The vetter's QA gate checks that the evidence block exists
+and holds against the diff it reads, nothing more.
 
 ## Invariants
 

@@ -16,11 +16,9 @@
 # Rust rewrite of pr-review-report.sh (target/ ignored by the project's own .gitignore):
 !/pr-review-report-rs/
 !/review-run.sh
+# The vetter runs on the FSM MCP surface only (issue #52): prompt, tool allow/deny, server config.
 !/review-prompt.txt
 !/review-settings.json
-# MCP-only vetter surface (issue #52): opt-in via VETTER_MCP=1 in cron.env.
-!/review-prompt-mcp.txt
-!/review-settings-mcp.json
 !/review-mcp.json
 !/merge-run.sh
 !/merge-prompt.txt
