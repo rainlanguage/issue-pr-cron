@@ -1,5 +1,5 @@
 // pr-review-report — report every open PR (and logged close-candidate) that needs a HUMAN decision,
-// RESPECTING reviews already done: it overlays (a) recorded review verdicts in review-verdicts.jsonl
+// RESPECTING reviews already done: it reads verdict state from GitHub labels and
 // and (b) GitHub's own review state (APPROVED / CHANGES_REQUESTED) on top of the CI/mergeability
 // signal. Rust rewrite of pr-review-report.sh, fixing the 16 bugs from the adversarial review.
 //
@@ -8,7 +8,7 @@
 //          pr-review-report --queue [N]                 # cheapest-first review queue
 //          pr-review-report --commit-closes <owner/repo> <pr>  # fail if a commit keyword closes an out-of-index issue
 //          pr-review-report --deploy <owner/repo> <pr> [--network <net>] [--dry-run]  # sanctioned Zoltu deploy of a PR branch
-// Config (env overrides cron.env in CWD, then default): ORG, ORGS (org scope for --queue), PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
+// Config (env overrides cron.env in CWD, then default): ORG, ORGS (org scope for --queue), PR_ASSIGNEE.
 
 use clap::{Parser, Subcommand};
 use serde_json::Value;
