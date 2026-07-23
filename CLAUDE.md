@@ -52,11 +52,11 @@ write). This is the vetter's **only** tool surface: `review-run.sh` always
 passes `--mcp-config review-mcp.json --strict-mcp-config` with
 `review-settings.json`, so the vetter has **no Bash at all** — the tools are
 `mcp__fsm__*` and a non-FSM operation is unrepresentable rather than merely
-denied (a Bash deny-list is prefix-matched and bypassable). There is no
-non-MCP vetter prompt or settings file, and no flag that selects one. The
-transition guards — verdict vocabulary, mandatory in-range cost, well-formed PR
-ref, human-sacred refusal — live in `validate_call` / `verdict_plan`, tested
-once, instead of being re-asserted in prose.
+denied (a Bash deny-list is prefix-matched and bypassable). There is no non-MCP
+vetter prompt or settings file, and no flag that selects one. The transition
+guards — verdict vocabulary, mandatory in-range cost, well-formed PR ref,
+human-sacred refusal — live in `validate_call` / `verdict_plan`, tested once,
+instead of being re-asserted in prose.
 
 The surface is kept deliberately small — a wrapper per `gh` command would cost
 more context than the prose it replaces. It is also deliberately **read-only on

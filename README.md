@@ -95,9 +95,10 @@ server is the vetter's **only** tool surface.
 | `pr_checkout`    | local read-only clone of the PR head, so the `audit` skill has source                                        |
 | `record_verdict` | the only write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                               |
 
-`review-run.sh` always launches the model with `--mcp-config review-mcp.json
---strict-mcp-config` and `review-settings.json`, so the vetter's entire tool
-surface is `mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}` plus
+`review-run.sh` always launches the model with `--mcp-config review-mcp.json`,
+`--strict-mcp-config` and `--settings review-settings.json`, so the vetter's
+entire tool surface is
+`mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}` plus
 `Read`/`Grep`/`Glob`/`Skill`/`ToolSearch` — **no Bash**, so there is no raw `gh`
 or `git` to reach for. There is no second vetter configuration and no flag that
 selects one. The guards (verdict vocabulary, a mandatory 0-1000 cost, a
@@ -212,20 +213,20 @@ rules in `campaign-prompt.txt` (step 7 / 7a).
 
 ## Files (tracked here)
 
-| File                       | Purpose                                                                                                                                                                                                                                         |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `campaign-run.sh`          | Durable runner: `flock` single-run lock, `DISABLED` kill-switch, `timeout`, bakes PATH+nix, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`).                                    |
-| `campaign-prompt.txt`      | The campaign instructions fed to the model.                                                                                                                                                                                                     |
-| `campaign-settings.json`   | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                       |
-| `review-run.sh`            | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                   |
-| `review-prompt.txt`        | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                             |
-| `review-settings.json`     | Tool allow/deny for the vetter: the four `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                             |
-| `review-mcp.json`          | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                |
-| `merge-run.sh`             | Merge runner — drives human-approved PRs to merge. Dry-run by default (`MERGE_DRY_RUN`). Logs to `merge.log`. Kill-switch `merge-DISABLED`.                                                                                                     |
-| `merge-prompt.txt`         | The merge instructions: only human-approved PRs, read every failing check before admin-merge-over-env-reds, never deploy/force-push/touch-issues.                                                                                               |
-| `merge-settings.json`      | Tool allow/deny for the merge cron — allows `gh pr merge`/`comment`, denies deploy/force-push/issue-ops/other mutations.                                                                                                                        |
-| `cron.env.example`         | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                    |
-| `pr-review-report.sh`      | Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / relink / reject / close / unreviewed / pending / draft), respecting `review-verdicts.jsonl` + GitHub approvals, as clickable URLs. |
+| File                     | Purpose                                                                                                                                                                                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `campaign-run.sh`        | Durable runner: `flock` single-run lock, `DISABLED` kill-switch, `timeout`, bakes PATH+nix, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`).                                    |
+| `campaign-prompt.txt`    | The campaign instructions fed to the model.                                                                                                                                                                                                     |
+| `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                       |
+| `review-run.sh`          | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                   |
+| `review-prompt.txt`      | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                            |
+| `review-settings.json`   | Tool allow/deny for the vetter: the four `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                             |
+| `review-mcp.json`        | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                |
+| `merge-run.sh`           | Merge runner — drives human-approved PRs to merge. Dry-run by default (`MERGE_DRY_RUN`). Logs to `merge.log`. Kill-switch `merge-DISABLED`.                                                                                                     |
+| `merge-prompt.txt`       | The merge instructions: only human-approved PRs, read every failing check before admin-merge-over-env-reds, never deploy/force-push/touch-issues.                                                                                               |
+| `merge-settings.json`    | Tool allow/deny for the merge cron — allows `gh pr merge`/`comment`, denies deploy/force-push/issue-ops/other mutations.                                                                                                                        |
+| `cron.env.example`       | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                    |
+| `pr-review-report.sh`    | Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / relink / reject / close / unreviewed / pending / draft), respecting `review-verdicts.jsonl` + GitHub approvals, as clickable URLs. |
 
 ## Configuration
 
