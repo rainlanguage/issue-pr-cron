@@ -81,11 +81,12 @@ state change from a prompt is a _loose_ transition — unenforced and untested �
 so the prompts route **all** GitHub I/O through the tool. That is what makes
 this an actual finite state machine rather than a picture of one.
 
-### The vetter's transitions as an MCP surface (opt-in)
+### The vetter's transitions as an MCP surface
 
-Routing through the tool is still enforced by the **prompt**, and a Bash
-deny-list is prefix-matched and bypassable. `pr-review-report mcp` closes that
-gap by serving the vetter's transitions over MCP (stdio):
+For the producer, routing through the tool is enforced by the **prompt**, and a
+Bash deny-list is prefix-matched and bypassable. For the vetter that gap is
+closed: `pr-review-report mcp` serves its transitions over MCP (stdio), and that
+server is the vetter's **only** tool surface.
 
 | Tool             | The move it makes                                                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -95,17 +96,32 @@ gap by serving the vetter's transitions over MCP (stdio):
 | `record_verdict` | the only write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                               |
 | `clone_release`  | dispose of a checkout it is finished with (guarded — see below)                                              |
 
-Run with `--mcp-config review-mcp.json --strict-mcp-config` and
-`review-settings-mcp.json`, the vetter's entire tool surface is
+`review-run.sh` always launches the model with `--mcp-config review-mcp.json
+--strict-mcp-config` and `review-settings.json`, so the vetter's entire tool
+surface is
 `mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict,clone_release}` plus
 `Read`/`Grep`/`Glob`/`Skill`/`ToolSearch` — **no Bash**, so there is no raw `gh`
-or `git` to reach for. The guards (verdict vocabulary, a mandatory 0-1000 cost,
-a well-formed `owner/repo#n`, the human-sacred refusal) are enforced in the
-server and unit-tested rather than restated in the prompt.
+or `git` to reach for. There is no second vetter configuration and no flag that
+selects one. The guards (verdict vocabulary, a mandatory 0-1000 cost, a
+well-formed `owner/repo#n`, the human-sacred refusal) are enforced in the server
+and unit-tested rather than restated in the prompt.
 
-**Opt-in, off by default:** set `VETTER_MCP=1` in `cron.env` and the runner uses
-`review-prompt-mcp.txt` + `review-settings-mcp.json`; unset, the vetter runs
-exactly as it does today.
+**What the vetter therefore does not verify.** With no Bash it cannot build, and
+cannot execute anything in the clone `pr_checkout` gives it — it reads source,
+it does not run it. Two checks live elsewhere as a result, and the vetter prompt
+does not ask for either:
+
+- **A clean working tree after a build.** Keeping a work clone clean by
+  construction is the **producer's** obligation (`campaign-prompt.txt` step 6b:
+  `git status --porcelain` must be empty before the work counts as submitted,
+  and build/tooling dirt is gitignored as part of the PR). For rainix Solidity
+  repos the committed-artifact half is additionally enforced on every push by
+  the shared `rainix-copy-artifacts` workflow, which regenerates, builds, and
+  fails on `git diff --exit-code`.
+- **Re-running a PR's tests.** The QA gate checks that the QA-GUIDE.md section-8
+  evidence block **exists** and that its claims are consistent with the diff it
+  reads. It does not re-run the named tests against base; CI runs them, and a
+  red CI is the producer's to green, never a vetter `reject` ground.
 
 ### Work-clone lifecycle as an MCP surface (always on)
 
@@ -238,13 +254,11 @@ rules in `campaign-prompt.txt` (step 7 / 7a).
 | `campaign-run.sh`          | Durable runner: `flock` single-run lock, `DISABLED` kill-switch, `timeout`, bakes PATH+nix, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`).                                    |
 | `campaign-prompt.txt`      | The campaign instructions fed to the model.                                                                                                                                                                                                     |
 | `campaign-settings.json`   | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                       |
-| `review-run.sh`            | Vetting runner (same hardened pattern as `campaign-run.sh`): reviews open PRs, appends verdicts to `review-verdicts.jsonl`, logs to `review.log`. Read-only on GitHub. Kill-switch `review-DISABLED`.                                           |
-| `review-prompt.txt`        | The AI-vetting instructions fed to the model.                                                                                                                                                                                                   |
-| `review-settings.json`     | Tool allow/deny for the vetter — every GitHub write (incl. `gh pr review`/approve, `gh api`) is denied; the only write is `pr-review-report record-verdict`.                                                                                    |
-| `review-mcp.json`          | MCP config for the opt-in MCP surface: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                  |
-| `review-settings-mcp.json` | Tool allow/deny for `VETTER_MCP=1`: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                         |
+| `review-run.sh`            | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                   |
+| `review-prompt.txt`        | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                             |
+| `review-settings.json`     | Tool allow/deny for the vetter: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                             |
+| `review-mcp.json`          | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                |
 | `campaign-mcp.json`        | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                        |
-| `review-prompt-mcp.txt`    | The vetter prompt for the MCP surface — the same judgement gates with the `gh` command recipes removed (they are tool schemas now).                                                                                                             |
 | `merge-run.sh`             | Merge runner — drives human-approved PRs to merge. Dry-run by default (`MERGE_DRY_RUN`). Logs to `merge.log`. Kill-switch `merge-DISABLED`.                                                                                                     |
 | `merge-prompt.txt`         | The merge instructions: only human-approved PRs, read every failing check before admin-merge-over-env-reds, never deploy/force-push/touch-issues.                                                                                               |
 | `merge-settings.json`      | Tool allow/deny for the merge cron — allows `gh pr merge`/`comment`, denies deploy/force-push/issue-ops/other mutations.                                                                                                                        |

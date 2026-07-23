@@ -3488,14 +3488,15 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
 // ─────────────────────────────────────────────────────────────────────────────
 // unvetted (the VETTER's state-load, #59) + the FSM MCP server (#52).
 //
-// The producer's state-load already lives in the tool (`worklist` / `uncovered-issues`); the vetter
-// had none, so `review-prompt.txt` made the MODEL enumerate PRs and run a `gh pr view` per candidate
-// inside its context — 61% of all vetter Bash output bytes across 32 traces. `unvetted` computes the
-// same decision in-process: one call, one struct, no per-PR shelling.
+// `unvetted` is the vetter's state-load, the counterpart to the producer's `worklist` /
+// `uncovered-issues`: which open PRs need a verdict this run, decided in-process — one call, one
+// struct, no per-PR shelling into the model's context.
 //
 // The MCP server exposes exactly that state-load plus the vetter's other three moves as typed tools,
-// so the vetter can run with NO Bash at all: a non-FSM operation is then unrepresentable rather than
-// merely forbidden by prose (Bash deny-lists are prefix-matched and bypassable). The surface is
+// and is the vetter's WHOLE surface: it runs with NO Bash at all, so a non-FSM operation is
+// unrepresentable rather than merely forbidden by prose (Bash deny-lists are prefix-matched and
+// bypassable). It also means the vetter never builds or executes anything in a `pr_checkout` clone —
+// it reads source only; clean-tree and test-execution checks belong to the producer and CI. The surface is
 // deliberately TINY — every tool schema rides in the preamble on every API call, so one wrapper per
 // `gh` command would spend back what the prose removal saves.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6262,6 +6263,66 @@ mod settings_tests {
         perm_list(rel, "deny")
     }
 
+    fn read_text(rel: &str) -> Option<String> {
+        std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel)).ok()
+    }
+
+    // The wiring above only means something if the RUNNER launches it. `review-run.sh` is the only
+    // thing that starts the vetter, so this pins the last side: it names the prompt/settings that
+    // exist, passes the MCP server config with `--strict-mcp-config`, and offers NO second surface —
+    // one assignment each, and no environment flag anywhere that could select a different one. Two
+    // vetter configurations where one is unreachable is drift a reader cannot resolve.
+    #[test]
+    fn the_vetter_runner_launches_the_mcp_surface_and_only_that() {
+        let Some(sh) = read_text("review-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+
+        for needed in [
+            "PROMPT_FILE=\"$DIR/review-prompt.txt\"",
+            "SETTINGS_FILE=\"$DIR/review-settings.json\"",
+            "MCP_ARGS=(--mcp-config \"$DIR/review-mcp.json\" --strict-mcp-config)",
+            "--settings \"$SETTINGS_FILE\"",
+            "\"${MCP_ARGS[@]}\"",
+        ] {
+            assert!(
+                sh.contains(needed),
+                "review-run.sh must launch the vetter with {needed}"
+            );
+        }
+
+        // A second assignment is a second surface — i.e. a branch the reader has to resolve.
+        for once in ["PROMPT_FILE=", "SETTINGS_FILE=", "MCP_ARGS="] {
+            assert_eq!(
+                sh.matches(once).count(),
+                1,
+                "review-run.sh must assign {once} exactly once: the vetter has one tool surface"
+            );
+        }
+
+        // The files it names must be the ones on disk, or the cron sed's an empty prompt / passes a
+        // missing settings path and the whole surface silently evaporates.
+        for f in [
+            "review-prompt.txt",
+            "review-settings.json",
+            "review-mcp.json",
+        ] {
+            assert!(
+                read_text(f).is_some(),
+                "review-run.sh names {f}, which must exist"
+            );
+        }
+
+        // No opt-in flag survives in the runner or the deployment-config template.
+        for f in ["review-run.sh", "cron.env.example"] {
+            let Some(text) = read_text(f) else { continue };
+            assert!(
+                !text.contains("VETTER_MCP"),
+                "{f}: the vetter's surface is not selectable — no VETTER_MCP"
+            );
+        }
+    }
+
     // The MCP-mode settings only mean anything if every allowed tool name is one the server actually
     // exposes: Claude Code presents an MCP tool as `mcp__<server>__<tool>`, and a subtly wrong name
     // fails at run time looking exactly like the tool not existing. This pins the three sides
@@ -6272,7 +6333,7 @@ mod settings_tests {
         for (cfg_file, settings_file, args, profile) in [
             (
                 "review-mcp.json",
-                "review-settings-mcp.json",
+                "review-settings.json",
                 serde_json::json!(["mcp"]),
                 super::McpProfile::Vetter,
             ),
@@ -6363,14 +6424,14 @@ mod settings_tests {
     // raw `gh`/`git`, and no prefix-matched deny-list to route around.
     #[test]
     fn mcp_vetter_has_no_bash() {
-        let Some(deny) = deny_list("review-settings-mcp.json") else {
+        let Some(deny) = deny_list("review-settings.json") else {
             return;
         };
         assert!(
             deny.iter().any(|d| d == "Bash"),
             "MCP mode must deny Bash outright"
         );
-        let allow = perm_list("review-settings-mcp.json", "allow").unwrap();
+        let allow = perm_list("review-settings.json", "allow").unwrap();
         assert!(
             !allow.iter().any(|a| a == "Bash" || a.starts_with("Bash(")),
             "MCP mode must not allow any Bash form"
@@ -6379,11 +6440,7 @@ mod settings_tests {
 
     #[test]
     fn both_crons_deny_scheduling_tools() {
-        for f in [
-            "campaign-settings.json",
-            "review-settings.json",
-            "review-settings-mcp.json",
-        ] {
+        for f in ["campaign-settings.json", "review-settings.json"] {
             let Some(deny) = deny_list(f) else {
                 continue; // settings not checked out (nix build sandbox) — enforced by the rs-test gate
             };

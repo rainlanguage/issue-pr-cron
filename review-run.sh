@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Durable local runner for the AI PR-VETTING cron (the "AI review" stage of the merge pipeline).
-# Sibling to campaign-run.sh. It reviews open PRs and appends verdicts to review-verdicts.jsonl;
-# it NEVER mutates GitHub (read-only gh + write only the local ledger — enforced by review-settings.json).
+# Sibling to campaign-run.sh. It reviews open PRs and records ONE verdict per PR — an `ai:<verdict>`
+# label plus a sha-bound `🤖 ai:vetter` comment — which is its ONLY GitHub write. The vetter runs on
+# the FSM MCP surface (see below): the write is a tool, not a command it could vary.
 #
 # Controls (run from the install dir):
 #   DISABLE:  touch review-DISABLED        (independent of the producer cron's DISABLED)
@@ -18,8 +19,9 @@ DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 export HOME
 : "${USER:=$(id -un)}"; export USER
 : "${LOGNAME:=$USER}"; export LOGNAME
-# Flag this as a cron run so the block-nix-wrap-gh PreToolUse hook enforces bare gh
-# (gh is on PATH below) and closes the deny-list nix-wrap bypass — cron-scoped only.
+# Cron-run flag for the block-nix-wrap-gh / block-cron-git-bypass PreToolUse hooks, which are
+# scoped to Bash. The vetter's surface has no Bash, so nothing fires; it is set so the hooks
+# cover any Bash the session were ever granted.
 export RAINIX_CRON_HOOK=1
 export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 set +u
@@ -33,7 +35,6 @@ REVIEW_MODEL="claude-fable-5"   # org default per 2026-07-04 directive; override
 FALLBACK_MODELS=""              # ordered fallback models tried on a REVIEW_MODEL quota/429 (set in cron.env)
 REVIEW_MAXTIME="2h"
 WORK_DIR="$HOME/code"          # where the audit lens checks PRs out (review-prompt {{WORK_DIR}})
-VETTER_MCP=0                   # 1 = run the vetter on the FSM MCP surface, no Bash (see below)
 REVIEW_KEEP_RUNS=2000          # ~1.8MB/trace → ~4GB/~11mo at 6/day; sole re-derivation source for future metrics (see campaign-run.sh KEEP_RUNS)
 # shellcheck disable=SC1091
 [ -f "$DIR/cron.env" ] && . "$DIR/cron.env"
@@ -80,22 +81,15 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
 
-# --- tool surface: bare-gh (default) or MCP-only (issue #52) ---------------------------------
-# VETTER_MCP=1 in cron.env runs the vetter against the FSM MCP server in pr-review-report:
-# the whole tool surface becomes `mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}`
-# (+ Read/Grep/Glob/Skill) with NO Bash at all, so a non-FSM operation is unrepresentable rather
-# than merely denied — a Bash deny-list is prefix-matched and bypassable (`nix shell … --command`).
+# --- tool surface: the FSM MCP server, and nothing else (issue #52) ---------------------------
+# The vetter runs against the FSM MCP server in pr-review-report: its whole tool surface is
+# `mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}` (+ Read/Grep/Glob/Skill/ToolSearch)
+# with NO Bash at all, so a non-FSM operation is unrepresentable rather than merely denied — a Bash
+# deny-list is prefix-matched and bypassable (`nix shell … --command`).
 # `--strict-mcp-config` keeps every other MCP configuration on the box out of the run.
-# Default is 0: the live cron behaviour is unchanged until this is flipped deliberately.
-MCP_ARGS=()
-if [ "$VETTER_MCP" = "1" ]; then
-  PROMPT_FILE="$DIR/review-prompt-mcp.txt"
-  SETTINGS_FILE="$DIR/review-settings-mcp.json"
-  MCP_ARGS=(--mcp-config "$DIR/review-mcp.json" --strict-mcp-config)
-else
-  PROMPT_FILE="$DIR/review-prompt.txt"
-  SETTINGS_FILE="$DIR/review-settings.json"
-fi
+PROMPT_FILE="$DIR/review-prompt.txt"
+SETTINGS_FILE="$DIR/review-settings.json"
+MCP_ARGS=(--mcp-config "$DIR/review-mcp.json" --strict-mcp-config)
 
 # The vetter's audit lens checks PRs out under WORK_DIR (prompt {{WORK_DIR}}; the MCP `pr_checkout`
 # tool reads the env var), so it must exist and be exported. INSTALL_DIR is the SECOND clone root the
@@ -116,10 +110,11 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
 
 {
   echo "================================================================="
-  echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, mcp=$VETTER_MCP, host=$(hostname)) trace=$RUNLOG"
+  echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(hostname)) trace=$RUNLOG"
 } >> "$LOG"
 
-# gh + jq on PATH (via nix shell) so the model uses BARE gh -> the read-only deny-list applies.
+# gh + jq on PATH (via nix shell) for the MCP SERVER, which shells out to gh for every GitHub read
+# and for its one write; the model itself has no Bash and never invokes them.
 # Model fallback: try $REVIEW_MODEL, then each $FALLBACK_MODELS in order, advancing ONLY on a
 # quota/usage limit (HTTP 429) so one model's exhausted quota can't stall vetting. Any other outcome
 # (success, nix/auth startup failure, real error) is final.
@@ -130,7 +125,7 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
   timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
     --model "$USED_MODEL" \
     --settings "$SETTINGS_FILE" \
-    ${MCP_ARGS[@]+"${MCP_ARGS[@]}"} \
+    "${MCP_ARGS[@]}" \
     --permission-mode default \
     --verbose --output-format stream-json \
     --add-dir "$DIR" \

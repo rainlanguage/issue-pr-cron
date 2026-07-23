@@ -55,18 +55,29 @@ neither can name the other's transitions.
 | `vetter` (default) | `unvetted`, `pr_context`, `pr_checkout`, `record_verdict`, `clone_release` |
 | `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`                  |
 
-Run with `--mcp-config review-mcp.json --strict-mcp-config` and
-`review-settings-mcp.json`, the vetter has **no Bash at all**: the tools are
+The vetter profile is the vetter's **only** tool surface: `review-run.sh` always
+passes `--mcp-config review-mcp.json --strict-mcp-config` with
+`review-settings.json`, so the vetter has **no Bash at all** — the tools are
 `mcp__fsm__*` and a non-FSM operation is unrepresentable rather than merely
-denied (a Bash deny-list is prefix-matched and bypassable). The transition
-guards — verdict vocabulary, mandatory in-range cost, well-formed PR ref,
-human-sacred refusal — live in `validate_call` / `verdict_plan`, tested once,
-instead of being re-asserted in prose.
+denied (a Bash deny-list is prefix-matched and bypassable). There is no
+non-MCP vetter prompt or settings file, and no flag that selects one. The
+transition guards — verdict vocabulary, mandatory in-range cost, well-formed PR
+ref, human-sacred refusal — live in `validate_call` / `verdict_plan`, tested
+once, instead of being re-asserted in prose.
 
-The vetter surface is opt-in and OFF by default: set `VETTER_MCP=1` in
-`cron.env`. The producer's server (`campaign-mcp.json`) is **additive** — no
-`--strict-mcp-config`, it keeps its Bash — and is always on, because what it
-gains is a clone lifecycle it could not previously perform at all.
+The vetter's surface **replaces** its Bash, so it is `--strict-mcp-config` and
+there is no non-MCP prompt or settings file to fall back to. The producer's
+server (`campaign-mcp.json`) is **additive** — no `--strict-mcp-config`, it keeps
+its Bash — because what it gains is a clone lifecycle it could not previously
+perform at all. Neither is selectable at run time.
+
+The vetter's surface is also deliberately **read-only on the filesystem**: it
+reads the `pr_checkout` clone, it never builds or runs anything in it.
+Clean-by-construction work clones are the producer's obligation
+(`campaign-prompt.txt` step 6b) and, for rainix Solidity repos, the
+`rainix-copy-artifacts` workflow's `git diff --exit-code`; re-running a PR's
+tests is CI's job. The vetter's QA gate checks that the evidence block exists
+and holds against the diff it reads, nothing more.
 
 ## Work-clone lifecycle
 
