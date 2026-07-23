@@ -421,8 +421,8 @@
     "ready": 49,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 179,
-    "unvetted": 5
+    "totalProducerPrs": 177,
+    "unvetted": 3
   },
   "lanes": {
     "human-decisions": {
@@ -912,20 +912,8 @@
         ]
       },
       "un-vetted": {
-        "count": 5,
+        "count": 3,
         "prs": [
-          {
-            "number": 64,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "feat(fsm): work-clone lifecycle as an MCP capability — the guarded replacement for a denied `rm -rf`",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/64"
-          },
-          {
-            "number": 63,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "feat(fsm): serve the vetter's transitions over MCP + add its in-process state-load",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/63"
-          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
