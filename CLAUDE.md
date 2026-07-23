@@ -40,6 +40,32 @@ transition functions:
 | `--commit-closes <owner/repo> <n>`                         | closing-keyword vs. `closingIssuesReferences` drift check                                               |
 | `--backfill-comments`                                      | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment) |
 | `--gc-clones <work-dir>`                                   | reclaim merged/closed work-clones (state cleanup)                                                       |
+| `unvetted [--json] [--include-skipped]`                    | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals     |
+| `mcp`                                                      | serve the vetter's transitions over MCP (stdio) — the FSM as a tool surface, not as prose               |
+
+## The FSM as a tool surface (MCP)
+
+`pr-review-report mcp` speaks MCP over stdio and exposes the **vetter's** whole
+job as four tools — `unvetted` (state-load), `pr_context` (read one PR),
+`pr_checkout` (local source for the audit lens), `record_verdict` (the only
+write). This is the vetter's **only** tool surface: `review-run.sh` always
+passes `--mcp-config review-mcp.json --strict-mcp-config` with
+`review-settings.json`, so the vetter has **no Bash at all** — the tools are
+`mcp__fsm__*` and a non-FSM operation is unrepresentable rather than merely
+denied (a Bash deny-list is prefix-matched and bypassable). There is no non-MCP
+vetter prompt or settings file, and no flag that selects one. The transition
+guards — verdict vocabulary, mandatory in-range cost, well-formed PR ref,
+human-sacred refusal — live in `validate_call` / `verdict_plan`, tested once,
+instead of being re-asserted in prose.
+
+The surface is kept deliberately small — a wrapper per `gh` command would cost
+more context than the prose it replaces. It is also deliberately **read-only on
+the filesystem**: the vetter reads the `pr_checkout` clone, it never builds or
+runs anything in it. Clean-by-construction work clones are the producer's
+obligation (`campaign-prompt.txt` step 6b) and, for rainix Solidity repos, the
+`rainix-copy-artifacts` workflow's `git diff --exit-code`; re-running a PR's
+tests is CI's job. The vetter's QA gate checks that the evidence block exists
+and holds against the diff it reads, nothing more.
 
 ## Invariants
 

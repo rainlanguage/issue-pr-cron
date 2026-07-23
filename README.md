@@ -81,6 +81,47 @@ state change from a prompt is a _loose_ transition — unenforced and untested �
 so the prompts route **all** GitHub I/O through the tool. That is what makes
 this an actual finite state machine rather than a picture of one.
 
+### The vetter's transitions as an MCP surface
+
+For the producer, routing through the tool is enforced by the **prompt**, and a
+Bash deny-list is prefix-matched and bypassable. For the vetter that gap is
+closed: `pr-review-report mcp` serves its transitions over MCP (stdio), and that
+server is the vetter's **only** tool surface.
+
+| Tool             | The move it makes                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| `unvetted`       | state-load: the open PRs to vet this run, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable |
+| `pr_context`     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call            |
+| `pr_checkout`    | local read-only clone of the PR head, so the `audit` skill has source                                        |
+| `record_verdict` | the only write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                               |
+
+`review-run.sh` always launches the model with `--mcp-config review-mcp.json`,
+`--strict-mcp-config` and `--settings review-settings.json`, so the vetter's
+entire tool surface is
+`mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}` plus
+`Read`/`Grep`/`Glob`/`Skill`/`ToolSearch` — **no Bash**, so there is no raw `gh`
+or `git` to reach for. There is no second vetter configuration and no flag that
+selects one. The guards (verdict vocabulary, a mandatory 0-1000 cost, a
+well-formed `owner/repo#n`, the human-sacred refusal) are enforced in the server
+and unit-tested rather than restated in the prompt.
+
+**What the vetter therefore does not verify.** With no Bash it cannot build, and
+cannot execute anything in the clone `pr_checkout` gives it — it reads source,
+it does not run it. Two checks live elsewhere as a result, and the vetter prompt
+does not ask for either:
+
+- **A clean working tree after a build.** Keeping a work clone clean by
+  construction is the **producer's** obligation (`campaign-prompt.txt` step 6b:
+  `git status --porcelain` must be empty before the work counts as submitted,
+  and build/tooling dirt is gitignored as part of the PR). For rainix Solidity
+  repos the committed-artifact half is additionally enforced on every push by
+  the shared `rainix-copy-artifacts` workflow, which regenerates, builds, and
+  fails on `git diff --exit-code`.
+- **Re-running a PR's tests.** The QA gate checks that the QA-GUIDE.md section-8
+  evidence block **exists** and that its claims are consistent with the diff it
+  reads. It does not re-run the named tests against base; CI runs them, and a
+  red CI is the producer's to green, never a vetter `reject` ground.
+
 The machine has **no dead-ends**: every state has an exit back into the
 lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle
 (`un-vetted → vetting → awaiting re-vet`) re-runs the vetter whenever a PR's
@@ -177,9 +218,10 @@ rules in `campaign-prompt.txt` (step 7 / 7a).
 | `campaign-run.sh`        | Durable runner: `flock` single-run lock, `DISABLED` kill-switch, `timeout`, bakes PATH+nix, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`).                                    |
 | `campaign-prompt.txt`    | The campaign instructions fed to the model.                                                                                                                                                                                                     |
 | `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                       |
-| `review-run.sh`          | Vetting runner (same hardened pattern as `campaign-run.sh`): reviews open PRs, appends verdicts to `review-verdicts.jsonl`, logs to `review.log`. Read-only on GitHub. Kill-switch `review-DISABLED`.                                           |
-| `review-prompt.txt`      | The AI-vetting instructions fed to the model.                                                                                                                                                                                                   |
-| `review-settings.json`   | Tool allow/deny for the vetter — every GitHub write (incl. `gh pr review`/approve, `gh api`) is denied; the only write is the local verdict ledger.                                                                                             |
+| `review-run.sh`          | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                   |
+| `review-prompt.txt`      | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                            |
+| `review-settings.json`   | Tool allow/deny for the vetter: the four `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                             |
+| `review-mcp.json`        | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                |
 | `merge-run.sh`           | Merge runner — drives human-approved PRs to merge. Dry-run by default (`MERGE_DRY_RUN`). Logs to `merge.log`. Kill-switch `merge-DISABLED`.                                                                                                     |
 | `merge-prompt.txt`       | The merge instructions: only human-approved PRs, read every failing check before admin-merge-over-env-reds, never deploy/force-push/touch-issues.                                                                                               |
 | `merge-settings.json`    | Tool allow/deny for the merge cron — allows `gh pr merge`/`comment`, denies deploy/force-push/issue-ops/other mutations.                                                                                                                        |
@@ -225,8 +267,7 @@ the review ledger; one JSON object per line:
 `{"repo":"rain.flare","pr":129,"verdict":"reject","source":"ai-campaign","note":"..."}`
 — `verdict` ∈ `ready`|`relink`|`reject`|`close`, `source` ∈
 `ai-campaign`|`human`. To approve a PR, either approve it on GitHub or add a
-`source: human`, `verdict:
-ready` line. It self-provisions `gh`+`jq` via nix,
+`source: human`, `verdict: ready` line. It self-provisions `gh`+`jq` via nix,
 and reads `cron.env` for `ORG` / `PR_ASSIGNEE` / `CLOSE_CANDIDATES` /
 `REVIEW_VERDICTS`.
 
