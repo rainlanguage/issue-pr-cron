@@ -9,8 +9,8 @@ framing is what keeps it debuggable and honest:
 - **The states are GitHub state.** A PR's state is its `ai:*` / `human:*`
   labels, its trusted `🤖 ai:vetter` / `🤖 ai:producer` comments, and its native
   `reviewDecision`. GitHub is the **single source of truth** — there is no
-  separate local state. (The old `review-verdicts.jsonl` / `review-costs.jsonl`
-  ledgers are being removed; cost moves into the vetter comment.)
+  separate local state. (The `review-verdicts.jsonl` / `review-costs.jsonl`
+  ledgers are gone; cost lives in the vetter comment.)
 - **The `pr-review-report` Rust tool is the ONLY transition function.** Every
   move between states — record a verdict, present the queue, backfill a comment,
   gc a clone, check closing keywords, read a comment — is a **tested**

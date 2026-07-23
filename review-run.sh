@@ -49,7 +49,6 @@ ORGS_HUMAN="$(printf '%s' "$ORGS" | sed -E 's/[[:space:]]+/, /g')"
 LOG="$DIR/review.log"
 LOCK="$DIR/review.lock"
 RUNDIR="$DIR/review-runs"
-REVIEW_VERDICTS="$DIR/review-verdicts.jsonl"
 
 # --- kill switch (independent of the producer cron) ---
 if [ -f "$DIR/review-DISABLED" ]; then
@@ -72,7 +71,6 @@ if ! flock -n 9; then
 fi
 
 mkdir -p "$RUNDIR"
-touch "$REVIEW_VERDICTS"
 cd "$DIR" || exit 1
 
 # rotate per-run traces
@@ -102,7 +100,6 @@ export INSTALL_DIR="$DIR"
 
 # substitute deployment values into the prompt template
 PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
-              -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
               -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
@@ -154,7 +151,7 @@ if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
   tail -5 "$ERRLOG" | sed 's/^/    /' >> "$LOG"
 fi
 
-echo "$(date -u +%FT%TZ) review run END (exit=$rc, verdicts now=$(wc -l < "$REVIEW_VERDICTS" 2>/dev/null), trace=$RUNLOG)" >> "$LOG"
+echo "$(date -u +%FT%TZ) review run END (exit=$rc, trace=$RUNLOG)" >> "$LOG"
 
 if [ -s "$RUNLOG" ]; then
   outcome="ok"; [ "$rc" -ne 0 ] && outcome="error"

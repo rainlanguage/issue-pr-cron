@@ -56,8 +56,8 @@ LOCK="$DIR/campaign.lock"
 RUNDIR="$DIR/runs"
 # close/design candidates are GitHub-native now (ai:close-candidate label via
 # `pr-review-report flag-close-candidate`; design = human:design + awaiting-ruling comment).
-# The old close-candidates.jsonl / design-candidates.jsonl local ledgers are retired.
-REVIEW_VERDICTS="$DIR/review-verdicts.jsonl"
+# The local ledgers -- close-candidates.jsonl, design-candidates.jsonl and
+# review-verdicts.jsonl -- are retired. GitHub is the source of truth.
 
 # --- kill switch ---
 if [ -f "$DIR/DISABLED" ]; then
@@ -100,7 +100,6 @@ ERRLOG="$RUNDIR/$TS.err"
 
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
-              -e "s#{{REVIEW_VERDICTS}}#$REVIEW_VERDICTS#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
