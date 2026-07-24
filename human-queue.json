@@ -421,8 +421,8 @@
     "ready": 48,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 176,
-    "unvetted": 4
+    "totalProducerPrs": 177,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -912,8 +912,14 @@
         ]
       },
       "un-vetted": {
-        "count": 4,
+        "count": 5,
         "prs": [
+          {
+            "number": 47,
+            "repo": "rainlanguage/rain.factory",
+            "title": "Slim rain.factory to the interface library (#46)",
+            "url": "https://github.com/rainlanguage/rain.factory/pull/47"
+          },
           {
             "number": 280,
             "repo": "rainlanguage/rainix",
