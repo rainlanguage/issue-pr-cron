@@ -421,8 +421,8 @@
     "ready": 48,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 175,
-    "unvetted": 3
+    "totalProducerPrs": 176,
+    "unvetted": 4
   },
   "lanes": {
     "human-decisions": {
@@ -912,8 +912,14 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "number": 280,
+            "repo": "rainlanguage/rainix",
+            "title": "feat(ci): rainix-tag-release — tag-triggered deploy-repo release",
+            "url": "https://github.com/rainlanguage/rainix/pull/280"
+          },
           {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
