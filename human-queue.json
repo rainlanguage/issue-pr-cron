@@ -421,8 +421,8 @@
     "ready": 48,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 176,
-    "unvetted": 4
+    "totalProducerPrs": 177,
+    "unvetted": 5
   },
   "lanes": {
     "human-decisions": {
@@ -912,8 +912,14 @@
         ]
       },
       "un-vetted": {
-        "count": 4,
+        "count": 5,
         "prs": [
+          {
+            "number": 284,
+            "repo": "rainlanguage/rainix",
+            "title": "fix(ci): point rainix-sol-artifacts at RPC_URL_ETHEREUM_FORK (fixes main red, #283)",
+            "url": "https://github.com/rainlanguage/rainix/pull/284"
+          },
           {
             "number": 47,
             "repo": "rainlanguage/rain.factory",
