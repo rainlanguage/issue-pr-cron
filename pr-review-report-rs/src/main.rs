@@ -5334,15 +5334,19 @@ fn action_rank(a: &str) -> u8 {
     }
 }
 
-/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter)
-/// + the covered set from open PRs' closing keywords, and return the uncovered issues (no covering
-/// open PR) with their meta. `None` on a gh failure — callers MUST abort rather than report a
-/// false-empty set. Both `uncovered-issues` and the `human-queue` producer-backlog count read this
-/// ONE computation, so their coverage semantics can never drift.
-fn coverage_uncovered() -> Option<(
+/// The uncovered-coverage result: the uncovered issues (repo, number) paired with a lookup from
+/// (repo, number) to each issue's meta.
+type UncoveredCoverage = (
     Vec<(String, u64)>,
     std::collections::HashMap<(String, u64), Value>,
-)> {
+);
+
+/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter)
+/// and the covered set from open PRs' closing keywords, then return the uncovered issues (no
+/// covering open PR) with their meta. `None` on a gh failure — callers MUST abort rather than
+/// report a false-empty set. Both `uncovered-issues` and the `human-queue` producer-backlog count
+/// read this ONE computation, so their coverage semantics can never drift.
+fn coverage_uncovered() -> Option<UncoveredCoverage> {
     // open issues
     let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
     isearch.extend(org_owner_args());
