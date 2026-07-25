@@ -236,11 +236,6 @@
       "title": "it is somehow possible to deploy orders from the app without the source attached"
     },
     {
-      "number": 544,
-      "repo": "rainlanguage/raindex",
-      "title": "error decoding for toasts"
-    },
-    {
       "number": 531,
       "repo": "rainlanguage/raindex",
       "title": "can't generate rainlang if there are elided bindings"
@@ -396,17 +391,17 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 78,
+    "closeCandidateIssues": 77,
     "closeCandidatePrs": 9,
     "design": 6,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 30,
     "leaks": 17,
-    "ready": 48,
+    "ready": 47,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 177,
     "unvetted": 6
   },
   "lanes": {
@@ -900,10 +895,10 @@
         "count": 6,
         "prs": [
           {
-            "number": 2816,
-            "repo": "rainlanguage/raindex",
-            "title": "ui-components render + screenshot harness",
-            "url": "https://github.com/rainlanguage/raindex/pull/2816"
+            "number": 6,
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "title": "Label adversarial findings `audit` so the org health graph counts them (0.28.0)",
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/6"
           },
           {
             "number": 284,
@@ -1040,7 +1035,7 @@
         ]
       },
       "ai:ready": {
-        "count": 47,
+        "count": 46,
         "prs": [
           {
             "number": 60,
@@ -1053,12 +1048,6 @@
             "repo": "rainlanguage/rain.solmem",
             "title": "Say that toIndexSigned needs relative, not absolute, alignment",
             "url": "https://github.com/rainlanguage/rain.solmem/pull/58"
-          },
-          {
-            "number": 56,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Record the adversarial mutation scan of v0.1.3",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/56"
           },
           {
             "number": 55,
@@ -1934,11 +1923,6 @@
         "number": 58,
         "repo": "rainlanguage/rain.solmem",
         "title": "Say that toIndexSigned needs relative, not absolute, alignment"
-      },
-      {
-        "number": 56,
-        "repo": "rainlanguage/rain.solmem",
-        "title": "Record the adversarial mutation scan of v0.1.3"
       },
       {
         "number": 55,
