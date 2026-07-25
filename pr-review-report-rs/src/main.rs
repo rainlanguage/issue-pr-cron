@@ -5339,8 +5339,10 @@ fn action_rank(a: &str) -> u8 {
 /// open PR) with their meta. `None` on a gh failure — callers MUST abort rather than report a
 /// false-empty set. Both `uncovered-issues` and the `human-queue` producer-backlog count read this
 /// ONE computation, so their coverage semantics can never drift.
-fn coverage_uncovered(
-) -> Option<(Vec<(String, u64)>, std::collections::HashMap<(String, u64), Value>)> {
+fn coverage_uncovered() -> Option<(
+    Vec<(String, u64)>,
+    std::collections::HashMap<(String, u64), Value>,
+)> {
     // open issues
     let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
     isearch.extend(org_owner_args());
