@@ -55,6 +55,10 @@
 # the rain-org-health dashboard fetches it at runtime from the raw URL — no site redeploy:
 !/human-queue.json
 !/refresh-human-queue.sh
+# Append-only per-state inventory history ({ts, counts} per changed refresh) + its one-time
+# backfill; the dashboard fetches the jsonl at runtime for the Theory-of-Constraints panel:
+!/human-queue-history.jsonl
+!/backfill-human-queue-history.sh
 # Flake exposing pr-review-report as a package (bin on the cron PATH):
 !/flake.nix
 !/flake.lock
