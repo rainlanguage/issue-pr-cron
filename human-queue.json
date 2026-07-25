@@ -406,8 +406,9 @@
     "ready": 48,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 179,
-    "unvetted": 7
+    "totalProducerPrs": 349,
+    "uncoveredIssues": 572,
+    "unvetted": 177
   },
   "lanes": {
     "human-decisions": {
@@ -897,8 +898,26 @@
         ]
       },
       "un-vetted": {
-        "count": 7,
+        "count": 177,
         "prs": [
+          {
+            "number": 125,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "feat(pipeline): Theory-of-Constraints flow panel — inventory sparklines + rising-WIP bottleneck border (Closes #32)",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/125"
+          },
+          {
+            "number": 69,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "feat(dashboard): per-state inventory history for the TOC flow panel (Refs rain-org-health#32)",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/69"
+          },
+          {
+            "number": 124,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "pipeline: show the producer's untouched-issue backlog under Producer action",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/124"
+          },
           {
             "number": 2816,
             "repo": "rainlanguage/raindex",
@@ -910,6 +929,18 @@
             "repo": "S01-Issuer/st0x.deploy",
             "title": "Model deploy pins as a rolling `candidate` + frozen releases (audited 0_1_1 preserved)",
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/283"
+          },
+          {
+            "number": 7,
+            "repo": "S01-Issuer/st0x.atomic-bridge",
+            "title": "Re-pin st0x.deploy to merged main; fork test consumes the live V4 wave",
+            "url": "https://github.com/S01-Issuer/st0x.atomic-bridge/pull/7"
+          },
+          {
+            "number": 286,
+            "repo": "rainlanguage/rainix",
+            "title": "rainix-sol test workflow: add RPC_URL_HYPEREVM_FORK secret slot",
+            "url": "https://github.com/rainlanguage/rainix/pull/286"
           },
           {
             "number": 284,
@@ -924,10 +955,952 @@
             "url": "https://github.com/rainlanguage/rain.factory/pull/47"
           },
           {
+            "number": 280,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "feat(authoriser): additional service signer — canonical pin + provisioning",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/280"
+          },
+          {
+            "number": 278,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "ops(script): HyperEVM token deploy (RAI-1511)",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/278"
+          },
+          {
+            "number": 277,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "pin(invariants): HyperEVM invariant surface (RAI-1511)",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/277"
+          },
+          {
+            "number": 276,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "ops(script): HyperEVM beacon-owner migration + 0.1.1 beacon lib generalisation (RAI-1511)",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/276"
+          },
+          {
+            "number": 275,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "feat(multichain): HyperEVM token-owner Safe pin plumbing (RAI-1511)",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/275"
+          },
+          {
+            "number": 274,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "feat(multichain): HyperEVM V4 authoriser clone pin plumbing (RAI-1511)",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/274"
+          },
+          {
+            "number": 463,
+            "repo": "rainlanguage/rain.solver",
+            "title": "test",
+            "url": "https://github.com/rainlanguage/rain.solver/pull/463"
+          },
+          {
+            "number": 461,
+            "repo": "rainlanguage/rain.solver",
+            "title": "improve zero output order pairs handling",
+            "url": "https://github.com/rainlanguage/rain.solver/pull/461"
+          },
+          {
+            "number": 2814,
+            "repo": "rainlanguage/raindex",
+            "title": "ci: test npm trusted publishing on every push",
+            "url": "https://github.com/rainlanguage/raindex/pull/2814"
+          },
+          {
+            "number": 249,
+            "repo": "rainlanguage/rain.math.float",
+            "title": "Add Float macro and serde crates",
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/249"
+          },
+          {
+            "number": 458,
+            "repo": "rainlanguage/rain.solver",
+            "title": "fix Alice/bob signed context for `clear3()`",
+            "url": "https://github.com/rainlanguage/rain.solver/pull/458"
+          },
+          {
+            "number": 259,
+            "repo": "rainlanguage/rainix",
+            "title": "ci: plumb RPC_URL_ETHEREUM_FORK through the sol workflows",
+            "url": "https://github.com/rainlanguage/rainix/pull/259"
+          },
+          {
+            "number": 221,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "feat(script): grant new issuer DEPOSIT+WITHDRAW on shared authoriser",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/221"
+          },
+          {
+            "number": 210,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "docs: operational-scripts how-to + invariant library structure",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/210"
+          },
+          {
+            "number": 206,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "chore(script): date-prefix MigrateMultisigThreshold + add run-script dispatcher",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/206"
+          },
+          {
+            "number": 2774,
+            "repo": "rainlanguage/raindex",
+            "title": "Surface vaultless read models",
+            "url": "https://github.com/rainlanguage/raindex/pull/2774"
+          },
+          {
+            "number": 2773,
+            "repo": "rainlanguage/raindex",
+            "title": "Handle vaultless deployment operations",
+            "url": "https://github.com/rainlanguage/raindex/pull/2773"
+          },
+          {
+            "number": 2772,
+            "repo": "rainlanguage/raindex",
+            "title": "Add builder vaultless state APIs",
+            "url": "https://github.com/rainlanguage/raindex/pull/2772"
+          },
+          {
+            "number": 2771,
+            "repo": "rainlanguage/raindex",
+            "title": "Reject zero vault operations",
+            "url": "https://github.com/rainlanguage/raindex/pull/2771"
+          },
+          {
+            "number": 2770,
+            "repo": "rainlanguage/raindex",
+            "title": "Emit vaultless add-order IO",
+            "url": "https://github.com/rainlanguage/raindex/pull/2770"
+          },
+          {
+            "number": 2769,
+            "repo": "rainlanguage/raindex",
+            "title": "Add vaultless order IO settings",
+            "url": "https://github.com/rainlanguage/raindex/pull/2769"
+          },
+          {
+            "number": 2680,
+            "repo": "rainlanguage/raindex",
+            "title": "Albion raindex",
+            "url": "https://github.com/rainlanguage/raindex/pull/2680"
+          },
+          {
+            "number": 117,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Albion settings",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/117"
+          },
+          {
+            "number": 2628,
+            "repo": "rainlanguage/raindex",
+            "title": "Add ST0x order quote2 Base fork test",
+            "url": "https://github.com/rainlanguage/raindex/pull/2628"
+          },
+          {
+            "number": 114,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Fix vault balance manifest",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/114"
+          },
+          {
+            "number": 112,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Update website manifest for derived vault deltas schema v5",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/112"
+          },
+          {
+            "number": 109,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Local DB producer settings - derived vault deltas",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/109"
+          },
+          {
+            "number": 108,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Local DB producer settings - derived trades",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/108"
+          },
+          {
+            "number": 107,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "wt rate strat",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/107"
+          },
+          {
+            "number": 2585,
+            "repo": "rainlanguage/raindex",
+            "title": "Test raindex npm release from PR",
+            "url": "https://github.com/rainlanguage/raindex/pull/2585"
+          },
+          {
+            "number": 9,
+            "repo": "rainlanguage/pyth-crosschain",
+            "title": "sentry monitoring",
+            "url": "https://github.com/rainlanguage/pyth-crosschain/pull/9"
+          },
+          {
+            "number": 21,
+            "repo": "rainlanguage/rain.pyth",
+            "title": "Add CEG, TSM feeds",
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/21"
+          },
+          {
+            "number": 8,
+            "repo": "rainlanguage/pyth-crosschain",
+            "title": "Add TSM, CEG feeds.",
+            "url": "https://github.com/rainlanguage/pyth-crosschain/pull/8"
+          },
+          {
+            "number": 2561,
+            "repo": "rainlanguage/raindex",
+            "title": "[draft] Fixes used by st0x.rest.api preview deployment",
+            "url": "https://github.com/rainlanguage/raindex/pull/2561"
+          },
+          {
+            "number": 362,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "Aether: Solution for Issue #324",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/362"
+          },
+          {
+            "number": 102,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "SGOV feed",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/102"
+          },
+          {
+            "number": 20,
+            "repo": "rainlanguage/rain.pyth",
+            "title": "Add SGOV, QQQM, VMO, ARKK Feed",
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/20"
+          },
+          {
+            "number": 2552,
+            "repo": "rainlanguage/raindex",
+            "title": "feat: add --describe flag to strategy-builder CLI",
+            "url": "https://github.com/rainlanguage/raindex/pull/2552"
+          },
+          {
+            "number": 2551,
+            "repo": "rainlanguage/raindex",
+            "title": "feat: template fallback operator ${expr || 'default'}",
+            "url": "https://github.com/rainlanguage/raindex/pull/2551"
+          },
+          {
+            "number": 2549,
+            "repo": "rainlanguage/raindex",
+            "title": "feat: add --tokens flag to list deployment-specific tokens",
+            "url": "https://github.com/rainlanguage/raindex/pull/2549"
+          },
+          {
+            "number": 2546,
+            "repo": "rainlanguage/raindex",
+            "title": "feat: add interactive mode to strategy-builder CLI",
+            "url": "https://github.com/rainlanguage/raindex/pull/2546"
+          },
+          {
+            "number": 100,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Rename gui to builder in strategy YAML",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/100"
+          },
+          {
+            "number": 439,
+            "repo": "rainlanguage/rain.solver",
+            "title": "feat: add signed context oracle support",
+            "url": "https://github.com/rainlanguage/rain.solver/pull/439"
+          },
+          {
+            "number": 2544,
+            "repo": "rainlanguage/raindex",
+            "title": "feat: add strategy-builder CLI subcommand",
+            "url": "https://github.com/rainlanguage/raindex/pull/2544"
+          },
+          {
+            "number": 99,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Add Dia oracle fixed-spread strategy on Base",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/99"
+          },
+          {
+            "number": 5,
+            "repo": "S01-Issuer/st0x-timelock-deploy",
+            "title": "Add tests, in-memory simulation, and pre-deploy CI gates",
+            "url": "https://github.com/S01-Issuer/st0x-timelock-deploy/pull/5"
+          },
+          {
+            "number": 2532,
+            "repo": "rainlanguage/raindex",
+            "title": "fix: return error on oracle fetch failure instead of silently continuing execution",
+            "url": "https://github.com/rainlanguage/raindex/pull/2532"
+          },
+          {
+            "number": 4,
+            "repo": "S01-Issuer/st0x-timelock-deploy",
+            "title": "min delay",
+            "url": "https://github.com/S01-Issuer/st0x-timelock-deploy/pull/4"
+          },
+          {
+            "number": 19,
+            "repo": "rainlanguage/rain.pyth",
+            "title": "feat: add Commodities.UKOILSPOT (Brent Crude Oil) price feed",
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/19"
+          },
+          {
+            "number": 95,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Update auction",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/95"
+          },
+          {
+            "number": 2501,
+            "repo": "rainlanguage/raindex",
+            "title": "Make get_add_orders_for_transaction public and remove orderbook_address param",
+            "url": "https://github.com/rainlanguage/raindex/pull/2501"
+          },
+          {
+            "number": 2496,
+            "repo": "rainlanguage/raindex",
+            "title": "Remove rain_orderbook_rest_api crate",
+            "url": "https://github.com/rainlanguage/raindex/pull/2496"
+          },
+          {
+            "number": 2495,
+            "repo": "rainlanguage/raindex",
+            "title": "Update rain.interpreter submodule to head of main",
+            "url": "https://github.com/rainlanguage/raindex/pull/2495"
+          },
+          {
+            "number": 283,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "feat(ui): unlock sorting, token filtering, wallet balance clarity",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/283"
+          },
+          {
+            "number": 1,
+            "repo": "S01-Issuer/st0x-tokens",
+            "title": "fix tokens",
+            "url": "https://github.com/S01-Issuer/st0x-tokens/pull/1"
+          },
+          {
+            "number": 90,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "st0x API settings",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/90"
+          },
+          {
+            "number": 2485,
+            "repo": "rainlanguage/raindex",
+            "title": "Add block sync progress tracking to local DB status dashboard",
+            "url": "https://github.com/rainlanguage/raindex/pull/2485"
+          },
+          {
+            "number": 2484,
+            "repo": "rainlanguage/raindex",
+            "title": "Add trade counterparty info and event type to order trades",
+            "url": "https://github.com/rainlanguage/raindex/pull/2484"
+          },
+          {
+            "number": 89,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Rename gui to builder across all strats",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/89"
+          },
+          {
+            "number": 2478,
+            "repo": "rainlanguage/raindex",
+            "title": "feat: add extractOracleUrl static method to RaindexOrder",
+            "url": "https://github.com/rainlanguage/raindex/pull/2478"
+          },
+          {
+            "number": 2477,
+            "repo": "rainlanguage/raindex",
+            "title": "Re-enable vault balance chart disabled by Issue #1989",
+            "url": "https://github.com/rainlanguage/raindex/pull/2477"
+          },
+          {
+            "number": 88,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "feat(settings): add Albion Labs tokenlist",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/88"
+          },
+          {
+            "number": 2476,
+            "repo": "rainlanguage/raindex",
+            "title": "docs(orderbook): add vault lifecycle quick reference",
+            "url": "https://github.com/rainlanguage/raindex/pull/2476"
+          },
+          {
+            "number": 2475,
+            "repo": "rainlanguage/raindex",
+            "title": "docs(orderbook): add troubleshooting section",
+            "url": "https://github.com/rainlanguage/raindex/pull/2475"
+          },
+          {
+            "number": 2474,
+            "repo": "rainlanguage/raindex",
+            "title": "docs(orderbook): add network-specific notes section",
+            "url": "https://github.com/rainlanguage/raindex/pull/2474"
+          },
+          {
+            "number": 2473,
+            "repo": "rainlanguage/raindex",
+            "title": "docs(orderbook): Add troubleshooting section and clarify self-contained dotrain usage",
+            "url": "https://github.com/rainlanguage/raindex/pull/2473"
+          },
+          {
+            "number": 2468,
+            "repo": "rainlanguage/raindex",
+            "title": "Add get trades by owner API",
+            "url": "https://github.com/rainlanguage/raindex/pull/2468"
+          },
+          {
+            "number": 2466,
+            "repo": "rainlanguage/raindex",
+            "title": "Chain take order tx automatically after approval",
+            "url": "https://github.com/rainlanguage/raindex/pull/2466"
+          },
+          {
+            "number": 2465,
+            "repo": "rainlanguage/raindex",
+            "title": "Add get trades by transaction hash API",
+            "url": "https://github.com/rainlanguage/raindex/pull/2465"
+          },
+          {
+            "number": 45,
+            "repo": "rainlanguage/specs",
+            "title": "feat: add oracle-url field to orders spec",
+            "url": "https://github.com/rainlanguage/specs/pull/45"
+          },
+          {
+            "number": 2461,
+            "repo": "rainlanguage/raindex",
+            "title": "Make DeploymentTransactionArgs fields and module public",
+            "url": "https://github.com/rainlanguage/raindex/pull/2461"
+          },
+          {
+            "number": 2452,
+            "repo": "rainlanguage/raindex",
+            "title": "feat(pipeline): index metaboard contract events in sync pipeline",
+            "url": "https://github.com/rainlanguage/raindex/pull/2452"
+          },
+          {
+            "number": 2450,
+            "repo": "rainlanguage/raindex",
+            "title": "Add contract address field to MetaboardCfg",
+            "url": "https://github.com/rainlanguage/raindex/pull/2450"
+          },
+          {
+            "number": 84,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Bump versions to 5 and update metaboards mapping",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/84"
+          },
+          {
+            "number": 2443,
+            "repo": "rainlanguage/raindex",
+            "title": "Fix vault balance changes table not loading due to WASM race condition",
+            "url": "https://github.com/rainlanguage/raindex/pull/2443"
+          },
+          {
+            "number": 2440,
+            "repo": "rainlanguage/raindex",
+            "title": "Strip CLI to local-db only and remove unused dependencies",
+            "url": "https://github.com/rainlanguage/raindex/pull/2440"
+          },
+          {
+            "number": 2436,
+            "repo": "rainlanguage/raindex",
+            "title": "Update rain.strategies registry commit hash",
+            "url": "https://github.com/rainlanguage/raindex/pull/2436"
+          },
+          {
+            "number": 432,
+            "repo": "rainlanguage/rain.solver",
+            "title": "skip balance tracking for vaultless vaults orderbook v6",
+            "url": "https://github.com/rainlanguage/rain.solver/pull/432"
+          },
+          {
+            "number": 2434,
+            "repo": "rainlanguage/raindex",
+            "title": "Subgraph vaultless block handler",
+            "url": "https://github.com/rainlanguage/raindex/pull/2434"
+          },
+          {
+            "number": 2428,
+            "repo": "rainlanguage/raindex",
+            "title": "token dropdown loading issues in Orders/Vaults list pages",
+            "url": "https://github.com/rainlanguage/raindex/pull/2428"
+          },
+          {
+            "number": 79,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Update fixed limit",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/79"
+          },
+          {
+            "number": 2421,
+            "repo": "rainlanguage/raindex",
+            "title": "Raindex Router Arb contract",
+            "url": "https://github.com/rainlanguage/raindex/pull/2421"
+          },
+          {
+            "number": 2415,
+            "repo": "rainlanguage/raindex",
+            "title": "Vaultless Phase 5: Webapp Order Detail Display",
+            "url": "https://github.com/rainlanguage/raindex/pull/2415"
+          },
+          {
+            "number": 2414,
+            "repo": "rainlanguage/raindex",
+            "title": "Vaultless Phase 4: Webapp Order Creation UI",
+            "url": "https://github.com/rainlanguage/raindex/pull/2414"
+          },
+          {
+            "number": 2413,
+            "repo": "rainlanguage/raindex",
+            "title": "Add vaultless support to GUI order operations",
+            "url": "https://github.com/rainlanguage/raindex/pull/2413"
+          },
+          {
+            "number": 2412,
+            "repo": "rainlanguage/raindex",
+            "title": "Add vault ID zero validation to DepositArgs and WithdrawArgs",
+            "url": "https://github.com/rainlanguage/raindex/pull/2412"
+          },
+          {
+            "number": 2411,
+            "repo": "rainlanguage/raindex",
+            "title": "Add vaultless field to OrderIOCfg with validation (Phase 1)",
+            "url": "https://github.com/rainlanguage/raindex/pull/2411"
+          },
+          {
+            "number": 75,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Update version to 5",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/75"
+          },
+          {
+            "number": 44,
+            "repo": "rainlanguage/specs",
+            "title": "Document vaultless vault ID sentinel",
+            "url": "https://github.com/rainlanguage/specs/pull/44"
+          },
+          {
+            "number": 74,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Update Base orderbook address to V6",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/74"
+          },
+          {
+            "number": 26,
+            "repo": "rainlanguage/sqlite-web",
+            "title": "Rename packages/ to crates/ and svelte-test/ to packages/ui/",
+            "url": "https://github.com/rainlanguage/sqlite-web/pull/26"
+          },
+          {
+            "number": 424,
+            "repo": "rainlanguage/rain.solver",
+            "title": "increase headroom",
+            "url": "https://github.com/rainlanguage/rain.solver/pull/424"
+          },
+          {
+            "number": 71,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Albion npv strat",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/71"
+          },
+          {
+            "number": 69,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Add sync settings for remote repository",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/69"
+          },
+          {
+            "number": 2312,
+            "repo": "rainlanguage/raindex",
+            "title": "Flare v5 registry",
+            "url": "https://github.com/rainlanguage/raindex/pull/2312"
+          },
+          {
+            "number": 68,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "updating config for flare",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/68"
+          },
+          {
+            "number": 65,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Add more RPC endpoints to flare network for `v4`",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/65"
+          },
+          {
+            "number": 2299,
+            "repo": "rainlanguage/raindex",
+            "title": "fix tauri release missing env",
+            "url": "https://github.com/rainlanguage/raindex/pull/2299"
+          },
+          {
+            "number": 62,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Add a fixed spread strat for st0x",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/62"
+          },
+          {
+            "number": 41,
+            "repo": "rainlanguage/specs",
+            "title": "Add Raindex Event Sourcing Sync Specification V1",
+            "url": "https://github.com/rainlanguage/specs/pull/41"
+          },
+          {
+            "number": 61,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "update pyth period",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/61"
+          },
+          {
+            "number": 2181,
+            "repo": "rainlanguage/raindex",
+            "title": "Virtual Raindex live facade",
+            "url": "https://github.com/rainlanguage/raindex/pull/2181"
+          },
+          {
+            "number": 2176,
+            "repo": "rainlanguage/raindex",
+            "title": "Additional helpers preparing Virtual Raindex for usage in RaindexClient",
+            "url": "https://github.com/rainlanguage/raindex/pull/2176"
+          },
+          {
+            "number": 1,
+            "repo": "rainlanguage/pyth-crosschain",
+            "title": "Stox price pusher",
+            "url": "https://github.com/rainlanguage/pyth-crosschain/pull/1"
+          },
+          {
+            "number": 39,
+            "repo": "rainlanguage/specs",
+            "title": "Spec update to better support multi-chain guis",
+            "url": "https://github.com/rainlanguage/specs/pull/39"
+          },
+          {
+            "number": 238,
+            "repo": "cyclofinance/cyclo.site",
+            "title": "feat: impleneted the re-up opportunity for cytoken positions on unlock",
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/238"
+          },
+          {
+            "number": 2097,
+            "repo": "rainlanguage/raindex",
+            "title": "Remove CLI and ledger support from tauri app",
+            "url": "https://github.com/rainlanguage/raindex/pull/2097"
+          },
+          {
+            "number": 2095,
+            "repo": "rainlanguage/raindex",
+            "title": "Implement filters for Orders page + refactor components",
+            "url": "https://github.com/rainlanguage/raindex/pull/2095"
+          },
+          {
+            "number": 2093,
+            "repo": "rainlanguage/raindex",
+            "title": "Create `BalancerRouterOrderBookV4ArbOrderTaker` contract",
+            "url": "https://github.com/rainlanguage/raindex/pull/2093"
+          },
+          {
+            "number": 2086,
+            "repo": "rainlanguage/raindex",
+            "title": "Add ApproveArgs for ERC20 approvals",
+            "url": "https://github.com/rainlanguage/raindex/pull/2086"
+          },
+          {
+            "number": 19,
+            "repo": "S01-Issuer/s1-issuer",
+            "title": "Remove portfolio, make transaction history a block explorer",
+            "url": "https://github.com/S01-Issuer/s1-issuer/pull/19"
+          },
+          {
+            "number": 2036,
+            "repo": "rainlanguage/raindex",
+            "title": "QueryFilters and persistent FilterStores (based on upd/alloy)",
+            "url": "https://github.com/rainlanguage/raindex/pull/2036"
+          },
+          {
+            "number": 57,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "test",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/57"
+          },
+          {
+            "number": 2013,
+            "repo": "rainlanguage/raindex",
+            "title": "WASM Dereference problem example",
+            "url": "https://github.com/rainlanguage/raindex/pull/2013"
+          },
+          {
+            "number": 2009,
+            "repo": "rainlanguage/raindex",
+            "title": "Change trade timestamps from local datetime to UTC",
+            "url": "https://github.com/rainlanguage/raindex/pull/2009"
+          },
+          {
+            "number": 53,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Claims",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/53"
+          },
+          {
+            "number": 1,
+            "repo": "rainlanguage/incubator-devlake",
+            "title": "github projects",
+            "url": "https://github.com/rainlanguage/incubator-devlake/pull/1"
+          },
+          {
+            "number": 42,
+            "repo": "rainlanguage/rain.strategies",
+            "title": "Add arbitrum2 to dsf, dca, limit, canary",
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/42"
+          },
+          {
+            "number": 1885,
+            "repo": "rainlanguage/raindex",
+            "title": "test AI dev 2",
+            "url": "https://github.com/rainlanguage/raindex/pull/1885"
+          },
+          {
+            "number": 1884,
+            "repo": "rainlanguage/raindex",
+            "title": "test AI code size report",
+            "url": "https://github.com/rainlanguage/raindex/pull/1884"
+          },
+          {
+            "number": 3,
+            "repo": "rainlanguage/apache-devlake",
+            "title": "v.1.0.0",
+            "url": "https://github.com/rainlanguage/apache-devlake/pull/3"
+          },
+          {
+            "number": 336,
+            "repo": "rainlanguage/rain.solver",
+            "title": "prod automation POC",
+            "url": "https://github.com/rainlanguage/rain.solver/pull/336"
+          },
+          {
+            "number": 38,
+            "repo": "rainlanguage/sushiswap",
+            "title": "sonic dexes",
+            "url": "https://github.com/rainlanguage/sushiswap/pull/38"
+          },
+          {
+            "number": 1412,
+            "repo": "rainlanguage/raindex",
+            "title": "03/03/25 fix external links",
+            "url": "https://github.com/rainlanguage/raindex/pull/1412"
+          },
+          {
+            "number": 349,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "cyWETH<>cysFLR Dsf",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/349"
+          },
+          {
+            "number": 346,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "BIOHACK<>USDT Auction Dca",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/346"
+          },
+          {
+            "number": 1,
+            "repo": "cyclofinance/cyclo.rewardsold",
+            "title": "Write script",
+            "url": "https://github.com/cyclofinance/cyclo.rewardsold/pull/1"
+          },
+          {
+            "number": 344,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "Update Polygon Rpc",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/344"
+          },
+          {
+            "number": 336,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "RKFI<>USDC Dsf, Auction Dca",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/336"
+          },
+          {
+            "number": 335,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "WMTX > USDT Sell Auction",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/335"
+          },
+          {
+            "number": 330,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "Eth HOT<>USDT Auction Dca, Grid setup",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/330"
+          },
+          {
+            "number": 329,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "Ethereum RKFI<>USDT Auction Dca, Dsf, Grid",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/329"
+          },
+          {
+            "number": 326,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "(DO NOT MERGE) COFEK Setup ",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/326"
+          },
+          {
+            "number": 322,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "Grid Sell cysFLR-cUSDX",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/322"
+          },
+          {
+            "number": 1082,
+            "repo": "rainlanguage/raindex",
+            "title": "1060 withdraw2 task not being executed when withdrawamount is 0",
+            "url": "https://github.com/rainlanguage/raindex/pull/1082"
+          },
+          {
+            "number": 65,
+            "repo": "rainlanguage/docs.rainlang.xyz",
+            "title": "Update 1-examples.md",
+            "url": "https://github.com/rainlanguage/docs.rainlang.xyz/pull/65"
+          },
+          {
+            "number": 64,
+            "repo": "rainlanguage/docs.rainlang.xyz",
+            "title": "Create 5-two-sided-dynamic-spread.md",
+            "url": "https://github.com/rainlanguage/docs.rainlang.xyz/pull/64"
+          },
+          {
+            "number": 63,
+            "repo": "rainlanguage/docs.rainlang.xyz",
+            "title": "Create 4-auction-based-averaging.md",
+            "url": "https://github.com/rainlanguage/docs.rainlang.xyz/pull/63"
+          },
+          {
+            "number": 62,
+            "repo": "rainlanguage/docs.rainlang.xyz",
+            "title": "Create 3-fixed-limit.md",
+            "url": "https://github.com/rainlanguage/docs.rainlang.xyz/pull/62"
+          },
+          {
+            "number": 60,
+            "repo": "rainlanguage/docs.rainlang.xyz",
+            "title": "Create 2024-10-25-jade-city-techncal-overview.md",
+            "url": "https://github.com/rainlanguage/docs.rainlang.xyz/pull/60"
+          },
+          {
+            "number": 226,
+            "repo": "rainlanguage/rain.webapp",
+            "title": "Generally improve the submission tx flow",
+            "url": "https://github.com/rainlanguage/rain.webapp/pull/226"
+          },
+          {
+            "number": 2,
+            "repo": "rainlanguage/raindex-tg-bot",
+            "title": "Ts, Docker Setup",
+            "url": "https://github.com/rainlanguage/raindex-tg-bot/pull/2"
+          },
+          {
+            "number": 58,
+            "repo": "rainlanguage/docs.rainlang.xyz",
+            "title": "Update 1-dotrain-in-10-minutes.svelte.md",
+            "url": "https://github.com/rainlanguage/docs.rainlang.xyz/pull/58"
+          },
+          {
+            "number": 23,
+            "repo": "rainlanguage/rain.internal",
+            "title": "arb-bot-responsibilities new",
+            "url": "https://github.com/rainlanguage/rain.internal/pull/23"
+          },
+          {
+            "number": 55,
+            "repo": "rainlanguage/docs.rainlang.xyz",
+            "title": "bumped app link and started v4 settings",
+            "url": "https://github.com/rainlanguage/docs.rainlang.xyz/pull/55"
+          },
+          {
             "number": 31,
             "repo": "rainlanguage/rain.uniswap",
             "title": "2024 06 23 sushi v3",
             "url": "https://github.com/rainlanguage/rain.uniswap/pull/31"
+          },
+          {
+            "number": 5,
+            "repo": "rainlanguage/router",
+            "title": "filter helpers",
+            "url": "https://github.com/rainlanguage/router/pull/5"
+          },
+          {
+            "number": 3,
+            "repo": "rainlanguage/assemblyscript-cbor",
+            "title": "Add more tests",
+            "url": "https://github.com/rainlanguage/assemblyscript-cbor/pull/3"
+          },
+          {
+            "number": 4,
+            "repo": "rainlanguage/forker",
+            "title": "upgrade functionalities",
+            "url": "https://github.com/rainlanguage/forker/pull/4"
+          },
+          {
+            "number": 63,
+            "repo": "rainlanguage/dotrain",
+            "title": "add fuzz tests for regexes",
+            "url": "https://github.com/rainlanguage/dotrain/pull/63"
+          },
+          {
+            "number": 683,
+            "repo": "rainlanguage/rain-protocol",
+            "title": "using deflate and inflate raw method for meta",
+            "url": "https://github.com/rainlanguage/rain-protocol/pull/683"
+          },
+          {
+            "number": 679,
+            "repo": "rainlanguage/rain-protocol",
+            "title": "Bump @openzeppelin/contracts-upgradeable from 4.8.3 to 4.9.2",
+            "url": "https://github.com/rainlanguage/rain-protocol/pull/679"
+          },
+          {
+            "number": 74,
+            "repo": "rainlanguage/rain-svelte-components",
+            "title": "Modal tests",
+            "url": "https://github.com/rainlanguage/rain-svelte-components/pull/74"
+          },
+          {
+            "number": 73,
+            "repo": "rainlanguage/rain-svelte-components",
+            "title": "Button Component tests",
+            "url": "https://github.com/rainlanguage/rain-svelte-components/pull/73"
+          },
+          {
+            "number": 70,
+            "repo": "rainlanguage/rain-svelte-components",
+            "title": "InputDropdown tests",
+            "url": "https://github.com/rainlanguage/rain-svelte-components/pull/70"
+          },
+          {
+            "number": 8,
+            "repo": "rainlanguage/rain.orderbook.flashborrower.zeroex",
+            "title": "Update CI Deployment keys based on branches",
+            "url": "https://github.com/rainlanguage/rain.orderbook.flashborrower.zeroex/pull/8"
+          },
+          {
+            "number": 677,
+            "repo": "rainlanguage/rain-protocol",
+            "title": "Update CI Deployment keys based on branches",
+            "url": "https://github.com/rainlanguage/rain-protocol/pull/677"
+          },
+          {
+            "number": 676,
+            "repo": "rainlanguage/rain-protocol",
+            "title": "3 6 2023 set get test",
+            "url": "https://github.com/rainlanguage/rain-protocol/pull/676"
           },
           {
             "number": 675,
@@ -936,10 +1909,58 @@
             "url": "https://github.com/rainlanguage/rain-protocol/pull/675"
           },
           {
+            "number": 59,
+            "repo": "rainlanguage/rain-svelte-components",
+            "title": "2023 04 26 auto abi form tests",
+            "url": "https://github.com/rainlanguage/rain-svelte-components/pull/59"
+          },
+          {
             "number": 613,
             "repo": "rainlanguage/rain-protocol",
             "title": "add generic errors for integrity operand overflow and underflow",
             "url": "https://github.com/rainlanguage/rain-protocol/pull/613"
+          },
+          {
+            "number": 4,
+            "repo": "rainlanguage/flow-subgraph",
+            "title": "added mumbai deployments in CI",
+            "url": "https://github.com/rainlanguage/flow-subgraph/pull/4"
+          },
+          {
+            "number": 515,
+            "repo": "rainlanguage/rain-protocol",
+            "title": "Adding get set tests to stake",
+            "url": "https://github.com/rainlanguage/rain-protocol/pull/515"
+          },
+          {
+            "number": 35,
+            "repo": "rainlanguage/rain-sdk",
+            "title": "update to v2 latest",
+            "url": "https://github.com/rainlanguage/rain-sdk/pull/35"
+          },
+          {
+            "number": 1,
+            "repo": "rainlanguage/rainprotocol.xyz-old",
+            "title": "Dev",
+            "url": "https://github.com/rainlanguage/rainprotocol.xyz-old/pull/1"
+          },
+          {
+            "number": 2,
+            "repo": "rainlanguage/rain-statusfi",
+            "title": "MVP",
+            "url": "https://github.com/rainlanguage/rain-statusfi/pull/2"
+          },
+          {
+            "number": 2,
+            "repo": "rainlanguage/rain-zora",
+            "title": "Add GatedSingleEditionMintable contracts",
+            "url": "https://github.com/rainlanguage/rain-zora/pull/2"
+          },
+          {
+            "number": 1,
+            "repo": "rainlanguage/rain-zora",
+            "title": "Add GitHub actions from rain-protocol",
+            "url": "https://github.com/rainlanguage/rain-zora/pull/1"
           }
         ]
       }
@@ -2356,5 +3377,2867 @@
         "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
       }
     ]
-  }
+  },
+  "uncoveredIssues": [
+    {
+      "number": 66,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "human-queue: emit per-state `owner` (single source of truth) + split the two dual-owner states (human:reject, ai:blocked-on)"
+    },
+    {
+      "number": 53,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Audit check: enforce the deploy-repo / library-repo release split (no repo on both lifecycles)"
+    },
+    {
+      "number": 281,
+      "repo": "rainlanguage/rainix",
+      "title": "Dependency-graph tooling over-counts: a declared edge is not what a consumer actually resolves"
+    },
+    {
+      "number": 46,
+      "repo": "rainlanguage/rain.factory",
+      "title": "Split rain.factory into library (rain.factory) + deploy (rain.factory.deploy)"
+    },
+    {
+      "number": 122,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "roh-scan models only Base + Ethereum: an unmodelled chain renders as absent, not unknown"
+    },
+    {
+      "number": 281,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Authoriser grant invariant is presence-only: a post-deploy `_ADMIN` re-grant is invisible"
+    },
+    {
+      "number": 52,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Audit design-system drift: composition, not just tokens"
+    },
+    {
+      "number": 330,
+      "repo": "rainlanguage/rain.vats",
+      "title": "IAuthorizableV1 publishes the getter but not the setter, so consumers hand-mirror setAuthorizer"
+    },
+    {
+      "number": 278,
+      "repo": "rainlanguage/rainix",
+      "title": "Extend the one-contract-per-file check to interfaces"
+    },
+    {
+      "number": 15,
+      "repo": "rainlanguage/rain.deploy",
+      "title": "On-chain migration registry: let deploy scripts record what has been applied, so tests assert state instead of dates"
+    },
+    {
+      "number": 272,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Four independent per-chain dispatch sites — adding a chain fails at broadcast time, not compile time"
+    },
+    {
+      "number": 62,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Rotate campaign.log and gc.log"
+    },
+    {
+      "number": 61,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "`Monitor` is not denied, so the one-shot rule is unenforced"
+    },
+    {
+      "number": 60,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Batching primitives are denied while per-item calls are allowed (881 denials)"
+    },
+    {
+      "number": 58,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "run_metrics() undercounts tokens and cost by 11–36% (subagent spend invisible)"
+    },
+    {
+      "number": 57,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "`\"permisssions\"` typo makes the whole settings block inert"
+    },
+    {
+      "number": 56,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Deny rule `Bash(rm -rf /:*)` blocks every work-clone deletion — 195 GB accumulated"
+    },
+    {
+      "number": 277,
+      "repo": "rainlanguage/rainix",
+      "title": "rainix-sol-artifacts: forge script --verify fails for Zoltu CREATE2, then --resume loops without wallet"
+    },
+    {
+      "number": 54,
+      "repo": "rainlanguage/rain.solmem",
+      "title": "Unchecked mul(_, 0x20) word scaling wraps, turning documented loud failures into silent corruption"
+    },
+    {
+      "number": 51,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Flag ambient global state and references (they remove branches from testability)"
+    },
+    {
+      "number": 53,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Reference: adopt ideas from Bun's \"Bun in Rust\" for our pipeline processes"
+    },
+    {
+      "number": 51,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "pr-review-report: sanctioned PR-body edit subcommand — producer deadlocks on body-only vetter rejects (QA §8 block)"
+    },
+    {
+      "number": 91,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "roh: surface the audit stamp's audited-commit + skill version in the graph nodes and audit rows (read skillCommit too)"
+    },
+    {
+      "number": 88,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "roh: track the st0x production tokens per network (and Base<->Ethereum parity)"
+    },
+    {
+      "number": 85,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "roh: flag repos not off submodules; a missing [dependencies] must not read as zero deps"
+    },
+    {
+      "number": 84,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "roh: track deployments (which version is live on which network) and flag deployed-beyond-audit"
+    },
+    {
+      "number": 2812,
+      "repo": "rainlanguage/raindex",
+      "title": "Goldsky ob4-base subgraph still serves pre-rename orderbook schema (breaks GraphQL consumers on SDK v6)"
+    },
+    {
+      "number": 83,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "roh: flag when a repo depends on an archived repo"
+    },
+    {
+      "number": 40,
+      "repo": "rainlanguage/rain.dia",
+      "title": "[AUDIT-M12] [medium] LibOpDiaPrice.run does not validate staleAfter is a Float"
+    },
+    {
+      "number": 80,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "Exclude archived repos from the scan (dashboard, graph, metrics)"
+    },
+    {
+      "number": 273,
+      "repo": "rainlanguage/rainix",
+      "title": "autopublish: make cutting constant snapshots and deploying manual actions, generally"
+    },
+    {
+      "number": 256,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Scripts as migrations: on-chain migration registry, state-relevant tests, drop the deadline-gated dual-state invariant"
+    },
+    {
+      "number": 55,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 132,
+      "repo": "rainlanguage/rain.metadata",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 44,
+      "repo": "rainlanguage/rain.extrospection",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 26,
+      "repo": "rainlanguage/rain.tofu.erc20-decimals",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 13,
+      "repo": "rainlanguage/rain.merkle",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 30,
+      "repo": "rainlanguage/rain.pyth",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 26,
+      "repo": "rainlanguage/rain.verify",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 5,
+      "repo": "rainlanguage/rain.dia",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 257,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 202,
+      "repo": "rainlanguage/rain.flare",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 545,
+      "repo": "rainlanguage/rainlang",
+      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "number": 45,
+      "repo": "rainlanguage/rain.factory",
+      "title": "Convert BuildPointers to the shared LibSnapshot — and gain the missing immutability guard"
+    },
+    {
+      "number": 251,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Convert BuildPointers to the shared LibSnapshot (drop the local copy + reconcile deployTags divergence)"
+    },
+    {
+      "number": 2809,
+      "repo": "rainlanguage/raindex",
+      "title": "Convert BuildPointers to the shared LibSnapshot (drop the local deployTag/freezeSnapshot copy)"
+    },
+    {
+      "number": 271,
+      "repo": "rainlanguage/rainix",
+      "title": "Upstream the 'every published soldeer version has its frozen snapshot' check to rainix"
+    },
+    {
+      "number": 256,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "Decide: should ERC4626Words be a pinned prod deploy (snapshot convention) or stay a library-only package?"
+    },
+    {
+      "number": 201,
+      "repo": "rainlanguage/rain.flare",
+      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
+    },
+    {
+      "number": 12,
+      "repo": "rainlanguage/rain.merkle",
+      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
+    },
+    {
+      "number": 255,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
+    },
+    {
+      "number": 29,
+      "repo": "rainlanguage/rain.pyth",
+      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
+    },
+    {
+      "number": 67,
+      "repo": "rainlanguage/raindex.interface",
+      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
+    },
+    {
+      "number": 2805,
+      "repo": "rainlanguage/raindex",
+      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
+    },
+    {
+      "number": 542,
+      "repo": "rainlanguage/rainlang",
+      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
+    },
+    {
+      "number": 65,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "Audit page: label the LOC/drift numbers as Solidity-only (they exclude every other language)"
+    },
+    {
+      "number": 45,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Audit: flag hand-rolled string parsing where a robust domain parser exists"
+    },
+    {
+      "number": 44,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Audit rule: render untrusted data via DOM construction, never innerHTML + a hand-rolled escaper"
+    },
+    {
+      "number": 43,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "FSM: let blocked-deploy/infra/on override APPROVED (deploy failure is orthogonal to code approval)"
+    },
+    {
+      "number": 42,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "FSM: model PR-level close-candidate (extend flag-close-candidate to PRs)"
+    },
+    {
+      "number": 29,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "Expose pipeline/queue system metrics on the dashboard (dead-run rate, startup %, create/land/red rates)"
+    },
+    {
+      "number": 42,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Flag deploy-pin prod addresses not source-verified on the block explorer for every supported network"
+    },
+    {
+      "number": 41,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Flag byte-index string slicing that panics on multi-byte UTF-8 (not-a-char-boundary)"
+    },
+    {
+      "number": 40,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Enforce clap for CLI arg parsing in Rust bins (flag hand-rolled dispatch)"
+    },
+    {
+      "number": 39,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Flag data→innerHTML string interpolation; recommend escape-by-construction (textContent/DOM), not hand-rolled escaping"
+    },
+    {
+      "number": 326,
+      "repo": "rainlanguage/rain.vats",
+      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
+    },
+    {
+      "number": 24,
+      "repo": "rainlanguage/rain.sol.codegen",
+      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
+    },
+    {
+      "number": 541,
+      "repo": "rainlanguage/rainlang",
+      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
+    },
+    {
+      "number": 200,
+      "repo": "rainlanguage/rain.flare",
+      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
+    },
+    {
+      "number": 39,
+      "repo": "rainlanguage/rain.factory",
+      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
+    },
+    {
+      "number": 2803,
+      "repo": "rainlanguage/raindex",
+      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
+    },
+    {
+      "number": 24,
+      "repo": "rainlanguage/rain.datacontract",
+      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
+    },
+    {
+      "number": 38,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Audit skill: much more framework-tooling awareness — flag hand-rolled reimplementations of framework-native mechanisms"
+    },
+    {
+      "number": 121,
+      "repo": "rainlanguage/rain.strategies",
+      "title": "Revert the auction-dca halflife clamp from #118 (fixed-point-era; not needed on float)"
+    },
+    {
+      "number": 37,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Run-stamps should be JSONL (append-per-run history), not single-object last-run.json"
+    },
+    {
+      "number": 2802,
+      "repo": "rainlanguage/raindex",
+      "title": "Depositing to a vault doesn't update an order's max output until page reload (stale cache)"
+    },
+    {
+      "number": 2801,
+      "repo": "rainlanguage/raindex",
+      "title": "Webapp: blank white screen for a long time on load, with no loading indication"
+    },
+    {
+      "number": 265,
+      "repo": "rainlanguage/rainix",
+      "title": "De-bash lib/subgraph.sh (subgraph deploy helpers) to Rust"
+    },
+    {
+      "number": 36,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Audit skill: flag per-sink hand-rolled output/URL safety; standardize on framework-native defense (CSP) + one sanitized primitive"
+    },
+    {
+      "number": 35,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Audit skill: flag inconsistent or missing query layer (frontend data-fetching)"
+    },
+    {
+      "number": 262,
+      "repo": "rainlanguage/rainix",
+      "title": "All-org standard: PR screenshots must render from committed Storybook stories"
+    },
+    {
+      "number": 261,
+      "repo": "rainlanguage/rainix",
+      "title": "rainix-static: allowlist file extensions at the repo level"
+    },
+    {
+      "number": 420,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "sanitizeHref lets protocol-relative URLs (//host) through as relative — open-redirect vector"
+    },
+    {
+      "number": 131,
+      "repo": "rainlanguage/rain.metadata",
+      "title": "Extend RainMetaDocumentV1Item to use OaSchema as a CBOR map key (the #98 additional consideration)"
+    },
+    {
+      "number": 244,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "st0x-deploy release lifecycle: foundry.toml = next version, generate-into-it, publish+bump+regenerate on merge"
+    },
+    {
+      "number": 2800,
+      "repo": "rainlanguage/raindex",
+      "title": "Document clear3 signed-context cross-assignment (alice/bob slots)"
+    },
+    {
+      "number": 31,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "audit: verify soldeer autopublish is wired and current (dead publish workflows, cross-org secrets: inherit, [package] drift, registry lag)"
+    },
+    {
+      "number": 238,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "deploy-constant guard + freeze CI: bind address to its tag-constant + enforce per-tag snapshot existence"
+    },
+    {
+      "number": 237,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "corp-actions: cache the cumulative-multiplier accumulator (cumulativeBalanceMultiplierSinceGenesis is O(n) on-chain)"
+    },
+    {
+      "number": 236,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "corp-actions: stock-split multiplier floor protects one-whole-token, not 1-wei (doc contradicts code)"
+    },
+    {
+      "number": 234,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Orchestrator 1155 receiver: restrict to the known receipt implementation (single shared beacon) instead of accept-all + defensive probe"
+    },
+    {
+      "number": 2799,
+      "repo": "rainlanguage/raindex",
+      "title": "Make the deploy-constant check pointer-driven (drop the hardcoded prefix list + FFI/soldeer fetch)"
+    },
+    {
+      "number": 20,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "Health signal: Protofire audit staleness — last audited tag vs latest published soldeer tag"
+    },
+    {
+      "number": 260,
+      "repo": "rainlanguage/rainix",
+      "title": "Codegen deploy tag-constants from soldeer instead of CI-checking hand-maintained ones"
+    },
+    {
+      "number": 35,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Self-heal PRs that carry multiple ai:* verdict labels (ambiguous state)"
+    },
+    {
+      "number": 31,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Label provenance: human:* labels are trusted by name, not by who applied them"
+    },
+    {
+      "number": 24,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "run-metrics mutation detector undercounts git pushes (overstates idleness)"
+    },
+    {
+      "number": 23,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Ready PRs rot to conflict/stale-CI faster than step-3d re-greens them"
+    },
+    {
+      "number": 22,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Producer spends the majority of each run re-deriving state (gh-read heavy)"
+    },
+    {
+      "number": 20,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Move review state from local ledger to GitHub API (labels + reviews)"
+    },
+    {
+      "number": 416,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Lock minSharesOut floors to 0n for sub-100-wei cyTokenOutput (dust re-opens the no-floor edge)"
+    },
+    {
+      "number": 16,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "Producer metrics chart tooltip can overflow horizontally on narrow viewports"
+    },
+    {
+      "number": 15,
+      "repo": "rainlanguage/rain-org-health",
+      "title": "Producer metrics chart is mouse-only — add touch + a non-visual data alternative"
+    },
+    {
+      "number": 15,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "rainix-static/pipeline bin: emit standard structured run metrics on every invocation"
+    },
+    {
+      "number": 14,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Pipeline metrics: parse run traces into visible time-series (startup overhead as a first-class metric)"
+    },
+    {
+      "number": 13,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Source verdicts and all human queues from GitHub, not the local ledger"
+    },
+    {
+      "number": 253,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "Document the lossless-revert conversion design in LibERC4626 (per the #70 REVERT ruling)"
+    },
+    {
+      "number": 257,
+      "repo": "rainlanguage/rainix",
+      "title": "Graduate gate-able org-health scan signals into rainix-static subcommands"
+    },
+    {
+      "number": 483,
+      "repo": "rainlanguage/flow",
+      "title": "De-submodule: forge-std + rainprotocol-era rain.math.fixedpoint/rain.factory"
+    },
+    {
+      "number": 65,
+      "repo": "cyclofinance/cyclo.subgraph",
+      "title": "De-submodule: lib/cyclo.sol + lib/rain.factory"
+    },
+    {
+      "number": 54,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "De-submodule: lib/ethgild + lib/rain.extrospection to soldeer"
+    },
+    {
+      "number": 411,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "De-submodule: replace the cyclo.sol submodule"
+    },
+    {
+      "number": 12,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Formalize the comment-protocol as Rust subcommands so standard forms are enforced"
+    },
+    {
+      "number": 11,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Convert prompt-inline command recipes to Rust bin subcommands"
+    },
+    {
+      "number": 10,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Convert the PreToolUse hook scripts to Rust"
+    },
+    {
+      "number": 9,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Convert merge-run.sh (merge runner) to Rust"
+    },
+    {
+      "number": 8,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Convert review-run.sh (vetter runner) to Rust"
+    },
+    {
+      "number": 7,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Convert campaign-run.sh (producer runner) to Rust"
+    },
+    {
+      "number": 255,
+      "repo": "rainlanguage/rainix",
+      "title": "Convert the static-check shell libraries to Rust"
+    },
+    {
+      "number": 4,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "classify_ci treats a STALE check conclusion as green-contributing"
+    },
+    {
+      "number": 3,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Queue vs retired python: ledger lines with missing 'source' are included as ai-campaign"
+    },
+    {
+      "number": 55,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Scan: flag deploy-pattern drift (manual-sol-artifacts shape, rain.deploy adoption, rpc alias env names, rain-deploy version)"
+    },
+    {
+      "number": 220,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "verify() dispatches deploy-vs-grants bundle by tx count — fragile to grant-set changes (follow-up to #209)"
+    },
+    {
+      "number": 453,
+      "repo": "rainlanguage/rain.solver",
+      "title": "update E2E tests"
+    },
+    {
+      "number": 218,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "refactor(scripts): source all script production-address constants from versioned LibProdDeploy* libs (Safe address is the lone outlier)"
+    },
+    {
+      "number": 217,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "test: exercise MigrateBeaconOwners.run() directly — production entrypoint has no coverage (test mirrors the script)"
+    },
+    {
+      "number": 215,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Audit + eliminate raw privileged EOAs across the production deployment (umbrella)"
+    },
+    {
+      "number": 214,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "DEPOSIT/WITHDRAW should be held by a manager contract that gates operator EOAs, not granted to the service EOA"
+    },
+    {
+      "number": 213,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Revoke CERTIFY from the unidentified service EOA (0x1c66) on the prod authoriser"
+    },
+    {
+      "number": 212,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Followup to #199: align versioned deploy constants + CI with raindex (single source of truth + artifact drift-check)"
+    },
+    {
+      "number": 2788,
+      "repo": "rainlanguage/raindex",
+      "title": "Allow the order input token to be optional"
+    },
+    {
+      "number": 11,
+      "repo": "rainlanguage/rain.erc4626.words",
+      "title": "\"Manual sol artifacts\" workflow only supports network 'base' but README implies free network choice"
+    },
+    {
+      "number": 2776,
+      "repo": "rainlanguage/raindex",
+      "title": "RaindexOrderBuilder: sequential RPC round-trips inflate order prep"
+    },
+    {
+      "number": 384,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Update vendored dynamic-spread strategy to rain.strategies v6 (halflife exponent clamp)"
+    },
+    {
+      "number": 2746,
+      "repo": "rainlanguage/raindex",
+      "title": "Latest raindex should support Flare end-to-end"
+    },
+    {
+      "number": 54,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Extend health check to flag untested external/public functions on Solidity contracts"
+    },
+    {
+      "number": 2715,
+      "repo": "rainlanguage/raindex",
+      "title": "addOrder4 could validate calculate-source output count at add time (would make the runtime UnsupportedCalculateOutputs check removable)"
+    },
+    {
+      "number": 175,
+      "repo": "S01-Issuer/Albion-issuance-site",
+      "title": "perf(claims): Claims & Portfolio pages load slowly on first visit"
+    },
+    {
+      "number": 2671,
+      "repo": "rainlanguage/raindex",
+      "title": "Error-quality + NatSpec-accuracy bundle (OOB->Panic 0x32, clear revert ordering, stale clear/LibOpContext/quote2 NatSpec)"
+    },
+    {
+      "number": 2653,
+      "repo": "rainlanguage/raindex",
+      "title": "signers subparser word uses the raw operand as row without & 0xFF masking (unlike signed-context)"
+    },
+    {
+      "number": 2647,
+      "repo": "rainlanguage/raindex",
+      "title": "Post-action context: subparser words silently alias other fields or revert OOB (generalizes Protofire M02 #2619)"
+    },
+    {
+      "number": 107,
+      "repo": "rainlanguage/rainlang.interface",
+      "title": "Rename rain.interpreter.interface → rainlang.interface (follow rain.interpreter → rainlang)"
+    },
+    {
+      "number": 60,
+      "repo": "rainlanguage/raindex.interface",
+      "title": "Expose stateOverlay on quote (quote3 / IRaindexV7)"
+    },
+    {
+      "number": 2619,
+      "repo": "rainlanguage/raindex",
+      "title": "Audit (Protofire M02): order-counterparty() exposed in add/remove post-actions but its context row is never populated (reverts)"
+    },
+    {
+      "number": 200,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Upgrade live deployments to the #309-fixed rain.vats base (bump rain-vats 0.1.5 → fixed release)"
+    },
+    {
+      "number": 383,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Invariant + test: deposit/mint recipient is ALWAYS the connected user, never a third party (rain.vats#309)"
+    },
+    {
+      "number": 382,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Document safe depositing / mint wrapper (mitigate _msgSender spoofing phishing, rain.vats#309)"
+    },
+    {
+      "number": 53,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Add immutable CycloMintWrapper to make the safe deposit path verifiable (mitigates _msgSender spoofing, rain.vats#309)"
+    },
+    {
+      "number": 2599,
+      "repo": "rainlanguage/raindex",
+      "title": "Unify getrandom to 0.4 across the wasm dependency graph"
+    },
+    {
+      "number": 227,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "Package Release fails at npm publish: @rainlanguage/float 404 (scoped package never created)"
+    },
+    {
+      "number": 519,
+      "repo": "rainlanguage/rainlang",
+      "title": "Publish rainlang-eval + rainlang_test_fixtures to crates.io (unblock raindex's last git deps)"
+    },
+    {
+      "number": 196,
+      "repo": "rainlanguage/rainix",
+      "title": "Publish rainix nix derivations to a shared binary cache (substituter)"
+    },
+    {
+      "number": 2593,
+      "repo": "rainlanguage/raindex",
+      "title": "Remove ALL git dependencies + submodule path-deps from raindex (zero exceptions)"
+    },
+    {
+      "number": 183,
+      "repo": "rainlanguage/rainix",
+      "title": "Pinned nixpkgs ships tailscale 1.98.0 — broken MagicDNS on Linux"
+    },
+    {
+      "number": 224,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "ci: @rainlanguage/float npm publish fails with 404 Not Found"
+    },
+    {
+      "number": 510,
+      "repo": "rainlanguage/rainlang",
+      "title": "Publish Rust crates (bindings, dispair, parser, eval) to crates.io"
+    },
+    {
+      "number": 195,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Extract prod V2 invariant checks from StoxProdV2Test into a library"
+    },
+    {
+      "number": 2580,
+      "repo": "rainlanguage/raindex",
+      "title": "Review and deploy renamed subgraphs (raindex-* on Goldsky)"
+    },
+    {
+      "number": 2578,
+      "repo": "rainlanguage/raindex",
+      "title": "Replace git submodules with Soldeer for Solidity dependencies"
+    },
+    {
+      "number": 2574,
+      "repo": "rainlanguage/raindex",
+      "title": "Deploy + migration tasks for OrderBook → Raindex rename (#2526)"
+    },
+    {
+      "number": 17,
+      "repo": "rainlanguage/rain.cli",
+      "title": "Ship prebuilt rain binary so downstream flakes don't compile from source"
+    },
+    {
+      "number": 173,
+      "repo": "rainlanguage/rainix",
+      "title": "Upstream a regen-derived-artifacts-and-assert-clean-tree reusable workflow"
+    },
+    {
+      "number": 499,
+      "repo": "rainlanguage/rainlang",
+      "title": "Speed up copy-artifacts.yaml (currently ~11 min)"
+    },
+    {
+      "number": 169,
+      "repo": "rainlanguage/rainix",
+      "title": "Ship a rainix-copy-artifacts.yaml reusable workflow"
+    },
+    {
+      "number": 168,
+      "repo": "rainlanguage/rainix",
+      "title": "Ship a shared LibCopyArtifacts in rainix"
+    },
+    {
+      "number": 167,
+      "repo": "rainlanguage/rainix",
+      "title": "Ubuntu CI jobs hang for the full 6-hour timeout window"
+    },
+    {
+      "number": 111,
+      "repo": "rainlanguage/rain.metadata",
+      "title": "Publish all crates: rain-metadata-bindings + rain-metaboard-subgraph"
+    },
+    {
+      "number": 162,
+      "repo": "rainlanguage/rainix",
+      "title": "Add js-shell slim devShell + reusable workflow"
+    },
+    {
+      "number": 153,
+      "repo": "rainlanguage/rainix",
+      "title": "Upstream copy-artifacts pattern"
+    },
+    {
+      "number": 172,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Encode CompletionFilter as high bits of type mask in nextOfType/prevOfType"
+    },
+    {
+      "number": 132,
+      "repo": "rainlanguage/rainix",
+      "title": "Run a full audit pass"
+    },
+    {
+      "number": 24,
+      "repo": "rainlanguage/rain.erc",
+      "title": "Audit rain.erc end-to-end"
+    },
+    {
+      "number": 126,
+      "repo": "rainlanguage/rainix",
+      "title": "Standardize post-deploy verification across LibRainDeploy / rainix"
+    },
+    {
+      "number": 52,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Replace stale 'ethgild' submodule + remapping with 'rain.vats' canonical name"
+    },
+    {
+      "number": 156,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Review and port sft-ops"
+    },
+    {
+      "number": 381,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "UX: explain stale-Pyth gate and let users bump prices from the lock page"
+    },
+    {
+      "number": 51,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Tooling: foundry script to refresh hardcoded oracle prices in prod tests"
+    },
+    {
+      "number": 151,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Move corp-actions scheduler multisig from 1-of-5 to 3-of-5"
+    },
+    {
+      "number": 149,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Bump rain.math.float to fully-audited release"
+    },
+    {
+      "number": 2564,
+      "repo": "rainlanguage/raindex",
+      "title": "visualize DB sync stages sequentially with % completion"
+    },
+    {
+      "number": 50,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Pull `receiptAddress` from on-chain via `vault.receipt()` instead of canonical JSON"
+    },
+    {
+      "number": 49,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Pull `underlyingSymbol` from on-chain instead of canonical JSON"
+    },
+    {
+      "number": 48,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Pull `underlyingDecimals` from on-chain instead of canonical JSON"
+    },
+    {
+      "number": 47,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Pull `underlyingAddress` from on-chain via `vault.asset()` instead of canonical JSON"
+    },
+    {
+      "number": 46,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Pull cyToken `symbol` from on-chain instead of canonical JSON"
+    },
+    {
+      "number": 45,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Pull cyToken `name` from on-chain instead of canonical JSON"
+    },
+    {
+      "number": 44,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Pull cyToken `decimals` from on-chain instead of canonical JSON"
+    },
+    {
+      "number": 43,
+      "repo": "cyclofinance/cyclo.sol",
+      "title": "Verify cyclo-site-tokens.json receiptAddress linkage on-chain"
+    },
+    {
+      "number": 373,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Read cyToken/underlying decimals from on-chain instead of hardcoding in stores.ts"
+    },
+    {
+      "number": 142,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Fork test: corporate-action authorizer permission grants on deployed infra"
+    },
+    {
+      "number": 370,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Fork-test cyclo.site/stores.ts token config against on-chain contracts"
+    },
+    {
+      "number": 123,
+      "repo": "rainlanguage/rainix",
+      "title": "headless chromium does not capture fully-rendered SPA output"
+    },
+    {
+      "number": 107,
+      "repo": "rainlanguage/rain.metadata",
+      "title": "Tooling to identify and reap unused deployed subgraphs on Goldsky"
+    },
+    {
+      "number": 138,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Corporate actions: handling >~250 actions per vault"
+    },
+    {
+      "number": 137,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Corporate action: name/symbol changes (ACTION_TYPE_NAME_SYMBOL_V1)"
+    },
+    {
+      "number": 129,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Review _ensureBootstrap location: bootstrap only fires alongside a user-scheduled action"
+    },
+    {
+      "number": 119,
+      "repo": "rainlanguage/rainix",
+      "title": "discussion: rainix-managed npm deps via buildNpmPackage"
+    },
+    {
+      "number": 23,
+      "repo": "rainlanguage/rain.extrospection",
+      "title": "scan rain interpreter bytecode for ops present/reachable"
+    },
+    {
+      "number": 437,
+      "repo": "rainlanguage/flow",
+      "title": "Migrate to latest rain.interpreter.interface (V4 caller / V4 interpreter / V3 store)"
+    },
+    {
+      "number": 364,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Remove rewards UI/queries/constants now that the rFLR rewards program is finished"
+    },
+    {
+      "number": 106,
+      "repo": "rainlanguage/rain.metadata",
+      "title": "Remove MetaBoard.hash() — no longer needed"
+    },
+    {
+      "number": 435,
+      "repo": "rainlanguage/flow",
+      "title": "Evaluate ERC1155 transfer data parameter support in LibFlow.flowERC1155"
+    },
+    {
+      "number": 434,
+      "repo": "rainlanguage/flow",
+      "title": "Evaluate ERC1155 batch transfer support in LibFlow.flowERC1155"
+    },
+    {
+      "number": 108,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Sync rate limiting / time-window controls on mint, burn, MM order placement"
+    },
+    {
+      "number": 107,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Liquidity isolation per token set: prevent cross-token blow-ups as issuer/MM landscape diversifies"
+    },
+    {
+      "number": 106,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Guardian-style monitor + freeze: what we'd need to make it effective"
+    },
+    {
+      "number": 105,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Upgrade process: prevent ownership / implementation foot-guns"
+    },
+    {
+      "number": 104,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Corporate action: stablecoin dividends (ACTION_TYPE_STABLES_DIVIDEND_V1)"
+    },
+    {
+      "number": 103,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Prod deploy tests: enumerate from chain, fail CI on uncovered deployments"
+    },
+    {
+      "number": 360,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A21-4] [LOW] mappedReceipts is non-reactive; stale rows after receipts prop changes"
+    },
+    {
+      "number": 359,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A20-4] [LOW] ReceiptModal does not validate tokenId and bare-catches previewRedeem errors, masking diagnostic state"
+    },
+    {
+      "number": 358,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A21-3] [LOW] receipt.balance passed to formatUnits without BigInt() coercion"
+    },
+    {
+      "number": 340,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A22-1] [LOW] RewardsInfo.svelte hardcodes stale Jan-2025 epoch dates and 1M rFLR pool"
+    },
+    {
+      "number": 330,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A15-2] [LOW] Default no-op validate lets empty string and lone '.' reach amount in Input.svelte"
+    },
+    {
+      "number": 328,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A15-1] [LOW] External amount updates bypass handleDecimalSeparator sanitization in Input.svelte"
+    },
+    {
+      "number": 318,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A01-4] [LOW] STALE_PERIOD of 30 days passed to Pyth getPriceNoOlderThan in frontend display"
+    },
+    {
+      "number": 317,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A01-3] [LOW] getCyTokenUsdPrice swallows quoter errors as 0n, indistinguishable from real zero"
+    },
+    {
+      "number": 312,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "[A03-1] [LOW] Symbol-keyed lookups in AccountStats are case-sensitive without normalization"
+    },
+    {
+      "number": 98,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Consider full EIP-2535 diamond pattern over single hardcoded facet"
+    },
+    {
+      "number": 88,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "effectiveTotalSupply scales linearly with completed split count"
+    },
+    {
+      "number": 87,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Track upstream OZ PR to expose ERC-7201 root slot as internal"
+    },
+    {
+      "number": 84,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Review LibRebase.migratedBalance optimization choices"
+    },
+    {
+      "number": 83,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "nextOfType/prevOfType collapse three distinct outcomes to return value 0"
+    },
+    {
+      "number": 78,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Gas optimization opportunities for corporate action linked list"
+    },
+    {
+      "number": 64,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "unmigrated storage field name is semantically misleading"
+    },
+    {
+      "number": 479,
+      "repo": "rainlanguage/rainlang",
+      "title": "CI takes 30-40min due to macOS Nix cache and redundant sol-prelude"
+    },
+    {
+      "number": 34,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Prod token test: verify authorizer is set and consistent across vaults"
+    },
+    {
+      "number": 32,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "V2 OARV deployer beacons bricked on Base"
+    },
+    {
+      "number": 478,
+      "repo": "rainlanguage/rainlang",
+      "title": "Rename RainlangExpressionDeployer"
+    },
+    {
+      "number": 465,
+      "repo": "rainlanguage/rainlang",
+      "title": "Rename DISPaiR struct and crate to Rainlang"
+    },
+    {
+      "number": 287,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Clean up unused Flare subgraph deployments on Goldsky"
+    },
+    {
+      "number": 286,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Replace Arbitrum rewards subgraph with direct RPC calls"
+    },
+    {
+      "number": 2540,
+      "repo": "rainlanguage/raindex",
+      "title": "Remote DB deployment via CI action"
+    },
+    {
+      "number": 17,
+      "repo": "S01-Issuer/st0x.deploy",
+      "title": "Security Enhancement: Mint Recipient Whitelist with Two-Key Model"
+    },
+    {
+      "number": 2524,
+      "repo": "rainlanguage/raindex",
+      "title": "Investigate lag when changing filters on Orders and Vaults pages"
+    },
+    {
+      "number": 2523,
+      "repo": "rainlanguage/raindex",
+      "title": "Vault detail page intermittently fails to load (v6.raindex.finance)"
+    },
+    {
+      "number": 177,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "Investigate exact derivation of log/antilog small table values"
+    },
+    {
+      "number": 2481,
+      "repo": "rainlanguage/raindex",
+      "title": "Show associated orders and counterparty trades for take orders/clears"
+    },
+    {
+      "number": 434,
+      "repo": "rainlanguage/rainlang",
+      "title": "upstream GM word to float lib"
+    },
+    {
+      "number": 2471,
+      "repo": "rainlanguage/raindex",
+      "title": "Extract RaindexOrderBuilder from js_api into common crate"
+    },
+    {
+      "number": 13,
+      "repo": "rainlanguage/rain.lib.memkv",
+      "title": "support larger pointers"
+    },
+    {
+      "number": 2451,
+      "repo": "rainlanguage/raindex",
+      "title": "Local DB sync forensics: separate logs DB + structured sync logs"
+    },
+    {
+      "number": 2448,
+      "repo": "rainlanguage/raindex",
+      "title": "No way to debug user-reported local database issues"
+    },
+    {
+      "number": 2447,
+      "repo": "rainlanguage/raindex",
+      "title": "Add local DB support for fetching dotrain source"
+    },
+    {
+      "number": 2446,
+      "repo": "rainlanguage/raindex",
+      "title": "Use local DB for fetching dotrain source"
+    },
+    {
+      "number": 2445,
+      "repo": "rainlanguage/raindex",
+      "title": "Index metaboard contract events in the sync pipeline"
+    },
+    {
+      "number": 2444,
+      "repo": "rainlanguage/raindex",
+      "title": "Add contract address field to MetaboardCfg"
+    },
+    {
+      "number": 2426,
+      "repo": "rainlanguage/raindex",
+      "title": "Dynamic Chunking for Local DB Sync"
+    },
+    {
+      "number": 2425,
+      "repo": "rainlanguage/raindex",
+      "title": "Token Selection Dropdown Loading Issues"
+    },
+    {
+      "number": 4,
+      "repo": "S01-Issuer/st0x-rewards",
+      "title": "I migrated your subgraph to HyperIndex - 100x faster indexing"
+    },
+    {
+      "number": 7,
+      "repo": "rainlanguage/rain.lib.hash",
+      "title": "eip 712"
+    },
+    {
+      "number": 88,
+      "repo": "rainlanguage/rain.metadata",
+      "title": "deterministic deployments"
+    },
+    {
+      "number": 2410,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Phase 8: Quote Fillability (Optional)"
+    },
+    {
+      "number": 2409,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Phase 7: Performance Metrics Display"
+    },
+    {
+      "number": 2408,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Phase 6: Vault List Handling"
+    },
+    {
+      "number": 2407,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Phase 5: Webapp Display - Order Detail"
+    },
+    {
+      "number": 2406,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Phase 4: Webapp Order Creation UI"
+    },
+    {
+      "number": 2405,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Phase 3: GUI Order Operations"
+    },
+    {
+      "number": 2404,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Phase 2: SDK Validation Guards"
+    },
+    {
+      "number": 2403,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Phase 1: Settings & Validation"
+    },
+    {
+      "number": 2402,
+      "repo": "rainlanguage/raindex",
+      "title": "Vaultless Orders (Direct Trading) - V6 Feature Implementation"
+    },
+    {
+      "number": 2400,
+      "repo": "rainlanguage/raindex",
+      "title": "Improve First-Load Experience on Mobile (Sync Status Visibility)"
+    },
+    {
+      "number": 2397,
+      "repo": "rainlanguage/raindex",
+      "title": "Remove subgraph fallback from get_balance_changes when using local DB"
+    },
+    {
+      "number": 2394,
+      "repo": "rainlanguage/raindex",
+      "title": "Implement LocalDB as data source for Take Orders API"
+    },
+    {
+      "number": 2389,
+      "repo": "rainlanguage/raindex",
+      "title": "V6 Migration - SDK & App Review"
+    },
+    {
+      "number": 2386,
+      "repo": "rainlanguage/raindex",
+      "title": "Implement Take Orders SDK with V6 Exact Swap Interface"
+    },
+    {
+      "number": 2377,
+      "repo": "rainlanguage/raindex",
+      "title": "Base Network Local DB taking way longer to sync"
+    },
+    {
+      "number": 2374,
+      "repo": "rainlanguage/raindex",
+      "title": "Support LocalDB as a data source for Order Detail “Volume” tab"
+    },
+    {
+      "number": 2357,
+      "repo": "rainlanguage/raindex",
+      "title": "Take Orders SDK – Phase 3: Exact‑In Simulation and Builder"
+    },
+    {
+      "number": 2353,
+      "repo": "rainlanguage/raindex",
+      "title": "Take Orders SDK Functionality"
+    },
+    {
+      "number": 145,
+      "repo": "S01-Issuer/Albion-issuance-site",
+      "title": "sold out tokens should be displayed under available tokens"
+    },
+    {
+      "number": 144,
+      "repo": "S01-Issuer/Albion-issuance-site",
+      "title": "\"buy\" button shows for sold out assets"
+    },
+    {
+      "number": 2327,
+      "repo": "rainlanguage/raindex",
+      "title": "add retry when deposit tx timeouts"
+    },
+    {
+      "number": 22,
+      "repo": "rainlanguage/sqlite-web",
+      "title": "Request: Prepared Query Batch"
+    },
+    {
+      "number": 20,
+      "repo": "rainlanguage/sqlite-web",
+      "title": "Refactor js package build process for removing the need for `await init()` call"
+    },
+    {
+      "number": 2206,
+      "repo": "rainlanguage/raindex",
+      "title": "Implement \"0 vault id\" logic in sdk and webapp"
+    },
+    {
+      "number": 5,
+      "repo": "rainlanguage/rain.pyth",
+      "title": "Generic pyth word for any feed id."
+    },
+    {
+      "number": 151,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "comma support in parsing and formatting"
+    },
+    {
+      "number": 149,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "handle exponent underflow better?"
+    },
+    {
+      "number": 148,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "check pow precision for very small but positive b in a^b"
+    },
+    {
+      "number": 131,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "handle the case of fullA = false in div without erroring"
+    },
+    {
+      "number": 89,
+      "repo": "S01-Issuer/Albion-issuance-site",
+      "title": "Add legal guardrails"
+    },
+    {
+      "number": 245,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Marking the address that is blacklisted on the rewards subpage"
+    },
+    {
+      "number": 2105,
+      "repo": "rainlanguage/raindex",
+      "title": "Link the abstractions of DotrainRegistry, DotrainOrder and DotrainOrderGui"
+    },
+    {
+      "number": 3,
+      "repo": "rainlanguage/sqlite-web",
+      "title": "Move rust logic to `/crates` and typescript logic to `/packages`"
+    },
+    {
+      "number": 86,
+      "repo": "S01-Issuer/Albion-issuance-site",
+      "title": "Optimize AbiCoder instantiation to use singleton pattern"
+    },
+    {
+      "number": 13,
+      "repo": "rainlanguage/rain.dex.solve",
+      "title": "BalancerV3 POC for arbing QuantMM pools"
+    },
+    {
+      "number": 78,
+      "repo": "S01-Issuer/Albion-issuance-site",
+      "title": "Improve about page with stronger track record"
+    },
+    {
+      "number": 76,
+      "repo": "S01-Issuer/Albion-issuance-site",
+      "title": "Incorporate feedback from Josh's friend"
+    },
+    {
+      "number": 75,
+      "repo": "S01-Issuer/Albion-issuance-site",
+      "title": "Rethink IRR / APY approach and naming conventions"
+    },
+    {
+      "number": 2052,
+      "repo": "rainlanguage/raindex",
+      "title": "Think about the flow of mullti-network in sdk"
+    },
+    {
+      "number": 2051,
+      "repo": "rainlanguage/raindex",
+      "title": "Add version dropdown to SDK docs website"
+    },
+    {
+      "number": 92,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "support more precise interpolation for pow"
+    },
+    {
+      "number": 2049,
+      "repo": "rainlanguage/raindex",
+      "title": "Track Schwab fill prices"
+    },
+    {
+      "number": 88,
+      "repo": "rainlanguage/rain.math.float",
+      "title": "support negative base in pow for integer exponent"
+    },
+    {
+      "number": 2041,
+      "repo": "rainlanguage/raindex",
+      "title": "Re-deploy orderbook v5 and related infra across all networks"
+    },
+    {
+      "number": 58,
+      "repo": "rainlanguage/rain.strategies",
+      "title": "Update rain.strategies (`settings.yaml`, individual strategies, and then registry)"
+    },
+    {
+      "number": 2027,
+      "repo": "rainlanguage/raindex",
+      "title": "the name of the project is not at all clearly visible on the landing page, can be improved with a border maybe or a darker font color"
+    },
+    {
+      "number": 2026,
+      "repo": "rainlanguage/raindex",
+      "title": "The theme button is missing on the landing page"
+    },
+    {
+      "number": 2025,
+      "repo": "rainlanguage/raindex",
+      "title": "The UI of deploying a limit order of chain, looks like a basic html file - can add some boxes and divs to make to look good with simpler and easier user experience"
+    },
+    {
+      "number": 2023,
+      "repo": "rainlanguage/raindex",
+      "title": "Fix deposit/withdraw buttons"
+    },
+    {
+      "number": 2022,
+      "repo": "rainlanguage/raindex",
+      "title": "Improve token selection UI/UX"
+    },
+    {
+      "number": 2021,
+      "repo": "rainlanguage/raindex",
+      "title": "Improve page load time"
+    },
+    {
+      "number": 2016,
+      "repo": "rainlanguage/raindex",
+      "title": "Wallet Connect Error"
+    },
+    {
+      "number": 2011,
+      "repo": "rainlanguage/raindex",
+      "title": "Passing structs back to WASM without losing its reference"
+    },
+    {
+      "number": 1998,
+      "repo": "rainlanguage/raindex",
+      "title": "Ability to reference price ratios in field names/descriptions and for default field values in `DotrainOrderGui` yaml"
+    },
+    {
+      "number": 234,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "receipts not showing in GUI"
+    },
+    {
+      "number": 1991,
+      "repo": "rainlanguage/raindex",
+      "title": "Create types to parse YAML to/from and isolate the YAML handling. Use well-typed values everywhere else"
+    },
+    {
+      "number": 1990,
+      "repo": "rainlanguage/raindex",
+      "title": "Create strongly typed equivalents of subgraph types, convert between them directly in the subgraph crate, and make the current Sg* types private to the subgraph crate"
+    },
+    {
+      "number": 1967,
+      "repo": "rainlanguage/raindex",
+      "title": "Rethink about the getters that return `Result` in the raindex client sdk"
+    },
+    {
+      "number": 1965,
+      "repo": "rainlanguage/raindex",
+      "title": "Tauri app does not display error if settings text is not valid"
+    },
+    {
+      "number": 75,
+      "repo": "rainlanguage/rain.metadata",
+      "title": "Add transaction metadata, like hash, block number, timestamp to subgraph."
+    },
+    {
+      "number": 35,
+      "repo": "rainlanguage/rain.wasm",
+      "title": "Update wasm export macro to remove pre-processing on some of the attributes"
+    },
+    {
+      "number": 1954,
+      "repo": "rainlanguage/raindex",
+      "title": "Move query filters in get orders and get vaults queries to the new RaindexClient"
+    },
+    {
+      "number": 1953,
+      "repo": "rainlanguage/raindex",
+      "title": "Remove alloy-ethers-typecast dependency from rain.orderbook"
+    },
+    {
+      "number": 43,
+      "repo": "rainlanguage/rain.strategies",
+      "title": "Rouzwelt  comms"
+    },
+    {
+      "number": 1898,
+      "repo": "rainlanguage/raindex",
+      "title": "callback closure for getting prices"
+    },
+    {
+      "number": 1887,
+      "repo": "rainlanguage/raindex",
+      "title": "Optimize PR CI by conditional execution"
+    },
+    {
+      "number": 1867,
+      "repo": "rainlanguage/raindex",
+      "title": "vault balance chnage types filter"
+    },
+    {
+      "number": 1794,
+      "repo": "rainlanguage/raindex",
+      "title": "Replace all transactions in transactionStore with constructor versions"
+    },
+    {
+      "number": 1792,
+      "repo": "rainlanguage/raindex",
+      "title": "Simulate transactions before sending them to wallet"
+    },
+    {
+      "number": 231,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Allow remortaging"
+    },
+    {
+      "number": 25,
+      "repo": "rainlanguage/rain.wasm",
+      "title": "Automate publish workflow on main merge"
+    },
+    {
+      "number": 1743,
+      "repo": "rainlanguage/raindex",
+      "title": "Constructable Transactions that allow multiple tx's to run concurrently"
+    },
+    {
+      "number": 1740,
+      "repo": "rainlanguage/raindex",
+      "title": "_🧹 Nitpick (assertive)_"
+    },
+    {
+      "number": 1739,
+      "repo": "rainlanguage/raindex",
+      "title": "_⚠️ Potential issue_"
+    },
+    {
+      "number": 1737,
+      "repo": "rainlanguage/raindex",
+      "title": "_🛠️ Refactor suggestion_"
+    },
+    {
+      "number": 1736,
+      "repo": "rainlanguage/raindex",
+      "title": "_🛠️ Refactor suggestion_"
+    },
+    {
+      "number": 1734,
+      "repo": "rainlanguage/raindex",
+      "title": "_🛠️ Refactor suggestion_"
+    },
+    {
+      "number": 1733,
+      "repo": "rainlanguage/raindex",
+      "title": "_🛠️ Refactor suggestion_"
+    },
+    {
+      "number": 1732,
+      "repo": "rainlanguage/raindex",
+      "title": "_🧹 Nitpick (assertive)_"
+    },
+    {
+      "number": 1731,
+      "repo": "rainlanguage/raindex",
+      "title": "_🧹 Nitpick (assertive)_"
+    },
+    {
+      "number": 1728,
+      "repo": "rainlanguage/raindex",
+      "title": "Provide ability to set block numbers for debug tab"
+    },
+    {
+      "number": 335,
+      "repo": "rainlanguage/rain.solver",
+      "title": "automate deployment poc"
+    },
+    {
+      "number": 1672,
+      "repo": "rainlanguage/raindex",
+      "title": "Move transaction indexing logic after deploying an order into gui"
+    },
+    {
+      "number": 1664,
+      "repo": "rainlanguage/raindex",
+      "title": "Should there be an option to paste in a .rain and deploy, instead of having to use a registry URL?"
+    },
+    {
+      "number": 1650,
+      "repo": "rainlanguage/raindex",
+      "title": "make invariant testing work"
+    },
+    {
+      "number": 1618,
+      "repo": "rainlanguage/raindex",
+      "title": "Add inline deposit/withdraw/remove functionality to list components in webapp"
+    },
+    {
+      "number": 1609,
+      "repo": "rainlanguage/raindex",
+      "title": "vault balances tab"
+    },
+    {
+      "number": 1595,
+      "repo": "rainlanguage/raindex",
+      "title": "gui.ValidateDeployment to run simulateWriteContract before deploying strates"
+    },
+    {
+      "number": 1578,
+      "repo": "rainlanguage/raindex",
+      "title": "Order deployed on network, but returned status is failed."
+    },
+    {
+      "number": 1556,
+      "repo": "rainlanguage/raindex",
+      "title": "EditableSpan doesn't appear to be used anywhere, could probably be deleted"
+    },
+    {
+      "number": 1553,
+      "repo": "rainlanguage/raindex",
+      "title": "packages/webapp/src/routes/orders/[network]-[orderHash]/+page.svelte"
+    },
+    {
+      "number": 1550,
+      "repo": "rainlanguage/raindex",
+      "title": "packages/webapp/src/routes/deploy/+layout.svelte"
+    },
+    {
+      "number": 1537,
+      "repo": "rainlanguage/raindex",
+      "title": "Move validateAmount.ts into Rust"
+    },
+    {
+      "number": 1533,
+      "repo": "rainlanguage/raindex",
+      "title": "Move any value-handling logic out of components into files that can be fuzz-tested"
+    },
+    {
+      "number": 1525,
+      "repo": "rainlanguage/raindex",
+      "title": "Failing to get token info from Ethereum mainnet for valid tokens"
+    },
+    {
+      "number": 1509,
+      "repo": "rainlanguage/raindex",
+      "title": "Cannot switch chains using walletConnect from tauri-app"
+    },
+    {
+      "number": 18,
+      "repo": "rainlanguage/rain.wasm",
+      "title": "Add support for automatically generating the return type in wasm_export macro"
+    },
+    {
+      "number": 1450,
+      "repo": "rainlanguage/raindex",
+      "title": "For all vaults/order, return the Chain ID of the Orderbook which deployed it"
+    },
+    {
+      "number": 1395,
+      "repo": "rainlanguage/raindex",
+      "title": "Move transaction args into transaction.ts and extend them for various state of TX (frontend/ with config)"
+    },
+    {
+      "number": 319,
+      "repo": "rainlanguage/rain.solver",
+      "title": "Track transaction revert rates (as a proxy for front-running/MEV issues)"
+    },
+    {
+      "number": 318,
+      "repo": "rainlanguage/rain.solver",
+      "title": "Arb transaction efficiency (as a proxy for opportunity staleness)"
+    },
+    {
+      "number": 317,
+      "repo": "rainlanguage/rain.solver",
+      "title": "Measure downtime (e.g. tracking time between trades for each network and set a downtime threshold)"
+    },
+    {
+      "number": 316,
+      "repo": "rainlanguage/rain.solver",
+      "title": "Solver KPIs"
+    },
+    {
+      "number": 1386,
+      "repo": "rainlanguage/raindex",
+      "title": "Bitfrost wallet compatibility"
+    },
+    {
+      "number": 1374,
+      "repo": "rainlanguage/raindex",
+      "title": "is:open label:enhancement Pull Asset list from Sparkdex.ai and/or Blazeswap for choosing the assets to trade"
+    },
+    {
+      "number": 1359,
+      "repo": "rainlanguage/raindex",
+      "title": "Refactor Balance/ trade Chart wrappers"
+    },
+    {
+      "number": 1348,
+      "repo": "rainlanguage/raindex",
+      "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
+    },
+    {
+      "number": 1347,
+      "repo": "rainlanguage/raindex",
+      "title": "Add fuzz-testing for deploymentSteps"
+    },
+    {
+      "number": 1337,
+      "repo": "rainlanguage/raindex",
+      "title": "Would be great that your own vaults would show up during the strategy deployment so you dont have to copy paste"
+    },
+    {
+      "number": 1320,
+      "repo": "rainlanguage/raindex",
+      "title": "Better validation for fields"
+    },
+    {
+      "number": 1311,
+      "repo": "rainlanguage/raindex",
+      "title": "Clear message for the missing binding."
+    },
+    {
+      "number": 1310,
+      "repo": "rainlanguage/raindex",
+      "title": "Modal showing the deployment status from v1"
+    },
+    {
+      "number": 222,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Be able to burn with your locked tokens"
+    },
+    {
+      "number": 1261,
+      "repo": "rainlanguage/raindex",
+      "title": "network selection and network bindings"
+    },
+    {
+      "number": 138,
+      "repo": "rainlanguage/dotrain",
+      "title": "unify Alloy versions"
+    },
+    {
+      "number": 221,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "Current market value is incorrect"
+    },
+    {
+      "number": 218,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "show actual APYs from prior epochs as well as current APY estimations"
+    },
+    {
+      "number": 217,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "show total collateral locked and total cy* to unlock per token"
+    },
+    {
+      "number": 341,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "Option to provide custom rpc url while deploying strategies to fetch onchain data"
+    },
+    {
+      "number": 213,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "ability to have conditional bindings"
+    },
+    {
+      "number": 3,
+      "repo": "rainlanguage/rain.strategies",
+      "title": "Validate strategies pushed to rain.strategies using a CI action?"
+    },
+    {
+      "number": 197,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "show the historical market price of cysFLR from the moment it was minted for each receipt on the burn page"
+    },
+    {
+      "number": 183,
+      "repo": "cyclofinance/cyclo.site",
+      "title": "include youtube vids etc. in docs"
+    },
+    {
+      "number": 1060,
+      "repo": "rainlanguage/raindex",
+      "title": "withdraw2 task not being executed when withdrawAmount is <= 0"
+    },
+    {
+      "number": 280,
+      "repo": "rainlanguage/rain.solver",
+      "title": "bribe bounty strats/bot ??"
+    },
+    {
+      "number": 279,
+      "repo": "rainlanguage/rain.solver",
+      "title": "arbitrage strats case"
+    },
+    {
+      "number": 1042,
+      "repo": "rainlanguage/raindex",
+      "title": "GStreamer and the Embedded video in the homepage causes local build to freeze"
+    },
+    {
+      "number": 277,
+      "repo": "rainlanguage/rain.solver",
+      "title": "research the possibility to include arb3 tx gas usage and gasPrice in the arb3 task context from solidity"
+    },
+    {
+      "number": 1039,
+      "repo": "rainlanguage/raindex",
+      "title": "Unable to install linux release on ubunut24"
+    },
+    {
+      "number": 271,
+      "repo": "rainlanguage/rain.solver",
+      "title": "test https://cow.fi/mev-blocker"
+    },
+    {
+      "number": 302,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "need CI to flag basic issues with the integrity and deployability of the yaml"
+    },
+    {
+      "number": 71,
+      "repo": "rainlanguage/docs.rainlang.xyz",
+      "title": "Raindex solver explainers"
+    },
+    {
+      "number": 263,
+      "repo": "rainlanguage/rain.solver",
+      "title": "try to use https://blinklabs.xyz/ to avoid front running that causes expensive reverts"
+    },
+    {
+      "number": 270,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "Approve transaction is mined but no block confirmation is received"
+    },
+    {
+      "number": 991,
+      "repo": "rainlanguage/raindex",
+      "title": "get vault balances for an order in cli"
+    },
+    {
+      "number": 981,
+      "repo": "rainlanguage/raindex",
+      "title": "add back button for desktop app"
+    },
+    {
+      "number": 2,
+      "repo": "rainlanguage/org-process",
+      "title": "define canary order scope of work and purpose and generally when/where/why/how about it"
+    },
+    {
+      "number": 243,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "Order table styling not working on Firefox"
+    },
+    {
+      "number": 222,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "Would be good to have a transaction store, similar to the one in SFT site."
+    },
+    {
+      "number": 3,
+      "repo": "rainlanguage/raindex-tg-bot",
+      "title": "Ensure raindex tg bot is in typescript"
+    },
+    {
+      "number": 960,
+      "repo": "rainlanguage/raindex",
+      "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
+    },
+    {
+      "number": 217,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "show codemirror modal on the strat page"
+    },
+    {
+      "number": 216,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "Slow to perform getAddOrderCallData from transactionData.ts"
+    },
+    {
+      "number": 192,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "have a local db"
+    },
+    {
+      "number": 950,
+      "repo": "rainlanguage/raindex",
+      "title": "have a local db"
+    },
+    {
+      "number": 151,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "ability to set the vault id, so multiple strats can point at the same capital"
+    },
+    {
+      "number": 936,
+      "repo": "rainlanguage/raindex",
+      "title": "clicking on all the accounts in the orders page also turns on \"all accounts\" which includes accounts that aren't in the list"
+    },
+    {
+      "number": 145,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "ability to see other people's orders"
+    },
+    {
+      "number": 142,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "ability to sort table by headings on my strats page"
+    },
+    {
+      "number": 931,
+      "repo": "rainlanguage/raindex",
+      "title": "rainbow wallet on mobile doesn't select correct network"
+    },
+    {
+      "number": 929,
+      "repo": "rainlanguage/raindex",
+      "title": "connect to wallet connect button does nothing (after disconnecting?)"
+    },
+    {
+      "number": 139,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "i was asked to infinite approve quick on deposit"
+    },
+    {
+      "number": 927,
+      "repo": "rainlanguage/raindex",
+      "title": "can't deposit any tokens into order on polygon, says 0 wallet balance for all vaults"
+    },
+    {
+      "number": 229,
+      "repo": "rainlanguage/rain.solver",
+      "title": "integrate with rubic aggregator - https://rubic.exchange/"
+    },
+    {
+      "number": 924,
+      "repo": "rainlanguage/raindex",
+      "title": "add `balance` field to `erc20` entity in subgraph"
+    },
+    {
+      "number": 83,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "Add deposit/withdraw history to strategy page"
+    },
+    {
+      "number": 69,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "i deployed a strat but it didn't show up under \"my strategies\""
+    },
+    {
+      "number": 134,
+      "repo": "rainlanguage/dotrain",
+      "title": "decouple CAS locations from subgraph"
+    },
+    {
+      "number": 907,
+      "repo": "rainlanguage/raindex",
+      "title": "show max drawdowns"
+    },
+    {
+      "number": 906,
+      "repo": "rainlanguage/raindex",
+      "title": "mousewheel over the charts only moves the horizontal axis, it doesn't move the vertical axis"
+    },
+    {
+      "number": 901,
+      "repo": "rainlanguage/raindex",
+      "title": "Add official RP4 addresses to deployment CI as env"
+    },
+    {
+      "number": 41,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "New file structure for strats and subdomains"
+    },
+    {
+      "number": 25,
+      "repo": "rainlanguage/rain.webapp",
+      "title": "some kind of domain switcher navigation so users can move easily between subdomains"
+    },
+    {
+      "number": 889,
+      "repo": "rainlanguage/raindex",
+      "title": "Change the \"rainlang\" tab on the order page to \"source\" and add subtabs for the rainlang and the dotrain"
+    },
+    {
+      "number": 888,
+      "repo": "rainlanguage/raindex",
+      "title": "Add the dotrain for a deployment to the meta for an order, as well as the composed rainlang"
+    },
+    {
+      "number": 25,
+      "repo": "rainlanguage/rain.internal",
+      "title": "Webapp/Flare incentives launch"
+    },
+    {
+      "number": 850,
+      "repo": "rainlanguage/raindex",
+      "title": "add a rainlang repl to the order page"
+    },
+    {
+      "number": 53,
+      "repo": "rainlanguage/docs.rainlang.xyz",
+      "title": "OrderBookV4 docs sweep"
+    },
+    {
+      "number": 754,
+      "repo": "rainlanguage/raindex",
+      "title": "Uniswap-v3 twap historical data inaccurate."
+    },
+    {
+      "number": 67,
+      "repo": "rainlanguage/flow",
+      "title": "Porting legacy tests from \".FlowERC20/flow\" — test case \"should not be able to access values set in a flow across different flows\""
+    },
+    {
+      "number": 41,
+      "repo": "rainlanguage/flow",
+      "title": "Porting legacy tests from \".Flow/flow\" — test case \"should not be able to access values set in a flow across different flows\""
+    },
+    {
+      "number": 743,
+      "repo": "rainlanguage/raindex",
+      "title": "Signed Context in Raindex App"
+    },
+    {
+      "number": 730,
+      "repo": "rainlanguage/raindex",
+      "title": "Vault screen in raindex, list of orders add # trades and tooltip"
+    },
+    {
+      "number": 726,
+      "repo": "rainlanguage/raindex",
+      "title": "Add area chart capability"
+    },
+    {
+      "number": 710,
+      "repo": "rainlanguage/raindex",
+      "title": "Define additional task entrypoints in order frontmatter"
+    },
+    {
+      "number": 258,
+      "repo": "rainlanguage/rainlang",
+      "title": "Rust for unpacking and formatting rain stack items"
+    },
+    {
+      "number": 707,
+      "repo": "rainlanguage/raindex",
+      "title": "raindex - browsing and navigation of lists or orders, vaults and trades"
+    },
+    {
+      "number": 705,
+      "repo": "rainlanguage/raindex",
+      "title": "some kind of visual warning to users when they are interacting with tokens that don't have `decimals` on the contract"
+    },
+    {
+      "number": 144,
+      "repo": "rainlanguage/rain.solver",
+      "title": "Generate ABIs rather than hardcode"
+    },
+    {
+      "number": 35,
+      "repo": "rainlanguage/rain.uniswap",
+      "title": "organise the tests better so we can cover many networks easily for a given dex"
+    },
+    {
+      "number": 252,
+      "repo": "rainlanguage/rainlang",
+      "title": "Surface RPC errors better"
+    },
+    {
+      "number": 126,
+      "repo": "rainlanguage/rain.solver",
+      "title": "exex spike"
+    },
+    {
+      "number": 27,
+      "repo": "rainlanguage/rain.uniswap",
+      "title": "infer the outputs from the rainlang rather than needing an operand for it for timestamps"
+    },
+    {
+      "number": 23,
+      "repo": "rainlanguage/rain.uniswap",
+      "title": "`UniswapWords` incompatible with pancakeswap v3."
+    },
+    {
+      "number": 675,
+      "repo": "rainlanguage/raindex",
+      "title": "allow for a charting entrypoint"
+    },
+    {
+      "number": 20,
+      "repo": "rainlanguage/rain.internal",
+      "title": "Create submission form for comp"
+    },
+    {
+      "number": 242,
+      "repo": "rainlanguage/rainlang",
+      "title": "pointer generation for externs"
+    },
+    {
+      "number": 241,
+      "repo": "rainlanguage/rainlang",
+      "title": "interfaces for pointers"
+    },
+    {
+      "number": 21,
+      "repo": "rainlanguage/rain.uniswap",
+      "title": "rain.uniswap is not deployed on flare properly - no meta emitted and wrong factory addresses"
+    },
+    {
+      "number": 671,
+      "repo": "rainlanguage/raindex",
+      "title": "inject order counterparty into context grid for simulations"
+    },
+    {
+      "number": 20,
+      "repo": "rainlanguage/rain.uniswap",
+      "title": "Uniswap subparser deployments for different protocols."
+    },
+    {
+      "number": 11,
+      "repo": "rainlanguage/rain.internal",
+      "title": "Create a tutorial video for how to get words displaying in the app"
+    },
+    {
+      "number": 659,
+      "repo": "rainlanguage/raindex",
+      "title": "rename `orderbook` word in subparser to `raindex`"
+    },
+    {
+      "number": 657,
+      "repo": "rainlanguage/raindex",
+      "title": "add word to read the vault balance from an orderbook"
+    },
+    {
+      "number": 649,
+      "repo": "rainlanguage/raindex",
+      "title": "show and ability to change the owner that is being used to eval the debug panel"
+    },
+    {
+      "number": 2,
+      "repo": "rainlanguage/rain.internal",
+      "title": "Write CVSS-like criteria to help score and prioritise bugs and infra issues"
+    },
+    {
+      "number": 231,
+      "repo": "rainlanguage/rainlang",
+      "title": "how should erc 721/1155 be handled as decimals?"
+    },
+    {
+      "number": 228,
+      "repo": "rainlanguage/rainlang",
+      "title": "lexical ordering of 00 ops doesn't match compatibility number requirements"
+    },
+    {
+      "number": 220,
+      "repo": "rainlanguage/rainlang",
+      "title": "true/false words"
+    },
+    {
+      "number": 218,
+      "repo": "rainlanguage/rainlang",
+      "title": "support types in decimal literals like 1_d6 and 1_d0 and 1_uint etc."
+    },
+    {
+      "number": 217,
+      "repo": "rainlanguage/rainlang",
+      "title": "support _ separator like 1_000_000 in decimal literals"
+    },
+    {
+      "number": 216,
+      "repo": "rainlanguage/rainlang",
+      "title": "support negative numbers"
+    },
+    {
+      "number": 214,
+      "repo": "rainlanguage/rainlang",
+      "title": "support `+` for exponents like `1.0e+2` to match negative"
+    },
+    {
+      "number": 64,
+      "repo": "rainlanguage/rain.solver",
+      "title": "bot uses way too much rpc"
+    },
+    {
+      "number": 575,
+      "repo": "rainlanguage/raindex",
+      "title": "if there's only one possible deployment in the dropdown on the add order page it should be selected"
+    },
+    {
+      "number": 50,
+      "repo": "rainlanguage/rain.solver",
+      "title": "push docker to rainlang org on docker hub"
+    },
+    {
+      "number": 567,
+      "repo": "rainlanguage/raindex",
+      "title": "show full order details including dispair and bytecode along with decoded rainlang meta"
+    },
+    {
+      "number": 557,
+      "repo": "rainlanguage/raindex",
+      "title": "when we removed the \"back\" button in favour of breadcrumbs, we didn't make the breadcrumbs respect history"
+    },
+    {
+      "number": 551,
+      "repo": "rainlanguage/raindex",
+      "title": "order screen needs to show the deployer otherwise it's trivial to create a phishing deployer"
+    },
+    {
+      "number": 543,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to set data type for charting"
+    },
+    {
+      "number": 10,
+      "repo": "rainlanguage/rain.flare",
+      "title": "if the pair is against usd for pair it should just defer to a single pair rather than getting two quotes"
+    },
+    {
+      "number": 536,
+      "repo": "rainlanguage/raindex",
+      "title": "trades chart only renders scale for days that data exists (i.e. when trades were made) rather than for the whole time frame that was selected"
+    },
+    {
+      "number": 524,
+      "repo": "rainlanguage/raindex",
+      "title": "small numbers getting rounded to zero on charts"
+    },
+    {
+      "number": 521,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to copy trade from the order view page"
+    },
+    {
+      "number": 513,
+      "repo": "rainlanguage/raindex",
+      "title": "scenario runs should be visible to children"
+    },
+    {
+      "number": 193,
+      "repo": "rainlanguage/rainlang",
+      "title": "some kind of \"rain name service\" RNS as sub parser"
+    },
+    {
+      "number": 504,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to reference settings in bindings"
+    },
+    {
+      "number": 43,
+      "repo": "rainlanguage/rain.solver",
+      "title": "review how we interact with flashbots"
+    },
+    {
+      "number": 493,
+      "repo": "rainlanguage/raindex",
+      "title": "support rainlang strings for vault ids"
+    },
+    {
+      "number": 485,
+      "repo": "rainlanguage/raindex",
+      "title": "Upload source maps to sentry"
+    },
+    {
+      "number": 484,
+      "repo": "rainlanguage/raindex",
+      "title": "some kind of gas report for strats during testing"
+    },
+    {
+      "number": 473,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to chart orders that already exist if the rainlang is known"
+    },
+    {
+      "number": 472,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to quote bind data transformations while charting"
+    },
+    {
+      "number": 471,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to set the denomination of a chart axis to a token, and then have it render the token symbol"
+    },
+    {
+      "number": 470,
+      "repo": "rainlanguage/raindex",
+      "title": "stable sorting of charts on the dashboard"
+    },
+    {
+      "number": 468,
+      "repo": "rainlanguage/raindex",
+      "title": "support using-tokens-from in settings"
+    },
+    {
+      "number": 465,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to set sig figs for decimal amounts in the GUI from the settings yaml"
+    },
+    {
+      "number": 464,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to set date format in the settings yaml"
+    },
+    {
+      "number": 463,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to handle different combinations of IO for a single order in the same block"
+    },
+    {
+      "number": 462,
+      "repo": "rainlanguage/raindex",
+      "title": "elisions should not error if runs is set during fuzzing"
+    },
+    {
+      "number": 461,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to name axes"
+    },
+    {
+      "number": 460,
+      "repo": "rainlanguage/raindex",
+      "title": "ability to dismiss/accept the alpha warning"
+    },
+    {
+      "number": 454,
+      "repo": "rainlanguage/raindex",
+      "title": "Display date times in locale of user"
+    },
+    {
+      "number": 450,
+      "repo": "rainlanguage/raindex",
+      "title": "duplicate `runs` keys in scenarios when nested should be an error"
+    },
+    {
+      "number": 447,
+      "repo": "rainlanguage/raindex",
+      "title": "Set Context in yml options"
+    },
+    {
+      "number": 444,
+      "repo": "rainlanguage/raindex",
+      "title": "CSV output option for fuzz testing on CLI"
+    },
+    {
+      "number": 442,
+      "repo": "rainlanguage/raindex",
+      "title": "User can navigate to orders page without required settings by clicking \"Home\" button in breadcrumbs"
+    },
+    {
+      "number": 439,
+      "repo": "rainlanguage/raindex",
+      "title": "Trade / Deposit charts overlap \"early alpha\" notice"
+    },
+    {
+      "number": 438,
+      "repo": "rainlanguage/raindex",
+      "title": "Decimal 18 scaled values for X and Y axis. "
+    },
+    {
+      "number": 435,
+      "repo": "rainlanguage/raindex",
+      "title": "Ensure linux .deb packages link to proper system libs or bundle required libs"
+    },
+    {
+      "number": 417,
+      "repo": "rainlanguage/raindex",
+      "title": "Link to specs for words & yaml"
+    },
+    {
+      "number": 20,
+      "repo": "rainlanguage/flow",
+      "title": "add a sub parser"
+    },
+    {
+      "number": 409,
+      "repo": "rainlanguage/raindex",
+      "title": "Include ledger connection requirements in ledger error toasts"
+    },
+    {
+      "number": 405,
+      "repo": "rainlanguage/raindex",
+      "title": "Specify number of block confirmations to wait for a transaction per chain via config"
+    },
+    {
+      "number": 404,
+      "repo": "rainlanguage/raindex",
+      "title": "Display number of block confirmations in transaction status notice as they are received"
+    },
+    {
+      "number": 402,
+      "repo": "rainlanguage/raindex",
+      "title": "Make settings / add order text areas multiple rows by default"
+    },
+    {
+      "number": 399,
+      "repo": "rainlanguage/raindex",
+      "title": "reliable builds on linux"
+    },
+    {
+      "number": 398,
+      "repo": "rainlanguage/raindex",
+      "title": "libusb and gmp required on mac os"
+    },
+    {
+      "number": 394,
+      "repo": "rainlanguage/raindex",
+      "title": "review if we can use the scale trick in uniswap ops to improve precision of ob"
+    },
+    {
+      "number": 391,
+      "repo": "rainlanguage/raindex",
+      "title": "support fee on transfer tokens"
+    },
+    {
+      "number": 390,
+      "repo": "rainlanguage/raindex",
+      "title": "replace typeshare with tsify"
+    },
+    {
+      "number": 387,
+      "repo": "rainlanguage/raindex",
+      "title": "Reduce flakiness of ledger connnection"
+    },
+    {
+      "number": 367,
+      "repo": "rainlanguage/raindex",
+      "title": "Observable charting for fuzzed traces in the GUI"
+    },
+    {
+      "number": 363,
+      "repo": "rainlanguage/raindex",
+      "title": "Build fix"
+    },
+    {
+      "number": 356,
+      "repo": "rainlanguage/raindex",
+      "title": "Input and output cols on trades table are around the wrong wa"
+    },
+    {
+      "number": 332,
+      "repo": "rainlanguage/raindex",
+      "title": "Context menus don't disappear when clicking outside of them"
+    },
+    {
+      "number": 328,
+      "repo": "rainlanguage/raindex",
+      "title": "Adding spaces to rain causes parser to revert with blank reason"
+    },
+    {
+      "number": 322,
+      "repo": "rainlanguage/raindex",
+      "title": "Re-add a previously removed order"
+    },
+    {
+      "number": 321,
+      "repo": "rainlanguage/raindex",
+      "title": "Volume Chart for trading pair"
+    },
+    {
+      "number": 320,
+      "repo": "rainlanguage/raindex",
+      "title": "Take an order from the UI"
+    },
+    {
+      "number": 316,
+      "repo": "rainlanguage/raindex",
+      "title": "Always convert returned subgraph structs into our own structs, with values converted from string to usable types in desired format"
+    },
+    {
+      "number": 315,
+      "repo": "rainlanguage/raindex",
+      "title": "Subgraph vaultId should should be a \"0x\" prefixed hex value"
+    },
+    {
+      "number": 313,
+      "repo": "rainlanguage/raindex",
+      "title": "verify decoded order meta matches actually deployed order"
+    },
+    {
+      "number": 301,
+      "repo": "rainlanguage/raindex",
+      "title": "Support Legacy & abritarary Ledger Derviation Paths"
+    },
+    {
+      "number": 299,
+      "repo": "rainlanguage/raindex",
+      "title": "Hovering orders table column changes width on mac os"
+    },
+    {
+      "number": 291,
+      "repo": "rainlanguage/raindex",
+      "title": "tauri invoke awaits should time out"
+    },
+    {
+      "number": 288,
+      "repo": "rainlanguage/raindex",
+      "title": "move derivation index field before address field"
+    },
+    {
+      "number": 284,
+      "repo": "rainlanguage/raindex",
+      "title": "Fetch token decimals in input field"
+    },
+    {
+      "number": 280,
+      "repo": "rainlanguage/raindex",
+      "title": "Help page content: Ledger Issues"
+    },
+    {
+      "number": 276,
+      "repo": "rainlanguage/raindex",
+      "title": "Universal mac binaries"
+    },
+    {
+      "number": 274,
+      "repo": "rainlanguage/raindex",
+      "title": "Include token symbol & transaction hash in transaction status notice"
+    },
+    {
+      "number": 273,
+      "repo": "rainlanguage/raindex",
+      "title": "add a button to generate a random vaultid on the deposit modal"
+    },
+    {
+      "number": 269,
+      "repo": "rainlanguage/raindex",
+      "title": "cancel in-progress transactions"
+    },
+    {
+      "number": 262,
+      "repo": "rainlanguage/raindex",
+      "title": "Round values in order takes table -- show full value on hover"
+    },
+    {
+      "number": 3,
+      "repo": "rainlanguage/forker",
+      "title": "Make cache expiration configurable or default to never expire"
+    },
+    {
+      "number": 29,
+      "repo": "rainlanguage/rainlang-vscode",
+      "title": "add native parser parsing process to the extension"
+    },
+    {
+      "number": 28,
+      "repo": "rainlanguage/rainlang-vscode",
+      "title": "adopt rebinds with reading directly from frontmatter"
+    },
+    {
+      "number": 236,
+      "repo": "rainlanguage/raindex",
+      "title": "Standardize CLI output method with other rain clis"
+    },
+    {
+      "number": 235,
+      "repo": "rainlanguage/raindex",
+      "title": "Merge clears & takes into single chart / table"
+    },
+    {
+      "number": 218,
+      "repo": "rainlanguage/raindex",
+      "title": "Frontmatter rebindings parse errors"
+    },
+    {
+      "number": 212,
+      "repo": "rainlanguage/raindex",
+      "title": "Token detail page"
+    },
+    {
+      "number": 211,
+      "repo": "rainlanguage/raindex",
+      "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
+    },
+    {
+      "number": 210,
+      "repo": "rainlanguage/raindex",
+      "title": "List filtering"
+    },
+    {
+      "number": 209,
+      "repo": "rainlanguage/raindex",
+      "title": "Nix commands to wrap all prerequisite steps of `cargo tauri dev` and `cargo tauri build`"
+    },
+    {
+      "number": 208,
+      "repo": "rainlanguage/raindex",
+      "title": "Link to orderbook in block explorer"
+    },
+    {
+      "number": 206,
+      "repo": "rainlanguage/raindex",
+      "title": "Take Order Chart: number of transactions"
+    },
+    {
+      "number": 205,
+      "repo": "rainlanguage/raindex",
+      "title": "Take Orders Chart: Token Balances"
+    },
+    {
+      "number": 204,
+      "repo": "rainlanguage/raindex",
+      "title": "Live Chart w/ Polling"
+    },
+    {
+      "number": 175,
+      "repo": "rainlanguage/raindex",
+      "title": "factory to create governance wrappers"
+    },
+    {
+      "number": 169,
+      "repo": "rainlanguage/raindex",
+      "title": "if a strat eval reverts in take orders, don't revert the whole take orders, instead skip the order"
+    },
+    {
+      "number": 168,
+      "repo": "rainlanguage/raindex",
+      "title": "put counterparty desired amount in context"
+    },
+    {
+      "number": 142,
+      "repo": "rainlanguage/rainlang",
+      "title": "utf8 support for parsing"
+    },
+    {
+      "number": 141,
+      "repo": "rainlanguage/rainlang",
+      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
+    },
+    {
+      "number": 139,
+      "repo": "rainlanguage/rainlang",
+      "title": "undefined word (requires subsitution)"
+    },
+    {
+      "number": 138,
+      "repo": "rainlanguage/rainlang",
+      "title": "calldata eval rather than onchain deploys"
+    },
+    {
+      "number": 137,
+      "repo": "rainlanguage/rainlang",
+      "title": "LHS parse substitutions"
+    },
+    {
+      "number": 135,
+      "repo": "rainlanguage/rainlang",
+      "title": "rounding direction in math"
+    },
+    {
+      "number": 134,
+      "repo": "rainlanguage/rainlang",
+      "title": "multivariadic comparisons"
+    },
+    {
+      "number": 133,
+      "repo": "rainlanguage/rainlang",
+      "title": "saturating math"
+    },
+    {
+      "number": 6,
+      "repo": "rainlanguage/rain.cli",
+      "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
+    },
+    {
+      "number": 148,
+      "repo": "rainlanguage/raindex",
+      "title": "Call local Parser in addOrder functions"
+    },
+    {
+      "number": 142,
+      "repo": "rainlanguage/raindex",
+      "title": "Transaction status notice should last until the subgraph includes the submitted transaction"
+    },
+    {
+      "number": 134,
+      "repo": "rainlanguage/raindex",
+      "title": "contract client / cli integration tests"
+    },
+    {
+      "number": 110,
+      "repo": "rainlanguage/raindex",
+      "title": "remove the manual steps for codegen for cynic"
+    },
+    {
+      "number": 102,
+      "repo": "rainlanguage/raindex",
+      "title": "subgraph query integration tests"
+    },
+    {
+      "number": 91,
+      "repo": "rainlanguage/raindex",
+      "title": "Curses-style UI for List and Detail commands"
+    },
+    {
+      "number": 89,
+      "repo": "rainlanguage/raindex",
+      "title": "Cynic graphql type generation on CI"
+    },
+    {
+      "number": 61,
+      "repo": "rainlanguage/dotrain",
+      "title": "fuzzing all the regexes against expectations"
+    },
+    {
+      "number": 75,
+      "repo": "rainlanguage/rain-svelte-components",
+      "title": "Modal test"
+    },
+    {
+      "number": 72,
+      "repo": "rainlanguage/rain-svelte-components",
+      "title": "Button test"
+    },
+    {
+      "number": 71,
+      "repo": "rainlanguage/rain-svelte-components",
+      "title": "InputDropdown tests"
+    },
+    {
+      "number": 63,
+      "repo": "rainlanguage/rain-svelte-components",
+      "title": "Bump Rainlang and the extension for the parser"
+    },
+    {
+      "number": 60,
+      "repo": "rainlanguage/rain-svelte-components",
+      "title": "AutoAbiForm tests"
+    },
+    {
+      "number": 1,
+      "repo": "rainlanguage/rain.datacontract",
+      "title": "https://eips.ethereum.org/EIPS/eip-3540"
+    },
+    {
+      "number": 599,
+      "repo": "rainlanguage/rain-protocol",
+      "title": "Update fuzz test for combine tier"
+    },
+    {
+      "number": 537,
+      "repo": "rainlanguage/rain-protocol",
+      "title": "Check if able to specify rounding , and it rounds correctly in scale18 Op . Check if able to retrieve  scale from the stack"
+    },
+    {
+      "number": 533,
+      "repo": "rainlanguage/rain-protocol",
+      "title": "Failing Stake get-set tests"
+    },
+    {
+      "number": 453,
+      "repo": "rainlanguage/rain-protocol",
+      "title": "Struct interfaces from typechain"
+    },
+    {
+      "number": 359,
+      "repo": "rainlanguage/rain-protocol",
+      "title": "Inexistent Validation of Distributor Status"
+    },
+    {
+      "number": 311,
+      "repo": "rainlanguage/rain-protocol",
+      "title": "Potential User-Defined Value Type"
+    }
+  ]
 }
