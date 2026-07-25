@@ -236,11 +236,6 @@
       "title": "it is somehow possible to deploy orders from the app without the source attached"
     },
     {
-      "number": 546,
-      "repo": "rainlanguage/raindex",
-      "title": "Add link to telegram on sidebar"
-    },
-    {
       "number": 544,
       "repo": "rainlanguage/raindex",
       "title": "error decoding for toasts"
@@ -249,11 +244,6 @@
       "number": 543,
       "repo": "rainlanguage/raindex",
       "title": "ability to set data type for charting"
-    },
-    {
-      "number": 541,
-      "repo": "rainlanguage/raindex",
-      "title": "ability to debug without specifying charts"
     },
     {
       "number": 531,
@@ -411,7 +401,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 81,
+    "closeCandidateIssues": 79,
     "closeCandidatePrs": 9,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -421,8 +411,8 @@
     "ready": 48,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 177,
-    "unvetted": 5
+    "totalProducerPrs": 179,
+    "unvetted": 7
   },
   "lanes": {
     "human-decisions": {
@@ -912,8 +902,20 @@
         ]
       },
       "un-vetted": {
-        "count": 5,
+        "count": 7,
         "prs": [
+          {
+            "number": 283,
+            "repo": "S01-Issuer/st0x.deploy",
+            "title": "Model deploy pins as a rolling `candidate` + frozen releases (audited 0_1_1 preserved)",
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/283"
+          },
+          {
+            "number": 123,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "pipeline: group the FSM report by who must act next (producer / vetter / human)",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/123"
+          },
           {
             "number": 284,
             "repo": "rainlanguage/rainix",
