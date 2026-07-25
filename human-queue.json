@@ -406,8 +406,8 @@
     "ready": 48,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 181,
-    "unvetted": 9
+    "totalProducerPrs": 178,
+    "unvetted": 6
   },
   "lanes": {
     "human-decisions": {
@@ -897,31 +897,13 @@
         ]
       },
       "un-vetted": {
-        "count": 9,
+        "count": 6,
         "prs": [
-          {
-            "number": 125,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "feat(pipeline): Theory-of-Constraints flow panel — inventory sparklines + rising-WIP bottleneck border (Closes #32)",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/125"
-          },
-          {
-            "number": 69,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "feat(dashboard): per-state inventory history for the TOC flow panel (Refs rain-org-health#32)",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/69"
-          },
           {
             "number": 2816,
             "repo": "rainlanguage/raindex",
-            "title": "ui-components render + screenshot harness (do NOT merge)",
+            "title": "ui-components render + screenshot harness",
             "url": "https://github.com/rainlanguage/raindex/pull/2816"
-          },
-          {
-            "number": 283,
-            "repo": "S01-Issuer/st0x.deploy",
-            "title": "Model deploy pins as a rolling `candidate` + frozen releases (audited 0_1_1 preserved)",
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/283"
           },
           {
             "number": 284,
