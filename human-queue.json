@@ -406,8 +406,8 @@
     "ready": 48,
     "reject": 33,
     "relink": 3,
-    "totalProducerPrs": 179,
-    "unvetted": 7
+    "totalProducerPrs": 181,
+    "unvetted": 9
   },
   "lanes": {
     "human-decisions": {
@@ -897,8 +897,20 @@
         ]
       },
       "un-vetted": {
-        "count": 7,
+        "count": 9,
         "prs": [
+          {
+            "number": 125,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "feat(pipeline): Theory-of-Constraints flow panel — inventory sparklines + rising-WIP bottleneck border (Closes #32)",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/125"
+          },
+          {
+            "number": 69,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "feat(dashboard): per-state inventory history for the TOC flow panel (Refs rain-org-health#32)",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/69"
+          },
           {
             "number": 2816,
             "repo": "rainlanguage/raindex",
