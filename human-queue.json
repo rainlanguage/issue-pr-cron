@@ -386,8 +386,8 @@
     "ready": 45,
     "reject": 31,
     "relink": 2,
-    "totalProducerPrs": 174,
-    "unvetted": 8
+    "totalProducerPrs": 180,
+    "unvetted": 14
   },
   "lanes": {
     "human-decisions": {
@@ -877,8 +877,44 @@
         ]
       },
       "un-vetted": {
-        "count": 8,
+        "count": 14,
         "prs": [
+          {
+            "number": 128,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "feat(scan): inherited audit provenance, and stop trusting unresolved tags",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/128"
+          },
+          {
+            "number": 6,
+            "repo": "rainlanguage/rain.factory.deploy",
+            "title": "Restore the Protofire reports as inherited audit records (reverses #1)",
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6"
+          },
+          {
+            "number": 5,
+            "repo": "rainlanguage/rain.factory.deploy",
+            "title": "Migrate to the rolling-candidate snapshot model",
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5"
+          },
+          {
+            "number": 101,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/101"
+          },
+          {
+            "number": 100,
+            "repo": "rainlanguage/rain.solmem",
+            "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)",
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/100"
+          },
+          {
+            "number": 289,
+            "repo": "rainlanguage/rainix",
+            "title": "Fail over fork RPC endpoints with an archive-aware preflight",
+            "url": "https://github.com/rainlanguage/rainix/pull/289"
+          },
           {
             "number": 4,
             "repo": "rainlanguage/rain.factory.deploy",
