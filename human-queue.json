@@ -386,8 +386,8 @@
     "ready": 45,
     "reject": 31,
     "relink": 2,
-    "totalProducerPrs": 172,
-    "unvetted": 6
+    "totalProducerPrs": 173,
+    "unvetted": 7
   },
   "lanes": {
     "human-decisions": {
@@ -877,8 +877,14 @@
         ]
       },
       "un-vetted": {
-        "count": 6,
+        "count": 7,
         "prs": [
+          {
+            "number": 19,
+            "repo": "rainlanguage/rain.deploy",
+            "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found",
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/19"
+          },
           {
             "number": 56,
             "repo": "cyclofinance/cyclo.sol",
