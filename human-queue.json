@@ -296,16 +296,6 @@
       "title": "Tab based UI with multi window support"
     },
     {
-      "number": 482,
-      "repo": "rainlanguage/raindex",
-      "title": "Same transaction status notices for ledger & walletconnect transactions"
-    },
-    {
-      "number": 481,
-      "repo": "rainlanguage/raindex",
-      "title": "Refactor ModalExecute.svelte component to act like a generic \"input\" component"
-    },
-    {
       "number": 476,
       "repo": "rainlanguage/raindex",
       "title": "Frontend testing harness & basic tests"
@@ -339,11 +329,6 @@
       "number": 279,
       "repo": "rainlanguage/raindex",
       "title": "Polling on all pages"
-    },
-    {
-      "number": 272,
-      "repo": "rainlanguage/raindex",
-      "title": "don't close deposit modal on ledger error"
     },
     {
       "number": 239,
@@ -391,17 +376,17 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 77,
+    "closeCandidateIssues": 74,
     "closeCandidatePrs": 9,
     "design": 6,
     "humanCloseCandidate": 0,
     "humanDesign": 6,
     "humanReject": 30,
     "leaks": 17,
-    "ready": 47,
-    "reject": 33,
-    "relink": 3,
-    "totalProducerPrs": 177,
+    "ready": 45,
+    "reject": 31,
+    "relink": 2,
+    "totalProducerPrs": 172,
     "unvetted": 6
   },
   "lanes": {
@@ -895,10 +880,10 @@
         "count": 6,
         "prs": [
           {
-            "number": 6,
-            "repo": "rainlanguage/adversarial-mutation-test",
-            "title": "Label adversarial findings `audit` so the org health graph counts them (0.28.0)",
-            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/6"
+            "number": 56,
+            "repo": "cyclofinance/cyclo.sol",
+            "title": "anchor audit PDFs under audit/protofire/ so the org health scan sees them",
+            "url": "https://github.com/cyclofinance/cyclo.sol/pull/56"
           },
           {
             "number": 284,
@@ -1035,20 +1020,8 @@
         ]
       },
       "ai:ready": {
-        "count": 46,
+        "count": 44,
         "prs": [
-          {
-            "number": 60,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Document the audit/ directory and its filename anchor convention",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/60"
-          },
-          {
-            "number": 58,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Say that toIndexSigned needs relative, not absolute, alignment",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/58"
-          },
           {
             "number": 55,
             "repo": "rainlanguage/issue-pr-cron",
@@ -1316,14 +1289,8 @@
         ]
       },
       "ai:reject": {
-        "count": 33,
+        "count": 31,
         "prs": [
-          {
-            "number": 59,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Warn that unsafeCopyWordsTo can silently overflow",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/59"
-          },
           {
             "number": 436,
             "repo": "cyclofinance/cyclo.site",
@@ -1347,12 +1314,6 @@
             "repo": "rainlanguage/rain.dia",
             "title": "Consolidate pointer codegen to canonical script/Build.sol",
             "url": "https://github.com/rainlanguage/rain.dia/pull/55"
-          },
-          {
-            "number": 5,
-            "repo": "rainlanguage/adversarial-mutation-test",
-            "title": "Add version-hygiene CI",
-            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/5"
           },
           {
             "number": 32,
@@ -1519,14 +1480,8 @@
         ]
       },
       "ai:relink": {
-        "count": 3,
+        "count": 2,
         "prs": [
-          {
-            "number": 57,
-            "repo": "rainlanguage/rain.solmem",
-            "title": "Read the extend length before overwriting base's length word",
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/57"
-          },
           {
             "number": 231,
             "repo": "rainlanguage/rain.erc4626.words",
@@ -1915,16 +1870,6 @@
     ],
     "ai:ready": [
       {
-        "number": 60,
-        "repo": "rainlanguage/rain.solmem",
-        "title": "Document the audit/ directory and its filename anchor convention"
-      },
-      {
-        "number": 58,
-        "repo": "rainlanguage/rain.solmem",
-        "title": "Say that toIndexSigned needs relative, not absolute, alignment"
-      },
-      {
         "number": 55,
         "repo": "rainlanguage/issue-pr-cron",
         "title": "fix(uncovered-issues): coverage from native closingIssuesReferences, not body regex"
@@ -2152,11 +2097,6 @@
     ],
     "ai:reject": [
       {
-        "number": 59,
-        "repo": "rainlanguage/rain.solmem",
-        "title": "Warn that unsafeCopyWordsTo can silently overflow"
-      },
-      {
         "number": 436,
         "repo": "cyclofinance/cyclo.site",
         "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
@@ -2175,11 +2115,6 @@
         "number": 55,
         "repo": "rainlanguage/rain.dia",
         "title": "Consolidate pointer codegen to canonical script/Build.sol"
-      },
-      {
-        "number": 5,
-        "repo": "rainlanguage/adversarial-mutation-test",
-        "title": "Add version-hygiene CI"
       },
       {
         "number": 32,
@@ -2318,11 +2253,6 @@
       }
     ],
     "ai:relink": [
-      {
-        "number": 57,
-        "repo": "rainlanguage/rain.solmem",
-        "title": "Read the extend length before overwriting base's length word"
-      },
       {
         "number": 231,
         "repo": "rainlanguage/rain.erc4626.words",
