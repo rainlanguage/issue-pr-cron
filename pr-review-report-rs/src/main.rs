@@ -1953,6 +1953,28 @@ fn human_queue_mode(json_out: bool) -> i32 {
         })
         .collect();
 
+    // Producer untouched BACKLOG: open issues with no covering open PR that are not human-gated /
+    // close-candidate — the biggest bucket of the producer's inbox (work it hasn't picked up yet),
+    // previously invisible on the FSM dashboard. Same coverage computation as `uncovered-issues`
+    // (via `coverage_uncovered`); `is_producer_backlog` narrows it to the producer's share. A gh
+    // failure leaves it empty rather than aborting the whole queue render — it is additive.
+    let backlog: Vec<(String, u64, String)> = coverage_uncovered()
+        .map(|(open, meta)| {
+            open.iter()
+                .filter(|k| meta.get(*k).map(is_producer_backlog).unwrap_or(true))
+                .map(|(slug, num)| {
+                    let title = meta
+                        .get(&(slug.clone(), *num))
+                        .and_then(|m| m.get("title"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    (slug.clone(), *num, title)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     if json_out {
         let bmap: serde_json::Map<String, Value> = buckets
             .iter()
@@ -1973,6 +1995,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
             "states": bmap,
             "lanes": lanes,
             "closeCandidateIssues": close_issues.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
+            "uncoveredIssues": backlog.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
             "leaks": leaks.iter().map(|(s,n,t,r)| serde_json::json!({"repo": s, "number": n, "title": t, "reason": r})).collect::<Vec<_>>(),
             "counts": {
                 // Legacy label-based counts (UNCHANGED — the dashboard reads these).
@@ -1984,6 +2007,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
                 "closeCandidateIssues": close_issues.len(),
                 "leaks": leaks.len(),
                 "totalProducerPrs": prs.len(),
+                // Producer untouched backlog — open issues with no covering open PR, excluding
+                // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
+                "uncoveredIssues": backlog.len(),
                 // Additive lane-based counts (each PR counted once, human-override dominant) — the
                 // states previously invisible to the dashboard.
                 "unvetted": lane_state_count(&lanes, "vet-lifecycle", "un-vetted"),
@@ -2028,6 +2054,10 @@ fn human_queue_mode(json_out: bool) -> i32 {
     println!(
         "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs) ===",
         prs.len()
+    );
+    println!(
+        "▓▓ Producer backlog — untouched issues, no open PR (excl. human-gated / close-candidate): {}",
+        backlog.len()
     );
     // vet-lifecycle
     show_lane(
@@ -5304,7 +5334,13 @@ fn action_rank(a: &str) -> u8 {
     }
 }
 
-fn uncovered_issues_mode(json_out: bool) -> i32 {
+/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter)
+/// + the covered set from open PRs' closing keywords, and return the uncovered issues (no covering
+/// open PR) with their meta. `None` on a gh failure — callers MUST abort rather than report a
+/// false-empty set. Both `uncovered-issues` and the `human-queue` producer-backlog count read this
+/// ONE computation, so their coverage semantics can never drift.
+fn coverage_uncovered(
+) -> Option<(Vec<(String, u64)>, std::collections::HashMap<(String, u64), Value>)> {
     // open issues
     let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
     isearch.extend(org_owner_args());
@@ -5323,7 +5359,7 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     let iref: Vec<&str> = isearch.iter().map(String::as_str).collect();
     let Some(ival) = gh_json(&iref) else {
         eprintln!("error: `gh search issues` failed — aborting rather than report a falsely-empty issue set");
-        return 1;
+        return None;
     };
     // open PRs + their closing refs
     let mut psearch: Vec<String> = vec!["search".into(), "prs".into()];
@@ -5343,7 +5379,7 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     let pref: Vec<&str> = psearch.iter().map(String::as_str).collect();
     let Some(pval) = gh_json(&pref) else {
         eprintln!("error: `gh search prs` failed — aborting");
-        return 1;
+        return None;
     };
 
     let mut covered: std::collections::HashSet<(String, u64)> = std::collections::HashSet::new();
@@ -5388,7 +5424,30 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
         meta.insert(k, it.clone());
     }
 
-    let open = uncovered(&issues, &covered);
+    Some((uncovered(&issues, &covered), meta))
+}
+
+/// True when an uncovered issue belongs to the PRODUCER's untouched backlog: NOT already flagged
+/// `ai:close-candidate` (that is the human's close queue, surfaced separately) and carrying NO
+/// `human:*` label (a human ruling is the human's inbox, not the producer's). The raw
+/// `uncovered-issues` set does NOT apply these exclusions — the backlog is deliberately narrower.
+fn is_producer_backlog(meta: &Value) -> bool {
+    !meta
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .map(|arr| {
+            arr.iter().any(|l| {
+                let name = l.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                name == "ai:close-candidate" || name.starts_with("human:")
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn uncovered_issues_mode(json_out: bool) -> i32 {
+    let Some((open, meta)) = coverage_uncovered() else {
+        return 1;
+    };
     if json_out {
         let arr: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
         println!(
@@ -7801,6 +7860,29 @@ mod worklist_tests {
                           "body":"🤖 ai:producer deploy-confirmed at 999999999999"}]
         });
         assert_eq!(worklist_row("o/r", &notdone)["nextAction"], "deploy");
+    }
+
+    #[test]
+    fn producer_backlog_excludes_human_gated_and_close_candidate() {
+        let mk = |labels: &[&str]| {
+            json!({
+                "labels": labels
+                    .iter()
+                    .map(|n| json!({ "name": n }))
+                    .collect::<Vec<_>>()
+            })
+        };
+        // A plain or ai:* uncovered issue IS the producer's backlog.
+        assert!(is_producer_backlog(&mk(&[])));
+        assert!(is_producer_backlog(&mk(&["bug", "ai:some-label"])));
+        // ai:close-candidate → the human's close queue, surfaced separately — not the backlog.
+        assert!(!is_producer_backlog(&mk(&["ai:close-candidate"])));
+        // Any human:* ruling → the human's inbox, not the producer's.
+        assert!(!is_producer_backlog(&mk(&["human:keep-open"])));
+        assert!(!is_producer_backlog(&mk(&["human:design"])));
+        assert!(!is_producer_backlog(&mk(&["bug", "human:close-candidate"])));
+        // Missing labels field → conservatively counted in, never silently dropped.
+        assert!(is_producer_backlog(&json!({})));
     }
 
     #[test]
