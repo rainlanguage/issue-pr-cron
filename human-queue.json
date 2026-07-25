@@ -386,8 +386,8 @@
     "ready": 45,
     "reject": 31,
     "relink": 2,
-    "totalProducerPrs": 173,
-    "unvetted": 7
+    "totalProducerPrs": 174,
+    "unvetted": 8
   },
   "lanes": {
     "human-decisions": {
@@ -877,8 +877,14 @@
         ]
       },
       "un-vetted": {
-        "count": 7,
+        "count": 8,
         "prs": [
+          {
+            "number": 4,
+            "repo": "rainlanguage/rain.factory.deploy",
+            "title": "Enforce that [package].version, its snapshot and the deploy lib agree",
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4"
+          },
           {
             "number": 19,
             "repo": "rainlanguage/rain.deploy",
