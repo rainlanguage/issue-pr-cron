@@ -2239,16 +2239,18 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // Upheld is derived, not stored: a REJECTED flag has its label stripped, so it cannot appear in
     // this search at all — an issue that still carries the label AND is vetted at its current flag
     // was necessarily upheld.
-    let cc_vet_counts: (usize, usize) = unvetted_close_candidates_fetch(false)
+    // `include_skipped` is required: the upheld set lives in the skipped rows. Arrays and counts
+    // both come from this ONE document, so `counts.X == X.len()` holds by construction — the
+    // dashboard's boxes are click-through, and a count that disagreed with its list would render a
+    // number that lists a different number of issues.
+    let (cc_unvetted_items, cc_upheld_items) = unvetted_close_candidates_fetch(true)
         .ok()
-        .map(|d| {
-            let c = &d["counts"];
-            (
-                c["vet"].as_u64().unwrap_or(0) as usize,
-                c["skipVettedAtFlag"].as_u64().unwrap_or(0) as usize,
-            )
-        })
-        .unwrap_or((0, 0));
+        .map(|d| cc_item_arrays(&d))
+        .unwrap_or_default();
+    // Array and count come from one call each, so the emitted count is always the emitted array's
+    // length — see `issue_state_pair`.
+    let (cc_unvetted, cc_unvetted_n) = issue_state_pair(cc_unvetted_items);
+    let (cc_upheld, cc_upheld_n) = issue_state_pair(cc_upheld_items);
 
     // Producer untouched BACKLOG: open issues with no covering open PR that are not human-gated /
     // close-candidate — the biggest bucket of the producer's inbox (work it hasn't picked up yet),
@@ -2292,6 +2294,10 @@ fn human_queue_mode(json_out: bool) -> i32 {
             "states": bmap,
             "lanes": lanes,
             "closeCandidateIssues": close_issues.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
+            // Same key at top level (the ITEM ARRAY) and under `counts` (its length), exactly as
+            // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
+            "closeCandidateUnvetted": cc_unvetted,
+            "closeCandidateUpheld": cc_upheld,
             "uncoveredIssues": backlog.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
             "leaks": leaks.iter().map(|(s,n,t,r)| serde_json::json!({"repo": s, "number": n, "title": t, "reason": r})).collect::<Vec<_>>(),
             "counts": {
@@ -2308,8 +2314,8 @@ fn human_queue_mode(json_out: bool) -> i32 {
                 //   upheld   = the vetter judged the evidence sound; genuinely queued for the human
                 // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the issue
                 // leaves this set entirely and reappears under `uncoveredIssues`.
-                "closeCandidateUnvetted": cc_vet_counts.0,
-                "closeCandidateUpheld": cc_vet_counts.1,
+                "closeCandidateUnvetted": cc_unvetted_n,
+                "closeCandidateUpheld": cc_upheld_n,
                 "leaks": leaks.len(),
                 "totalProducerPrs": prs.len(),
                 // Producer untouched backlog — open issues with no covering open PR, excluding
@@ -4032,6 +4038,11 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
         action,
         serde_json::json!({
             "issue": format!("{slug}#{num}"),
+            // `repo`/`number`/`title` mirror the item shape `closeCandidateIssues` and
+            // `uncoveredIssues` already emit, so the dashboard reads every issue array
+            // generically — no special-casing for the split states.
+            "repo": slug,
+            "number": num,
             "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
             "title": title,
             "labels": labels,
@@ -4042,6 +4053,56 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
             "action": action,
         }),
     )
+}
+
+/// PURE: split an `unvetted_close_candidates` document into the two dashboard ITEM ARRAYS —
+/// `(unvetted, upheld)` — in the same `{repo, number, title}` shape `closeCandidateIssues` and
+/// `uncoveredIssues` already emit.
+///
+/// Both the arrays and their counts are derived from THIS one document, which is what makes an
+/// array/count mismatch unrepresentable: a box that renders "5" and then lists three issues when
+/// clicked is the drift this shape rules out.
+///
+/// `upheld` is the skipped rows whose action is `skip-vetted-at-flag`: a REJECTED flag has its
+/// label stripped, so it cannot appear in this search at all — an issue still carrying the label
+/// AND vetted at its current flag was necessarily upheld.
+fn cc_item_arrays(doc: &Value) -> (Vec<Value>, Vec<Value>) {
+    let item = |r: &Value| {
+        serde_json::json!({
+            "repo": r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
+            "number": r.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
+            "title": r.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        })
+    };
+    let unvetted: Vec<Value> = doc
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().map(item).collect())
+        .unwrap_or_default();
+    let upheld: Vec<Value> = doc
+        .get("skipped")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter(|r| r.get("action").and_then(|v| v.as_str()) == Some("skip-vetted-at-flag"))
+                .map(item)
+                .collect()
+        })
+        .unwrap_or_default();
+    (unvetted, upheld)
+}
+
+/// PURE: an issue state's dashboard pair — the ITEM ARRAY and the count that labels it, from ONE
+/// source.
+///
+/// The count is not passed in and cannot be computed separately: emitting `items.len()` at the
+/// array site and again at the counts site let the two drift, and a mutation decoupling them
+/// survived (a box rendering "5" that lists three issues when clicked). Deriving both here makes
+/// that unrepresentable, and puts the invariant somewhere a test can actually reach — the emission
+/// site itself is inside a network call.
+fn issue_state_pair(items: Vec<Value>) -> (Value, usize) {
+    let n = items.len();
+    (Value::Array(items), n)
 }
 
 /// PURE: the `Close-candidate: <category>: <evidence>` payload of a flag body, without the marker
@@ -6482,6 +6543,73 @@ mod queue_tests {
         assert_eq!(issue_slug("https://example.com/o/r/issues/1"), None);
         assert_eq!(issue_slug("https://github.com/r/issues/1"), None);
         assert_eq!(issue_slug(""), None);
+    }
+
+    // The dashboard's boxes are CLICK-THROUGH: each state renders a count and, when clicked, lists
+    // the issues from the top-level array of the SAME name. So both must exist, carry the shape
+    // `closeCandidateIssues` / `uncoveredIssues` already use, and agree — a "5" that lists three
+    // issues is the drift worth pinning.
+    #[test]
+    fn cc_item_arrays_are_populated_and_agree_with_their_counts() {
+        let row = |repo: &str, num: u64, title: &str, action: &str| {
+            json!({"issue": format!("{repo}#{num}"), "repo": repo, "number": num,
+                   "title": title, "action": action})
+        };
+        let doc = json!({
+            "issues": [
+                row("rainlanguage/raindex", 512, "orderbooks should fallback", "vet"),
+                row("rainlanguage/raindex", 592, "Fix inverted IO ratio", "vet"),
+            ],
+            "skipped": [
+                row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag"),
+                // Neither of these is UPHELD: one is a human ruling, one has no flag to judge.
+                row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided"),
+                row("rainlanguage/raindex", 999, "no flag", "skip-no-flag"),
+            ],
+        });
+        let (unvetted, upheld) = cc_item_arrays(&doc);
+
+        // Populated, and each item carries EXACTLY the generic issue-item shape.
+        assert_eq!(unvetted.len(), 2);
+        assert_eq!(upheld.len(), 1);
+        assert_eq!(
+            unvetted[0],
+            json!({"repo": "rainlanguage/raindex", "number": 512, "title": "orderbooks should fallback"})
+        );
+        assert_eq!(
+            upheld[0],
+            json!({"repo": "rainlanguage/raindex", "number": 523, "title": "nothing visual happens"})
+        );
+        // Only `skip-vetted-at-flag` is upheld — a human ruling or a missing flag is neither.
+        for r in &upheld {
+            assert_ne!(r["number"], json!(184));
+            assert_ne!(r["number"], json!(999));
+        }
+
+        // A doc with no skipped rows (include_skipped omitted) yields an EMPTY upheld array, never
+        // a count without items.
+        let (u2, up2) = cc_item_arrays(&json!({"issues": []}));
+        assert!(u2.is_empty() && up2.is_empty());
+    }
+
+    // The count a state box shows and the list it opens must be the same data. Asserting
+    // `len() == len()` at the call site is a TAUTOLOGY that a decoupled emission survives (it did,
+    // when the count was computed separately from the array), so what gets pinned is the pairing
+    // itself: whatever array comes out, the count is ITS length.
+    #[test]
+    fn an_issue_state_count_is_always_its_own_arrays_length() {
+        for n in [0usize, 1, 5] {
+            let items: Vec<Value> = (0..n)
+                .map(|i| json!({"repo": "o/r", "number": i, "title": "t"}))
+                .collect();
+            let (arr, count) = issue_state_pair(items);
+            assert_eq!(count, n);
+            assert_eq!(
+                arr.as_array().expect("emitted as a JSON array").len(),
+                count,
+                "a state box showing {count} must list exactly {count} issues"
+            );
+        }
     }
 
     #[test]

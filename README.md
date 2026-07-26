@@ -228,6 +228,15 @@ A **rejected** flag needs no count: the vetter strips `ai:close-candidate`, so
 the issue leaves this set entirely and reappears under `uncoveredIssues` — the
 producer's queue — which is exactly the behaviour a rejection should have.
 
+Both are emitted exactly as `closeCandidateIssues` and `uncoveredIssues` are:
+the key appears **twice** — at the top level as the ITEM ARRAY (one
+`{repo, number, title}` per issue) and under `counts` as its length. The
+dashboard's state boxes are click-through, so a count without its array renders
+a number that then lists nothing. Arrays and counts are derived from a single
+document, so `counts.X == X.len()` holds by construction. These are ISSUE
+states, so — like `closeCandidateIssues` — they are **not** in `lanes`, which
+groups PRs.
+
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
 `blocked-deploy`, `blocked-infra`, or `blocked-on`. Those five plus `ready` (the
