@@ -154,36 +154,6 @@
       "number": 589,
       "repo": "rainlanguage/raindex",
       "title": "trading chart should indicate direction somehow"
-    },
-    {
-      "number": 588,
-      "repo": "rainlanguage/raindex",
-      "title": "io ratio is backwards on the order page"
-    },
-    {
-      "number": 576,
-      "repo": "rainlanguage/raindex",
-      "title": "hover states in the sidebar are weird"
-    },
-    {
-      "number": 574,
-      "repo": "rainlanguage/raindex",
-      "title": "probably makes more sense to show the tx.origin on trades in the order page as msg.sender is just whatever arb contract mediated the trade"
-    },
-    {
-      "number": 573,
-      "repo": "rainlanguage/raindex",
-      "title": "changing the orderbook address in the settings doesn't update the vaults, so if you have the same vault ID in two different orderbooks it shows deposits/withdrawals from the previous ob"
-    },
-    {
-      "number": 572,
-      "repo": "rainlanguage/raindex",
-      "title": "every time we do anything the wallet gets disconnected for no reason"
-    },
-    {
-      "number": 570,
-      "repo": "rainlanguage/raindex",
-      "title": "withdraw button on vault asks to connect wallet even if already connected"
     }
   ],
   "counts": {
@@ -191,7 +161,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 37,
+    "closeCandidateIssues": 31,
     "closeCandidatePrs": 6,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -202,7 +172,7 @@
     "reject": 30,
     "relink": 2,
     "totalProducerPrs": 175,
-    "uncoveredIssues": 634,
+    "uncoveredIssues": 627,
     "unvetted": 13
   },
   "lanes": {
@@ -4626,11 +4596,6 @@
       "title": "order screen needs to show the deployer otherwise it's trivial to create a phishing deployer"
     },
     {
-      "number": 549,
-      "repo": "rainlanguage/raindex",
-      "title": "it is somehow possible to deploy orders from the app without the source attached"
-    },
-    {
       "number": 543,
       "repo": "rainlanguage/raindex",
       "title": "ability to set data type for charting"
@@ -4646,11 +4611,6 @@
       "title": "trades chart only renders scale for days that data exists (i.e. when trades were made) rather than for the whole time frame that was selected"
     },
     {
-      "number": 531,
-      "repo": "rainlanguage/raindex",
-      "title": "can't generate rainlang if there are elided bindings"
-    },
-    {
       "number": 529,
       "repo": "rainlanguage/raindex",
       "title": "if there's no elided bindings i shouldn't have to specify runs to generate a chart (should imply 1 run)"
@@ -4659,11 +4619,6 @@
       "number": 528,
       "repo": "rainlanguage/raindex",
       "title": "cmd + s should save order"
-    },
-    {
-      "number": 527,
-      "repo": "rainlanguage/raindex",
-      "title": "link to relevant observable plot docs near the yaml while i'm trying to write charts"
     },
     {
       "number": 525,
@@ -4709,16 +4664,6 @@
       "number": 43,
       "repo": "rainlanguage/rain.solver",
       "title": "review how we interact with flashbots"
-    },
-    {
-      "number": 499,
-      "repo": "rainlanguage/raindex",
-      "title": "Refactor Config & ConfigSource types for consistent key ordering"
-    },
-    {
-      "number": 495,
-      "repo": "rainlanguage/raindex",
-      "title": "Tab based UI with multi window support"
     },
     {
       "number": 493,
@@ -5031,11 +4976,6 @@
       "title": "Merge clears & takes into single chart / table"
     },
     {
-      "number": 229,
-      "repo": "rainlanguage/raindex",
-      "title": "Refactor front-end caching and pagination of list queries to support chart data"
-    },
-    {
       "number": 218,
       "repo": "rainlanguage/raindex",
       "title": "Frontmatter rebindings parse errors"
@@ -5079,11 +5019,6 @@
       "number": 204,
       "repo": "rainlanguage/raindex",
       "title": "Live Chart w/ Polling"
-    },
-    {
-      "number": 184,
-      "repo": "rainlanguage/raindex",
-      "title": "Frontmatter lint errors do not underline the text that caused the error"
     },
     {
       "number": 183,
