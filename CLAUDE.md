@@ -41,7 +41,7 @@ transition functions:
 | `--backfill-comments`                                      | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment) |
 | `gc-clones <work-dir>...`                                  | reclaim merged/closed work-clones across one or more clone roots (state cleanup)                        |
 | `unvetted [--json] [--include-skipped]`                    | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals     |
-| `unvetted_close_candidates` (MCP)                          | the vetter's second state-load: which producer close-candidate flags need judging this run             |
+| `unvetted_close_candidates` (MCP)                          | the vetter's second state-load: which producer close-candidate flags need judging this run              |
 | `record_close_candidate_verdict` (MCP)                     | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)  |
 | `mcp [--profile vetter\|producer]`                         | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                   |
 
@@ -52,10 +52,10 @@ profile is a **surface** filter, not a permission: `tools/list` returns only
 that role's tools, so neither role pays preamble for the other's schemas and
 neither can name the other's transitions.
 
-| Profile            | Tools                                                                      |
-| ------------------ | -------------------------------------------------------------------------- |
+| Profile            | Tools                                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `vetter` (default) | PRs: `unvetted`, `pr_context`, `pr_checkout`, `record_verdict`, `clone_release`. Close-candidate flags: `unvetted_close_candidates`, `close_candidate_context`, `record_close_candidate_verdict` |
-| `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`                  |
+| `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`                                                                                                                                        |
 
 The vetter has **two subjects**, not one. A PR is judged on its diff; a producer
 `ai:close-candidate` flag is judged on its evidence — and the second matters
@@ -63,8 +63,8 @@ because a wrong flag asks a human to destroy work. Both follow the same three
 moves (state-load → read one → record one verdict) and the same
 vetted-at-the-thing-judged rule: a PR re-vets when its head moves, a flag
 re-vets when the producer posts a new one. The vetter never writes a `human:*`
-label in either subject; `uphold` leaves the flag for the human, `reject`
-strips `ai:close-candidate` so the issue returns to the producer's queue.
+label in either subject; `uphold` leaves the flag for the human, `reject` strips
+`ai:close-candidate` so the issue returns to the producer's queue.
 
 The vetter profile is the vetter's **only** tool surface: `review-run.sh` always
 passes `--mcp-config review-mcp.json --strict-mcp-config` with

@@ -100,21 +100,31 @@ Bash deny-list is prefix-matched and bypassable. For the vetter that gap is
 closed: `pr-review-report mcp` serves its transitions over MCP (stdio), and that
 server is the vetter's **only** tool surface.
 
-| Tool             | The move it makes                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------ |
-| `unvetted`       | state-load: the open PRs to vet this run, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable |
-| `pr_context`     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call            |
-| `pr_checkout`    | local read-only clone of the PR head, so the `audit` skill has source                                        |
-| `record_verdict` | the only write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                               |
-| `clone_release`  | dispose of a checkout it is finished with (guarded — see below)                                              |
+| Tool                             | The move it makes                                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `unvetted`                       | state-load: the open PRs to vet this run, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable |
+| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call            |
+| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source                                        |
+| `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                 |
+| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                              |
+| `unvetted_close_candidates`      | state-load: the producer close-candidate flags to judge this run, each with its `flagAt` + stated evidence   |
+| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts      |
+| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)      |
+
+The last three are the vetter's **second subject**. A PR asks a human to merge
+code; a close-candidate flag asks a human to **destroy work**, so the flag is
+judged before it reaches the triage queue. The shape is identical to the PR side
+— state-load, read one, record one verdict — including the
+vetted-at-the-thing-judged rule: a PR re-vets when its head moves, a flag
+re-vets when the producer posts a new one.
 
 `review-run.sh` always launches the model with `--mcp-config review-mcp.json`,
 `--strict-mcp-config` and `--settings review-settings.json`, so the vetter's
 entire tool surface is
-`mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict,clone_release}` plus
-`Read`/`Grep`/`Glob`/`Skill`/`ToolSearch` — **no Bash**, so there is no raw `gh`
-or `git` to reach for. There is no second vetter configuration and no flag that
-selects one. The guards (verdict vocabulary, a mandatory 0-1000 cost, a
+`mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict,clone_release,unvetted_close_candidates,close_candidate_context,record_close_candidate_verdict}`
+plus `Read`/`Grep`/`Glob`/`Skill`/`ToolSearch` — **no Bash**, so there is no raw
+`gh` or `git` to reach for. There is no second vetter configuration and no flag
+that selects one. The guards (verdict vocabulary, a mandatory 0-1000 cost, a
 well-formed `owner/repo#n`, the human-sacred refusal) are enforced in the server
 and unit-tested rather than restated in the prompt.
 
@@ -275,12 +285,11 @@ That flag is then **vetted before a human sees it**. The producer is the party
 with an incentive to believe its own evidence, so the vetter judges the claim
 the same way it judges a PR: `uphold` leaves the flag queued for the human, and
 `reject` strips `ai:close-candidate` and returns the issue to the producer's
-uncovered queue. Only the human ever CLOSES an issue — but the queue they
-triage has had its wrong flags filtered out first. Hand-triage of ~29 flags
-found roughly one in three unsupported (#72), in three classes the vetter now
-checks explicitly: evidence that predates the issue, evidence that is
-unreachable code, and evidence that answers a narrower question than the issue
-asked.
+uncovered queue. Only the human ever CLOSES an issue — but the queue they triage
+has had its wrong flags filtered out first. Hand-triage of ~29 flags found
+roughly one in three unsupported (#72), in three classes the vetter now checks
+explicitly: evidence that predates the issue, evidence that is unreachable code,
+and evidence that answers a narrower question than the issue asked.
 
 ## Files (tracked here)
 
