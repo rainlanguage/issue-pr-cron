@@ -141,16 +141,6 @@
       "title": "Add balance of vault to order detail page"
     },
     {
-      "number": 592,
-      "repo": "rainlanguage/raindex",
-      "title": "Fix inverted IO ratio on orders page"
-    },
-    {
-      "number": 591,
-      "repo": "rainlanguage/raindex",
-      "title": "Orderbook for the network needs to be mentioned explicitly in `orders` section in yml"
-    },
-    {
       "number": 589,
       "repo": "rainlanguage/raindex",
       "title": "trading chart should indicate direction somehow"
@@ -161,7 +151,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 31,
+    "closeCandidateIssues": 29,
     "closeCandidatePrs": 6,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -171,9 +161,9 @@
     "ready": 45,
     "reject": 30,
     "relink": 2,
-    "totalProducerPrs": 175,
-    "uncoveredIssues": 627,
-    "unvetted": 13
+    "totalProducerPrs": 177,
+    "uncoveredIssues": 629,
+    "unvetted": 15
   },
   "lanes": {
     "human-decisions": {
@@ -663,8 +653,20 @@
         ]
       },
       "un-vetted": {
-        "count": 13,
+        "count": 15,
         "prs": [
+          {
+            "number": 130,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Split close-candidate issues into vetter and human inboxes",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/130"
+          },
+          {
+            "number": 74,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "Vet close-candidate flags before a human sees them (state-load + verdict, MCP surface, FSM, counts)",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/74"
+          },
           {
             "number": 128,
             "repo": "rainlanguage/rain-org-health",
@@ -2050,6 +2052,16 @@
     ]
   },
   "uncoveredIssues": [
+    {
+      "number": 73,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Vet close-candidate flags: state-load + verdict, MCP surface, FSM model, counts keys, roh dashboard"
+    },
+    {
+      "number": 72,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Vetter is the quality gate for ALL producer output, not just PRs (close-candidates first: ~1 in 3 wrong)"
+    },
     {
       "number": 2821,
       "repo": "rainlanguage/raindex",
