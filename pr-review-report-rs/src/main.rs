@@ -1115,12 +1115,153 @@ fn close_candidate_plan(state: &str, labels: &[String], already_noted: bool) -> 
     }
 }
 
+/// The datable anchor an `already-fixed-on-main:` reason must carry, so "the fix is on main" can be
+/// checked against "the fix landed AFTER the bug was reported".
+#[derive(Debug, PartialEq)]
+enum FixAnchor {
+    /// The reason is not an `already-fixed-on-main` claim — recency does not apply.
+    NotApplicable,
+    /// An `already-fixed-on-main` claim carrying nothing datable (a bare `file:line`).
+    Missing,
+    Commit(String),
+    Pr(String),
+}
+
+/// Extract the datable anchor from a close-candidate reason.
+///
+/// `already-fixed-on-main` is the one category whose evidence is checkable: a commit or a merged PR
+/// carries a date, so the claim can be tested against the issue's own creation date. A bare
+/// `file:line on main` cannot — code that was already there when the bug was filed proves nothing,
+/// which is exactly how live issues got flagged (raindex#512, #531, #549). The other categories
+/// (`invalid` / `duplicate` / `wont-fix`) are judgements, not landings, so they are left alone.
+fn already_fixed_anchor(reason: &str) -> FixAnchor {
+    if !reason.trim_start().starts_with("already-fixed-on-main") {
+        return FixAnchor::NotApplicable;
+    }
+    // A merged PR reference: `#123` / `PR#123` / `PR 123`.
+    let bytes = reason.as_bytes();
+    for (i, _) in reason.match_indices('#') {
+        let digits: String = reason[i + 1..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        // `#` must not be mid-identifier, and must actually be followed by digits.
+        let prev_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        if prev_ok && !digits.is_empty() {
+            return FixAnchor::Pr(digits);
+        }
+    }
+    // A commit sha: a standalone 7..=40 char hex run. Require >= 7 so a hex-looking word
+    // (`deadbeef` is a legitimate sha, `add` is not) is not mistaken for one.
+    for word in reason.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if (7..=40).contains(&word.len())
+            && word.chars().all(|c| c.is_ascii_hexdigit())
+            && word.chars().any(|c| c.is_ascii_digit())
+        {
+            return FixAnchor::Commit(word.to_string());
+        }
+    }
+    FixAnchor::Missing
+}
+
+/// Is `landed` strictly after `filed`? Both are ISO-8601 (`2024-04-01T11:06:35Z`), which sorts
+/// lexicographically, so a string compare is the whole comparison. `None` when either is unparseable
+/// — the caller fails closed rather than guessing.
+fn landed_after_filed(landed: &str, filed: &str) -> Option<bool> {
+    if landed.len() < 20 || filed.len() < 20 || !landed.contains('T') || !filed.contains('T') {
+        return None;
+    }
+    Some(landed > filed)
+}
+
+/// Enforce the recency contract on an `already-fixed-on-main` reason. Returns 0 to proceed, or a
+/// non-zero exit code: 4 = the claim is unsupported (no datable anchor, or the anchor predates the
+/// issue), 1 = the anchor's date could not be resolved. Fails CLOSED on an unresolvable anchor, the
+/// same rule the caller applies to an unreadable issue — a wrong `already-fixed-on-main` flag on a
+/// LIVE bug invites a human to close a real defect on false evidence.
+fn already_fixed_recency_gate(slug: &str, issue: &str, reason: &str, issue_json: &Value) -> i32 {
+    let anchor = already_fixed_anchor(reason);
+    if anchor == FixAnchor::NotApplicable {
+        return 0;
+    }
+    let filed = issue_json
+        .get("createdAt")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    if filed.is_empty() {
+        eprintln!("error: {slug}#{issue} has no createdAt — cannot check the fix postdates it");
+        return 1;
+    }
+    let (landed, what) = match &anchor {
+        FixAnchor::Missing => {
+            eprintln!(
+                "refusing to flag {slug}#{issue}: an `already-fixed-on-main` reason must cite a \
+                 MERGED commit sha or PR number, not only a file:line.\n\
+                 A file:line proves the code is on main today, not that it landed after the issue \
+                 was filed ({filed}) — code that predates the report cannot be the fix.\n\
+                 Cite the commit/PR that fixed it, or use `invalid`/`duplicate`/`wont-fix` if that \
+                 is the real category."
+            );
+            return 4;
+        }
+        FixAnchor::Commit(sha) => (
+            gh_json(&["api", &format!("repos/{slug}/commits/{sha}")])
+                .and_then(|c| {
+                    c.pointer("/commit/committer/date")
+                        .or_else(|| c.pointer("/commit/author/date"))
+                        .and_then(|d| d.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or_default(),
+            format!("commit {sha}"),
+        ),
+        FixAnchor::Pr(n) => (
+            gh_json(&["pr", "view", n, "-R", slug, "--json", "mergedAt"])
+                .and_then(|p| {
+                    p.get("mergedAt")
+                        .and_then(|d| d.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or_default(),
+            format!("PR #{n}"),
+        ),
+        FixAnchor::NotApplicable => unreachable!("returned above"),
+    };
+    if landed.is_empty() {
+        eprintln!(
+            "error: could not resolve a date for {what} in {slug} (unmerged, or the lookup \
+             failed) — not writing on unverified evidence"
+        );
+        return 1;
+    }
+    match landed_after_filed(&landed, filed) {
+        Some(true) => 0,
+        Some(false) => {
+            eprintln!(
+                "refusing to flag {slug}#{issue}: {what} landed {landed}, but the issue was filed \
+                 {filed}.\n\
+                 Evidence that predates the report cannot be the fix — find the change that \
+                 actually resolved it, or use `invalid`/`duplicate`/`wont-fix`."
+            );
+            4
+        }
+        None => {
+            eprintln!("error: unparseable dates ({what}: {landed:?}, issue: {filed:?})");
+            1
+        }
+    }
+}
+
 /// `--flag-close-candidate <owner/repo> <issue> "<reason>" [--dry-run]`: the SOLE sanctioned way the
 /// producer flags a closeable ISSUE — applies the `ai:close-candidate` label + a trusted
 /// `🤖 ai:producer` reason comment, replacing the old local close-candidates.jsonl. GitHub state is
 /// the source of truth: a closed/fixed issue drops out of the `--state open` query automatically,
 /// re-flagging is idempotent, and a human `human:keep-open` / `human:close-candidate` ruling is
 /// sacred (the tool refuses, exit 3). The producer NEVER closes the issue — a human does that.
+///
+/// An `already-fixed-on-main` reason additionally must carry a commit sha or merged PR number whose
+/// date POST-DATES the issue (exit 4). "This code is on main today" is not the same claim as "this
+/// issue is fixed": evidence that predates the report cannot be the fix.
 fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: bool) -> i32 {
     if reason.trim().is_empty() {
         eprintln!(
@@ -1135,11 +1276,14 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         "-R",
         slug,
         "--json",
-        "state,labels,comments",
+        "state,labels,comments,createdAt",
     ]) else {
         eprintln!("error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data");
         return 1;
     };
+    if let rc @ 1..=4 = already_fixed_recency_gate(slug, issue, reason, &j) {
+        return rc;
+    }
     let state = j.get("state").and_then(|s| s.as_str()).unwrap_or("");
     let labels: Vec<String> = j
         .get("labels")
@@ -5616,6 +5760,99 @@ mod queue_tests {
                 add_label: false,
                 post_comment: false
             }
+        );
+    }
+
+    #[test]
+    fn already_fixed_anchor_requires_something_datable() {
+        // The real shape that let live issues through: a bare file:line (raindex#512 cited
+        // crates/settings/src/raindex.rs:116-133, code that predated the issue by two weeks).
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: crates/settings/src/raindex.rs:116-133"),
+            FixAnchor::Missing
+        );
+        // The other categories are judgements, not landings — never gated.
+        assert_eq!(
+            already_fixed_anchor("invalid: the premise is obsolete, no tauri.conf.json exists"),
+            FixAnchor::NotApplicable
+        );
+        assert_eq!(
+            already_fixed_anchor("duplicate: of #123"),
+            FixAnchor::NotApplicable
+        );
+        assert_eq!(
+            already_fixed_anchor("wont-fix: superseded by the registry flow"),
+            FixAnchor::NotApplicable
+        );
+        // Datable anchors are extracted.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: fixed by PR #2420"),
+            FixAnchor::Pr("2420".into())
+        );
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: 2a319034 removed the tauri app"),
+            FixAnchor::Commit("2a319034".into())
+        );
+        // A sha alongside a file:line still counts — the sha is what gets date-checked.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: impls.rs:205 via a665ea9f7"),
+            FixAnchor::Commit("a665ea9f7".into())
+        );
+        // Prose must not be mistaken for a sha: short hex-ish words and all-alpha words are not.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: added a decade ago, see the code"),
+            FixAnchor::Missing
+        );
+        // `#` mid-identifier is not a PR reference.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: see foo#bar in the docs"),
+            FixAnchor::Missing
+        );
+    }
+
+    #[test]
+    fn landed_after_filed_compares_iso_instants() {
+        // raindex#512: filed 2024-04-01, cited fallback landed 2024-03-16 -> predates, must fail.
+        assert_eq!(
+            landed_after_filed("2024-03-16T09:00:00Z", "2024-04-01T11:06:35Z"),
+            Some(false)
+        );
+        // raindex#529: filed 2024-04-03, the runs-default landed later -> genuine fix.
+        assert_eq!(
+            landed_after_filed("2024-06-01T00:00:00Z", "2024-04-03T10:00:00Z"),
+            Some(true)
+        );
+        // Same instant is not "after" — a fix cannot be its own report.
+        assert_eq!(
+            landed_after_filed("2024-04-01T11:06:35Z", "2024-04-01T11:06:35Z"),
+            Some(false)
+        );
+        // Unparseable -> None, so the caller fails closed instead of guessing.
+        assert_eq!(landed_after_filed("", "2024-04-01T11:06:35Z"), None);
+        assert_eq!(landed_after_filed("2024-04-01", "2024-04-01T11:06:35Z"), None);
+    }
+
+    #[test]
+    fn recency_gate_blocks_predating_evidence_and_missing_dates() {
+        // No createdAt -> cannot check -> fail closed (1), never silently allow.
+        assert_eq!(
+            already_fixed_recency_gate("o/r", "1", "already-fixed-on-main: #7", &json!({})),
+            1
+        );
+        // Bare file:line -> unsupported claim (4).
+        assert_eq!(
+            already_fixed_recency_gate(
+                "o/r",
+                "1",
+                "already-fixed-on-main: src/foo.rs:10",
+                &json!({"createdAt": "2024-04-01T11:06:35Z"})
+            ),
+            4
+        );
+        // A non-already-fixed category is never gated, even with no createdAt.
+        assert_eq!(
+            already_fixed_recency_gate("o/r", "1", "invalid: premise obsolete", &json!({})),
+            0
         );
     }
 
