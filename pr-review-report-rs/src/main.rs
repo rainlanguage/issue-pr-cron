@@ -1138,25 +1138,27 @@ fn already_fixed_anchor(reason: &str) -> FixAnchor {
     if !reason.trim_start().starts_with("already-fixed-on-main") {
         return FixAnchor::NotApplicable;
     }
-    // A merged PR reference: `#123` / `PR#123` / `PR 123`.
-    let bytes = reason.as_bytes();
+    // A PR reference: any `#` followed by digits — `#123`, `PR#123`, `owner/repo#123`. Requiring
+    // digits is the whole guard: `foo#bar` has none, so prose cannot masquerade as a reference.
     for (i, _) in reason.match_indices('#') {
         let digits: String = reason[i + 1..]
             .chars()
             .take_while(|c| c.is_ascii_digit())
             .collect();
-        // `#` must not be mid-identifier, and must actually be followed by digits.
-        let prev_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
-        if prev_ok && !digits.is_empty() {
+        if !digits.is_empty() {
             return FixAnchor::Pr(digits);
         }
     }
-    // A commit sha: a standalone 7..=40 char hex run. Require >= 7 so a hex-looking word
-    // (`deadbeef` is a legitimate sha, `add` is not) is not mistaken for one.
+    // A commit sha: a standalone 7..=40 char hex run containing at least one a-f letter. The
+    // letter is what separates a sha from a bare number — `20240401` (a date) and `1234567` (an
+    // id) are valid hex too, and classifying them as commits would send the caller to
+    // `gh api .../commits/<digits>`, which 404s and reports a confusing "could not resolve a
+    // date" instead of the accurate "no usable anchor". A pure-decimal short sha is possible but
+    // rare, and the cost is only that the producer must cite the PR or a longer sha.
     for word in reason.split(|c: char| !c.is_ascii_alphanumeric()) {
         if (7..=40).contains(&word.len())
             && word.chars().all(|c| c.is_ascii_hexdigit())
-            && word.chars().any(|c| c.is_ascii_digit())
+            && word.chars().any(|c| c.is_ascii_alphabetic())
         {
             return FixAnchor::Commit(word.to_string());
         }
@@ -5799,11 +5801,37 @@ mod queue_tests {
             already_fixed_anchor("already-fixed-on-main: added a decade ago, see the code"),
             FixAnchor::Missing
         );
-        // `#` mid-identifier is not a PR reference.
+        // `#` with no digits after it is not a PR reference.
         assert_eq!(
             already_fixed_anchor("already-fixed-on-main: see foo#bar in the docs"),
             FixAnchor::Missing
         );
+        // The forms a producer actually types must all resolve — `PR#123` has an alphanumeric
+        // before the `#`, and rejecting it would refuse evidence in the format the prompt asks for.
+        for reason in [
+            "already-fixed-on-main: PR#2420",
+            "already-fixed-on-main: fixed in rainlanguage/raindex#2420",
+            "already-fixed-on-main: see #2420",
+        ] {
+            assert_eq!(
+                already_fixed_anchor(reason),
+                FixAnchor::Pr("2420".into()),
+                "{reason}"
+            );
+        }
+        // An all-letter hex sha is still a sha.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: deadbeef fixed it"),
+            FixAnchor::Commit("deadbeef".into())
+        );
+        // A bare number is NOT a sha — a date or an id must report "no usable anchor", not send
+        // the caller to `gh api .../commits/20240401` and surface a date-resolution error.
+        for reason in [
+            "already-fixed-on-main: landed 20240401",
+            "already-fixed-on-main: see build 1234567",
+        ] {
+            assert_eq!(already_fixed_anchor(reason), FixAnchor::Missing, "{reason}");
+        }
     }
 
     #[test]
