@@ -184,21 +184,6 @@
       "number": 570,
       "repo": "rainlanguage/raindex",
       "title": "withdraw button on vault asks to connect wallet even if already connected"
-    },
-    {
-      "number": 550,
-      "repo": "rainlanguage/raindex",
-      "title": "deposit modal balance is broken and/or confusing"
-    },
-    {
-      "number": 529,
-      "repo": "rainlanguage/raindex",
-      "title": "if there's no elided bindings i shouldn't have to specify runs to generate a chart (should imply 1 run)"
-    },
-    {
-      "number": 523,
-      "repo": "rainlanguage/raindex",
-      "title": "nothing visual happens in the app when an order is successfully deployed"
     }
   ],
   "counts": {
@@ -206,7 +191,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 40,
+    "closeCandidateIssues": 37,
     "closeCandidatePrs": 6,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -217,7 +202,7 @@
     "reject": 30,
     "relink": 2,
     "totalProducerPrs": 175,
-    "uncoveredIssues": 633,
+    "uncoveredIssues": 634,
     "unvetted": 13
   },
   "lanes": {
@@ -4664,6 +4649,11 @@
       "number": 531,
       "repo": "rainlanguage/raindex",
       "title": "can't generate rainlang if there are elided bindings"
+    },
+    {
+      "number": 529,
+      "repo": "rainlanguage/raindex",
+      "title": "if there's no elided bindings i shouldn't have to specify runs to generate a chart (should imply 1 run)"
     },
     {
       "number": 528,
