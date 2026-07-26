@@ -164,6 +164,21 @@ fn pr_slug(url: &str) -> Option<String> {
     Some(slug.to_string())
 }
 
+/// `owner/repo` from an ISSUE url. The twin of [`pr_slug`], which deliberately rejects `/issues/`
+/// urls — reusing it here silently emptied the whole close-candidate queue, since every row parsed
+/// to `None` and was skipped before it could be judged.
+fn issue_slug(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    if !rest.contains("/issues/") {
+        return None;
+    }
+    let slug = rest.split("/issues/").next()?;
+    if slug.is_empty() || !slug.contains('/') {
+        return None;
+    }
+    Some(slug.to_string())
+}
+
 /// Aggregate queue counts for the header (see `render_queue`).
 struct QueueCounts {
     raw: usize,      // all ai:ready PRs the search returned
@@ -4067,17 +4082,31 @@ fn unvetted_close_candidates_fetch(include_skipped: bool) -> Result<Value, Strin
              aborting rather than report a falsely-empty close-candidate queue"
                 .to_string()
         })?;
+    // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
+    // reported (see `fetchErrors` below), never dropped.
 
     let mut rows: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
     let (mut n_human, mut n_noflag, mut n_vetted) = (0usize, 0usize, 0usize);
     for i in &found {
         let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let (Some(slug), Some(num)) = (pr_slug(url), i.get("number").and_then(|n| n.as_u64()))
-        else {
+        let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        // `repository.nameWithOwner` is authoritative; the url parse is the fallback.
+        let slug = i
+            .get("repository")
+            .and_then(|r| r.get("nameWithOwner"))
+            .and_then(|s| s.as_str())
+            .map(String::from)
+            .or_else(|| issue_slug(url));
+        let (Some(slug), Some(num)) = (slug, i.get("number").and_then(|n| n.as_u64())) else {
+            errors.push(
+                serde_json::json!({"url": url, "title": title, "error": "unparseable issue ref"}),
+            );
             continue;
         };
-        let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        // A dropped issue must be VISIBLE. Silently `continue`ing shrinks the vetter's inbox and
+        // makes `flagged` disagree with `vet + skip*` with nothing to explain the gap.
         let Some(detail) = gh_json(&[
             "issue",
             "view",
@@ -4087,6 +4116,11 @@ fn unvetted_close_candidates_fetch(include_skipped: bool) -> Result<Value, Strin
             "--json",
             "number,title,url,state,labels,comments",
         ]) else {
+            errors.push(serde_json::json!({
+                "issue": format!("{slug}#{num}"),
+                "title": title,
+                "error": "gh issue view failed — not judged this run",
+            }));
             continue;
         };
         let (vet, action, row) = cc_row(&slug, num, title, &detail);
@@ -4109,8 +4143,12 @@ fn unvetted_close_candidates_fetch(include_skipped: bool) -> Result<Value, Strin
             "skipHumanDecided": n_human,
             "skipNoFlag": n_noflag,
             "skipVettedAtFlag": n_vetted,
+            // flagged == vet + skip* + fetchErrors, always. A non-zero value here is the ONLY
+            // reason the parts may not sum to the whole.
+            "fetchErrors": errors.len(),
         },
         "issues": rows,
+        "fetchErrors": errors,
     });
     if include_skipped {
         doc.as_object_mut()
@@ -6424,6 +6462,26 @@ mod queue_tests {
             cc_verdict_comment("T", "uphold", "   "),
             "🤖 ai:vetter\nReviewed close-candidate @T: uphold"
         );
+    }
+
+    // The close-candidate queue searches ISSUE urls, and `pr_slug` rejects those BY DESIGN. Reusing
+    // it there parsed every row to None, so the whole queue silently stayed empty and the feature
+    // did nothing at all.
+    #[test]
+    fn issue_slug_parses_issue_urls_where_pr_slug_deliberately_will_not() {
+        assert_eq!(
+            issue_slug("https://github.com/rainlanguage/raindex/issues/512").as_deref(),
+            Some("rainlanguage/raindex")
+        );
+        assert_eq!(
+            pr_slug("https://github.com/rainlanguage/raindex/issues/512"),
+            None
+        );
+        // ...and the reverse: an issue slug is not a PR slug.
+        assert_eq!(issue_slug("https://github.com/o/r/pull/1"), None);
+        assert_eq!(issue_slug("https://example.com/o/r/issues/1"), None);
+        assert_eq!(issue_slug("https://github.com/r/issues/1"), None);
+        assert_eq!(issue_slug(""), None);
     }
 
     #[test]
@@ -9636,7 +9694,8 @@ mod mcp_tests {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
-        assert_eq!(cc_verdicts, vec!["uphold", "reject"]);
+        // Pinned to the vocabulary itself, so the schema and CC_VERDICTS cannot drift apart.
+        assert_eq!(cc_verdicts, CC_VERDICTS.to_vec());
 
         let rv = tools
             .iter()
