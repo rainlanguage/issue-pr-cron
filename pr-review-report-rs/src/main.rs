@@ -1217,11 +1217,7 @@ fn already_fixed_recency_gate(slug: &str, issue: &str, reason: &str, issue_json:
         ),
         FixAnchor::Pr(n) => (
             gh_json(&["pr", "view", n, "-R", slug, "--json", "mergedAt"])
-                .and_then(|p| {
-                    p.get("mergedAt")
-                        .and_then(|d| d.as_str())
-                        .map(String::from)
-                })
+                .and_then(|p| p.get("mergedAt").and_then(|d| d.as_str()).map(String::from))
                 .unwrap_or_default(),
             format!("PR #{n}"),
         ),
@@ -5829,7 +5825,10 @@ mod queue_tests {
         );
         // Unparseable -> None, so the caller fails closed instead of guessing.
         assert_eq!(landed_after_filed("", "2024-04-01T11:06:35Z"), None);
-        assert_eq!(landed_after_filed("2024-04-01", "2024-04-01T11:06:35Z"), None);
+        assert_eq!(
+            landed_after_filed("2024-04-01", "2024-04-01T11:06:35Z"),
+            None
+        );
     }
 
     #[test]
