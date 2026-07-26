@@ -191,84 +191,14 @@
       "title": "deposit modal balance is broken and/or confusing"
     },
     {
-      "number": 549,
-      "repo": "rainlanguage/raindex",
-      "title": "it is somehow possible to deploy orders from the app without the source attached"
-    },
-    {
-      "number": 531,
-      "repo": "rainlanguage/raindex",
-      "title": "can't generate rainlang if there are elided bindings"
-    },
-    {
       "number": 529,
       "repo": "rainlanguage/raindex",
       "title": "if there's no elided bindings i shouldn't have to specify runs to generate a chart (should imply 1 run)"
     },
     {
-      "number": 528,
-      "repo": "rainlanguage/raindex",
-      "title": "cmd + s should save order"
-    },
-    {
-      "number": 527,
-      "repo": "rainlanguage/raindex",
-      "title": "link to relevant observable plot docs near the yaml while i'm trying to write charts"
-    },
-    {
-      "number": 525,
-      "repo": "rainlanguage/raindex",
-      "title": "pasting an order into the editor when an order was already charted etc. doesn't clear what was previously done"
-    },
-    {
       "number": 523,
       "repo": "rainlanguage/raindex",
       "title": "nothing visual happens in the app when an order is successfully deployed"
-    },
-    {
-      "number": 522,
-      "repo": "rainlanguage/raindex",
-      "title": "undefined deployer address"
-    },
-    {
-      "number": 519,
-      "repo": "rainlanguage/raindex",
-      "title": "add order screen should be prefilled to a minimal skeleton to an order"
-    },
-    {
-      "number": 512,
-      "repo": "rainlanguage/raindex",
-      "title": "orderbooks should fallback to the network they are named for"
-    },
-    {
-      "number": 499,
-      "repo": "rainlanguage/raindex",
-      "title": "Refactor Config & ConfigSource types for consistent key ordering"
-    },
-    {
-      "number": 498,
-      "repo": "rainlanguage/raindex",
-      "title": "Refactor reporting sentry errors - generic try/catch wrapper"
-    },
-    {
-      "number": 476,
-      "repo": "rainlanguage/raindex",
-      "title": "Frontend testing harness & basic tests"
-    },
-    {
-      "number": 448,
-      "repo": "rainlanguage/raindex",
-      "title": "\"Cannot access unitialized variable\" - White Screen on Mac OS 11"
-    },
-    {
-      "number": 446,
-      "repo": "rainlanguage/raindex",
-      "title": "Add titles for axes in charts"
-    },
-    {
-      "number": 437,
-      "repo": "rainlanguage/raindex",
-      "title": "Generic deposit modal should use dropdown to select token from config, instead of text input"
     }
   ],
   "counts": {
@@ -276,7 +206,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 54,
+    "closeCandidateIssues": 40,
     "closeCandidatePrs": 6,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -287,7 +217,7 @@
     "reject": 30,
     "relink": 2,
     "totalProducerPrs": 175,
-    "uncoveredIssues": 620,
+    "uncoveredIssues": 633,
     "unvetted": 13
   },
   "lanes": {
@@ -2165,6 +2095,26 @@
     ]
   },
   "uncoveredIssues": [
+    {
+      "number": 2821,
+      "repo": "rainlanguage/raindex",
+      "title": "Dead-code sweep: unreferenced exports, orphaned modules, unused deps, commented-out blocks"
+    },
+    {
+      "number": 2820,
+      "repo": "rainlanguage/raindex",
+      "title": "Restore in-app order authoring: a free-form dotrain editor that can deploy without a registry"
+    },
+    {
+      "number": 2819,
+      "repo": "rainlanguage/raindex",
+      "title": "Browser-driven smoke tests for the webapp (extend the render-harness conventions to real user flows)"
+    },
+    {
+      "number": 2818,
+      "repo": "rainlanguage/raindex",
+      "title": "charts: support a `description` on plots (metrics already have one)"
+    },
     {
       "number": 2817,
       "repo": "rainlanguage/raindex",
@@ -4691,6 +4641,11 @@
       "title": "order screen needs to show the deployer otherwise it's trivial to create a phishing deployer"
     },
     {
+      "number": 549,
+      "repo": "rainlanguage/raindex",
+      "title": "it is somehow possible to deploy orders from the app without the source attached"
+    },
+    {
       "number": 543,
       "repo": "rainlanguage/raindex",
       "title": "ability to set data type for charting"
@@ -4706,14 +4661,44 @@
       "title": "trades chart only renders scale for days that data exists (i.e. when trades were made) rather than for the whole time frame that was selected"
     },
     {
+      "number": 531,
+      "repo": "rainlanguage/raindex",
+      "title": "can't generate rainlang if there are elided bindings"
+    },
+    {
+      "number": 528,
+      "repo": "rainlanguage/raindex",
+      "title": "cmd + s should save order"
+    },
+    {
+      "number": 527,
+      "repo": "rainlanguage/raindex",
+      "title": "link to relevant observable plot docs near the yaml while i'm trying to write charts"
+    },
+    {
+      "number": 525,
+      "repo": "rainlanguage/raindex",
+      "title": "pasting an order into the editor when an order was already charted etc. doesn't clear what was previously done"
+    },
+    {
       "number": 524,
       "repo": "rainlanguage/raindex",
       "title": "small numbers getting rounded to zero on charts"
     },
     {
+      "number": 522,
+      "repo": "rainlanguage/raindex",
+      "title": "undefined deployer address"
+    },
+    {
       "number": 521,
       "repo": "rainlanguage/raindex",
       "title": "ability to copy trade from the order view page"
+    },
+    {
+      "number": 519,
+      "repo": "rainlanguage/raindex",
+      "title": "add order screen should be prefilled to a minimal skeleton to an order"
     },
     {
       "number": 513,
@@ -4734,6 +4719,11 @@
       "number": 43,
       "repo": "rainlanguage/rain.solver",
       "title": "review how we interact with flashbots"
+    },
+    {
+      "number": 499,
+      "repo": "rainlanguage/raindex",
+      "title": "Refactor Config & ConfigSource types for consistent key ordering"
     },
     {
       "number": 495,
@@ -5104,6 +5094,11 @@
       "number": 184,
       "repo": "rainlanguage/raindex",
       "title": "Frontmatter lint errors do not underline the text that caused the error"
+    },
+    {
+      "number": 183,
+      "repo": "rainlanguage/raindex",
+      "title": "Disable \"Add Order\" button when linting finds problems"
     },
     {
       "number": 175,
