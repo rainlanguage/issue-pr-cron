@@ -251,11 +251,6 @@
       "title": "Refactor reporting sentry errors - generic try/catch wrapper"
     },
     {
-      "number": 495,
-      "repo": "rainlanguage/raindex",
-      "title": "Tab based UI with multi window support"
-    },
-    {
       "number": 476,
       "repo": "rainlanguage/raindex",
       "title": "Frontend testing harness & basic tests"
@@ -274,51 +269,6 @@
       "number": 437,
       "repo": "rainlanguage/raindex",
       "title": "Generic deposit modal should use dropdown to select token from config, instead of text input"
-    },
-    {
-      "number": 290,
-      "repo": "rainlanguage/raindex",
-      "title": "Select a ledger address rather than requiring user to enter derivation index"
-    },
-    {
-      "number": 279,
-      "repo": "rainlanguage/raindex",
-      "title": "Polling on all pages"
-    },
-    {
-      "number": 239,
-      "repo": "rainlanguage/raindex",
-      "title": "Error displayed twice on deposit "
-    },
-    {
-      "number": 229,
-      "repo": "rainlanguage/raindex",
-      "title": "Refactor front-end caching and pagination of list queries to support chart data"
-    },
-    {
-      "number": 184,
-      "repo": "rainlanguage/raindex",
-      "title": "Frontmatter lint errors do not underline the text that caused the error"
-    },
-    {
-      "number": 183,
-      "repo": "rainlanguage/raindex",
-      "title": "Disable \"Add Order\" button when linting finds problems"
-    },
-    {
-      "number": 159,
-      "repo": "rainlanguage/raindex",
-      "title": "Pagination with end page"
-    },
-    {
-      "number": 132,
-      "repo": "rainlanguage/raindex",
-      "title": "include the sha or similar in the name of the assets when doing builds off main"
-    },
-    {
-      "number": 103,
-      "repo": "rainlanguage/raindex",
-      "title": "refactor subgraph client to use new subgraph implementation in rain.orderbook repo"
     }
   ],
   "counts": {
@@ -326,7 +276,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 64,
+    "closeCandidateIssues": 54,
     "closeCandidatePrs": 6,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -336,9 +286,9 @@
     "ready": 45,
     "reject": 30,
     "relink": 2,
-    "totalProducerPrs": 176,
-    "uncoveredIssues": 616,
-    "unvetted": 14
+    "totalProducerPrs": 175,
+    "uncoveredIssues": 620,
+    "unvetted": 13
   },
   "lanes": {
     "human-decisions": {
@@ -828,7 +778,7 @@
         ]
       },
       "un-vetted": {
-        "count": 14,
+        "count": 13,
         "prs": [
           {
             "number": 128,
@@ -883,12 +833,6 @@
             "repo": "cyclofinance/cyclo.sol",
             "title": "anchor audit PDFs under audit/protofire/ so the org health scan sees them",
             "url": "https://github.com/cyclofinance/cyclo.sol/pull/56"
-          },
-          {
-            "number": 284,
-            "repo": "rainlanguage/rainix",
-            "title": "make rainix-sol-artifacts hermetic: own anvil when no ETH_RPC_URL (fixes main red)",
-            "url": "https://github.com/rainlanguage/rainix/pull/284"
           },
           {
             "number": 47,
@@ -2221,6 +2165,11 @@
     ]
   },
   "uncoveredIssues": [
+    {
+      "number": 2817,
+      "repo": "rainlanguage/raindex",
+      "title": "Deploy Order button is not disabled when the deployment config is incomplete/invalid"
+    },
     {
       "number": 99,
       "repo": "rainlanguage/rain.solmem",
@@ -4787,6 +4736,11 @@
       "title": "review how we interact with flashbots"
     },
     {
+      "number": 495,
+      "repo": "rainlanguage/raindex",
+      "title": "Tab based UI with multi window support"
+    },
+    {
       "number": 493,
       "repo": "rainlanguage/raindex",
       "title": "support rainlang strings for vault ids"
@@ -5097,6 +5051,11 @@
       "title": "Merge clears & takes into single chart / table"
     },
     {
+      "number": 229,
+      "repo": "rainlanguage/raindex",
+      "title": "Refactor front-end caching and pagination of list queries to support chart data"
+    },
+    {
       "number": 218,
       "repo": "rainlanguage/raindex",
       "title": "Frontmatter rebindings parse errors"
@@ -5140,6 +5099,11 @@
       "number": 204,
       "repo": "rainlanguage/raindex",
       "title": "Live Chart w/ Polling"
+    },
+    {
+      "number": 184,
+      "repo": "rainlanguage/raindex",
+      "title": "Frontmatter lint errors do not underline the text that caused the error"
     },
     {
       "number": 175,
