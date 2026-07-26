@@ -1097,21 +1097,141 @@ enum CloseFlagPlan {
     Flag { add_label: bool, post_comment: bool },
 }
 
-/// A human `human:keep-open` / `human:close-candidate` ruling is sacred (refuse); a CLOSED issue is
-/// moot; otherwise flag it, adding the label / posting the note only when not already present.
+/// The human's namespace on an ISSUE. A ruling here is sacred: neither the producer's flag nor the
+/// vetter's verdict may overwrite it.
+///
+/// `human:keep-open` is retained for compatibility but is NOT a label the org actually uses — the
+/// real set is the same three [`has_human_override`] enforces on PRs. Checking only `keep-open` +
+/// `close-candidate` (as this did) left a `human:reject` / `human:design` ruling on an issue
+/// invisible here, so the producer could flag an issue a human had already parked.
+const HUMAN_RULING_LABELS: [&str; 4] = [
+    "human:reject",
+    "human:design",
+    "human:close-candidate",
+    "human:keep-open",
+];
+
+/// Does any human ruling sit on this issue? Takes label NAMES, which callers already have.
+fn has_human_ruling(labels: &[String]) -> bool {
+    labels
+        .iter()
+        .any(|l| HUMAN_RULING_LABELS.contains(&l.as_str()))
+}
+
+/// A human ruling is sacred (refuse); a CLOSED issue is moot; otherwise flag it, adding the label /
+/// posting the note only when not already present.
 fn close_candidate_plan(state: &str, labels: &[String], already_noted: bool) -> CloseFlagPlan {
     if state == "CLOSED" {
         return CloseFlagPlan::AlreadyClosed;
     }
-    if labels
-        .iter()
-        .any(|l| l == "human:keep-open" || l == "human:close-candidate")
-    {
+    if has_human_ruling(labels) {
         return CloseFlagPlan::RefuseHuman;
     }
     CloseFlagPlan::Flag {
         add_label: !labels.iter().any(|l| l == "ai:close-candidate"),
         post_comment: !already_noted,
+    }
+}
+
+/// The vetter's verdicts on a producer close-candidate FLAG. Two, because the flag is a binary
+/// claim: either the evidence supports closing (leave it queued for the human) or it does not
+/// (drop the flag, returning the issue to the producer's uncovered queue).
+const CC_VERDICTS: [&str; 2] = ["uphold", "reject"];
+
+/// The producer's most recent trusted close-candidate flag on an issue, as `(createdAt, body)`.
+///
+/// Trusted by AUTHOR, never by marker text: `🤖 ai:producer` is public body text anyone can post,
+/// so an untrusted "flag" must never be judged as though the pipeline made it.
+fn last_close_candidate_flag(issue: &Value) -> Option<(String, String)> {
+    issue
+        .get("comments")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|c| author_login(c) == Some(TRUSTED_AUTHOR))
+        .filter_map(|c| {
+            let body = c.get("body").and_then(|b| b.as_str())?;
+            if !body.starts_with("🤖 ai:producer") || !body.contains("Close-candidate:") {
+                return None;
+            }
+            let at = c.get("createdAt").and_then(|t| t.as_str()).unwrap_or("");
+            Some((at.to_string(), body.to_string()))
+        })
+        .next_back()
+}
+
+/// The most-recent trusted `🤖 ai:vetter` comment on an ISSUE recording a close-candidate verdict.
+fn last_cc_vetter_comment(issue: &Value) -> Option<String> {
+    trusted_comments(issue, Some("🤖 ai:vetter"))
+        .into_iter()
+        .rfind(|b| b.contains("Reviewed close-candidate @"))
+}
+
+/// The issue-side analogue of [`vetted_at_head`]: a flag is vetted only when the vetter's own
+/// comment pins the CURRENT flag's timestamp. The `ai:close-candidate` label alone is not a verdict
+/// — it is the producer's claim. A RE-flag (new comment, new timestamp) un-vets, exactly as a moved
+/// head does for a PR, so new evidence is re-judged instead of inheriting a stale pass.
+fn cc_vetted_at_flag(issue: &Value, flag_at: &str) -> bool {
+    !flag_at.is_empty()
+        && last_cc_vetter_comment(issue)
+            .map(|b| b.contains(&format!("Reviewed close-candidate @{flag_at}:")))
+            .unwrap_or(false)
+}
+
+/// The sha-bound verdict comment's issue-side twin: pins the flag being judged, so the record says
+/// WHICH claim was reviewed rather than merely that a review happened.
+fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str) -> String {
+    let tail = if note.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" — {}", note.trim())
+    };
+    format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict}{tail}")
+}
+
+/// The close-candidate recording decision, computed PURELY from the fetched issue JSON — the same
+/// guard-before-write shape as [`VerdictPlan`].
+#[derive(Debug, PartialEq)]
+enum CcVerdictPlan {
+    /// A human already ruled: never overwritten.
+    RefuseHuman,
+    /// The issue is closed — the flag is moot.
+    AlreadyClosed,
+    /// No trusted producer flag to judge (nothing was claimed).
+    NoFlag,
+    Record {
+        flag_at: String,
+        /// `ai:close-candidate` is present and this verdict drops it (reject only).
+        remove_label: bool,
+        /// The same verdict at the same flag is already recorded — a no-op re-review.
+        skip_comment: bool,
+    },
+}
+
+/// PURE: may the vetter record `verdict` on this flagged issue, and what does it change?
+fn cc_verdict_plan(issue_json: &Value, verdict: &str) -> CcVerdictPlan {
+    let state = issue_json
+        .get("state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    if state == "CLOSED" {
+        return CcVerdictPlan::AlreadyClosed;
+    }
+    let labels = label_names(issue_json);
+    if has_human_ruling(&labels) {
+        return CcVerdictPlan::RefuseHuman;
+    }
+    let Some((flag_at, _)) = last_close_candidate_flag(issue_json) else {
+        return CcVerdictPlan::NoFlag;
+    };
+    let has_flag_label = labels.iter().any(|l| l == "ai:close-candidate");
+    CcVerdictPlan::Record {
+        skip_comment: last_cc_vetter_comment(issue_json)
+            .map(|b| b.contains(&format!("Reviewed close-candidate @{flag_at}: {verdict}")))
+            .unwrap_or(false),
+        // Only `reject` mutates the label — an upheld flag stays queued for the human untouched.
+        remove_label: verdict == "reject" && has_flag_label,
+        flag_at,
     }
 }
 
@@ -2095,6 +2215,26 @@ fn human_queue_mode(json_out: bool) -> i32 {
         })
         .collect();
 
+    // Close-candidate vet state, as `(unvetted, upheld)`. Computed from the same state-load the
+    // vetter reads, so the dashboard and the vetter can never disagree about the size of the inbox.
+    // Additive and FAILURE-TOLERANT: this costs one `gh issue view` per flagged issue, so a transient
+    // API failure yields (0, 0) rather than aborting the queue render or corrupting the legacy
+    // `closeCandidateIssues` count, which keeps its own cheap search above.
+    //
+    // Upheld is derived, not stored: a REJECTED flag has its label stripped, so it cannot appear in
+    // this search at all — an issue that still carries the label AND is vetted at its current flag
+    // was necessarily upheld.
+    let cc_vet_counts: (usize, usize) = unvetted_close_candidates_fetch(false)
+        .ok()
+        .map(|d| {
+            let c = &d["counts"];
+            (
+                c["vet"].as_u64().unwrap_or(0) as usize,
+                c["skipVettedAtFlag"].as_u64().unwrap_or(0) as usize,
+            )
+        })
+        .unwrap_or((0, 0));
+
     // Producer untouched BACKLOG: open issues with no covering open PR that are not human-gated /
     // close-candidate — the biggest bucket of the producer's inbox (work it hasn't picked up yet),
     // previously invisible on the FSM dashboard. Same coverage computation as `uncovered-issues`
@@ -2147,6 +2287,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
                 "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
                 "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
                 "closeCandidateIssues": close_issues.len(),
+                // Close-candidate VET lifecycle (#72/#73). `closeCandidateIssues` above keeps its
+                // meaning — every issue carrying the label — and these split it by vet state:
+                //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
+                //   upheld   = the vetter judged the evidence sound; genuinely queued for the human
+                // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the issue
+                // leaves this set entirely and reappears under `uncoveredIssues`.
+                "closeCandidateUnvetted": cc_vet_counts.0,
+                "closeCandidateUpheld": cc_vet_counts.1,
                 "leaks": leaks.len(),
                 "totalProducerPrs": prs.len(),
                 // Producer untouched backlog — open issues with no covering open PR, excluding
@@ -3844,6 +3992,299 @@ fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value
     doc
 }
 
+/// PURE: one row of the close-candidate vet queue, plus whether it is to be vetted and why not.
+/// Split out so the skip reasons are unit-testable without the network — the same shape the PR-side
+/// state-load uses.
+fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static str, Value) {
+    let labels = label_names(detail);
+    let human = has_human_ruling(&labels);
+    let flag = last_close_candidate_flag(detail);
+    let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
+    let vetted = cc_vetted_at_flag(detail, &flag_at);
+    // Precedence mirrors the PR side: a human ruling dominates, then "nothing to judge", then a
+    // verdict already recorded against THIS flag.
+    let (vet, action) = if human {
+        (false, "skip-human-decided")
+    } else if flag.is_none() {
+        (false, "skip-no-flag")
+    } else if vetted {
+        (false, "skip-vetted-at-flag")
+    } else {
+        (true, "vet")
+    };
+    (
+        vet,
+        action,
+        serde_json::json!({
+            "issue": format!("{slug}#{num}"),
+            "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+            "title": title,
+            "labels": labels,
+            "humanSacred": human,
+            "flagAt": flag_at,
+            "flagReason": flag.as_ref().map(|(_, b)| flag_reason(b)).unwrap_or_default(),
+            "vettedAtFlag": vetted,
+            "action": action,
+        }),
+    )
+}
+
+/// PURE: the `Close-candidate: <category>: <evidence>` payload of a flag body, without the marker
+/// line — the claim the vetter has to judge.
+fn flag_reason(body: &str) -> String {
+    body.lines()
+        .find_map(|l| l.trim().strip_prefix("Close-candidate:"))
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+/// Live `unvetted-close-candidates` state-load: ONE org-wide search for open `ai:close-candidate`
+/// issues + one `gh issue view` each. Errors rather than returning a falsely-empty set, for the same
+/// reason the PR side does — an empty queue must never be an API failure in disguise.
+fn unvetted_close_candidates_fetch(include_skipped: bool) -> Result<Value, String> {
+    let mut args: Vec<String> = vec!["search".into(), "issues".into()];
+    args.extend(org_owner_args());
+    args.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            "ai:close-candidate",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,title",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let found = gh_json(&argref)
+        .and_then(|v| v.as_array().cloned())
+        .ok_or_else(|| {
+            "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
+             aborting rather than report a falsely-empty close-candidate queue"
+                .to_string()
+        })?;
+
+    let mut rows: Vec<Value> = Vec::new();
+    let mut skipped: Vec<Value> = Vec::new();
+    let (mut n_human, mut n_noflag, mut n_vetted) = (0usize, 0usize, 0usize);
+    for i in &found {
+        let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        let (Some(slug), Some(num)) = (pr_slug(url), i.get("number").and_then(|n| n.as_u64()))
+        else {
+            continue;
+        };
+        let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        let Some(detail) = gh_json(&[
+            "issue",
+            "view",
+            &num.to_string(),
+            "-R",
+            &slug,
+            "--json",
+            "number,title,url,state,labels,comments",
+        ]) else {
+            continue;
+        };
+        let (vet, action, row) = cc_row(&slug, num, title, &detail);
+        if vet {
+            rows.push(row);
+        } else {
+            match action {
+                "skip-human-decided" => n_human += 1,
+                "skip-no-flag" => n_noflag += 1,
+                _ => n_vetted += 1,
+            }
+            skipped.push(row);
+        }
+    }
+
+    let mut doc = serde_json::json!({
+        "counts": {
+            "flagged": found.len(),
+            "vet": rows.len(),
+            "skipHumanDecided": n_human,
+            "skipNoFlag": n_noflag,
+            "skipVettedAtFlag": n_vetted,
+        },
+        "issues": rows,
+    });
+    if include_skipped {
+        doc.as_object_mut()
+            .expect("object")
+            .insert("skipped".into(), Value::Array(skipped));
+    }
+    Ok(doc)
+}
+
+/// PURE: the judging bundle for ONE flagged issue — the claim, and everything needed to test it.
+/// The issue-side twin of [`pr_context_doc`]; comments are the TRUSTED ones only.
+fn close_candidate_context_doc(slug: &str, num: u64, detail: &Value) -> Value {
+    let flag = last_close_candidate_flag(detail);
+    let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
+    serde_json::json!({
+        "issue": format!("{slug}#{num}"),
+        "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+        "title": detail.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        "body": detail.get("body").and_then(|v| v.as_str()).unwrap_or(""),
+        "state": detail.get("state").and_then(|v| v.as_str()).unwrap_or(""),
+        // The issue's OWN creation time is the recency baseline: evidence dated before this cannot
+        // be the fix, which is failure class 1.
+        "createdAt": detail.get("createdAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "labels": label_names(detail),
+        "humanSacred": has_human_ruling(&label_names(detail)),
+        "flagAt": flag_at,
+        "flagReason": flag.as_ref().map(|(_, b)| flag_reason(b)).unwrap_or_default(),
+        "flagBody": flag.as_ref().map(|(_, b)| b.clone()).unwrap_or_default(),
+        "vettedAtFlag": cc_vetted_at_flag(detail, &flag_at),
+        "producerComments": trusted_comments(detail, Some("🤖 ai:producer")),
+        "vetterComments": trusted_comments(detail, Some("🤖 ai:vetter")),
+    })
+}
+
+/// Live `close_candidate_context`.
+fn close_candidate_context_fetch(slug: &str, num: u64) -> Result<Value, String> {
+    let detail = gh_json(&[
+        "issue",
+        "view",
+        &num.to_string(),
+        "-R",
+        slug,
+        "--json",
+        "number,title,body,url,state,createdAt,labels,comments",
+    ])
+    .ok_or_else(|| format!("error: `gh issue view {slug}#{num}` failed"))?;
+    Ok(close_candidate_context_doc(slug, num, &detail))
+}
+
+/// The close-candidate verdict write — the issue-side twin of [`record_verdict_apply`]. `uphold`
+/// leaves the flag queued for the human; `reject` REMOVES `ai:close-candidate`, which returns the
+/// issue to the producer's uncovered-issues queue. Either way a trusted, flag-pinned `🤖 ai:vetter`
+/// comment records the judgement.
+///
+/// The vetter never writes a `human:*` label: those are the human's namespace, and this routine is
+/// AI. Its whole authority is the `ai:*` flag it may drop and the comment it may post.
+fn record_cc_verdict_apply(
+    slug: &str,
+    issue: &str,
+    verdict: &str,
+    note: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    if !CC_VERDICTS.contains(&verdict) {
+        return Err((
+            2,
+            format!(
+                "{verdict:?} is not a close-candidate verdict — use one of: {}",
+                CC_VERDICTS.join(", ")
+            ),
+        ));
+    }
+    if note.trim().is_empty() {
+        return Err((
+            2,
+            "note is required: one line naming what the evidence proves or fails to prove"
+                .to_string(),
+        ));
+    }
+    let Some(j) = gh_json(&[
+        "issue",
+        "view",
+        issue,
+        "-R",
+        slug,
+        "--json",
+        "state,labels,comments",
+    ]) else {
+        return Err((
+            1,
+            format!(
+                "error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data"
+            ),
+        ));
+    };
+    let (flag_at, remove_label, skip) = match cc_verdict_plan(&j, verdict) {
+        CcVerdictPlan::AlreadyClosed => {
+            return Ok(format!("{slug}#{issue} already closed — nothing to vet"));
+        }
+        CcVerdictPlan::RefuseHuman => {
+            return Err((
+                3,
+                format!("human ruling present on {slug}#{issue}; not overriding"),
+            ));
+        }
+        CcVerdictPlan::NoFlag => {
+            return Err((
+                4,
+                format!(
+                    "no trusted producer close-candidate flag on {slug}#{issue} — nothing to judge"
+                ),
+            ));
+        }
+        CcVerdictPlan::Record {
+            flag_at,
+            remove_label,
+            skip_comment,
+        } => (flag_at, remove_label, skip_comment),
+    };
+    let comment = cc_verdict_comment(&flag_at, verdict, note);
+
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {slug}#{issue} flag @ {flag_at}\n  verdict: {verdict}\n  label: {}\n  comment: {}",
+            if remove_label {
+                "remove ai:close-candidate"
+            } else {
+                "unchanged"
+            },
+            if skip {
+                "skip (same verdict at same flag already posted)".to_string()
+            } else {
+                format!("post -> {}", comment.replace('\n', " / "))
+            }
+        ));
+    }
+
+    // Comment BEFORE the label drop: a rejected flag whose label vanished with no recorded reason
+    // is indistinguishable from a human de-flagging it by hand.
+    if !skip && !gh_run(&["issue", "comment", issue, "-R", slug, "--body", &comment]) {
+        return Err((
+            1,
+            format!("error: failed to post the close-candidate verdict comment on {slug}#{issue}"),
+        ));
+    }
+    if remove_label
+        && !gh_run(&[
+            "issue",
+            "edit",
+            issue,
+            "-R",
+            slug,
+            "--remove-label",
+            "ai:close-candidate",
+        ])
+    {
+        return Err((
+            1,
+            format!(
+                "error: posted the verdict on {slug}#{issue} but FAILED to remove ai:close-candidate"
+            ),
+        ));
+    }
+    Ok(format!(
+        "recorded close-candidate {verdict} on {slug}#{issue} @ {flag_at}{}{}",
+        if remove_label {
+            " [ai:close-candidate removed -> back to the producer queue]"
+        } else {
+            " [flag stands -> queued for the human]"
+        },
+        if skip { " [comment deduped]" } else { "" }
+    ))
+}
+
 /// Live `unvetted` state-load: ONE org-wide search + one `gh pr view` per open non-draft PR whose
 /// labels don't already carry a human decision. Errors (rather than returning a falsely-empty set) if
 /// the search fails — an empty vet queue must never be an API failure in disguise.
@@ -4223,6 +4664,12 @@ impl McpProfile {
                 "pr_checkout",
                 "record_verdict",
                 "clone_release",
+                // The vetter's SECOND subject: the producer also emits close-candidate flags on
+                // issues, and a bad one asks a human to destroy work. Same three moves as a PR —
+                // state-load, read one, record one verdict.
+                "unvetted_close_candidates",
+                "close_candidate_context",
+                "record_close_candidate_verdict",
             ],
             McpProfile::Producer => &["clone_create", "clone_release", "clone_list", "clone_gc"],
         }
@@ -4297,6 +4744,40 @@ fn mcp_all_tools() -> Value {
             }
         },
         {
+            "name": "unvetted_close_candidates",
+            "description": "State-load: the producer close-candidate flags on open issues to vet this run. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. Human-ruled and already-vetted-at-flag issues are excluded.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."}
+                }
+            }
+        },
+        {
+            "name": "close_candidate_context",
+            "description": "Everything needed to judge one close-candidate flag: the issue's title, body, labels, createdAt, state, and the trusted ai:producer flag(s) + any prior ai:vetter verdicts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "issue": {"type": "string", "description": "owner/repo#number"}
+                },
+                "required": ["issue"]
+            }
+        },
+        {
+            "name": "record_close_candidate_verdict",
+            "description": "The vetter's write on a flag: uphold (leave it queued for the human) or reject (drop ai:close-candidate, returning the issue to the producer). Posts a flag-pinned ai:vetter comment. Refuses if a human has ruled.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "issue": {"type": "string", "description": "owner/repo#number"},
+                    "verdict": {"type": "string", "enum": ["uphold", "reject"]},
+                    "note": {"type": "string", "description": "One line: what the evidence proves, or which check it fails (recency / reachability / scope)."}
+                },
+                "required": ["issue", "verdict", "note"]
+            }
+        },
+        {
             "name": "clone_create",
             "description": "Make (or re-sync to current base) the per-issue work clone. Returns its dir. Refuses to re-sync over unpushed commits.",
             "inputSchema": {
@@ -4364,6 +4845,19 @@ enum McpCall {
         note: String,
         cost: i64,
         basis: String,
+    },
+    UnvettedCloseCandidates {
+        include_skipped: bool,
+    },
+    CloseCandidateContext {
+        slug: String,
+        num: u64,
+    },
+    RecordCloseCandidateVerdict {
+        slug: String,
+        num: u64,
+        verdict: String,
+        note: String,
     },
     /// `root`/`name` are the OUTPUT of the path guard, not the model's argument: by the time this
     /// value exists, the name is known to be a single non-hidden component under a configured root.
@@ -4487,6 +4981,39 @@ fn validate_call(
                 note,
                 cost,
                 basis,
+            })
+        }
+        "unvetted_close_candidates" => Ok(McpCall::UnvettedCloseCandidates {
+            include_skipped: args
+                .get("include_skipped")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        }),
+        "close_candidate_context" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "issue")?)?;
+            Ok(McpCall::CloseCandidateContext { slug, num })
+        }
+        "record_close_candidate_verdict" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "issue")?)?;
+            let verdict = req_str(args, "verdict")?.trim().to_string();
+            if !CC_VERDICTS.contains(&verdict.as_str()) {
+                return Err(format!(
+                    "{verdict:?} is not a close-candidate verdict — use one of: {}",
+                    CC_VERDICTS.join(", ")
+                ));
+            }
+            let note = req_str(args, "note")?.trim().to_string();
+            if note.is_empty() {
+                return Err(
+                    "note is required: one line naming what the evidence proves or fails to prove"
+                        .to_string(),
+                );
+            }
+            Ok(McpCall::RecordCloseCandidateVerdict {
+                slug,
+                num,
+                verdict,
+                note,
             })
         }
         // --- work-clone lifecycle. The path guard runs HERE, before any effect exists, which is why
@@ -4666,6 +5193,19 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             false,
         )
         .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::UnvettedCloseCandidates { include_skipped } => {
+            unvetted_close_candidates_fetch(include_skipped).map(|d| d.to_string())
+        }
+        McpCall::CloseCandidateContext { slug, num } => {
+            close_candidate_context_fetch(&slug, num).map(|d| d.to_string())
+        }
+        McpCall::RecordCloseCandidateVerdict {
+            slug,
+            num,
+            verdict,
+            note,
+        } => record_cc_verdict_apply(&slug, &num.to_string(), &verdict, &note, false)
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::CloneCreate {
             root,
             name,
@@ -5729,6 +6269,171 @@ fn main() {
 mod queue_tests {
     use super::*;
     use serde_json::json;
+
+    /// An issue as `gh issue view --json` returns it, with one trusted producer flag.
+    fn flagged_issue(labels: &[&str], flag_at: &str, reason: &str, extra: Vec<Value>) -> Value {
+        let mut comments = vec![json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "createdAt": flag_at,
+            "body": format!("🤖 ai:producer\nClose-candidate: {reason}"),
+        })];
+        comments.extend(extra);
+        json!({
+            "state": "OPEN",
+            "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+            "comments": comments,
+        })
+    }
+
+    fn vetter_cc_comment(flag_at: &str, verdict: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "createdAt": "2026-07-26T10:00:00Z",
+            "body": format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict} — note"),
+        })
+    }
+
+    // A human ruling on an ISSUE was invisible to the old check, which looked only for
+    // `human:keep-open` (a label the org does not use) and `human:close-candidate`. So an issue a
+    // human had already parked with `human:reject` / `human:design` could still be flagged.
+    #[test]
+    fn a_human_ruling_on_an_issue_is_sacred_whichever_label_it_wears() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        for l in ["human:reject", "human:design", "human:close-candidate"] {
+            assert_eq!(
+                close_candidate_plan("OPEN", &s(&[l]), false),
+                CloseFlagPlan::RefuseHuman,
+                "{l} must block a producer flag"
+            );
+            assert_eq!(
+                cc_verdict_plan(
+                    &flagged_issue(&[l, "ai:close-candidate"], "T1", "x", vec![]),
+                    "reject"
+                ),
+                CcVerdictPlan::RefuseHuman,
+                "{l} must block a vetter verdict"
+            );
+        }
+    }
+
+    // The flag — not the label — is what gets judged, and a RE-flag re-opens the question. This is
+    // the issue-side `vetted_at_head`: without it the vetter would pass an issue once and never
+    // look at new evidence.
+    #[test]
+    fn a_reflag_un_vets_the_issue() {
+        let first = "2026-07-20T09:00:00Z";
+        let second = "2026-07-25T09:00:00Z";
+        let vetted = flagged_issue(
+            &["ai:close-candidate"],
+            first,
+            "already-fixed-on-main: #10",
+            vec![vetter_cc_comment(first, "uphold")],
+        );
+        assert!(cc_vetted_at_flag(&vetted, first));
+        let (_, action, _) = cc_row("o/r", 1, "t", &vetted);
+        assert_eq!(action, "skip-vetted-at-flag");
+
+        // The producer re-flags with new evidence: the old verdict no longer covers it.
+        let reflagged = flagged_issue(
+            &["ai:close-candidate"],
+            second,
+            "already-fixed-on-main: #11",
+            vec![vetter_cc_comment(first, "uphold")],
+        );
+        assert!(!cc_vetted_at_flag(&reflagged, second));
+        let (vet, action, row) = cc_row("o/r", 1, "t", &reflagged);
+        assert!(vet);
+        assert_eq!(action, "vet");
+        assert_eq!(row["flagAt"], json!(second));
+    }
+
+    // A marker is public body text: a flag from an untrusted author is not a flag.
+    #[test]
+    fn an_untrusted_close_candidate_marker_is_not_a_flag() {
+        let spoofed = json!({
+            "state": "OPEN",
+            "labels": [{"name": "ai:close-candidate"}],
+            "comments": [{
+                "author": {"login": "somebody-else"},
+                "createdAt": "2026-07-20T09:00:00Z",
+                "body": "🤖 ai:producer\nClose-candidate: already-fixed-on-main: #1",
+            }],
+        });
+        assert_eq!(last_close_candidate_flag(&spoofed), None);
+        assert_eq!(cc_verdict_plan(&spoofed, "uphold"), CcVerdictPlan::NoFlag);
+        let (vet, action, _) = cc_row("o/r", 1, "t", &spoofed);
+        assert!(!vet);
+        assert_eq!(action, "skip-no-flag");
+    }
+
+    // The three failure classes from the hand-triage (#72). The vetter's REJECT is what keeps a
+    // wrong flag away from the human; `uphold` must leave the flag exactly as it found it.
+    #[test]
+    fn reject_drops_the_flag_and_uphold_leaves_it_queued() {
+        // raindex#512: evidence predating the issue. raindex#523: unreachable code.
+        // raindex#592: scope drift — one of three todos answered.
+        let at = "2026-07-20T09:00:00Z";
+        let issue = flagged_issue(
+            &["ai:close-candidate", "bug"],
+            at,
+            "already-fixed-on-main: crates/settings/src/raindex.rs:116-133",
+            vec![],
+        );
+        assert_eq!(
+            cc_verdict_plan(&issue, "reject"),
+            CcVerdictPlan::Record {
+                flag_at: at.to_string(),
+                remove_label: true,
+                skip_comment: false,
+            }
+        );
+        // Upholding must not touch the label — the human still needs to see the flag.
+        assert_eq!(
+            cc_verdict_plan(&issue, "uphold"),
+            CcVerdictPlan::Record {
+                flag_at: at.to_string(),
+                remove_label: false,
+                skip_comment: false,
+            }
+        );
+        // Re-recording the SAME verdict at the SAME flag is a no-op comment.
+        let already = flagged_issue(
+            &["ai:close-candidate"],
+            at,
+            "already-fixed-on-main: #10",
+            vec![vetter_cc_comment(at, "reject")],
+        );
+        match cc_verdict_plan(&already, "reject") {
+            CcVerdictPlan::Record { skip_comment, .. } => assert!(skip_comment),
+            other => panic!("expected Record, got {other:?}"),
+        }
+        // ...but a DIFFERENT verdict at the same flag still posts.
+        match cc_verdict_plan(&already, "uphold") {
+            CcVerdictPlan::Record { skip_comment, .. } => assert!(!skip_comment),
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cc_verdict_comment_pins_the_flag_it_judged() {
+        assert_eq!(
+            cc_verdict_comment("2026-07-20T09:00:00Z", "reject", "evidence predates the issue"),
+            "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z: reject — evidence predates the issue"
+        );
+        assert_eq!(
+            cc_verdict_comment("T", "uphold", "   "),
+            "🤖 ai:vetter\nReviewed close-candidate @T: uphold"
+        );
+    }
+
+    #[test]
+    fn flag_reason_is_the_claim_without_the_marker() {
+        assert_eq!(
+            flag_reason("🤖 ai:producer\nClose-candidate: invalid: premise obsolete"),
+            "invalid: premise obsolete"
+        );
+        assert_eq!(flag_reason("🤖 ai:producer\nsomething else"), "");
+    }
 
     #[test]
     fn close_candidate_plan_respects_state_human_and_dedup() {
@@ -8903,7 +9608,11 @@ mod mcp_tests {
                 "pr_checkout",
                 "record_verdict",
                 // `pr_checkout` creates a clone, so the vetter owns the move that disposes of it.
-                "clone_release"
+                "clone_release",
+                // The second subject: producer close-candidate flags on issues (#72).
+                "unvetted_close_candidates",
+                "close_candidate_context",
+                "record_close_candidate_verdict",
             ]
         );
         // Every tool is callable: a name, a one-line description, an object schema.
@@ -8912,7 +9621,22 @@ mod mcp_tests {
             assert_eq!(t["inputSchema"]["type"], json!("object"));
         }
         // The surface stays SMALL on purpose (#52: schemas ride in every request's preamble).
-        assert!(tools.len() <= 6, "keep the tool surface small");
+        // Two subjects × (state-load, read one, record one verdict), plus clone_release.
+        assert!(tools.len() <= 9, "keep the tool surface small");
+
+        // The close-candidate write is constrained by SCHEMA, so the prompt cannot invent a
+        // verdict and the vetter cannot reach for a `human:*` disposition.
+        let cc = tools
+            .iter()
+            .find(|t| t["name"] == json!("record_close_candidate_verdict"))
+            .unwrap();
+        let cc_verdicts: Vec<&str> = cc["inputSchema"]["properties"]["verdict"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(cc_verdicts, vec!["uphold", "reject"]);
 
         let rv = tools
             .iter()

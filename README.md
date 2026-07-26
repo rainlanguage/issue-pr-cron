@@ -15,6 +15,8 @@ is interactive (a human merges on their explicit per-PR word). See
 stateDiagram-v2
     direction LR
     state "open issue" as issue
+    state "ai:close-candidate (issue)" as icand
+    state "close-candidate · upheld" as iupheld
     state "un-vetted PR" as unvetted
     state "awaiting re-vet" as revet
     state "ai:ready" as ready
@@ -34,6 +36,16 @@ stateDiagram-v2
 
     [*] --> issue
     issue --> unvetted : producer opens PR
+
+    %% issue close-candidate lifecycle — the vetter's SECOND subject. A flag is a CLAIM, and it is
+    %% vetted before a human is asked to act on it (a bad flag asks a human to destroy work).
+    issue --> icand : producer flag-close-candidate
+    icand --> iupheld : vetter uphold · evidence holds
+    icand --> issue : vetter reject · strips the flag → back to uncovered
+    icand --> icand : producer re-flags (new evidence) → un-vetted → re-vet
+    iupheld --> [*] : human closes
+    icand --> hclose : human close-candidate (sacred)
+    icand --> hreject : human reject (sacred)
 
     %% vet lifecycle — the vetter is the sole verdict transition fn
     unvetted --> ready : vetter record-verdict
@@ -191,6 +203,21 @@ unchanged; `lanes` and the additive `counts` keys (`reject`, `relink`,
 `closeCandidatePrs`, `humanReject`, `humanDesign`, `humanCloseCandidate`,
 `unvetted`, `awaitingReVet`) are the full-machine view the dashboard renders.
 
+The ISSUE close-candidate lifecycle carries two further additive counts, which
+split the existing `closeCandidateIssues` (unchanged: every issue carrying the
+label) by vet state:
+
+- **`closeCandidateUnvetted`** — flagged, no `human:*` ruling, and no vetter
+  verdict against the CURRENT flag. This is the vetter's inbox, and it is the
+  same set `unvetted-close-candidates` returns, so the dashboard and the vetter
+  cannot disagree about its size.
+- **`closeCandidateUpheld`** — the vetter judged the evidence sound, so the flag
+  genuinely awaits human triage.
+
+A **rejected** flag needs no count: the vetter strips `ai:close-candidate`, so
+the issue leaves this set entirely and reappears under `uncoveredIssues` — the
+producer's queue — which is exactly the behaviour a rejection should have.
+
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
 `blocked-deploy`, `blocked-infra`, or `blocked-on`. Those five plus `ready` (the
@@ -240,9 +267,20 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 its OWN open red PR branches (to drive them green).** It **never** merges,
 deploys, force-pushes, or closes/edits/comments-on issues. If it believes an
 issue should be closed (already fixed, invalid, duplicate) it records a
-_close-candidate_ — it never acts on it. A human reviews and disposes. This is
-enforced two ways: the permission deny-list in `campaign-settings.json` and the
-rules in `campaign-prompt.txt` (step 7 / 7a).
+_close-candidate_ — it never acts on it. This is enforced two ways: the
+permission deny-list in `campaign-settings.json` and the rules in
+`campaign-prompt.txt` (step 7 / 7a).
+
+That flag is then **vetted before a human sees it**. The producer is the party
+with an incentive to believe its own evidence, so the vetter judges the claim
+the same way it judges a PR: `uphold` leaves the flag queued for the human, and
+`reject` strips `ai:close-candidate` and returns the issue to the producer's
+uncovered queue. Only the human ever CLOSES an issue — but the queue they
+triage has had its wrong flags filtered out first. Hand-triage of ~29 flags
+found roughly one in three unsupported (#72), in three classes the vetter now
+checks explicitly: evidence that predates the issue, evidence that is
+unreachable code, and evidence that answers a narrower question than the issue
+asked.
 
 ## Files (tracked here)
 
