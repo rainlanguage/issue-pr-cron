@@ -100,16 +100,16 @@ Bash deny-list is prefix-matched and bypassable. For the vetter that gap is
 closed: `pr-review-report mcp` serves its transitions over MCP (stdio), and that
 server is the vetter's **only** tool surface.
 
-| Tool                             | The move it makes                                                                                            |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `unvetted`                       | state-load: the open PRs to vet this run, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable |
-| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call            |
-| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source                                        |
-| `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                 |
-| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                              |
-| `unvetted_close_candidates`      | state-load: the producer close-candidate flags to judge this run, each with its `flagAt` + stated evidence   |
-| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts      |
-| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)      |
+| Tool                             | The move it makes                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `unvetted`                       | state-load: the open PRs to vet this run, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable/unresolvedThreads |
+| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                              |
+| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source                                                          |
+| `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                                   |
+| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                |
+| `unvetted_close_candidates`      | state-load: the producer close-candidate flags to judge this run, each with its `flagAt` + stated evidence                     |
+| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                        |
+| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                        |
 
 The last three are the vetter's **second subject**. A PR asks a human to merge
 code; a close-candidate flag asks a human to **destroy work**, so the flag is
@@ -348,6 +348,29 @@ changes-requested** · **🗑️ close (dup/superseded)** · **🟦 not yet revi
 **⚠️ conflicting** (needs rebase) · **🟡 pending** · **📝 drafts** · plus the
 issues the cron flagged `ai:close-candidate`. `--ready` prints only the
 approved-by-you set.
+
+### The open-threads gate
+
+A PR does not reach **either** the vetter or the human while it carries
+**unresolved review threads** (CodeRabbit's or a human's). Both gates read the
+same typed GraphQL state — `reviewThreads { isResolved }`, paginated — and never
+the prose of a review body: on 2026-07-27 CodeRabbit reported check `SUCCESS` on
+rain-org-health#128 with four threads open, so neither the status check nor an
+`Actionable comments posted: N` line is evidence of clean.
+
+- `unvetted` (the vetter's state-load) withholds a thread-dirty PR: it is
+  counted as `skipOpenThreads` and never handed over, so no `ai:ready` verdict
+  can be recorded while a thread is open. The vetter itself has no `gh` — the
+  exclusion has to happen in the tool that builds its list.
+- `queue` (the human approval queue) withholds it a second time, counted as
+  `open-threads`, in case a PR was vetted before a thread was opened.
+
+Both fail **closed**: a thread state that cannot be read is not presented. In
+`queue` it is reported as `fetch-error` — a transient API failure is visible
+rather than silently read as clean (which would present a dirty PR) or as dirty
+(which would blank the queue). Resolving the threads is the **producer's**
+step-3e duty, and `worklist` routes the PR there as `nextAction:
+coderabbit-3e`.
 
 **There is no local review ledger.** Verdict state lives on GitHub as `ai:*` /
 `human:*` labels plus sha-bound comments, so it survives a lost box, is visible
