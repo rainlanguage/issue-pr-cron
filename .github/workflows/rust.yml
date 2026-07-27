@@ -103,7 +103,6 @@ jobs:
             exit 1
           }
           echo "rainix-rs-test present"
-
   # Every tool the crons execute must come from the flake (#76). These three ways of
   # acquiring a tool ambiently all LOOK fine while they work and fail as something else:
   # a registry flakeref floats with channels.nixos.org, a literal store path degrades to
@@ -153,7 +152,7 @@ jobs:
           # from "happens to be in the store" — the registry produces store paths too.
           for tool in gh jq; do
             want="$(nix build --no-link --print-out-paths "github:nixos/nixpkgs/$rev#$tool" | head -1)"
-            got="$(nix develop .#cron -c command -v "$tool")"
+            got="$(nix develop .#cron -c sh -c "command -v $tool")"
             echo "  $tool: want ${want}/bin/$tool"
             echo "  $tool: got  $got"
             case "$got" in
