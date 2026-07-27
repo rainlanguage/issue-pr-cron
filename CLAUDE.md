@@ -137,20 +137,20 @@ still holds work):
 One rule the unattended sweep does **not** share with release: an **audit-lens
 checkout** (`vet-<repo>-<n>`, made by `pr_checkout`) is disposable on **age
 alone** — one day, ignoring its PR state. The vetter checks out the PR it is
-JUDGING, so that PR is always OPEN, and "open PR → active work" made every leaked
-checkout immortal: 83 of them, 349 MB, under a sweep that had been running
-nightly the whole time (#81). The dirt/unpushed guards still run first. The
-sweep is also the ONLY thing that reclaims one — a run that dies is exactly the
-run that leaks, so an end-of-run `clone_release` cannot be the mechanism — which
-means the midnight `gc` line must name **every** clone root (`WORK_DIR` *and*
-the install dir), not just the first.
+JUDGING, so that PR is always OPEN, and "open PR → active work" made every
+leaked checkout immortal: 83 of them, 349 MB, under a sweep that had been
+running nightly the whole time (#81). The dirt/unpushed guards still run first.
+The sweep is also the ONLY thing that reclaims one — a run that dies is exactly
+the run that leaks, so an end-of-run `clone_release` cannot be the mechanism —
+which means the midnight `gc` line must name **every** clone root (`WORK_DIR`
+_and_ the install dir), not just the first.
 
 `pr_checkout` itself holds a binary postcondition: **the PR head at `dir`, or no
-`dir`**. It fetches `refs/pull/<n>/head` into `refs/remotes/origin/pr/<n>` (works
-on a shallow clone, works for forks, keeps the head provably pushed), returns the
-`dir` and the `head` sha, and deletes what it made if any step fails. Nothing
-downstream may search the filesystem for a checkout: the leftover it finds is a
-different PR's code.
+`dir`**. It fetches `refs/pull/<n>/head` into `refs/remotes/origin/pr/<n>`
+(works on a shallow clone, works for forks, keeps the head provably pushed),
+returns the `dir` and the `head` sha, and deletes what it made if any step
+fails. Nothing downstream may search the filesystem for a checkout: the leftover
+it finds is a different PR's code.
 
 ## Invariants
 
