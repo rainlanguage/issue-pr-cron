@@ -18,6 +18,12 @@
 //! the manifests plus the crate), so the script is absent and every test here returns early —
 //! the same convention `read_text` uses in `src/main.rs`. The `rainix-rs-test` gate runs `cargo
 //! test` against a full checkout, which is where these actually execute.
+//!
+//! `refresh-human-queue` is a Linux cron runner: it locks with `flock(1)`, which is util-linux and
+//! is why the flake package lists `pkgs.util-linux`. macOS has no such binary, the script's very
+//! first action there is to conclude another tick holds the lock, and there is nothing to drive.
+//! So these return early where flock is absent too — but *only* there: on Linux a missing flock is
+//! a broken environment rather than a reason to skip, so it is asserted instead of tolerated.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -38,6 +44,21 @@ fn script_under_test() -> Option<PathBuf> {
 
 fn read_repo_file(rel: &str) -> Option<String> {
     std::fs::read_to_string(repo_root().join(rel)).ok()
+}
+
+/// Is the script's own runtime present? Only `flock(1)` is in question — everything else the
+/// script reaches for (git, mktemp, date, tr) exists on both CI platforms.
+fn flock_available() -> bool {
+    let have = Command::new("flock")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    assert!(
+        have || !cfg!(target_os = "linux"),
+        "flock(1) is missing on a Linux host: refresh-human-queue.sh locks with it, so this is a \
+         broken environment, not a test that may be skipped"
+    );
+    have
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -109,7 +130,12 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Option<Self> {
+        // Script first: in the nix sandbox there is no checkout AND no flock, and the missing
+        // checkout is the reason to skip — the flock assertion must not fire there.
         let script = script_under_test()?;
+        if !flock_available() {
+            return None;
+        }
         let root = std::env::temp_dir()
             .join("refresh-human-queue-tests")
             .join(format!("{}-{}", std::process::id(), name));
