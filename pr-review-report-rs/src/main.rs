@@ -3534,6 +3534,10 @@ struct CloneState {
     pr: Option<PrState>,
     /// Days since the clone was last modified.
     age_days: u64,
+    /// This is an audit-lens checkout (`vet-<repo>-<n>`), created by `pr_checkout` and holding no
+    /// work by construction — as opposed to a producer work clone, where an open PR means the work
+    /// is live.
+    vet: bool,
 }
 
 /// Map a `gh pr list` state string to a [`PrState`].
@@ -3560,11 +3564,34 @@ fn parse_repo_slug(remote_url: &str) -> Option<String> {
     Some(format!("{owner}/{repo}"))
 }
 
+/// How long an audit-lens checkout may sit idle before the sweep reclaims it, INDEPENDENT of the
+/// caller's `max_age_days` (which is the backstop for ad-hoc clones nobody modeled).
+///
+/// One day is ~12x the vetter's own `REVIEW_MAXTIME` ceiling of 2h, so a clone this idle cannot
+/// belong to a run in flight, while the daily sweep still reclaims every leaked checkout within two
+/// passes.
+const VET_CLONE_MAX_AGE_DAYS: u64 = 1;
+
+/// PURE: is this clone an audit-lens checkout? The name is the signal because it is the ONE thing
+/// `pr_checkout` controls end to end ([`checkout_dir`]) and it survives a run that died before
+/// releasing — which is precisely the clone that leaks.
+fn is_vet_checkout(name: &str) -> bool {
+    name.starts_with(VET_CLONE_PREFIX)
+}
+
 /// Decide whether a clone is safe to garbage-collect, with a reason. Precedence is deliberate:
-/// unpushed/uncommitted work is ALWAYS preserved (never gc'd, whatever the PR state); then a
-/// merged/closed PR means the work has landed or been abandoned upstream, so the clone is disposable;
-/// an open PR is active work (kept); a clone with no resolvable PR is kept until it goes stale (the
-/// age backstop) so ad-hoc clones with no PR don't accumulate forever.
+/// unpushed/uncommitted work is ALWAYS preserved (never gc'd, whatever the PR state); then an
+/// audit-lens checkout is disposable on age alone; then a merged/closed PR means the work has landed
+/// or been abandoned upstream, so the clone is disposable; an open PR is active work (kept); a clone
+/// with no resolvable PR is kept until it goes stale (the age backstop) so ad-hoc clones with no PR
+/// don't accumulate forever.
+///
+/// The `vet` arm is #81. `pr_checkout` clones the PR the vetter is JUDGING, which is by definition an
+/// OPEN PR, so the "open PR → active work" rule made every leaked audit checkout immortal: 83 of
+/// them, 349 MB, none reclaimable by a sweep that was running nightly the whole time. A `vet-*` clone
+/// is not work — it is a read-only copy of a commit that is already on GitHub, reproducible in
+/// seconds, and its lifetime is ONE vetter run. The dirt/unpushed guards above still apply first, so
+/// "never delete something that holds work" survives intact.
 fn gc_decision(s: &CloneState, max_age_days: u64) -> GcAction {
     if !s.clean {
         return GcAction::Keep("uncommitted changes".into());
@@ -3575,6 +3602,16 @@ fn gc_decision(s: &CloneState, max_age_days: u64) -> GcAction {
         None => return GcAction::Keep("unpushed state unknown".into()),
         Some(n) if n > 0 => return GcAction::Keep(format!("{n} unpushed commit(s)")),
         Some(_) => {}
+    }
+    if s.vet {
+        return if s.age_days >= VET_CLONE_MAX_AGE_DAYS {
+            GcAction::Delete(format!("vet checkout, idle {}d", s.age_days))
+        } else {
+            GcAction::Keep(format!(
+                "vet checkout, idle {}d < {VET_CLONE_MAX_AGE_DAYS}d",
+                s.age_days
+            ))
+        };
     }
     match s.pr {
         Some(PrState::Merged) => GcAction::Delete("PR merged".into()),
@@ -3619,12 +3656,23 @@ fn resolve_pr_state(dir: &std::path::Path) -> Option<PrState> {
     parse_pr_state(v.as_array()?.first()?.get("state")?.as_str()?)
 }
 
-/// Days since the clone dir was last modified (0 on any error — errs toward KEEPING, since only the
-/// no-PR age backstop consults it).
+/// Days since anything last happened in this clone — the NEWER of the directory's own mtime and
+/// `.git/HEAD`'s (0 on any error — errs toward KEEPING, since only the age backstops consult it).
+///
+/// The directory's mtime alone answers the wrong question. It changes when a TOP-LEVEL entry is
+/// added or removed, and a checkout usually only rewrites files further down, so a clone that was
+/// checked out ten minutes ago can read as days idle. That is a live hazard with the vet cap: a
+/// vetter run spanning midnight, REUSING yesterday's checkout, would have had its working tree
+/// deleted underneath it by the sweep. `.git/HEAD` is rewritten by every `git checkout` — including
+/// the no-op `checkout -f -B` onto the branch already current — and, unlike `.git/index`, is NOT
+/// touched by the `git status` the sweep itself runs, so it cannot make every clone immortal.
 fn clone_age_days(dir: &std::path::Path) -> u64 {
-    std::fs::metadata(dir)
-        .and_then(|m| m.modified())
-        .ok()
+    let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let newest = [mtime(dir.to_path_buf()), mtime(dir.join(".git/HEAD"))]
+        .into_iter()
+        .flatten()
+        .max();
+    newest
         .and_then(|t| t.elapsed().ok())
         .map(|d| d.as_secs() / 86_400)
         .unwrap_or(0)
@@ -3698,10 +3746,13 @@ fn gc_clones_sweep(
         let local = local_clone_state(dir);
         let clean = local.dirt.as_deref().map(|d| d.is_empty()).unwrap_or(false);
         let unpushed = local.unpushed;
+        let vet = is_vet_checkout(&name);
         // Only pay for the `gh pr list` network round-trip once the clone is otherwise deletable: a
         // dirty or unpushed clone is KEPT regardless of its PR state, so skipping the call for it is
-        // what keeps a full pass over hundreds of clones from dragging past any timeout.
-        let pr = if clean && matches!(unpushed, Some(0)) {
+        // what keeps a full pass over hundreds of clones from dragging past any timeout. A `vet-*`
+        // checkout skips it too — `gc_decision` never consults `pr` for one, so the call would buy
+        // nothing but latency, once per leaked checkout.
+        let pr = if clean && !vet && matches!(unpushed, Some(0)) {
             resolve_pr_state(dir)
         } else {
             None
@@ -3711,6 +3762,7 @@ fn gc_clones_sweep(
             unpushed,
             pr,
             age_days: clone_age_days(dir),
+            vet,
         };
         let rec = match gc_decision(&state, max_age_days) {
             GcAction::Delete(reason) => {
@@ -5701,9 +5753,15 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
 
 /// Default cap on the diff a single `pr_context` returns. A diff is the vetter's biggest single read;
 /// past this the model is reading a generated-artifact dump, not a reviewable change.
-const DEFAULT_MAX_DIFF_BYTES: usize = 300_000;
-/// Hard ceiling a caller may raise `max_diff_bytes` to.
-const MAX_MAX_DIFF_BYTES: u64 = 4_000_000;
+///
+/// It is the whole result budget on purpose: the tool FITS the diff to what is left after the
+/// metadata (see [`pr_context_fetch`]), so the default asks for "as much diff as can be delivered"
+/// rather than for a number that has to be guessed and then refused.
+const DEFAULT_MAX_DIFF_BYTES: usize = MCP_MAX_RESULT_BYTES;
+/// Hard ceiling a caller may raise `max_diff_bytes` to. Asking for more diff than a whole result may
+/// occupy is not expressible — that is what kept `pr_context`'s effective budget above the harness's
+/// ceiling no matter what the guard said (#81).
+const MAX_MAX_DIFF_BYTES: u64 = MCP_MAX_RESULT_BYTES as u64;
 
 /// PURE: truncate to at most `max` BYTES on a char boundary (never panics on multi-byte input);
 /// returns (text, truncated?).
@@ -5782,6 +5840,7 @@ fn pr_context_doc(
         "vetterComments": trusted_comments(detail, Some("🤖 ai:vetter")),
         "producerComments": trusted_comments(detail, Some("🤖 ai:producer")),
         "diffBytes": diff.len(),
+        "diffIncluded": diff_text.len(),
         "diffTruncated": truncated,
         "diff": diff_text,
     })
@@ -5830,14 +5889,54 @@ fn pr_context_fetch(slug: &str, num: u64, max_diff_bytes: usize) -> Result<Value
         }
         issues.push(iss);
     }
-    Ok(pr_context_doc(
-        slug,
-        num,
-        &detail,
-        &diff,
-        &issues,
-        max_diff_bytes,
-    ))
+    fit_pr_context(slug, num, &detail, &diff, &issues, max_diff_bytes)
+}
+
+/// PURE (given its inputs): build the `pr_context` document so that it FITS
+/// [`MCP_MAX_RESULT_BYTES`], shrinking the diff until it does.
+///
+/// This is what makes "no result can exceed the ceiling" a property of the tool rather than a hope
+/// about its arguments (#81). Truncating the diff is not a silent loss: `max_diff_bytes` is a diff
+/// cap by definition, and the document reports `diffBytes` (the whole diff's size), `diffIncluded`
+/// (what actually made it in) and `diffTruncated`, so a caller can always see the difference between
+/// what exists and what it was handed.
+///
+/// TERMINATION. Each round sets `cap -= overflow` where `overflow = len - MCP_MAX_RESULT_BYTES >= 1`,
+/// so `cap` strictly decreases in a well-ordered set and the loop cannot run more than `cap` times.
+/// It converges far faster than that bound: removing one raw byte of diff removes at least one byte
+/// of serialized document (every raw byte contributes >= 1 serialized byte, more when escaped), so
+/// one round overshoots rather than undershoots and two rounds is the practical worst case.
+///
+/// If the diff reaches zero and the document STILL does not fit, the metadata alone — body, file
+/// list, linked issues, trusted comments — is over the ceiling. No argument can shrink that, so it
+/// is an error that says so rather than a smaller diff nobody asked for.
+fn fit_pr_context(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    diff: &str,
+    issues: &[Value],
+    max_diff_bytes: usize,
+) -> Result<Value, String> {
+    let mut cap = max_diff_bytes.min(diff.len());
+    loop {
+        let doc = pr_context_doc(slug, num, detail, diff, issues, cap);
+        let len = doc.to_string().len();
+        if len <= MCP_MAX_RESULT_BYTES {
+            return Ok(doc);
+        }
+        if cap == 0 {
+            return Err(format!(
+                "error: `pr_context` for {slug}#{num} is {len} bytes with NO diff at all, over the \
+                 {MCP_MAX_RESULT_BYTES}-byte budget one tool result must fit in. The overflow is \
+                 metadata — body, file list, linked issues, trusted comments — so `max_diff_bytes` \
+                 cannot shrink it and re-calling narrower will not help. Read this PR from its \
+                 `pr_checkout` source and the issue links directly, or record NO verdict for it and \
+                 name it in your run summary."
+            ));
+        }
+        cap = cap.saturating_sub(len - MCP_MAX_RESULT_BYTES);
+    }
 }
 
 /// The throwaway work-clone root for the vetter's audit lens (`WORK_DIR`, else the system temp dir).
@@ -5850,11 +5949,58 @@ fn vet_work_dir() -> String {
     })
 }
 
+/// The name prefix every audit-lens checkout carries. It is what tells the unattended sweep that a
+/// clone is a THROWAWAY the vetter created, not work someone is doing — see [`gc_decision`].
+const VET_CLONE_PREFIX: &str = "vet-";
+
 /// PURE: the per-PR throwaway clone path — the `vet-<repo>-<n>` convention `gc-clones` already
 /// reclaims, so an MCP-driven checkout is garbage-collected exactly like a hand-rolled one.
 fn checkout_dir(work_dir: &str, slug: &str, num: u64) -> String {
     let repo = slug.rsplit('/').next().unwrap_or(slug);
-    format!("{}/vet-{repo}-{num}", work_dir.trim_end_matches('/'))
+    format!(
+        "{}/{VET_CLONE_PREFIX}{repo}-{num}",
+        work_dir.trim_end_matches('/')
+    )
+}
+
+/// PURE: the local branch an audit-lens checkout lands on. Derived from the PR NUMBER alone, so no
+/// extra API round trip is needed to learn the head ref's name, and one code path serves same-repo
+/// and fork PRs alike.
+fn checkout_branch(num: u64) -> String {
+    format!("pr-{num}")
+}
+
+/// PURE: the refspec that fetches ONE PR's head into a remote-tracking ref.
+///
+/// `refs/pull/<n>/head` is the ref to use, not `refs/heads/<headRefName>`:
+///
+/// - it exists on the BASE repo for every PR, fork or not, so forks need no second remote;
+/// - it needs no `gh pr view` round trip to discover a branch name;
+/// - the destination is under `refs/remotes/`, which is what makes the checked-out commit count as
+///   PUSHED. `gh pr checkout` on a FORK PR lands the head on a plain LOCAL branch, so
+///   `rev-list HEAD --not --remotes` reports the whole branch as unpushed and both `clone_release`
+///   and the sweep then refuse to reclaim the clone — forever (#81).
+fn pr_head_refspec(num: u64) -> String {
+    format!("+refs/pull/{num}/head:refs/remotes/origin/pr/{num}")
+}
+
+/// PURE: the failure a caller of `pr_checkout` must act on. It is an ERROR (`isError: true`), and it
+/// spends its words on the ONE thing the model does next, because the observed failure was not the
+/// checkout — it was what the vetter did after it (#81).
+///
+/// Having no tree, the vetter globbed for one, found a `vet-*` leftover from an unrelated run, and
+/// began enumerating THAT repo's sources as if they were the PR's. So the message states the
+/// postcondition (the dir does not exist), names the specific wrong answer a filesystem search
+/// returns, and gives the only two legal next moves.
+fn checkout_failure_error(pr: &str, dir: &str, why: &str) -> String {
+    format!(
+        "error: `pr_checkout` could not produce a working tree for {pr}: {why}. There is NO \
+         checkout — {dir} does not exist, and nothing was left behind at that path. Do NOT search \
+         the filesystem for a substitute tree: a `{VET_CLONE_PREFIX}*` directory is some OTHER \
+         PR's checkout, and a verdict read off it is a confident verdict about code this PR never \
+         touched. Re-call `pr_checkout` ONCE; if it fails again you have no audit lens for this PR \
+         — record NO verdict for it and name it in your run summary."
+    )
 }
 
 /// Run `gh` for its exit status only, optionally inside `dir`, capturing BOTH streams (nothing leaks
@@ -5880,30 +6026,114 @@ fn gh_quiet(dir: Option<&std::path::Path>, args: &[&str]) -> Result<(), String> 
     ))
 }
 
+/// Land the PR's head commit in an EXISTING clone and return the sha. The half of the checkout that
+/// touches the clone, split out so the shallow-clone behaviour #81 is about is testable against a
+/// local repository instead of GitHub.
+///
+/// Two commands, no `gh`:
+///
+/// - the fetch carries an EXPLICIT destination refspec, which is what the shallow clone's
+///   single-branch `remote.origin.fetch` cannot supply. `gh pr checkout` fetches without one, so the
+///   head lands as a bare ref and `git checkout --track origin/<head>` refuses it — "cannot set up
+///   tracking information", on every same-repo PR;
+/// - `checkout -f -B` states the destination rather than deriving it from tracking configuration, so
+///   there is nothing left to refuse, and a reused clone left half-modified is RESET to the PR head
+///   rather than failing the checkout on a dirty tree.
+///
+/// Plain `git` is enough for auth: `gh repo clone` persists gh's credential helper into the clone's
+/// own config, so the fetch is authenticated exactly as the clone was.
+fn checkout_pr_head(path: &std::path::Path, num: u64) -> Result<String, String> {
+    git_run(
+        path,
+        &["fetch", "--depth", "1", "origin", &pr_head_refspec(num)],
+    )?;
+    git_run(
+        path,
+        &[
+            "checkout",
+            "-f",
+            "-B",
+            &checkout_branch(num),
+            &format!("refs/remotes/origin/pr/{num}"),
+        ],
+    )?;
+    git_out(path, &["rev-parse", "HEAD"])
+        .ok_or_else(|| "the checkout left no resolvable HEAD".to_string())
+}
+
 /// Check a PR out into its throwaway clone so the `audit` skill has SOURCE to read. LOCAL read only:
-/// a shallow clone plus `gh pr checkout` — never a push, a commit, or any GitHub write. Reuses an
-/// existing clone (fetching the PR head into it) rather than re-cloning.
+/// a shallow clone plus a shallow fetch of the PR head — never a push, a commit, or any GitHub
+/// write. Reuses an existing clone (re-fetching the PR head into it) rather than re-cloning.
+///
+/// POSTCONDITION, and the whole point of #81: when this returns `Ok`, `dir` holds the PR's head
+/// commit; when it returns `Err`, `dir` DOES NOT EXIST. There is no third state in which a directory
+/// named after this PR sits on disk holding some other commit — which is exactly what the old code
+/// left behind, because `gh repo clone --depth 1` succeeded (leaving the DEFAULT BRANCH checked out
+/// at the canonical path) and only the subsequent `gh pr checkout` failed.
+///
+/// `gh pr checkout` is gone from this path. In a `--depth 1` clone the fetch refspec is
+/// `+refs/heads/<default>:refs/remotes/origin/<default>`, so a same-repo PR's head arrives as a bare
+/// fetched ref rather than a remote-tracking branch and `git checkout --track` refuses it with
+/// "cannot set up tracking information" — for EVERY same-repo PR. See [`pr_head_refspec`] for why
+/// `refs/pull/<n>/head` replaces it rather than a widened refspec: widening makes the follow-up fetch
+/// deepen the clone to nearly full history (measured on raindex: 156 MiB of pack against 4 MiB),
+/// which trades this bug for the disk-full one that silently killed both crons for ~17h (#56).
 fn pr_checkout_exec(slug: &str, num: u64) -> Result<Value, String> {
-    let dir = checkout_dir(&vet_work_dir(), slug, num);
+    pr_checkout_at(&vet_work_dir(), slug, num)
+}
+
+/// [`pr_checkout_exec`] with the work root passed in rather than read from the environment, so the
+/// postcondition above can be tested against a temp root without a process-global `set_var` racing
+/// every other test in the binary.
+fn pr_checkout_at(work_dir: &str, slug: &str, num: u64) -> Result<Value, String> {
+    let pr = format!("{slug}#{num}");
+    let dir = checkout_dir(work_dir, slug, num);
     let path = std::path::Path::new(&dir);
     let reused = path.join(".git").is_dir();
-    if !reused {
-        if path.exists() {
-            return Err(format!(
-                "{dir} exists but is not a git clone — refusing to touch it"
-            ));
-        }
-        gh_quiet(None, &["repo", "clone", slug, &dir, "--", "--depth", "1"])?;
+    if !reused && path.exists() {
+        // The ONE failure that must not delete: this entry is not ours, so it is refused before
+        // anything is touched — and the refusal says so rather than claiming the path is clear.
+        return Err(format!(
+            "error: `pr_checkout` could not produce a working tree for {pr}: {dir} exists but is \
+             not a git clone — refusing to touch it. Move that path aside; nothing was changed."
+        ));
     }
-    gh_quiet(
-        Some(path),
-        &["pr", "checkout", &num.to_string(), "-R", slug],
-    )?;
+    let branch = checkout_branch(num);
+    let build = || -> Result<String, String> {
+        if !reused {
+            gh_quiet(None, &["repo", "clone", slug, &dir, "--", "--depth", "1"])?;
+        }
+        checkout_pr_head(path, num)
+    };
+    let head = match build() {
+        Ok(h) => h,
+        Err(why) => {
+            // Restore the postcondition. This is the file's only unguarded `remove_dir_all`, so
+            // what makes it safe is stated rather than left to be re-derived: control only reaches
+            // here past the check above, so `path` is either a directory that did NOT exist when
+            // this call started (we made it) or one that holds `.git` (a clone we made on an earlier
+            // call). Anything else was refused without being touched. `remove_dir_all` does not
+            // follow a symlink, so a symlinked path cannot redirect the delete either.
+            //
+            // Best-effort: if it fails the path may still hold a wrong tree, so the message says so
+            // instead of promising it is gone.
+            if std::fs::remove_dir_all(path).is_err() && path.exists() {
+                return Err(format!(
+                    "error: `pr_checkout` could not produce a working tree for {pr}: {why}. \
+                     {dir} could NOT be removed either and may hold a DIFFERENT commit — do not \
+                     read it. Record no verdict for this PR and name it in your run summary."
+                ));
+            }
+            return Err(checkout_failure_error(&pr, &dir, &why));
+        }
+    };
     Ok(serde_json::json!({
-        "pr": format!("{slug}#{num}"),
+        "pr": pr,
         "dir": dir,
+        "head": head,
+        "branch": branch,
         "reused": reused,
-        "note": "local read-only checkout for the audit lens; reclaimed by `pr-review-report gc-clones`",
+        "note": "local read-only checkout for the audit lens. This `dir` is the ONLY tree that is this PR's source — never search for another. Release it with `clone_release` when done.",
     }))
 }
 
@@ -5956,17 +6186,60 @@ const STATE_LOAD_PAGE_DEFAULT: usize = 10;
 const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=25;
 
 /// The byte budget ONE tool result must fit in — the contract this server holds itself to, checked
-/// on every result before it is handed back (#78).
+/// on every result before it is handed back (#78), and sized so that OUR error always arrives before
+/// the harness's (#81).
 ///
-/// Measured, not guessed: on 2026-07-27 12:44Z `unvetted {"include_skipped": true}` returned 63,742
-/// characters and the vetter's harness refused it as over its token cap. This JSON tokenises at
-/// roughly 2.5 chars/token (hex shas, urls, punctuation), which puts that refusal at ~25k tokens.
-/// Half of the refused payload leaves the whole harness framing inside the same cap.
+/// That ordering is the whole mechanism. If the harness is the thing that speaks, the caller gets an
+/// untyped message with `is_error` UNSET, and every rule downstream about "a tool error is an
+/// instruction" stops applying at exactly the moment it is needed. The previous value was set by
+/// halving a payload the harness had refused; that is how `pr_context`'s budget
+/// (`max_diff_bytes + this`, up to 332,000) ended up six times above what the harness accepts, and
+/// how the gap survived #79.
 ///
-/// It is a HARD ERROR, never a truncation: a state-load cut off mid-array is a payload whose own
-/// content cannot say what is missing, and the failure mode being fixed here is precisely a caller
-/// improvising around a state-load it could not see all of.
-const MCP_MAX_RESULT_BYTES: usize = 32_000;
+/// MEASURED against Claude Code 2.1.220, by calling `pr_context` through the real harness at
+/// increasing `max_diff_bytes` and reading the `tool_result` the model actually received. There are
+/// TWO independent gates, and BOTH arrive with `is_error` unset:
+///
+/// - a BYTE gate → `<persisted-output> Output too large (NN KB) … Preview (first 2KB)`. Delivered at
+///   50,011 bytes, replaced at 50,176 — so the ceiling is in that 165-byte bracket. It is NOT
+///   governed by `MAX_MCP_OUTPUT_TOKENS`: forcing that to 200,000 still replaced a 50,486-byte
+///   result. This gate is the more dangerous one, because the 2 KB preview it substitutes LOOKS like
+///   the head of a real answer.
+/// - a TOKEN gate → `Error: result (N characters …) exceeds maximum allowed tokens`, governed by
+///   `MAX_MCP_OUTPUT_TOKENS` (forcing it to 100 replaced a 4.5 KB result). This is the gate the live
+///   traces hit, at 63,742 and 56,789 characters.
+///
+/// Isolating the token gate at `MAX_MCP_OUTPUT_TOKENS=10000` puts its boundary between 27,152 and
+/// 30,163 bytes, so this JSON measures **2.7–3.0 chars/token**. Nothing on the box sets that
+/// variable, and 56,789 characters was enough to trip the gate live, which puts the default cap near
+/// 19–21k tokens — i.e. BOTH gates land around 50 kB for this content, and neither is far from the
+/// other.
+///
+/// The value is set well under both rather than just under the tighter one, because the token gate
+/// scales with the CONTENT: a diff of generated hex — which this org has, in every
+/// `src/generated/*.pointers.sol` — tokenises far worse than prose, and a byte budget safe for one
+/// is not automatically safe for the other. At 36,000 bytes even a payload tokenising at 1.5
+/// chars/token stays inside a 19k-token cap. Re-measure with
+/// `probe.sh <max_diff_bytes> [token-limit]` (see the PR) if the harness version moves.
+const MCP_MAX_RESULT_BYTES: usize = 36_000;
+
+/// The largest `pr_context` result observed DELIVERED through Claude Code 2.1.220. The next probe
+/// up, 50,176 bytes, came back as `<persisted-output>` — so the harness's byte gate lives in that
+/// 165-byte bracket. Recorded next to the budget it constrains, rather than in a comment that can
+/// drift away from the number it is about.
+const MEASURED_HARNESS_GATE_BYTES: usize = 50_011;
+
+// The ordering that IS the mechanism, enforced at COMPILE time: our guard fires before the
+// harness's, or this does not build. A budget raised past the gate silently reinstates #81 — the
+// harness speaks instead, with `is_error` unset, and every downstream rule about tool errors stops
+// applying. The 25% margin is not timidity: the token gate scales with CONTENT, and generated-hex
+// diffs tokenise far worse than the prose-and-code JSON the gate was measured on.
+const _: () = assert!(MCP_MAX_RESULT_BYTES < MEASURED_HARNESS_GATE_BYTES);
+const _: () = assert!(MCP_MAX_RESULT_BYTES * 4 <= MEASURED_HARNESS_GATE_BYTES * 3);
+// …and no argument may reach past the budget, which is what let `pr_context` sit six times above the
+// harness ceiling however the guard was worded.
+const _: () = assert!(MAX_MAX_DIFF_BYTES as usize <= MCP_MAX_RESULT_BYTES);
+const _: () = assert!(DEFAULT_MAX_DIFF_BYTES <= MCP_MAX_RESULT_BYTES);
 
 /// WHICH ROLE this server is serving. The two roles are different state machines that happen to
 /// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
@@ -6255,29 +6528,58 @@ fn state_load_limit(args: &Value) -> Result<usize, String> {
     }
 }
 
-/// PURE: the byte budget THIS call's result must fit in.
+/// PURE: the byte budget THIS call's result must fit in — [`MCP_MAX_RESULT_BYTES`], for EVERY tool.
 ///
-/// [`MCP_MAX_RESULT_BYTES`] for every tool but one. `pr_context` is the exception because its size
-/// is the CALLER's explicit argument: `max_diff_bytes` says how big a diff to hand back, so a big
-/// result there is what was asked for, not a surprise — the budget is that argument plus one result
-/// budget for the metadata wrapped around the diff (body, files, linked issues, comments).
-fn call_result_budget(call: &McpCall) -> usize {
+/// `pr_context` used to be an exception: its budget was `max_diff_bytes + MCP_MAX_RESULT_BYTES`, on
+/// the reasoning that a big result there is what the caller asked for. Two things were wrong with
+/// that (#81). It let the budget reach 332,000 bytes — six times what the harness accepts — so the
+/// guard could not fire and the harness's untyped message arrived instead. And because the diff is
+/// TRUNCATED to `max_diff_bytes`, budget and content moved in lockstep: lowering the argument
+/// lowered the allowance by exactly as much as it lowered the payload, so "re-call NARROWER" was a
+/// loop with no exit.
+///
+/// A budget that does not move with the argument is what makes narrowing converge, and it is why
+/// this function no longer looks at the call at all. It takes one anyway, so the ONE budget stays a
+/// property of the request rather than a constant callers reach past.
+fn call_result_budget(_call: &McpCall) -> usize {
+    MCP_MAX_RESULT_BYTES
+}
+
+/// PURE: which argument actually makes THIS call's result fit.
+///
+/// Every answer here is now truthful because [`call_result_budget`] does not move with the argument:
+/// lowering the named argument lowers the payload against a FIXED allowance, so narrowing strictly
+/// converges. While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument
+/// was advice that could not work — budget and content fell together and the caller could loop for
+/// ever — which is why the fix is the budget, not the wording.
+fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
     match call {
-        McpCall::PrContext { max_diff_bytes, .. } => max_diff_bytes + MCP_MAX_RESULT_BYTES,
-        _ => MCP_MAX_RESULT_BYTES,
+        McpCall::PrContext { .. } => Some("max_diff_bytes"),
+        _ => Some("limit"),
     }
 }
 
 /// PURE: the over-budget refusal. It is an ERROR, not a truncation and not a spill, and it names the
 /// argument that makes the call smaller — the caller's next move must be a narrower call, not an
 /// improvised one. (#78: the vetter met an over-budget state-load, invented a fallback that dropped
-/// the open-threads accounting, and nothing in the run said so.)
-fn oversize_result_error(name: &str, len: usize, budget: usize) -> String {
-    format!(
+/// the open-threads accounting, and nothing in the run said so.) When NO argument makes it smaller
+/// it says that instead, and names the only honest move left.
+fn oversize_result_error(name: &str, len: usize, budget: usize, narrow: Option<&str>) -> String {
+    let head = format!(
         "error: tool `{name}` produced {len} bytes, over the {budget}-byte budget one tool result \
          must fit in. Nothing was truncated or spilled — a partial state-load cannot say what it is \
-         missing. Re-call NARROWER: lower `limit` on a state-load, `max_diff_bytes` on `pr_context`."
-    )
+         missing. "
+    );
+    match narrow {
+        Some(arg) => format!("{head}Re-call NARROWER: lower `{arg}`."),
+        None => format!(
+            "{head}NO argument makes this call smaller — `max_diff_bytes` caps the diff and raises \
+             this budget by the same amount, so this result is over budget on its METADATA alone. \
+             Do not retry it with a different `max_diff_bytes` expecting a different answer, and do \
+             not improvise a substitute read: record NO verdict for this PR and name it in your run \
+             summary."
+        ),
+    }
 }
 
 fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -6532,15 +6834,18 @@ fn mcp_handle(
             let out = match validate_call(profile, roots, name, &args) {
                 Err(e) => tool_result(e, true),
                 Ok(call) => {
-                    // The budget is read off the VALIDATED call, before the effect runs, because
-                    // `exec` consumes it — and because it is a property of what was asked for.
+                    // The budget AND the narrowing advice are read off the VALIDATED call, before the
+                    // effect runs, because `exec` consumes it — and because both are properties of
+                    // what was asked for.
                     let budget = call_result_budget(&call);
+                    let narrow = narrowing_argument(&call);
                     match exec(call) {
                         // A result over budget is THIS server's error to raise. Handing it back and
                         // letting the harness reject it is what left the vetter improvising (#78).
-                        Ok(text) if text.len() > budget => {
-                            tool_result(oversize_result_error(name, text.len(), budget), true)
-                        }
+                        Ok(text) if text.len() > budget => tool_result(
+                            oversize_result_error(name, text.len(), budget, narrow),
+                            true,
+                        ),
                         Ok(text) => tool_result(text, false),
                         Err(e) => tool_result(e, true),
                     }
@@ -9693,8 +9998,8 @@ mod record_verdict_tests {
 #[cfg(test)]
 mod gc_tests {
     use super::{
-        gc_decision, nix_gc_args, parse_pr_state, parse_repo_slug, should_nix_gc, CloneState,
-        GcAction, PrState,
+        checkout_dir, gc_decision, is_vet_checkout, nix_gc_args, parse_pr_state, parse_repo_slug,
+        should_nix_gc, CloneState, GcAction, PrState, VET_CLONE_MAX_AGE_DAYS,
     };
 
     fn st(clean: bool, unpushed: Option<u32>, pr: Option<PrState>, age_days: u64) -> CloneState {
@@ -9703,6 +10008,15 @@ mod gc_tests {
             unpushed,
             pr,
             age_days,
+            vet: false,
+        }
+    }
+
+    /// The same clone, but an audit-lens checkout (`vet-<repo>-<n>`).
+    fn vst(clean: bool, unpushed: Option<u32>, pr: Option<PrState>, age_days: u64) -> CloneState {
+        CloneState {
+            vet: true,
+            ..st(clean, unpushed, pr, age_days)
         }
     }
 
@@ -9814,6 +10128,86 @@ mod gc_tests {
             gc_decision(&st(true, Some(0), None, 14), 14),
             GcAction::Delete("no PR, idle 14d".into())
         );
+    }
+
+    // #81: the leak. A `vet-*` checkout is a copy of the PR the vetter is JUDGING, so its PR is
+    // always OPEN — and `gc_keeps_open_pr` therefore made every leaked audit checkout immortal. 83
+    // of them, 349 MB, under a sweep that had been running nightly the whole time. The vet arm must
+    // ignore PR state entirely.
+    #[test]
+    fn gc_reclaims_a_stale_vet_checkout_whose_pr_is_still_open() {
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), Some(PrState::Open), 17), 30),
+            GcAction::Delete("vet checkout, idle 17d".into()),
+            "an open PR must not keep an audit-lens checkout alive"
+        );
+        // Its OWN cap, not the caller's: at `--max-age-days 365` a leaked checkout is still reaped.
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), Some(PrState::Open), 2), 365),
+            GcAction::Delete("vet checkout, idle 2d".into())
+        );
+        // A merged/closed PR reads the same way — one rule, not two.
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), Some(PrState::Merged), 5), 30),
+            GcAction::Delete("vet checkout, idle 5d".into())
+        );
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), None, 5), 30),
+            GcAction::Delete("vet checkout, idle 5d".into())
+        );
+    }
+
+    // The other side of the cap: a checkout the RUNNING vetter is reading is not residue. The
+    // vetter's own `REVIEW_MAXTIME` ceiling is 2h, so a same-day checkout can still be in use.
+    #[test]
+    fn gc_keeps_a_vet_checkout_younger_than_its_cap() {
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), Some(PrState::Open), 0), 30),
+            GcAction::Keep("vet checkout, idle 0d < 1d".into())
+        );
+        // Boundary is inclusive, exactly as the no-PR backstop's is.
+        assert!(matches!(
+            gc_decision(
+                &vst(true, Some(0), Some(PrState::Open), VET_CLONE_MAX_AGE_DAYS),
+                30
+            ),
+            GcAction::Delete(_)
+        ));
+    }
+
+    // The safety guards still win. "Reclaim leaked checkouts" must never become "delete work that
+    // happens to sit under a vet-* name" — the vet arm is placed AFTER the dirt/unpushed ladder.
+    #[test]
+    fn gc_never_deletes_a_dirty_or_unpushed_vet_checkout() {
+        assert_eq!(
+            gc_decision(&vst(false, Some(0), Some(PrState::Open), 99), 30),
+            GcAction::Keep("uncommitted changes".into())
+        );
+        assert_eq!(
+            gc_decision(&vst(true, Some(2), Some(PrState::Open), 99), 30),
+            GcAction::Keep("2 unpushed commit(s)".into())
+        );
+        assert_eq!(
+            gc_decision(&vst(true, None, Some(PrState::Open), 99), 30),
+            GcAction::Keep("unpushed state unknown".into())
+        );
+    }
+
+    // The classifier and the path builder must agree, or the sweep applies the producer rule to a
+    // checkout (the leak) or the vet rule to real work (data loss).
+    #[test]
+    fn vet_classifier_matches_what_pr_checkout_actually_creates() {
+        let dir = checkout_dir("/work", "rainlanguage/rain.factory", 47);
+        let name = dir.rsplit('/').next().unwrap();
+        assert_eq!(name, "vet-rain.factory-47");
+        assert!(is_vet_checkout(name));
+        // Producer work clones are named after the ISSUE, never `vet-`.
+        assert!(!is_vet_checkout("raindex-2444"));
+        assert!(!is_vet_checkout("cyclo.site"));
+        // The improvised names the vetter left behind before `pr_checkout` returned its dir are
+        // still checkouts, and still reclaimable.
+        assert!(is_vet_checkout("vet-st0x.deploy-243-h2"));
+        assert!(is_vet_checkout("vet-rain.factory-dep"));
     }
 }
 
@@ -12564,7 +12958,8 @@ mod mcp_tests {
         let t = text(&resp);
         assert!(t.contains("unvetted"), "the error names the tool: {t}");
         assert!(
-            t.contains(&format!("{}", MCP_MAX_RESULT_BYTES + 1)) && t.contains("32000"),
+            t.contains(&format!("{}", MCP_MAX_RESULT_BYTES + 1))
+                && t.contains(&format!("{MCP_MAX_RESULT_BYTES}")),
             "the error states the actual size and the budget: {t}"
         );
         assert!(
@@ -12584,28 +12979,222 @@ mod mcp_tests {
             &exact.handle(&call("unvetted", json!({}))).unwrap()
         ));
 
-        // `pr_context` is budgeted by the argument the CALLER set: the same payload that is
-        // over-budget for a state-load is within budget for a diff that size, and over it for a
-        // diff cap that small.
-        let ok = f
+        // `pr_context` gets the SAME budget, and that is the fix (#81). It used to be budgeted at
+        // `max_diff_bytes + MCP_MAX_RESULT_BYTES`, so this very payload was "within budget" for a
+        // large enough argument — up to 332,000 bytes, six times what the harness accepts.
+        let resp = f
             .handle(&call(
                 "pr_context",
-                json!({"pr": "o/r#1", "max_diff_bytes": 100_000}),
+                json!({"pr": "o/r#1", "max_diff_bytes": MAX_MAX_DIFF_BYTES}),
             ))
             .unwrap();
-        assert!(!is_error(&ok), "the caller asked for 100k of diff");
+        assert!(
+            is_error(&resp),
+            "no argument may buy a pr_context more room than any other tool gets"
+        );
+        assert!(text(&resp).contains("max_diff_bytes"));
+    }
+
+    // The ordering that is the whole mechanism: OUR guard must fire before the harness's. The
+    // relationship between the budget and the MEASURED gate is a compile-time assertion beside the
+    // constants (raise the budget past the gate and this crate does not build); this is the runtime
+    // half, which also covers what a REAL document does — a constant can be right while the thing
+    // built from it is not. `black_box` keeps the comparison out of const-folding so the assertion
+    // is genuinely evaluated here.
+    #[test]
+    fn the_result_budget_stays_under_the_measured_harness_gate() {
+        use std::hint::black_box;
+        let (budget, gate) = (
+            black_box(MCP_MAX_RESULT_BYTES),
+            black_box(MEASURED_HARNESS_GATE_BYTES),
+        );
+        assert!(
+            budget < gate,
+            "budget {budget} is not below the gate {gate}"
+        );
+        assert!(
+            budget * 4 <= gate * 3,
+            "keep 25% margin: {budget} vs {gate}"
+        );
+        // The largest document this tool can be asked for still lands under the gate, not merely
+        // under the budget — which is the property the live harness actually checks.
+        let (detail, diff) = ctx_fixture(200, 4_000_000);
+        let len = fit_pr_context("o/r", 1, &detail, &diff, &[], MAX_MAX_DIFF_BYTES as usize)
+            .unwrap()
+            .to_string()
+            .len();
+        assert!(
+            len < gate,
+            "worst-case document is {len} bytes, gate is {gate}"
+        );
+    }
+
+    // The property that makes "re-call NARROWER" terminate: the allowance does not move with the
+    // request. While `pr_context`'s budget scaled with `max_diff_bytes` and its diff was truncated
+    // to `max_diff_bytes`, lowering the argument lowered both sides equally and the caller could
+    // loop for ever — so this is pinned as an invariant, not left as a property of one match arm.
+    #[test]
+    fn the_result_budget_does_not_move_with_any_argument() {
+        let calls = [
+            McpCall::PrContext {
+                slug: "o/r".into(),
+                num: 1,
+                max_diff_bytes: 1,
+            },
+            McpCall::PrContext {
+                slug: "o/r".into(),
+                num: 1,
+                max_diff_bytes: MAX_MAX_DIFF_BYTES as usize,
+            },
+            McpCall::Unvetted {
+                include_skipped: true,
+                limit: 25,
+            },
+            McpCall::CloneList,
+        ];
+        for c in &calls {
+            assert_eq!(
+                call_result_budget(c),
+                MCP_MAX_RESULT_BYTES,
+                "every call gets the one budget: {c:?}"
+            );
+        }
+        // And the argument cannot be raised past it, so "ask for more diff than a whole result may
+        // occupy" is not expressible.
+        assert_eq!(MAX_MAX_DIFF_BYTES as usize, MCP_MAX_RESULT_BYTES);
+        let e = validate_call(
+            McpProfile::Vetter,
+            &[],
+            "pr_context",
+            &json!({"pr": "o/r#1", "max_diff_bytes": MCP_MAX_RESULT_BYTES + 1}),
+        )
+        .unwrap_err();
+        assert!(e.contains("max_diff_bytes must be an integer in"), "{e}");
+    }
+
+    // The advice each refusal gives must be advice that can work. With one fixed budget it is:
+    // lowering the named argument lowers the payload against an allowance that does not move.
+    #[test]
+    fn each_refusal_names_an_argument_that_actually_narrows_it() {
         let too_big = FakeExec {
             reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
             ..FakeExec::ok()
         };
-        let resp = too_big
+        let load = text(&too_big.handle(&call("unvetted", json!({}))).unwrap());
+        assert!(load.contains("Re-call NARROWER: lower `limit`."), "{load}");
+        let ctx = text(
+            &too_big
+                .handle(&call(
+                    "pr_context",
+                    json!({"pr": "o/r#1", "max_diff_bytes": 1_000}),
+                ))
+                .unwrap(),
+        );
+        assert!(
+            ctx.contains("Re-call NARROWER: lower `max_diff_bytes`."),
+            "{ctx}"
+        );
+    }
+
+    /// A `pr_context` input whose metadata is `meta_bytes`-ish and whose diff is `diff` bytes long.
+    fn ctx_fixture(meta_bytes: usize, diff_bytes: usize) -> (Value, String) {
+        let detail = json!({
+            "url": "https://github.com/o/r/pull/1",
+            "title": "t",
+            "body": "b".repeat(meta_bytes),
+            "headRefOid": "a".repeat(40),
+            "additions": 1, "deletions": 1,
+            "files": [{"path": "src/lib.rs", "additions": 1, "deletions": 1}],
+        });
+        (detail, "d".repeat(diff_bytes))
+    }
+
+    // THE requirement of #81: no `pr_context` result can exceed the ceiling, whatever
+    // `max_diff_bytes` says. Before this, a 300 KB default against a ~50 KB harness ceiling meant the
+    // guard never spoke and the harness's untyped replacement arrived instead — `is_error` unset, so
+    // every downstream rule about "a tool error is an instruction" stopped applying.
+    #[test]
+    fn a_pr_context_result_can_never_exceed_the_ceiling() {
+        for diff_bytes in [0, 1_000, MCP_MAX_RESULT_BYTES, 4_000_000] {
+            for asked in [1, 1_000, MCP_MAX_RESULT_BYTES] {
+                let (detail, diff) = ctx_fixture(200, diff_bytes);
+                let doc = fit_pr_context("o/r", 1, &detail, &diff, &[], asked).unwrap();
+                let len = doc.to_string().len();
+                assert!(
+                    len <= MCP_MAX_RESULT_BYTES,
+                    "diff={diff_bytes} asked={asked} produced {len} bytes, over {MCP_MAX_RESULT_BYTES}"
+                );
+                // …and it says how much of the diff it actually carried, so "I asked for more than
+                // this" is visible rather than inferred.
+                assert_eq!(doc["diffBytes"], json!(diff_bytes));
+                let included = doc["diffIncluded"].as_u64().unwrap() as usize;
+                assert!(included <= asked.min(diff_bytes));
+                assert_eq!(doc["diffTruncated"], json!(included < diff_bytes));
+            }
+        }
+    }
+
+    // Convergence, which is what "re-call NARROWER" depends on: a smaller argument is a strictly
+    // smaller result, monotonically, because the allowance no longer moves with it.
+    #[test]
+    fn narrowing_max_diff_bytes_strictly_shrinks_the_result() {
+        let (detail, diff) = ctx_fixture(100, 30_000);
+        let mut last = usize::MAX;
+        for asked in [20_000, 10_000, 5_000, 1_000, 100, 1] {
+            let len = fit_pr_context("o/r", 1, &detail, &diff, &[], asked)
+                .unwrap()
+                .to_string()
+                .len();
+            assert!(len < last, "asked={asked} gave {len}, not below {last}");
+            last = len;
+        }
+    }
+
+    // The one case no argument fixes, and it must say so rather than hand back a smaller diff nobody
+    // asked for: the metadata alone is over the ceiling.
+    #[test]
+    fn pr_context_metadata_alone_over_the_ceiling_is_a_typed_error() {
+        let (detail, diff) = ctx_fixture(MCP_MAX_RESULT_BYTES + 5_000, 10_000);
+        let e = fit_pr_context("o/r", 1, &detail, &diff, &[], MCP_MAX_RESULT_BYTES).unwrap_err();
+        assert!(e.starts_with("error:"), "{e}");
+        assert!(e.contains("with NO diff at all"), "{e}");
+        assert!(
+            e.contains("cannot shrink it"),
+            "it says the argument cannot help: {e}"
+        );
+        assert!(e.contains("record NO verdict"), "{e}");
+    }
+
+    // #81, link 2 of the wrong-tree chain. `pr_checkout`'s contract is "a working tree at path P";
+    // when it cannot, the caller must meet a typed refusal, not a sentence it can reason around. The
+    // transport half was already right (an `Err` from exec becomes `isError: true` — the live trace
+    // of 2026-07-27 shows `is_error: True` on both failed calls), and what was NOT right is that the
+    // text was a bare `gh … failed: fatal: cannot set up tracking information`: a git message with no
+    // statement of what the caller now has, and no instruction. This pins BOTH halves together,
+    // because either alone is what the vetter improvised past.
+    #[test]
+    fn a_failed_checkout_is_an_error_carrying_the_do_not_substitute_instruction() {
+        let f = FakeExec::failing(&checkout_failure_error(
+            "rainlanguage/rain.factory#47",
+            "/home/gildlab/code/vet-rain.factory-47",
+            "git fetch failed: could not read refs/pull/47/head",
+        ));
+        let resp = f
             .handle(&call(
-                "pr_context",
-                json!({"pr": "o/r#1", "max_diff_bytes": 1_000}),
+                "pr_checkout",
+                json!({"pr": "rainlanguage/rain.factory#47"}),
             ))
             .unwrap();
-        assert!(is_error(&resp));
-        assert!(text(&resp).contains("max_diff_bytes"));
+        assert!(
+            is_error(&resp),
+            "a checkout that produced no tree is not a successful call"
+        );
+        let t = text(&resp);
+        assert!(t.contains("There is NO checkout"), "{t}");
+        assert!(t.contains("Do NOT search the filesystem"), "{t}");
+        assert!(t.contains("record NO verdict"), "{t}");
+        // No path is offered, so nothing in the result can be read as "the tree is over there".
+        assert!(!t.contains("vet-rain.factory-dep"), "{t}");
     }
 
     #[test]
@@ -13190,5 +13779,477 @@ mod mcp_tests {
         assert_eq!(human_bytes(1536), "1.5 KB");
         assert_eq!(human_bytes(1024 * 1024), "1.0 MB");
         assert_eq!(human_bytes(195 * 1024 * 1024 * 1024), "195.0 GB");
+    }
+
+    // #81: a `vet-*` checkout is reclaimed by the sweep even though its PR is open, end to end
+    // through the real filesystem — `gc_reclaims_a_stale_vet_checkout_whose_pr_is_still_open` pins
+    // the decision, this pins that the sweep applies it to a directory `pr_checkout` would create.
+    // The clone here has NO remote, so `resolve_pr_state` cannot answer and the OLD code fell to the
+    // 30-day no-PR backstop; against real GitHub it answered "open PR" and kept it forever. Either
+    // way the directory survived, and either way it must not now.
+    #[test]
+    fn the_sweep_reclaims_a_leaked_vet_checkout_but_not_a_producer_clone() {
+        let outer = tmp_root("sweep-vet");
+        // The upstream lives OUTSIDE the swept root, so the sweep sees only the two clones.
+        let up = outer.join("upstream");
+        let root = outer.join("root");
+        std::fs::create_dir_all(&up).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let rs = root.to_string_lossy().to_string();
+        if git_run(&up, &["init", "-q", "-b", "main"]).is_err() {
+            let _ = std::fs::remove_dir_all(&outer);
+            panic!("git is required to run this test");
+        }
+        let id = ["-c", "user.email=t@t", "-c", "user.name=t"];
+        std::fs::write(up.join("src.sol"), "contract C {}").unwrap();
+        git_run(&up, &["add", "-A"]).unwrap();
+        let mut c = id.to_vec();
+        c.extend_from_slice(&["-c", "commit.gpgsign=false", "commit", "-qm", "the PR head"]);
+        git_run(&up, &c).unwrap();
+
+        // A leaked audit checkout: a clean clone whose commit is on origin — exactly what
+        // `pr_checkout` leaves behind when the run dies before `clone_release`.
+        let leaked = root.join("vet-rain.factory-47");
+        git_run(
+            std::path::Path::new("."),
+            &[
+                "clone",
+                "-q",
+                &format!("file://{}", up.display()),
+                &leaked.to_string_lossy(),
+            ],
+        )
+        .unwrap();
+        // Age it past the vet cap. `clone_age_days` reads the NEWER of the directory and
+        // `.git/HEAD`, so a leaked clone is only idle when nothing has checked out in it either.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 86_400);
+        let age = |d: &std::path::Path| {
+            filetime_set(d, old);
+            filetime_set(&d.join(".git/HEAD"), old);
+        };
+        age(&leaked);
+
+        // A producer work clone of the same age, holding one commit that exists only here.
+        let work = root.join("rain.factory-46");
+        git_run(
+            std::path::Path::new("."),
+            &[
+                "clone",
+                "-q",
+                &format!("file://{}", up.display()),
+                &work.to_string_lossy(),
+            ],
+        )
+        .unwrap();
+        std::fs::write(work.join("fix.sol"), "contract Fix {}").unwrap();
+        git_run(&work, &["add", "-A"]).unwrap();
+        let mut c = id.to_vec();
+        c.extend_from_slice(&["-c", "commit.gpgsign=false", "commit", "-qm", "wip"]);
+        git_run(&work, &c).unwrap();
+        age(&work);
+
+        let recs = gc_clones_sweep(&rs, 30, false, &mut |_| {}).unwrap();
+        let outcome = |n: &str| {
+            recs.iter()
+                .find(|r| r.name == n)
+                .map(|r| (r.outcome, r.reason.clone()))
+                .unwrap_or(("missing", String::new()))
+        };
+        assert_eq!(
+            outcome("vet-rain.factory-47"),
+            ("deleted", "vet checkout, idle 3d".to_string())
+        );
+        assert!(!leaked.exists(), "the leaked audit checkout is gone");
+        // The producer clone holds a commit on no remote — unpushed work, kept whatever its age.
+        assert_eq!(
+            outcome("rain.factory-46"),
+            ("kept", "1 unpushed commit(s)".to_string())
+        );
+        assert!(work.exists(), "a clone holding work is never touched");
+        let _ = std::fs::remove_dir_all(&outer);
+    }
+
+    // The race the vet cap opens if "idle" is read off the directory's mtime alone. A checkout
+    // rewrites files BELOW the top level, so it does not touch the directory's own mtime — a clone
+    // the vetter checked out minutes ago can read as days idle, and the midnight sweep would delete
+    // the working tree of a run still using it (a 23:00 run reusing yesterday's checkout is exactly
+    // the case). `.git/HEAD` is rewritten by every checkout, including the no-op `-f -B` onto the
+    // current branch, and is not touched by the `git status` this sweep itself runs.
+    #[test]
+    fn a_clone_checked_out_recently_is_not_idle_however_old_its_directory_looks() {
+        let root = tmp_root("age");
+        let d = root.join("clone");
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        let ancient = std::time::SystemTime::now() - std::time::Duration::from_secs(9 * 86_400);
+        std::fs::write(d.join(".git/HEAD"), "ref: refs/heads/pr-47\n").unwrap();
+        filetime_set(&d, ancient);
+        filetime_set(&d.join(".git/HEAD"), ancient);
+        assert_eq!(
+            clone_age_days(&d),
+            9,
+            "nothing has happened here for 9 days"
+        );
+
+        // …now check it out again: only `.git/HEAD` moves, and the clone is live.
+        filetime_set(&d.join(".git/HEAD"), std::time::SystemTime::now());
+        assert_eq!(
+            clone_age_days(&d),
+            0,
+            "a clone checked out just now is not idle, whatever its directory mtime says"
+        );
+        // A clone with no `.git/HEAD` at all still ages off its directory.
+        std::fs::remove_file(d.join(".git/HEAD")).unwrap();
+        assert_eq!(clone_age_days(&d), 9);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Backdate a file's or directory's mtime, via `std::fs::File::set_times` rather than a `touch`
+    /// subprocess. The subprocess form needs GNU `touch` for `-d @<epoch>`; BSD `touch` rejects it,
+    /// so on macOS it works only because `rainix-rs-test` runs inside a nix shell that puts nixpkgs
+    /// coreutils on PATH. A test whose result depends on which `touch` is ahead on PATH is a test
+    /// with a hidden precondition; this has none.
+    fn filetime_set(p: &std::path::Path, t: std::time::SystemTime) {
+        let f = std::fs::File::options()
+            .read(true)
+            .open(p)
+            .unwrap_or_else(|e| panic!("open {}: {e}", p.display()));
+        f.set_times(std::fs::FileTimes::new().set_accessed(t).set_modified(t))
+            .unwrap_or_else(|e| panic!("set_times {}: {e}", p.display()));
+    }
+}
+
+// ─── pr_checkout: the audit lens's working tree ──────────────────────────────
+//
+// These drive REAL `git` against a REAL local repository over `file://`, because the bug in #81 is a
+// property of git's refspec handling in a shallow clone — a stub would have asserted our belief
+// about git rather than what git does. Nothing here touches the network: the "upstream" is a
+// directory, and `refs/pull/<n>/head` is written into it with `update-ref` exactly as GitHub
+// publishes it.
+#[cfg(test)]
+mod pr_checkout_tests {
+    use super::{
+        checkout_branch, checkout_dir, checkout_failure_error, checkout_pr_head, git_out, git_run,
+        local_clone_state, pr_checkout_at, pr_head_refspec,
+    };
+
+    fn tmp_root(tag: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("prr-checkout-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn commit(dir: &std::path::Path, msg: &str) -> String {
+        git_run(dir, &["add", "-A"]).unwrap();
+        git_run(
+            dir,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                msg,
+            ],
+        )
+        .unwrap();
+        git_out(dir, &["rev-parse", "HEAD"]).unwrap()
+    }
+
+    /// An "upstream" whose PR head is published ONLY at `refs/pull/<n>/head` — the shape a FORK PR
+    /// has, and the shape a same-repo PR has as far as a single-branch shallow clone can see.
+    /// Returns (upstream path, PR head sha).
+    fn upstream(root: &std::path::Path, num: u64) -> (std::path::PathBuf, String) {
+        let up = root.join("upstream");
+        std::fs::create_dir_all(&up).unwrap();
+        git_run(&up, &["init", "-q", "-b", "main"]).expect("git is required to run this test");
+        std::fs::write(up.join("base.txt"), "base").unwrap();
+        let base = commit(&up, "base");
+        git_run(&up, &["checkout", "-q", "-b", "pr-head"]).unwrap();
+        std::fs::write(up.join("only-in-the-pr.sol"), "contract Reviewed {}").unwrap();
+        let head = commit(&up, "the PR commit");
+        git_run(&up, &["checkout", "-q", "main"]).unwrap();
+        git_run(
+            &up,
+            &["update-ref", &format!("refs/pull/{num}/head"), &head],
+        )
+        .unwrap();
+        assert_ne!(base, head);
+        (up, head)
+    }
+
+    /// The clone `pr_checkout` makes: `--depth 1`, which is what leaves
+    /// `remote.origin.fetch = +refs/heads/main:refs/remotes/origin/main`.
+    fn shallow_clone(up: &std::path::Path, dest: &std::path::Path) {
+        git_run(
+            std::path::Path::new("."),
+            &[
+                "clone",
+                "-q",
+                "--depth",
+                "1",
+                &format!("file://{}", up.display()),
+                &dest.to_string_lossy(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            git_out(dest, &["config", "--get", "remote.origin.fetch"]).unwrap(),
+            "+refs/heads/main:refs/remotes/origin/main",
+            "the fixture must reproduce the SINGLE-BRANCH refspec a shallow clone gets — that is the \
+             whole precondition of #81"
+        );
+    }
+
+    // THE regression. On a shallow clone the old path (`gh pr checkout`, i.e. fetch the head with no
+    // destination refspec then `git checkout --track origin/<head>`) died with "cannot set up
+    // tracking information; starting point 'origin/<head>' is not a branch" — for EVERY same-repo
+    // PR, so the audit lens never ran at all.
+    #[test]
+    fn a_shallow_clone_gets_the_pr_head_checked_out() {
+        let root = tmp_root("head");
+        let (up, head) = upstream(&root, 47);
+        let clone = root.join("vet-upstream-47");
+        shallow_clone(&up, &clone);
+
+        assert_eq!(checkout_pr_head(&clone, 47).unwrap(), head);
+        assert_eq!(git_out(&clone, &["rev-parse", "HEAD"]).unwrap(), head);
+        assert_eq!(
+            git_out(&clone, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(),
+            checkout_branch(47)
+        );
+        // The audit lens reads FILES, so the working tree — not just the ref — must be the PR's.
+        assert_eq!(
+            std::fs::read_to_string(clone.join("only-in-the-pr.sol")).unwrap(),
+            "contract Reviewed {}"
+        );
+        assert_eq!(
+            git_out(&clone, &["status", "--porcelain"]).unwrap(),
+            "",
+            "a checkout that leaves dirt would make the clone unreleasable"
+        );
+        // Still shallow: the fix must not have traded #81 for the disk-full outage.
+        assert_eq!(
+            git_out(&clone, &["rev-parse", "--is-shallow-repository"]).unwrap(),
+            "true"
+        );
+        assert_eq!(
+            git_out(&clone, &["rev-list", "--count", "HEAD"]).unwrap(),
+            "1"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The second, quieter half of the leak. `gh pr checkout` puts a FORK PR's head on a plain LOCAL
+    // branch, so `rev-list HEAD --not --remotes` counts the whole branch as unpushed and BOTH
+    // `clone_release` and the sweep refuse the clone forever. Fetching into `refs/remotes/origin/pr/<n>`
+    // is what makes the checked-out commit provably pushed — and therefore reclaimable.
+    #[test]
+    fn the_checked_out_head_counts_as_pushed_so_the_clone_stays_reclaimable() {
+        let root = tmp_root("pushed");
+        let (up, _head) = upstream(&root, 12);
+        let clone = root.join("vet-upstream-12");
+        shallow_clone(&up, &clone);
+        checkout_pr_head(&clone, 12).unwrap();
+
+        let s = local_clone_state(&clone);
+        assert_eq!(
+            s.unpushed,
+            Some(0),
+            "the PR head must be reachable from a remote-tracking ref, or the clone is immortal"
+        );
+        assert_eq!(s.dirt.as_deref(), Some(""));
+        assert!(super::release_decision(&s, false).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The refspec is load-bearing in two independent ways; both are asserted rather than implied.
+    #[test]
+    fn the_refspec_names_the_pull_ref_and_an_explicit_remote_destination() {
+        let r = pr_head_refspec(47);
+        assert_eq!(r, "+refs/pull/47/head:refs/remotes/origin/pr/47");
+        assert!(
+            r.contains("refs/pull/"),
+            "a heads-based refspec cannot see a fork PR's head at all"
+        );
+        assert!(
+            r.split(':').nth(1).unwrap().starts_with("refs/remotes/"),
+            "no destination (or a non-remote one) is what makes the head read as unpushed"
+        );
+    }
+
+    // THE wrong-tree defect. `gh repo clone --depth 1` SUCCEEDED and only the checkout failed, so the
+    // old code returned an error while leaving `vet-<repo>-<n>` on disk holding the DEFAULT BRANCH —
+    // a directory named after this PR, at the exact path the audit lens looks for, containing code
+    // the PR never touched. (The live artifact: /home/gildlab/code/vet-rain.factory-47, HEAD 832e457
+    // = main, while rain.factory#47's head is 58a938e.) The postcondition is now binary: the PR head,
+    // or nothing.
+    #[test]
+    fn a_failed_checkout_leaves_no_directory_at_the_path_the_audit_lens_would_read() {
+        let root = tmp_root("teardown");
+        let (up, _) = upstream(&root, 47);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        // The clone exists and is valid — as it does after `gh repo clone` succeeds. Only the PR ref
+        // is missing (PR 99 was never opened), so the fetch fails exactly where the old one did.
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 99);
+        let path = std::path::PathBuf::from(&dir);
+        shallow_clone(&up, &path);
+        assert!(
+            path.join("base.txt").exists(),
+            "the wrong tree IS on disk here"
+        );
+
+        let e = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 99).unwrap_err();
+        assert!(
+            !path.exists(),
+            "the failed checkout must not leave a tree at {dir}"
+        );
+        // …and the error is the one that tells the caller not to go looking for a replacement.
+        assert!(e.contains("There is NO checkout"), "{e}");
+        assert!(e.contains("record NO verdict"), "{e}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The chain #81 observed ran: checkout fails → the vetter searches → a `vet-*` leftover from an
+    // unrelated run answers the search → the audit lens enumerates the WRONG repo's sources. Two
+    // links are closed here. The tool never names a directory it did not create (so nothing in its
+    // output can be mistaken for one), and its failure message names the exact wrong answer a
+    // filesystem search returns. The third link — that the leftover exists at all — is
+    // `the_sweep_reclaims_a_leaked_vet_checkout_but_not_a_producer_clone`; the fourth is the vetter
+    // prompt's "never search for a checkout".
+    #[test]
+    fn a_leftover_vet_directory_is_never_offered_as_a_substitute_tree() {
+        let root = tmp_root("leftover");
+        let (up, _) = upstream(&root, 47);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        // Exactly the observed leftover: another run's checkout, full of plausible sources.
+        let leftover = work.join("vet-rain.factory-dep");
+        std::fs::create_dir_all(leftover.join("src")).unwrap();
+        std::fs::write(
+            leftover.join("src/LibCloneFactoryDeploy.sol"),
+            "// other PR",
+        )
+        .unwrap();
+
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 99);
+        shallow_clone(&up, std::path::Path::new(&dir));
+        let e = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 99).unwrap_err();
+
+        assert!(
+            !e.contains("vet-rain.factory-dep"),
+            "the tool must not hand back a path it did not create: {e}"
+        );
+        assert!(
+            e.contains("Do NOT search the filesystem"),
+            "the refusal forbids the move that produced the wrong-tree verdict: {e}"
+        );
+        assert!(
+            e.contains("some OTHER PR's checkout"),
+            "…and names what a search would actually return: {e}"
+        );
+        // The leftover is another run's business: refusing must not delete it either.
+        assert!(leftover.join("src/LibCloneFactoryDeploy.sol").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A reused checkout must end at the PR head whatever state the last run left it in — the tool's
+    // contract is the tree, not a best effort at it. Without `-f`, a modified file makes `checkout`
+    // refuse, which under the postcondition above would DELETE a clone that only needed resetting.
+    #[test]
+    fn a_reused_checkout_is_reset_to_the_pr_head_even_when_the_tree_was_modified() {
+        let root = tmp_root("reuse");
+        let (up, head) = upstream(&root, 47);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 47);
+        let path = std::path::PathBuf::from(&dir);
+        shallow_clone(&up, &path);
+
+        let first = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 47).unwrap();
+        assert_eq!(first["reused"], serde_json::json!(true));
+        assert_eq!(first["head"], serde_json::json!(head));
+
+        std::fs::write(path.join("only-in-the-pr.sol"), "contract Tampered {}").unwrap();
+        let again = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 47).unwrap();
+        assert_eq!(again["head"], serde_json::json!(head));
+        assert_eq!(
+            std::fs::read_to_string(path.join("only-in-the-pr.sol")).unwrap(),
+            "contract Reviewed {}",
+            "the reused clone was reset to the PR head, not left half-modified"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The vetter burned four Glob calls — two of them 20-second ripgrep timeouts against
+    // /home/gildlab/code — looking for a directory the tool already knew. The success value carries
+    // the path AND the sha, so "locate my own tool's output" is not a step that exists.
+    #[test]
+    fn a_successful_checkout_returns_the_path_and_the_sha_it_produced() {
+        let root = tmp_root("returns");
+        let (up, head) = upstream(&root, 47);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 47);
+        shallow_clone(&up, std::path::Path::new(&dir));
+
+        let out = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 47).unwrap();
+        assert_eq!(out["dir"], serde_json::json!(dir));
+        assert_eq!(out["head"], serde_json::json!(head));
+        assert_eq!(out["branch"], serde_json::json!(checkout_branch(47)));
+        assert_eq!(out["pr"], serde_json::json!("o/upstream#47"));
+        // The sha is what lets the caller cross-check the tree against `pr_context.headRefOid`
+        // instead of trusting that the right thing happened.
+        assert_eq!(
+            git_out(std::path::Path::new(&dir), &["rev-parse", "HEAD"]).unwrap(),
+            out["head"].as_str().unwrap()
+        );
+        // The note tells the reader the same thing the prompt does, so the rule survives a prompt
+        // edit that forgets it.
+        let note = out["note"].as_str().unwrap();
+        assert!(note.contains("ONLY tree"), "{note}");
+        assert!(note.contains("clone_release"), "{note}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The one failure that must NOT delete: something that is not our clone sits at the path. The
+    // teardown exists to remove a tree WE made; turning it into "delete whatever is in the way"
+    // would be a far worse bug than the one it fixes.
+    #[test]
+    fn a_non_clone_at_the_checkout_path_is_refused_without_being_touched() {
+        let root = tmp_root("occupied");
+        let work = root.join("work");
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 47);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(format!("{dir}/irreplaceable.txt"), "everything").unwrap();
+
+        let e = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 47).unwrap_err();
+        assert!(e.contains("not a git clone"), "{e}");
+        assert!(e.contains("nothing was changed"), "{e}");
+        assert_eq!(
+            std::fs::read_to_string(format!("{dir}/irreplaceable.txt")).unwrap(),
+            "everything"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The message is the whole of link 2→3, so its content is pinned rather than left to prose drift.
+    #[test]
+    fn the_failure_message_states_the_postcondition_and_the_only_two_next_moves() {
+        let m = checkout_failure_error("o/r#47", "/work/vet-r-47", "git fetch failed: no such ref");
+        assert!(m.starts_with("error:"), "{m}");
+        assert!(m.contains("o/r#47") && m.contains("/work/vet-r-47"), "{m}");
+        assert!(
+            m.contains("git fetch failed: no such ref"),
+            "the cause survives: {m}"
+        );
+        assert!(m.contains("does not exist"), "{m}");
+        assert!(m.contains("Re-call `pr_checkout` ONCE"), "{m}");
+        assert!(m.contains("record NO verdict"), "{m}");
     }
 }

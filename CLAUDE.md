@@ -134,6 +134,39 @@ still holds work):
   because in practice that dirt is build output and refusing it outright is what
   leaves the clone on disk forever.
 
+One rule the unattended sweep does **not** share with release: an **audit-lens
+checkout** (`vet-<repo>-<n>`, made by `pr_checkout`) is disposable on **age
+alone** — one day, ignoring its PR state. The vetter checks out the PR it is
+JUDGING, so that PR is always OPEN, and "open PR → active work" made every
+leaked checkout immortal: 83 of them, 349 MB, under a sweep that had been
+running nightly the whole time (#81). The dirt/unpushed guards still run first.
+The sweep is also the ONLY thing that reclaims one — a run that dies is exactly
+the run that leaks, so an end-of-run `clone_release` cannot be the mechanism —
+which means the midnight `gc` line must name **every** clone root (`WORK_DIR`
+_and_ the install dir), not just the first.
+
+**One result budget, and it must be under the harness's ceiling.** Every tool
+result is checked against the same 36,000 bytes — `pr_context` included, which
+used to get `max_diff_bytes + 32,000` (up to 332,000, about six times what the
+harness accepts, so its guard never fired). Ordering is the mechanism: if the
+harness speaks first the caller gets an untyped message with `is_error`
+**unset**, and "a tool error is an instruction" stops applying exactly when it
+is needed. The ceiling is measured against the running harness, never derived by
+halving a payload that was refused; 2.1.220 has TWO untyped gates (a byte gate
+around 50,011–50,176 bytes, not governed by `MAX_MCP_OUTPUT_TOKENS`, and a token
+gate governed by it) and the budget sits ~28% under both. One budget for every
+tool is also what makes narrowing CONVERGE — while the allowance scaled with
+`max_diff_bytes`, lowering the argument lowered both sides equally. `pr_context`
+fits itself to the budget rather than waiting to be refused, and reports
+`diffBytes` / `diffIncluded` / `diffTruncated` so the shortfall is visible.
+
+`pr_checkout` itself holds a binary postcondition: **the PR head at `dir`, or no
+`dir`**. It fetches `refs/pull/<n>/head` into `refs/remotes/origin/pr/<n>`
+(works on a shallow clone, works for forks, keeps the head provably pushed),
+returns the `dir` and the `head` sha, and deletes what it made if any step
+fails. Nothing downstream may search the filesystem for a checkout: the leftover
+it finds is a different PR's code.
+
 ## Invariants
 
 - **Human decisions are sacred.** A `human:*` label OR a native `APPROVED` /

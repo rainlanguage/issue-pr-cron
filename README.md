@@ -104,7 +104,7 @@ server is the vetter's **only** tool surface.
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list |
 | `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                           |
-| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source                                                                                                                       |
+| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                              |
 | `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                                                                                                |
 | `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                             |
 | `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                               |
@@ -146,20 +146,110 @@ removes its subject from the queue, paging converges without an offset argument.
 The page size is what makes the bound structural — the payload no longer grows
 with the number of open PRs.
 
-Every result is then checked against a byte budget (32,000 bytes; `pr_context`
-gets that plus the `max_diff_bytes` the caller explicitly asked for), and a
-result over budget is returned as a **tool error naming the argument to narrow**
-— never truncated, never spilled. On 2026-07-27
-`unvetted {"include_skipped":
-true}` returned 63,742 characters on one line, the
+Every result is then checked against **one byte budget, the same for every
+tool** (36,000 bytes), and a result over budget is returned as a **tool error
+naming the argument to narrow** — never truncated, never spilled. On 2026-07-27
+`unvetted {"include_skipped": true}` returned 63,742 characters on one line, the
 harness refused it, and the vetter improvised a fallback that silently dropped
 the whole open-threads accounting; the run log looked normal. A partial
 state-load cannot say what it is missing, so the tool refuses to produce one.
+
+**The budget must be lower than what the harness accepts, and that is the
+mechanism, not a preference.** If the harness is the thing that speaks, what
+comes back is untyped and arrives with `is_error` **unset** — so every rule
+downstream about "a tool error is an instruction" stops applying at the moment
+it is needed. `pr_context` used to be budgeted at `max_diff_bytes + 32,000`, up
+to **332,000 bytes**, roughly six times what the harness accepts; its guard
+could not fire, and the harness's message arrived instead. The value is now
+measured rather than derived from halving a payload that had already been
+refused — see [the ceiling, measured](#the-ceiling-measured).
+
+Two consequences follow from one budget for every tool. `max_diff_bytes` can no
+longer be raised past it, so a `pr_context` cannot buy itself more room than any
+other tool gets. And **narrowing converges**: while the budget scaled with
+`max_diff_bytes` and the diff was truncated to `max_diff_bytes`, lowering the
+argument lowered allowance and payload equally, so "re-call NARROWER" was a loop
+with no exit. Against a fixed allowance a smaller argument is a strictly smaller
+result.
+
+`pr_context` does not wait to be refused: it **fits itself** to the budget,
+shrinking the diff until the document lands under it, and reports `diffBytes`
+(the whole diff), `diffIncluded` (what actually made it in) and `diffTruncated`
+so the gap between what exists and what was handed over is visible rather than
+inferred. The shrink terminates — each round removes at least the overflow from
+the cap, and one raw byte of diff is at least one byte of document — and the one
+case no argument can fix, metadata alone over the budget, is a typed error that
+says exactly that.
+
+#### The ceiling, measured
+
+Against Claude Code 2.1.220, by calling `pr_context` through the real harness at
+increasing `max_diff_bytes` and reading the `tool_result` the model actually
+received. There are **two** independent gates and **both** arrive with
+`is_error` unset:
+
+| gate  | what the model gets                                             | boundary                                                      |
+| ----- | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| byte  | `<persisted-output> Output too large (NN KB)` + a 2 KB preview  | delivered at 50,011 bytes, replaced at 50,176                 |
+| token | `Error: result (N characters …) exceeds maximum allowed tokens` | the gate the live traces hit, at 63,742 and 56,789 characters |
+
+The byte gate is **not** governed by `MAX_MCP_OUTPUT_TOKENS` — forcing that to
+200,000 still replaced a 50,486-byte result — and it is the more dangerous of
+the two, because the 2 KB preview it substitutes looks like the head of a real
+answer. The token gate is: forcing the variable to 100 replaced a 4.5 KB result.
+Isolating it at `MAX_MCP_OUTPUT_TOKENS=10000` puts its boundary between 27,152
+and 30,163 bytes, so this JSON measures **2.7–3.0 chars/token**; nothing on the
+box sets that variable, and 56,789 characters tripped it live, which puts the
+default near 19–21k tokens. Both gates therefore land around 50 kB for this
+content.
+
+36,000 sits ~28% under both. The margin is not timidity: the token gate scales
+with the **content**, and a diff of generated hex — which this org has, in every
+`src/generated/*.pointers.sol` — tokenises far worse than prose. At 36,000 bytes
+even a payload tokenising at 1.5 chars/token stays inside a 19k-token cap.
 
 The `openThreads` list is unconditional for the same reason: the PRs withheld
 for unresolved threads (and their `unresolvedThreads` counts) are the only
 skipped rows carrying information the vetter can act on, and making that
 accounting depend on an optional argument is exactly how it went missing.
+
+### The audit lens's working tree: the PR head, or nothing
+
+`pr_checkout` shallow-clones the repo and fetches **`refs/pull/<n>/head`** into
+`refs/remotes/origin/pr/<n>`, then checks that out as `pr-<n>`. Three properties
+follow, and each fixes a distinct failure:
+
+- **It works on a shallow clone.** `gh pr checkout` does not: a `--depth 1`
+  clone's fetch refspec is
+  `+refs/heads/<default>:refs/remotes/origin/<default>`, so a same-repo PR's
+  head arrives as a bare fetched ref and `git checkout --track` refuses it —
+  _"cannot set up tracking information; starting point 'origin/<head>' is not a
+  branch"_ — for **every** same-repo PR, i.e. every PR that needed the audit
+  lens (#81).
+- **It stays shallow.** The obvious repair — widen the refspec and keep
+  `gh pr checkout` — makes the follow-up fetch deepen the clone to nearly full
+  history. Measured on raindex: **156 MiB** of pack against **3.9 MiB** for the
+  pull-ref fetch, with `--depth 1 --no-single-branch` at 78 MiB and a full clone
+  at 180 MiB. Disk-full silently killed both crons for ~17h (#56), so the fix
+  that costs nothing over the shallow clone already intended is the only one
+  that is not a trade.
+- **The head is on a remote-tracking ref**, which is what makes the commit count
+  as pushed. `gh pr checkout` puts a **fork** PR's head on a plain local branch,
+  so `rev-list HEAD --not --remotes` reports the whole branch as unpushed and
+  both `clone_release` and the sweep refuse the clone forever.
+
+**Its postcondition is binary: the PR head at `dir`, or no `dir` at all.** The
+old code returned an error while leaving the directory behind, because
+`gh repo clone` had succeeded and only the checkout failed — so a directory
+named after the PR sat at exactly the path the audit lens looks for, holding the
+**default branch**. On 2026-07-27 the vetter met that failure, went looking for
+a tree, found the leftover `vet-rain.factory-dep` from an unrelated run, and
+began enumerating its Solidity sources as `rain.factory#47`'s. The chain is
+broken in four places: the checkout works; a failed one deletes what it made;
+the failure is an `isError` that names the wrong answer a filesystem search
+returns and forbids it; and the sweep reclaims the leftovers a search would
+otherwise find. The success value carries the `dir` **and** the `head` sha, so
+locating (or recognising) the tool's own output is not a step that exists.
 
 **What the vetter therefore does not verify.** With no Bash it cannot build, and
 cannot execute anything in the clone `pr_checkout` gives it — it reads source,
@@ -212,6 +302,22 @@ an unknown push state); uncommitted changes refuse too, overridable with
 `discard_uncommitted` once the caller has confirmed the dirt is build output.
 `clone_gc` remains the unattended backstop with the old, deliberately
 conservative rule — it deletes only what it can prove is finished.
+
+**Audit-lens checkouts are the one exception, and they had to be.** A `vet-*`
+clone is the PR the vetter is **judging**, so its PR is always OPEN, and "open
+PR → active work" made every leaked checkout immortal: 83 of them, 349 MB, under
+a sweep that had been running nightly the whole time (#81). They are now
+disposable on **age alone** — one day, ~12× the vetter's own 2h `REVIEW_MAXTIME`
+ceiling, independent of `--max-age-days`. The dirt/unpushed guards still run
+first, and "idle" is read as the newer of the clone directory's mtime and
+`.git/HEAD`'s — a checkout rewrites files below the top level, so the
+directory's own mtime does not move, and a clone the vetter checked out minutes
+ago would otherwise read as days idle and be deleted underneath a run still
+using it. So "never delete something that holds work" is unchanged; what changed
+is that a read-only copy of a commit already on GitHub stopped being treated as
+work. This sweep is the **only** thing that reclaims a leaked checkout, and it
+has to be: a run that dies is exactly the run that leaks, so a `clone_release`
+on the way out can never be the mechanism.
 
 The machine has **no dead-ends**: every state has an exit back into the
 lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle
@@ -441,6 +547,16 @@ reads `cron.env` for `ORG` / `ORGS` / `PR_ASSIGNEE`.
   every evaluation, and the install dir accumulates gitignored work clones and
   traces (~5GB against ~1MB of tracked files). CI asserts the two refs produce
   identical derivations, so the cheap one is always safe.
+
+  The **disk sweep** gets its own line, at midnight — the one run-free gap,
+  since every producer/vetter tick is on an odd hour. It must name **every**
+  clone root: clones land in `WORK_DIR`, and `vet-*` checkouts also accumulate
+  in the install dir, which a `WORK_DIR`-only sweep never looks at (that
+  omission is where 83 leaked checkouts and 349 MB sat, #81).
+
+  ```cron
+  0 0 * * * PATH=$HOME/.nix-profile/bin:/usr/bin:/bin nix run git+file://<install-dir>#pr-review-report -- gc <work-dir> <install-dir> >> <install-dir>/gc.log 2>&1
+  ```
 - **Pause:** `touch DISABLED` · **Resume:** `rm DISABLED`
 - **Watch:** `tail -f campaign.log` · **Run now:**
   `CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run`
