@@ -1032,6 +1032,592 @@ fn distill_trace_mode() -> i32 {
     0
 }
 
+// ---------------------------------------------------------------------------------------------
+// Weekly-budget pace gate (was usage-gate.sh).
+//
+// Everything this gate does is data work — one HTTPS GET, a JSON parse, ISO-8601 date math and a
+// threshold comparison — so it lives here rather than in bash, where `python3` was only ever
+// present because bash cannot do any of it. Bash keeps process control; the binary does the rest.
+//
+// Two properties improve by being in-process:
+//   1. The bearer token never reaches the process table. The shell version went to real lengths
+//      for this (`curl --config -`, reading the header from stdin so the token stays out of argv);
+//      here there is no argv to leak into, so the property holds by construction.
+//   2. The pace arithmetic is a pure function of (used, reset, now, slack, ceiling) instead of a
+//      heredoc, so every branch and boundary is directly testable.
+// ---------------------------------------------------------------------------------------------
+
+/// One week, in milliseconds — the budget period the gate paces against.
+const USAGE_WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// What the gate decided. The exit code IS the interface: the runners branch on it.
+#[derive(Debug, PartialEq, Eq)]
+enum UsageVerdict {
+    /// Exit 0 — this tick may run.
+    Run(String),
+    /// Exit 10 — skip this tick. The caller logs the reason and exits 0 itself.
+    Pause(String),
+}
+
+impl UsageVerdict {
+    fn code(&self) -> i32 {
+        match self {
+            UsageVerdict::Run(_) => 0,
+            UsageVerdict::Pause(_) => 10,
+        }
+    }
+    fn reason(&self) -> &str {
+        match self {
+            UsageVerdict::Run(r) | UsageVerdict::Pause(r) => r,
+        }
+    }
+}
+
+/// A usage reading, whichever source it came from.
+#[derive(Debug, PartialEq)]
+struct UsageReading {
+    /// Percent of the weekly budget already used.
+    used: f64,
+    /// When the week rolls. `None` only via the fallback path — the endpoint always carries it,
+    /// and a reading whose `resets_at` will not parse is discarded rather than paced blind.
+    reset_ms: Option<i64>,
+    /// The reset timestamp as the source spelled it. Echoed rather than re-formatted so the log
+    /// shows exactly what the API said, and so no date-formatting code sits between the two.
+    reset_display: Option<String>,
+    /// `endpoint` or `fallback reading` — surfaced in the reason so a run's log says which was used.
+    source: &'static str,
+}
+
+/// Where usage "should" be by now at a steady burn toward `reset_ms`, as a percentage.
+///
+/// Clamped at both ends: a reset more than a week out yields a negative fraction (clamps to 0),
+/// and one already past yields over 1 (clamps to 100). Split out from [`usage_gate_decide`]
+/// because the upper clamp is unreachable through that path — the `now >= reset` branch returns
+/// first — so it would otherwise be untestable.
+fn linear_pct(now_ms: i64, reset_ms: i64) -> f64 {
+    let frac = (now_ms - (reset_ms - USAGE_WEEK_MS)) as f64 / USAGE_WEEK_MS as f64;
+    (frac * 100.0).clamp(0.0, 100.0)
+}
+
+/// The whole gate decision, as a pure function.
+///
+/// Order matters: the CEILING is checked before the PACE, and applies whatever the pace — being
+/// under a linear burn is no help once the weekly budget is nearly spent.
+///
+/// `None` reading means the endpoint could not be read and no fallback is set. That is INERT —
+/// it prints OK and the crons RUN. This is deliberate and must stay: an earlier version of this
+/// gate could not read usage and made the operator paste percentages in by hand, which silently
+/// paused both crons for 22 consecutive ticks when a reading went stale at 80%. The gate exists
+/// to pace spending, not to become a new way for the pipeline to stall — so a malformed response,
+/// an expired token, a network failure and an unparseable date all land here, never on Pause.
+fn usage_gate_decide(
+    reading: Option<&UsageReading>,
+    now_ms: i64,
+    slack: f64,
+    ceiling: f64,
+) -> UsageVerdict {
+    let Some(r) = reading else {
+        return UsageVerdict::Run(
+            "OK: usage endpoint unreachable and no fallback reading set — gate inert".to_string(),
+        );
+    };
+    let (used, source) = (r.used, r.source);
+
+    // 1. CEILING — at or over pauses. `>=` not `>`: the ceiling is the point we stop, not the
+    //    point we have already passed.
+    if used >= ceiling {
+        return UsageVerdict::Pause(format!(
+            "PAUSE: {used:.0}% of the weekly budget used ({source}) — at/over the {ceiling:.0}% ceiling"
+        ));
+    }
+
+    let (Some(reset_ms), Some(reset_display)) = (r.reset_ms, r.reset_display.as_deref()) else {
+        return UsageVerdict::Run(format!(
+            "OK: {used:.0}% used ({source}), under the {ceiling:.0}% ceiling — no reset known, pacing off"
+        ));
+    };
+
+    if now_ms >= reset_ms {
+        return UsageVerdict::Run(format!(
+            "OK: reset {reset_display} has passed ({source}) — new week"
+        ));
+    }
+
+    // 2. PACE — pause only when usage is MORE than `slack` ahead of the linear burn. Exactly at
+    //    the slack boundary still runs; `slack` is an allowance, not a limit to trip on.
+    let linear = linear_pct(now_ms, reset_ms);
+    if used - linear > slack {
+        return UsageVerdict::Pause(format!(
+            "PAUSE: {used:.0}% used vs {linear:.0}% linear-by-now toward reset \
+             {reset_display} ({source}) — >{slack:.0}% ahead of pace"
+        ));
+    }
+
+    UsageVerdict::Run(format!(
+        "OK: {used:.0}% used vs {linear:.0}% linear-by-now toward reset \
+         {reset_display} ({source}) — within {slack:.0}% slack"
+    ))
+}
+
+/// Pull the OAuth bearer token out of the credentials file (`.claudeAiOauth.accessToken`).
+/// Every failure — absent file, bad JSON, missing key, empty value — is `None`, which routes to
+/// the fallback-or-inert path rather than an error.
+fn oauth_token(creds: &str) -> Option<String> {
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(creds).ok()?).ok()?;
+    let tok = doc.get("claudeAiOauth")?.get("accessToken")?.as_str()?;
+    (!tok.is_empty()).then(|| tok.to_string())
+}
+
+/// The `seven_day` block: `utilization` is the percent used, `resets_at` is authoritative.
+/// Both must be present and well-formed or the whole reading is discarded — pacing against a
+/// usage number with no trustworthy reset date would be guessing.
+fn parse_seven_day(raw: &str) -> Option<UsageReading> {
+    let week = serde_json::from_str::<Value>(raw)
+        .ok()?
+        .get("seven_day")?
+        .clone();
+    let used = week.get("utilization")?.as_f64()?;
+    let resets_at = week.get("resets_at")?.as_str()?.to_string();
+    let reset_ms = iso_to_epoch_ms(&resets_at)?;
+    Some(UsageReading {
+        used,
+        reset_ms: Some(reset_ms),
+        reset_display: Some(resets_at),
+        source: "endpoint",
+    })
+}
+
+/// The operator's last manual reading, used only when the endpoint gave nothing.
+///
+/// A `USAGE_RESET_AT` that is set but unparseable discards the whole reading (returns `None`,
+/// i.e. inert) rather than pacing with no reset — matching the shell version, where the date
+/// parse and the percent parse shared one error path.
+fn fallback_reading(used_pct: &str, reset_at: &str) -> Option<UsageReading> {
+    if used_pct.trim().is_empty() {
+        return None;
+    }
+    let used: f64 = used_pct.trim().parse().ok()?;
+    let (reset_ms, reset_display) = if reset_at.trim().is_empty() {
+        (None, None)
+    } else {
+        (
+            Some(iso_to_epoch_ms(reset_at.trim())?),
+            Some(reset_at.trim().to_string()),
+        )
+    };
+    Some(UsageReading {
+        used,
+        reset_ms,
+        reset_display,
+        source: "fallback reading",
+    })
+}
+
+/// One HTTPS GET for the usage document. Any failure is `None` — see [`usage_gate_decide`] for
+/// why nothing here may escalate to a pause.
+fn fetch_usage(url: &str, token: &str) -> Option<String> {
+    ureq::get(url)
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .header("Content-Type", "application/json")
+        .call()
+        .ok()?
+        .body_mut()
+        .read_to_string()
+        .ok()
+}
+
+/// Read an env var as f64, falling back when unset, empty or unparseable.
+fn env_f64(name: &str, default: f64) -> f64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+/// `usage-gate`: prints one line and exits 0 (run) or 10 (pause).
+///
+/// Config is env-only, exported by the runners from cron.env — the same way ORGS/PR_ASSIGNEE
+/// already reach this binary.
+fn usage_gate_mode() -> i32 {
+    let ceiling = env_f64("USAGE_CEILING_PCT", 90.0);
+    let slack = env_f64("USAGE_SLACK_PCT", 5.0);
+
+    let creds = std::env::var("CLAUDE_CREDENTIALS").unwrap_or_else(|_| {
+        format!(
+            "{}/.claude/.credentials.json",
+            std::env::var("HOME").unwrap_or_default()
+        )
+    });
+    let url = std::env::var("USAGE_URL")
+        .unwrap_or_else(|_| "https://api.anthropic.com/api/oauth/usage".to_string());
+
+    let reading = oauth_token(&creds)
+        .and_then(|tok| fetch_usage(&url, &tok))
+        .and_then(|body| parse_seven_day(&body))
+        .or_else(|| {
+            fallback_reading(
+                &std::env::var("USAGE_USED_PCT").unwrap_or_default(),
+                &std::env::var("USAGE_RESET_AT").unwrap_or_default(),
+            )
+        });
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    let verdict = usage_gate_decide(reading.as_ref(), now_ms, slack, ceiling);
+    println!("{}", verdict.reason());
+    verdict.code()
+}
+
+#[cfg(test)]
+mod usage_gate_tests {
+    use super::*;
+
+    fn ms(iso: &str) -> i64 {
+        iso_to_epoch_ms(iso).expect("test timestamp must parse")
+    }
+    /// A reading from the endpoint with a known reset.
+    fn reading(used: f64, reset: &str) -> UsageReading {
+        UsageReading {
+            used,
+            reset_ms: Some(ms(reset)),
+            reset_display: Some(reset.to_string()),
+            source: "endpoint",
+        }
+    }
+    const RESET: &str = "2026-07-19T00:00:00Z";
+
+    // ---- inert: the property that must never regress to fail-closed --------------------------
+
+    // No endpoint and no fallback => RUN. An earlier gate that could not read usage paused both
+    // crons for 22 consecutive ticks; this gate paces spending, it does not stall the pipeline.
+    #[test]
+    fn no_reading_is_inert_and_runs() {
+        let v = usage_gate_decide(None, ms("2026-07-15T00:00:00Z"), 5.0, 90.0);
+        assert_eq!(v.code(), 0);
+        assert!(v.reason().starts_with("OK:"), "{}", v.reason());
+        assert!(v.reason().contains("gate inert"), "{}", v.reason());
+    }
+
+    // Every unreadable-usage shape collapses to None, i.e. to the inert path above — never a pause.
+    #[test]
+    fn unreadable_usage_shapes_never_produce_a_reading() {
+        assert!(parse_seven_day("").is_none(), "empty body");
+        assert!(parse_seven_day("not json").is_none(), "malformed JSON");
+        assert!(parse_seven_day("{}").is_none(), "missing seven_day");
+        assert!(
+            parse_seven_day(r#"{"seven_day":{"resets_at":"2026-07-19T00:00:00Z"}}"#).is_none(),
+            "missing utilization"
+        );
+        assert!(
+            parse_seven_day(r#"{"seven_day":{"utilization":50.0}}"#).is_none(),
+            "missing resets_at"
+        );
+        assert!(
+            parse_seven_day(r#"{"seven_day":{"utilization":50.0,"resets_at":"not-a-date"}}"#)
+                .is_none(),
+            "unparseable resets_at must discard the whole reading, not pace blind"
+        );
+    }
+
+    // ---- ceiling ------------------------------------------------------------------------------
+
+    // AT the ceiling pauses: the ceiling is where we stop, not where we have already gone past.
+    // Kills `used >= ceiling` -> `used > ceiling`.
+    #[test]
+    fn ceiling_pauses_at_the_boundary_not_only_over_it() {
+        let at = usage_gate_decide(
+            Some(&reading(90.0, RESET)),
+            ms("2026-07-18T00:00:00Z"),
+            5.0,
+            90.0,
+        );
+        assert_eq!(
+            at.code(),
+            10,
+            "exactly at the ceiling must PAUSE: {}",
+            at.reason()
+        );
+        assert!(
+            at.reason().contains("at/over the 90% ceiling"),
+            "{}",
+            at.reason()
+        );
+
+        // Just under the ceiling falls through to the pace check instead.
+        let under = usage_gate_decide(
+            Some(&reading(89.0, RESET)),
+            ms("2026-07-18T00:00:00Z"),
+            5.0,
+            90.0,
+        );
+        assert!(
+            !under.reason().contains("ceiling —"),
+            "89 < 90 must not trip the ceiling: {}",
+            under.reason()
+        );
+    }
+
+    // The ceiling is checked BEFORE the pace and applies whatever the pace says. Here usage is
+    // comfortably BEHIND a linear burn (95 used vs ~99 linear), so a pace-first ordering would
+    // return Run. Kills any reordering of the two checks.
+    #[test]
+    fn ceiling_is_checked_before_pace_and_wins() {
+        // One hour before reset => linear ~99.4%, so used-linear is negative: pace alone says run.
+        let now = ms(RESET) - 3_600_000;
+        let pace_only = usage_gate_decide(Some(&reading(95.0, RESET)), now, 5.0, 100.0);
+        assert_eq!(pace_only.code(), 0, "precondition: pace alone would RUN");
+
+        let v = usage_gate_decide(Some(&reading(95.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(v.code(), 10, "ceiling must win over a healthy pace");
+        assert!(v.reason().contains("ceiling"), "{}", v.reason());
+
+        // The ceiling is checked before EVERY later branch, not just the pace one — the two
+        // branches that return Run early would otherwise swallow it. Without these, moving the
+        // ceiling check below the pace check still passes, because in the case above both checks
+        // fire and only their order differs.
+
+        // (a) Over the ceiling with NO reset known: still a pause, not "pacing off".
+        let no_reset = UsageReading {
+            used: 95.0,
+            reset_ms: None,
+            reset_display: None,
+            source: "fallback reading",
+        };
+        let v = usage_gate_decide(Some(&no_reset), now, 5.0, 90.0);
+        assert_eq!(
+            v.code(),
+            10,
+            "over the ceiling must pause even with pacing off: {}",
+            v.reason()
+        );
+
+        // (b) Over the ceiling just after the week rolled: still a pause, not "new week".
+        let v = usage_gate_decide(Some(&reading(95.0, RESET)), ms(RESET) + 1, 5.0, 90.0);
+        assert_eq!(
+            v.code(),
+            10,
+            "over the ceiling must pause even once the reset has passed: {}",
+            v.reason()
+        );
+    }
+
+    // ---- pace ---------------------------------------------------------------------------------
+
+    // Exactly `slack` ahead still RUNS — slack is an allowance, not a limit to trip on.
+    // Kills `used - linear > slack` -> `>= slack`.
+    #[test]
+    fn pace_boundary_runs_at_exactly_slack_and_pauses_just_past_it() {
+        let now = ms(RESET) - USAGE_WEEK_MS / 2; // half the week elapsed => linear = 50%
+        assert_eq!(linear_pct(now, ms(RESET)), 50.0, "precondition");
+
+        let at = usage_gate_decide(Some(&reading(55.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(
+            at.code(),
+            0,
+            "exactly 5 ahead is within slack: {}",
+            at.reason()
+        );
+        assert!(at.reason().contains("within 5% slack"), "{}", at.reason());
+
+        let over = usage_gate_decide(Some(&reading(55.1, RESET)), now, 5.0, 90.0);
+        assert_eq!(
+            over.code(),
+            10,
+            "5.1 ahead exceeds slack: {}",
+            over.reason()
+        );
+        assert!(over.reason().contains("ahead of pace"), "{}", over.reason());
+    }
+
+    // Behind pace runs, and the reason names both numbers and the source.
+    #[test]
+    fn behind_pace_runs_and_reports_both_numbers() {
+        let now = ms(RESET) - USAGE_WEEK_MS / 2;
+        let v = usage_gate_decide(Some(&reading(10.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(v.code(), 0);
+        assert!(v.reason().contains("10% used"), "{}", v.reason());
+        assert!(v.reason().contains("50% linear-by-now"), "{}", v.reason());
+        assert!(v.reason().contains("(endpoint)"), "{}", v.reason());
+    }
+
+    // ---- the linear-pace clamp -----------------------------------------------------------------
+
+    // Both ends. The upper clamp is unreachable through usage_gate_decide (the `now >= reset`
+    // branch returns first), which is exactly why linear_pct is its own function.
+    #[test]
+    fn linear_pct_clamps_at_both_ends() {
+        let reset = ms(RESET);
+        // Reset two weeks out => frac = -1 => clamps to 0, not negative.
+        assert_eq!(linear_pct(reset - 2 * USAGE_WEEK_MS, reset), 0.0);
+        // Reset already a week past => frac = 2 => clamps to 100, not 200.
+        assert_eq!(linear_pct(reset + USAGE_WEEK_MS, reset), 100.0);
+        // And it is linear in between.
+        assert_eq!(linear_pct(reset - USAGE_WEEK_MS, reset), 0.0);
+        assert_eq!(linear_pct(reset - USAGE_WEEK_MS / 4, reset), 75.0);
+        assert_eq!(linear_pct(reset, reset), 100.0);
+    }
+
+    // ---- week roll and missing reset ------------------------------------------------------------
+
+    #[test]
+    fn reset_already_passed_runs_as_a_new_week() {
+        // Usage is high AND way ahead of any pace, but the week has rolled, so it must RUN.
+        let v = usage_gate_decide(Some(&reading(88.0, RESET)), ms(RESET) + 1, 5.0, 90.0);
+        assert_eq!(v.code(), 0, "{}", v.reason());
+        assert!(v.reason().contains("new week"), "{}", v.reason());
+        assert!(
+            v.reason().contains(RESET),
+            "reason echoes the reset: {}",
+            v.reason()
+        );
+
+        // EXACTLY at the reset instant is already the new week. Pinned because `>=` -> `>` here
+        // still returns code 0 (linear clamps to 100, so nothing reads as "ahead of pace") — only
+        // the REASON distinguishes them, and a run logged as a pace result at the roll boundary
+        // would misreport why it ran.
+        let at = usage_gate_decide(Some(&reading(88.0, RESET)), ms(RESET), 5.0, 90.0);
+        assert_eq!(at.code(), 0, "{}", at.reason());
+        assert!(
+            at.reason().contains("new week"),
+            "at the reset instant the week has rolled: {}",
+            at.reason()
+        );
+    }
+
+    // A reading with no reset paces nothing, but still honours the ceiling (checked earlier).
+    #[test]
+    fn absent_reset_runs_with_pacing_off() {
+        let r = UsageReading {
+            used: 40.0,
+            reset_ms: None,
+            reset_display: None,
+            source: "fallback reading",
+        };
+        let v = usage_gate_decide(Some(&r), ms("2026-07-15T00:00:00Z"), 5.0, 90.0);
+        assert_eq!(v.code(), 0);
+        assert!(v.reason().contains("pacing off"), "{}", v.reason());
+        assert!(v.reason().contains("(fallback reading)"), "{}", v.reason());
+    }
+
+    // ---- sources -------------------------------------------------------------------------------
+
+    #[test]
+    fn endpoint_reading_parses_and_names_its_source() {
+        let r = parse_seven_day(
+            r#"{"seven_day":{"utilization":12.5,"resets_at":"2026-07-19T11:59:59Z"}}"#,
+        )
+        .expect("well-formed body");
+        assert_eq!(r.used, 12.5);
+        assert_eq!(r.source, "endpoint");
+        assert_eq!(r.reset_display.as_deref(), Some("2026-07-19T11:59:59Z"));
+        assert_eq!(r.reset_ms, iso_to_epoch_ms("2026-07-19T11:59:59Z"));
+    }
+
+    #[test]
+    fn fallback_is_used_only_when_set_and_says_so() {
+        assert!(fallback_reading("", "").is_none(), "unset => inert");
+        assert!(fallback_reading("  ", "").is_none(), "blank => inert");
+        assert!(
+            fallback_reading("not-a-number", "").is_none(),
+            "unparseable pct => inert"
+        );
+        // Set but with an unparseable reset: discard the whole reading rather than pace blind.
+        assert!(
+            fallback_reading("60", "not-a-date").is_none(),
+            "unparseable reset must not silently become pacing-off"
+        );
+
+        let r = fallback_reading("60", RESET).expect("valid fallback");
+        assert_eq!(r.used, 60.0);
+        assert_eq!(r.source, "fallback reading");
+        assert_eq!(r.reset_ms, iso_to_epoch_ms(RESET));
+
+        // Percent alone is legitimate: pacing off, ceiling still enforced.
+        let r = fallback_reading("60", "").expect("pct-only fallback");
+        assert_eq!(r.reset_ms, None);
+    }
+
+    // The one-line reason must always say which source it used, on every path that has a reading.
+    #[test]
+    fn every_reading_path_names_its_source() {
+        let now = ms("2026-07-15T00:00:00Z");
+        for src in ["endpoint", "fallback reading"] {
+            let over = UsageReading {
+                used: 99.0,
+                reset_ms: Some(ms(RESET)),
+                reset_display: Some(RESET.to_string()),
+                source: src,
+            };
+            assert!(
+                usage_gate_decide(Some(&over), now, 5.0, 90.0)
+                    .reason()
+                    .contains(src),
+                "ceiling path must name {src}"
+            );
+            let paced = UsageReading { used: 80.0, ..over };
+            assert!(
+                usage_gate_decide(Some(&paced), now, 5.0, 90.0)
+                    .reason()
+                    .contains(src),
+                "pace path must name {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn oauth_token_is_none_for_every_bad_shape() {
+        let dir = std::env::temp_dir().join(format!("prr-usage-gate-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let write = |name: &str, body: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            p.to_string_lossy().to_string()
+        };
+        assert!(
+            oauth_token("/definitely/not/here.json").is_none(),
+            "absent file"
+        );
+        assert!(
+            oauth_token(&write("bad.json", "not json")).is_none(),
+            "bad JSON"
+        );
+        assert!(
+            oauth_token(&write("nokey.json", "{}")).is_none(),
+            "missing claudeAiOauth"
+        );
+        assert!(
+            oauth_token(&write("notok.json", r#"{"claudeAiOauth":{}}"#)).is_none(),
+            "missing accessToken"
+        );
+        assert!(
+            oauth_token(&write(
+                "empty.json",
+                r#"{"claudeAiOauth":{"accessToken":""}}"#
+            ))
+            .is_none(),
+            "empty token is not a token"
+        );
+        assert_eq!(
+            oauth_token(&write(
+                "ok.json",
+                r#"{"claudeAiOauth":{"accessToken":"sk-abc"}}"#
+            )),
+            Some("sk-abc".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exit_codes_are_the_interface() {
+        assert_eq!(UsageVerdict::Run(String::new()).code(), 0);
+        assert_eq!(UsageVerdict::Pause(String::new()).code(), 10);
+    }
+}
+
 /// verdict word -> the `ai:*` label it records. None for anything else.
 fn verdict_label(verdict: &str) -> Option<&'static str> {
     match verdict {
@@ -5769,6 +6355,10 @@ enum Cmd {
     },
     /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
     DistillTrace,
+    /// Weekly-budget pace gate. Prints one line; exits 0 to RUN this tick, 10 to PAUSE it.
+    /// Config is env-only (USAGE_CEILING_PCT, USAGE_SLACK_PCT, USAGE_USED_PCT, USAGE_RESET_AT,
+    /// CLAUDE_CREDENTIALS, USAGE_URL), exported by the runners from cron.env.
+    UsageGate,
     /// The producer's whole in-flight worklist in ONE call: own open PRs with CI/failing-checks/
     /// mergeState/threads/closes/markers and a computed next_action. Replaces the hand-rolled startup.
     Worklist {
@@ -6645,6 +7235,7 @@ fn main() {
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
+        Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
         Cmd::FlagBlockedDeploy {

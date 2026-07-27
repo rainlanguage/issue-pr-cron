@@ -48,6 +48,12 @@ WORK_DIR="$HOME/code"          # where the audit lens checks PRs out (review-pro
 REVIEW_KEEP_RUNS=2000          # ~1.8MB/trace → ~4GB/~11mo at 6/day; sole re-derivation source for future metrics (see campaign-run.sh KEEP_RUNS)
 # shellcheck disable=SC1091
 [ -f "$DIR/cron.env" ] && . "$DIR/cron.env"
+# The gate runs in-process in pr-review-report, so its config must reach the binary as ENV.
+# cron.env is sourced above, which makes these shell-local; export them explicitly. Exporting a
+# name that cron.env never set is a no-op — bash does not put unset names in the child's env — so
+# an unset var stays absent rather than arriving as an empty string.
+export USAGE_CEILING_PCT USAGE_SLACK_PCT USAGE_USED_PCT USAGE_RESET_AT USAGE_URL CLAUDE_CREDENTIALS
+
 
 # --- org scope: single source = cron.env ORGS; derive owner-flags + prose, export for pr-review-report ---
 : "${ORGS:=rainlanguage cyclofinance}"
@@ -65,14 +71,12 @@ if [ -f "$DIR/review-DISABLED" ]; then
   echo "$(date -u +%FT%TZ) SKIP: review-DISABLED flag present" >> "$LOG"; exit 0
 fi
 
-# --- weekly-budget pace gate: skip this tick when usage is over the ceiling or
-# running ahead of a linear burn toward the reset. Reads /api/oauth/usage
-# itself — see usage-gate.sh ---
-if [ -x "$DIR/usage-gate.sh" ]; then
-  _ug="$("$DIR/usage-gate.sh")"; _ugrc=$?
-  echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
-  [ "$_ugrc" -eq 10 ] && exit 0
-fi
+# --- weekly-budget pace gate: skip this tick when usage is over the ceiling or running ahead of a
+# linear burn toward the reset. `usage-gate` reads /api/oauth/usage itself; exit 10 means PAUSE.
+# It is INERT when it cannot read usage and no fallback is set — it prints OK and we run. ---
+_ug="$(pr-review-report usage-gate)"; _ugrc=$?
+echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
+[ "$_ugrc" -eq 10 ] && exit 0
 
 # --- single-run lock (non-blocking) ---
 exec 9>"$LOCK"
