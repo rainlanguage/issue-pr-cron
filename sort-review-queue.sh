@@ -11,20 +11,10 @@
 # Usage: ./sort-review-queue.sh [N]   (default: top 20; 0 = all)
 set -uo pipefail
 
-DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-cd "$DIR" || exit 1
-BIN="$DIR/pr-review-report-rs/target/release/pr-review-report"
+# Packaged as a flake output: `gh` and the binary come from the flake's locked nixpkgs, so the
+# gh-hunting re-exec and the unpinned `cargo build --release` fallback are both gone (#76 items
+# 2 and 5). $0 is a read-only nix store path now, so the install dir comes from $CRON_DIR,
+# defaulting to $PWD.
+cd "${CRON_DIR:-$PWD}" || exit 1
 
-# gh is required at runtime; re-exec under nix if it isn't already on PATH.
-if ! command -v gh >/dev/null 2>&1 && command -v nix >/dev/null 2>&1; then
-  exec nix shell nixpkgs#gh --command "$0" "$@"
-fi
-
-if [ ! -x "$BIN" ]; then
-  echo "sort-review-queue: Rust binary not built; building it now…" >&2
-  ( cd "$DIR/pr-review-report-rs" \
-      && nix shell nixpkgs#cargo nixpkgs#rustc --command cargo build --release >&2 ) \
-    || { echo "sort-review-queue: build failed; run: (cd pr-review-report-rs && cargo build --release)" >&2; exit 1; }
-fi
-
-exec "$BIN" --queue "${1:-20}"
+exec pr-review-report queue "${1:-20}"

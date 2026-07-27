@@ -725,9 +725,21 @@ fn run_metrics(content: &str) -> RunMetrics {
     m
 }
 
-/// `--run-metrics <trace.jsonl>`: print the run's metrics (startup overhead, duration, tokens,
-/// cost) as one JSON line — the input to a committed metrics/runs.jsonl and the #7 dashboard.
-fn run_metrics_mode(path: &str) -> i32 {
+/// `run-metrics <trace.jsonl> [--run-id --role --model --exit-code]`: print the run's metrics
+/// (startup overhead, duration, tokens, cost) as one JSON line — the input to a committed
+/// metrics/runs.jsonl and the #7 dashboard.
+///
+/// With the run-identity flags it emits the FULL runs.jsonl record. The runners used to pipe this
+/// through `jq '. + {runId:…, role:…, model:…, exitCode:…, outcome:…}'`; folding the merge in here
+/// means the record's shape lives in one tested place, and `outcome` is derived by
+/// [`classify_trace`] rather than by grepping the trace in bash.
+fn run_metrics_mode(
+    path: &str,
+    run_id: Option<&str>,
+    role: Option<&str>,
+    model: Option<&str>,
+    exit_code: Option<i32>,
+) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
@@ -736,7 +748,7 @@ fn run_metrics_mode(path: &str) -> i32 {
         }
     };
     let m = run_metrics(&content);
-    let doc = serde_json::json!({
+    let mut doc = serde_json::json!({
         "trace": path,
         "toolCalls": m.tool_calls,
         "startupToolCalls": m.startup_tool_calls,
@@ -752,8 +764,858 @@ fn run_metrics_mode(path: &str) -> i32 {
         "cacheCreation": m.cache_creation,
         "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
     });
+    // Only enrich when the caller supplied run identity, so a bare `run-metrics <trace>` keeps
+    // emitting exactly the record it always has (the dashboard re-derives history from traces).
+    if let Some(obj) = doc.as_object_mut() {
+        if let Some(run_id) = run_id {
+            obj.insert("runId".into(), serde_json::json!(run_id));
+        }
+        if let Some(role) = role {
+            obj.insert("role".into(), serde_json::json!(role));
+        }
+        if let Some(model) = model {
+            obj.insert("model".into(), serde_json::json!(model));
+        }
+        if let Some(rc) = exit_code {
+            obj.insert("exitCode".into(), serde_json::json!(rc));
+            obj.insert(
+                "outcome".into(),
+                serde_json::json!(classify_trace(&content, rc).as_str()),
+            );
+        }
+    }
     println!("{}", serde_json::to_string(&doc).unwrap());
     0
+}
+
+/// How a run ended. This is a TYPE, not a grep over the trace bytes.
+///
+/// The runners used to decide model-fallback with
+/// `grep -qiE '"api_error_status": ?429|reached your [^"]*limit|usage limit|session limit'`
+/// across the whole trace AND its stderr sidecar. That matched anywhere — including inside a
+/// tool RESULT quoting an unrelated 429, or a PR body the run happened to read — so an
+/// unaffected model could be skipped for a quota problem that was never ours.
+///
+/// Here the discriminant is structural: only `result` events are consulted, and only their
+/// typed fields. Text is read from `.result` alone (the model's own final message), never from
+/// arbitrary trace bytes.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum TraceOutcome {
+    Ok,
+    /// The model is quota/usage limited — the ONLY outcome that should advance model fallback.
+    QuotaLimited,
+    Error,
+}
+
+impl TraceOutcome {
+    /// The wire word written into metrics/runs.jsonl. `session-limit` is kept verbatim: the
+    /// committed history already uses it and the dashboard reads it.
+    fn as_str(self) -> &'static str {
+        match self {
+            TraceOutcome::Ok => "ok",
+            TraceOutcome::QuotaLimited => "session-limit",
+            TraceOutcome::Error => "error",
+        }
+    }
+}
+
+/// True when a `result` event says *this run* was refused for quota/usage limits.
+///
+/// Checked in order of decreasing structure:
+///   1. `api_error_status` == 429 (typed, unambiguous — a real HTTP status field),
+///   2. `subtype` naming a limit (the SDK's own enumerated reason),
+///   3. the `result` string itself, which is the model's final message and the only place a
+///      limit is reported in prose. Scoped to that one field, so a 429 quoted inside a tool
+///      result or a fetched page can never trip it.
+fn result_event_is_quota_limited(ev: &Value) -> bool {
+    if ev.get("type").and_then(|t| t.as_str()) != Some("result") {
+        return false;
+    }
+    // 1. Typed status field. Accept both the numeric and stringified spellings the SDK has used.
+    if let Some(status) = ev.get("api_error_status") {
+        let is_429 = status.as_i64() == Some(429)
+            || status.as_str().map(|s| s.trim() == "429").unwrap_or(false);
+        if is_429 {
+            return true;
+        }
+    }
+    // 2. Enumerated subtype.
+    if let Some(sub) = ev.get("subtype").and_then(|s| s.as_str()) {
+        let sub = sub.to_ascii_lowercase();
+        if sub.contains("usage_limit")
+            || sub.contains("session_limit")
+            || sub.contains("rate_limit")
+        {
+            return true;
+        }
+    }
+    // 3. The model's own final message, and nothing else.
+    if let Some(text) = ev.get("result").and_then(|r| r.as_str()) {
+        let t = text.to_ascii_lowercase();
+        if t.contains("usage limit") || t.contains("session limit") || t.contains("reached your") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Classify a whole trace. `exit_code` is the runner's own observation of the claude process, so a
+/// process that died without ever emitting a `result` event is still an error rather than an "ok".
+fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
+    let quota = trace
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .any(|ev| result_event_is_quota_limited(&ev));
+    if quota {
+        return TraceOutcome::QuotaLimited;
+    }
+    if exit_code != 0 {
+        return TraceOutcome::Error;
+    }
+    TraceOutcome::Ok
+}
+
+/// `trace-outcome <trace> --exit-code <n>`: print the typed outcome word and exit 0.
+///
+/// The runners' model-fallback loop consumes this instead of grepping. Kept separate from
+/// `run-metrics` because the loop must decide whether to try the next model *before* the run's
+/// metrics line is assembled.
+fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
+    // An unreadable/absent trace is not itself an error to report on: the runner already
+    // distinguishes "no event stream" separately. Treat it as an empty trace.
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    println!("{}", classify_trace(&content, exit_code).as_str());
+    0
+}
+
+/// One `{ts, counts}` rollup line for human-queue-history.jsonl, from a human-queue.json snapshot.
+///
+/// Replaces `jq -c --arg ts "$ts" '{ts: $ts, counts: .counts}'` in refresh-human-queue.sh and the
+/// per-commit `select(.counts != null) | …` in backfill-human-queue-history.sh — one implementation
+/// for the live append and the historical backfill, so the two can never drift into different line
+/// shapes for the same file.
+///
+/// Returns None when the snapshot has no `counts` (the backfill's `select`): early commits of
+/// human-queue.json predate the key, and those commits must be skipped, not emitted as null.
+fn queue_history_line(snapshot: &str, ts: &str) -> Option<String> {
+    let doc: Value = serde_json::from_str(snapshot).ok()?;
+    let counts = doc.get("counts")?;
+    if counts.is_null() {
+        return None;
+    }
+    let line = serde_json::json!({ "ts": ts, "counts": counts });
+    Some(serde_json::to_string(&line).unwrap())
+}
+
+/// `queue-history-line [<snapshot.json>] --ts <iso8601>`: emit the rollup line, or nothing.
+///
+/// Reads stdin when no path is given, because the backfill feeds it `git show <sha>:human-queue.json`
+/// per commit rather than a file on disk.
+fn queue_history_line_mode(path: Option<&str>, ts: &str) -> i32 {
+    let snapshot = match path {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("error: cannot read snapshot {p}: {e}");
+                return 2;
+            }
+        },
+        None => {
+            use std::io::Read;
+            let mut buf = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+                eprintln!("error: cannot read snapshot from stdin: {e}");
+                return 2;
+            }
+            buf
+        }
+    };
+    // No counts => print nothing and succeed. The backfill loop appends our stdout directly, so a
+    // skipped commit must contribute zero bytes rather than a `null` line.
+    if let Some(line) = queue_history_line(&snapshot, ts) {
+        println!("{line}");
+    }
+    0
+}
+
+/// Render one trace event as the human-readable log line the runners tee into `$LOG`.
+///
+/// This is the jq distiller from campaign-run.sh/review-run.sh, moved into the binary so both
+/// runners share one implementation and so the truncation widths are covered by tests rather than
+/// by an 8-line jq program duplicated in two shell scripts.
+///
+/// Widths and glyphs are preserved exactly: tool calls and assistant text clip to 200 characters,
+/// result lines to 800. Clipping is by CHARACTER, matching jq's `.[0:200]` (which slices
+/// codepoints), so a multi-byte glyph is never cut in half.
+fn distill_event(ev: &Value) -> Vec<String> {
+    fn flatten(s: &str, limit: usize) -> String {
+        s.replace('\n', " ").chars().take(limit).collect()
+    }
+    let mut out = Vec::new();
+    match ev.get("type").and_then(|t| t.as_str()) {
+        Some("assistant") => {
+            let content = ev
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array());
+            for item in content.into_iter().flatten() {
+                match item.get("type").and_then(|t| t.as_str()) {
+                    Some("tool_use") => {
+                        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        // Same precedence as the jq: the command, else the description, else the
+                        // whole input rendered as JSON.
+                        let input = item.get("input");
+                        let detail = input
+                            .and_then(|i| i.get("command"))
+                            .and_then(|c| c.as_str())
+                            .map(|s| s.to_string())
+                            .or_else(|| {
+                                input
+                                    .and_then(|i| i.get("description"))
+                                    .and_then(|d| d.as_str())
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| match input {
+                                Some(i) => serde_json::to_string(i).unwrap_or_default(),
+                                None => String::new(),
+                            });
+                        out.push(format!("  ▸ {}  {}", name, flatten(&detail, 200)));
+                    }
+                    Some("text") => {
+                        let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                        out.push(format!("  · {}", flatten(text, 200)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Some("result") => {
+            let subtype = ev
+                .get("subtype")
+                .and_then(|s| s.as_str())
+                .unwrap_or("done")
+                .to_ascii_uppercase();
+            let result = ev.get("result").and_then(|r| r.as_str()).unwrap_or("");
+            out.push(format!("  ⟹ {}: {}", subtype, flatten(result, 800)));
+        }
+        _ => {}
+    }
+    out
+}
+
+/// `distill-trace`: stream stream-json on stdin, write the human log lines on stdout.
+///
+/// Flushed per line, matching jq's `--unbuffered`: the runner tees this into the live log while the
+/// run is still going, and a human watching `tail -f` must see progress rather than a block at exit.
+/// Unparseable lines are skipped rather than fatal — the trace is written by another process and a
+/// torn final line must not lose the whole distillation.
+fn distill_trace_mode() -> i32 {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(ev) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        for out in distill_event(&ev) {
+            if writeln!(stdout, "{out}").is_err() {
+                return 0; // downstream closed (the runner's `|| cat >/dev/null` path)
+            }
+        }
+        let _ = stdout.flush();
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------------------------
+// Weekly-budget pace gate (was usage-gate.sh).
+//
+// Everything this gate does is data work — one HTTPS GET, a JSON parse, ISO-8601 date math and a
+// threshold comparison — so it lives here rather than in bash, where `python3` was only ever
+// present because bash cannot do any of it. Bash keeps process control; the binary does the rest.
+//
+// Two properties improve by being in-process:
+//   1. The bearer token never reaches the process table. The shell version went to real lengths
+//      for this (`curl --config -`, reading the header from stdin so the token stays out of argv);
+//      here there is no argv to leak into, so the property holds by construction.
+//   2. The pace arithmetic is a pure function of (used, reset, now, slack, ceiling) instead of a
+//      heredoc, so every branch and boundary is directly testable.
+// ---------------------------------------------------------------------------------------------
+
+/// One week, in milliseconds — the budget period the gate paces against.
+const USAGE_WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// What the gate decided. The exit code IS the interface: the runners branch on it.
+#[derive(Debug, PartialEq, Eq)]
+enum UsageVerdict {
+    /// Exit 0 — this tick may run.
+    Run(String),
+    /// Exit 10 — skip this tick. The caller logs the reason and exits 0 itself.
+    Pause(String),
+}
+
+impl UsageVerdict {
+    fn code(&self) -> i32 {
+        match self {
+            UsageVerdict::Run(_) => 0,
+            UsageVerdict::Pause(_) => 10,
+        }
+    }
+    fn reason(&self) -> &str {
+        match self {
+            UsageVerdict::Run(r) | UsageVerdict::Pause(r) => r,
+        }
+    }
+}
+
+/// A usage reading, whichever source it came from.
+#[derive(Debug, PartialEq)]
+struct UsageReading {
+    /// Percent of the weekly budget already used.
+    used: f64,
+    /// When the week rolls. `None` only via the fallback path — the endpoint always carries it,
+    /// and a reading whose `resets_at` will not parse is discarded rather than paced blind.
+    reset_ms: Option<i64>,
+    /// The reset timestamp as the source spelled it. Echoed rather than re-formatted so the log
+    /// shows exactly what the API said, and so no date-formatting code sits between the two.
+    reset_display: Option<String>,
+    /// `endpoint` or `fallback reading` — surfaced in the reason so a run's log says which was used.
+    source: &'static str,
+}
+
+/// Where usage "should" be by now at a steady burn toward `reset_ms`, as a percentage.
+///
+/// Clamped at both ends: a reset more than a week out yields a negative fraction (clamps to 0),
+/// and one already past yields over 1 (clamps to 100). Split out from [`usage_gate_decide`]
+/// because the upper clamp is unreachable through that path — the `now >= reset` branch returns
+/// first — so it would otherwise be untestable.
+fn linear_pct(now_ms: i64, reset_ms: i64) -> f64 {
+    let frac = (now_ms - (reset_ms - USAGE_WEEK_MS)) as f64 / USAGE_WEEK_MS as f64;
+    (frac * 100.0).clamp(0.0, 100.0)
+}
+
+/// The whole gate decision, as a pure function.
+///
+/// Order matters: the CEILING is checked before the PACE, and applies whatever the pace — being
+/// under a linear burn is no help once the weekly budget is nearly spent.
+///
+/// `None` reading means the endpoint could not be read and no fallback is set. That is INERT —
+/// it prints OK and the crons RUN. This is deliberate and must stay: an earlier version of this
+/// gate could not read usage and made the operator paste percentages in by hand, which silently
+/// paused both crons for 22 consecutive ticks when a reading went stale at 80%. The gate exists
+/// to pace spending, not to become a new way for the pipeline to stall — so a malformed response,
+/// an expired token, a network failure and an unparseable date all land here, never on Pause.
+fn usage_gate_decide(
+    reading: Option<&UsageReading>,
+    now_ms: i64,
+    slack: f64,
+    ceiling: f64,
+) -> UsageVerdict {
+    let Some(r) = reading else {
+        return UsageVerdict::Run(
+            "OK: usage endpoint unreachable and no fallback reading set — gate inert".to_string(),
+        );
+    };
+    let (used, source) = (r.used, r.source);
+
+    // 1. CEILING — at or over pauses. `>=` not `>`: the ceiling is the point we stop, not the
+    //    point we have already passed.
+    if used >= ceiling {
+        return UsageVerdict::Pause(format!(
+            "PAUSE: {used:.0}% of the weekly budget used ({source}) — at/over the {ceiling:.0}% ceiling"
+        ));
+    }
+
+    let (Some(reset_ms), Some(reset_display)) = (r.reset_ms, r.reset_display.as_deref()) else {
+        return UsageVerdict::Run(format!(
+            "OK: {used:.0}% used ({source}), under the {ceiling:.0}% ceiling — no reset known, pacing off"
+        ));
+    };
+
+    if now_ms >= reset_ms {
+        return UsageVerdict::Run(format!(
+            "OK: reset {reset_display} has passed ({source}) — new week"
+        ));
+    }
+
+    // 2. PACE — pause only when usage is MORE than `slack` ahead of the linear burn. Exactly at
+    //    the slack boundary still runs; `slack` is an allowance, not a limit to trip on.
+    let linear = linear_pct(now_ms, reset_ms);
+    if used - linear > slack {
+        return UsageVerdict::Pause(format!(
+            "PAUSE: {used:.0}% used vs {linear:.0}% linear-by-now toward reset \
+             {reset_display} ({source}) — >{slack:.0}% ahead of pace"
+        ));
+    }
+
+    UsageVerdict::Run(format!(
+        "OK: {used:.0}% used vs {linear:.0}% linear-by-now toward reset \
+         {reset_display} ({source}) — within {slack:.0}% slack"
+    ))
+}
+
+/// Pull the OAuth bearer token out of the credentials file (`.claudeAiOauth.accessToken`).
+/// Every failure — absent file, bad JSON, missing key, empty value — is `None`, which routes to
+/// the fallback-or-inert path rather than an error.
+fn oauth_token(creds: &str) -> Option<String> {
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(creds).ok()?).ok()?;
+    let tok = doc.get("claudeAiOauth")?.get("accessToken")?.as_str()?;
+    (!tok.is_empty()).then(|| tok.to_string())
+}
+
+/// The `seven_day` block: `utilization` is the percent used, `resets_at` is authoritative.
+/// Both must be present and well-formed or the whole reading is discarded — pacing against a
+/// usage number with no trustworthy reset date would be guessing.
+fn parse_seven_day(raw: &str) -> Option<UsageReading> {
+    let week = serde_json::from_str::<Value>(raw)
+        .ok()?
+        .get("seven_day")?
+        .clone();
+    let used = week.get("utilization")?.as_f64()?;
+    let resets_at = week.get("resets_at")?.as_str()?.to_string();
+    let reset_ms = iso_to_epoch_ms(&resets_at)?;
+    Some(UsageReading {
+        used,
+        reset_ms: Some(reset_ms),
+        reset_display: Some(resets_at),
+        source: "endpoint",
+    })
+}
+
+/// The operator's last manual reading, used only when the endpoint gave nothing.
+///
+/// A `USAGE_RESET_AT` that is set but unparseable discards the whole reading (returns `None`,
+/// i.e. inert) rather than pacing with no reset — matching the shell version, where the date
+/// parse and the percent parse shared one error path.
+fn fallback_reading(used_pct: &str, reset_at: &str) -> Option<UsageReading> {
+    if used_pct.trim().is_empty() {
+        return None;
+    }
+    let used: f64 = used_pct.trim().parse().ok()?;
+    let (reset_ms, reset_display) = if reset_at.trim().is_empty() {
+        (None, None)
+    } else {
+        (
+            Some(iso_to_epoch_ms(reset_at.trim())?),
+            Some(reset_at.trim().to_string()),
+        )
+    };
+    Some(UsageReading {
+        used,
+        reset_ms,
+        reset_display,
+        source: "fallback reading",
+    })
+}
+
+/// One HTTPS GET for the usage document. Any failure is `None` — see [`usage_gate_decide`] for
+/// why nothing here may escalate to a pause.
+fn fetch_usage(url: &str, token: &str) -> Option<String> {
+    ureq::get(url)
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .header("Content-Type", "application/json")
+        .call()
+        .ok()?
+        .body_mut()
+        .read_to_string()
+        .ok()
+}
+
+/// Read an env var as f64, falling back when unset, empty or unparseable.
+fn env_f64(name: &str, default: f64) -> f64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+/// `usage-gate`: prints one line and exits 0 (run) or 10 (pause).
+///
+/// Config is env-only, exported by the runners from cron.env — the same way ORGS/PR_ASSIGNEE
+/// already reach this binary.
+fn usage_gate_mode() -> i32 {
+    let ceiling = env_f64("USAGE_CEILING_PCT", 90.0);
+    let slack = env_f64("USAGE_SLACK_PCT", 5.0);
+
+    let creds = std::env::var("CLAUDE_CREDENTIALS").unwrap_or_else(|_| {
+        format!(
+            "{}/.claude/.credentials.json",
+            std::env::var("HOME").unwrap_or_default()
+        )
+    });
+    let url = std::env::var("USAGE_URL")
+        .unwrap_or_else(|_| "https://api.anthropic.com/api/oauth/usage".to_string());
+
+    let reading = oauth_token(&creds)
+        .and_then(|tok| fetch_usage(&url, &tok))
+        .and_then(|body| parse_seven_day(&body))
+        .or_else(|| {
+            fallback_reading(
+                &std::env::var("USAGE_USED_PCT").unwrap_or_default(),
+                &std::env::var("USAGE_RESET_AT").unwrap_or_default(),
+            )
+        });
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    let verdict = usage_gate_decide(reading.as_ref(), now_ms, slack, ceiling);
+    println!("{}", verdict.reason());
+    verdict.code()
+}
+
+#[cfg(test)]
+mod usage_gate_tests {
+    use super::*;
+
+    fn ms(iso: &str) -> i64 {
+        iso_to_epoch_ms(iso).expect("test timestamp must parse")
+    }
+    /// A reading from the endpoint with a known reset.
+    fn reading(used: f64, reset: &str) -> UsageReading {
+        UsageReading {
+            used,
+            reset_ms: Some(ms(reset)),
+            reset_display: Some(reset.to_string()),
+            source: "endpoint",
+        }
+    }
+    const RESET: &str = "2026-07-19T00:00:00Z";
+
+    // ---- inert: the property that must never regress to fail-closed --------------------------
+
+    // No endpoint and no fallback => RUN. An earlier gate that could not read usage paused both
+    // crons for 22 consecutive ticks; this gate paces spending, it does not stall the pipeline.
+    #[test]
+    fn no_reading_is_inert_and_runs() {
+        let v = usage_gate_decide(None, ms("2026-07-15T00:00:00Z"), 5.0, 90.0);
+        assert_eq!(v.code(), 0);
+        assert!(v.reason().starts_with("OK:"), "{}", v.reason());
+        assert!(v.reason().contains("gate inert"), "{}", v.reason());
+    }
+
+    // Every unreadable-usage shape collapses to None, i.e. to the inert path above — never a pause.
+    #[test]
+    fn unreadable_usage_shapes_never_produce_a_reading() {
+        assert!(parse_seven_day("").is_none(), "empty body");
+        assert!(parse_seven_day("not json").is_none(), "malformed JSON");
+        assert!(parse_seven_day("{}").is_none(), "missing seven_day");
+        assert!(
+            parse_seven_day(r#"{"seven_day":{"resets_at":"2026-07-19T00:00:00Z"}}"#).is_none(),
+            "missing utilization"
+        );
+        assert!(
+            parse_seven_day(r#"{"seven_day":{"utilization":50.0}}"#).is_none(),
+            "missing resets_at"
+        );
+        assert!(
+            parse_seven_day(r#"{"seven_day":{"utilization":50.0,"resets_at":"not-a-date"}}"#)
+                .is_none(),
+            "unparseable resets_at must discard the whole reading, not pace blind"
+        );
+    }
+
+    // ---- ceiling ------------------------------------------------------------------------------
+
+    // AT the ceiling pauses: the ceiling is where we stop, not where we have already gone past.
+    // Kills `used >= ceiling` -> `used > ceiling`.
+    #[test]
+    fn ceiling_pauses_at_the_boundary_not_only_over_it() {
+        let at = usage_gate_decide(
+            Some(&reading(90.0, RESET)),
+            ms("2026-07-18T00:00:00Z"),
+            5.0,
+            90.0,
+        );
+        assert_eq!(
+            at.code(),
+            10,
+            "exactly at the ceiling must PAUSE: {}",
+            at.reason()
+        );
+        assert!(
+            at.reason().contains("at/over the 90% ceiling"),
+            "{}",
+            at.reason()
+        );
+
+        // Just under the ceiling falls through to the pace check instead.
+        let under = usage_gate_decide(
+            Some(&reading(89.0, RESET)),
+            ms("2026-07-18T00:00:00Z"),
+            5.0,
+            90.0,
+        );
+        assert!(
+            !under.reason().contains("ceiling —"),
+            "89 < 90 must not trip the ceiling: {}",
+            under.reason()
+        );
+    }
+
+    // The ceiling is checked BEFORE the pace and applies whatever the pace says. Here usage is
+    // comfortably BEHIND a linear burn (95 used vs ~99 linear), so a pace-first ordering would
+    // return Run. Kills any reordering of the two checks.
+    #[test]
+    fn ceiling_is_checked_before_pace_and_wins() {
+        // One hour before reset => linear ~99.4%, so used-linear is negative: pace alone says run.
+        let now = ms(RESET) - 3_600_000;
+        let pace_only = usage_gate_decide(Some(&reading(95.0, RESET)), now, 5.0, 100.0);
+        assert_eq!(pace_only.code(), 0, "precondition: pace alone would RUN");
+
+        let v = usage_gate_decide(Some(&reading(95.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(v.code(), 10, "ceiling must win over a healthy pace");
+        assert!(v.reason().contains("ceiling"), "{}", v.reason());
+
+        // The ceiling is checked before EVERY later branch, not just the pace one — the two
+        // branches that return Run early would otherwise swallow it. Without these, moving the
+        // ceiling check below the pace check still passes, because in the case above both checks
+        // fire and only their order differs.
+
+        // (a) Over the ceiling with NO reset known: still a pause, not "pacing off".
+        let no_reset = UsageReading {
+            used: 95.0,
+            reset_ms: None,
+            reset_display: None,
+            source: "fallback reading",
+        };
+        let v = usage_gate_decide(Some(&no_reset), now, 5.0, 90.0);
+        assert_eq!(
+            v.code(),
+            10,
+            "over the ceiling must pause even with pacing off: {}",
+            v.reason()
+        );
+
+        // (b) Over the ceiling just after the week rolled: still a pause, not "new week".
+        let v = usage_gate_decide(Some(&reading(95.0, RESET)), ms(RESET) + 1, 5.0, 90.0);
+        assert_eq!(
+            v.code(),
+            10,
+            "over the ceiling must pause even once the reset has passed: {}",
+            v.reason()
+        );
+    }
+
+    // ---- pace ---------------------------------------------------------------------------------
+
+    // Exactly `slack` ahead still RUNS — slack is an allowance, not a limit to trip on.
+    // Kills `used - linear > slack` -> `>= slack`.
+    #[test]
+    fn pace_boundary_runs_at_exactly_slack_and_pauses_just_past_it() {
+        let now = ms(RESET) - USAGE_WEEK_MS / 2; // half the week elapsed => linear = 50%
+        assert_eq!(linear_pct(now, ms(RESET)), 50.0, "precondition");
+
+        let at = usage_gate_decide(Some(&reading(55.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(
+            at.code(),
+            0,
+            "exactly 5 ahead is within slack: {}",
+            at.reason()
+        );
+        assert!(at.reason().contains("within 5% slack"), "{}", at.reason());
+
+        let over = usage_gate_decide(Some(&reading(55.1, RESET)), now, 5.0, 90.0);
+        assert_eq!(
+            over.code(),
+            10,
+            "5.1 ahead exceeds slack: {}",
+            over.reason()
+        );
+        assert!(over.reason().contains("ahead of pace"), "{}", over.reason());
+    }
+
+    // Behind pace runs, and the reason names both numbers and the source.
+    #[test]
+    fn behind_pace_runs_and_reports_both_numbers() {
+        let now = ms(RESET) - USAGE_WEEK_MS / 2;
+        let v = usage_gate_decide(Some(&reading(10.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(v.code(), 0);
+        assert!(v.reason().contains("10% used"), "{}", v.reason());
+        assert!(v.reason().contains("50% linear-by-now"), "{}", v.reason());
+        assert!(v.reason().contains("(endpoint)"), "{}", v.reason());
+    }
+
+    // ---- the linear-pace clamp -----------------------------------------------------------------
+
+    // Both ends. The upper clamp is unreachable through usage_gate_decide (the `now >= reset`
+    // branch returns first), which is exactly why linear_pct is its own function.
+    #[test]
+    fn linear_pct_clamps_at_both_ends() {
+        let reset = ms(RESET);
+        // Reset two weeks out => frac = -1 => clamps to 0, not negative.
+        assert_eq!(linear_pct(reset - 2 * USAGE_WEEK_MS, reset), 0.0);
+        // Reset already a week past => frac = 2 => clamps to 100, not 200.
+        assert_eq!(linear_pct(reset + USAGE_WEEK_MS, reset), 100.0);
+        // And it is linear in between.
+        assert_eq!(linear_pct(reset - USAGE_WEEK_MS, reset), 0.0);
+        assert_eq!(linear_pct(reset - USAGE_WEEK_MS / 4, reset), 75.0);
+        assert_eq!(linear_pct(reset, reset), 100.0);
+    }
+
+    // ---- week roll and missing reset ------------------------------------------------------------
+
+    #[test]
+    fn reset_already_passed_runs_as_a_new_week() {
+        // Usage is high AND way ahead of any pace, but the week has rolled, so it must RUN.
+        let v = usage_gate_decide(Some(&reading(88.0, RESET)), ms(RESET) + 1, 5.0, 90.0);
+        assert_eq!(v.code(), 0, "{}", v.reason());
+        assert!(v.reason().contains("new week"), "{}", v.reason());
+        assert!(
+            v.reason().contains(RESET),
+            "reason echoes the reset: {}",
+            v.reason()
+        );
+
+        // EXACTLY at the reset instant is already the new week. Pinned because `>=` -> `>` here
+        // still returns code 0 (linear clamps to 100, so nothing reads as "ahead of pace") — only
+        // the REASON distinguishes them, and a run logged as a pace result at the roll boundary
+        // would misreport why it ran.
+        let at = usage_gate_decide(Some(&reading(88.0, RESET)), ms(RESET), 5.0, 90.0);
+        assert_eq!(at.code(), 0, "{}", at.reason());
+        assert!(
+            at.reason().contains("new week"),
+            "at the reset instant the week has rolled: {}",
+            at.reason()
+        );
+    }
+
+    // A reading with no reset paces nothing, but still honours the ceiling (checked earlier).
+    #[test]
+    fn absent_reset_runs_with_pacing_off() {
+        let r = UsageReading {
+            used: 40.0,
+            reset_ms: None,
+            reset_display: None,
+            source: "fallback reading",
+        };
+        let v = usage_gate_decide(Some(&r), ms("2026-07-15T00:00:00Z"), 5.0, 90.0);
+        assert_eq!(v.code(), 0);
+        assert!(v.reason().contains("pacing off"), "{}", v.reason());
+        assert!(v.reason().contains("(fallback reading)"), "{}", v.reason());
+    }
+
+    // ---- sources -------------------------------------------------------------------------------
+
+    #[test]
+    fn endpoint_reading_parses_and_names_its_source() {
+        let r = parse_seven_day(
+            r#"{"seven_day":{"utilization":12.5,"resets_at":"2026-07-19T11:59:59Z"}}"#,
+        )
+        .expect("well-formed body");
+        assert_eq!(r.used, 12.5);
+        assert_eq!(r.source, "endpoint");
+        assert_eq!(r.reset_display.as_deref(), Some("2026-07-19T11:59:59Z"));
+        assert_eq!(r.reset_ms, iso_to_epoch_ms("2026-07-19T11:59:59Z"));
+    }
+
+    #[test]
+    fn fallback_is_used_only_when_set_and_says_so() {
+        assert!(fallback_reading("", "").is_none(), "unset => inert");
+        assert!(fallback_reading("  ", "").is_none(), "blank => inert");
+        assert!(
+            fallback_reading("not-a-number", "").is_none(),
+            "unparseable pct => inert"
+        );
+        // Set but with an unparseable reset: discard the whole reading rather than pace blind.
+        assert!(
+            fallback_reading("60", "not-a-date").is_none(),
+            "unparseable reset must not silently become pacing-off"
+        );
+
+        let r = fallback_reading("60", RESET).expect("valid fallback");
+        assert_eq!(r.used, 60.0);
+        assert_eq!(r.source, "fallback reading");
+        assert_eq!(r.reset_ms, iso_to_epoch_ms(RESET));
+
+        // Percent alone is legitimate: pacing off, ceiling still enforced.
+        let r = fallback_reading("60", "").expect("pct-only fallback");
+        assert_eq!(r.reset_ms, None);
+    }
+
+    // The one-line reason must always say which source it used, on every path that has a reading.
+    #[test]
+    fn every_reading_path_names_its_source() {
+        let now = ms("2026-07-15T00:00:00Z");
+        for src in ["endpoint", "fallback reading"] {
+            let over = UsageReading {
+                used: 99.0,
+                reset_ms: Some(ms(RESET)),
+                reset_display: Some(RESET.to_string()),
+                source: src,
+            };
+            assert!(
+                usage_gate_decide(Some(&over), now, 5.0, 90.0)
+                    .reason()
+                    .contains(src),
+                "ceiling path must name {src}"
+            );
+            let paced = UsageReading { used: 80.0, ..over };
+            assert!(
+                usage_gate_decide(Some(&paced), now, 5.0, 90.0)
+                    .reason()
+                    .contains(src),
+                "pace path must name {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn oauth_token_is_none_for_every_bad_shape() {
+        let dir = std::env::temp_dir().join(format!("prr-usage-gate-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let write = |name: &str, body: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            p.to_string_lossy().to_string()
+        };
+        assert!(
+            oauth_token("/definitely/not/here.json").is_none(),
+            "absent file"
+        );
+        assert!(
+            oauth_token(&write("bad.json", "not json")).is_none(),
+            "bad JSON"
+        );
+        assert!(
+            oauth_token(&write("nokey.json", "{}")).is_none(),
+            "missing claudeAiOauth"
+        );
+        assert!(
+            oauth_token(&write("notok.json", r#"{"claudeAiOauth":{}}"#)).is_none(),
+            "missing accessToken"
+        );
+        assert!(
+            oauth_token(&write(
+                "empty.json",
+                r#"{"claudeAiOauth":{"accessToken":""}}"#
+            ))
+            .is_none(),
+            "empty token is not a token"
+        );
+        assert_eq!(
+            oauth_token(&write(
+                "ok.json",
+                r#"{"claudeAiOauth":{"accessToken":"sk-abc"}}"#
+            )),
+            Some("sk-abc".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exit_codes_are_the_interface() {
+        assert_eq!(UsageVerdict::Run(String::new()).code(), 0);
+        assert_eq!(UsageVerdict::Pause(String::new()).code(), 10);
+    }
 }
 
 /// verdict word -> the `ai:*` label it records. None for anything else.
@@ -5459,7 +6321,44 @@ enum Cmd {
         nix_threshold: u8,
     },
     /// Emit one enriched per-run metrics JSON line distilled from a stream-json trace.
-    RunMetrics { trace: String },
+    RunMetrics {
+        trace: String,
+        /// Run id (the runner's UTC timestamp). Enriches the record with `runId`.
+        #[arg(long)]
+        run_id: Option<String>,
+        /// producer | vetter.
+        #[arg(long)]
+        role: Option<String>,
+        /// The model that actually ran (after any fallback).
+        #[arg(long)]
+        model: Option<String>,
+        /// claude's exit code. Also selects `outcome`, classified from the trace.
+        #[arg(long)]
+        exit_code: Option<i32>,
+    },
+    /// Print the typed outcome of a run trace: `ok`, `session-limit`, or `error`.
+    /// The runners' model-fallback loop branches on this instead of grepping the trace.
+    TraceOutcome {
+        trace: String,
+        /// claude's exit code, so a run that died without a result event classifies as `error`.
+        #[arg(long, default_value_t = 0)]
+        exit_code: i32,
+    },
+    /// Emit one `{ts, counts}` rollup line from a human-queue.json snapshot (stdin if no path).
+    /// Prints nothing when the snapshot predates the `counts` key.
+    QueueHistoryLine {
+        /// Snapshot path; omit to read stdin.
+        snapshot: Option<String>,
+        /// ISO-8601 timestamp for the line.
+        #[arg(long)]
+        ts: String,
+    },
+    /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
+    DistillTrace,
+    /// Weekly-budget pace gate. Prints one line; exits 0 to RUN this tick, 10 to PAUSE it.
+    /// Config is env-only (USAGE_CEILING_PCT, USAGE_SLACK_PCT, USAGE_USED_PCT, USAGE_RESET_AT,
+    /// CLAUDE_CREDENTIALS, USAGE_URL), exported by the runners from cron.env.
+    UsageGate,
     /// The producer's whole in-flight worklist in ONE call: own open PRs with CI/failing-checks/
     /// mergeState/threads/closes/markers and a computed next_action. Replaces the hand-rolled startup.
     Worklist {
@@ -6320,7 +7219,23 @@ fn main() {
                 nix_threshold,
             )
         }
-        Cmd::RunMetrics { trace } => run_metrics_mode(&trace),
+        Cmd::RunMetrics {
+            trace,
+            run_id,
+            role,
+            model,
+            exit_code,
+        } => run_metrics_mode(
+            &trace,
+            run_id.as_deref(),
+            role.as_deref(),
+            model.as_deref(),
+            exit_code,
+        ),
+        Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
+        Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
+        Cmd::DistillTrace => distill_trace_mode(),
+        Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
         Cmd::FlagBlockedDeploy {
@@ -8748,12 +9663,267 @@ mod cli_tests {
 
     #[test]
     fn run_metrics_trace() {
+        // Bare form is unchanged: the enrichment flags are all optional, so the dashboard's
+        // re-derivation from raw traces keeps working untouched.
         assert_eq!(
             parse(&["prr", "run-metrics", "/path/to/trace.jsonl"]),
             Cmd::RunMetrics {
                 trace: "/path/to/trace.jsonl".to_string(),
+                run_id: None,
+                role: None,
+                model: None,
+                exit_code: None,
             }
         );
+        // The form the runners now use in place of the `| jq '. + {…}'` pipe.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--run-id",
+                "20260727T100743Z",
+                "--role",
+                "producer",
+                "--model",
+                "claude-fable-5",
+                "--exit-code",
+                "0"
+            ]),
+            Cmd::RunMetrics {
+                trace: "/t.jsonl".to_string(),
+                run_id: Some("20260727T100743Z".to_string()),
+                role: Some("producer".to_string()),
+                model: Some("claude-fable-5".to_string()),
+                exit_code: Some(0),
+            }
+        );
+    }
+
+    #[test]
+    fn trace_outcome_cli() {
+        assert_eq!(
+            parse(&["prr", "trace-outcome", "/t.jsonl"]),
+            Cmd::TraceOutcome {
+                trace: "/t.jsonl".to_string(),
+                exit_code: 0,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "trace-outcome", "/t.jsonl", "--exit-code", "124"]),
+            Cmd::TraceOutcome {
+                trace: "/t.jsonl".to_string(),
+                exit_code: 124,
+            }
+        );
+    }
+
+    #[test]
+    fn queue_history_line_cli() {
+        // Path form (refresh-human-queue.sh).
+        assert_eq!(
+            parse(&[
+                "prr",
+                "queue-history-line",
+                "/q.json",
+                "--ts",
+                "2026-07-27T10:00:00Z"
+            ]),
+            Cmd::QueueHistoryLine {
+                snapshot: Some("/q.json".to_string()),
+                ts: "2026-07-27T10:00:00Z".to_string(),
+            }
+        );
+        // Stdin form (backfill-human-queue-history.sh pipes `git show` into it).
+        assert_eq!(
+            parse(&["prr", "queue-history-line", "--ts", "2026-07-27T10:00:00Z"]),
+            Cmd::QueueHistoryLine {
+                snapshot: None,
+                ts: "2026-07-27T10:00:00Z".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn distill_trace_cli() {
+        assert_eq!(parse(&["prr", "distill-trace"]), Cmd::DistillTrace);
+    }
+
+    // ---- trace classification: the typed replacement for the runners' fallback grep ----
+
+    #[test]
+    fn quota_limit_from_typed_status_field() {
+        let t = r#"{"type":"result","subtype":"error","api_error_status":429}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+        // The SDK has also written it as a string.
+        let t = r#"{"type":"result","subtype":"error","api_error_status":"429"}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    #[test]
+    fn quota_limit_from_subtype_and_from_result_text() {
+        let t = r#"{"type":"result","subtype":"error_usage_limit"}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+        let t =
+            r#"{"type":"result","subtype":"error","result":"You have reached your usage limit."}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    // The whole point of moving this out of `grep`. The old regex scanned the raw trace, so a 429
+    // (or the words "usage limit") appearing inside a tool RESULT — a fetched page, a quoted CI
+    // log, a PR body the run happened to read — advanced model fallback for a run that was never
+    // quota-limited. Here only `result` events are consulted, so this trace is a clean success.
+    #[test]
+    fn quota_words_inside_tool_output_do_not_trip_fallback() {
+        let t = concat!(
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"HTTP 429: you have reached your usage limit"}]}}"#,
+            "\n",
+            r#"{"type":"result","subtype":"success","result":"opened 3 PRs"}"#,
+        );
+        assert_eq!(classify_trace(t, 0), TraceOutcome::Ok);
+        // …and the same bytes in an assistant message are equally inert.
+        let t = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"the API returned api_error_status 429 earlier"}]}}"#;
+        assert_eq!(classify_trace(t, 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn nonzero_exit_without_quota_signal_is_error() {
+        let t = r#"{"type":"result","subtype":"success","result":"done"}"#;
+        assert_eq!(classify_trace(t, 124), TraceOutcome::Error); // timeout(1)
+                                                                 // An empty trace (claude died before emitting anything) follows the exit code.
+        assert_eq!(classify_trace("", 1), TraceOutcome::Error);
+        assert_eq!(classify_trace("", 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn quota_wins_over_exit_code_so_fallback_still_advances() {
+        // A quota-limited run also exits non-zero; it must classify as the limit, not as a
+        // generic error, or the loop would stop instead of trying the next model.
+        let t = r#"{"type":"result","subtype":"error","api_error_status":429}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    #[test]
+    fn malformed_trace_lines_are_skipped_not_fatal() {
+        let t = concat!(
+            "not json at all\n",
+            "\n",
+            r#"{"type":"result","subtype":"error","api_error_status":429}"#,
+            "\n{\"truncated\": ",
+        );
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    #[test]
+    fn outcome_words_match_the_committed_history() {
+        // metrics/runs.jsonl already contains these three words and the dashboard reads them.
+        assert_eq!(TraceOutcome::Ok.as_str(), "ok");
+        assert_eq!(TraceOutcome::QuotaLimited.as_str(), "session-limit");
+        assert_eq!(TraceOutcome::Error.as_str(), "error");
+    }
+
+    // ---- queue-history-line: one implementation for the live append and the backfill ----
+
+    // Byte-identical to what the jq this replaces emitted, key order included — `ts` first, and
+    // the counts sub-object in the snapshot's own order. That parity is why serde_json carries the
+    // `preserve_order` feature; see the note in Cargo.toml.
+    #[test]
+    fn queue_history_line_shape() {
+        let snap = r#"{"counts":{"ready":3,"design":1},"other":"ignored"}"#;
+        assert_eq!(
+            queue_history_line(snap, "2026-07-27T10:00:00Z").unwrap(),
+            r#"{"ts":"2026-07-27T10:00:00Z","counts":{"ready":3,"design":1}}"#
+        );
+        // Only `counts` is carried over; anything else in the snapshot is dropped.
+        let parsed: Value = serde_json::from_str(&queue_history_line(snap, "t").unwrap()).unwrap();
+        assert_eq!(
+            parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["ts", "counts"]
+        );
+    }
+
+    #[test]
+    fn queue_history_line_skips_snapshots_without_counts() {
+        // The backfill's `select(.counts != null)`: early commits of human-queue.json predate the
+        // key, and those commits must contribute zero bytes rather than a `null` line.
+        assert!(queue_history_line(r#"{"prs":[]}"#, "t").is_none());
+        assert!(queue_history_line(r#"{"counts":null}"#, "t").is_none());
+        // `git show` of a commit where the file did not exist yields empty output.
+        assert!(queue_history_line("", "t").is_none());
+        assert!(queue_history_line("not json", "t").is_none());
+    }
+
+    // ---- distill-trace: the jq distiller, with its truncation widths now under test ----
+
+    #[test]
+    fn distill_tool_use_prefers_command_then_description_then_input() {
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Bash","input":{"command":"gh pr list","description":"ignored"}}]}});
+        assert_eq!(distill_event(&ev), vec!["  ▸ Bash  gh pr list"]);
+
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Read","input":{"description":"read a file"}}]}});
+        assert_eq!(distill_event(&ev), vec!["  ▸ Read  read a file"]);
+
+        // Neither key: the whole input object, as jq's `(.input|tostring)` did.
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"X","input":{"a":1}}]}});
+        assert_eq!(distill_event(&ev), vec![r#"  ▸ X  {"a":1}"#]);
+    }
+
+    #[test]
+    fn distill_flattens_newlines_and_clips_at_the_jq_widths() {
+        let long = "x".repeat(500);
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":long}]}});
+        let out = &distill_event(&ev)[0];
+        assert_eq!(
+            out.chars().count(),
+            4 + 200,
+            "text clips to 200 after '  · '"
+        );
+
+        let long = "y".repeat(1000);
+        let ev = serde_json::json!({"type":"result","subtype":"success","result":long});
+        let out = &distill_event(&ev)[0];
+        assert!(out.ends_with(&"y".repeat(800)));
+        assert_eq!(out.chars().count(), "  ⟹ SUCCESS: ".chars().count() + 800);
+
+        // Newlines become spaces so one event stays one log line.
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"a\nb\nc"}]}});
+        assert_eq!(distill_event(&ev), vec!["  · a b c"]);
+    }
+
+    // jq sliced CODEPOINTS (`.[0:200]`). Clipping bytes instead would split a multi-byte glyph
+    // and write invalid UTF-8 into the log the humans read.
+    #[test]
+    fn distill_clips_multibyte_text_by_character() {
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"é".repeat(300)}]}});
+        let out = &distill_event(&ev)[0];
+        assert_eq!(out.chars().filter(|c| *c == 'é').count(), 200);
+    }
+
+    #[test]
+    fn distill_result_defaults_subtype_and_uppercases_it() {
+        let ev = serde_json::json!({"type":"result","result":"done"});
+        assert_eq!(distill_event(&ev), vec!["  ⟹ DONE: done"]);
+        let ev = serde_json::json!({"type":"result","subtype":"error_max_turns","result":""});
+        assert_eq!(distill_event(&ev), vec!["  ⟹ ERROR_MAX_TURNS: "]);
+    }
+
+    #[test]
+    fn distill_emits_one_line_per_content_item_and_ignores_other_events() {
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"thinking"},
+            {"type":"tool_use","name":"Bash","input":{"command":"ls"}},
+            {"type":"thinking","thinking":"hidden"}]}});
+        assert_eq!(distill_event(&ev), vec!["  · thinking", "  ▸ Bash  ls"]);
+
+        // `user`/`system` events produced nothing under the jq filter either.
+        assert!(distill_event(&serde_json::json!({"type":"user"})).is_empty());
+        assert!(distill_event(&serde_json::json!({"type":"system","subtype":"init"})).is_empty());
     }
 
     // The pre-conversion `--foo` dispatch forms are gone: clap must REJECT them as unknown args

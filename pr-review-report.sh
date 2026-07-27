@@ -9,20 +9,15 @@
 # Config from ./cron.env (ORG, PR_ASSIGNEE), read by the binary.
 set -uo pipefail
 
-DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-cd "$DIR" || exit 1            # the binary reads cron.env + ledgers from this dir
-BIN="$DIR/pr-review-report-rs/target/release/pr-review-report"
+# Packaged as a flake output, so `gh` and the binary are already on PATH from the flake's locked
+# nixpkgs. Everything this wrapper used to do — re-exec under a registry-resolved `nix shell` to
+# find gh, then `cargo build --release` under an unpinned registry toolchain if the binary was
+# missing — is gone. Both existed only because a bare script could assume neither its tools nor
+# its own build; a flake package has both by construction, and the ad-hoc cargo build produced a
+# binary with no lock relationship to the one `nix build` produces (#76 items 2 and 5).
+#
+# $0 is a read-only nix store path now, so the install dir (cron.env, ledgers) comes from
+# $CRON_DIR, defaulting to $PWD — which is the checkout for an interactive run.
+cd "${CRON_DIR:-$PWD}" || exit 1
 
-# gh is required at runtime; re-exec under nix if it isn't already on PATH.
-if ! command -v gh >/dev/null 2>&1 && command -v nix >/dev/null 2>&1; then
-  exec nix shell nixpkgs#gh --command "$0" "$@"
-fi
-
-if [ ! -x "$BIN" ]; then
-  echo "pr-review-report: Rust binary not built; building it now…" >&2
-  ( cd "$DIR/pr-review-report-rs" \
-      && nix shell nixpkgs#cargo nixpkgs#rustc --command cargo build --release >&2 ) \
-    || { echo "pr-review-report: build failed; run: (cd pr-review-report-rs && cargo build --release)" >&2; exit 1; }
-fi
-
-exec "$BIN" "$@"
+exec pr-review-report "$@"

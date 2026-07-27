@@ -9,5 +9,16 @@ name = "pr-review-report"
 path = "src/main.rs"
 
 [dependencies]
-serde_json = "1"
+# `preserve_order` keeps JSON objects in their ORIGINAL key order instead of sorting them.
+# The run-log distiller renders a tool call's whole input object when it has no `command`/
+# `description` key, then clips it to 200 chars — so key order decides which fields survive
+# the clip. Sorted keys pushed `content` ahead of `file_path`, and every Write/Edit line in
+# campaign.log lost the filename it was about. jq preserved order; this keeps parity.
+serde_json = { version = "1", features = ["preserve_order"] }
 clap = { version = "4", features = ["derive"] }
+# The usage gate does one HTTPS GET against /api/oauth/usage. ureq is chosen over
+# reqwest because this crate has no async runtime and never wanted one — ureq is
+# blocking, which is the shape every other call site here already has. `rustls` (its
+# default) keeps TLS pure-Rust, so the nix build links no OpenSSL and the closure
+# stays self-contained. Only the gate uses it.
+ureq = "3"

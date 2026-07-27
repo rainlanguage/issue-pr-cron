@@ -302,28 +302,29 @@ and evidence that answers a narrower question than the issue asked.
 
 ## Files (tracked here)
 
-| File                     | Purpose                                                                                                                                                                                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `campaign-run.sh`        | Durable runner: `flock` single-run lock, `DISABLED` kill-switch, `timeout`, bakes PATH+nix, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`).                                 |
-| `campaign-prompt.txt`    | The campaign instructions fed to the model.                                                                                                                                                                                                  |
-| `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                    |
-| `review-run.sh`          | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                |
-| `review-prompt.txt`      | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                         |
-| `review-settings.json`   | Tool allow/deny for the vetter: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                          |
-| `review-mcp.json`        | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                             |
-| `campaign-mcp.json`      | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                     |
-| `cron.env.example`       | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                 |
-| `pr-review-report.sh`    | Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / relink / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
+| File                     | Purpose                                                                                                                                                                                                                                                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `campaign-run.sh`        | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                               |
+| `campaign-prompt.txt`    | The campaign instructions fed to the model.                                                                                                                                                                                                                                                                      |
+| `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                        |
+| `review-run.sh`          | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                    |
+| `review-prompt.txt`      | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                             |
+| `review-settings.json`   | Tool allow/deny for the vetter: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                                                                                              |
+| `review-mcp.json`        | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                 |
+| `campaign-mcp.json`      | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                         |
+| `cron.env.example`       | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                     |
+| `pr-review-report.sh`    | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / relink / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
 
 ## Configuration
 
 Deployment-specific values are **not** committed. Copy `cron.env.example` to
 `cron.env` (gitignored) and set at least `PR_ASSIGNEE` (the GitHub handle every
 opened PR is assigned to). `WORK_DIR`, `MODEL`, `MAXTIME`, `KEEP_RUNS` have
-defaults and may be overridden there. The runner self-locates its install dir
-and rebuilds `PATH`/nix from `$HOME`, so there are no machine paths in the repo;
-`campaign-prompt.txt` uses `{{WORK_DIR}}` / `{{CLOSE_CANDIDATES}}` /
-`{{ASSIGNEE}}` placeholders that the runner substitutes at run time.
+defaults and may be overridden there. The runner takes its install dir from
+`CRON_DIR` (falling back to the working directory) and gets its `PATH` from the
+flake closure, so there are no machine paths in the repo; `campaign-prompt.txt`
+uses `{{WORK_DIR}}` / `{{CLOSE_CANDIDATES}}` / `{{ASSIGNEE}}` placeholders that
+the runner substitutes at run time.
 
 ## Reviewing the output — the merge pipeline
 
@@ -367,11 +368,24 @@ reads `cron.env` for `ORG` / `ORGS` / `PR_ASSIGNEE`.
 
 ## Schedule & controls
 
-- **crontab:** `0 1,5,9,13,17,21 * * * <install-dir>/campaign-run.sh` (every
-  4h).
+- **crontab:** the runners are flake packages, so cron invokes them through nix
+  rather than by script path. `CRON_DIR` names the install dir (where
+  `cron.env`, the prompts, the logs and the ledgers live) — the script can no
+  longer derive it from `$0`, which is now a read-only path in the nix store.
+
+  ```cron
+  0 1,5,9,13,17,21 * * * PATH=$HOME/.nix-profile/bin:/usr/bin:/bin CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run
+  ```
+
+  The `PATH=` prefix exists only so cron can find `nix` itself; everything the
+  run then executes comes from the flake closure. Use the `git+file:` form, not
+  `path:`: a `path:` ref copies the working directory verbatim into the store on
+  every evaluation, and the install dir accumulates gitignored work clones and
+  traces (~5GB against ~1MB of tracked files). CI asserts the two refs produce
+  identical derivations, so the cheap one is always safe.
 - **Pause:** `touch DISABLED` · **Resume:** `rm DISABLED`
-- **Watch:** `tail -f campaign.log` · **Run now:** run `campaign-run.sh`
-  directly.
+- **Watch:** `tail -f campaign.log` · **Run now:**
+  `CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run`
 
 ## What a run does
 
