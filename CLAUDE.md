@@ -40,7 +40,7 @@ transition functions:
 | `--commit-closes <owner/repo> <n>`                         | closing-keyword vs. `closingIssuesReferences` drift check                                               |
 | `--backfill-comments`                                      | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment) |
 | `gc-clones <work-dir>...`                                  | reclaim merged/closed work-clones across one or more clone roots (state cleanup)                        |
-| `unvetted [--json] [--include-skipped]`                    | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals     |
+| `unvetted [--json] [--include-skipped] [--limit n]`        | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals (MCP always pages; the CLI is unbounded unless `--limit`) |
 | `unvetted_close_candidates` (MCP)                          | the vetter's second state-load: which producer close-candidate flags need judging this run              |
 | `record_close_candidate_verdict` (MCP)                     | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)  |
 | `mcp [--profile vetter\|producer]`                         | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                   |

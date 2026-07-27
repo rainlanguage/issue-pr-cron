@@ -3294,7 +3294,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // both come from this ONE document, so `counts.X == X.len()` holds by construction — the
     // dashboard's boxes are click-through, and a count that disagreed with its list would render a
     // number that lists a different number of issues.
-    let (cc_unvetted_items, cc_upheld_items) = unvetted_close_candidates_fetch(true)
+    // UNBOUNDED (`limit: None`): the dashboard renders whole sets, not a page. Paging here would
+    // make `counts.closeCandidateUnvetted` disagree with the list it labels.
+    let (cc_unvetted_items, cc_upheld_items) = unvetted_close_candidates_fetch(true, None)
         .ok()
         .map(|d| cc_item_arrays(&d))
         .unwrap_or_default();
@@ -5062,12 +5064,58 @@ fn unvetted_row(
     (action, vet_priority(ci, merge), row)
 }
 
+/// PURE: take at most `limit` items off the front of `items`, returning (page, not-on-this-page).
+/// `None` means unbounded — the CLI/dashboard shape, where the consumer is a shell or an in-process
+/// caller with no token budget.
+fn page<T>(items: Vec<T>, limit: Option<usize>) -> (Vec<T>, usize) {
+    let Some(limit) = limit else {
+        return (items, 0);
+    };
+    let more = items.len().saturating_sub(limit);
+    let mut items = items;
+    items.truncate(limit);
+    (items, more)
+}
+
+/// PURE: the tiny projection of a skipped row that is worth spending a caller's context on — which
+/// PR, why it was withheld, and (for the open-threads gate) how many threads. The full row carries
+/// `headRefOid`/`labels`/`ci`/`mergeable`/`reviewDecision`, all of which describe a PR the caller is
+/// about to do NOTHING with; 150 of them is what made the state-load unreadable (#78).
+fn skipped_digest(row: &Value) -> Value {
+    let mut d = serde_json::json!({
+        "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+        "action": row.get("action").cloned().unwrap_or(Value::Null),
+    });
+    if let Some(t) = row.get("unresolvedThreads") {
+        d.as_object_mut()
+            .expect("object")
+            .insert("unresolvedThreads".into(), t.clone());
+    }
+    d
+}
+
 /// PURE: the `unvetted` document from classified rows. `prs` holds the PRs to VET, in vet-first order
-/// (priority, then a stable pr key); the skipped ones are counted, and only listed when
-/// `include_skipped` — a skipped PR needs no per-PR reasoning, and every listed row costs context.
-fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value {
+/// (priority, then a stable pr key), capped at `limit` with the remainder reported as `more`.
+///
+/// BOUNDED BY CONSTRUCTION (#78). Every list here is a PAGE, not a dump: on 2026-07-27 this document
+/// returned 63,742 characters on ONE line, the vetter's harness refused it as over-budget, and the
+/// vetter silently re-called without `include_skipped` — dropping the whole open-threads accounting
+/// #2 had landed an hour earlier. Paging is the fix that does not depend on the queue staying small:
+/// the vetter vets ONE PR at a time and each verdict removes its PR from the next call's page, so a
+/// page walks the queue without an offset argument.
+///
+/// `openThreads` is UNCONDITIONAL and is the reason `include_skipped` is no longer load-bearing: the
+/// PRs withheld for unresolved threads are the only skipped rows carrying per-row information the
+/// vetter can act on (a PR left the queue with no verdict, and `unresolvedThreads` says why). Making
+/// it depend on an optional argument is exactly how that accounting went missing.
+fn unvetted_doc(
+    rows: &[(VetAction, u8, Value)],
+    include_skipped: bool,
+    limit: Option<usize>,
+) -> Value {
     let mut vet: Vec<(u8, String, Value)> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
+    let mut open_threads: Vec<Value> = Vec::new();
     let (mut n_draft, mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize, 0usize);
     for (action, prio, row) in rows {
         match action {
@@ -5085,7 +5133,17 @@ fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value
                 match other {
                     VetAction::SkipDraft => n_draft += 1,
                     VetAction::SkipHuman => n_human += 1,
-                    VetAction::SkipOpenThreads => n_threads += 1,
+                    VetAction::SkipOpenThreads => {
+                        n_threads += 1;
+                        open_threads.push(serde_json::json!({
+                            "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+                            "url": row.get("url").cloned().unwrap_or(Value::Null),
+                            "unresolvedThreads": row
+                                .get("unresolvedThreads")
+                                .cloned()
+                                .unwrap_or(Value::Null),
+                        }));
+                    }
                     // `Vet` is taken by the arm above; the only action left here is vetted-at-head.
                     VetAction::SkipVetted | VetAction::Vet => n_vetted += 1,
                 }
@@ -5094,22 +5152,34 @@ fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value
         }
     }
     vet.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
-    let prs: Vec<Value> = vet.into_iter().map(|(_, _, r)| r).collect();
+    let n_vet = vet.len();
+    let (page_rows, more) = page(vet, limit);
+    let prs: Vec<Value> = page_rows.into_iter().map(|(_, _, r)| r).collect();
+    let (open_threads, more_threads) = page(open_threads, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "open": rows.len(),
-            "vet": prs.len(),
+            "vet": n_vet,
             "skipDraft": n_draft,
             "skipHumanDecided": n_human,
             "skipVettedAtHead": n_vetted,
             "skipOpenThreads": n_threads,
         },
         "prs": prs,
+        // How many vet-able PRs this page LEFT BEHIND. A caller that reads `prs.len()` as the whole
+        // queue is wrong by exactly this number, so the number is stated rather than inferable.
+        "more": more,
+        "openThreads": open_threads,
+        "moreOpenThreads": more_threads,
     });
     if include_skipped {
-        doc.as_object_mut()
-            .expect("object")
-            .insert("skipped".into(), Value::Array(skipped));
+        let (rows, more_skipped) = page(skipped, limit);
+        let obj = doc.as_object_mut().expect("object");
+        obj.insert(
+            "skipped".into(),
+            Value::Array(rows.iter().map(skipped_digest).collect()),
+        );
+        obj.insert("moreSkipped".into(), Value::from(more_skipped));
     }
     doc
 }
@@ -5219,7 +5289,15 @@ fn flag_reason(body: &str) -> String {
 /// Live `unvetted-close-candidates` state-load: ONE org-wide search for open `ai:close-candidate`
 /// issues + one `gh issue view` each. Errors rather than returning a falsely-empty set, for the same
 /// reason the PR side does — an empty queue must never be an API failure in disguise.
-fn unvetted_close_candidates_fetch(include_skipped: bool) -> Result<Value, String> {
+///
+/// `limit` pages the `issues` list for the same reason [`unvetted_doc`] pages `prs` (#78): the MCP
+/// caller has a token budget, so it always supplies one. The DASHBOARD passes `None` — it derives
+/// `closeCandidateUnvetted`/`closeCandidateUpheld` from this document's own arrays, and a paged array
+/// would render a count that disagrees with the list under it.
+fn unvetted_close_candidates_fetch(
+    include_skipped: bool,
+    limit: Option<usize>,
+) -> Result<Value, String> {
     let mut args: Vec<String> = vec!["search".into(), "issues".into()];
     args.extend(org_owner_args());
     args.extend(
@@ -5298,10 +5376,12 @@ fn unvetted_close_candidates_fetch(include_skipped: bool) -> Result<Value, Strin
         }
     }
 
+    let n_vet = rows.len();
+    let (issues, more) = page(rows, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "flagged": found.len(),
-            "vet": rows.len(),
+            "vet": n_vet,
             "skipHumanDecided": n_human,
             "skipNoFlag": n_noflag,
             "skipVettedAtFlag": n_vetted,
@@ -5309,13 +5389,15 @@ fn unvetted_close_candidates_fetch(include_skipped: bool) -> Result<Value, Strin
             // reason the parts may not sum to the whole.
             "fetchErrors": errors.len(),
         },
-        "issues": rows,
+        "issues": issues,
+        "more": more,
         "fetchErrors": errors,
     });
     if include_skipped {
-        doc.as_object_mut()
-            .expect("object")
-            .insert("skipped".into(), Value::Array(skipped));
+        let (skipped, more_skipped) = page(skipped, limit);
+        let obj = doc.as_object_mut().expect("object");
+        obj.insert("skipped".into(), Value::Array(skipped));
+        obj.insert("moreSkipped".into(), Value::from(more_skipped));
     }
     Ok(doc)
 }
@@ -5488,7 +5570,10 @@ fn record_cc_verdict_apply(
 /// Live `unvetted` state-load: ONE org-wide search + one `gh pr view` per open non-draft PR whose
 /// labels don't already carry a human decision. Errors (rather than returning a falsely-empty set) if
 /// the search fails — an empty vet queue must never be an API failure in disguise.
-fn unvetted_fetch(include_skipped: bool) -> Result<Value, String> {
+///
+/// `limit` bounds the returned PAGE, not the work: every open PR is still classified (the counts are
+/// whole-queue), only the listed rows are capped. `None` = unbounded, the CLI shape.
+fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, String> {
     let assignee = pr_assignee();
     let mut args: Vec<String> = vec!["search".into(), "prs".into()];
     args.extend(org_owner_args());
@@ -5565,11 +5650,11 @@ fn unvetted_fetch(include_skipped: bool) -> Result<Value, String> {
             },
         ));
     }
-    Ok(unvetted_doc(&rows, include_skipped))
+    Ok(unvetted_doc(&rows, include_skipped, limit))
 }
 
-fn unvetted_mode(json_out: bool, include_skipped: bool) -> i32 {
-    let doc = match unvetted_fetch(include_skipped) {
+fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) -> i32 {
+    let doc = match unvetted_fetch(include_skipped, limit) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("{e}");
@@ -5597,6 +5682,18 @@ fn unvetted_mode(json_out: bool, include_skipped: bool) -> i32 {
             p["ci"].as_str().unwrap_or("?"),
             p["mergeable"].as_str().unwrap_or("?"),
             p["title"].as_str().unwrap_or("")
+        );
+    }
+    if doc["more"].as_u64().unwrap_or(0) > 0 {
+        println!("  … {} more not on this page", doc["more"]);
+    }
+    // The PRs withheld because a review thread is still open. Printed unconditionally: this is the
+    // one skip reason that says a PR left the queue with NO verdict and work is owed on it.
+    for t in doc["openThreads"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [withheld · {} unresolved thread(s)]",
+            t["pr"].as_str().unwrap_or(""),
+            t["unresolvedThreads"]
         );
     }
     0
@@ -5848,6 +5945,29 @@ const MAX_BASIS_WORDS: usize = 12;
 const GC_MAX_AGE_DEFAULT: u64 = 30;
 const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 
+/// How many rows ONE state-load page carries, and the bounds a caller may move it within (#78).
+///
+/// The vetter judges ONE PR at a time and each `record_verdict` removes that PR from the next
+/// call's page, so a page walks the whole queue without an offset argument — which is why the
+/// default is small rather than "everything that fits". The ceiling is what keeps the bound
+/// STRUCTURAL: at 25 rows a state-load cannot reach [`MCP_MAX_RESULT_BYTES`] even with GitHub's
+/// longest legal titles, so the size of the queue stops being able to break the state-load.
+const STATE_LOAD_PAGE_DEFAULT: usize = 10;
+const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=25;
+
+/// The byte budget ONE tool result must fit in — the contract this server holds itself to, checked
+/// on every result before it is handed back (#78).
+///
+/// Measured, not guessed: on 2026-07-27 12:44Z `unvetted {"include_skipped": true}` returned 63,742
+/// characters and the vetter's harness refused it as over its token cap. This JSON tokenises at
+/// roughly 2.5 chars/token (hex shas, urls, punctuation), which puts that refusal at ~25k tokens.
+/// Half of the refused payload leaves the whole harness framing inside the same cap.
+///
+/// It is a HARD ERROR, never a truncation: a state-load cut off mid-array is a payload whose own
+/// content cannot say what is missing, and the failure mode being fixed here is precisely a caller
+/// improvising around a state-load it could not see all of.
+const MCP_MAX_RESULT_BYTES: usize = 32_000;
+
 /// WHICH ROLE this server is serving. The two roles are different state machines that happen to
 /// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
 /// not a permission — `tools/list` returns only the profile's tools, so the producer never sees
@@ -5913,11 +6033,12 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
-            "description": "State-load: the open PRs to vet this run, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. Human-decided, draft and vetted-at-head PRs are already excluded.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — re-call after recording verdicts for the next page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why."}
+                    "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why (digest rows: pr, action, unresolvedThreads)."},
+                    "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
                 }
             }
         },
@@ -5959,11 +6080,12 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "unvetted_close_candidates",
-            "description": "State-load: the producer close-candidate flags on open issues to vet this run. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. Human-ruled and already-vetted-at-flag issues are excluded.",
+            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — re-call after recording verdicts. Human-ruled and already-vetted-at-flag issues are excluded.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."}
+                    "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."},
+                    "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
                 }
             }
         },
@@ -6042,6 +6164,9 @@ fn mcp_all_tools() -> Value {
 enum McpCall {
     Unvetted {
         include_skipped: bool,
+        /// Page size. Always `Some` from the MCP guard — the token-budgeted caller never gets an
+        /// unbounded state-load, which is the whole of #78.
+        limit: usize,
     },
     PrContext {
         slug: String,
@@ -6062,6 +6187,7 @@ enum McpCall {
     },
     UnvettedCloseCandidates {
         include_skipped: bool,
+        limit: usize,
     },
     CloseCandidateContext {
         slug: String,
@@ -6111,6 +6237,49 @@ fn parse_pr_ref(s: &str) -> Result<(String, u64), String> {
     Ok((format!("{owner}/{repo}"), num))
 }
 
+/// PURE: a state-load's page size. Absent means [`STATE_LOAD_PAGE_DEFAULT`]; out of range is
+/// REFUSED rather than clamped, for the same reason `max_diff_bytes` is — a silently-clamped
+/// argument leaves the caller believing it asked for something it did not get, which is the class
+/// of quiet disagreement #78 is about.
+fn state_load_limit(args: &Value) -> Result<usize, String> {
+    match args.get("limit") {
+        None | Some(Value::Null) => Ok(STATE_LOAD_PAGE_DEFAULT),
+        Some(v) => match v.as_u64() {
+            Some(n) if STATE_LOAD_PAGE_RANGE.contains(&n) => Ok(n as usize),
+            _ => Err(format!(
+                "limit must be an integer in {}..={}",
+                STATE_LOAD_PAGE_RANGE.start(),
+                STATE_LOAD_PAGE_RANGE.end()
+            )),
+        },
+    }
+}
+
+/// PURE: the byte budget THIS call's result must fit in.
+///
+/// [`MCP_MAX_RESULT_BYTES`] for every tool but one. `pr_context` is the exception because its size
+/// is the CALLER's explicit argument: `max_diff_bytes` says how big a diff to hand back, so a big
+/// result there is what was asked for, not a surprise — the budget is that argument plus one result
+/// budget for the metadata wrapped around the diff (body, files, linked issues, comments).
+fn call_result_budget(call: &McpCall) -> usize {
+    match call {
+        McpCall::PrContext { max_diff_bytes, .. } => max_diff_bytes + MCP_MAX_RESULT_BYTES,
+        _ => MCP_MAX_RESULT_BYTES,
+    }
+}
+
+/// PURE: the over-budget refusal. It is an ERROR, not a truncation and not a spill, and it names the
+/// argument that makes the call smaller — the caller's next move must be a narrower call, not an
+/// improvised one. (#78: the vetter met an over-budget state-load, invented a fallback that dropped
+/// the open-threads accounting, and nothing in the run said so.)
+fn oversize_result_error(name: &str, len: usize, budget: usize) -> String {
+    format!(
+        "error: tool `{name}` produced {len} bytes, over the {budget}-byte budget one tool result \
+         must fit in. Nothing was truncated or spilled — a partial state-load cannot say what it is \
+         missing. Re-call NARROWER: lower `limit` on a state-load, `max_diff_bytes` on `pr_context`."
+    )
+}
+
 fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     match args.get(key).and_then(|v| v.as_str()) {
         Some(s) if !s.trim().is_empty() => Ok(s),
@@ -6142,6 +6311,7 @@ fn validate_call(
                 .get("include_skipped")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+            limit: state_load_limit(args)?,
         }),
         "pr_context" => {
             let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
@@ -6202,6 +6372,7 @@ fn validate_call(
                 .get("include_skipped")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+            limit: state_load_limit(args)?,
         }),
         "close_candidate_context" => {
             let (slug, num) = parse_pr_ref(req_str(args, "issue")?)?;
@@ -6360,10 +6531,20 @@ fn mcp_handle(
                 .unwrap_or_else(|| serde_json::json!({}));
             let out = match validate_call(profile, roots, name, &args) {
                 Err(e) => tool_result(e, true),
-                Ok(call) => match exec(call) {
-                    Ok(text) => tool_result(text, false),
-                    Err(e) => tool_result(e, true),
-                },
+                Ok(call) => {
+                    // The budget is read off the VALIDATED call, before the effect runs, because
+                    // `exec` consumes it — and because it is a property of what was asked for.
+                    let budget = call_result_budget(&call);
+                    match exec(call) {
+                        // A result over budget is THIS server's error to raise. Handing it back and
+                        // letting the harness reject it is what left the vetter improvising (#78).
+                        Ok(text) if text.len() > budget => {
+                            tool_result(oversize_result_error(name, text.len(), budget), true)
+                        }
+                        Ok(text) => tool_result(text, false),
+                        Err(e) => tool_result(e, true),
+                    }
+                }
             };
             Some(jsonrpc_result(id, out))
         }
@@ -6381,9 +6562,10 @@ fn mcp_handle(
 fn mcp_exec(call: McpCall) -> Result<String, String> {
     let roots = clone_roots();
     match call {
-        McpCall::Unvetted { include_skipped } => {
-            unvetted_fetch(include_skipped).map(|d| d.to_string())
-        }
+        McpCall::Unvetted {
+            include_skipped,
+            limit,
+        } => unvetted_fetch(include_skipped, Some(limit)).map(|d| d.to_string()),
         McpCall::PrContext {
             slug,
             num,
@@ -6407,9 +6589,10 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             false,
         )
         .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
-        McpCall::UnvettedCloseCandidates { include_skipped } => {
-            unvetted_close_candidates_fetch(include_skipped).map(|d| d.to_string())
-        }
+        McpCall::UnvettedCloseCandidates {
+            include_skipped,
+            limit,
+        } => unvetted_close_candidates_fetch(include_skipped, Some(limit)).map(|d| d.to_string()),
         McpCall::CloseCandidateContext { slug, num } => {
             close_candidate_context_fetch(&slug, num).map(|d| d.to_string())
         }
@@ -6687,6 +6870,10 @@ enum Cmd {
         /// Also list the skipped PRs (draft / human-decided / vetted-at-head) and why.
         #[arg(long)]
         include_skipped: bool,
+        /// Rows per list. Omitted = unbounded: a terminal has no token budget, so the CLI is the
+        /// one caller that may ask for the whole queue. The MCP surface always pages (#78).
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
     /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
@@ -7588,7 +7775,8 @@ fn main() {
         Cmd::Unvetted {
             json,
             include_skipped,
-        } => unvetted_mode(json, include_skipped),
+            limit,
+        } => unvetted_mode(json, include_skipped, limit),
         Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
             Ok(p) => mcp_serve(p),
             Err(e) => {
@@ -8705,7 +8893,7 @@ mod open_threads_tests {
                 json!({"pr": "o/r#3", "action": "skip-vetted-at-head"}),
             ),
         ];
-        let doc = unvetted_doc(&rows, false);
+        let doc = unvetted_doc(&rows, false, None);
         assert_eq!(doc["counts"]["vet"], json!(1));
         assert_eq!(doc["counts"]["skipOpenThreads"], json!(1));
         assert_eq!(doc["counts"]["skipVettedAtHead"], json!(1));
@@ -9182,6 +9370,34 @@ mod settings_tests {
         assert!(
             allow.iter().any(|a| a == "ToolSearch"),
             "MCP tool schemas are deferred; without ToolSearch the clone tools are unreachable"
+        );
+    }
+
+    // #78: the vetter's surface is thirteen tools, fixed and tiny. Deferring it buys nothing and
+    // costs a `ToolSearch` round trip every run to rediscover a hardcoded allowlist, so the runner
+    // puts the harness in standard mode instead.
+    //
+    // The second half is the part that matters: `ToolSearch` stays ALLOWED. The export is an
+    // optimisation and must degrade to the old behaviour, never to a dead vetter — a run that
+    // cannot call `ToolSearch` while schemas are deferred sees its own tools as nonexistent and
+    // records nothing (#63). Allowed-and-unused costs one schema; disallowed-and-needed costs a run.
+    #[test]
+    fn the_vetter_presents_its_surface_instead_of_deferring_it() {
+        let Ok(runner) = std::fs::read_to_string("review-run.sh") else {
+            return;
+        };
+        assert!(
+            runner.contains("export ENABLE_TOOL_SEARCH=false"),
+            "review-run.sh must put the harness in standard mode so the tiny FSM surface is \
+             presented rather than deferred behind a ToolSearch round trip"
+        );
+        let Some(allow) = perm_list("review-settings.json", "allow") else {
+            return;
+        };
+        assert!(
+            allow.iter().any(|a| a == "ToolSearch"),
+            "ToolSearch must stay allowed as the fail-safe: if the harness defers anyway, a vetter \
+             that cannot call it records nothing at all"
         );
     }
 
@@ -11546,7 +11762,7 @@ mod vetter_state_load_tests {
             row("o/r#6", VetAction::SkipVetted, 4),
             row("o/r#2", VetAction::Vet, 0), // ties break on the pr key
         ];
-        let doc = unvetted_doc(&rows, false);
+        let doc = unvetted_doc(&rows, false, None);
         assert_eq!(doc["counts"]["open"], json!(6));
         assert_eq!(doc["counts"]["vet"], json!(3));
         assert_eq!(doc["counts"]["skipDraft"], json!(1));
@@ -11562,16 +11778,240 @@ mod vetter_state_load_tests {
         // skipped PRs cost context and need no reasoning -> absent unless asked for.
         assert!(doc.get("skipped").is_none());
 
-        let doc = unvetted_doc(&rows, true);
+        let doc = unvetted_doc(&rows, true, None);
         assert_eq!(doc["skipped"].as_array().unwrap().len(), 3);
     }
 
     #[test]
     fn empty_state_load_is_a_well_formed_empty_doc() {
-        let doc = unvetted_doc(&[], false);
+        let doc = unvetted_doc(&[], false, None);
         assert_eq!(doc["counts"]["open"], json!(0));
         assert_eq!(doc["counts"]["vet"], json!(0));
         assert_eq!(doc["prs"], json!([]));
+        // Present-and-empty, not absent: "nothing was withheld for threads" is an answer.
+        assert_eq!(doc["openThreads"], json!([]));
+        assert_eq!(doc["more"], json!(0));
+    }
+
+    // --- #78: the state-load is bounded BY CONSTRUCTION -----------------------------------------
+
+    /// The vet queue at LIVE scale. Every number here is measured, not invented: the state-load the
+    /// vetter's harness refused on 2026-07-27 12:44Z (spill
+    /// `mcp-fsm-unvetted-1785156423098.txt`, 63,742 chars on ONE line) reported
+    /// `{"open":170,"vet":20,"skipDraft":1,"skipHumanDecided":36,"skipVettedAtHead":113}`, and its
+    /// rows averaged 373 bytes. Rows are built through `unvetted_row`, so the widths are the
+    /// production emitter's, not a fixture's guess — a row that grows a field grows this test too.
+    fn live_scale_rows() -> Vec<(VetAction, u8, Value)> {
+        // Slugs/titles at the live repos' actual lengths; a short-name fixture would understate the
+        // payload by ~30% and let an unbounded doc slip under the budget.
+        let detail = |head: &str, labels: Value, review: Value, draft: bool| {
+            json!({
+                "headRefOid": head,
+                "labels": labels,
+                "reviewDecision": review,
+                "mergeable": "MERGEABLE",
+                "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
+                "comments": [],
+                "isDraft": draft,
+            })
+        };
+        let mut rows = Vec::new();
+        let mut push = |n: u64, labels: Value, review: Value, draft: bool, vetted: bool| {
+            let slug = "rainlanguage/rain.orderbook.interface";
+            let head = "58a938eec90fa7fb5c864cb58934335475d29e7e";
+            let mut d = detail(head, labels, review, draft);
+            if vetted {
+                d["comments"] = json!([vetter_comment(head, "ready")]);
+            }
+            rows.push(unvetted_row(
+                slug,
+                n,
+                &format!("https://github.com/{slug}/pull/{n}"),
+                "Replace the hand-rolled float parser with LibDecimalFloat (#2444)",
+                &d,
+            ));
+        };
+        for n in 0..20 {
+            push(1000 + n, json!([]), Value::Null, false, false);
+        }
+        for n in 0..113 {
+            push(
+                2000 + n,
+                json!([{"name": "ai:ready"}]),
+                Value::Null,
+                false,
+                true,
+            );
+        }
+        for n in 0..36 {
+            push(
+                3000 + n,
+                json!([{"name": "human:reject"}]),
+                Value::Null,
+                false,
+                false,
+            );
+        }
+        push(4000, json!([]), Value::Null, true, false);
+        rows
+    }
+
+    // THE regression test for #78. At the live queue size the state-load handed to the vetter must
+    // fit the budget one tool result has — including `include_skipped`, which is the exact call
+    // that returned 63,742 characters and was refused. The bound is structural (a page), so it does
+    // not depend on how many PRs happen to be open.
+    #[test]
+    fn the_state_load_is_bounded_at_the_live_queue_size() {
+        let rows = live_scale_rows();
+        assert_eq!(rows.len(), 170, "the fixture is the live queue size");
+
+        // The fixture reproduces the defect, checked against the ROWS rather than the emitter so it
+        // cannot be satisfied by the fix it is testing: listing all 170 of these rows in full — the
+        // pre-#78 shape — is over budget on its own, before any wrapper. Without this the bounded
+        // assertion below could pass on a toy queue.
+        let dumped: usize = rows.iter().map(|(_, _, r)| r.to_string().len()).sum();
+        assert!(
+            dumped > MCP_MAX_RESULT_BYTES,
+            "fixture must reproduce the over-budget payload (rows total {dumped} bytes)"
+        );
+
+        for include_skipped in [false, true] {
+            let doc = unvetted_doc(&rows, include_skipped, Some(STATE_LOAD_PAGE_DEFAULT));
+            let s = doc.to_string();
+            assert!(
+                s.len() <= MCP_MAX_RESULT_BYTES,
+                "state-load (include_skipped={include_skipped}) is {} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget",
+                s.len()
+            );
+            // Whole-queue truth survives the page: the counts are never the page's size.
+            assert_eq!(doc["counts"]["open"], json!(170));
+            assert_eq!(doc["counts"]["vet"], json!(20));
+            assert_eq!(doc["counts"]["skipVettedAtHead"], json!(113));
+            // Every list is capped, and what it left behind is STATED rather than inferable.
+            assert_eq!(
+                doc["prs"].as_array().unwrap().len(),
+                STATE_LOAD_PAGE_DEFAULT
+            );
+            assert_eq!(doc["more"], json!(10));
+            if include_skipped {
+                assert_eq!(
+                    doc["skipped"].as_array().unwrap().len(),
+                    STATE_LOAD_PAGE_DEFAULT
+                );
+                assert_eq!(doc["moreSkipped"], json!(140));
+            }
+        }
+
+        // The ceiling is what makes the bound structural rather than a hopeful default: the LARGEST
+        // page a caller may ask for still fits, so no argument reachable through the guard can
+        // reproduce the failure.
+        let max = *STATE_LOAD_PAGE_RANGE.end() as usize;
+        assert!(
+            unvetted_doc(&rows, true, Some(max)).to_string().len() <= MCP_MAX_RESULT_BYTES,
+            "the maximum page must still fit the budget"
+        );
+
+        // …and it holds as the queue GROWS, which is the property a byte check at today's size
+        // cannot give: at 5x the live open-PR count the page is the same size, because the page is
+        // what is bounded, not the queue.
+        let grown: Vec<_> = std::iter::repeat_with(live_scale_rows)
+            .take(5)
+            .flatten()
+            .collect();
+        assert_eq!(grown.len(), 850);
+        let doc = unvetted_doc(&grown, true, Some(max)).to_string();
+        assert!(
+            doc.len() <= MCP_MAX_RESULT_BYTES,
+            "a 5x queue must not change the page size (got {} bytes)",
+            doc.len()
+        );
+    }
+
+    // #78 requirement 1: the open-threads accounting (#2) must reach the vetter WITHOUT depending on
+    // an optional argument. It lived only in the skipped list, the skipped list is what blew the
+    // budget, and the vetter's fallback dropped it — so the gate merged hours earlier was invisible
+    // to its only consumer.
+    #[test]
+    fn the_open_threads_accounting_reaches_the_vetter_unconditionally() {
+        let gated = |pr: &str, threads: Value| {
+            (
+                VetAction::SkipOpenThreads,
+                0,
+                json!({
+                    "pr": pr,
+                    "url": format!("https://github.com/{}", pr.replace('#', "/pull/")),
+                    "action": "skip-open-threads",
+                    "unresolvedThreads": threads,
+                }),
+            )
+        };
+        let rows = vec![
+            (VetAction::Vet, 0, json!({"pr": "o/r#1", "action": "vet"})),
+            gated("o/r#2", json!(3)),
+            // an UNREADABLE thread state is fail-closed too, and must stay distinguishable from a
+            // verified zero once it reaches the vetter.
+            gated("o/r#3", Value::Null),
+            (
+                VetAction::SkipVetted,
+                4,
+                json!({"pr": "o/r#4", "action": "skip-vetted-at-head"}),
+            ),
+        ];
+
+        // No `include_skipped`, default page — the call the prompt actually tells the vetter to make.
+        let doc = unvetted_doc(&rows, false, Some(STATE_LOAD_PAGE_DEFAULT));
+        assert_eq!(doc["counts"]["skipOpenThreads"], json!(2));
+        assert_eq!(
+            doc["openThreads"],
+            json!([
+                {"pr": "o/r#2", "url": "https://github.com/o/r/pull/2", "unresolvedThreads": 3},
+                {"pr": "o/r#3", "url": "https://github.com/o/r/pull/3", "unresolvedThreads": null},
+            ]),
+            "the withheld PRs and their thread counts reach the vetter with no opt-in"
+        );
+        assert_eq!(doc["moreOpenThreads"], json!(0));
+        // and only the thread-gated rows are there — a vetted-at-head PR is not "withheld work".
+        assert!(!doc["openThreads"].to_string().contains("o/r#4"));
+
+        // The digest carried by `include_skipped` keeps the per-row thread count too, at ~1/5 the
+        // bytes of the full row: it is the part of a skipped row a caller can act on.
+        let doc = unvetted_doc(&rows, true, Some(STATE_LOAD_PAGE_DEFAULT));
+        assert_eq!(
+            doc["skipped"],
+            json!([
+                {"pr": "o/r#2", "action": "skip-open-threads", "unresolvedThreads": 3},
+                {"pr": "o/r#3", "action": "skip-open-threads", "unresolvedThreads": null},
+                {"pr": "o/r#4", "action": "skip-vetted-at-head"},
+            ])
+        );
+    }
+
+    // The page must not silently re-order or drop the queue's head: a page is the FIRST n in
+    // vet-first order, and `more` is exactly the remainder.
+    #[test]
+    fn a_page_is_the_front_of_the_queue_and_more_is_the_remainder() {
+        let rows: Vec<_> = (0..7)
+            .map(|n| {
+                (
+                    VetAction::Vet,
+                    n as u8,
+                    json!({"pr": format!("o/r#{n}"), "action": "vet"}),
+                )
+            })
+            .collect();
+        let doc = unvetted_doc(&rows, false, Some(3));
+        let listed: Vec<&str> = doc["prs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["pr"].as_str().unwrap())
+            .collect();
+        assert_eq!(listed, vec!["o/r#0", "o/r#1", "o/r#2"]);
+        assert_eq!(doc["more"], json!(4));
+        assert_eq!(doc["counts"]["vet"], json!(7), "counts stay whole-queue");
+        // a page larger than the queue leaves nothing behind.
+        assert_eq!(unvetted_doc(&rows, false, Some(99))["more"], json!(0));
+        assert_eq!(unvetted_doc(&rows, false, None)["more"], json!(0));
     }
 
     // --- pr_context_doc: the one-call review bundle ---------------------------------------------
@@ -12061,13 +12501,111 @@ mod mcp_tests {
                     max_diff_bytes: DEFAULT_MAX_DIFF_BYTES
                 },
                 McpCall::Unvetted {
-                    include_skipped: false
+                    include_skipped: false,
+                    limit: STATE_LOAD_PAGE_DEFAULT
                 },
                 McpCall::Unvetted {
-                    include_skipped: true
+                    include_skipped: true,
+                    limit: STATE_LOAD_PAGE_DEFAULT
                 },
             ]
         );
+    }
+
+    // #78: a state-load handed to a token-budgeted caller is ALWAYS paged. An out-of-range page is
+    // refused rather than clamped — a clamp leaves the caller believing it got what it asked for.
+    #[test]
+    fn a_state_load_page_is_bounded_by_the_transition_guard() {
+        let f = FakeExec::ok();
+        for tool in ["unvetted", "unvetted_close_candidates"] {
+            for bad in [json!(0), json!(26), json!("10"), json!(-1), json!(1000)] {
+                let resp = f.handle(&call(tool, json!({"limit": bad}))).unwrap();
+                assert!(is_error(&resp), "{tool} limit={bad} must be refused");
+                assert!(text(&resp).contains("limit must be an integer in 1..=25"));
+            }
+        }
+        assert!(f.calls().is_empty(), "no refused page reached a fetch");
+
+        // …and an in-range page is carried through verbatim.
+        f.handle(&call("unvetted", json!({"limit": 3}))).unwrap();
+        f.handle(&call("unvetted_close_candidates", json!({"limit": 25})))
+            .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::Unvetted {
+                    include_skipped: false,
+                    limit: 3
+                },
+                McpCall::UnvettedCloseCandidates {
+                    include_skipped: false,
+                    limit: 25
+                },
+            ]
+        );
+    }
+
+    // #78, the load-bearing one: an over-budget result is THIS SERVER's error. On 2026-07-27 the
+    // server handed back 63,742 bytes, the harness refused it, and the vetter improvised a fallback
+    // that silently dropped the open-threads accounting. A tool that cannot answer within budget
+    // must SAY SO, so the caller's only available next move is a narrower call.
+    #[test]
+    fn an_over_budget_result_is_refused_by_the_server_not_left_to_the_caller() {
+        let huge = "x".repeat(MCP_MAX_RESULT_BYTES + 1);
+        let f = FakeExec {
+            reply: Ok(huge.clone()),
+            ..FakeExec::ok()
+        };
+        let resp = f.handle(&call("unvetted", json!({}))).unwrap();
+        assert!(
+            is_error(&resp),
+            "an over-budget state-load must be an error"
+        );
+        let t = text(&resp);
+        assert!(t.contains("unvetted"), "the error names the tool: {t}");
+        assert!(
+            t.contains(&format!("{}", MCP_MAX_RESULT_BYTES + 1)) && t.contains("32000"),
+            "the error states the actual size and the budget: {t}"
+        );
+        assert!(
+            t.contains("limit"),
+            "the error names the argument that makes the call smaller: {t}"
+        );
+        // NOT a truncation and NOT a spill: no fragment of the payload is handed back to be
+        // half-read. A partial state-load cannot say what it is missing.
+        assert!(!t.contains(&huge[..64]), "no payload fragment is returned");
+
+        // Exactly at the budget is fine — the boundary is `>`, not `>=`.
+        let exact = FakeExec {
+            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES)),
+            ..FakeExec::ok()
+        };
+        assert!(!is_error(
+            &exact.handle(&call("unvetted", json!({}))).unwrap()
+        ));
+
+        // `pr_context` is budgeted by the argument the CALLER set: the same payload that is
+        // over-budget for a state-load is within budget for a diff that size, and over it for a
+        // diff cap that small.
+        let ok = f
+            .handle(&call(
+                "pr_context",
+                json!({"pr": "o/r#1", "max_diff_bytes": 100_000}),
+            ))
+            .unwrap();
+        assert!(!is_error(&ok), "the caller asked for 100k of diff");
+        let too_big = FakeExec {
+            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
+            ..FakeExec::ok()
+        };
+        let resp = too_big
+            .handle(&call(
+                "pr_context",
+                json!({"pr": "o/r#1", "max_diff_bytes": 1_000}),
+            ))
+            .unwrap();
+        assert!(is_error(&resp));
+        assert!(text(&resp).contains("max_diff_bytes"));
     }
 
     #[test]
