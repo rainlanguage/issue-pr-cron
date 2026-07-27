@@ -5753,9 +5753,15 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
 
 /// Default cap on the diff a single `pr_context` returns. A diff is the vetter's biggest single read;
 /// past this the model is reading a generated-artifact dump, not a reviewable change.
-const DEFAULT_MAX_DIFF_BYTES: usize = 300_000;
-/// Hard ceiling a caller may raise `max_diff_bytes` to.
-const MAX_MAX_DIFF_BYTES: u64 = 4_000_000;
+///
+/// It is the whole result budget on purpose: the tool FITS the diff to what is left after the
+/// metadata (see [`pr_context_fetch`]), so the default asks for "as much diff as can be delivered"
+/// rather than for a number that has to be guessed and then refused.
+const DEFAULT_MAX_DIFF_BYTES: usize = MCP_MAX_RESULT_BYTES;
+/// Hard ceiling a caller may raise `max_diff_bytes` to. Asking for more diff than a whole result may
+/// occupy is not expressible — that is what kept `pr_context`'s effective budget above the harness's
+/// ceiling no matter what the guard said (#81).
+const MAX_MAX_DIFF_BYTES: u64 = MCP_MAX_RESULT_BYTES as u64;
 
 /// PURE: truncate to at most `max` BYTES on a char boundary (never panics on multi-byte input);
 /// returns (text, truncated?).
@@ -5834,6 +5840,7 @@ fn pr_context_doc(
         "vetterComments": trusted_comments(detail, Some("🤖 ai:vetter")),
         "producerComments": trusted_comments(detail, Some("🤖 ai:producer")),
         "diffBytes": diff.len(),
+        "diffIncluded": diff_text.len(),
         "diffTruncated": truncated,
         "diff": diff_text,
     })
@@ -5882,14 +5889,54 @@ fn pr_context_fetch(slug: &str, num: u64, max_diff_bytes: usize) -> Result<Value
         }
         issues.push(iss);
     }
-    Ok(pr_context_doc(
-        slug,
-        num,
-        &detail,
-        &diff,
-        &issues,
-        max_diff_bytes,
-    ))
+    fit_pr_context(slug, num, &detail, &diff, &issues, max_diff_bytes)
+}
+
+/// PURE (given its inputs): build the `pr_context` document so that it FITS
+/// [`MCP_MAX_RESULT_BYTES`], shrinking the diff until it does.
+///
+/// This is what makes "no result can exceed the ceiling" a property of the tool rather than a hope
+/// about its arguments (#81). Truncating the diff is not a silent loss: `max_diff_bytes` is a diff
+/// cap by definition, and the document reports `diffBytes` (the whole diff's size), `diffIncluded`
+/// (what actually made it in) and `diffTruncated`, so a caller can always see the difference between
+/// what exists and what it was handed.
+///
+/// TERMINATION. Each round sets `cap -= overflow` where `overflow = len - MCP_MAX_RESULT_BYTES >= 1`,
+/// so `cap` strictly decreases in a well-ordered set and the loop cannot run more than `cap` times.
+/// It converges far faster than that bound: removing one raw byte of diff removes at least one byte
+/// of serialized document (every raw byte contributes >= 1 serialized byte, more when escaped), so
+/// one round overshoots rather than undershoots and two rounds is the practical worst case.
+///
+/// If the diff reaches zero and the document STILL does not fit, the metadata alone — body, file
+/// list, linked issues, trusted comments — is over the ceiling. No argument can shrink that, so it
+/// is an error that says so rather than a smaller diff nobody asked for.
+fn fit_pr_context(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    diff: &str,
+    issues: &[Value],
+    max_diff_bytes: usize,
+) -> Result<Value, String> {
+    let mut cap = max_diff_bytes.min(diff.len());
+    loop {
+        let doc = pr_context_doc(slug, num, detail, diff, issues, cap);
+        let len = doc.to_string().len();
+        if len <= MCP_MAX_RESULT_BYTES {
+            return Ok(doc);
+        }
+        if cap == 0 {
+            return Err(format!(
+                "error: `pr_context` for {slug}#{num} is {len} bytes with NO diff at all, over the \
+                 {MCP_MAX_RESULT_BYTES}-byte budget one tool result must fit in. The overflow is \
+                 metadata — body, file list, linked issues, trusted comments — so `max_diff_bytes` \
+                 cannot shrink it and re-calling narrower will not help. Read this PR from its \
+                 `pr_checkout` source and the issue links directly, or record NO verdict for it and \
+                 name it in your run summary."
+            ));
+        }
+        cap = cap.saturating_sub(len - MCP_MAX_RESULT_BYTES);
+    }
 }
 
 /// The throwaway work-clone root for the vetter's audit lens (`WORK_DIR`, else the system temp dir).
@@ -6139,17 +6186,60 @@ const STATE_LOAD_PAGE_DEFAULT: usize = 10;
 const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=25;
 
 /// The byte budget ONE tool result must fit in — the contract this server holds itself to, checked
-/// on every result before it is handed back (#78).
+/// on every result before it is handed back (#78), and sized so that OUR error always arrives before
+/// the harness's (#81).
 ///
-/// Measured, not guessed: on 2026-07-27 12:44Z `unvetted {"include_skipped": true}` returned 63,742
-/// characters and the vetter's harness refused it as over its token cap. This JSON tokenises at
-/// roughly 2.5 chars/token (hex shas, urls, punctuation), which puts that refusal at ~25k tokens.
-/// Half of the refused payload leaves the whole harness framing inside the same cap.
+/// That ordering is the whole mechanism. If the harness is the thing that speaks, the caller gets an
+/// untyped message with `is_error` UNSET, and every rule downstream about "a tool error is an
+/// instruction" stops applying at exactly the moment it is needed. The previous value was set by
+/// halving a payload the harness had refused; that is how `pr_context`'s budget
+/// (`max_diff_bytes + this`, up to 332,000) ended up six times above what the harness accepts, and
+/// how the gap survived #79.
 ///
-/// It is a HARD ERROR, never a truncation: a state-load cut off mid-array is a payload whose own
-/// content cannot say what is missing, and the failure mode being fixed here is precisely a caller
-/// improvising around a state-load it could not see all of.
-const MCP_MAX_RESULT_BYTES: usize = 32_000;
+/// MEASURED against Claude Code 2.1.220, by calling `pr_context` through the real harness at
+/// increasing `max_diff_bytes` and reading the `tool_result` the model actually received. There are
+/// TWO independent gates, and BOTH arrive with `is_error` unset:
+///
+/// - a BYTE gate → `<persisted-output> Output too large (NN KB) … Preview (first 2KB)`. Delivered at
+///   50,011 bytes, replaced at 50,176 — so the ceiling is in that 165-byte bracket. It is NOT
+///   governed by `MAX_MCP_OUTPUT_TOKENS`: forcing that to 200,000 still replaced a 50,486-byte
+///   result. This gate is the more dangerous one, because the 2 KB preview it substitutes LOOKS like
+///   the head of a real answer.
+/// - a TOKEN gate → `Error: result (N characters …) exceeds maximum allowed tokens`, governed by
+///   `MAX_MCP_OUTPUT_TOKENS` (forcing it to 100 replaced a 4.5 KB result). This is the gate the live
+///   traces hit, at 63,742 and 56,789 characters.
+///
+/// Isolating the token gate at `MAX_MCP_OUTPUT_TOKENS=10000` puts its boundary between 27,152 and
+/// 30,163 bytes, so this JSON measures **2.7–3.0 chars/token**. Nothing on the box sets that
+/// variable, and 56,789 characters was enough to trip the gate live, which puts the default cap near
+/// 19–21k tokens — i.e. BOTH gates land around 50 kB for this content, and neither is far from the
+/// other.
+///
+/// The value is set well under both rather than just under the tighter one, because the token gate
+/// scales with the CONTENT: a diff of generated hex — which this org has, in every
+/// `src/generated/*.pointers.sol` — tokenises far worse than prose, and a byte budget safe for one
+/// is not automatically safe for the other. At 36,000 bytes even a payload tokenising at 1.5
+/// chars/token stays inside a 19k-token cap. Re-measure with
+/// `probe.sh <max_diff_bytes> [token-limit]` (see the PR) if the harness version moves.
+const MCP_MAX_RESULT_BYTES: usize = 36_000;
+
+/// The largest `pr_context` result observed DELIVERED through Claude Code 2.1.220. The next probe
+/// up, 50,176 bytes, came back as `<persisted-output>` — so the harness's byte gate lives in that
+/// 165-byte bracket. Recorded next to the budget it constrains, rather than in a comment that can
+/// drift away from the number it is about.
+const MEASURED_HARNESS_GATE_BYTES: usize = 50_011;
+
+// The ordering that IS the mechanism, enforced at COMPILE time: our guard fires before the
+// harness's, or this does not build. A budget raised past the gate silently reinstates #81 — the
+// harness speaks instead, with `is_error` unset, and every downstream rule about tool errors stops
+// applying. The 25% margin is not timidity: the token gate scales with CONTENT, and generated-hex
+// diffs tokenise far worse than the prose-and-code JSON the gate was measured on.
+const _: () = assert!(MCP_MAX_RESULT_BYTES < MEASURED_HARNESS_GATE_BYTES);
+const _: () = assert!(MCP_MAX_RESULT_BYTES * 4 <= MEASURED_HARNESS_GATE_BYTES * 3);
+// …and no argument may reach past the budget, which is what let `pr_context` sit six times above the
+// harness ceiling however the guard was worded.
+const _: () = assert!(MAX_MAX_DIFF_BYTES as usize <= MCP_MAX_RESULT_BYTES);
+const _: () = assert!(DEFAULT_MAX_DIFF_BYTES <= MCP_MAX_RESULT_BYTES);
 
 /// WHICH ROLE this server is serving. The two roles are different state machines that happen to
 /// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
@@ -6438,31 +6528,33 @@ fn state_load_limit(args: &Value) -> Result<usize, String> {
     }
 }
 
-/// PURE: the byte budget THIS call's result must fit in.
+/// PURE: the byte budget THIS call's result must fit in — [`MCP_MAX_RESULT_BYTES`], for EVERY tool.
 ///
-/// [`MCP_MAX_RESULT_BYTES`] for every tool but one. `pr_context` is the exception because its size
-/// is the CALLER's explicit argument: `max_diff_bytes` says how big a diff to hand back, so a big
-/// result there is what was asked for, not a surprise — the budget is that argument plus one result
-/// budget for the metadata wrapped around the diff (body, files, linked issues, comments).
-fn call_result_budget(call: &McpCall) -> usize {
-    match call {
-        McpCall::PrContext { max_diff_bytes, .. } => max_diff_bytes + MCP_MAX_RESULT_BYTES,
-        _ => MCP_MAX_RESULT_BYTES,
-    }
+/// `pr_context` used to be an exception: its budget was `max_diff_bytes + MCP_MAX_RESULT_BYTES`, on
+/// the reasoning that a big result there is what the caller asked for. Two things were wrong with
+/// that (#81). It let the budget reach 332,000 bytes — six times what the harness accepts — so the
+/// guard could not fire and the harness's untyped message arrived instead. And because the diff is
+/// TRUNCATED to `max_diff_bytes`, budget and content moved in lockstep: lowering the argument
+/// lowered the allowance by exactly as much as it lowered the payload, so "re-call NARROWER" was a
+/// loop with no exit.
+///
+/// A budget that does not move with the argument is what makes narrowing converge, and it is why
+/// this function no longer looks at the call at all. It takes one anyway, so the ONE budget stays a
+/// property of the request rather than a constant callers reach past.
+fn call_result_budget(_call: &McpCall) -> usize {
+    MCP_MAX_RESULT_BYTES
 }
 
-/// PURE: which argument, if any, actually makes THIS call's result fit.
+/// PURE: which argument actually makes THIS call's result fit.
 ///
-/// `None` for `pr_context`, and that is arithmetic, not caution. Its budget is
-/// `max_diff_bytes + MCP_MAX_RESULT_BYTES` and its diff is TRUNCATED to `max_diff_bytes`, so
-/// lowering the argument lowers the budget by exactly as much as it lowers the content: a
-/// `pr_context` that is over budget is over it on METADATA (body, file list, linked issues, trusted
-/// comments), which no argument shrinks. Telling the caller to "re-call narrower" there sends it
-/// round a loop that cannot terminate — the same shape as #81's failed checkout, where a wrong
-/// instruction was what the model improvised from.
+/// Every answer here is now truthful because [`call_result_budget`] does not move with the argument:
+/// lowering the named argument lowers the payload against a FIXED allowance, so narrowing strictly
+/// converges. While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument
+/// was advice that could not work — budget and content fell together and the caller could loop for
+/// ever — which is why the fix is the budget, not the wording.
 fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
     match call {
-        McpCall::PrContext { .. } => None,
+        McpCall::PrContext { .. } => Some("max_diff_bytes"),
         _ => Some("limit"),
     }
 }
@@ -12866,7 +12958,8 @@ mod mcp_tests {
         let t = text(&resp);
         assert!(t.contains("unvetted"), "the error names the tool: {t}");
         assert!(
-            t.contains(&format!("{}", MCP_MAX_RESULT_BYTES + 1)) && t.contains("32000"),
+            t.contains(&format!("{}", MCP_MAX_RESULT_BYTES + 1))
+                && t.contains(&format!("{MCP_MAX_RESULT_BYTES}")),
             "the error states the actual size and the budget: {t}"
         );
         assert!(
@@ -12886,42 +12979,110 @@ mod mcp_tests {
             &exact.handle(&call("unvetted", json!({}))).unwrap()
         ));
 
-        // `pr_context` is budgeted by the argument the CALLER set: the same payload that is
-        // over-budget for a state-load is within budget for a diff that size, and over it for a
-        // diff cap that small.
-        let ok = f
+        // `pr_context` gets the SAME budget, and that is the fix (#81). It used to be budgeted at
+        // `max_diff_bytes + MCP_MAX_RESULT_BYTES`, so this very payload was "within budget" for a
+        // large enough argument — up to 332,000 bytes, six times what the harness accepts.
+        let resp = f
             .handle(&call(
                 "pr_context",
-                json!({"pr": "o/r#1", "max_diff_bytes": 100_000}),
+                json!({"pr": "o/r#1", "max_diff_bytes": MAX_MAX_DIFF_BYTES}),
             ))
             .unwrap();
-        assert!(!is_error(&ok), "the caller asked for 100k of diff");
-        let too_big = FakeExec {
-            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
-            ..FakeExec::ok()
-        };
-        let resp = too_big
-            .handle(&call(
-                "pr_context",
-                json!({"pr": "o/r#1", "max_diff_bytes": 1_000}),
-            ))
-            .unwrap();
-        assert!(is_error(&resp));
+        assert!(
+            is_error(&resp),
+            "no argument may buy a pr_context more room than any other tool gets"
+        );
         assert!(text(&resp).contains("max_diff_bytes"));
     }
 
-    // #81: the refusal must not hand out advice that cannot work. `pr_context`'s budget is
-    // `max_diff_bytes + MCP_MAX_RESULT_BYTES` and its diff is truncated to `max_diff_bytes`, so
-    // lowering the argument lowers the budget by exactly as much as it lowers the content — the
-    // "re-call NARROWER" instruction #78 shipped sends the caller round a loop with no exit. A wrong
-    // instruction in an error message is what the model improvises from; that is the whole of #81.
+    // The ordering that is the whole mechanism: OUR guard must fire before the harness's. The
+    // relationship between the budget and the MEASURED gate is a compile-time assertion beside the
+    // constants (raise the budget past the gate and this crate does not build); this is the runtime
+    // half, which also covers what a REAL document does — a constant can be right while the thing
+    // built from it is not. `black_box` keeps the comparison out of const-folding so the assertion
+    // is genuinely evaluated here.
     #[test]
-    fn pr_context_over_budget_does_not_tell_the_caller_to_narrow() {
+    fn the_result_budget_stays_under_the_measured_harness_gate() {
+        use std::hint::black_box;
+        let (budget, gate) = (
+            black_box(MCP_MAX_RESULT_BYTES),
+            black_box(MEASURED_HARNESS_GATE_BYTES),
+        );
+        assert!(
+            budget < gate,
+            "budget {budget} is not below the gate {gate}"
+        );
+        assert!(
+            budget * 4 <= gate * 3,
+            "keep 25% margin: {budget} vs {gate}"
+        );
+        // The largest document this tool can be asked for still lands under the gate, not merely
+        // under the budget — which is the property the live harness actually checks.
+        let (detail, diff) = ctx_fixture(200, 4_000_000);
+        let len = fit_pr_context("o/r", 1, &detail, &diff, &[], MAX_MAX_DIFF_BYTES as usize)
+            .unwrap()
+            .to_string()
+            .len();
+        assert!(
+            len < gate,
+            "worst-case document is {len} bytes, gate is {gate}"
+        );
+    }
+
+    // The property that makes "re-call NARROWER" terminate: the allowance does not move with the
+    // request. While `pr_context`'s budget scaled with `max_diff_bytes` and its diff was truncated
+    // to `max_diff_bytes`, lowering the argument lowered both sides equally and the caller could
+    // loop for ever — so this is pinned as an invariant, not left as a property of one match arm.
+    #[test]
+    fn the_result_budget_does_not_move_with_any_argument() {
+        let calls = [
+            McpCall::PrContext {
+                slug: "o/r".into(),
+                num: 1,
+                max_diff_bytes: 1,
+            },
+            McpCall::PrContext {
+                slug: "o/r".into(),
+                num: 1,
+                max_diff_bytes: MAX_MAX_DIFF_BYTES as usize,
+            },
+            McpCall::Unvetted {
+                include_skipped: true,
+                limit: 25,
+            },
+            McpCall::CloneList,
+        ];
+        for c in &calls {
+            assert_eq!(
+                call_result_budget(c),
+                MCP_MAX_RESULT_BYTES,
+                "every call gets the one budget: {c:?}"
+            );
+        }
+        // And the argument cannot be raised past it, so "ask for more diff than a whole result may
+        // occupy" is not expressible.
+        assert_eq!(MAX_MAX_DIFF_BYTES as usize, MCP_MAX_RESULT_BYTES);
+        let e = validate_call(
+            McpProfile::Vetter,
+            &[],
+            "pr_context",
+            &json!({"pr": "o/r#1", "max_diff_bytes": MCP_MAX_RESULT_BYTES + 1}),
+        )
+        .unwrap_err();
+        assert!(e.contains("max_diff_bytes must be an integer in"), "{e}");
+    }
+
+    // The advice each refusal gives must be advice that can work. With one fixed budget it is:
+    // lowering the named argument lowers the payload against an allowance that does not move.
+    #[test]
+    fn each_refusal_names_an_argument_that_actually_narrows_it() {
         let too_big = FakeExec {
             reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
             ..FakeExec::ok()
         };
-        let t = text(
+        let load = text(&too_big.handle(&call("unvetted", json!({}))).unwrap());
+        assert!(load.contains("Re-call NARROWER: lower `limit`."), "{load}");
+        let ctx = text(
             &too_big
                 .handle(&call(
                     "pr_context",
@@ -12930,20 +13091,78 @@ mod mcp_tests {
                 .unwrap(),
         );
         assert!(
-            !t.contains("NARROWER"),
-            "no argument narrows a pr_context: {t}"
+            ctx.contains("Re-call NARROWER: lower `max_diff_bytes`."),
+            "{ctx}"
         );
+    }
+
+    /// A `pr_context` input whose metadata is `meta_bytes`-ish and whose diff is `diff` bytes long.
+    fn ctx_fixture(meta_bytes: usize, diff_bytes: usize) -> (Value, String) {
+        let detail = json!({
+            "url": "https://github.com/o/r/pull/1",
+            "title": "t",
+            "body": "b".repeat(meta_bytes),
+            "headRefOid": "a".repeat(40),
+            "additions": 1, "deletions": 1,
+            "files": [{"path": "src/lib.rs", "additions": 1, "deletions": 1}],
+        });
+        (detail, "d".repeat(diff_bytes))
+    }
+
+    // THE requirement of #81: no `pr_context` result can exceed the ceiling, whatever
+    // `max_diff_bytes` says. Before this, a 300 KB default against a ~50 KB harness ceiling meant the
+    // guard never spoke and the harness's untyped replacement arrived instead — `is_error` unset, so
+    // every downstream rule about "a tool error is an instruction" stopped applying.
+    #[test]
+    fn a_pr_context_result_can_never_exceed_the_ceiling() {
+        for diff_bytes in [0, 1_000, MCP_MAX_RESULT_BYTES, 4_000_000] {
+            for asked in [1, 1_000, MCP_MAX_RESULT_BYTES] {
+                let (detail, diff) = ctx_fixture(200, diff_bytes);
+                let doc = fit_pr_context("o/r", 1, &detail, &diff, &[], asked).unwrap();
+                let len = doc.to_string().len();
+                assert!(
+                    len <= MCP_MAX_RESULT_BYTES,
+                    "diff={diff_bytes} asked={asked} produced {len} bytes, over {MCP_MAX_RESULT_BYTES}"
+                );
+                // …and it says how much of the diff it actually carried, so "I asked for more than
+                // this" is visible rather than inferred.
+                assert_eq!(doc["diffBytes"], json!(diff_bytes));
+                let included = doc["diffIncluded"].as_u64().unwrap() as usize;
+                assert!(included <= asked.min(diff_bytes));
+                assert_eq!(doc["diffTruncated"], json!(included < diff_bytes));
+            }
+        }
+    }
+
+    // Convergence, which is what "re-call NARROWER" depends on: a smaller argument is a strictly
+    // smaller result, monotonically, because the allowance no longer moves with it.
+    #[test]
+    fn narrowing_max_diff_bytes_strictly_shrinks_the_result() {
+        let (detail, diff) = ctx_fixture(100, 30_000);
+        let mut last = usize::MAX;
+        for asked in [20_000, 10_000, 5_000, 1_000, 100, 1] {
+            let len = fit_pr_context("o/r", 1, &detail, &diff, &[], asked)
+                .unwrap()
+                .to_string()
+                .len();
+            assert!(len < last, "asked={asked} gave {len}, not below {last}");
+            last = len;
+        }
+    }
+
+    // The one case no argument fixes, and it must say so rather than hand back a smaller diff nobody
+    // asked for: the metadata alone is over the ceiling.
+    #[test]
+    fn pr_context_metadata_alone_over_the_ceiling_is_a_typed_error() {
+        let (detail, diff) = ctx_fixture(MCP_MAX_RESULT_BYTES + 5_000, 10_000);
+        let e = fit_pr_context("o/r", 1, &detail, &diff, &[], MCP_MAX_RESULT_BYTES).unwrap_err();
+        assert!(e.starts_with("error:"), "{e}");
+        assert!(e.contains("with NO diff at all"), "{e}");
         assert!(
-            t.contains("NO argument makes this call smaller"),
-            "the refusal says so outright: {t}"
+            e.contains("cannot shrink it"),
+            "it says the argument cannot help: {e}"
         );
-        assert!(
-            t.contains("record NO verdict"),
-            "and names the only honest move left: {t}"
-        );
-        // A state-load's advice is unchanged and still actionable.
-        let load = text(&too_big.handle(&call("unvetted", json!({}))).unwrap());
-        assert!(load.contains("Re-call NARROWER: lower `limit`."), "{load}");
+        assert!(e.contains("record NO verdict"), "{e}");
     }
 
     // #81, link 2 of the wrong-tree chain. `pr_checkout`'s contract is "a working tree at path P";

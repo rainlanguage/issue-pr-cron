@@ -146,15 +146,67 @@ removes its subject from the queue, paging converges without an offset argument.
 The page size is what makes the bound structural — the payload no longer grows
 with the number of open PRs.
 
-Every result is then checked against a byte budget (32,000 bytes; `pr_context`
-gets that plus the `max_diff_bytes` the caller explicitly asked for), and a
-result over budget is returned as a **tool error naming the argument to narrow**
-— never truncated, never spilled. On 2026-07-27
-`unvetted {"include_skipped":
-true}` returned 63,742 characters on one line, the
+Every result is then checked against **one byte budget, the same for every
+tool** (36,000 bytes), and a result over budget is returned as a **tool error
+naming the argument to narrow** — never truncated, never spilled. On 2026-07-27
+`unvetted {"include_skipped": true}` returned 63,742 characters on one line, the
 harness refused it, and the vetter improvised a fallback that silently dropped
 the whole open-threads accounting; the run log looked normal. A partial
 state-load cannot say what it is missing, so the tool refuses to produce one.
+
+**The budget must be lower than what the harness accepts, and that is the
+mechanism, not a preference.** If the harness is the thing that speaks, what
+comes back is untyped and arrives with `is_error` **unset** — so every rule
+downstream about "a tool error is an instruction" stops applying at the moment
+it is needed. `pr_context` used to be budgeted at `max_diff_bytes + 32,000`, up
+to **332,000 bytes**, roughly six times what the harness accepts; its guard
+could not fire, and the harness's message arrived instead. The value is now
+measured rather than derived from halving a payload that had already been
+refused — see [the ceiling, measured](#the-ceiling-measured).
+
+Two consequences follow from one budget for every tool. `max_diff_bytes` can no
+longer be raised past it, so a `pr_context` cannot buy itself more room than any
+other tool gets. And **narrowing converges**: while the budget scaled with
+`max_diff_bytes` and the diff was truncated to `max_diff_bytes`, lowering the
+argument lowered allowance and payload equally, so "re-call NARROWER" was a loop
+with no exit. Against a fixed allowance a smaller argument is a strictly smaller
+result.
+
+`pr_context` does not wait to be refused: it **fits itself** to the budget,
+shrinking the diff until the document lands under it, and reports `diffBytes`
+(the whole diff), `diffIncluded` (what actually made it in) and `diffTruncated`
+so the gap between what exists and what was handed over is visible rather than
+inferred. The shrink terminates — each round removes at least the overflow from
+the cap, and one raw byte of diff is at least one byte of document — and the one
+case no argument can fix, metadata alone over the budget, is a typed error that
+says exactly that.
+
+#### The ceiling, measured
+
+Against Claude Code 2.1.220, by calling `pr_context` through the real harness at
+increasing `max_diff_bytes` and reading the `tool_result` the model actually
+received. There are **two** independent gates and **both** arrive with
+`is_error` unset:
+
+| gate  | what the model gets                                             | boundary                                                      |
+| ----- | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| byte  | `<persisted-output> Output too large (NN KB)` + a 2 KB preview  | delivered at 50,011 bytes, replaced at 50,176                 |
+| token | `Error: result (N characters …) exceeds maximum allowed tokens` | the gate the live traces hit, at 63,742 and 56,789 characters |
+
+The byte gate is **not** governed by `MAX_MCP_OUTPUT_TOKENS` — forcing that to
+200,000 still replaced a 50,486-byte result — and it is the more dangerous of
+the two, because the 2 KB preview it substitutes looks like the head of a real
+answer. The token gate is: forcing the variable to 100 replaced a 4.5 KB result.
+Isolating it at `MAX_MCP_OUTPUT_TOKENS=10000` puts its boundary between 27,152
+and 30,163 bytes, so this JSON measures **2.7–3.0 chars/token**; nothing on the
+box sets that variable, and 56,789 characters tripped it live, which puts the
+default near 19–21k tokens. Both gates therefore land around 50 kB for this
+content.
+
+36,000 sits ~28% under both. The margin is not timidity: the token gate scales
+with the **content**, and a diff of generated hex — which this org has, in every
+`src/generated/*.pointers.sol` — tokenises far worse than prose. At 36,000 bytes
+even a payload tokenising at 1.5 chars/token stays inside a 19k-token cap.
 
 The `openThreads` list is unconditional for the same reason: the PRs withheld
 for unresolved threads (and their `unresolvedThreads` counts) are the only

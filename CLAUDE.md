@@ -145,6 +145,21 @@ the run that leaks, so an end-of-run `clone_release` cannot be the mechanism —
 which means the midnight `gc` line must name **every** clone root (`WORK_DIR`
 _and_ the install dir), not just the first.
 
+**One result budget, and it must be under the harness's ceiling.** Every tool
+result is checked against the same 36,000 bytes — `pr_context` included, which
+used to get `max_diff_bytes + 32,000` (up to 332,000, about six times what the
+harness accepts, so its guard never fired). Ordering is the mechanism: if the
+harness speaks first the caller gets an untyped message with `is_error`
+**unset**, and "a tool error is an instruction" stops applying exactly when it
+is needed. The ceiling is measured against the running harness, never derived by
+halving a payload that was refused; 2.1.220 has TWO untyped gates (a byte gate
+around 50,011–50,176 bytes, not governed by `MAX_MCP_OUTPUT_TOKENS`, and a token
+gate governed by it) and the budget sits ~28% under both. One budget for every
+tool is also what makes narrowing CONVERGE — while the allowance scaled with
+`max_diff_bytes`, lowering the argument lowered both sides equally. `pr_context`
+fits itself to the budget rather than waiting to be refused, and reports
+`diffBytes` / `diffIncluded` / `diffTruncated` so the shortfall is visible.
+
 `pr_checkout` itself holds a binary postcondition: **the PR head at `dir`, or no
 `dir`**. It fetches `refs/pull/<n>/head` into `refs/remotes/origin/pr/<n>`
 (works on a shallow clone, works for forks, keeps the head provably pushed),
