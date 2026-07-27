@@ -1099,14 +1099,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 13,
+        "count": 12,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 79,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/79",
-            "title": "fix(vetter): bound the state-load and make over-budget the tool's error"
-          },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 6,
@@ -1866,6 +1860,11 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 81,
+      "title": "pr_checkout fails on shallow clones, and its failure is not fatal"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 60,
@@ -5016,9 +5015,9 @@
     "closeCandidateUnvetted": 14,
     "closeCandidateUpheld": 0,
     "leaks": 17,
-    "totalProducerPrs": 171,
-    "uncoveredIssues": 607,
-    "unvetted": 13,
+    "totalProducerPrs": 170,
+    "uncoveredIssues": 608,
+    "unvetted": 12,
     "awaitingReVet": 0,
     "reject": 30,
     "relink": 1,
