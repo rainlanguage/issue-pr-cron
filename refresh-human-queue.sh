@@ -7,7 +7,8 @@
 # rain-org-health#32). Data-only, safe unattended. Installed on a cron; see crontab.
 # Packaged as a flake output (`packages.refresh-human-queue`); nix builds PATH from the flake's
 # locked nixpkgs. errexit is turned back off — writeShellApplication forces it, but this script
-# uses `git diff --quiet && exit 0` as a conditional and tolerates best-effort steps.
+# reads exit status as data (`git diff --quiet` says whether the snapshot moved, a rejected push
+# is a state to recover from) and decides what to do with each one explicitly.
 set +o errexit
 
 # --- locate the install dir + bare-cron env (mirrors campaign-run.sh) ---
