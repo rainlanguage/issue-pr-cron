@@ -4634,12 +4634,13 @@ fn unvetted_fetch(include_skipped: bool) -> Result<Value, String> {
         };
         // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
         // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
-        let Some((owner, repo)) = slug.split_once('/') else {
-            continue;
-        };
+        // An unsplittable slug yields None (fail-closed: not vetted this run), never a dropped PR.
         rows.push(gate_open_threads(
             unvetted_row(&slug, num, url, title, &detail),
-            || unresolved_threads(owner, repo, num),
+            || {
+                let (owner, repo) = slug.split_once('/')?;
+                unresolved_threads(owner, repo, num)
+            },
         ));
     }
     Ok(unvetted_doc(&rows, include_skipped))
