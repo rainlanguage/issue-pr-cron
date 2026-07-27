@@ -23,3 +23,69 @@ jobs:
           persist-credentials: false
       - uses: DeterminateSystems/nix-installer-action@a7ad9c4f0c65208097f4d34f3cfa1913b80cce5c # main
       - run: nix build .#pr-review-report --print-build-logs
+  # The crons do NOT resolve `.#pr-review-report` — campaign-run.sh and
+  # review-run.sh both resolve `path:$DIR#pr-review-report`. A `path:` ref copies
+  # the working directory verbatim, gitignored files INCLUDED, so any build churn
+  # the flake's fileset fails to exclude enters the source and changes its hash.
+  # When that happens a cron tick rebuilds the crate — and runs its release-profile
+  # test suite inside the derivation — before the model gets a single token, burning
+  # the run's own `timeout` budget. That is a silent, recurring cost: nothing fails,
+  # the run is just late.
+  #
+  # A fresh CI checkout has no `target/`, so merely building `path:` would pass
+  # straight through the bug. This job therefore CREATES the churn condition and
+  # asserts the derivation is unchanged — the invariant that actually matters.
+  flake-src-excludes-build-churn:
+    name: flake src excludes build churn
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@a7ad9c4f0c65208097f4d34f3cfa1913b80cce5c # main
+      - name: build churn must not change the cron's derivation
+        run: |
+          set -euo pipefail
+          drv() { nix path-info --derivation "path:$PWD#pr-review-report"; }
+
+          before="$(drv)"
+          echo "clean:  $before"
+
+          # Exactly what cargo/nix leave behind in the live install dir (~100MB there).
+          mkdir -p pr-review-report-rs/target/debug/incremental
+          echo churn > pr-review-report-rs/target/debug/churn
+          echo churn > pr-review-report-rs/target/CACHEDIR.TAG
+
+          after="$(drv)"
+          echo "churned: $after"
+
+          if [ "$before" != "$after" ]; then
+            echo "::error::Build churn changed the derivation the crons resolve."
+            echo "flake.nix's fileset must exclude cargo output; otherwise every cron"
+            echo "tick after a local build pays a full rebuild + in-derivation test suite."
+            exit 1
+          fi
+
+          # The two refs must stay interchangeable, so warming one warms the other
+          # and a human debugging with `.#` sees what the cron actually runs.
+          dot="$(nix path-info --derivation '.#pr-review-report')"
+          if [ "$dot" != "$after" ]; then
+            echo "::error::'.#pr-review-report' and 'path:\$PWD#pr-review-report' diverged."
+            echo "  .#    $dot"
+            echo "  path: $after"
+            exit 1
+          fi
+          echo "stable and equivalent: $after"
+      # `doCheck` is left ON deliberately: with the fileset fixed, a rebuild only
+      # happens on a real source change, and running the suite then is the point.
+      # This guards the other half — if someone later sets doCheck = false, the
+      # cargo test gate must still exist in CI or the crate ships untested.
+      - name: the cargo test gate still exists
+        run: |
+          set -euo pipefail
+          grep -q "rainix-rs-test" .github/workflows/rust.yml || {
+            echo "::error::rainix-rs-test is gone from rust.yml — the crate's test gate must live somewhere."
+            exit 1
+          }
+          echo "rainix-rs-test present"
