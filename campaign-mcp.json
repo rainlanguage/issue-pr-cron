@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fsm": {
+      "command": "pr-review-report",
+      "args": ["mcp", "--profile", "producer"]
+    }
+  }
+}

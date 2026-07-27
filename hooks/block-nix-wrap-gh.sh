@@ -4,7 +4,7 @@
 #
 # DEPLOY: copy to the box's claude hooks dir and add it as a PreToolUse "Bash"
 # hook in the user settings.json (alongside the other block-*.sh hooks). The
-# cron runners (campaign/review/merge-run.sh) export RAINIX_CRON_HOOK so this
+# cron runners (campaign/review-run.sh) export RAINIX_CRON_HOOK so this
 # only ever fires for cron runs, never interactive sessions.
 #
 # WHY: the cron runner already wraps claude in `nix shell nixpkgs#gh nixpkgs#jq …`,

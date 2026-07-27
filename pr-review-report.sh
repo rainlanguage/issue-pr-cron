@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # pr-review-report.sh — report every open PR (and logged close-candidate) that needs a HUMAN
-# decision, overlaying recorded review verdicts (review-verdicts.jsonl) and GitHub's own review
+# decision, reading verdict state from GitHub labels and its own review
 # state on top of the CI/mergeability signal. Delegates to the Rust implementation in
 # pr-review-report-rs/. Everything prints as full clickable URLs.
 #
 # Usage:   ./pr-review-report.sh            # all buckets
 #          ./pr-review-report.sh --ready    # only the reviewed-&-ready-to-merge bucket
-# Config from ./cron.env (ORG, PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS), read by the binary.
+# Config from ./cron.env (ORG, PR_ASSIGNEE), read by the binary.
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
