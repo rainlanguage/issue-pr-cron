@@ -6061,8 +6061,15 @@ fn pr_checkout_at(work_dir: &str, slug: &str, num: u64) -> Result<Value, String>
     let head = match build() {
         Ok(h) => h,
         Err(why) => {
-            // Restore the postcondition. A best-effort remove: if it fails the path may still hold a
-            // wrong tree, so the message says so instead of promising it is gone.
+            // Restore the postcondition. This is the file's only unguarded `remove_dir_all`, so
+            // what makes it safe is stated rather than left to be re-derived: control only reaches
+            // here past the check above, so `path` is either a directory that did NOT exist when
+            // this call started (we made it) or one that holds `.git` (a clone we made on an earlier
+            // call). Anything else was refused without being touched. `remove_dir_all` does not
+            // follow a symlink, so a symlinked path cannot redirect the delete either.
+            //
+            // Best-effort: if it fails the path may still hold a wrong tree, so the message says so
+            // instead of promising it is gone.
             if std::fs::remove_dir_all(path).is_err() && path.exists() {
                 return Err(format!(
                     "error: `pr_checkout` could not produce a working tree for {pr}: {why}. \
