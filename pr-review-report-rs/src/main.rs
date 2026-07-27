@@ -37,6 +37,113 @@ fn gh_json(args: &[&str]) -> Option<Value> {
     serde_json::from_slice(&out.stdout).ok()
 }
 
+/// One page of the reviewThreads GraphQL response → (unresolved count, end cursor if more pages).
+/// None when the expected structure is missing (malformed/error response) — never a silent 0:
+/// an unknown thread state must stay distinguishable from a verified-clean one.
+fn count_unresolved_page(v: &Value) -> Option<(u64, Option<String>)> {
+    let threads = v
+        .get("data")?
+        .get("repository")?
+        .get("pullRequest")?
+        .get("reviewThreads")?;
+    let nodes = threads.get("nodes")?.as_array()?;
+    let mut unresolved = 0u64;
+    for n in nodes {
+        // A node missing isResolved is malformed — treat the whole page as unknown.
+        if !n.get("isResolved")?.as_bool()? {
+            unresolved += 1;
+        }
+    }
+    let page = threads.get("pageInfo")?;
+    let cursor = if page.get("hasNextPage")?.as_bool()? {
+        Some(page.get("endCursor")?.as_str()?.to_string())
+    } else {
+        None
+    };
+    Some((unresolved, cursor))
+}
+
+/// Hard cap on reviewThreads pages followed for ONE PR. At 100 threads a page that is 10,000
+/// threads — far past any real PR — so hitting it means the cursor is not advancing (a server bug
+/// or a hostile response). Stopping returns None, NOT the partial total: a truncated count read as
+/// a total is exactly the "0 unresolved" lie this gate exists to prevent.
+const MAX_THREAD_PAGES: usize = 100;
+
+/// PURE given `fetch_page`: fold every reviewThreads page into one unresolved total. `fetch_page`
+/// receives the cursor to resume from (`None` for the first page) and returns that page's raw JSON.
+/// Paging stops at the first page whose `hasNextPage` is false. Returns None the moment ANY page is
+/// unfetchable, unparseable, or the page cap is hit — a partial read is never reported as a total,
+/// so a long review history can never silently truncate into a false clean.
+fn total_unresolved(mut fetch_page: impl FnMut(Option<&str>) -> Option<Value>) -> Option<u64> {
+    let mut total = 0u64;
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_THREAD_PAGES {
+        let (page, next) = count_unresolved_page(&fetch_page(cursor.as_deref())?)?;
+        total = total.checked_add(page)?;
+        match next {
+            Some(cur) => cursor = Some(cur),
+            None => return Some(total),
+        }
+    }
+    None
+}
+
+/// Total unresolved review threads on a PR (CodeRabbit or human), paginated so a long review
+/// history is never silently truncated. None on any fetch/parse failure.
+fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Option<u64> {
+    let query = "query($owner:String!,$repo:String!,$num:Int!,$cursor:String){\
+                 repository(owner:$owner,name:$repo){pullRequest(number:$num){\
+                 reviewThreads(first:100,after:$cursor){nodes{isResolved}\
+                 pageInfo{hasNextPage endCursor}}}}}";
+    total_unresolved(|cursor| {
+        let mut args: Vec<String> = vec![
+            "api".into(),
+            "graphql".into(),
+            "-f".into(),
+            format!("query={query}"),
+            "-f".into(),
+            format!("owner={owner}"),
+            "-f".into(),
+            format!("repo={repo}"),
+            "-F".into(),
+            format!("num={num}"),
+        ];
+        if let Some(cur) = cursor {
+            args.push("-f".into());
+            args.push(format!("cursor={cur}"));
+        }
+        let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+        gh_json(&argrefs)
+    })
+}
+
+/// Where an otherwise-presentable PR goes once its unresolved-thread count is known. THE THREE
+/// OUTCOMES ARE DISTINCT ON PURPOSE: "verified clean", "verified dirty" and "could not tell" are
+/// three different facts, and collapsing the third into either of the others is the bug this whole
+/// gate exists to prevent (a green CodeRabbit status check while four threads sat unresolved on
+/// rain-org-health#128 is the same class of mistake, made by trusting a proxy signal).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ThreadRoute {
+    /// A VERIFIED zero — the only state that reaches a human.
+    Present,
+    /// At least one unresolved thread — the producer's step-3e work.
+    OpenThreads,
+    /// The thread state could not be read. FAIL-CLOSED: not presented, and counted as a fetch
+    /// error rather than silently as clean or as dirty, so a transient API failure is visible in
+    /// the report instead of being laundered into either verdict.
+    FetchError,
+}
+
+/// PURE: route a thread count. Only a verified zero passes (fail-closed, matching the queue's
+/// existing mergeable check — an unverifiable PR is never presented to the human).
+fn thread_route(threads: Option<u64>) -> ThreadRoute {
+    match threads {
+        Some(0) => ThreadRoute::Present,
+        Some(_) => ThreadRoute::OpenThreads,
+        None => ThreadRoute::FetchError,
+    }
+}
+
 /// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
 /// `--record-verdict`'s logic testable without network.
 fn gh_run(args: &[&str]) -> bool {
@@ -189,6 +296,7 @@ struct QueueCounts {
     merge_unknown: usize,
     approved: usize,
     unconfirmed: usize, // green+mergeable but no ai:vetter comment at head — awaiting (re-)vet, not shown
+    open_threads: usize, // otherwise-presentable but unresolved review threads — producer thread-resolution work
     fetch_error: usize,
 }
 
@@ -200,6 +308,11 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         "  [WARNING: search hit the 1000-result limit — queue may be undercounted]"
     } else {
         ""
+    };
+    let threads = if c.open_threads > 0 {
+        format!(", {} open-threads", c.open_threads)
+    } else {
+        String::new()
     };
     let err = if c.fetch_error > 0 {
         format!(", {} fetch-error", c.fetch_error)
@@ -217,8 +330,8 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} awaiting re-vet{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unconfirmed, err, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} awaiting re-vet{}{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unconfirmed, threads, err, excl, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -397,6 +510,7 @@ fn queue_mode(top: usize) {
         merge_unknown: 0,
         approved: 0,
         unconfirmed: 0,
+        open_threads: 0,
         fetch_error: 0,
     };
     for (slug, num, url) in &candidates {
@@ -429,9 +543,24 @@ fn queue_mode(top: usize) {
                 // pushed-since PR is not presented; it's counted as awaiting (re-)vet.
                 let head = j.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("");
                 if vetted_at_head(&j, head) {
-                    let (cost, basis) = cost_from_comment(last_vetter_comment(&j).as_deref());
-                    let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
-                    rows.push((cost, repo_disp, *num, url.clone(), basis));
+                    // Open-threads gate: an otherwise-presentable PR with unresolved review
+                    // threads (CodeRabbit or human) is the producer's thread-resolution work,
+                    // not human-presentable. Only a VERIFIED zero passes (fail-closed): an
+                    // unknown thread state counts as a fetch error, never a maybe-dirty row.
+                    let Some((owner, repo)) = slug.split_once('/') else {
+                        counts.fetch_error += 1;
+                        continue;
+                    };
+                    match thread_route(unresolved_threads(owner, repo, *num)) {
+                        ThreadRoute::Present => {
+                            let (cost, basis) =
+                                cost_from_comment(last_vetter_comment(&j).as_deref());
+                            let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
+                            rows.push((cost, repo_disp, *num, url.clone(), basis));
+                        }
+                        ThreadRoute::OpenThreads => counts.open_threads += 1,
+                        ThreadRoute::FetchError => counts.fetch_error += 1,
+                    }
                 } else {
                     counts.unconfirmed += 1;
                 }
@@ -4771,6 +4900,7 @@ enum VetAction {
     SkipHuman,
     SkipDraft,
     SkipVetted,
+    SkipOpenThreads,
 }
 
 impl VetAction {
@@ -4780,6 +4910,7 @@ impl VetAction {
             VetAction::SkipHuman => "skip-human-decided",
             VetAction::SkipDraft => "skip-draft",
             VetAction::SkipVetted => "skip-vetted-at-head",
+            VetAction::SkipOpenThreads => "skip-open-threads",
         }
     }
 }
@@ -4801,6 +4932,49 @@ fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAc
     } else {
         VetAction::Vet
     }
+}
+
+/// The open-threads gate on the VETTER's state-load, applied to one already-classified `unvetted`
+/// row. It is the vetter's half of issue #1 — "do not record a `ready` verdict while the PR has
+/// unresolved review comments" — implemented HERE rather than in `review-prompt.txt` because
+/// #63/#64 removed the vetter's Bash: it has no `gh`, so it cannot run the reviewThreads query
+/// itself. The exclusion has to happen in the tool that hands it the list.
+///
+/// `fetch` is called ONLY for a row that would otherwise be VETTED — every other action already
+/// skips the PR, so it must not pay a GraphQL round-trip to learn something that changes nothing.
+///
+/// FAIL-CLOSED, matching `--queue`: an unreadable thread state (`None`) is NOT offered for vetting,
+/// so a transient API failure can never launder a thread-dirty PR into an `ai:ready` verdict. The
+/// cost is one deferred vet — the next run re-reads it — against a wrong `ready` label that then
+/// needs a human to unwind. The count rides on the row as `unresolvedThreads` (`null` = unreadable)
+/// so an operator reading `--json` can tell "dirty" from "unknown".
+fn gate_open_threads(
+    row: (VetAction, u8, Value),
+    fetch: impl FnOnce() -> Option<u64>,
+) -> (VetAction, u8, Value) {
+    let (action, prio, mut json) = row;
+    if action != VetAction::Vet {
+        return (action, prio, json);
+    }
+    let threads = fetch();
+    let Some(obj) = json.as_object_mut() else {
+        return (action, prio, json);
+    };
+    obj.insert(
+        "unresolvedThreads".into(),
+        threads.map(Value::from).unwrap_or(Value::Null),
+    );
+    // The vetter collapses `OpenThreads` and `FetchError` into ONE skip: in both cases the thread
+    // state is not verified clean, and the vetter's handling is identical (don't vet it this run).
+    // The row's `unresolvedThreads` (`null` vs a number) keeps the two distinguishable to a reader.
+    if thread_route(threads) == ThreadRoute::Present {
+        return (action, prio, json);
+    }
+    obj.insert(
+        "action".into(),
+        Value::from(VetAction::SkipOpenThreads.as_str()),
+    );
+    (VetAction::SkipOpenThreads, prio, json)
 }
 
 /// PURE: vet-first ordering — lower sorts first. The prompt's "vet green+mergeable ones first" rule,
@@ -4894,7 +5068,7 @@ fn unvetted_row(
 fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value {
     let mut vet: Vec<(u8, String, Value)> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
-    let (mut n_draft, mut n_human, mut n_vetted) = (0usize, 0usize, 0usize);
+    let (mut n_draft, mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize, 0usize);
     for (action, prio, row) in rows {
         match action {
             VetAction::Vet => {
@@ -4906,10 +5080,14 @@ fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value
                 vet.push((*prio, key, row.clone()));
             }
             other => {
+                // Exhaustive on purpose: a new `VetAction` must be given its own count rather than
+                // silently folding into `skipVettedAtHead` (which is what a `_` arm did).
                 match other {
                     VetAction::SkipDraft => n_draft += 1,
                     VetAction::SkipHuman => n_human += 1,
-                    _ => n_vetted += 1,
+                    VetAction::SkipOpenThreads => n_threads += 1,
+                    // `Vet` is taken by the arm above; the only action left here is vetted-at-head.
+                    VetAction::SkipVetted | VetAction::Vet => n_vetted += 1,
                 }
                 skipped.push(row.clone());
             }
@@ -4924,6 +5102,7 @@ fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value
             "skipDraft": n_draft,
             "skipHumanDecided": n_human,
             "skipVettedAtHead": n_vetted,
+            "skipOpenThreads": n_threads,
         },
         "prs": prs,
     });
@@ -5375,7 +5554,16 @@ fn unvetted_fetch(include_skipped: bool) -> Result<Value, String> {
                 "error: `gh pr view {slug}#{num}` failed — aborting rather than report an incomplete vet queue"
             ));
         };
-        rows.push(unvetted_row(&slug, num, url, title, &detail));
+        // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
+        // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
+        // An unsplittable slug yields None (fail-closed: not vetted this run), never a dropped PR.
+        rows.push(gate_open_threads(
+            unvetted_row(&slug, num, url, title, &detail),
+            || {
+                let (owner, repo) = slug.split_once('/')?;
+                unresolved_threads(owner, repo, num)
+            },
+        ));
     }
     Ok(unvetted_doc(&rows, include_skipped))
 }
@@ -5394,8 +5582,13 @@ fn unvetted_mode(json_out: bool, include_skipped: bool) -> i32 {
     }
     let c = &doc["counts"];
     println!(
-        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head)",
-        c["vet"], c["open"], c["skipDraft"], c["skipHumanDecided"], c["skipVettedAtHead"]
+        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads)",
+        c["vet"],
+        c["open"],
+        c["skipDraft"],
+        c["skipHumanDecided"],
+        c["skipVettedAtHead"],
+        c["skipOpenThreads"]
     );
     for p in doc["prs"].as_array().into_iter().flatten() {
         println!(
@@ -6845,20 +7038,14 @@ fn fetch_pr_detail(slug: &str, num: u64) -> Option<Value> {
         "number,title,url,mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,headRefOid,commits,closingIssuesReferences,createdAt,updatedAt,comments,labels,isDraft,body,files",
     ])?;
     let (owner, repo) = slug.split_once('/')?;
-    let q = format!(
-        "query{{repository(owner:\"{owner}\",name:\"{repo}\"){{pullRequest(number:{num}){{reviewThreads(first:50){{nodes{{isResolved}}}}}}}}}}"
-    );
-    let threads = gh_json(&["api", "graphql", "-f", &format!("query={q}")])
-        .and_then(|v| {
-            v.pointer("/data/repository/pullRequest/reviewThreads/nodes")
-                .and_then(|n| n.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter(|t| t.get("isResolved").and_then(|b| b.as_bool()) == Some(false))
-                        .count()
-                })
-        })
-        .unwrap_or(0);
+    // Same paginated reader the `--queue` and `unvetted` gates use — one query, not a second
+    // hand-rolled one. (It replaced a `first:50` single-page count that silently under-reported a
+    // PR past 50 threads.) The ERROR semantics differ deliberately: an unreadable state here reads
+    // as 0, because `worklist` answers "what should the PRODUCER do with this PR next?" and a
+    // transient GraphQL failure must not manufacture a thread-resolution sweep with nothing to
+    // resolve. Nothing is presented to a human off this value — `--queue` recomputes it fail-closed
+    // before any PR reaches the approval queue.
+    let threads = unresolved_threads(owner, repo, num).unwrap_or(0) as usize;
     if let Some(obj) = j.as_object_mut() {
         obj.insert("unresolvedThreads".into(), Value::from(threads));
     }
@@ -8135,6 +8322,7 @@ mod queue_tests {
             merge_unknown: 0,
             approved,
             unconfirmed: 0,
+            open_threads: 0,
             fetch_error: 0,
         }
     }
@@ -8218,10 +8406,12 @@ mod queue_tests {
         c.fetch_error = 1;
         c.merge_unknown = 2;
         c.unconfirmed = 3;
+        c.open_threads = 4;
         let out = render_queue(&rows, &c, 0);
         assert!(out.contains("  unscored  r#2  "), "unscored:\n{out}");
         assert!(out.contains("1 fetch-error"));
         assert!(out.contains("1 excluded (draft/human-override)"));
+        assert!(out.contains("4 open-threads"), "open-threads note:\n{out}");
         assert!(
             out.contains("2 unknown-merge"),
             "unknown-merge count:\n{out}"
@@ -8312,6 +8502,224 @@ mod report_tests {
     fn ci_fail_beats_pending() {
         let r = json!([{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]);
         assert!(classify_ci(&r) == Ci::Red);
+    }
+}
+
+#[cfg(test)]
+mod open_threads_tests {
+    use super::*;
+    use serde_json::json;
+    use std::cell::{Cell, RefCell};
+
+    fn page(nodes: Value, has_next: bool, cursor: &str) -> Value {
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": nodes,
+            "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}
+        }}}}})
+    }
+
+    // T1: unresolved threads are counted by the typed isResolved field, resolved ones excluded.
+    #[test]
+    fn count_mixed_resolved_unresolved() {
+        let v = page(
+            json!([{"isResolved": false}, {"isResolved": true}, {"isResolved": false}]),
+            false,
+            "",
+        );
+        assert_eq!(count_unresolved_page(&v), Some((2, None)));
+    }
+
+    // T2: zero threads is a verified-clean Some(0), distinct from unknown.
+    #[test]
+    fn count_empty_nodes_is_zero() {
+        assert_eq!(
+            count_unresolved_page(&page(json!([]), false, "")),
+            Some((0, None))
+        );
+    }
+
+    // T3: a further page propagates its cursor so pagination can't silently truncate.
+    #[test]
+    fn count_propagates_next_cursor() {
+        let v = page(json!([{"isResolved": false}]), true, "CUR");
+        assert_eq!(
+            count_unresolved_page(&v),
+            Some((1, Some("CUR".to_string())))
+        );
+    }
+
+    // T4: malformed responses (missing pullRequest, non-array nodes, node without isResolved,
+    // GraphQL error shape) are None — unknown, never a silent 0.
+    #[test]
+    fn count_malformed_is_none() {
+        assert_eq!(
+            count_unresolved_page(&json!({"data": {"repository": null}})),
+            None
+        );
+        assert_eq!(
+            count_unresolved_page(&json!({"errors": [{"message": "boom"}]})),
+            None
+        );
+        let bad_nodes = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": "nope", "pageInfo": {"hasNextPage": false, "endCursor": ""}}}}}});
+        assert_eq!(count_unresolved_page(&bad_nodes), None);
+        let bad_node = page(json!([{"resolved": true}]), false, "");
+        assert_eq!(count_unresolved_page(&bad_node), None);
+    }
+
+    // T5: the three thread states route three different ways — clean is the ONLY one presented,
+    // and "could not read" is its own outcome, never folded into clean or into dirty.
+    #[test]
+    fn queue_routing_is_fail_closed_and_three_way() {
+        assert_eq!(thread_route(Some(0)), ThreadRoute::Present);
+        assert_eq!(thread_route(Some(1)), ThreadRoute::OpenThreads);
+        assert_eq!(thread_route(Some(9)), ThreadRoute::OpenThreads);
+        assert_eq!(thread_route(None), ThreadRoute::FetchError);
+    }
+
+    // T6: PAGING — the total is every page summed, and each page after the first is fetched with
+    // the PREVIOUS page's endCursor. A reader that stopped at page 1 would report 1, not 3.
+    #[test]
+    fn total_sums_every_page_and_resumes_from_the_cursor() {
+        let seen: RefCell<Vec<Option<String>>> = RefCell::new(Vec::new());
+        let total = total_unresolved(|cursor| {
+            seen.borrow_mut().push(cursor.map(String::from));
+            match cursor {
+                None => Some(page(json!([{"isResolved": false}]), true, "C1")),
+                Some("C1") => Some(page(
+                    json!([{"isResolved": false}, {"isResolved": true}, {"isResolved": false}]),
+                    false,
+                    "",
+                )),
+                Some(other) => panic!("unexpected cursor {other}"),
+            }
+        });
+        assert_eq!(total, Some(3), "both pages must be counted");
+        assert_eq!(
+            *seen.borrow(),
+            vec![None, Some("C1".to_string())],
+            "page 2 must resume from page 1's endCursor"
+        );
+    }
+
+    // T7: a page that cannot be read mid-pagination yields None — NEVER the partial total already
+    // accumulated, which would be a truncated count presented as a whole one.
+    #[test]
+    fn total_is_none_when_a_later_page_is_unreadable() {
+        let total = total_unresolved(|cursor| match cursor {
+            None => Some(page(json!([{"isResolved": false}]), true, "C1")),
+            Some(_) => None,
+        });
+        assert_eq!(total, None);
+    }
+
+    // T8: a cursor that never terminates stops at the page cap and reports UNKNOWN, not the
+    // partial sum — an unbounded loop and a truncated total are both unacceptable.
+    #[test]
+    fn total_stops_at_the_page_cap_without_reporting_a_partial() {
+        let calls = Cell::new(0usize);
+        let total = total_unresolved(|_| {
+            calls.set(calls.get() + 1);
+            Some(page(json!([{"isResolved": false}]), true, "SAME"))
+        });
+        assert_eq!(
+            total, None,
+            "a non-terminating cursor must not yield a total"
+        );
+        assert_eq!(calls.get(), MAX_THREAD_PAGES, "paging must be bounded");
+    }
+
+    // --- the VETTER's state-load gate (`unvetted`), issue #1 requirement 2 ------------------------
+
+    fn vet_row() -> (VetAction, u8, Value) {
+        (VetAction::Vet, 0, json!({"pr": "o/r#1", "action": "vet"}))
+    }
+
+    // T9: a PR with an unresolved thread is NOT offered to the vetter, so it can never be given a
+    // `ready` verdict while a thread is open.
+    #[test]
+    fn vet_gate_excludes_a_pr_with_an_unresolved_thread() {
+        let (action, _, row) = gate_open_threads(vet_row(), || Some(1));
+        assert_eq!(action, VetAction::SkipOpenThreads);
+        assert_eq!(row["action"], json!("skip-open-threads"));
+        assert_eq!(row["unresolvedThreads"], json!(1));
+    }
+
+    // T10: a PR with a VERIFIED zero passes through untouched — the gate must not withhold clean
+    // PRs, or vetting stops entirely.
+    #[test]
+    fn vet_gate_passes_a_pr_with_zero_unresolved_threads() {
+        let (action, prio, row) = gate_open_threads(vet_row(), || Some(0));
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(prio, 0);
+        assert_eq!(row["action"], json!("vet"));
+        assert_eq!(row["unresolvedThreads"], json!(0));
+    }
+
+    // T11: an unreadable thread state is fail-closed (not vetted), and stays DISTINGUISHABLE from
+    // a verified zero on the row.
+    #[test]
+    fn vet_gate_fails_closed_on_unknown_thread_state() {
+        let (action, _, row) = gate_open_threads(vet_row(), || None);
+        assert_eq!(action, VetAction::SkipOpenThreads);
+        assert_eq!(row["unresolvedThreads"], json!(null));
+    }
+
+    // T12: a row that ALREADY skips costs no GraphQL round-trip — the gate only asks about PRs
+    // whose answer could change the outcome.
+    #[test]
+    fn vet_gate_does_not_query_an_already_skipped_row() {
+        for skip in [
+            VetAction::SkipHuman,
+            VetAction::SkipDraft,
+            VetAction::SkipVetted,
+        ] {
+            let called = Cell::new(false);
+            let (action, _, row) = gate_open_threads(
+                (skip, 4, json!({"pr": "o/r#1", "action": skip.as_str()})),
+                || {
+                    called.set(true);
+                    Some(7)
+                },
+            );
+            assert!(!called.get(), "{skip:?} must not trigger a thread query");
+            assert_eq!(action, skip);
+            assert_eq!(row.get("unresolvedThreads"), None);
+        }
+    }
+
+    // T13: the state-load counts an open-threads skip as ITS OWN reason — folding it into
+    // `skipVettedAtHead` would report un-vetted PRs as already vetted.
+    #[test]
+    fn doc_counts_the_open_threads_skip_separately() {
+        let rows = vec![
+            (VetAction::Vet, 0, json!({"pr": "o/r#1", "action": "vet"})),
+            (
+                VetAction::SkipOpenThreads,
+                0,
+                json!({"pr": "o/r#2", "action": "skip-open-threads"}),
+            ),
+            (
+                VetAction::SkipVetted,
+                4,
+                json!({"pr": "o/r#3", "action": "skip-vetted-at-head"}),
+            ),
+        ];
+        let doc = unvetted_doc(&rows, false);
+        assert_eq!(doc["counts"]["vet"], json!(1));
+        assert_eq!(doc["counts"]["skipOpenThreads"], json!(1));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(1));
+        let listed: Vec<&str> = doc["prs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["pr"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            listed,
+            vec!["o/r#1"],
+            "a gated PR is not handed to the vetter"
+        );
     }
 }
 
