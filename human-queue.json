@@ -175,7 +175,7 @@
   ],
   "closeCandidateUpheld": [],
   "counts": {
-    "awaitingReVet": 1,
+    "awaitingReVet": 0,
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
@@ -188,12 +188,12 @@
     "humanDesign": 6,
     "humanReject": 30,
     "leaks": 17,
-    "ready": 45,
+    "ready": 44,
     "reject": 30,
     "relink": 2,
-    "totalProducerPrs": 179,
-    "uncoveredIssues": 630,
-    "unvetted": 17
+    "totalProducerPrs": 176,
+    "uncoveredIssues": 631,
+    "unvetted": 15
   },
   "lanes": {
     "human-decisions": {
@@ -671,19 +671,8 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 1,
-        "prs": [
-          {
-            "number": 246,
-            "repo": "S01-Issuer/st0x.deploy",
-            "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant",
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/246"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 17,
+        "count": 15,
         "prs": [
           {
             "number": 134,
@@ -696,18 +685,6 @@
             "repo": "rainlanguage/issue-pr-cron",
             "title": "Exclude cargo target/ from the flake source so the cron's derivation is cacheable",
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/75"
-          },
-          {
-            "number": 133,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Model the FSM leak as a human state, not a banner beside the machine",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/133"
-          },
-          {
-            "number": 131,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "Remove the overview page; site root redirects to Repositories",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/131"
           },
           {
             "number": 128,
@@ -1793,11 +1770,6 @@
         "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
       },
       {
-        "number": 246,
-        "repo": "S01-Issuer/st0x.deploy",
-        "title": "fix(invariants): reject null vault authoriser unconditionally in migration invariant"
-      },
-      {
         "number": 254,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
@@ -2094,6 +2066,11 @@
     ]
   },
   "uncoveredIssues": [
+    {
+      "number": 76,
+      "repo": "rainlanguage/issue-pr-cron",
+      "title": "Every tool the crons execute should come from the flake"
+    },
     {
       "number": 60,
       "repo": "rainlanguage/claude-audit-skills",
