@@ -99,6 +99,23 @@ ERRLOG="$RUNDIR/$TS.err"
 # with NO Bash at all, so a non-FSM operation is unrepresentable rather than merely denied — a Bash
 # deny-list is prefix-matched and bypassable (`nix shell … --command`).
 # `--strict-mcp-config` keeps every other MCP configuration on the box out of the run.
+#
+# Tool schemas are PRESENTED, not deferred (#78). By default Claude Code defers MCP schemas and the
+# vetter spends its first turn on a `ToolSearch` selecting its own eight `mcp__fsm__*` tools by name
+# — a round trip to rediscover a fixed allowlist. `ENABLE_TOOL_SEARCH=false` puts the harness in
+# standard mode, where the whole surface rides in the preamble. That trade is right HERE and only
+# here: the vetter's surface is thirteen tools, deliberately tiny, so the preamble it costs is
+# smaller than the turn it saves. The producer keeps deferral — it has Bash and a far larger surface.
+#
+# Verified 2026-07-27 against claude 2.1.220: unset, the first tool_use of a one-shot run is
+# `ToolSearch`; with this export, the first tool_use is the MCP tool itself.
+#
+# `ToolSearch` stays ALLOWED in review-settings.json on purpose. This export is an optimisation, and
+# its failure mode must be the old behaviour, not a dead vetter: if a future harness ignores the
+# variable and defers anyway, a vetter that cannot call `ToolSearch` sees its own tools as
+# nonexistent and records nothing, silently — that is the #63 failure. Allowed-and-unused costs one
+# schema; disallowed-and-needed costs a whole run.
+export ENABLE_TOOL_SEARCH=false
 PROMPT_FILE="$DIR/review-prompt.txt"
 SETTINGS_FILE="$DIR/review-settings.json"
 MCP_ARGS=(--mcp-config "$DIR/review-mcp.json" --strict-mcp-config)
