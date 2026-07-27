@@ -3656,12 +3656,23 @@ fn resolve_pr_state(dir: &std::path::Path) -> Option<PrState> {
     parse_pr_state(v.as_array()?.first()?.get("state")?.as_str()?)
 }
 
-/// Days since the clone dir was last modified (0 on any error — errs toward KEEPING, since only the
-/// no-PR age backstop consults it).
+/// Days since anything last happened in this clone — the NEWER of the directory's own mtime and
+/// `.git/HEAD`'s (0 on any error — errs toward KEEPING, since only the age backstops consult it).
+///
+/// The directory's mtime alone answers the wrong question. It changes when a TOP-LEVEL entry is
+/// added or removed, and a checkout usually only rewrites files further down, so a clone that was
+/// checked out ten minutes ago can read as days idle. That is a live hazard with the vet cap: a
+/// vetter run spanning midnight, REUSING yesterday's checkout, would have had its working tree
+/// deleted underneath it by the sweep. `.git/HEAD` is rewritten by every `git checkout` — including
+/// the no-op `checkout -f -B` onto the branch already current — and, unlike `.git/index`, is NOT
+/// touched by the `git status` the sweep itself runs, so it cannot make every clone immortal.
 fn clone_age_days(dir: &std::path::Path) -> u64 {
-    std::fs::metadata(dir)
-        .and_then(|m| m.modified())
-        .ok()
+    let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let newest = [mtime(dir.to_path_buf()), mtime(dir.join(".git/HEAD"))]
+        .into_iter()
+        .flatten()
+        .max();
+    newest
         .and_then(|t| t.elapsed().ok())
         .map(|d| d.as_secs() / 86_400)
         .unwrap_or(0)
@@ -13583,9 +13594,14 @@ mod mcp_tests {
             ],
         )
         .unwrap();
-        // Age it past the vet cap. The dir's mtime is what `clone_age_days` reads.
+        // Age it past the vet cap. `clone_age_days` reads the NEWER of the directory and
+        // `.git/HEAD`, so a leaked clone is only idle when nothing has checked out in it either.
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 86_400);
-        filetime_set(&leaked, old);
+        let age = |d: &std::path::Path| {
+            filetime_set(d, old);
+            filetime_set(&d.join(".git/HEAD"), old);
+        };
+        age(&leaked);
 
         // A producer work clone of the same age, holding one commit that exists only here.
         let work = root.join("rain.factory-46");
@@ -13604,7 +13620,7 @@ mod mcp_tests {
         let mut c = id.to_vec();
         c.extend_from_slice(&["-c", "commit.gpgsign=false", "commit", "-qm", "wip"]);
         git_run(&work, &c).unwrap();
-        filetime_set(&work, old);
+        age(&work);
 
         let recs = gc_clones_sweep(&rs, 30, false, &mut |_| {}).unwrap();
         let outcome = |n: &str| {
@@ -13625,6 +13641,40 @@ mod mcp_tests {
         );
         assert!(work.exists(), "a clone holding work is never touched");
         let _ = std::fs::remove_dir_all(&outer);
+    }
+
+    // The race the vet cap opens if "idle" is read off the directory's mtime alone. A checkout
+    // rewrites files BELOW the top level, so it does not touch the directory's own mtime — a clone
+    // the vetter checked out minutes ago can read as days idle, and the midnight sweep would delete
+    // the working tree of a run still using it (a 23:00 run reusing yesterday's checkout is exactly
+    // the case). `.git/HEAD` is rewritten by every checkout, including the no-op `-f -B` onto the
+    // current branch, and is not touched by the `git status` this sweep itself runs.
+    #[test]
+    fn a_clone_checked_out_recently_is_not_idle_however_old_its_directory_looks() {
+        let root = tmp_root("age");
+        let d = root.join("clone");
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        let ancient = std::time::SystemTime::now() - std::time::Duration::from_secs(9 * 86_400);
+        std::fs::write(d.join(".git/HEAD"), "ref: refs/heads/pr-47\n").unwrap();
+        filetime_set(&d, ancient);
+        filetime_set(&d.join(".git/HEAD"), ancient);
+        assert_eq!(
+            clone_age_days(&d),
+            9,
+            "nothing has happened here for 9 days"
+        );
+
+        // …now check it out again: only `.git/HEAD` moves, and the clone is live.
+        filetime_set(&d.join(".git/HEAD"), std::time::SystemTime::now());
+        assert_eq!(
+            clone_age_days(&d),
+            0,
+            "a clone checked out just now is not idle, whatever its directory mtime says"
+        );
+        // A clone with no `.git/HEAD` at all still ages off its directory.
+        std::fs::remove_file(d.join(".git/HEAD")).unwrap();
+        assert_eq!(clone_age_days(&d), 9);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Backdate a directory's mtime. No `filetime` crate here, so this shells out to `touch` —

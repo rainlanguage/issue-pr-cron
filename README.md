@@ -257,8 +257,12 @@ PR → active work" made every leaked checkout immortal: 83 of them, 349 MB, und
 a sweep that had been running nightly the whole time (#81). They are now
 disposable on **age alone** — one day, ~12× the vetter's own 2h `REVIEW_MAXTIME`
 ceiling, independent of `--max-age-days`. The dirt/unpushed guards still run
-first, so "never delete something that holds work" is unchanged; what changed is
-that a read-only copy of a commit already on GitHub stopped being treated as
+first, and "idle" is read as the newer of the clone directory's mtime and
+`.git/HEAD`'s — a checkout rewrites files below the top level, so the
+directory's own mtime does not move, and a clone the vetter checked out minutes
+ago would otherwise read as days idle and be deleted underneath a run still
+using it. So "never delete something that holds work" is unchanged; what changed
+is that a read-only copy of a commit already on GitHub stopped being treated as
 work. This sweep is the **only** thing that reclaims a leaked checkout, and it
 has to be: a run that dies is exactly the run that leaks, so a `clone_release`
 on the way out can never be the mechanism.
