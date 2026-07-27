@@ -191,9 +191,9 @@
     "ready": 45,
     "reject": 30,
     "relink": 2,
-    "totalProducerPrs": 175,
-    "uncoveredIssues": 629,
-    "unvetted": 13
+    "totalProducerPrs": 179,
+    "uncoveredIssues": 630,
+    "unvetted": 17
   },
   "lanes": {
     "human-decisions": {
@@ -683,8 +683,32 @@
         ]
       },
       "un-vetted": {
-        "count": 13,
+        "count": 17,
         "prs": [
+          {
+            "number": 134,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Mark each actor's largest queue when no bottleneck is flagged",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/134"
+          },
+          {
+            "number": 75,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "Exclude cargo target/ from the flake source so the cron's derivation is cacheable",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/75"
+          },
+          {
+            "number": 133,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Model the FSM leak as a human state, not a banner beside the machine",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/133"
+          },
+          {
+            "number": 131,
+            "repo": "rainlanguage/rain-org-health",
+            "title": "Remove the overview page; site root redirects to Repositories",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/131"
+          },
           {
             "number": 128,
             "repo": "rainlanguage/rain-org-health",
@@ -2070,6 +2094,11 @@
     ]
   },
   "uncoveredIssues": [
+    {
+      "number": 60,
+      "repo": "rainlanguage/claude-audit-skills",
+      "title": "Investigate: does the skill still need to prescribe fan-out, or can current models derive it?"
+    },
     {
       "number": 73,
       "repo": "rainlanguage/issue-pr-cron",
