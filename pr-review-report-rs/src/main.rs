@@ -13678,8 +13678,10 @@ mod mcp_tests {
     }
 
     /// Backdate a file's or directory's mtime, via `std::fs::File::set_times` rather than a `touch`
-    /// subprocess: BSD `touch` — macOS, where `rainix-rs-test` also runs — does not accept GNU's
-    /// `-d @<epoch>`, so the subprocess form passes on one CI runner and fails on the other.
+    /// subprocess. The subprocess form needs GNU `touch` for `-d @<epoch>`; BSD `touch` rejects it,
+    /// so on macOS it works only because `rainix-rs-test` runs inside a nix shell that puts nixpkgs
+    /// coreutils on PATH. A test whose result depends on which `touch` is ahead on PATH is a test
+    /// with a hidden precondition; this has none.
     fn filetime_set(p: &std::path::Path, t: std::time::SystemTime) {
         let f = std::fs::File::options()
             .read(true)
