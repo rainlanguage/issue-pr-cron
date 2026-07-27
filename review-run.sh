@@ -95,7 +95,7 @@ ERRLOG="$RUNDIR/$TS.err"
 
 # --- tool surface: the FSM MCP server, and nothing else (issue #52) ---------------------------
 # The vetter runs against the FSM MCP server in pr-review-report: its whole tool surface is
-# `mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}` (+ Read/Grep/Glob/Skill)
+# `mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}` (+ Read/Grep/Glob/Skill/ToolSearch)
 # with NO Bash at all, so a non-FSM operation is unrepresentable rather than merely denied — a Bash
 # deny-list is prefix-matched and bypassable (`nix shell … --command`).
 # `--strict-mcp-config` keeps every other MCP configuration on the box out of the run.
