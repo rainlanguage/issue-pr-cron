@@ -18,12 +18,26 @@
         # inside src, so src is the workspace root — but filtered to just the
         # manifests + crate. Without the filter the whole repo (churning runs/,
         # metrics/, logs) would enter the build and bust the cache every tick.
+        #
+        # `target/` must be excluded explicitly. The crons resolve the flake as
+        # `path:$DIR#pr-review-report`, and a `path:` ref copies the working
+        # directory as-is — gitignored files included — so cargo's build output
+        # sitting inside the crate dir lands in the source and changes its hash.
+        # The install dir accumulates ~100MB there, which is why a cron tick
+        # could rebuild the crate (and re-run its release-profile test suite)
+        # before the model got a single token. `.gitignore` does not save us
+        # here: it is not consulted for a `path:` ref.
         src = lib.fileset.toSource {
           root = ./.;
           fileset = lib.fileset.unions [
             ./Cargo.toml
             ./Cargo.lock
-            ./pr-review-report-rs
+            # Subtract rather than whitelist src/: a whitelist silently drops
+            # anything the crate gains later (tests/, benches/, build.rs), which
+            # fails as a missing test gate rather than a loud error.
+            (lib.fileset.difference ./pr-review-report-rs (
+              lib.fileset.maybeMissing ./pr-review-report-rs/target
+            ))
           ];
         };
         # The pipeline's deterministic tooling (queue, report, --commit-closes,
