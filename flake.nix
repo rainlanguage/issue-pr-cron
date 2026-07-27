@@ -86,6 +86,8 @@
             pkgs.findutils
             pkgs.gnugrep
             pkgs.gnused
+            pkgs.util-linux # flock, for the single-run lock
+            pkgs.getent # resolves HOME when cron starts without it
           ];
         };
 
@@ -103,6 +105,9 @@
             pkgs.coreutils
             pkgs.findutils
             pkgs.gnugrep
+            pkgs.gnused # {{…}} substitution into the prompt template
+            pkgs.util-linux # flock, for the single-run lock
+            pkgs.getent # resolves HOME when cron starts without it
           ];
         };
 
@@ -116,7 +121,8 @@
             pkgs.gh
             pkgs.git
             pkgs.coreutils
-            pkgs.util-linux
+            pkgs.util-linux # flock
+            pkgs.getent # resolves HOME when cron starts without it
           ];
         };
 

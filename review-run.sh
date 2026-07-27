@@ -117,7 +117,7 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
 
 {
   echo "================================================================="
-  echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(hostname)) trace=$RUNLOG"
+  echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(uname -n)) trace=$RUNLOG"
 } >> "$LOG"
 
 # `gh` is on PATH as a bare executable, put there by nix from the flake's runtimeInputs, for the MCP
@@ -144,7 +144,7 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
     | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}
   # Typed verdict from the trace's result events, not a grep over the trace bytes (see
-  # `classify_run`): the old regex also matched a 429 quoted inside an unrelated tool result.
+  # `classify_trace`): the old regex also matched a 429 quoted inside an unrelated tool result.
   if [ "$(pr-review-report trace-outcome "$RUNLOG" --exit-code "$rc")" = "session-limit" ]; then
     echo "  !! model $USED_MODEL is quota-limited — falling back to next model" >> "$LOG"
     continue

@@ -47,36 +47,50 @@ jobs:
       - name: build churn must not change the cron's derivation
         run: |
           set -euo pipefail
-          drv() { nix path-info --derivation "path:$PWD#pr-review-report"; }
+          # Every output a cron resolves, not just the crate. The runners are
+          # writeShellApplication packages that depend on pr-review-report, so the
+          # fileset governs their hashes too — churn leaking into the source
+          # rebuilds the runner as well as the binary.
+          OUTPUTS="pr-review-report campaign-run review-run refresh-human-queue backfill-human-queue-history review-queue"
 
-          before="$(drv)"
-          echo "clean:  $before"
+          drvs() {
+            for o in $OUTPUTS; do
+              printf '%s %s\n' "$o" "$(nix path-info --derivation "path:$PWD#$o")"
+            done
+          }
+
+          before="$(drvs)"
+          echo "clean:"; echo "$before" | sed 's/^/  /'
 
           # Exactly what cargo/nix leave behind in the live install dir (~100MB there).
           mkdir -p pr-review-report-rs/target/debug/incremental
           echo churn > pr-review-report-rs/target/debug/churn
           echo churn > pr-review-report-rs/target/CACHEDIR.TAG
 
-          after="$(drv)"
-          echo "churned: $after"
+          after="$(drvs)"
+          echo "churned:"; echo "$after" | sed 's/^/  /'
 
           if [ "$before" != "$after" ]; then
-            echo "::error::Build churn changed the derivation the crons resolve."
+            echo "::error::Build churn changed a derivation the crons resolve."
             echo "flake.nix's fileset must exclude cargo output; otherwise every cron"
             echo "tick after a local build pays a full rebuild + in-derivation test suite."
+            diff <(echo "$before") <(echo "$after") || true
             exit 1
           fi
 
           # The two refs must stay interchangeable, so warming one warms the other
           # and a human debugging with `.#` sees what the cron actually runs.
-          dot="$(nix path-info --derivation '.#pr-review-report')"
-          if [ "$dot" != "$after" ]; then
-            echo "::error::'.#pr-review-report' and 'path:\$PWD#pr-review-report' diverged."
-            echo "  .#    $dot"
-            echo "  path: $after"
-            exit 1
-          fi
-          echo "stable and equivalent: $after"
+          for o in $OUTPUTS; do
+            dot="$(nix path-info --derivation ".#$o")"
+            path="$(nix path-info --derivation "path:$PWD#$o")"
+            if [ "$dot" != "$path" ]; then
+              echo "::error::'.#$o' and 'path:\$PWD#$o' diverged."
+              echo "  .#    $dot"
+              echo "  path: $path"
+              exit 1
+            fi
+          done
+          echo "stable and equivalent across all cron outputs"
       # `doCheck` is left ON deliberately: with the fileset fixed, a rebuild only
       # happens on a real source change, and running the suite then is the point.
       # This guards the other half — if someone later sets doCheck = false, the
@@ -89,3 +103,110 @@ jobs:
             exit 1
           }
           echo "rainix-rs-test present"
+
+  # Every tool the crons execute must come from the flake (#76). These three ways of
+  # acquiring a tool ambiently all LOOK fine while they work and fail as something else:
+  # a registry flakeref floats with channels.nixos.org, a literal store path degrades to
+  # ~/.nix-profile when the store is gc'd, and ~/.nix-profile first on PATH means the cron
+  # runs whatever a human last installed. None of them can be caught by running the code,
+  # so they are asserted statically here.
+  tools-come-from-the-flake:
+    name: tools come from the flake
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@a7ad9c4f0c65208097f4d34f3cfa1913b80cce5c # main
+      - name: no ambient tool acquisition in any script
+        run: |
+          set -euo pipefail
+          fail=0
+          # `nixpkgs#x` resolves via the GLOBAL REGISTRY, not flake.lock.
+          if grep -rn 'nixpkgs#' ./*.sh; then
+            echo "::error::A script resolves a registry flakeref. Add the tool to the"
+            echo "package's runtimeInputs in flake.nix instead — the registry floats."
+            fail=1
+          fi
+          # A baked store path is not a pin: nothing GC-roots it, and when it vanishes
+          # PATH silently falls through to an unpinned copy.
+          if grep -rn '/nix/store/' ./*.sh; then
+            echo "::error::A script hardcodes a /nix/store path. Use runtimeInputs."
+            fail=1
+          fi
+          # Ambient authority: whatever a human last installed, ahead of the closure.
+          if grep -rn 'PATH=.*\.nix-profile' ./*.sh; then
+            echo "::error::A script puts ~/.nix-profile on PATH. Let nix build PATH."
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "no ambient tool acquisition found"
+          exit "$fail"
+      - name: gh and jq resolve to the LOCKED nixpkgs, not the registry
+        run: |
+          set -euo pipefail
+          rev="$(nix flake metadata --json | nix run nixpkgs#jq -- -r '.locks.nodes.nixpkgs.locked.rev')"
+          echo "flake.lock nixpkgs rev: $rev"
+
+          # Build each tool straight from the locked rev and require the runner's copy to be
+          # the SAME store path. This is the assertion that actually distinguishes "pinned"
+          # from "happens to be in the store" — the registry produces store paths too.
+          for tool in gh jq; do
+            want="$(nix build --no-link --print-out-paths "github:nixos/nixpkgs/$rev#$tool" | head -1)"
+            got="$(nix develop .#cron -c command -v "$tool")"
+            echo "  $tool: want ${want}/bin/$tool"
+            echo "  $tool: got  $got"
+            case "$got" in
+              "$want"/bin/"$tool") echo "  $tool OK — from the locked nixpkgs" ;;
+              *) echo "::error::$tool does not come from flake.lock's nixpkgs ($rev)."; exit 1 ;;
+            esac
+          done
+      - name: the cron shell prints nothing on entry
+        run: |
+          set -euo pipefail
+          # The runners tee stdout into a JSONL trace; a shellHook banner corrupts the
+          # first line. Assert the shell contributes zero bytes of its own.
+          out="$(nix develop .#cron -c true)"
+          if [ -n "$out" ]; then
+            echo "::error::The cron devShell wrote to stdout on entry:"
+            printf '%s\n' "$out"
+            exit 1
+          fi
+          # And that a payload comes back byte-identical and parses as JSON.
+          echo '{"type":"system"}' | nix develop .#cron -c jq -e -c '.type' >/dev/null
+          echo "cron shell is silent on entry; JSON round-trips clean"
+      # A runner whose closure is missing a tool still WORKS on a developer box, because the
+      # ambient PATH quietly supplies it — and then behaves differently under cron, where the
+      # environment is bare. That is the same class of bug as the three above, so it is asserted
+      # the same way: resolve each tool using ONLY the package's own baked PATH, and require a
+      # store path. Writing this check is what found flock, getent, hostname and sed missing.
+      - name: each runner's closure is self-contained
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            pkg="$1"; bin="$2"; shift 2
+            out="$(nix build --no-link --print-out-paths ".#$pkg")"
+            # writeShellApplication bakes `export PATH="<runtimeInputs>"` into the script.
+            wp="$(grep -o 'export PATH="[^"]*"' "$out/bin/$bin" | head -1 | sed 's/export PATH="//;s/"$//')"
+            for t in "$@"; do
+              r="$(env -i PATH="$wp" /bin/sh -c "command -v $t" 2>/dev/null || true)"
+              case "$r" in
+                /nix/store/*) ;;
+                *) echo "::error::$pkg: '$t' is not in the package closure (resolved: ${r:-not found})"; fail=1 ;;
+              esac
+            done
+          }
+          check campaign-run campaign-run \
+            date uname getent id flock timeout find sort cut tail rm mkdir tee sed grep gh jq pr-review-report
+          check review-run review-run \
+            date uname getent id flock timeout find sort cut tail rm mkdir tee sed grep gh pr-review-report
+          check refresh-human-queue refresh-human-queue \
+            date getent id flock mktemp mv rm git pr-review-report
+          check backfill-human-queue-history backfill-human-queue-history git wc pr-review-report
+          check review-queue sort-review-queue pr-review-report
+          check pr-review-report-sh pr-review-report-sh pr-review-report
+          [ "$fail" -eq 0 ] && echo "every runner closure is self-contained"
+          exit "$fail"
+      - name: flake check
+        run: nix flake check --print-build-logs

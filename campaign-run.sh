@@ -119,7 +119,7 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 
 {
   echo "================================================================="
-  echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(hostname)) trace=$RUNLOG"
+  echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(uname -n)) trace=$RUNLOG"
 } >> "$LOG"
 
 # gh, jq and pr-review-report are on PATH as BARE executables, put there by nix from the flake's
@@ -157,7 +157,7 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}
   # Advance to the next model ONLY on a usage/quota limit; any other outcome is final. The verdict
-  # is a TYPE computed from the trace's result events (see `classify_run`), not a grep over the
+  # is a TYPE computed from the trace's result events (see `classify_trace`), not a grep over the
   # trace bytes — the old regex also matched a 429 quoted inside an unrelated tool result, which
   # could skip a model that was never quota-limited at all.
   if [ "$(pr-review-report trace-outcome "$RUNLOG" --exit-code "$rc")" = "session-limit" ]; then

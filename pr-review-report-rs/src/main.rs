@@ -732,7 +732,7 @@ fn run_metrics(content: &str) -> RunMetrics {
 /// With the run-identity flags it emits the FULL runs.jsonl record. The runners used to pipe this
 /// through `jq '. + {runId:…, role:…, model:…, exitCode:…, outcome:…}'`; folding the merge in here
 /// means the record's shape lives in one tested place, and `outcome` is derived by
-/// [`classify_run`] rather than by grepping the trace in bash.
+/// [`classify_trace`] rather than by grepping the trace in bash.
 fn run_metrics_mode(
     path: &str,
     run_id: Option<&str>,
@@ -780,7 +780,7 @@ fn run_metrics_mode(
             obj.insert("exitCode".into(), serde_json::json!(rc));
             obj.insert(
                 "outcome".into(),
-                serde_json::json!(classify_run(&content, rc).as_str()),
+                serde_json::json!(classify_trace(&content, rc).as_str()),
             );
         }
     }
@@ -800,21 +800,21 @@ fn run_metrics_mode(
 /// typed fields. Text is read from `.result` alone (the model's own final message), never from
 /// arbitrary trace bytes.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum RunOutcome {
+enum TraceOutcome {
     Ok,
     /// The model is quota/usage limited — the ONLY outcome that should advance model fallback.
     QuotaLimited,
     Error,
 }
 
-impl RunOutcome {
+impl TraceOutcome {
     /// The wire word written into metrics/runs.jsonl. `session-limit` is kept verbatim: the
     /// committed history already uses it and the dashboard reads it.
     fn as_str(self) -> &'static str {
         match self {
-            RunOutcome::Ok => "ok",
-            RunOutcome::QuotaLimited => "session-limit",
-            RunOutcome::Error => "error",
+            TraceOutcome::Ok => "ok",
+            TraceOutcome::QuotaLimited => "session-limit",
+            TraceOutcome::Error => "error",
         }
     }
 }
@@ -842,7 +842,9 @@ fn result_event_is_quota_limited(ev: &Value) -> bool {
     // 2. Enumerated subtype.
     if let Some(sub) = ev.get("subtype").and_then(|s| s.as_str()) {
         let sub = sub.to_ascii_lowercase();
-        if sub.contains("usage_limit") || sub.contains("session_limit") || sub.contains("rate_limit")
+        if sub.contains("usage_limit")
+            || sub.contains("session_limit")
+            || sub.contains("rate_limit")
         {
             return true;
         }
@@ -859,19 +861,19 @@ fn result_event_is_quota_limited(ev: &Value) -> bool {
 
 /// Classify a whole trace. `exit_code` is the runner's own observation of the claude process, so a
 /// process that died without ever emitting a `result` event is still an error rather than an "ok".
-fn classify_run(trace: &str, exit_code: i32) -> RunOutcome {
+fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
     let quota = trace
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .any(|ev| result_event_is_quota_limited(&ev));
     if quota {
-        return RunOutcome::QuotaLimited;
+        return TraceOutcome::QuotaLimited;
     }
     if exit_code != 0 {
-        return RunOutcome::Error;
+        return TraceOutcome::Error;
     }
-    RunOutcome::Ok
+    TraceOutcome::Ok
 }
 
 /// `trace-outcome <trace> --exit-code <n>`: print the typed outcome word and exit 0.
@@ -883,7 +885,7 @@ fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
     // An unreadable/absent trace is not itself an error to report on: the runner already
     // distinguishes "no event stream" separately. Treat it as an empty trace.
     let content = std::fs::read_to_string(path).unwrap_or_default();
-    println!("{}", classify_run(&content, exit_code).as_str());
+    println!("{}", classify_trace(&content, exit_code).as_str());
     0
 }
 
@@ -6641,9 +6643,7 @@ fn main() {
             exit_code,
         ),
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
-        Cmd::QueueHistoryLine { snapshot, ts } => {
-            queue_history_line_mode(snapshot.as_deref(), &ts)
-        }
+        Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
@@ -9131,7 +9131,13 @@ mod cli_tests {
     fn queue_history_line_cli() {
         // Path form (refresh-human-queue.sh).
         assert_eq!(
-            parse(&["prr", "queue-history-line", "/q.json", "--ts", "2026-07-27T10:00:00Z"]),
+            parse(&[
+                "prr",
+                "queue-history-line",
+                "/q.json",
+                "--ts",
+                "2026-07-27T10:00:00Z"
+            ]),
             Cmd::QueueHistoryLine {
                 snapshot: Some("/q.json".to_string()),
                 ts: "2026-07-27T10:00:00Z".to_string(),
@@ -9150,6 +9156,183 @@ mod cli_tests {
     #[test]
     fn distill_trace_cli() {
         assert_eq!(parse(&["prr", "distill-trace"]), Cmd::DistillTrace);
+    }
+
+    // ---- trace classification: the typed replacement for the runners' fallback grep ----
+
+    #[test]
+    fn quota_limit_from_typed_status_field() {
+        let t = r#"{"type":"result","subtype":"error","api_error_status":429}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+        // The SDK has also written it as a string.
+        let t = r#"{"type":"result","subtype":"error","api_error_status":"429"}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    #[test]
+    fn quota_limit_from_subtype_and_from_result_text() {
+        let t = r#"{"type":"result","subtype":"error_usage_limit"}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+        let t =
+            r#"{"type":"result","subtype":"error","result":"You have reached your usage limit."}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    // The whole point of moving this out of `grep`. The old regex scanned the raw trace, so a 429
+    // (or the words "usage limit") appearing inside a tool RESULT — a fetched page, a quoted CI
+    // log, a PR body the run happened to read — advanced model fallback for a run that was never
+    // quota-limited. Here only `result` events are consulted, so this trace is a clean success.
+    #[test]
+    fn quota_words_inside_tool_output_do_not_trip_fallback() {
+        let t = concat!(
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"HTTP 429: you have reached your usage limit"}]}}"#,
+            "\n",
+            r#"{"type":"result","subtype":"success","result":"opened 3 PRs"}"#,
+        );
+        assert_eq!(classify_trace(t, 0), TraceOutcome::Ok);
+        // …and the same bytes in an assistant message are equally inert.
+        let t = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"the API returned api_error_status 429 earlier"}]}}"#;
+        assert_eq!(classify_trace(t, 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn nonzero_exit_without_quota_signal_is_error() {
+        let t = r#"{"type":"result","subtype":"success","result":"done"}"#;
+        assert_eq!(classify_trace(t, 124), TraceOutcome::Error); // timeout(1)
+                                                                 // An empty trace (claude died before emitting anything) follows the exit code.
+        assert_eq!(classify_trace("", 1), TraceOutcome::Error);
+        assert_eq!(classify_trace("", 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn quota_wins_over_exit_code_so_fallback_still_advances() {
+        // A quota-limited run also exits non-zero; it must classify as the limit, not as a
+        // generic error, or the loop would stop instead of trying the next model.
+        let t = r#"{"type":"result","subtype":"error","api_error_status":429}"#;
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    #[test]
+    fn malformed_trace_lines_are_skipped_not_fatal() {
+        let t = concat!(
+            "not json at all\n",
+            "\n",
+            r#"{"type":"result","subtype":"error","api_error_status":429}"#,
+            "\n{\"truncated\": ",
+        );
+        assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    #[test]
+    fn outcome_words_match_the_committed_history() {
+        // metrics/runs.jsonl already contains these three words and the dashboard reads them.
+        assert_eq!(TraceOutcome::Ok.as_str(), "ok");
+        assert_eq!(TraceOutcome::QuotaLimited.as_str(), "session-limit");
+        assert_eq!(TraceOutcome::Error.as_str(), "error");
+    }
+
+    // ---- queue-history-line: one implementation for the live append and the backfill ----
+
+    // Byte-identical to what the jq this replaces emitted, key order included — `ts` first, and
+    // the counts sub-object in the snapshot's own order. That parity is why serde_json carries the
+    // `preserve_order` feature; see the note in Cargo.toml.
+    #[test]
+    fn queue_history_line_shape() {
+        let snap = r#"{"counts":{"ready":3,"design":1},"other":"ignored"}"#;
+        assert_eq!(
+            queue_history_line(snap, "2026-07-27T10:00:00Z").unwrap(),
+            r#"{"ts":"2026-07-27T10:00:00Z","counts":{"ready":3,"design":1}}"#
+        );
+        // Only `counts` is carried over; anything else in the snapshot is dropped.
+        let parsed: Value = serde_json::from_str(&queue_history_line(snap, "t").unwrap()).unwrap();
+        assert_eq!(
+            parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["ts", "counts"]
+        );
+    }
+
+    #[test]
+    fn queue_history_line_skips_snapshots_without_counts() {
+        // The backfill's `select(.counts != null)`: early commits of human-queue.json predate the
+        // key, and those commits must contribute zero bytes rather than a `null` line.
+        assert!(queue_history_line(r#"{"prs":[]}"#, "t").is_none());
+        assert!(queue_history_line(r#"{"counts":null}"#, "t").is_none());
+        // `git show` of a commit where the file did not exist yields empty output.
+        assert!(queue_history_line("", "t").is_none());
+        assert!(queue_history_line("not json", "t").is_none());
+    }
+
+    // ---- distill-trace: the jq distiller, with its truncation widths now under test ----
+
+    #[test]
+    fn distill_tool_use_prefers_command_then_description_then_input() {
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Bash","input":{"command":"gh pr list","description":"ignored"}}]}});
+        assert_eq!(distill_event(&ev), vec!["  ▸ Bash  gh pr list"]);
+
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Read","input":{"description":"read a file"}}]}});
+        assert_eq!(distill_event(&ev), vec!["  ▸ Read  read a file"]);
+
+        // Neither key: the whole input object, as jq's `(.input|tostring)` did.
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"X","input":{"a":1}}]}});
+        assert_eq!(distill_event(&ev), vec![r#"  ▸ X  {"a":1}"#]);
+    }
+
+    #[test]
+    fn distill_flattens_newlines_and_clips_at_the_jq_widths() {
+        let long = "x".repeat(500);
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":long}]}});
+        let out = &distill_event(&ev)[0];
+        assert_eq!(
+            out.chars().count(),
+            4 + 200,
+            "text clips to 200 after '  · '"
+        );
+
+        let long = "y".repeat(1000);
+        let ev = serde_json::json!({"type":"result","subtype":"success","result":long});
+        let out = &distill_event(&ev)[0];
+        assert!(out.ends_with(&"y".repeat(800)));
+        assert_eq!(out.chars().count(), "  ⟹ SUCCESS: ".chars().count() + 800);
+
+        // Newlines become spaces so one event stays one log line.
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"a\nb\nc"}]}});
+        assert_eq!(distill_event(&ev), vec!["  · a b c"]);
+    }
+
+    // jq sliced CODEPOINTS (`.[0:200]`). Clipping bytes instead would split a multi-byte glyph
+    // and write invalid UTF-8 into the log the humans read.
+    #[test]
+    fn distill_clips_multibyte_text_by_character() {
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"é".repeat(300)}]}});
+        let out = &distill_event(&ev)[0];
+        assert_eq!(out.chars().filter(|c| *c == 'é').count(), 200);
+    }
+
+    #[test]
+    fn distill_result_defaults_subtype_and_uppercases_it() {
+        let ev = serde_json::json!({"type":"result","result":"done"});
+        assert_eq!(distill_event(&ev), vec!["  ⟹ DONE: done"]);
+        let ev = serde_json::json!({"type":"result","subtype":"error_max_turns","result":""});
+        assert_eq!(distill_event(&ev), vec!["  ⟹ ERROR_MAX_TURNS: "]);
+    }
+
+    #[test]
+    fn distill_emits_one_line_per_content_item_and_ignores_other_events() {
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"thinking"},
+            {"type":"tool_use","name":"Bash","input":{"command":"ls"}},
+            {"type":"thinking","thinking":"hidden"}]}});
+        assert_eq!(distill_event(&ev), vec!["  · thinking", "  ▸ Bash  ls"]);
+
+        // `user`/`system` events produced nothing under the jq filter either.
+        assert!(distill_event(&serde_json::json!({"type":"user"})).is_empty());
+        assert!(distill_event(&serde_json::json!({"type":"system","subtype":"init"})).is_empty());
     }
 
     // The pre-conversion `--foo` dispatch forms are gone: clap must REJECT them as unknown args
