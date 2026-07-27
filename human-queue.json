@@ -16,21 +16,6 @@
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
-      "number": 111,
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "run() missing @return and operand @param documentation"
-    },
-    {
-      "number": 98,
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "Short, non-descriptive local names vaultFloat/sharesFloat are acceptable but the raw-assembly read of inputs[0]/inputs[1] has no length asse"
-    },
-    {
-      "number": 96,
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "run() reads inputs via raw assembly with no length guard (leaky abstraction)"
-    },
-    {
       "number": 93,
       "repo": "rainlanguage/rain.erc4626.words",
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
@@ -103,21 +88,6 @@
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
-      "number": 111,
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "run() missing @return and operand @param documentation"
-    },
-    {
-      "number": 98,
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "Short, non-descriptive local names vaultFloat/sharesFloat are acceptable but the raw-assembly read of inputs[0]/inputs[1] has no length asse"
-    },
-    {
-      "number": 96,
-      "repo": "rainlanguage/rain.erc4626.words",
-      "title": "run() reads inputs via raw assembly with no length guard (leaky abstraction)"
-    },
-    {
       "number": 93,
       "repo": "rainlanguage/rain.erc4626.words",
       "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
@@ -175,13 +145,13 @@
   ],
   "closeCandidateUpheld": [],
   "counts": {
-    "awaitingReVet": 0,
+    "awaitingReVet": 2,
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 17,
+    "closeCandidateIssues": 14,
     "closeCandidatePrs": 6,
-    "closeCandidateUnvetted": 17,
+    "closeCandidateUnvetted": 14,
     "closeCandidateUpheld": 0,
     "design": 6,
     "humanCloseCandidate": 0,
@@ -190,9 +160,9 @@
     "leaks": 17,
     "ready": 44,
     "reject": 30,
-    "relink": 2,
-    "totalProducerPrs": 176,
-    "uncoveredIssues": 631,
+    "relink": 1,
+    "totalProducerPrs": 175,
+    "uncoveredIssues": 630,
     "unvetted": 15
   },
   "lanes": {
@@ -671,26 +641,43 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 2,
+        "prs": [
+          {
+            "number": 55,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "fix(uncovered-issues): coverage from native closingIssuesReferences, not body regex",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/55"
+          },
+          {
+            "number": 2,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
+          }
+        ]
+      },
       "un-vetted": {
         "count": 15,
         "prs": [
           {
-            "number": 134,
+            "number": 136,
             "repo": "rainlanguage/rain-org-health",
-            "title": "Mark each actor's largest queue when no bottleneck is flagged",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/134"
+            "title": "Put Audit second in the nav, behind Pipeline",
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/136"
+          },
+          {
+            "number": 77,
+            "repo": "rainlanguage/issue-pr-cron",
+            "title": "Every tool the crons execute comes from the flake",
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/77"
           },
           {
             "number": 75,
             "repo": "rainlanguage/issue-pr-cron",
             "title": "Exclude cargo target/ from the flake source so the cron's derivation is cacheable",
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/75"
-          },
-          {
-            "number": 128,
-            "repo": "rainlanguage/rain-org-health",
-            "title": "feat(scan): inherited audit provenance, and stop trusting unresolved tags",
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/128"
           },
           {
             "number": 6,
@@ -851,14 +838,8 @@
         ]
       },
       "ai:ready": {
-        "count": 44,
+        "count": 42,
         "prs": [
-          {
-            "number": 55,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "fix(uncovered-issues): coverage from native closingIssuesReferences, not body regex",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/55"
-          },
           {
             "number": 50,
             "repo": "rainlanguage/claude-audit-skills",
@@ -1050,12 +1031,6 @@
             "repo": "rainlanguage/raindex",
             "title": "perf: eliminate redundant read_dispair calls in try_into_call",
             "url": "https://github.com/rainlanguage/raindex/pull/2793"
-          },
-          {
-            "number": 2,
-            "repo": "rainlanguage/issue-pr-cron",
-            "title": "feat(coderabbit-gate): block human review until CodeRabbit findings resolved",
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/2"
           },
           {
             "number": 230,
@@ -1305,14 +1280,8 @@
         ]
       },
       "ai:relink": {
-        "count": 2,
+        "count": 1,
         "prs": [
-          {
-            "number": 231,
-            "repo": "rainlanguage/rain.erc4626.words",
-            "title": "docs(assembly): document integrity() coupling in run() assembly reads",
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/231"
-          },
           {
             "number": 209,
             "repo": "rainlanguage/rain.erc4626.words",
@@ -2054,11 +2023,6 @@
     ],
     "ai:relink": [
       {
-        "number": 231,
-        "repo": "rainlanguage/rain.erc4626.words",
-        "title": "docs(assembly): document integrity() coupling in run() assembly reads"
-      },
-      {
         "number": 209,
         "repo": "rainlanguage/rain.erc4626.words",
         "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
@@ -2066,11 +2030,6 @@
     ]
   },
   "uncoveredIssues": [
-    {
-      "number": 76,
-      "repo": "rainlanguage/issue-pr-cron",
-      "title": "Every tool the crons execute should come from the flake"
-    },
     {
       "number": 60,
       "repo": "rainlanguage/claude-audit-skills",
