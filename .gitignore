@@ -16,8 +16,12 @@
 # Rust rewrite of pr-review-report.sh (target/ ignored by the project's own .gitignore):
 !/pr-review-report-rs/
 !/review-run.sh
+# The vetter runs on the FSM MCP surface only (issue #52): prompt, tool allow/deny, server config.
 !/review-prompt.txt
 !/review-settings.json
+!/review-mcp.json
+# Producer's clone-lifecycle MCP surface (additive; the producer keeps its Bash):
+!/campaign-mcp.json
 !/merge-run.sh
 !/merge-prompt.txt
 !/merge-settings.json
@@ -51,6 +55,10 @@
 # the rain-org-health dashboard fetches it at runtime from the raw URL — no site redeploy:
 !/human-queue.json
 !/refresh-human-queue.sh
+# Append-only per-state inventory history ({ts, counts} per changed refresh) + its one-time
+# backfill; the dashboard fetches the jsonl at runtime for the Theory-of-Constraints panel:
+!/human-queue-history.jsonl
+!/backfill-human-queue-history.sh
 # Flake exposing pr-review-report as a package (bin on the cron PATH):
 !/flake.nix
 !/flake.lock

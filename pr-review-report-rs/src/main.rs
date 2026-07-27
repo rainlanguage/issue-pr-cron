@@ -1,5 +1,5 @@
 // pr-review-report — report every open PR (and logged close-candidate) that needs a HUMAN decision,
-// RESPECTING reviews already done: it overlays (a) recorded review verdicts in review-verdicts.jsonl
+// RESPECTING reviews already done: it reads verdict state from GitHub labels and
 // and (b) GitHub's own review state (APPROVED / CHANGES_REQUESTED) on top of the CI/mergeability
 // signal. Rust rewrite of pr-review-report.sh, fixing the 16 bugs from the adversarial review.
 //
@@ -8,7 +8,7 @@
 //          pr-review-report --queue [N]                 # cheapest-first review queue
 //          pr-review-report --commit-closes <owner/repo> <pr>  # fail if a commit keyword closes an out-of-index issue
 //          pr-review-report --deploy <owner/repo> <pr> [--network <net>] [--dry-run]  # sanctioned Zoltu deploy of a PR branch
-// Config (env overrides cron.env in CWD, then default): ORG, ORGS (org scope for --queue), PR_ASSIGNEE, CLOSE_CANDIDATES, REVIEW_VERDICTS.
+// Config (env overrides cron.env in CWD, then default): ORG, ORGS (org scope for --queue), PR_ASSIGNEE.
 
 use clap::{Parser, Subcommand};
 use serde_json::Value;
@@ -159,6 +159,21 @@ fn pr_slug(url: &str) -> Option<String> {
     let rest = url.strip_prefix("https://github.com/")?;
     let slug = rest.split("/pull/").next()?;
     if slug.is_empty() || !slug.contains('/') || !rest.contains("/pull/") {
+        return None;
+    }
+    Some(slug.to_string())
+}
+
+/// `owner/repo` from an ISSUE url. The twin of [`pr_slug`], which deliberately rejects `/issues/`
+/// urls — reusing it here silently emptied the whole close-candidate queue, since every row parsed
+/// to `None` and was skipped before it could be judged.
+fn issue_slug(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    if !rest.contains("/issues/") {
+        return None;
+    }
+    let slug = rest.split("/issues/").next()?;
+    if slug.is_empty() || !slug.contains('/') {
         return None;
     }
     Some(slug.to_string())
@@ -960,6 +975,10 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
 /// `--record-verdict <owner/repo> <pr> <verdict> [note...]`: record an AI verdict as the
 /// `ai:<verdict>` label (exactly one AI verdict at a time) + a SHA-bound `🤖 ai:vetter` comment.
 /// The ONE writer of AI verdicts (shared by the vetter); never overrides a human verdict.
+///
+/// Thin CLI shell over [`record_verdict_apply`]: it OWNS the printing so the core can be reused by a
+/// caller that must not write to stdout (the MCP server — a stray stdout line corrupts its JSON-RPC
+/// stream). Exit codes are unchanged: 0 ok, 1 error, 2 usage, 3 human-decision refusal.
 #[allow(clippy::too_many_arguments)]
 fn record_verdict_mode(
     slug: &str,
@@ -970,11 +989,32 @@ fn record_verdict_mode(
     basis: &str,
     dry_run: bool,
 ) -> i32 {
+    match record_verdict_apply(slug, pr, verdict, note, cost, basis, dry_run) {
+        Ok(msg) => {
+            println!("{msg}");
+            0
+        }
+        Err((code, msg)) => {
+            eprintln!("{msg}");
+            code
+        }
+    }
+}
+
+/// The verdict write itself. Returns the human-readable success report, or `(exit code, message)`.
+/// Writes NOTHING to stdout — non-fatal warnings still go to stderr, which is safe for every caller.
+#[allow(clippy::too_many_arguments)]
+fn record_verdict_apply(
+    slug: &str,
+    pr: &str,
+    verdict: &str,
+    note: &str,
+    cost: Option<i64>,
+    basis: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
     let Some(target) = verdict_label(verdict) else {
-        eprintln!(
-            "usage: pr-review-report --record-verdict <owner/repo> <pr> <ready|reject|design|close|relink> [note...] [--cost <n>] [--basis <s>] [--dry-run]"
-        );
-        return 2;
+        return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close|relink> [note...] [--cost <n>] [--basis <s>] [--dry-run]".to_string()));
     };
     let Some(pr_json) = gh_json(&[
         "pr",
@@ -985,19 +1025,23 @@ fn record_verdict_mode(
         "--json",
         "headRefOid,labels,comments,reviewDecision",
     ]) else {
-        eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
-        return 1;
+        return Err((
+            1,
+            format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
+        ));
     };
     let (to_remove, has_target, sha, skip) = match verdict_plan(&pr_json, target, verdict) {
         VerdictPlan::RefuseHuman => {
-            eprintln!("human verdict present on {slug}#{pr}; not overriding");
-            return 3;
+            return Err((
+                3,
+                format!("human verdict present on {slug}#{pr}; not overriding"),
+            ));
         }
         VerdictPlan::NoSha => {
-            eprintln!(
-                "error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"
-            );
-            return 1;
+            return Err((
+                1,
+                format!("error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"),
+            ));
         }
         VerdictPlan::Record {
             to_remove,
@@ -1009,35 +1053,24 @@ fn record_verdict_mode(
     let comment = verdict_comment(&sha, verdict, note, cost, basis);
 
     if dry_run {
-        println!("[dry-run] {slug}#{pr} @ {sha}");
-        println!(
-            "  target label: {target}{}",
-            if has_target { " (already present)" } else { "" }
-        );
-        println!(
-            "  labels to remove: {}",
+        return Ok(format!(
+            "[dry-run] {slug}#{pr} @ {sha}\n  target label: {target}{}\n  labels to remove: {}\n  comment: {}\n  cost: {}",
+            if has_target { " (already present)" } else { "" },
             if to_remove.is_empty() {
                 "(none)".to_string()
             } else {
                 to_remove.join(", ")
-            }
-        );
-        println!(
-            "  comment: {}",
+            },
             if skip {
                 "skip (same verdict + sha already posted)".to_string()
             } else {
                 format!("post -> {}", comment.replace('\n', " / "))
-            }
-        );
-        println!(
-            "  cost: {}",
+            },
             match cost {
                 Some(c) => format!("{c} ({basis}) -> embedded in the comment"),
                 None => "(none)".to_string(),
             }
-        );
-        return 0;
+        ));
     }
 
     let (color, desc) = label_meta(target);
@@ -1056,8 +1089,7 @@ fn record_verdict_mode(
         eprintln!("warning: could not ensure label {target} exists in {slug}");
     }
     if !has_target && !gh_run(&["pr", "edit", pr, "-R", slug, "--add-label", target]) {
-        eprintln!("error: failed to add {target} to {slug}#{pr}");
-        return 1;
+        return Err((1, format!("error: failed to add {target} to {slug}#{pr}")));
     }
     for r in &to_remove {
         if !gh_run(&["pr", "edit", pr, "-R", slug, "--remove-label", r]) {
@@ -1067,10 +1099,14 @@ fn record_verdict_mode(
     // A swallowed comment failure would report success with the SHA-bound rationale never posted.
     // The cost now travels INSIDE this comment (verdict_comment embeds it) — there is no cost sidecar.
     if !skip && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
-        eprintln!("error: recorded {target} on {slug}#{pr} but FAILED to post the verdict comment");
-        return 1;
+        return Err((
+            1,
+            format!(
+                "error: recorded {target} on {slug}#{pr} but FAILED to post the verdict comment"
+            ),
+        ));
     }
-    println!(
+    Ok(format!(
         "recorded {target} on {slug}#{pr}{}{}{}",
         if to_remove.is_empty() {
             String::new()
@@ -1086,8 +1122,7 @@ fn record_verdict_mode(
             Some(c) => format!(" [cost {c}]"),
             None => String::new(),
         }
-    );
-    0
+    ))
 }
 
 /// Pure plan for `--flag-close-candidate`: given the issue's live state, decide what to do.
@@ -1098,21 +1133,276 @@ enum CloseFlagPlan {
     Flag { add_label: bool, post_comment: bool },
 }
 
-/// A human `human:keep-open` / `human:close-candidate` ruling is sacred (refuse); a CLOSED issue is
-/// moot; otherwise flag it, adding the label / posting the note only when not already present.
+/// The human's namespace on an ISSUE. A ruling here is sacred: neither the producer's flag nor the
+/// vetter's verdict may overwrite it.
+///
+/// `human:keep-open` is retained for compatibility but is NOT a label the org actually uses — the
+/// real set is the same three [`has_human_override`] enforces on PRs. Checking only `keep-open` +
+/// `close-candidate` (as this did) left a `human:reject` / `human:design` ruling on an issue
+/// invisible here, so the producer could flag an issue a human had already parked.
+const HUMAN_RULING_LABELS: [&str; 4] = [
+    "human:reject",
+    "human:design",
+    "human:close-candidate",
+    "human:keep-open",
+];
+
+/// Does any human ruling sit on this issue? Takes label NAMES, which callers already have.
+fn has_human_ruling(labels: &[String]) -> bool {
+    labels
+        .iter()
+        .any(|l| HUMAN_RULING_LABELS.contains(&l.as_str()))
+}
+
+/// A human ruling is sacred (refuse); a CLOSED issue is moot; otherwise flag it, adding the label /
+/// posting the note only when not already present.
 fn close_candidate_plan(state: &str, labels: &[String], already_noted: bool) -> CloseFlagPlan {
     if state == "CLOSED" {
         return CloseFlagPlan::AlreadyClosed;
     }
-    if labels
-        .iter()
-        .any(|l| l == "human:keep-open" || l == "human:close-candidate")
-    {
+    if has_human_ruling(labels) {
         return CloseFlagPlan::RefuseHuman;
     }
     CloseFlagPlan::Flag {
         add_label: !labels.iter().any(|l| l == "ai:close-candidate"),
         post_comment: !already_noted,
+    }
+}
+
+/// The vetter's verdicts on a producer close-candidate FLAG. Two, because the flag is a binary
+/// claim: either the evidence supports closing (leave it queued for the human) or it does not
+/// (drop the flag, returning the issue to the producer's uncovered queue).
+const CC_VERDICTS: [&str; 2] = ["uphold", "reject"];
+
+/// The producer's most recent trusted close-candidate flag on an issue, as `(createdAt, body)`.
+///
+/// Trusted by AUTHOR, never by marker text: `🤖 ai:producer` is public body text anyone can post,
+/// so an untrusted "flag" must never be judged as though the pipeline made it.
+fn last_close_candidate_flag(issue: &Value) -> Option<(String, String)> {
+    issue
+        .get("comments")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|c| author_login(c) == Some(TRUSTED_AUTHOR))
+        .filter_map(|c| {
+            let body = c.get("body").and_then(|b| b.as_str())?;
+            if !body.starts_with("🤖 ai:producer") || !body.contains("Close-candidate:") {
+                return None;
+            }
+            let at = c.get("createdAt").and_then(|t| t.as_str()).unwrap_or("");
+            Some((at.to_string(), body.to_string()))
+        })
+        .next_back()
+}
+
+/// The most-recent trusted `🤖 ai:vetter` comment on an ISSUE recording a close-candidate verdict.
+fn last_cc_vetter_comment(issue: &Value) -> Option<String> {
+    trusted_comments(issue, Some("🤖 ai:vetter"))
+        .into_iter()
+        .rfind(|b| b.contains("Reviewed close-candidate @"))
+}
+
+/// The issue-side analogue of [`vetted_at_head`]: a flag is vetted only when the vetter's own
+/// comment pins the CURRENT flag's timestamp. The `ai:close-candidate` label alone is not a verdict
+/// — it is the producer's claim. A RE-flag (new comment, new timestamp) un-vets, exactly as a moved
+/// head does for a PR, so new evidence is re-judged instead of inheriting a stale pass.
+fn cc_vetted_at_flag(issue: &Value, flag_at: &str) -> bool {
+    !flag_at.is_empty()
+        && last_cc_vetter_comment(issue)
+            .map(|b| b.contains(&format!("Reviewed close-candidate @{flag_at}:")))
+            .unwrap_or(false)
+}
+
+/// The sha-bound verdict comment's issue-side twin: pins the flag being judged, so the record says
+/// WHICH claim was reviewed rather than merely that a review happened.
+fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str) -> String {
+    let tail = if note.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" — {}", note.trim())
+    };
+    format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict}{tail}")
+}
+
+/// The close-candidate recording decision, computed PURELY from the fetched issue JSON — the same
+/// guard-before-write shape as [`VerdictPlan`].
+#[derive(Debug, PartialEq)]
+enum CcVerdictPlan {
+    /// A human already ruled: never overwritten.
+    RefuseHuman,
+    /// The issue is closed — the flag is moot.
+    AlreadyClosed,
+    /// No trusted producer flag to judge (nothing was claimed).
+    NoFlag,
+    Record {
+        flag_at: String,
+        /// `ai:close-candidate` is present and this verdict drops it (reject only).
+        remove_label: bool,
+        /// The same verdict at the same flag is already recorded — a no-op re-review.
+        skip_comment: bool,
+    },
+}
+
+/// PURE: may the vetter record `verdict` on this flagged issue, and what does it change?
+fn cc_verdict_plan(issue_json: &Value, verdict: &str) -> CcVerdictPlan {
+    let state = issue_json
+        .get("state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    if state == "CLOSED" {
+        return CcVerdictPlan::AlreadyClosed;
+    }
+    let labels = label_names(issue_json);
+    if has_human_ruling(&labels) {
+        return CcVerdictPlan::RefuseHuman;
+    }
+    let Some((flag_at, _)) = last_close_candidate_flag(issue_json) else {
+        return CcVerdictPlan::NoFlag;
+    };
+    let has_flag_label = labels.iter().any(|l| l == "ai:close-candidate");
+    CcVerdictPlan::Record {
+        skip_comment: last_cc_vetter_comment(issue_json)
+            .map(|b| b.contains(&format!("Reviewed close-candidate @{flag_at}: {verdict}")))
+            .unwrap_or(false),
+        // Only `reject` mutates the label — an upheld flag stays queued for the human untouched.
+        remove_label: verdict == "reject" && has_flag_label,
+        flag_at,
+    }
+}
+
+/// The datable anchor an `already-fixed-on-main:` reason must carry, so "the fix is on main" can be
+/// checked against "the fix landed AFTER the bug was reported".
+#[derive(Debug, PartialEq)]
+enum FixAnchor {
+    /// The reason is not an `already-fixed-on-main` claim — recency does not apply.
+    NotApplicable,
+    /// An `already-fixed-on-main` claim carrying nothing datable (a bare `file:line`).
+    Missing,
+    Commit(String),
+    Pr(String),
+}
+
+/// Extract the datable anchor from a close-candidate reason.
+///
+/// `already-fixed-on-main` is the one category whose evidence is checkable: a commit or a merged PR
+/// carries a date, so the claim can be tested against the issue's own creation date. A bare
+/// `file:line on main` cannot — code that was already there when the bug was filed proves nothing,
+/// which is exactly how live issues got flagged (raindex#512, #531, #549). The other categories
+/// (`invalid` / `duplicate` / `wont-fix`) are judgements, not landings, so they are left alone.
+fn already_fixed_anchor(reason: &str) -> FixAnchor {
+    if !reason.trim_start().starts_with("already-fixed-on-main") {
+        return FixAnchor::NotApplicable;
+    }
+    // A PR reference: any `#` followed by digits — `#123`, `PR#123`, `owner/repo#123`. Requiring
+    // digits is the whole guard: `foo#bar` has none, so prose cannot masquerade as a reference.
+    for (i, _) in reason.match_indices('#') {
+        let digits: String = reason[i + 1..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if !digits.is_empty() {
+            return FixAnchor::Pr(digits);
+        }
+    }
+    // A commit sha: a standalone 7..=40 char hex run containing at least one a-f letter. The
+    // letter is what separates a sha from a bare number — `20240401` (a date) and `1234567` (an
+    // id) are valid hex too, and classifying them as commits would send the caller to
+    // `gh api .../commits/<digits>`, which 404s and reports a confusing "could not resolve a
+    // date" instead of the accurate "no usable anchor". A pure-decimal short sha is possible but
+    // rare, and the cost is only that the producer must cite the PR or a longer sha.
+    for word in reason.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if (7..=40).contains(&word.len())
+            && word.chars().all(|c| c.is_ascii_hexdigit())
+            && word.chars().any(|c| c.is_ascii_alphabetic())
+        {
+            return FixAnchor::Commit(word.to_string());
+        }
+    }
+    FixAnchor::Missing
+}
+
+/// Is `landed` strictly after `filed`? Both are ISO-8601 (`2024-04-01T11:06:35Z`), which sorts
+/// lexicographically, so a string compare is the whole comparison. `None` when either is unparseable
+/// — the caller fails closed rather than guessing.
+fn landed_after_filed(landed: &str, filed: &str) -> Option<bool> {
+    if landed.len() < 20 || filed.len() < 20 || !landed.contains('T') || !filed.contains('T') {
+        return None;
+    }
+    Some(landed > filed)
+}
+
+/// Enforce the recency contract on an `already-fixed-on-main` reason. Returns 0 to proceed, or a
+/// non-zero exit code: 4 = the claim is unsupported (no datable anchor, or the anchor predates the
+/// issue), 1 = the anchor's date could not be resolved. Fails CLOSED on an unresolvable anchor, the
+/// same rule the caller applies to an unreadable issue — a wrong `already-fixed-on-main` flag on a
+/// LIVE bug invites a human to close a real defect on false evidence.
+fn already_fixed_recency_gate(slug: &str, issue: &str, reason: &str, issue_json: &Value) -> i32 {
+    let anchor = already_fixed_anchor(reason);
+    if anchor == FixAnchor::NotApplicable {
+        return 0;
+    }
+    let filed = issue_json
+        .get("createdAt")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    if filed.is_empty() {
+        eprintln!("error: {slug}#{issue} has no createdAt — cannot check the fix postdates it");
+        return 1;
+    }
+    let (landed, what) = match &anchor {
+        FixAnchor::Missing => {
+            eprintln!(
+                "refusing to flag {slug}#{issue}: an `already-fixed-on-main` reason must cite a \
+                 MERGED commit sha or PR number, not only a file:line.\n\
+                 A file:line proves the code is on main today, not that it landed after the issue \
+                 was filed ({filed}) — code that predates the report cannot be the fix.\n\
+                 Cite the commit/PR that fixed it, or use `invalid`/`duplicate`/`wont-fix` if that \
+                 is the real category."
+            );
+            return 4;
+        }
+        FixAnchor::Commit(sha) => (
+            gh_json(&["api", &format!("repos/{slug}/commits/{sha}")])
+                .and_then(|c| {
+                    c.pointer("/commit/committer/date")
+                        .or_else(|| c.pointer("/commit/author/date"))
+                        .and_then(|d| d.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or_default(),
+            format!("commit {sha}"),
+        ),
+        FixAnchor::Pr(n) => (
+            gh_json(&["pr", "view", n, "-R", slug, "--json", "mergedAt"])
+                .and_then(|p| p.get("mergedAt").and_then(|d| d.as_str()).map(String::from))
+                .unwrap_or_default(),
+            format!("PR #{n}"),
+        ),
+        FixAnchor::NotApplicable => unreachable!("returned above"),
+    };
+    if landed.is_empty() {
+        eprintln!(
+            "error: could not resolve a date for {what} in {slug} (unmerged, or the lookup \
+             failed) — not writing on unverified evidence"
+        );
+        return 1;
+    }
+    match landed_after_filed(&landed, filed) {
+        Some(true) => 0,
+        Some(false) => {
+            eprintln!(
+                "refusing to flag {slug}#{issue}: {what} landed {landed}, but the issue was filed \
+                 {filed}.\n\
+                 Evidence that predates the report cannot be the fix — find the change that \
+                 actually resolved it, or use `invalid`/`duplicate`/`wont-fix`."
+            );
+            4
+        }
+        None => {
+            eprintln!("error: unparseable dates ({what}: {landed:?}, issue: {filed:?})");
+            1
+        }
     }
 }
 
@@ -1122,6 +1412,10 @@ fn close_candidate_plan(state: &str, labels: &[String], already_noted: bool) -> 
 /// the source of truth: a closed/fixed issue drops out of the `--state open` query automatically,
 /// re-flagging is idempotent, and a human `human:keep-open` / `human:close-candidate` ruling is
 /// sacred (the tool refuses, exit 3). The producer NEVER closes the issue — a human does that.
+///
+/// An `already-fixed-on-main` reason additionally must carry a commit sha or merged PR number whose
+/// date POST-DATES the issue (exit 4). "This code is on main today" is not the same claim as "this
+/// issue is fixed": evidence that predates the report cannot be the fix.
 fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: bool) -> i32 {
     if reason.trim().is_empty() {
         eprintln!(
@@ -1136,11 +1430,14 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         "-R",
         slug,
         "--json",
-        "state,labels,comments",
+        "state,labels,comments,createdAt",
     ]) else {
         eprintln!("error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data");
         return 1;
     };
+    if let rc @ 1..=4 = already_fixed_recency_gate(slug, issue, reason, &j) {
+        return rc;
+    }
     let state = j.get("state").and_then(|s| s.as_str()).unwrap_or("");
     let labels: Vec<String> = j
         .get("labels")
@@ -1954,6 +2251,50 @@ fn human_queue_mode(json_out: bool) -> i32 {
         })
         .collect();
 
+    // Close-candidate vet state, as `(unvetted, upheld)`. Computed from the same state-load the
+    // vetter reads, so the dashboard and the vetter can never disagree about the size of the inbox.
+    // Additive and FAILURE-TOLERANT: this costs one `gh issue view` per flagged issue, so a transient
+    // API failure yields (0, 0) rather than aborting the queue render or corrupting the legacy
+    // `closeCandidateIssues` count, which keeps its own cheap search above.
+    //
+    // Upheld is derived, not stored: a REJECTED flag has its label stripped, so it cannot appear in
+    // this search at all — an issue that still carries the label AND is vetted at its current flag
+    // was necessarily upheld.
+    // `include_skipped` is required: the upheld set lives in the skipped rows. Arrays and counts
+    // both come from this ONE document, so `counts.X == X.len()` holds by construction — the
+    // dashboard's boxes are click-through, and a count that disagreed with its list would render a
+    // number that lists a different number of issues.
+    let (cc_unvetted_items, cc_upheld_items) = unvetted_close_candidates_fetch(true)
+        .ok()
+        .map(|d| cc_item_arrays(&d))
+        .unwrap_or_default();
+    // Array and count come from one call each, so the emitted count is always the emitted array's
+    // length — see `issue_state_pair`.
+    let (cc_unvetted, cc_unvetted_n) = issue_state_pair(cc_unvetted_items);
+    let (cc_upheld, cc_upheld_n) = issue_state_pair(cc_upheld_items);
+
+    // Producer untouched BACKLOG: open issues with no covering open PR that are not human-gated /
+    // close-candidate — the biggest bucket of the producer's inbox (work it hasn't picked up yet),
+    // previously invisible on the FSM dashboard. Same coverage computation as `uncovered-issues`
+    // (via `coverage_uncovered`); `is_producer_backlog` narrows it to the producer's share. A gh
+    // failure leaves it empty rather than aborting the whole queue render — it is additive.
+    let backlog: Vec<(String, u64, String)> = coverage_uncovered()
+        .map(|(open, meta)| {
+            open.iter()
+                .filter(|k| meta.get(*k).map(is_producer_backlog).unwrap_or(true))
+                .map(|(slug, num)| {
+                    let title = meta
+                        .get(&(slug.clone(), *num))
+                        .and_then(|m| m.get("title"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    (slug.clone(), *num, title)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     if json_out {
         let bmap: serde_json::Map<String, Value> = buckets
             .iter()
@@ -1974,6 +2315,11 @@ fn human_queue_mode(json_out: bool) -> i32 {
             "states": bmap,
             "lanes": lanes,
             "closeCandidateIssues": close_issues.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
+            // Same key at top level (the ITEM ARRAY) and under `counts` (its length), exactly as
+            // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
+            "closeCandidateUnvetted": cc_unvetted,
+            "closeCandidateUpheld": cc_upheld,
+            "uncoveredIssues": backlog.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
             "leaks": leaks.iter().map(|(s,n,t,r)| serde_json::json!({"repo": s, "number": n, "title": t, "reason": r})).collect::<Vec<_>>(),
             "counts": {
                 // Legacy label-based counts (UNCHANGED — the dashboard reads these).
@@ -1983,8 +2329,19 @@ fn human_queue_mode(json_out: bool) -> i32 {
                 "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
                 "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
                 "closeCandidateIssues": close_issues.len(),
+                // Close-candidate VET lifecycle (#72/#73). `closeCandidateIssues` above keeps its
+                // meaning — every issue carrying the label — and these split it by vet state:
+                //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
+                //   upheld   = the vetter judged the evidence sound; genuinely queued for the human
+                // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the issue
+                // leaves this set entirely and reappears under `uncoveredIssues`.
+                "closeCandidateUnvetted": cc_unvetted_n,
+                "closeCandidateUpheld": cc_upheld_n,
                 "leaks": leaks.len(),
                 "totalProducerPrs": prs.len(),
+                // Producer untouched backlog — open issues with no covering open PR, excluding
+                // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
+                "uncoveredIssues": backlog.len(),
                 // Additive lane-based counts (each PR counted once, human-override dominant) — the
                 // states previously invisible to the dashboard.
                 "unvetted": lane_state_count(&lanes, "vet-lifecycle", "un-vetted"),
@@ -2029,6 +2386,10 @@ fn human_queue_mode(json_out: bool) -> i32 {
     println!(
         "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs) ===",
         prs.len()
+    );
+    println!(
+        "▓▓ Producer backlog — untouched issues, no open PR (excl. human-gated / close-candidate): {}",
+        backlog.len()
     );
     // vet-lifecycle
     show_lane(
@@ -2237,36 +2598,74 @@ fn clone_age_days(dir: &std::path::Path) -> u64 {
         .unwrap_or(0)
 }
 
-/// `--gc-clones <work-dir> [--dry-run] [--max-age-days N]`: garbage-collect the per-PR/issue work
-/// clones directly under <work-dir>. A clone is deleted only when it is clean + fully pushed AND its
-/// checked-out branch's PR is merged/closed (or it has no PR and has been idle past the age cap);
-/// clones with uncommitted/unpushed work or an open PR are always kept. Prints one line per clone.
-fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
-    let Ok(entries) = std::fs::read_dir(work_dir) else {
-        eprintln!("error: cannot read work-dir {work_dir}");
-        return 2;
-    };
+/// What the sweep did to (or would do to) one clone. `bytes` is the on-disk size, measured only for
+/// a clone the sweep is deleting — walking every kept clone would cost a full stat of the whole
+/// work-dir for a number nobody acts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GcRecord {
+    root: String,
+    name: String,
+    /// `deleted` | `would-delete` | `kept` | `error`
+    outcome: &'static str,
+    reason: String,
+    bytes: u64,
+}
+
+/// Recursive on-disk size in bytes, symlinks counted as their own (tiny) entry and NEVER followed —
+/// a symlink into `/nix/store` must not be reported as if the store lived inside the clone.
+/// Unreadable entries contribute 0 rather than aborting the walk: this is a reporting figure.
+fn dir_size_bytes(root: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let Ok(md) = e.metadata() else { continue }; // read_dir metadata does NOT follow symlinks
+            if md.is_dir() {
+                stack.push(e.path());
+            } else {
+                total += md.len();
+            }
+        }
+    }
+    total
+}
+
+/// Sweep ONE root: decide and (unless `dry_run`) act on every work clone directly under it,
+/// reporting each decision to `on` as it is made. Errors only when the root itself is unreadable —
+/// an individual clone's failure is a record, not an abort.
+fn gc_clones_sweep(
+    work_dir: &str,
+    max_age_days: u64,
+    dry_run: bool,
+    on: &mut dyn FnMut(&GcRecord),
+) -> Result<Vec<GcRecord>, String> {
+    let entries =
+        std::fs::read_dir(work_dir).map_err(|e| format!("cannot read work-dir {work_dir}: {e}"))?;
     let mut dirs: Vec<std::path::PathBuf> = entries
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.join(".git").is_dir())
         .collect();
     dirs.sort();
-    let (mut deleted, mut kept) = (0u32, 0u32);
+    let mut out = Vec::with_capacity(dirs.len());
     for dir in &dirs {
-        let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+        let name = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .to_string();
         // FULL status (untracked INCLUDED): an untracked file could be real uncommitted WIP, so gc
         // must keep a clone with ANY dirt — never ignore untracked to reclaim more. Cleanliness is
         // the PRODUCER's job (commit real work, gitignore ephemeral artifacts, keep temp files OUT of
-        // the clone, then delete the clone after submit) and the VETTER's gate (reject a PR whose
+        // the clone, then release the clone after submit) and the VETTER's gate (reject a PR whose
         // checkout goes dirty), NOT gc's to guess. A dirty clone left here = a hygiene bug upstream.
-        let clean = git_out(dir, &["status", "--porcelain"])
-            .map(|s| s.is_empty())
-            .unwrap_or(false);
-        // Unpushed commits = on HEAD but on NO remote-tracking branch. This works WITHOUT a configured
-        // upstream (unlike `@{u}..HEAD`, which errors on an upstream-less branch); a git error stays
-        // `None` (not 0) so gc_decision fails safe and keeps a clone whose push-state is unknown.
-        let unpushed = git_out(dir, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
-            .and_then(|s| s.parse::<u32>().ok());
+        // Same reading as `clone_release`'s, from ONE function: the unattended sweep and the attended
+        // release must never disagree about whether a clone still holds work.
+        let local = local_clone_state(dir);
+        let clean = local.dirt.as_deref().map(|d| d.is_empty()).unwrap_or(false);
+        let unpushed = local.unpushed;
         // Only pay for the `gh pr list` network round-trip once the clone is otherwise deletable: a
         // dirty or unpushed clone is KEPT regardless of its PR state, so skipping the call for it is
         // what keeps a full pass over hundreds of clones from dragging past any timeout.
@@ -2281,34 +2680,124 @@ fn gc_clones_mode(work_dir: &str, max_age_days: u64, dry_run: bool) -> i32 {
             pr,
             age_days: clone_age_days(dir),
         };
-        match gc_decision(&state, max_age_days) {
+        let rec = match gc_decision(&state, max_age_days) {
             GcAction::Delete(reason) => {
+                let bytes = dir_size_bytes(dir);
                 if dry_run {
-                    println!("would delete  {name}  ({reason})");
-                    deleted += 1;
-                } else if std::fs::remove_dir_all(dir).is_ok() {
-                    println!("deleted       {name}  ({reason})");
-                    deleted += 1;
+                    GcRecord {
+                        root: work_dir.to_string(),
+                        name,
+                        outcome: "would-delete",
+                        reason,
+                        bytes,
+                    }
                 } else {
-                    eprintln!("error deleting {name}");
-                    kept += 1;
+                    match std::fs::remove_dir_all(dir) {
+                        Ok(()) => GcRecord {
+                            root: work_dir.to_string(),
+                            name,
+                            outcome: "deleted",
+                            reason,
+                            bytes,
+                        },
+                        Err(e) => GcRecord {
+                            root: work_dir.to_string(),
+                            name,
+                            outcome: "error",
+                            reason: format!("{reason}, but delete failed: {e}"),
+                            bytes: 0,
+                        },
+                    }
                 }
             }
-            GcAction::Keep(reason) => {
-                println!("kept          {name}  ({reason})");
-                kept += 1;
+            GcAction::Keep(reason) => GcRecord {
+                root: work_dir.to_string(),
+                name,
+                outcome: "kept",
+                reason,
+                bytes: 0,
+            },
+        };
+        on(&rec);
+        out.push(rec);
+    }
+    Ok(out)
+}
+
+/// PURE: human-readable size. Reported next to every reclaim figure so "what would this free" is
+/// answerable from the sweep's own output instead of a separate `du`.
+fn human_bytes(b: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = b as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{b} B")
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
+}
+
+/// `gc-clones <work-dir>... [--dry-run] [--max-age-days N]`: garbage-collect the per-PR/issue work
+/// clones directly under EACH <work-dir>. A clone is deleted only when it is clean + fully pushed AND
+/// its checked-out branch's PR is merged/closed (or it has no PR and has been idle past the age cap);
+/// clones with uncommitted/unpushed work or an open PR are always kept. Prints one line per clone.
+///
+/// Several roots are accepted because clones do not all land in `WORK_DIR`: `review-run.sh` did not
+/// substitute `{{WORK_DIR}}` into the vetter prompt, so `vet-*` clones accumulated in the INSTALL
+/// dir, which a single-root sweep never looked at.
+fn gc_clones_mode(work_dirs: &[String], max_age_days: u64, dry_run: bool) -> i32 {
+    let (mut deleted, mut kept, mut scanned, mut freed) = (0u32, 0u32, 0usize, 0u64);
+    let mut rc = 0;
+    for work_dir in work_dirs {
+        if work_dirs.len() > 1 {
+            println!("== {work_dir} ==");
+        }
+        // Stream each decision immediately: on a full disk the deletes free space AS WE GO, and
+        // progress stays visible so a long run never looks hung or gets cut off mid-scan.
+        let mut print = |r: &GcRecord| {
+            let label = match r.outcome {
+                "deleted" => "deleted      ",
+                "would-delete" => "would delete ",
+                "kept" => "kept         ",
+                _ => "ERROR        ",
+            };
+            let size = if r.bytes > 0 {
+                format!(" [{}]", human_bytes(r.bytes))
+            } else {
+                String::new()
+            };
+            println!("{label} {}  ({}){size}", r.name, r.reason);
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        };
+        match gc_clones_sweep(work_dir, max_age_days, dry_run, &mut print) {
+            Err(e) => {
+                eprintln!("error: {e}");
+                rc = 2;
+            }
+            Ok(recs) => {
+                scanned += recs.len();
+                for r in &recs {
+                    match r.outcome {
+                        "deleted" | "would-delete" => {
+                            deleted += 1;
+                            freed += r.bytes;
+                        }
+                        _ => kept += 1,
+                    }
+                }
             }
         }
-        // Stream each decision immediately: on a full disk the deletes above free space AS WE GO, and
-        // progress stays visible so a long run never looks hung or gets cut off mid-scan.
-        let _ = std::io::Write::flush(&mut std::io::stdout());
     }
     let verb = if dry_run { "would gc" } else { "gc" };
     println!(
-        "{verb}: {deleted} deleted, {kept} kept ({} clones)",
-        dirs.len()
+        "{verb}: {deleted} deleted, {kept} kept ({scanned} clones, {} reclaimed)",
+        human_bytes(freed)
     );
-    0
+    rc
 }
 
 /// Args for `nix-collect-garbage`: `-d` (delete old generations + collect garbage), plus `--dry-run`
@@ -2382,7 +2871,7 @@ fn should_nix_gc(usage: Option<u8>, threshold: u8) -> bool {
 /// is at/above `nix_threshold` percent, or usage can't be determined; otherwise the warm build cache
 /// is kept. Either half can be skipped. Nonzero if either half errors.
 fn gc_mode(
-    work_dir: &str,
+    work_dirs: &[String],
     max_age_days: u64,
     dry_run: bool,
     do_clones: bool,
@@ -2392,16 +2881,15 @@ fn gc_mode(
     let mut rc = 0;
     if do_clones {
         println!("== work clones ==");
-        let c = gc_clones_mode(work_dir, max_age_days, dry_run);
+        let c = gc_clones_mode(work_dirs, max_age_days, dry_run);
         if c != 0 {
             rc = c;
         }
     }
     if do_nix {
-        let path = if work_dir.is_empty() {
-            "/nix/store"
-        } else {
-            work_dir
+        let path = match work_dirs.first() {
+            Some(d) if !d.is_empty() => d.as_str(),
+            _ => "/nix/store",
         };
         let usage = disk_usage_pct(path);
         if should_nix_gc(usage, nix_threshold) {
@@ -2419,6 +2907,421 @@ fn gc_mode(
     }
     rc
 }
+
+// ─── work-clone lifecycle: a GUARDED filesystem surface, not a shell command ─────────────────────
+//
+// Creating and destroying work clones used to be the model composing shell: `git clone`, then
+// `rm -rf <clonedir>` the moment the work was pushed (campaign-prompt step 6c). That delete was
+// never actually possible — `campaign-settings.json` denies `Bash(rm -rf /:*)` and deny rules are
+// PREFIX-matched, so it also matched `rm -rf /home/gildlab/code/<anything>`, i.e. every work-clone
+// path (#56). The instruction and the permission rule contradicted each other for months and the
+// box filled up.
+//
+// Widening the deny rule would fix that instance and leave the shape of the problem: an unbounded
+// `rm -rf` whose safety is a string-matching rule. Here the delete is a TOOL instead. The model
+// names a CLONE; it never supplies a path to remove. Every name is resolved through the guards
+// below before any syscall, so "delete something outside the work roots" is not expressible.
+
+/// The roots a work clone may live directly under, in preference order (`clone_create` always builds
+/// in the first). `WORK_DIR` is where both runners put clones. `INSTALL_DIR` is the cron's own
+/// checkout, included because it accumulated `vet-*` clones for months: `review-run.sh` did not
+/// substitute `{{WORK_DIR}}` into the vetter prompt, so the vetter improvised its checkout path and
+/// landed in cwd. Roots come from the ENVIRONMENT and never from a tool argument — a model-supplied
+/// root would make every guard below vacuous.
+fn clone_roots() -> Vec<String> {
+    let mut roots = vec![vet_work_dir()];
+    if let Ok(d) = std::env::var("INSTALL_DIR") {
+        let d = d.trim_end_matches('/').to_string();
+        if !d.is_empty() && !roots.contains(&d) {
+            roots.push(d);
+        }
+    }
+    roots
+}
+
+/// PURE: resolve `input` — a bare clone name, or an absolute path under `root` — to the single path
+/// COMPONENT naming a work clone directly inside `root`. This is the whole path guard's first half,
+/// and it runs before ANY filesystem call, so a refusal here cannot have an effect.
+///
+/// Refused: an absolute path outside `root` (including the sibling-prefix trick, `/x/codeEVIL` for
+/// root `/x/code`), `..` in any position, a nested path, the root itself, `.`-prefixed entries
+/// (`.git` is not a work clone), an embedded NUL, and the empty string.
+fn clone_name_in_root(root: &str, input: &str) -> Result<String, String> {
+    let root = root.trim_end_matches('/');
+    if root.is_empty() || !root.starts_with('/') {
+        return Err(format!(
+            "work-clone root {root:?} is not an absolute path — refusing to resolve anything under it"
+        ));
+    }
+    let bad = |why: &str| {
+        format!("refusing {input:?}: {why}. Name one work clone directly under {root} (e.g. \"raindex-2444\")")
+    };
+    let s = input.trim();
+    if s.is_empty() {
+        return Err(bad("empty name"));
+    }
+    if s.contains('\0') {
+        return Err(bad("embedded NUL"));
+    }
+    // `..` ANYWHERE is refused up front, before any prefix arithmetic — so a traversal can never be
+    // laundered through an otherwise root-prefixed path (`/x/code/../../etc`).
+    if std::path::Path::new(s)
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(bad("`..` traversal"));
+    }
+    let rest = if s.starts_with('/') {
+        if s.trim_end_matches('/') == root {
+            return Err(bad("that is the root itself, not a clone in it"));
+        }
+        s.strip_prefix(&format!("{root}/"))
+            .ok_or_else(|| bad("absolute path outside the work-clone root"))?
+    } else {
+        s
+    };
+    // No second `rest.is_empty()` check here: the root-itself case is already decided above, before
+    // the prefix is stripped, so nothing can reach this point with an empty remainder. A mutation
+    // pass proved a check here was unreachable — dead code in a guard reads as protection that is
+    // not actually protecting anything.
+    let rest = rest.trim_end_matches('/');
+    if rest.contains('/') {
+        return Err(bad("not a direct child of the root"));
+    }
+    if rest.starts_with('.') {
+        return Err(bad("`.`-prefixed entries are never work clones"));
+    }
+    Ok(rest.to_string())
+}
+
+/// PURE: the same resolution against SEVERAL roots — first root that accepts the name wins. The
+/// error names every root, so a model that guessed the wrong one is told where clones actually live.
+fn clone_in_roots(roots: &[String], input: &str) -> Result<(String, String), String> {
+    let mut first_err = None;
+    for root in roots {
+        match clone_name_in_root(root, input) {
+            Ok(name) => return Ok((root.trim_end_matches('/').to_string(), name)),
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+    Err(match first_err {
+        Some(e) => format!("{e} (work-clone roots: {})", roots.join(", ")),
+        None => "no work-clone root is configured (WORK_DIR is unset)".to_string(),
+    })
+}
+
+/// The path guard's second half: the checks that genuinely need the filesystem. Given an
+/// already-name-resolved (root, name), confirm the target is a real work clone we may touch —
+/// it exists, is a DIRECTORY and not a symlink, canonicalises to a DIRECT CHILD of the canonical
+/// root (so a symlinked component cannot smuggle the path elsewhere), and contains `.git`.
+///
+/// That last check is the one that makes a mistake cheap: only a git clone is ever deletable, so no
+/// argument — however malformed — reaches ordinary data.
+///
+/// This is a SECOND layer: `clone_name_in_root` should already have rejected anything that is not a
+/// plain component. It is written to hold on its own anyway (and tested that way, called directly
+/// with names the first layer would never emit), so relaxing the first layer cannot silently make
+/// the root or its ancestors deletable.
+fn resolve_existing_clone(root: &str, name: &str) -> Result<std::path::PathBuf, String> {
+    let root_real = std::fs::canonicalize(root)
+        .map_err(|e| format!("work-clone root {root} is not readable: {e}"))?;
+    let path = root_real.join(name);
+    let md = std::fs::symlink_metadata(&path)
+        .map_err(|_| format!("no work clone {name:?} under {root}"))?;
+    if md.file_type().is_symlink() {
+        return Err(format!(
+            "refusing {name:?}: it is a SYMLINK, not a work clone — releasing it would act on whatever it points at"
+        ));
+    }
+    if !md.is_dir() {
+        return Err(format!("refusing {name:?}: not a directory"));
+    }
+    let real = std::fs::canonicalize(&path)
+        .map_err(|e| format!("cannot resolve {}: {e}", path.display()))?;
+    if real == root_real || real.parent() != Some(root_real.as_path()) {
+        return Err(format!(
+            "refusing {name:?}: it resolves to {} — outside {}",
+            real.display(),
+            root_real.display()
+        ));
+    }
+    if !real.join(".git").exists() {
+        return Err(format!(
+            "refusing {name:?}: no .git — this tool only ever touches git work clones"
+        ));
+    }
+    Ok(real)
+}
+
+/// A clone's local git state, as the release decision sees it. `unpushed: None` means git could not
+/// answer, which is treated exactly like "possibly unpushed".
+struct LocalCloneState {
+    unpushed: Option<u32>,
+    dirt: Option<String>,
+    branch: String,
+}
+
+fn local_clone_state(path: &std::path::Path) -> LocalCloneState {
+    // Unpushed commits = on HEAD but on NO remote-tracking branch. This works WITHOUT a configured
+    // upstream (unlike `@{u}..HEAD`, which errors on an upstream-less branch); a git error stays
+    // `None` (not 0) so the decision fails safe on a clone whose push-state is unknown.
+    let unpushed = match git_out(path, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        Some(n) => Some(n),
+        // …with ONE exception. An UNBORN HEAD — a clone interrupted before its first checkout — also
+        // makes `rev-list HEAD` fail, and that is not an unknown state: there are no commits at all,
+        // so there is nothing that could be lost. Without this, a half-finished clone is immortal.
+        None if git_out(path, &["rev-parse", "--git-dir"]).is_some()
+            && git_out(path, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_none() =>
+        {
+            Some(0)
+        }
+        None => None,
+    };
+    LocalCloneState {
+        unpushed,
+        dirt: git_out(path, &["status", "--porcelain"]),
+        branch: git_out(path, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default(),
+    }
+}
+
+/// PURE: may this clone be released, given its local state and whether the caller explicitly
+/// accepted losing uncommitted changes? Split out from the filesystem so the whole refusal ladder is
+/// unit-testable.
+///
+/// - Commits that exist ONLY here are unrecoverable, so they refuse UNCONDITIONALLY — there is no
+///   flag, because a flag is a thing a model under time pressure sets.
+/// - An unknown push state is treated as unpushed (the same fail-safe `gc_decision` uses).
+/// - Uncommitted changes refuse too, but `discard_uncommitted` overrides: in practice this dirt is
+///   build/tooling output (`Cargo.lock` churn, generated pointers) that the producer is told to
+///   gitignore, and refusing it outright is what leaves the clone on disk forever.
+fn release_decision(s: &LocalCloneState, discard_uncommitted: bool) -> Result<(), String> {
+    match s.unpushed {
+        None => {
+            return Err(
+                "push state could not be determined — refusing to release (no flag overrides this)"
+                    .to_string(),
+            )
+        }
+        Some(n) if n > 0 => {
+            return Err(format!(
+                "{n} commit(s) exist only in this clone — push them first. No flag overrides this: the work would be unrecoverable"
+            ))
+        }
+        Some(_) => {}
+    }
+    let Some(dirt) = &s.dirt else {
+        return Err(
+            "`git status` failed — refusing to release a clone whose state is unknown".to_string(),
+        );
+    };
+    if !dirt.is_empty() && !discard_uncommitted {
+        let lines: Vec<&str> = dirt.lines().collect();
+        let shown: Vec<&str> = lines.iter().take(10).copied().collect();
+        return Err(format!(
+            "{} uncommitted change(s) — commit and push them, or pass discard_uncommitted:true once you have confirmed they are build/tooling output:\n{}{}",
+            lines.len(),
+            shown.join("\n"),
+            if lines.len() > shown.len() { "\n…" } else { "" }
+        ));
+    }
+    Ok(())
+}
+
+/// Release ONE work clone: the tool that replaces `rm -rf <clonedir>`. Every guard above runs first;
+/// the size is measured before the delete so the trace records what was actually reclaimed.
+fn clone_release_exec(root: &str, name: &str, discard_uncommitted: bool) -> Result<Value, String> {
+    let path = resolve_existing_clone(root, name)?;
+    let state = local_clone_state(&path);
+    release_decision(&state, discard_uncommitted)
+        .map_err(|why| format!("refusing to release {name:?}: {why}"))?;
+    let bytes = dir_size_bytes(&path);
+    let discarded = state.dirt.as_deref().unwrap_or("").lines().count();
+    std::fs::remove_dir_all(&path).map_err(|e| format!("could not release {name:?}: {e}"))?;
+    Ok(serde_json::json!({
+        "released": name,
+        "dir": path.to_string_lossy(),
+        "branch": state.branch,
+        "bytes": bytes,
+        "size": human_bytes(bytes),
+        "discardedUncommitted": discarded,
+    }))
+}
+
+/// Create (or re-sync) a work clone. Same guard as release for the NAME; the destination may not
+/// exist yet, so existence is the one check that differs. A re-sync is `fetch` + `checkout -f -B` +
+/// `clean -fdx` — campaign-prompt step 4's recipe, moved into the binary so it can carry a guard the
+/// shell version could not: a clone holding UNPUSHED commits is never re-synced over.
+fn clone_create_exec(
+    root: &str,
+    name: &str,
+    slug: &str,
+    branch: &str,
+    base: Option<&str>,
+) -> Result<Value, String> {
+    std::fs::create_dir_all(root)
+        .map_err(|e| format!("cannot create work-clone root {root}: {e}"))?;
+    let root_real = std::fs::canonicalize(root)
+        .map_err(|e| format!("work-clone root {root} is not readable: {e}"))?;
+    let path = root_real.join(name);
+    let existed = std::fs::symlink_metadata(&path).is_ok();
+    if existed {
+        // Reuse the FULL guard: a pre-existing entry that is a symlink, a file, or not a clone is
+        // refused rather than clobbered.
+        let path = resolve_existing_clone(root, name)?;
+        let state = local_clone_state(&path);
+        if !matches!(state.unpushed, Some(0)) {
+            return Err(format!(
+                "refusing to re-sync {name:?}: it holds commits that are not on any remote (or its push state is unknown) — push them, or use a different clone name"
+            ));
+        }
+        git_run(&path, &["fetch", "origin", "--prune"])?;
+    } else {
+        gh_quiet(
+            None,
+            &[
+                "repo",
+                "clone",
+                slug,
+                &path.to_string_lossy(),
+                "--",
+                "--no-single-branch",
+            ],
+        )?;
+    }
+    let base = match base {
+        Some(b) => b.to_string(),
+        None => default_branch_of(&path)?,
+    };
+    git_run(
+        &path,
+        &["checkout", "-f", "-B", branch, &format!("origin/{base}")],
+    )?;
+    git_run(&path, &["clean", "-fdx"])?;
+    Ok(serde_json::json!({
+        "dir": path.to_string_lossy(),
+        "repo": slug,
+        "branch": branch,
+        "base": base,
+        "resynced": existed,
+        "note": "release it with clone_release the moment the work is on GitHub",
+    }))
+}
+
+/// `git -C <dir> <args>` for effect, surfacing git's own stderr on failure. Distinct from `git_out`,
+/// which swallows failures into `None` because its callers WANT a fail-safe unknown.
+fn git_run(dir: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to run git {}: {e}", args.join(" ")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let tail: Vec<&str> = err.lines().rev().take(5).collect();
+    Err(format!(
+        "git {} failed: {}",
+        args.join(" "),
+        tail.into_iter().rev().collect::<Vec<_>>().join(" / ")
+    ))
+}
+
+/// The clone's default branch, read from the remote HEAD it already fetched (no network round-trip,
+/// no assumption that it is called `main`).
+fn default_branch_of(dir: &std::path::Path) -> Result<String, String> {
+    if let Some(s) = git_out(
+        dir,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    ) {
+        if let Some(b) = s.rsplit('/').next() {
+            if !b.is_empty() {
+                return Ok(b.to_string());
+            }
+        }
+    }
+    // `--no-single-branch` clones set origin/HEAD; a clone that predates that may not have it.
+    git_out(dir, &["remote", "set-head", "origin", "--auto"])
+        .and_then(|_| {
+            git_out(
+                dir,
+                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            )
+        })
+        .and_then(|s| s.rsplit('/').next().map(String::from))
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| "could not determine the repo's default branch — pass `base`".to_string())
+}
+
+/// Every work clone under every configured root, with the state that decides whether it is
+/// releasable. Read-only: the answer to "what is on this box and who owns it".
+fn clone_list_exec(roots: &[String]) -> Result<Value, String> {
+    let mut out = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        let mut dirs: Vec<std::path::PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.join(".git").is_dir())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+            let state = local_clone_state(&dir);
+            out.push(serde_json::json!({
+                "name": name,
+                "root": root,
+                "branch": state.branch,
+                "unpushed": state.unpushed,
+                "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
+                "ageDays": clone_age_days(&dir),
+                "releasable": release_decision(&state, false).is_ok(),
+            }));
+        }
+    }
+    Ok(serde_json::json!({"roots": roots, "clones": out}))
+}
+
+/// The unattended sweep, as a tool. Same decision function as the CLI (`gc_decision`), across every
+/// configured root, returning what it did instead of printing it — STDOUT is the MCP protocol.
+fn clone_gc_exec(roots: &[String], max_age_days: u64, dry_run: bool) -> Result<Value, String> {
+    let mut recs = Vec::new();
+    let mut errors = Vec::new();
+    for root in roots {
+        match gc_clones_sweep(root, max_age_days, dry_run, &mut |_r| {}) {
+            Ok(mut r) => recs.append(&mut r),
+            Err(e) => errors.push(e),
+        }
+    }
+    let freed: u64 = recs.iter().map(|r| r.bytes).sum();
+    let deleted = recs
+        .iter()
+        .filter(|r| r.outcome == "deleted" || r.outcome == "would-delete")
+        .count();
+    Ok(serde_json::json!({
+        "dryRun": dry_run,
+        "roots": roots,
+        "scanned": recs.len(),
+        "deleted": deleted,
+        "kept": recs.len() - deleted,
+        "bytesReclaimed": freed,
+        "reclaimed": human_bytes(freed),
+        "errors": errors,
+        "clones": recs.iter().map(|r| serde_json::json!({
+            "name": r.name, "root": r.root, "outcome": r.outcome,
+            "reason": r.reason, "bytes": r.bytes,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 // --- --deploy: the SOLE, constrained way the producer triggers a sanctioned Zoltu deploy ---------
 //
 // Org prod deploys are Zoltu deterministic CREATE2 (address = f(bytecode); idempotent;
@@ -2944,6 +3847,1538 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// unvetted (the VETTER's state-load, #59) + the FSM MCP server (#52).
+//
+// `unvetted` is the vetter's state-load, the counterpart to the producer's `worklist` /
+// `uncovered-issues`: which open PRs need a verdict this run, decided in-process — one call, one
+// struct, no per-PR shelling into the model's context.
+//
+// The MCP server exposes exactly that state-load plus the vetter's other three moves as typed tools,
+// and is the vetter's WHOLE surface: it runs with NO Bash at all, so a non-FSM operation is
+// unrepresentable rather than merely forbidden by prose (Bash deny-lists are prefix-matched and
+// bypassable). It also means the vetter never builds or executes anything in a `pr_checkout` clone —
+// it reads source only; clean-tree and test-execution checks belong to the producer and CI. The surface is
+// deliberately TINY — every tool schema rides in the preamble on every API call, so one wrapper per
+// `gh` command would spend back what the prose removal saves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What the vetter must do with ONE open PR this run.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum VetAction {
+    Vet,
+    SkipHuman,
+    SkipDraft,
+    SkipVetted,
+}
+
+impl VetAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            VetAction::Vet => "vet",
+            VetAction::SkipHuman => "skip-human-decided",
+            VetAction::SkipDraft => "skip-draft",
+            VetAction::SkipVetted => "skip-vetted-at-head",
+        }
+    }
+}
+
+/// PURE vet-lifecycle transition guard. **THE ORDER IS THE GUARD**: the human-sacred check resolves
+/// BEFORE any head/vetted comparison, so a moved head can never reopen a human-decided PR (on
+/// 2026-07-04 a run re-vetted human-rejected rain.erc4626.words#162 after a merge-main commit moved
+/// its head — that exact sequence is what this ordering forbids). `human_sacred` covers BOTH forms of
+/// human decision: a `human:*` label and a native `APPROVED`/`CHANGES_REQUESTED` review.
+fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAction {
+    if human_sacred {
+        return VetAction::SkipHuman;
+    }
+    if is_draft {
+        return VetAction::SkipDraft;
+    }
+    if vetted_at_head {
+        VetAction::SkipVetted
+    } else {
+        VetAction::Vet
+    }
+}
+
+/// PURE: vet-first ordering — lower sorts first. The prompt's "vet green+mergeable ones first" rule,
+/// computed here instead of costing a `gh pr view` per PR inside the model loop. CI/mergeability is
+/// NEVER a reason to withhold a verdict (that stays a prompt-level judgement rule); it only decides
+/// which un-vetted PR is closest to merge and therefore worth vetting first.
+fn vet_priority(ci: Ci, merge: Merge) -> u8 {
+    match (ci, merge) {
+        (Ci::Green, Merge::Mergeable) => 0,
+        (Ci::NoChecks, Merge::Mergeable) => 1,
+        (Ci::Green | Ci::NoChecks, _) => 2,
+        (Ci::Pending, _) => 3,
+        (Ci::Red, _) => 4,
+    }
+}
+
+fn merge_str(m: Merge) -> &'static str {
+    match m {
+        Merge::Mergeable => "MERGEABLE",
+        Merge::Conflicting => "CONFLICTING",
+        Merge::Unknown => "UNKNOWN",
+    }
+}
+
+fn parse_merge(v: Option<&str>) -> Merge {
+    match v {
+        Some("MERGEABLE") => Merge::Mergeable,
+        Some("CONFLICTING") => Merge::Conflicting,
+        _ => Merge::Unknown,
+    }
+}
+
+fn label_names(v: &Value) -> Vec<String> {
+    v.get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// PURE: one candidate's `unvetted` row + its action + its vet-first sort key, derived from the PR
+/// detail JSON. Everything issue #59 asks for per candidate — `headRefOid`, `labels`,
+/// `reviewDecision`, human-sacred flag, vetted-at-head flag, `ci`, `mergeable` — in one place.
+fn unvetted_row(
+    slug: &str,
+    num: u64,
+    url: &str,
+    title: &str,
+    detail: &Value,
+) -> (VetAction, u8, Value) {
+    let head = detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let human_sacred = has_human_override(detail) || has_native_human_review(detail);
+    let vetted = vetted_at_head(detail, head);
+    let is_draft = detail
+        .get("isDraft")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let ci = classify_ci(detail.get("statusCheckRollup").unwrap_or(&Value::Null));
+    let merge = parse_merge(detail.get("mergeable").and_then(|v| v.as_str()));
+    let action = vet_action(is_draft, human_sacred, vetted);
+    let review_decision = detail
+        .get("reviewDecision")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let row = serde_json::json!({
+        "pr": format!("{slug}#{num}"),
+        "url": url,
+        "title": title,
+        "headRefOid": head,
+        "labels": label_names(detail),
+        "reviewDecision": review_decision,
+        "humanSacred": human_sacred,
+        "vettedAtHead": vetted,
+        "ci": ci_str(ci),
+        "mergeable": merge_str(merge),
+        "isDraft": is_draft,
+        "action": action.as_str(),
+    });
+    (action, vet_priority(ci, merge), row)
+}
+
+/// PURE: the `unvetted` document from classified rows. `prs` holds the PRs to VET, in vet-first order
+/// (priority, then a stable pr key); the skipped ones are counted, and only listed when
+/// `include_skipped` — a skipped PR needs no per-PR reasoning, and every listed row costs context.
+fn unvetted_doc(rows: &[(VetAction, u8, Value)], include_skipped: bool) -> Value {
+    let mut vet: Vec<(u8, String, Value)> = Vec::new();
+    let mut skipped: Vec<Value> = Vec::new();
+    let (mut n_draft, mut n_human, mut n_vetted) = (0usize, 0usize, 0usize);
+    for (action, prio, row) in rows {
+        match action {
+            VetAction::Vet => {
+                let key = row
+                    .get("pr")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                vet.push((*prio, key, row.clone()));
+            }
+            other => {
+                match other {
+                    VetAction::SkipDraft => n_draft += 1,
+                    VetAction::SkipHuman => n_human += 1,
+                    _ => n_vetted += 1,
+                }
+                skipped.push(row.clone());
+            }
+        }
+    }
+    vet.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    let prs: Vec<Value> = vet.into_iter().map(|(_, _, r)| r).collect();
+    let mut doc = serde_json::json!({
+        "counts": {
+            "open": rows.len(),
+            "vet": prs.len(),
+            "skipDraft": n_draft,
+            "skipHumanDecided": n_human,
+            "skipVettedAtHead": n_vetted,
+        },
+        "prs": prs,
+    });
+    if include_skipped {
+        doc.as_object_mut()
+            .expect("object")
+            .insert("skipped".into(), Value::Array(skipped));
+    }
+    doc
+}
+
+/// PURE: one row of the close-candidate vet queue, plus whether it is to be vetted and why not.
+/// Split out so the skip reasons are unit-testable without the network — the same shape the PR-side
+/// state-load uses.
+fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static str, Value) {
+    let labels = label_names(detail);
+    let human = has_human_ruling(&labels);
+    let flag = last_close_candidate_flag(detail);
+    let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
+    let vetted = cc_vetted_at_flag(detail, &flag_at);
+    // Precedence mirrors the PR side: a human ruling dominates, then "nothing to judge", then a
+    // verdict already recorded against THIS flag.
+    let (vet, action) = if human {
+        (false, "skip-human-decided")
+    } else if flag.is_none() {
+        (false, "skip-no-flag")
+    } else if vetted {
+        (false, "skip-vetted-at-flag")
+    } else {
+        (true, "vet")
+    };
+    (
+        vet,
+        action,
+        serde_json::json!({
+            "issue": format!("{slug}#{num}"),
+            // `repo`/`number`/`title` mirror the item shape `closeCandidateIssues` and
+            // `uncoveredIssues` already emit, so the dashboard reads every issue array
+            // generically — no special-casing for the split states.
+            "repo": slug,
+            "number": num,
+            "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+            "title": title,
+            "labels": labels,
+            "humanSacred": human,
+            "flagAt": flag_at,
+            "flagReason": flag.as_ref().map(|(_, b)| flag_reason(b)).unwrap_or_default(),
+            "vettedAtFlag": vetted,
+            "action": action,
+        }),
+    )
+}
+
+/// PURE: split an `unvetted_close_candidates` document into the two dashboard ITEM ARRAYS —
+/// `(unvetted, upheld)` — in the same `{repo, number, title}` shape `closeCandidateIssues` and
+/// `uncoveredIssues` already emit.
+///
+/// Both the arrays and their counts are derived from THIS one document, which is what makes an
+/// array/count mismatch unrepresentable: a box that renders "5" and then lists three issues when
+/// clicked is the drift this shape rules out.
+///
+/// `upheld` is the skipped rows whose action is `skip-vetted-at-flag`: a REJECTED flag has its
+/// label stripped, so it cannot appear in this search at all — an issue still carrying the label
+/// AND vetted at its current flag was necessarily upheld.
+fn cc_item_arrays(doc: &Value) -> (Vec<Value>, Vec<Value>) {
+    let item = |r: &Value| {
+        serde_json::json!({
+            "repo": r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
+            "number": r.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
+            "title": r.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        })
+    };
+    let unvetted: Vec<Value> = doc
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().map(item).collect())
+        .unwrap_or_default();
+    let upheld: Vec<Value> = doc
+        .get("skipped")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter(|r| r.get("action").and_then(|v| v.as_str()) == Some("skip-vetted-at-flag"))
+                .map(item)
+                .collect()
+        })
+        .unwrap_or_default();
+    (unvetted, upheld)
+}
+
+/// PURE: an issue state's dashboard pair — the ITEM ARRAY and the count that labels it, from ONE
+/// source.
+///
+/// The count is not passed in and cannot be computed separately: emitting `items.len()` at the
+/// array site and again at the counts site let the two drift, and a mutation decoupling them
+/// survived (a box rendering "5" that lists three issues when clicked). Deriving both here makes
+/// that unrepresentable, and puts the invariant somewhere a test can actually reach — the emission
+/// site itself is inside a network call.
+fn issue_state_pair(items: Vec<Value>) -> (Value, usize) {
+    let n = items.len();
+    (Value::Array(items), n)
+}
+
+/// PURE: the `Close-candidate: <category>: <evidence>` payload of a flag body, without the marker
+/// line — the claim the vetter has to judge.
+fn flag_reason(body: &str) -> String {
+    body.lines()
+        .find_map(|l| l.trim().strip_prefix("Close-candidate:"))
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+/// Live `unvetted-close-candidates` state-load: ONE org-wide search for open `ai:close-candidate`
+/// issues + one `gh issue view` each. Errors rather than returning a falsely-empty set, for the same
+/// reason the PR side does — an empty queue must never be an API failure in disguise.
+fn unvetted_close_candidates_fetch(include_skipped: bool) -> Result<Value, String> {
+    let mut args: Vec<String> = vec!["search".into(), "issues".into()];
+    args.extend(org_owner_args());
+    args.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            "ai:close-candidate",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,title",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let found = gh_json(&argref)
+        .and_then(|v| v.as_array().cloned())
+        .ok_or_else(|| {
+            "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
+             aborting rather than report a falsely-empty close-candidate queue"
+                .to_string()
+        })?;
+    // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
+    // reported (see `fetchErrors` below), never dropped.
+
+    let mut rows: Vec<Value> = Vec::new();
+    let mut skipped: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
+    let (mut n_human, mut n_noflag, mut n_vetted) = (0usize, 0usize, 0usize);
+    for i in &found {
+        let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        // `repository.nameWithOwner` is authoritative; the url parse is the fallback.
+        let slug = i
+            .get("repository")
+            .and_then(|r| r.get("nameWithOwner"))
+            .and_then(|s| s.as_str())
+            .map(String::from)
+            .or_else(|| issue_slug(url));
+        let (Some(slug), Some(num)) = (slug, i.get("number").and_then(|n| n.as_u64())) else {
+            errors.push(
+                serde_json::json!({"url": url, "title": title, "error": "unparseable issue ref"}),
+            );
+            continue;
+        };
+        // A dropped issue must be VISIBLE. Silently `continue`ing shrinks the vetter's inbox and
+        // makes `flagged` disagree with `vet + skip*` with nothing to explain the gap.
+        let Some(detail) = gh_json(&[
+            "issue",
+            "view",
+            &num.to_string(),
+            "-R",
+            &slug,
+            "--json",
+            "number,title,url,state,labels,comments",
+        ]) else {
+            errors.push(serde_json::json!({
+                "issue": format!("{slug}#{num}"),
+                "title": title,
+                "error": "gh issue view failed — not judged this run",
+            }));
+            continue;
+        };
+        let (vet, action, row) = cc_row(&slug, num, title, &detail);
+        if vet {
+            rows.push(row);
+        } else {
+            match action {
+                "skip-human-decided" => n_human += 1,
+                "skip-no-flag" => n_noflag += 1,
+                _ => n_vetted += 1,
+            }
+            skipped.push(row);
+        }
+    }
+
+    let mut doc = serde_json::json!({
+        "counts": {
+            "flagged": found.len(),
+            "vet": rows.len(),
+            "skipHumanDecided": n_human,
+            "skipNoFlag": n_noflag,
+            "skipVettedAtFlag": n_vetted,
+            // flagged == vet + skip* + fetchErrors, always. A non-zero value here is the ONLY
+            // reason the parts may not sum to the whole.
+            "fetchErrors": errors.len(),
+        },
+        "issues": rows,
+        "fetchErrors": errors,
+    });
+    if include_skipped {
+        doc.as_object_mut()
+            .expect("object")
+            .insert("skipped".into(), Value::Array(skipped));
+    }
+    Ok(doc)
+}
+
+/// PURE: the judging bundle for ONE flagged issue — the claim, and everything needed to test it.
+/// The issue-side twin of [`pr_context_doc`]; comments are the TRUSTED ones only.
+fn close_candidate_context_doc(slug: &str, num: u64, detail: &Value) -> Value {
+    let flag = last_close_candidate_flag(detail);
+    let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
+    serde_json::json!({
+        "issue": format!("{slug}#{num}"),
+        "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+        "title": detail.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        "body": detail.get("body").and_then(|v| v.as_str()).unwrap_or(""),
+        "state": detail.get("state").and_then(|v| v.as_str()).unwrap_or(""),
+        // The issue's OWN creation time is the recency baseline: evidence dated before this cannot
+        // be the fix, which is failure class 1.
+        "createdAt": detail.get("createdAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "labels": label_names(detail),
+        "humanSacred": has_human_ruling(&label_names(detail)),
+        "flagAt": flag_at,
+        "flagReason": flag.as_ref().map(|(_, b)| flag_reason(b)).unwrap_or_default(),
+        "flagBody": flag.as_ref().map(|(_, b)| b.clone()).unwrap_or_default(),
+        "vettedAtFlag": cc_vetted_at_flag(detail, &flag_at),
+        "producerComments": trusted_comments(detail, Some("🤖 ai:producer")),
+        "vetterComments": trusted_comments(detail, Some("🤖 ai:vetter")),
+    })
+}
+
+/// Live `close_candidate_context`.
+fn close_candidate_context_fetch(slug: &str, num: u64) -> Result<Value, String> {
+    let detail = gh_json(&[
+        "issue",
+        "view",
+        &num.to_string(),
+        "-R",
+        slug,
+        "--json",
+        "number,title,body,url,state,createdAt,labels,comments",
+    ])
+    .ok_or_else(|| format!("error: `gh issue view {slug}#{num}` failed"))?;
+    Ok(close_candidate_context_doc(slug, num, &detail))
+}
+
+/// The close-candidate verdict write — the issue-side twin of [`record_verdict_apply`]. `uphold`
+/// leaves the flag queued for the human; `reject` REMOVES `ai:close-candidate`, which returns the
+/// issue to the producer's uncovered-issues queue. Either way a trusted, flag-pinned `🤖 ai:vetter`
+/// comment records the judgement.
+///
+/// The vetter never writes a `human:*` label: those are the human's namespace, and this routine is
+/// AI. Its whole authority is the `ai:*` flag it may drop and the comment it may post.
+fn record_cc_verdict_apply(
+    slug: &str,
+    issue: &str,
+    verdict: &str,
+    note: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    if !CC_VERDICTS.contains(&verdict) {
+        return Err((
+            2,
+            format!(
+                "{verdict:?} is not a close-candidate verdict — use one of: {}",
+                CC_VERDICTS.join(", ")
+            ),
+        ));
+    }
+    if note.trim().is_empty() {
+        return Err((
+            2,
+            "note is required: one line naming what the evidence proves or fails to prove"
+                .to_string(),
+        ));
+    }
+    let Some(j) = gh_json(&[
+        "issue",
+        "view",
+        issue,
+        "-R",
+        slug,
+        "--json",
+        "state,labels,comments",
+    ]) else {
+        return Err((
+            1,
+            format!(
+                "error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data"
+            ),
+        ));
+    };
+    let (flag_at, remove_label, skip) = match cc_verdict_plan(&j, verdict) {
+        CcVerdictPlan::AlreadyClosed => {
+            return Ok(format!("{slug}#{issue} already closed — nothing to vet"));
+        }
+        CcVerdictPlan::RefuseHuman => {
+            return Err((
+                3,
+                format!("human ruling present on {slug}#{issue}; not overriding"),
+            ));
+        }
+        CcVerdictPlan::NoFlag => {
+            return Err((
+                4,
+                format!(
+                    "no trusted producer close-candidate flag on {slug}#{issue} — nothing to judge"
+                ),
+            ));
+        }
+        CcVerdictPlan::Record {
+            flag_at,
+            remove_label,
+            skip_comment,
+        } => (flag_at, remove_label, skip_comment),
+    };
+    let comment = cc_verdict_comment(&flag_at, verdict, note);
+
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {slug}#{issue} flag @ {flag_at}\n  verdict: {verdict}\n  label: {}\n  comment: {}",
+            if remove_label {
+                "remove ai:close-candidate"
+            } else {
+                "unchanged"
+            },
+            if skip {
+                "skip (same verdict at same flag already posted)".to_string()
+            } else {
+                format!("post -> {}", comment.replace('\n', " / "))
+            }
+        ));
+    }
+
+    // Comment BEFORE the label drop: a rejected flag whose label vanished with no recorded reason
+    // is indistinguishable from a human de-flagging it by hand.
+    if !skip && !gh_run(&["issue", "comment", issue, "-R", slug, "--body", &comment]) {
+        return Err((
+            1,
+            format!("error: failed to post the close-candidate verdict comment on {slug}#{issue}"),
+        ));
+    }
+    if remove_label
+        && !gh_run(&[
+            "issue",
+            "edit",
+            issue,
+            "-R",
+            slug,
+            "--remove-label",
+            "ai:close-candidate",
+        ])
+    {
+        return Err((
+            1,
+            format!(
+                "error: posted the verdict on {slug}#{issue} but FAILED to remove ai:close-candidate"
+            ),
+        ));
+    }
+    Ok(format!(
+        "recorded close-candidate {verdict} on {slug}#{issue} @ {flag_at}{}{}",
+        if remove_label {
+            " [ai:close-candidate removed -> back to the producer queue]"
+        } else {
+            " [flag stands -> queued for the human]"
+        },
+        if skip { " [comment deduped]" } else { "" }
+    ))
+}
+
+/// Live `unvetted` state-load: ONE org-wide search + one `gh pr view` per open non-draft PR whose
+/// labels don't already carry a human decision. Errors (rather than returning a falsely-empty set) if
+/// the search fails — an empty vet queue must never be an API failure in disguise.
+fn unvetted_fetch(include_skipped: bool) -> Result<Value, String> {
+    let assignee = pr_assignee();
+    let mut args: Vec<String> = vec!["search".into(), "prs".into()];
+    args.extend(org_owner_args());
+    args.extend(
+        [
+            "--author",
+            &assignee,
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,title,isDraft,labels",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let prs = gh_json(&argref)
+        .and_then(|v| v.as_array().cloned())
+        .ok_or_else(|| {
+            format!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty vet queue")
+        })?;
+
+    let mut rows: Vec<(VetAction, u8, Value)> = Vec::new();
+    for p in &prs {
+        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        let (Some(slug), Some(num)) = (pr_slug(url), p.get("number").and_then(|n| n.as_u64()))
+        else {
+            continue;
+        };
+        let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        let is_draft = p.get("isDraft").and_then(|d| d.as_bool()).unwrap_or(false);
+        // Cheap pre-filter: a draft or an already-human-decided PR is skipped straight from the
+        // search JSON — no per-PR fetch. (A native human REVIEW is invisible to search, so every
+        // remaining PR is still fetched and re-checked below, human-first.)
+        if is_draft || has_human_override(p) {
+            let action = vet_action(is_draft, has_human_override(p), false);
+            rows.push((
+                action,
+                4,
+                serde_json::json!({
+                    "pr": format!("{slug}#{num}"),
+                    "url": url,
+                    "title": title,
+                    "labels": label_names(p),
+                    "isDraft": is_draft,
+                    "action": action.as_str(),
+                }),
+            ));
+            continue;
+        }
+        let Some(detail) = gh_json(&[
+            "pr",
+            "view",
+            &num.to_string(),
+            "-R",
+            &slug,
+            "--json",
+            "headRefOid,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
+        ]) else {
+            return Err(format!(
+                "error: `gh pr view {slug}#{num}` failed — aborting rather than report an incomplete vet queue"
+            ));
+        };
+        rows.push(unvetted_row(&slug, num, url, title, &detail));
+    }
+    Ok(unvetted_doc(&rows, include_skipped))
+}
+
+fn unvetted_mode(json_out: bool, include_skipped: bool) -> i32 {
+    let doc = match unvetted_fetch(include_skipped) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    if json_out {
+        println!("{doc}");
+        return 0;
+    }
+    let c = &doc["counts"];
+    println!(
+        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head)",
+        c["vet"], c["open"], c["skipDraft"], c["skipHumanDecided"], c["skipVettedAtHead"]
+    );
+    for p in doc["prs"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [{} · {}]  {}",
+            p["pr"].as_str().unwrap_or(""),
+            p["ci"].as_str().unwrap_or("?"),
+            p["mergeable"].as_str().unwrap_or("?"),
+            p["title"].as_str().unwrap_or("")
+        );
+    }
+    0
+}
+
+/// Default cap on the diff a single `pr_context` returns. A diff is the vetter's biggest single read;
+/// past this the model is reading a generated-artifact dump, not a reviewable change.
+const DEFAULT_MAX_DIFF_BYTES: usize = 300_000;
+/// Hard ceiling a caller may raise `max_diff_bytes` to.
+const MAX_MAX_DIFF_BYTES: u64 = 4_000_000;
+
+/// PURE: truncate to at most `max` BYTES on a char boundary (never panics on multi-byte input);
+/// returns (text, truncated?).
+fn truncate_utf8(s: &str, max: usize) -> (String, bool) {
+    if s.len() <= max {
+        return (s.to_string(), false);
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (s[..end].to_string(), true)
+}
+
+/// PURE: the whole review bundle for ONE PR — what `gh pr view` + `gh pr diff` + an `gh issue view`
+/// per linked issue used to cost inside the model's context, in a single document. Comments are the
+/// TRUSTED ones only (author-verified, per the provenance invariant), so a spoofed `🤖 ai:vetter`
+/// marker from a third party can never be read as a prior verdict.
+fn pr_context_doc(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    diff: &str,
+    issues: &[Value],
+    max_diff_bytes: usize,
+) -> Value {
+    let head = detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let ci = classify_ci(detail.get("statusCheckRollup").unwrap_or(&Value::Null));
+    let merge = parse_merge(detail.get("mergeable").and_then(|v| v.as_str()));
+    let files: Vec<Value> = detail
+        .get("files")
+        .and_then(|f| f.as_array())
+        .map(|a| {
+            a.iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "path": f.get("path").and_then(|p| p.as_str()).unwrap_or(""),
+                        "additions": f.get("additions").and_then(|x| x.as_u64()).unwrap_or(0),
+                        "deletions": f.get("deletions").and_then(|x| x.as_u64()).unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let closes: Vec<u64> = detail
+        .get("closingIssuesReferences")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| r.get("number").and_then(|n| n.as_u64()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let (diff_text, truncated) = truncate_utf8(diff, max_diff_bytes);
+    serde_json::json!({
+        "pr": format!("{slug}#{num}"),
+        "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+        "title": detail.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        "body": detail.get("body").and_then(|v| v.as_str()).unwrap_or(""),
+        "headRefOid": head,
+        "isDraft": detail.get("isDraft").and_then(|v| v.as_bool()).unwrap_or(false),
+        "labels": label_names(detail),
+        "reviewDecision": detail.get("reviewDecision").and_then(|v| v.as_str()).filter(|s| !s.is_empty()),
+        "humanSacred": has_human_override(detail) || has_native_human_review(detail),
+        "vettedAtHead": vetted_at_head(detail, head),
+        "ci": ci_str(ci),
+        "mergeable": merge_str(merge),
+        "additions": detail.get("additions").and_then(|v| v.as_u64()).unwrap_or(0),
+        "deletions": detail.get("deletions").and_then(|v| v.as_u64()).unwrap_or(0),
+        "files": files,
+        "closes": closes,
+        "issues": issues,
+        "vetterComments": trusted_comments(detail, Some("🤖 ai:vetter")),
+        "producerComments": trusted_comments(detail, Some("🤖 ai:producer")),
+        "diffBytes": diff.len(),
+        "diffTruncated": truncated,
+        "diff": diff_text,
+    })
+}
+
+/// Live `pr_context`: the PR detail, its diff, and every issue it Closes/Refs — three `gh` shapes,
+/// one call, none of it re-derived in the model's context.
+fn pr_context_fetch(slug: &str, num: u64, max_diff_bytes: usize) -> Result<Value, String> {
+    let n = num.to_string();
+    let detail = gh_json(&[
+        "pr", "view", &n, "-R", slug, "--json",
+        "number,title,body,url,headRefOid,isDraft,labels,reviewDecision,mergeable,statusCheckRollup,additions,deletions,files,closingIssuesReferences,comments",
+    ])
+    .ok_or_else(|| format!("error: `gh pr view {slug}#{num}` failed"))?;
+    let diff = gh_text(&["pr", "diff", &n, "-R", slug])
+        .ok_or_else(|| format!("error: `gh pr diff {slug}#{num}` failed"))?;
+    let mut issues: Vec<Value> = Vec::new();
+    for r in detail
+        .get("closingIssuesReferences")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let Some(inum) = r.get("number").and_then(|n| n.as_u64()) else {
+            continue;
+        };
+        // A linked issue can live in another repo of the org; the reference carries its own repo.
+        let islug = r
+            .pointer("/repository/nameWithOwner")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| slug.to_string());
+        let Some(mut iss) = gh_json(&[
+            "issue",
+            "view",
+            &inum.to_string(),
+            "-R",
+            &islug,
+            "--json",
+            "number,title,body,labels,state",
+        ]) else {
+            continue;
+        };
+        if let Some(o) = iss.as_object_mut() {
+            o.insert("repo".into(), Value::String(islug));
+        }
+        issues.push(iss);
+    }
+    Ok(pr_context_doc(
+        slug,
+        num,
+        &detail,
+        &diff,
+        &issues,
+        max_diff_bytes,
+    ))
+}
+
+/// The throwaway work-clone root for the vetter's audit lens (`WORK_DIR`, else the system temp dir).
+fn vet_work_dir() -> String {
+    std::env::var("WORK_DIR").unwrap_or_else(|_| {
+        std::env::temp_dir()
+            .to_string_lossy()
+            .trim_end_matches('/')
+            .to_string()
+    })
+}
+
+/// PURE: the per-PR throwaway clone path — the `vet-<repo>-<n>` convention `gc-clones` already
+/// reclaims, so an MCP-driven checkout is garbage-collected exactly like a hand-rolled one.
+fn checkout_dir(work_dir: &str, slug: &str, num: u64) -> String {
+    let repo = slug.rsplit('/').next().unwrap_or(slug);
+    format!("{}/vet-{repo}-{num}", work_dir.trim_end_matches('/'))
+}
+
+/// Run `gh` for its exit status only, optionally inside `dir`, capturing BOTH streams (nothing leaks
+/// to this process's stdout — the MCP JSON-RPC stream lives there).
+fn gh_quiet(dir: Option<&std::path::Path>, args: &[&str]) -> Result<(), String> {
+    let mut cmd = Command::new("gh");
+    cmd.args(args);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| format!("failed to run gh {}: {e}", args.join(" ")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let tail: Vec<&str> = err.lines().rev().take(5).collect();
+    Err(format!(
+        "gh {} failed: {}",
+        args.join(" "),
+        tail.into_iter().rev().collect::<Vec<_>>().join(" / ")
+    ))
+}
+
+/// Check a PR out into its throwaway clone so the `audit` skill has SOURCE to read. LOCAL read only:
+/// a shallow clone plus `gh pr checkout` — never a push, a commit, or any GitHub write. Reuses an
+/// existing clone (fetching the PR head into it) rather than re-cloning.
+fn pr_checkout_exec(slug: &str, num: u64) -> Result<Value, String> {
+    let dir = checkout_dir(&vet_work_dir(), slug, num);
+    let path = std::path::Path::new(&dir);
+    let reused = path.join(".git").is_dir();
+    if !reused {
+        if path.exists() {
+            return Err(format!(
+                "{dir} exists but is not a git clone — refusing to touch it"
+            ));
+        }
+        gh_quiet(None, &["repo", "clone", slug, &dir, "--", "--depth", "1"])?;
+    }
+    gh_quiet(
+        Some(path),
+        &["pr", "checkout", &num.to_string(), "-R", slug],
+    )?;
+    Ok(serde_json::json!({
+        "pr": format!("{slug}#{num}"),
+        "dir": dir,
+        "reused": reused,
+        "note": "local read-only checkout for the audit lens; reclaimed by `pr-review-report gc-clones`",
+    }))
+}
+
+// ─── MCP: the FSM as a tool surface ──────────────────────────────────────────
+
+/// Server name. It becomes the middle segment of every exposed tool name — Claude Code presents an
+/// MCP tool as `mcp__<server>__<tool>` and permission-matches it as `mcp__<server>__*` — so it is
+/// SHORT on purpose: that string is repeated per tool in every request preamble.
+const MCP_SERVER_NAME: &str = "fsm";
+const MCP_SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Protocol revisions this server speaks, newest first. The negotiated version is the client's
+/// requested one when we know it, else [`MCP_PROTOCOL_DEFAULT`] — which every current client accepts.
+const MCP_PROTOCOL_SUPPORTED: [&str; 5] = [
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+    "2024-10-07",
+];
+const MCP_PROTOCOL_DEFAULT: &str = "2025-06-18";
+
+/// PURE: MCP version negotiation — echo the client's requested revision when supported, else offer
+/// ours. Answering with an UNKNOWN revision is what makes a client hang up mid-handshake.
+fn mcp_protocol_version(requested: Option<&str>) -> &'static str {
+    requested
+        .and_then(|v| MCP_PROTOCOL_SUPPORTED.iter().find(|s| **s == v).copied())
+        .unwrap_or(MCP_PROTOCOL_DEFAULT)
+}
+
+/// The vetter's verdicts — the ONLY values `record_verdict` accepts. Anything else (`approve`,
+/// `merge`, `close-issue`, …) is not a transition of this machine and is refused.
+const VETTER_VERDICTS: [&str; 5] = ["ready", "reject", "relink", "design", "close"];
+/// Cost is a 0-1000 vibes score; a value outside it is a mis-scaled score, not a cost.
+const COST_RANGE: std::ops::RangeInclusive<i64> = 0..=1000;
+/// `basis` is a 3-8 word phrase naming the cost driver; a paragraph there is a note in the wrong slot.
+const MAX_BASIS_WORDS: usize = 12;
+/// The sweep's idle-clone age cap, and the bounds a tool caller may move it within. 0 would delete
+/// every PR-less clone the instant it appeared, including one being built right now.
+const GC_MAX_AGE_DEFAULT: u64 = 30;
+const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
+
+/// WHICH ROLE this server is serving. The two roles are different state machines that happen to
+/// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
+/// not a permission — `tools/list` returns only the profile's tools, so the producer never sees
+/// `record_verdict` (the vetter's write) and the vetter never sees `clone_create`, and neither pays
+/// preamble for the other's schemas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpProfile {
+    Vetter,
+    Producer,
+}
+
+impl McpProfile {
+    fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "vetter" => Ok(McpProfile::Vetter),
+            "producer" => Ok(McpProfile::Producer),
+            _ => Err(format!("unknown profile {s:?} — use vetter or producer")),
+        }
+    }
+    /// The tool names this profile exposes, in listing order.
+    fn tool_names(self) -> &'static [&'static str] {
+        match self {
+            // `clone_release` is on BOTH: `pr_checkout` creates a clone, so the vetter needs the
+            // move that disposes of it — otherwise every vetted PR leaks a checkout until the sweep.
+            McpProfile::Vetter => &[
+                "unvetted",
+                "pr_context",
+                "pr_checkout",
+                "record_verdict",
+                "clone_release",
+                // The vetter's SECOND subject: the producer also emits close-candidate flags on
+                // issues, and a bad one asks a human to destroy work. Same three moves as a PR —
+                // state-load, read one, record one verdict.
+                "unvetted_close_candidates",
+                "close_candidate_context",
+                "record_close_candidate_verdict",
+            ],
+            McpProfile::Producer => &["clone_create", "clone_release", "clone_list", "clone_gc"],
+        }
+    }
+}
+
+/// The TOOL SURFACE. Descriptions are one line each on purpose: every schema here is re-sent in the
+/// preamble of every API call, so the surface must replace more prose than it adds.
+fn mcp_tools(profile: McpProfile) -> Value {
+    let names = profile.tool_names();
+    let all = mcp_all_tools();
+    let all = all.as_array().expect("tool table is an array");
+    Value::Array(
+        names
+            .iter()
+            .map(|n| {
+                all.iter()
+                    .find(|t| t["name"] == Value::String((*n).to_string()))
+                    .unwrap_or_else(|| panic!("profile names an undefined tool {n:?}"))
+                    .clone()
+            })
+            .collect(),
+    )
+}
+
+fn mcp_all_tools() -> Value {
+    serde_json::json!([
+        {
+            "name": "unvetted",
+            "description": "State-load: the open PRs to vet this run, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. Human-decided, draft and vetted-at-head PRs are already excluded.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why."}
+                }
+            }
+        },
+        {
+            "name": "pr_context",
+            "description": "Everything needed to judge one PR: title, body, files, additions/deletions, headRefOid, ci, mergeable, the full diff, every linked issue's title/body/labels, and the trusted ai:vetter/ai:producer comments.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pr": {"type": "string", "description": "owner/repo#number"},
+                    "max_diff_bytes": {"type": "integer", "description": "Diff cap, default 300000."}
+                },
+                "required": ["pr"]
+            }
+        },
+        {
+            "name": "pr_checkout",
+            "description": "Check the PR head out into a throwaway local clone so the audit skill can read source. Local read only — no GitHub write. Returns its dir.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"pr": {"type": "string", "description": "owner/repo#number"}},
+                "required": ["pr"]
+            }
+        },
+        {
+            "name": "record_verdict",
+            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost. Refuses if a human has decided the PR.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pr": {"type": "string", "description": "owner/repo#number"},
+                    "verdict": {"type": "string", "enum": ["ready", "reject", "relink", "design", "close"]},
+                    "note": {"type": "string", "description": "One line naming the issue number(s) and the specific reason."},
+                    "cost": {"type": "integer", "description": "Human verification cost, 0-1000."},
+                    "basis": {"type": "string", "description": "3-8 words naming the cost driver."}
+                },
+                "required": ["pr", "verdict", "note", "cost", "basis"]
+            }
+        },
+        {
+            "name": "unvetted_close_candidates",
+            "description": "State-load: the producer close-candidate flags on open issues to vet this run. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. Human-ruled and already-vetted-at-flag issues are excluded.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."}
+                }
+            }
+        },
+        {
+            "name": "close_candidate_context",
+            "description": "Everything needed to judge one close-candidate flag: the issue's title, body, labels, createdAt, state, and the trusted ai:producer flag(s) + any prior ai:vetter verdicts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "issue": {"type": "string", "description": "owner/repo#number"}
+                },
+                "required": ["issue"]
+            }
+        },
+        {
+            "name": "record_close_candidate_verdict",
+            "description": "The vetter's write on a flag: uphold (leave it queued for the human) or reject (drop ai:close-candidate, returning the issue to the producer). Posts a flag-pinned ai:vetter comment. Refuses if a human has ruled.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "issue": {"type": "string", "description": "owner/repo#number"},
+                    "verdict": {"type": "string", "enum": ["uphold", "reject"]},
+                    "note": {"type": "string", "description": "One line: what the evidence proves, or which check it fails (recency / reachability / scope)."}
+                },
+                "required": ["issue", "verdict", "note"]
+            }
+        },
+        {
+            "name": "clone_create",
+            "description": "Make (or re-sync to current base) the per-issue work clone. Returns its dir. Refuses to re-sync over unpushed commits.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo"},
+                    "name": {"type": "string", "description": "Clone dir name, e.g. raindex-2444. One path segment; the root is fixed."},
+                    "branch": {"type": "string", "description": "Branch to create/reset, e.g. 2026-07-22-issue-2444."},
+                    "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
+                },
+                "required": ["repo", "name", "branch"]
+            }
+        },
+        {
+            "name": "clone_release",
+            "description": "Dispose of a work clone the moment its work is on GitHub. This replaces `rm -rf`. Refuses unpushed commits outright; refuses uncommitted changes unless discard_uncommitted.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "clone": {"type": "string", "description": "Clone dir name (or its full path under the work root)."},
+                    "discard_uncommitted": {"type": "boolean", "description": "Release even with uncommitted changes — only once you have confirmed they are build/tooling output."}
+                },
+                "required": ["clone"]
+            }
+        },
+        {
+            "name": "clone_list",
+            "description": "Every work clone on this box: name, branch, unpushed/uncommitted counts, age, and whether it is releasable now.",
+            "inputSchema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "clone_gc",
+            "description": "End-of-run sweep of every work root: deletes only clean, fully-pushed clones whose PR is merged/closed, or PR-less clones idle past the age cap. Reports bytes reclaimed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "dry_run": {"type": "boolean", "description": "Report the decisions without deleting."},
+                    "max_age_days": {"type": "integer", "description": "Idle cap for PR-less clones, 1-365 (default 30)."}
+                }
+            }
+        }
+    ])
+}
+
+/// A VALIDATED transition. Constructing one is the only way to reach an effect, so an invalid
+/// transition cannot be represented — the point of #52.
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum McpCall {
+    Unvetted {
+        include_skipped: bool,
+    },
+    PrContext {
+        slug: String,
+        num: u64,
+        max_diff_bytes: usize,
+    },
+    PrCheckout {
+        slug: String,
+        num: u64,
+    },
+    RecordVerdict {
+        slug: String,
+        num: u64,
+        verdict: String,
+        note: String,
+        cost: i64,
+        basis: String,
+    },
+    UnvettedCloseCandidates {
+        include_skipped: bool,
+    },
+    CloseCandidateContext {
+        slug: String,
+        num: u64,
+    },
+    RecordCloseCandidateVerdict {
+        slug: String,
+        num: u64,
+        verdict: String,
+        note: String,
+    },
+    /// `root`/`name` are the OUTPUT of the path guard, not the model's argument: by the time this
+    /// value exists, the name is known to be a single non-hidden component under a configured root.
+    CloneCreate {
+        root: String,
+        name: String,
+        slug: String,
+        branch: String,
+        base: Option<String>,
+    },
+    CloneRelease {
+        root: String,
+        name: String,
+        discard_uncommitted: bool,
+    },
+    CloneList,
+    CloneGc {
+        max_age_days: u64,
+        dry_run: bool,
+    },
+}
+
+/// PURE: `owner/repo#number` → (slug, number). One string keeps the schemas small AND makes the
+/// "always use the PR's ACTUAL owner/repo" rule structural — there is no org to guess wrong.
+fn parse_pr_ref(s: &str) -> Result<(String, u64), String> {
+    let bad =
+        || format!("bad pr ref {s:?} — want owner/repo#number, e.g. rainlanguage/rain.flare#170");
+    let (slug, num) = s.trim().split_once('#').ok_or_else(bad)?;
+    let num: u64 = num.trim().parse().map_err(|_| bad())?;
+    let mut parts = slug.trim().split('/');
+    let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(bad());
+    };
+    if owner.is_empty() || repo.is_empty() || num == 0 {
+        return Err(bad());
+    }
+    Ok((format!("{owner}/{repo}"), num))
+}
+
+fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    match args.get(key).and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => Ok(s),
+        _ => Err(format!("missing required string argument {key:?}")),
+    }
+}
+
+/// PURE: the TRANSITION GUARD. Maps (tool name, arguments) to a validated [`McpCall`], or to the
+/// error the model sees. Every rule the vetter prompt used to state in prose — the verdict
+/// vocabulary, a mandatory cost in range, a note that says something, a phrase-length basis, a
+/// well-formed PR reference — is enforced HERE, once, tested.
+fn validate_call(
+    profile: McpProfile,
+    roots: &[String],
+    name: &str,
+    args: &Value,
+) -> Result<McpCall, String> {
+    // A tool the profile does not expose does not exist for this role — checked FIRST, so the
+    // producer cannot reach `record_verdict` and the vetter cannot reach `clone_create` by name.
+    if !profile.tool_names().contains(&name) {
+        return Err(format!(
+            "no such tool {name:?} — this server exposes exactly: {}",
+            profile.tool_names().join(", ")
+        ));
+    }
+    match name {
+        "unvetted" => Ok(McpCall::Unvetted {
+            include_skipped: args
+                .get("include_skipped")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        }),
+        "pr_context" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            let max_diff_bytes = match args.get("max_diff_bytes") {
+                None | Some(Value::Null) => DEFAULT_MAX_DIFF_BYTES,
+                Some(v) => match v.as_u64() {
+                    Some(n) if n > 0 && n <= MAX_MAX_DIFF_BYTES => n as usize,
+                    _ => {
+                        return Err(format!(
+                            "max_diff_bytes must be an integer in 1..={MAX_MAX_DIFF_BYTES}"
+                        ))
+                    }
+                },
+            };
+            Ok(McpCall::PrContext {
+                slug,
+                num,
+                max_diff_bytes,
+            })
+        }
+        "pr_checkout" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            Ok(McpCall::PrCheckout { slug, num })
+        }
+        "record_verdict" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            let verdict = req_str(args, "verdict")?.trim().to_string();
+            if !VETTER_VERDICTS.contains(&verdict.as_str()) {
+                return Err(format!(
+                    "{verdict:?} is not a verdict of this machine — use one of: {}",
+                    VETTER_VERDICTS.join(", ")
+                ));
+            }
+            let note = req_str(args, "note")?.trim().to_string();
+            let cost = args.get("cost").and_then(|v| v.as_i64()).ok_or_else(|| {
+                "cost is required: an integer 0-1000 (human verification cost)".to_string()
+            })?;
+            if !COST_RANGE.contains(&cost) {
+                return Err(format!("cost {cost} is out of range — an integer 0-1000"));
+            }
+            let basis = req_str(args, "basis")?.trim().to_string();
+            if basis.split_whitespace().count() > MAX_BASIS_WORDS {
+                return Err(format!(
+                    "basis must be at most {MAX_BASIS_WORDS} words naming the cost driver (put the reasoning in note)"
+                ));
+            }
+            Ok(McpCall::RecordVerdict {
+                slug,
+                num,
+                verdict,
+                note,
+                cost,
+                basis,
+            })
+        }
+        "unvetted_close_candidates" => Ok(McpCall::UnvettedCloseCandidates {
+            include_skipped: args
+                .get("include_skipped")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        }),
+        "close_candidate_context" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "issue")?)?;
+            Ok(McpCall::CloseCandidateContext { slug, num })
+        }
+        "record_close_candidate_verdict" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "issue")?)?;
+            let verdict = req_str(args, "verdict")?.trim().to_string();
+            if !CC_VERDICTS.contains(&verdict.as_str()) {
+                return Err(format!(
+                    "{verdict:?} is not a close-candidate verdict — use one of: {}",
+                    CC_VERDICTS.join(", ")
+                ));
+            }
+            let note = req_str(args, "note")?.trim().to_string();
+            if note.is_empty() {
+                return Err(
+                    "note is required: one line naming what the evidence proves or fails to prove"
+                        .to_string(),
+                );
+            }
+            Ok(McpCall::RecordCloseCandidateVerdict {
+                slug,
+                num,
+                verdict,
+                note,
+            })
+        }
+        // --- work-clone lifecycle. The path guard runs HERE, before any effect exists, which is why
+        // a refused clone argument can be proven to have touched nothing.
+        "clone_create" => {
+            let slug = req_str(args, "repo")?.trim().to_string();
+            let mut parts = slug.split('/');
+            let (Some(o), Some(r), None) = (parts.next(), parts.next(), parts.next()) else {
+                return Err(format!("bad repo {slug:?} — want owner/repo"));
+            };
+            if o.is_empty() || r.is_empty() {
+                return Err(format!("bad repo {slug:?} — want owner/repo"));
+            }
+            // clone_create always builds in the FIRST root (WORK_DIR); the extra roots exist so
+            // already-stranded clones can be listed/released, not so new ones can be placed there.
+            let root = roots.first().ok_or_else(|| {
+                "no work-clone root is configured (WORK_DIR is unset)".to_string()
+            })?;
+            let name = clone_name_in_root(root, req_str(args, "name")?)?;
+            let branch = req_str(args, "branch")?.trim().to_string();
+            if branch.contains(char::is_whitespace) || branch.starts_with('-') {
+                return Err(format!("bad branch {branch:?}"));
+            }
+            let base = match args.get("base") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(req_str(args, "base")?.trim().to_string()),
+            };
+            Ok(McpCall::CloneCreate {
+                root: root.trim_end_matches('/').to_string(),
+                name,
+                slug,
+                branch,
+                base,
+            })
+        }
+        "clone_release" => {
+            let (root, name) = clone_in_roots(roots, req_str(args, "clone")?)?;
+            Ok(McpCall::CloneRelease {
+                root,
+                name,
+                discard_uncommitted: args
+                    .get("discard_uncommitted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        }
+        "clone_list" => Ok(McpCall::CloneList),
+        "clone_gc" => {
+            let max_age_days = match args.get("max_age_days") {
+                None | Some(Value::Null) => GC_MAX_AGE_DEFAULT,
+                Some(v) => match v.as_u64() {
+                    Some(n) if GC_MAX_AGE_RANGE.contains(&n) => n,
+                    _ => {
+                        return Err(format!(
+                            "max_age_days must be an integer in {}..={}",
+                            GC_MAX_AGE_RANGE.start(),
+                            GC_MAX_AGE_RANGE.end()
+                        ))
+                    }
+                },
+            };
+            Ok(McpCall::CloneGc {
+                max_age_days,
+                dry_run: args
+                    .get("dry_run")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        }
+        // Unreachable while `tool_names()` and this match agree (pinned by a test). An Err rather
+        // than a panic: a listed-but-unhandled tool must not take the whole server down.
+        _ => Err(format!("tool {name:?} is listed but not implemented")),
+    }
+}
+
+fn jsonrpc_result(id: Value, result: Value) -> Value {
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})
+}
+
+fn jsonrpc_error(id: Value, code: i64, message: &str) -> Value {
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
+}
+
+/// A `tools/call` result. A REFUSED transition is a successful JSON-RPC response carrying
+/// `isError: true` — the model reads the reason and corrects, exactly as it would a tool's own error.
+fn tool_result(text: String, is_error: bool) -> Value {
+    serde_json::json!({
+        "content": [{"type": "text", "text": text}],
+        "isError": is_error,
+    })
+}
+
+/// Handle ONE JSON-RPC message. Pure apart from `exec`, which performs a validated call — so the
+/// whole protocol surface (handshake, listing, dispatch, refusals) is unit-testable with a fake exec.
+/// `None` = a notification, which is never answered.
+fn mcp_handle(
+    profile: McpProfile,
+    roots: &[String],
+    req: &Value,
+    exec: &mut dyn FnMut(McpCall) -> Result<String, String>,
+) -> Option<Value> {
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let id = match req.get("id") {
+        None | Some(Value::Null) => return None,
+        Some(v) => v.clone(),
+    };
+    match method {
+        "initialize" => Some(jsonrpc_result(
+            id,
+            serde_json::json!({
+                "protocolVersion": mcp_protocol_version(
+                    req.pointer("/params/protocolVersion").and_then(|v| v.as_str())
+                ),
+                "capabilities": {"tools": {"listChanged": false}},
+                "serverInfo": {"name": MCP_SERVER_NAME, "version": MCP_SERVER_VERSION},
+            }),
+        )),
+        "tools/list" => Some(jsonrpc_result(
+            id,
+            serde_json::json!({"tools": mcp_tools(profile)}),
+        )),
+        "tools/call" => {
+            let name = req
+                .pointer("/params/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let args = req
+                .pointer("/params/arguments")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let out = match validate_call(profile, roots, name, &args) {
+                Err(e) => tool_result(e, true),
+                Ok(call) => match exec(call) {
+                    Ok(text) => tool_result(text, false),
+                    Err(e) => tool_result(e, true),
+                },
+            };
+            Some(jsonrpc_result(id, out))
+        }
+        "ping" => Some(jsonrpc_result(id, serde_json::json!({}))),
+        // resources/prompts are not offered (no such capability was advertised).
+        _ => Some(jsonrpc_error(
+            id,
+            -32601,
+            &format!("method not found: {method}"),
+        )),
+    }
+}
+
+/// Perform a validated transition. The ONLY effectful half of the server; every guard already ran.
+fn mcp_exec(call: McpCall) -> Result<String, String> {
+    let roots = clone_roots();
+    match call {
+        McpCall::Unvetted { include_skipped } => {
+            unvetted_fetch(include_skipped).map(|d| d.to_string())
+        }
+        McpCall::PrContext {
+            slug,
+            num,
+            max_diff_bytes,
+        } => pr_context_fetch(&slug, num, max_diff_bytes).map(|d| d.to_string()),
+        McpCall::PrCheckout { slug, num } => pr_checkout_exec(&slug, num).map(|d| d.to_string()),
+        McpCall::RecordVerdict {
+            slug,
+            num,
+            verdict,
+            note,
+            cost,
+            basis,
+        } => record_verdict_apply(
+            &slug,
+            &num.to_string(),
+            &verdict,
+            &note,
+            Some(cost),
+            &basis,
+            false,
+        )
+        .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::UnvettedCloseCandidates { include_skipped } => {
+            unvetted_close_candidates_fetch(include_skipped).map(|d| d.to_string())
+        }
+        McpCall::CloseCandidateContext { slug, num } => {
+            close_candidate_context_fetch(&slug, num).map(|d| d.to_string())
+        }
+        McpCall::RecordCloseCandidateVerdict {
+            slug,
+            num,
+            verdict,
+            note,
+        } => record_cc_verdict_apply(&slug, &num.to_string(), &verdict, &note, false)
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::CloneCreate {
+            root,
+            name,
+            slug,
+            branch,
+            base,
+        } => {
+            clone_create_exec(&root, &name, &slug, &branch, base.as_deref()).map(|d| d.to_string())
+        }
+        McpCall::CloneRelease {
+            root,
+            name,
+            discard_uncommitted,
+        } => clone_release_exec(&root, &name, discard_uncommitted).map(|d| d.to_string()),
+        McpCall::CloneList => clone_list_exec(&roots).map(|d| d.to_string()),
+        McpCall::CloneGc {
+            max_age_days,
+            dry_run,
+        } => clone_gc_exec(&roots, max_age_days, dry_run).map(|d| d.to_string()),
+    }
+}
+
+/// `pr-review-report mcp` — speak MCP over stdio (newline-delimited JSON-RPC 2.0 on stdin/stdout).
+/// STDOUT IS THE PROTOCOL: nothing else may print there, which is why the verdict write goes through
+/// [`record_verdict_apply`] rather than the printing CLI mode.
+fn mcp_serve(profile: McpProfile) -> i32 {
+    use std::io::{BufRead, Write};
+    let roots = clone_roots();
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let resp = match serde_json::from_str::<Value>(line) {
+            Ok(req) => mcp_handle(profile, &roots, &req, &mut mcp_exec),
+            Err(e) => Some(jsonrpc_error(
+                Value::Null,
+                -32700,
+                &format!("parse error: {e}"),
+            )),
+        };
+        if let Some(r) = resp {
+            if writeln!(out, "{r}").is_err() || out.flush().is_err() {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
 /// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
 /// parsing, validation, and `--help`/usage (replacing the former hand-rolled `args.get(n)` dispatch).
 #[derive(Parser)]
@@ -3016,9 +5451,12 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Garbage-collect the per-PR/issue work clones directly under <work-dir>.
+    /// Garbage-collect the per-PR/issue work clones directly under each <work-dir>.
     GcClones {
-        work_dir: String,
+        /// One or more clone roots. More than one because clones do not all land in WORK_DIR — the
+        /// vetter's `vet-*` clones accumulated in the INSTALL dir, which a single-root sweep missed.
+        #[arg(required = true, num_args = 1..)]
+        work_dirs: Vec<String>,
         #[arg(long)]
         dry_run: bool,
         #[arg(long, default_value_t = 30)]
@@ -3027,8 +5465,8 @@ enum Cmd {
     /// Unified reclaim: the work clones (gc-clones), always; the nix store (nix-collect-garbage -d)
     /// only when the disk is under pressure (usage >= --nix-threshold), so the build cache stays warm.
     Gc {
-        /// Required unless --no-clones.
-        work_dir: Option<String>,
+        /// One or more clone roots. Required unless --no-clones.
+        work_dirs: Vec<String>,
         #[arg(long)]
         dry_run: bool,
         #[arg(long, default_value_t = 30)]
@@ -3109,6 +5547,22 @@ enum Cmd {
     HumanQueue {
         #[arg(long)]
         json: bool,
+    },
+    /// The VETTER's state-load in ONE call: the open PRs to vet this run (vet-first order), each with
+    /// headRefOid/labels/reviewDecision/humanSacred/vettedAtHead/ci/mergeable.
+    Unvetted {
+        #[arg(long)]
+        json: bool,
+        /// Also list the skipped PRs (draft / human-decided / vetted-at-head) and why.
+        #[arg(long)]
+        include_skipped: bool,
+    },
+    /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
+    /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
+    Mcp {
+        /// Which role's surface to serve: `vetter` (default) or `producer`.
+        #[arg(long, default_value = "vetter")]
+        profile: String,
     },
 }
 
@@ -3754,7 +6208,19 @@ fn action_rank(a: &str) -> u8 {
     }
 }
 
-fn uncovered_issues_mode(json_out: bool) -> i32 {
+/// The uncovered-coverage result: the uncovered issues (repo, number) paired with a lookup from
+/// (repo, number) to each issue's meta.
+type UncoveredCoverage = (
+    Vec<(String, u64)>,
+    std::collections::HashMap<(String, u64), Value>,
+);
+
+/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter)
+/// and the covered set from open PRs' native `closingIssuesReferences`, then return the uncovered
+/// issues (no covering open PR) with their meta. `None` on a gh failure — callers MUST abort rather
+/// than report a false-empty set. Both `uncovered-issues` and the `human-queue` producer-backlog
+/// count read this ONE computation, so their coverage semantics can never drift.
+fn coverage_uncovered() -> Option<UncoveredCoverage> {
     // open issues
     let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
     isearch.extend(org_owner_args());
@@ -3773,7 +6239,7 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     let iref: Vec<&str> = isearch.iter().map(String::as_str).collect();
     let Some(ival) = gh_json(&iref) else {
         eprintln!("error: `gh search issues` failed — aborting rather than report a falsely-empty issue set");
-        return 1;
+        return None;
     };
     // open PRs + their NATIVE closing references (GraphQL). The REST `gh search prs` cannot
     // return `closingIssuesReferences`, and regexing title+body missed the URL and cross-repo
@@ -3783,7 +6249,7 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
         eprintln!(
             "error: open-PR closing-references search failed — aborting rather than report covered issues as uncovered"
         );
-        return 1;
+        return None;
     };
     let covered = covered_from_search_prs(&pr_nodes);
 
@@ -3806,7 +6272,30 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
         meta.insert(k, it.clone());
     }
 
-    let open = uncovered(&issues, &covered);
+    Some((uncovered(&issues, &covered), meta))
+}
+
+/// True when an uncovered issue belongs to the PRODUCER's untouched backlog: NOT already flagged
+/// `ai:close-candidate` (that is the human's close queue, surfaced separately) and carrying NO
+/// `human:*` label (a human ruling is the human's inbox, not the producer's). The raw
+/// `uncovered-issues` set does NOT apply these exclusions — the backlog is deliberately narrower.
+fn is_producer_backlog(meta: &Value) -> bool {
+    !meta
+        .get("labels")
+        .and_then(|l| l.as_array())
+        .map(|arr| {
+            arr.iter().any(|l| {
+                let name = l.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                name == "ai:close-candidate" || name.starts_with("human:")
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn uncovered_issues_mode(json_out: bool) -> i32 {
+    let Some((open, meta)) = coverage_uncovered() else {
+        return 1;
+    };
     if json_out {
         let arr: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
         println!(
@@ -3865,12 +6354,12 @@ fn main() {
             dry_run,
         } => deploy_mode(&slug, &pr, network.as_deref(), dry_run),
         Cmd::GcClones {
-            work_dir,
+            work_dirs,
             dry_run,
             max_age_days,
-        } => gc_clones_mode(&work_dir, max_age_days, dry_run),
+        } => gc_clones_mode(&work_dirs, max_age_days, dry_run),
         Cmd::Gc {
-            work_dir,
+            work_dirs,
             dry_run,
             max_age_days,
             no_clones,
@@ -3879,12 +6368,18 @@ fn main() {
         } => {
             let do_clones = !no_clones;
             let do_nix = !no_nix;
-            let wd = work_dir.unwrap_or_default();
-            if do_clones && wd.is_empty() {
+            if do_clones && work_dirs.is_empty() {
                 eprintln!("error: gc needs <work-dir> unless --no-clones is given");
                 std::process::exit(2);
             }
-            gc_mode(&wd, max_age_days, dry_run, do_clones, do_nix, nix_threshold)
+            gc_mode(
+                &work_dirs,
+                max_age_days,
+                dry_run,
+                do_clones,
+                do_nix,
+                nix_threshold,
+            )
         }
         Cmd::RunMetrics { trace } => run_metrics_mode(&trace),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
@@ -3915,6 +6410,17 @@ fn main() {
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), dry_run),
         Cmd::ReworkedReject { slug, pr, dry_run } => reworked_reject_mode(&slug, &pr, dry_run),
         Cmd::HumanQueue { json } => human_queue_mode(json),
+        Cmd::Unvetted {
+            json,
+            include_skipped,
+        } => unvetted_mode(json, include_skipped),
+        Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
+            Ok(p) => mcp_serve(p),
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        },
     };
     std::process::exit(code);
 }
@@ -3923,6 +6429,258 @@ fn main() {
 mod queue_tests {
     use super::*;
     use serde_json::json;
+
+    /// An issue as `gh issue view --json` returns it, with one trusted producer flag.
+    fn flagged_issue(labels: &[&str], flag_at: &str, reason: &str, extra: Vec<Value>) -> Value {
+        let mut comments = vec![json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "createdAt": flag_at,
+            "body": format!("🤖 ai:producer\nClose-candidate: {reason}"),
+        })];
+        comments.extend(extra);
+        json!({
+            "state": "OPEN",
+            "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+            "comments": comments,
+        })
+    }
+
+    fn vetter_cc_comment(flag_at: &str, verdict: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "createdAt": "2026-07-26T10:00:00Z",
+            "body": format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict} — note"),
+        })
+    }
+
+    // A human ruling on an ISSUE was invisible to the old check, which looked only for
+    // `human:keep-open` (a label the org does not use) and `human:close-candidate`. So an issue a
+    // human had already parked with `human:reject` / `human:design` could still be flagged.
+    #[test]
+    fn a_human_ruling_on_an_issue_is_sacred_whichever_label_it_wears() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        for l in ["human:reject", "human:design", "human:close-candidate"] {
+            assert_eq!(
+                close_candidate_plan("OPEN", &s(&[l]), false),
+                CloseFlagPlan::RefuseHuman,
+                "{l} must block a producer flag"
+            );
+            assert_eq!(
+                cc_verdict_plan(
+                    &flagged_issue(&[l, "ai:close-candidate"], "T1", "x", vec![]),
+                    "reject"
+                ),
+                CcVerdictPlan::RefuseHuman,
+                "{l} must block a vetter verdict"
+            );
+        }
+    }
+
+    // The flag — not the label — is what gets judged, and a RE-flag re-opens the question. This is
+    // the issue-side `vetted_at_head`: without it the vetter would pass an issue once and never
+    // look at new evidence.
+    #[test]
+    fn a_reflag_un_vets_the_issue() {
+        let first = "2026-07-20T09:00:00Z";
+        let second = "2026-07-25T09:00:00Z";
+        let vetted = flagged_issue(
+            &["ai:close-candidate"],
+            first,
+            "already-fixed-on-main: #10",
+            vec![vetter_cc_comment(first, "uphold")],
+        );
+        assert!(cc_vetted_at_flag(&vetted, first));
+        let (_, action, _) = cc_row("o/r", 1, "t", &vetted);
+        assert_eq!(action, "skip-vetted-at-flag");
+
+        // The producer re-flags with new evidence: the old verdict no longer covers it.
+        let reflagged = flagged_issue(
+            &["ai:close-candidate"],
+            second,
+            "already-fixed-on-main: #11",
+            vec![vetter_cc_comment(first, "uphold")],
+        );
+        assert!(!cc_vetted_at_flag(&reflagged, second));
+        let (vet, action, row) = cc_row("o/r", 1, "t", &reflagged);
+        assert!(vet);
+        assert_eq!(action, "vet");
+        assert_eq!(row["flagAt"], json!(second));
+    }
+
+    // A marker is public body text: a flag from an untrusted author is not a flag.
+    #[test]
+    fn an_untrusted_close_candidate_marker_is_not_a_flag() {
+        let spoofed = json!({
+            "state": "OPEN",
+            "labels": [{"name": "ai:close-candidate"}],
+            "comments": [{
+                "author": {"login": "somebody-else"},
+                "createdAt": "2026-07-20T09:00:00Z",
+                "body": "🤖 ai:producer\nClose-candidate: already-fixed-on-main: #1",
+            }],
+        });
+        assert_eq!(last_close_candidate_flag(&spoofed), None);
+        assert_eq!(cc_verdict_plan(&spoofed, "uphold"), CcVerdictPlan::NoFlag);
+        let (vet, action, _) = cc_row("o/r", 1, "t", &spoofed);
+        assert!(!vet);
+        assert_eq!(action, "skip-no-flag");
+    }
+
+    // The three failure classes from the hand-triage (#72). The vetter's REJECT is what keeps a
+    // wrong flag away from the human; `uphold` must leave the flag exactly as it found it.
+    #[test]
+    fn reject_drops_the_flag_and_uphold_leaves_it_queued() {
+        // raindex#512: evidence predating the issue. raindex#523: unreachable code.
+        // raindex#592: scope drift — one of three todos answered.
+        let at = "2026-07-20T09:00:00Z";
+        let issue = flagged_issue(
+            &["ai:close-candidate", "bug"],
+            at,
+            "already-fixed-on-main: crates/settings/src/raindex.rs:116-133",
+            vec![],
+        );
+        assert_eq!(
+            cc_verdict_plan(&issue, "reject"),
+            CcVerdictPlan::Record {
+                flag_at: at.to_string(),
+                remove_label: true,
+                skip_comment: false,
+            }
+        );
+        // Upholding must not touch the label — the human still needs to see the flag.
+        assert_eq!(
+            cc_verdict_plan(&issue, "uphold"),
+            CcVerdictPlan::Record {
+                flag_at: at.to_string(),
+                remove_label: false,
+                skip_comment: false,
+            }
+        );
+        // Re-recording the SAME verdict at the SAME flag is a no-op comment.
+        let already = flagged_issue(
+            &["ai:close-candidate"],
+            at,
+            "already-fixed-on-main: #10",
+            vec![vetter_cc_comment(at, "reject")],
+        );
+        match cc_verdict_plan(&already, "reject") {
+            CcVerdictPlan::Record { skip_comment, .. } => assert!(skip_comment),
+            other => panic!("expected Record, got {other:?}"),
+        }
+        // ...but a DIFFERENT verdict at the same flag still posts.
+        match cc_verdict_plan(&already, "uphold") {
+            CcVerdictPlan::Record { skip_comment, .. } => assert!(!skip_comment),
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cc_verdict_comment_pins_the_flag_it_judged() {
+        assert_eq!(
+            cc_verdict_comment("2026-07-20T09:00:00Z", "reject", "evidence predates the issue"),
+            "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z: reject — evidence predates the issue"
+        );
+        assert_eq!(
+            cc_verdict_comment("T", "uphold", "   "),
+            "🤖 ai:vetter\nReviewed close-candidate @T: uphold"
+        );
+    }
+
+    // The close-candidate queue searches ISSUE urls, and `pr_slug` rejects those BY DESIGN. Reusing
+    // it there parsed every row to None, so the whole queue silently stayed empty and the feature
+    // did nothing at all.
+    #[test]
+    fn issue_slug_parses_issue_urls_where_pr_slug_deliberately_will_not() {
+        assert_eq!(
+            issue_slug("https://github.com/rainlanguage/raindex/issues/512").as_deref(),
+            Some("rainlanguage/raindex")
+        );
+        assert_eq!(
+            pr_slug("https://github.com/rainlanguage/raindex/issues/512"),
+            None
+        );
+        // ...and the reverse: an issue slug is not a PR slug.
+        assert_eq!(issue_slug("https://github.com/o/r/pull/1"), None);
+        assert_eq!(issue_slug("https://example.com/o/r/issues/1"), None);
+        assert_eq!(issue_slug("https://github.com/r/issues/1"), None);
+        assert_eq!(issue_slug(""), None);
+    }
+
+    // The dashboard's boxes are CLICK-THROUGH: each state renders a count and, when clicked, lists
+    // the issues from the top-level array of the SAME name. So both must exist, carry the shape
+    // `closeCandidateIssues` / `uncoveredIssues` already use, and agree — a "5" that lists three
+    // issues is the drift worth pinning.
+    #[test]
+    fn cc_item_arrays_are_populated_and_agree_with_their_counts() {
+        let row = |repo: &str, num: u64, title: &str, action: &str| {
+            json!({"issue": format!("{repo}#{num}"), "repo": repo, "number": num,
+                   "title": title, "action": action})
+        };
+        let doc = json!({
+            "issues": [
+                row("rainlanguage/raindex", 512, "orderbooks should fallback", "vet"),
+                row("rainlanguage/raindex", 592, "Fix inverted IO ratio", "vet"),
+            ],
+            "skipped": [
+                row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag"),
+                // Neither of these is UPHELD: one is a human ruling, one has no flag to judge.
+                row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided"),
+                row("rainlanguage/raindex", 999, "no flag", "skip-no-flag"),
+            ],
+        });
+        let (unvetted, upheld) = cc_item_arrays(&doc);
+
+        // Populated, and each item carries EXACTLY the generic issue-item shape.
+        assert_eq!(unvetted.len(), 2);
+        assert_eq!(upheld.len(), 1);
+        assert_eq!(
+            unvetted[0],
+            json!({"repo": "rainlanguage/raindex", "number": 512, "title": "orderbooks should fallback"})
+        );
+        assert_eq!(
+            upheld[0],
+            json!({"repo": "rainlanguage/raindex", "number": 523, "title": "nothing visual happens"})
+        );
+        // Only `skip-vetted-at-flag` is upheld — a human ruling or a missing flag is neither.
+        for r in &upheld {
+            assert_ne!(r["number"], json!(184));
+            assert_ne!(r["number"], json!(999));
+        }
+
+        // A doc with no skipped rows (include_skipped omitted) yields an EMPTY upheld array, never
+        // a count without items.
+        let (u2, up2) = cc_item_arrays(&json!({"issues": []}));
+        assert!(u2.is_empty() && up2.is_empty());
+    }
+
+    // The count a state box shows and the list it opens must be the same data. Asserting
+    // `len() == len()` at the call site is a TAUTOLOGY that a decoupled emission survives (it did,
+    // when the count was computed separately from the array), so what gets pinned is the pairing
+    // itself: whatever array comes out, the count is ITS length.
+    #[test]
+    fn an_issue_state_count_is_always_its_own_arrays_length() {
+        for n in [0usize, 1, 5] {
+            let items: Vec<Value> = (0..n)
+                .map(|i| json!({"repo": "o/r", "number": i, "title": "t"}))
+                .collect();
+            let (arr, count) = issue_state_pair(items);
+            assert_eq!(count, n);
+            assert_eq!(
+                arr.as_array().expect("emitted as a JSON array").len(),
+                count,
+                "a state box showing {count} must list exactly {count} issues"
+            );
+        }
+    }
+
+    #[test]
+    fn flag_reason_is_the_claim_without_the_marker() {
+        assert_eq!(
+            flag_reason("🤖 ai:producer\nClose-candidate: invalid: premise obsolete"),
+            "invalid: premise obsolete"
+        );
+        assert_eq!(flag_reason("🤖 ai:producer\nsomething else"), "");
+    }
 
     #[test]
     fn close_candidate_plan_respects_state_human_and_dedup() {
@@ -3952,6 +6710,128 @@ mod queue_tests {
                 add_label: false,
                 post_comment: false
             }
+        );
+    }
+
+    #[test]
+    fn already_fixed_anchor_requires_something_datable() {
+        // The real shape that let live issues through: a bare file:line (raindex#512 cited
+        // crates/settings/src/raindex.rs:116-133, code that predated the issue by two weeks).
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: crates/settings/src/raindex.rs:116-133"),
+            FixAnchor::Missing
+        );
+        // The other categories are judgements, not landings — never gated.
+        assert_eq!(
+            already_fixed_anchor("invalid: the premise is obsolete, no tauri.conf.json exists"),
+            FixAnchor::NotApplicable
+        );
+        assert_eq!(
+            already_fixed_anchor("duplicate: of #123"),
+            FixAnchor::NotApplicable
+        );
+        assert_eq!(
+            already_fixed_anchor("wont-fix: superseded by the registry flow"),
+            FixAnchor::NotApplicable
+        );
+        // Datable anchors are extracted.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: fixed by PR #2420"),
+            FixAnchor::Pr("2420".into())
+        );
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: 2a319034 removed the tauri app"),
+            FixAnchor::Commit("2a319034".into())
+        );
+        // A sha alongside a file:line still counts — the sha is what gets date-checked.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: impls.rs:205 via a665ea9f7"),
+            FixAnchor::Commit("a665ea9f7".into())
+        );
+        // Prose must not be mistaken for a sha: short hex-ish words and all-alpha words are not.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: added a decade ago, see the code"),
+            FixAnchor::Missing
+        );
+        // `#` with no digits after it is not a PR reference.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: see foo#bar in the docs"),
+            FixAnchor::Missing
+        );
+        // The forms a producer actually types must all resolve — `PR#123` has an alphanumeric
+        // before the `#`, and rejecting it would refuse evidence in the format the prompt asks for.
+        for reason in [
+            "already-fixed-on-main: PR#2420",
+            "already-fixed-on-main: fixed in rainlanguage/raindex#2420",
+            "already-fixed-on-main: see #2420",
+        ] {
+            assert_eq!(
+                already_fixed_anchor(reason),
+                FixAnchor::Pr("2420".into()),
+                "{reason}"
+            );
+        }
+        // An all-letter hex sha is still a sha.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: deadbeef fixed it"),
+            FixAnchor::Commit("deadbeef".into())
+        );
+        // A bare number is NOT a sha — a date or an id must report "no usable anchor", not send
+        // the caller to `gh api .../commits/20240401` and surface a date-resolution error.
+        for reason in [
+            "already-fixed-on-main: landed 20240401",
+            "already-fixed-on-main: see build 1234567",
+        ] {
+            assert_eq!(already_fixed_anchor(reason), FixAnchor::Missing, "{reason}");
+        }
+    }
+
+    #[test]
+    fn landed_after_filed_compares_iso_instants() {
+        // raindex#512: filed 2024-04-01, cited fallback landed 2024-03-16 -> predates, must fail.
+        assert_eq!(
+            landed_after_filed("2024-03-16T09:00:00Z", "2024-04-01T11:06:35Z"),
+            Some(false)
+        );
+        // raindex#529: filed 2024-04-03, the runs-default landed later -> genuine fix.
+        assert_eq!(
+            landed_after_filed("2024-06-01T00:00:00Z", "2024-04-03T10:00:00Z"),
+            Some(true)
+        );
+        // Same instant is not "after" — a fix cannot be its own report.
+        assert_eq!(
+            landed_after_filed("2024-04-01T11:06:35Z", "2024-04-01T11:06:35Z"),
+            Some(false)
+        );
+        // Unparseable -> None, so the caller fails closed instead of guessing.
+        assert_eq!(landed_after_filed("", "2024-04-01T11:06:35Z"), None);
+        assert_eq!(
+            landed_after_filed("2024-04-01", "2024-04-01T11:06:35Z"),
+            None
+        );
+    }
+
+    #[test]
+    fn recency_gate_blocks_predating_evidence_and_missing_dates() {
+        // No createdAt -> cannot check -> fail closed (1), never silently allow.
+        assert_eq!(
+            already_fixed_recency_gate("o/r", "1", "already-fixed-on-main: #7", &json!({})),
+            1
+        );
+        // Bare file:line -> unsupported claim (4).
+        assert_eq!(
+            already_fixed_recency_gate(
+                "o/r",
+                "1",
+                "already-fixed-on-main: src/foo.rs:10",
+                &json!({"createdAt": "2024-04-01T11:06:35Z"})
+            ),
+            4
+        );
+        // A non-already-fixed category is never gated, even with no createdAt.
+        assert_eq!(
+            already_fixed_recency_gate("o/r", "1", "invalid: premise obsolete", &json!({})),
+            0
         );
     }
 
@@ -4642,18 +7522,201 @@ mod settings_tests {
     // Files live at the repo root, one dir up from the crate. The flake package build runs tests with
     // a filtered src that omits them, so the read is skipped there; the rs-test gate (cargo test at the
     // repo root) has the files and enforces the assertion.
-    fn deny_list(rel: &str) -> Option<Vec<String>> {
+    fn read_json(rel: &str) -> Option<Value> {
         let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
         let text = std::fs::read_to_string(&path).ok()?;
-        let v: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}"));
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+    }
+
+    fn perm_list(rel: &str, which: &str) -> Option<Vec<String>> {
+        let v = read_json(rel)?;
         Some(
-            v["permissions"]["deny"]
+            v["permissions"][which]
                 .as_array()
-                .unwrap_or_else(|| panic!("{path}: permissions.deny is not an array"))
+                .unwrap_or_else(|| panic!("{rel}: permissions.{which} is not an array"))
                 .iter()
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect(),
         )
+    }
+
+    fn deny_list(rel: &str) -> Option<Vec<String>> {
+        perm_list(rel, "deny")
+    }
+
+    fn read_text(rel: &str) -> Option<String> {
+        std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel)).ok()
+    }
+
+    // The wiring above only means something if the RUNNER launches it. `review-run.sh` is the only
+    // thing that starts the vetter, so this pins the last side: it names the prompt/settings that
+    // exist, passes the MCP server config with `--strict-mcp-config`, and offers NO second surface —
+    // one assignment each, and no environment flag anywhere that could select a different one. Two
+    // vetter configurations where one is unreachable is drift a reader cannot resolve.
+    #[test]
+    fn the_vetter_runner_launches_the_mcp_surface_and_only_that() {
+        let Some(sh) = read_text("review-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+
+        for needed in [
+            "PROMPT_FILE=\"$DIR/review-prompt.txt\"",
+            "SETTINGS_FILE=\"$DIR/review-settings.json\"",
+            "MCP_ARGS=(--mcp-config \"$DIR/review-mcp.json\" --strict-mcp-config)",
+            "--settings \"$SETTINGS_FILE\"",
+            "\"${MCP_ARGS[@]}\"",
+        ] {
+            assert!(
+                sh.contains(needed),
+                "review-run.sh must launch the vetter with {needed}"
+            );
+        }
+
+        // A second assignment is a second surface — i.e. a branch the reader has to resolve.
+        for once in ["PROMPT_FILE=", "SETTINGS_FILE=", "MCP_ARGS="] {
+            assert_eq!(
+                sh.matches(once).count(),
+                1,
+                "review-run.sh must assign {once} exactly once: the vetter has one tool surface"
+            );
+        }
+
+        // The files it names must be the ones on disk, or the cron sed's an empty prompt / passes a
+        // missing settings path and the whole surface silently evaporates.
+        for f in [
+            "review-prompt.txt",
+            "review-settings.json",
+            "review-mcp.json",
+        ] {
+            assert!(
+                read_text(f).is_some(),
+                "review-run.sh names {f}, which must exist"
+            );
+        }
+
+        // No opt-in flag survives in the runner or the deployment-config template.
+        for f in ["review-run.sh", "cron.env.example"] {
+            let Some(text) = read_text(f) else { continue };
+            assert!(
+                !text.contains("VETTER_MCP"),
+                "{f}: the vetter's surface is not selectable — no VETTER_MCP"
+            );
+        }
+    }
+
+    // The MCP-mode settings only mean anything if every allowed tool name is one the server actually
+    // exposes: Claude Code presents an MCP tool as `mcp__<server>__<tool>`, and a subtly wrong name
+    // fails at run time looking exactly like the tool not existing. This pins the three sides
+    // together — the server name in `review-mcp.json`, the tool names the binary emits from
+    // `tools/list`, and the allow-list the cron would run with.
+    #[test]
+    fn mcp_wiring_names_match_the_server() {
+        for (cfg_file, settings_file, args, profile) in [
+            (
+                "review-mcp.json",
+                "review-settings.json",
+                serde_json::json!(["mcp"]),
+                super::McpProfile::Vetter,
+            ),
+            (
+                "campaign-mcp.json",
+                "campaign-settings.json",
+                serde_json::json!(["mcp", "--profile", "producer"]),
+                super::McpProfile::Producer,
+            ),
+        ] {
+            let Some(cfg) = read_json(cfg_file) else {
+                return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            let servers = cfg["mcpServers"].as_object().expect("mcpServers object");
+            assert_eq!(servers.len(), 1, "{cfg_file}: one server: the FSM");
+            let (name, spec) = servers.iter().next().unwrap();
+            assert_eq!(
+                name,
+                super::MCP_SERVER_NAME,
+                "{cfg_file}: server key must be the name the binary reports"
+            );
+            assert_eq!(spec["command"], serde_json::json!("pr-review-report"));
+            assert_eq!(spec["args"], args, "{cfg_file}: profile flag must match");
+
+            let expected: Vec<String> = super::mcp_tools(profile)
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| format!("mcp__{name}__{}", t["name"].as_str().unwrap()))
+                .collect();
+            let allow = perm_list(settings_file, "allow").expect("settings");
+            let allowed_mcp: Vec<String> = allow
+                .iter()
+                .filter(|a| a.starts_with("mcp__"))
+                .cloned()
+                .collect();
+            assert_eq!(
+                allowed_mcp, expected,
+                "{settings_file}: the allow-list must name exactly the tools the server exposes"
+            );
+        }
+    }
+
+    // The producer keeps Bash (it builds, tests and pushes), so its MCP tools have to be REACHABLE
+    // rather than merely present: Claude Code defers MCP schemas behind ToolSearch, and a run that
+    // cannot call ToolSearch sees them as nonexistent (the failure #63 hit).
+    #[test]
+    fn the_producer_can_reach_its_mcp_tools() {
+        let Some(allow) = perm_list("campaign-settings.json", "allow") else {
+            return;
+        };
+        assert!(
+            allow.iter().any(|a| a == "ToolSearch"),
+            "MCP tool schemas are deferred; without ToolSearch the clone tools are unreachable"
+        );
+    }
+
+    // The whole point of the clone tools: the producer prompt must no longer mandate a `rm -rf` that
+    // the deny-list prefix-matches into unusability (#56).
+    #[test]
+    fn the_producer_prompt_releases_clones_through_the_tool_not_rm_rf() {
+        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
+            return;
+        };
+        assert!(
+            !prompt.contains("rm -rf <clonedir>"),
+            "campaign-prompt must not mandate `rm -rf <clonedir>` — a prefix-matched deny rule makes \
+             it impossible to follow, which is how 195 GB accumulated (#56)"
+        );
+        assert!(
+            prompt.contains("never `rm -rf` a clone"),
+            "the prompt must say so explicitly, not merely omit the old instruction"
+        );
+        // Every clone-lifecycle move the producer makes is named as a tool.
+        for tool in [
+            "mcp__fsm__clone_create",
+            "mcp__fsm__clone_release",
+            "mcp__fsm__clone_gc",
+        ] {
+            assert!(prompt.contains(tool), "the prompt must name {tool}");
+        }
+        // …and the old shell recipes for those moves are gone.
+        assert!(!prompt.contains("pr-review-report gc-clones"));
+        assert!(!prompt.contains("git -C <dir> fetch origin &&"));
+    }
+
+    // MCP mode's whole claim is that a non-FSM operation is UNREPRESENTABLE: no Bash at all, so no
+    // raw `gh`/`git`, and no prefix-matched deny-list to route around.
+    #[test]
+    fn mcp_vetter_has_no_bash() {
+        let Some(deny) = deny_list("review-settings.json") else {
+            return;
+        };
+        assert!(
+            deny.iter().any(|d| d == "Bash"),
+            "MCP mode must deny Bash outright"
+        );
+        let allow = perm_list("review-settings.json", "allow").unwrap();
+        assert!(
+            !allow.iter().any(|a| a == "Bash" || a.starts_with("Bash(")),
+            "MCP mode must not allow any Bash form"
+        );
     }
 
     #[test]
@@ -5656,7 +8719,7 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc-clones", "/w"]),
             Cmd::GcClones {
-                work_dir: "/w".to_string(),
+                work_dirs: s(&["/w"]),
                 dry_run: false,
                 max_age_days: 30,
             }
@@ -5664,9 +8727,19 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc-clones", "/w", "--dry-run", "--max-age-days", "7"]),
             Cmd::GcClones {
-                work_dir: "/w".to_string(),
+                work_dirs: s(&["/w"]),
                 dry_run: true,
                 max_age_days: 7,
+            }
+        );
+        // SEVERAL roots in one sweep: the vetter's stranded `vet-*` clones live in the install dir,
+        // not WORK_DIR, so a one-root sweep never reclaimed them.
+        assert_eq!(
+            parse(&["prr", "gc-clones", "/w", "/install", "--dry-run"]),
+            Cmd::GcClones {
+                work_dirs: s(&["/w", "/install"]),
+                dry_run: true,
+                max_age_days: 30,
             }
         );
         // work-dir is mandatory for gc-clones (unlike gc); omitting it is a parse error.
@@ -5680,7 +8753,7 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc", "/w"]),
             Cmd::Gc {
-                work_dir: Some("/w".to_string()),
+                work_dirs: s(&["/w"]),
                 dry_run: false,
                 max_age_days: 30,
                 no_clones: false,
@@ -5693,7 +8766,7 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc", "--no-clones", "--no-nix"]),
             Cmd::Gc {
-                work_dir: None,
+                work_dirs: vec![],
                 dry_run: false,
                 max_age_days: 30,
                 no_clones: true,
@@ -5712,7 +8785,7 @@ mod cli_tests {
                 "--no-nix"
             ]),
             Cmd::Gc {
-                work_dir: Some("/w".to_string()),
+                work_dirs: s(&["/w"]),
                 dry_run: true,
                 max_age_days: 5,
                 no_clones: false,
@@ -5724,7 +8797,7 @@ mod cli_tests {
         assert_eq!(
             parse(&["prr", "gc", "/w", "--nix-threshold", "50"]),
             Cmd::Gc {
-                work_dir: Some("/w".to_string()),
+                work_dirs: s(&["/w"]),
                 dry_run: false,
                 max_age_days: 30,
                 no_clones: false,
@@ -6009,6 +9082,29 @@ mod worklist_tests {
                           "body":"🤖 ai:producer deploy-confirmed at 999999999999"}]
         });
         assert_eq!(worklist_row("o/r", &notdone)["nextAction"], "deploy");
+    }
+
+    #[test]
+    fn producer_backlog_excludes_human_gated_and_close_candidate() {
+        let mk = |labels: &[&str]| {
+            json!({
+                "labels": labels
+                    .iter()
+                    .map(|n| json!({ "name": n }))
+                    .collect::<Vec<_>>()
+            })
+        };
+        // A plain or ai:* uncovered issue IS the producer's backlog.
+        assert!(is_producer_backlog(&mk(&[])));
+        assert!(is_producer_backlog(&mk(&["bug", "ai:some-label"])));
+        // ai:close-candidate → the human's close queue, surfaced separately — not the backlog.
+        assert!(!is_producer_backlog(&mk(&["ai:close-candidate"])));
+        // Any human:* ruling → the human's inbox, not the producer's.
+        assert!(!is_producer_backlog(&mk(&["human:keep-open"])));
+        assert!(!is_producer_backlog(&mk(&["human:design"])));
+        assert!(!is_producer_backlog(&mk(&["bug", "human:close-candidate"])));
+        // Missing labels field → conservatively counted in, never silently dropped.
+        assert!(is_producer_backlog(&json!({})));
     }
 
     #[test]
@@ -6362,5 +9458,1317 @@ mod fsm_completeness_tests {
             }
         }
         assert_eq!(total, prs.len());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// unvetted (the vetter's state-load) + the MCP FSM surface.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod vetter_state_load_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn vetter_comment(sha: &str, verdict: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": format!("🤖 ai:vetter\nReviewed {sha}: {verdict} — note\ncost 300 — small diff"),
+        })
+    }
+
+    // --- vet_action: the vet-lifecycle transition guard -----------------------------------------
+
+    #[test]
+    fn un_vetted_pr_is_vetted() {
+        assert_eq!(vet_action(false, false, false), VetAction::Vet);
+    }
+
+    #[test]
+    fn vetted_at_head_is_skipped_and_a_moved_head_re_opens_it() {
+        assert_eq!(vet_action(false, false, true), VetAction::SkipVetted);
+        // head moved past the last verdict (vetted_at_head false) -> back in the vet queue.
+        assert_eq!(vet_action(false, false, false), VetAction::Vet);
+    }
+
+    #[test]
+    fn drafts_are_left_un_vetted() {
+        assert_eq!(vet_action(true, false, false), VetAction::SkipDraft);
+    }
+
+    // THE ordering invariant: the human-sacred check resolves BEFORE any head/vetted comparison.
+    // rain.erc4626.words#162 (2026-07-04) was re-vetted after a merge-main commit moved the head of a
+    // human-REJECTED PR. Here that PR is human-sacred AND head-moved (vetted_at_head=false) — the one
+    // input combination that produced the violation — and it must still skip.
+    #[test]
+    fn a_human_decision_survives_a_moved_head() {
+        assert_eq!(vet_action(false, true, false), VetAction::SkipHuman);
+        assert_eq!(vet_action(false, true, true), VetAction::SkipHuman);
+        assert_eq!(vet_action(true, true, false), VetAction::SkipHuman);
+    }
+
+    // --- vet_priority: closest-to-merge first ---------------------------------------------------
+
+    #[test]
+    fn green_and_mergeable_vets_first_red_last() {
+        let mut order = [
+            ("red", vet_priority(Ci::Red, Merge::Mergeable)),
+            ("pending", vet_priority(Ci::Pending, Merge::Mergeable)),
+            (
+                "green-conflicting",
+                vet_priority(Ci::Green, Merge::Conflicting),
+            ),
+            (
+                "nochecks-mergeable",
+                vet_priority(Ci::NoChecks, Merge::Mergeable),
+            ),
+            ("green-mergeable", vet_priority(Ci::Green, Merge::Mergeable)),
+        ];
+        order.sort_by_key(|(_, p)| *p);
+        assert_eq!(
+            order.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            vec![
+                "green-mergeable",
+                "nochecks-mergeable",
+                "green-conflicting",
+                "pending",
+                "red"
+            ]
+        );
+        // a green+UNKNOWN-mergeability PR still outranks pending/red (it may just be unsettled).
+        assert!(
+            vet_priority(Ci::Green, Merge::Unknown) < vet_priority(Ci::Pending, Merge::Mergeable)
+        );
+    }
+
+    // --- unvetted_row: the per-candidate struct #59 asks for ------------------------------------
+
+    #[test]
+    fn row_reports_every_field_and_vets_an_unvetted_pr() {
+        let detail = json!({
+            "headRefOid": "abc123",
+            "labels": [{"name": "ai:reject"}],
+            "reviewDecision": "",
+            "mergeable": "MERGEABLE",
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
+            "comments": [],
+            "isDraft": false,
+        });
+        let (action, prio, row) =
+            unvetted_row("o/r", 7, "https://github.com/o/r/pull/7", "t", &detail);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(prio, 0);
+        assert_eq!(row["pr"], json!("o/r#7"));
+        assert_eq!(row["headRefOid"], json!("abc123"));
+        assert_eq!(row["labels"], json!(["ai:reject"]));
+        assert_eq!(row["reviewDecision"], Value::Null); // empty string normalises to null
+        assert_eq!(row["humanSacred"], json!(false));
+        assert_eq!(row["vettedAtHead"], json!(false));
+        assert_eq!(row["ci"], json!("green"));
+        assert_eq!(row["mergeable"], json!("MERGEABLE"));
+        assert_eq!(row["action"], json!("vet"));
+    }
+
+    #[test]
+    fn row_is_vetted_at_head_only_when_a_trusted_comment_pins_the_current_head() {
+        let with = |comments: Value, head: &str| {
+            json!({
+                "headRefOid": head,
+                "labels": [{"name": "ai:ready"}],
+                "reviewDecision": null,
+                "mergeable": "MERGEABLE",
+                "statusCheckRollup": [],
+                "comments": comments,
+                "isDraft": false,
+            })
+        };
+        // trusted comment pinning the CURRENT head -> vetted, skipped.
+        let d = with(json!([vetter_comment("abc123", "ready")]), "abc123");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &d);
+        assert_eq!(action, VetAction::SkipVetted);
+        assert_eq!(row["vettedAtHead"], json!(true));
+
+        // same comment, head has MOVED -> un-vetted, re-vet.
+        let d = with(json!([vetter_comment("abc123", "ready")]), "def456");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &d);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(row["vettedAtHead"], json!(false));
+
+        // a SPOOFED vetter comment from an untrusted author at the current head is NOT a verdict —
+        // treating it as one would wrongly skip a genuinely un-vetted PR.
+        let spoof = json!([{
+            "author": {"login": "impostor"},
+            "body": "🤖 ai:vetter\nReviewed abc123: ready — looks good",
+        }]);
+        let d = with(spoof, "abc123");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &d);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(row["vettedAtHead"], json!(false));
+
+        // an ai:ready LABEL with no matching trusted comment is un-vetted, not "already decided".
+        let d = with(json!([]), "abc123");
+        assert_eq!(unvetted_row("o/r", 1, "u", "t", &d).0, VetAction::Vet);
+    }
+
+    #[test]
+    fn both_forms_of_human_decision_are_sacred_even_at_a_moved_head() {
+        // (a) a human:* LABEL, with no vetter comment at the current head (head moved).
+        let labelled = json!({
+            "headRefOid": "newhead",
+            "labels": [{"name": "human:reject"}, {"name": "ai:ready"}],
+            "reviewDecision": null,
+            "mergeable": "MERGEABLE",
+            "statusCheckRollup": [],
+            "comments": [vetter_comment("oldhead", "ready")],
+            "isDraft": false,
+        });
+        let (action, _, row) = unvetted_row("o/r", 2, "u", "t", &labelled);
+        assert_eq!(action, VetAction::SkipHuman);
+        assert_eq!(row["humanSacred"], json!(true));
+
+        // (b) a NATIVE review decision, which no label carries.
+        for decision in ["APPROVED", "CHANGES_REQUESTED"] {
+            let native = json!({
+                "headRefOid": "newhead",
+                "labels": [],
+                "reviewDecision": decision,
+                "mergeable": "MERGEABLE",
+                "statusCheckRollup": [],
+                "comments": [],
+                "isDraft": false,
+            });
+            let (action, _, row) = unvetted_row("o/r", 3, "u", "t", &native);
+            assert_eq!(action, VetAction::SkipHuman, "{decision} must be sacred");
+            assert_eq!(row["humanSacred"], json!(true));
+        }
+
+        // A NON-decision review state (REVIEW_REQUIRED) is not a human decision.
+        let pending = json!({
+            "headRefOid": "h", "labels": [], "reviewDecision": "REVIEW_REQUIRED",
+            "mergeable": "MERGEABLE", "statusCheckRollup": [], "comments": [], "isDraft": false,
+        });
+        assert_eq!(unvetted_row("o/r", 4, "u", "t", &pending).0, VetAction::Vet);
+    }
+
+    // --- unvetted_doc: counts, ordering, and what is (not) listed -------------------------------
+
+    #[test]
+    fn doc_lists_only_vet_rows_in_vet_first_order_and_counts_the_rest() {
+        let row = |pr: &str, action: VetAction, prio: u8| {
+            (action, prio, json!({"pr": pr, "action": action.as_str()}))
+        };
+        let rows = vec![
+            row("o/r#3", VetAction::Vet, 4), // red
+            row("o/r#1", VetAction::SkipDraft, 4),
+            row("o/r#4", VetAction::Vet, 0), // green + mergeable -> first
+            row("o/r#5", VetAction::SkipHuman, 4),
+            row("o/r#6", VetAction::SkipVetted, 4),
+            row("o/r#2", VetAction::Vet, 0), // ties break on the pr key
+        ];
+        let doc = unvetted_doc(&rows, false);
+        assert_eq!(doc["counts"]["open"], json!(6));
+        assert_eq!(doc["counts"]["vet"], json!(3));
+        assert_eq!(doc["counts"]["skipDraft"], json!(1));
+        assert_eq!(doc["counts"]["skipHumanDecided"], json!(1));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(1));
+        let order: Vec<&str> = doc["prs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["pr"].as_str().unwrap())
+            .collect();
+        assert_eq!(order, vec!["o/r#2", "o/r#4", "o/r#3"]);
+        // skipped PRs cost context and need no reasoning -> absent unless asked for.
+        assert!(doc.get("skipped").is_none());
+
+        let doc = unvetted_doc(&rows, true);
+        assert_eq!(doc["skipped"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn empty_state_load_is_a_well_formed_empty_doc() {
+        let doc = unvetted_doc(&[], false);
+        assert_eq!(doc["counts"]["open"], json!(0));
+        assert_eq!(doc["counts"]["vet"], json!(0));
+        assert_eq!(doc["prs"], json!([]));
+    }
+
+    // --- pr_context_doc: the one-call review bundle ---------------------------------------------
+
+    #[test]
+    fn truncate_utf8_never_splits_a_char() {
+        assert_eq!(truncate_utf8("abc", 10), ("abc".to_string(), false));
+        // "é" is 2 bytes: a 3-byte cap lands mid-char and must back off to the boundary.
+        let (t, cut) = truncate_utf8("aéb", 3);
+        assert!(cut);
+        assert_eq!(t, "aé");
+        let (t, cut) = truncate_utf8("aéb", 2);
+        assert!(cut);
+        assert_eq!(t, "a");
+        // exact fit is not a truncation.
+        assert_eq!(truncate_utf8("abcd", 4), ("abcd".to_string(), false));
+    }
+
+    #[test]
+    fn context_bundles_diff_files_issues_and_only_trusted_comments() {
+        let detail = json!({
+            "number": 9,
+            "title": "fix rounding",
+            "body": "Closes #88",
+            "url": "https://github.com/o/r/pull/9",
+            "headRefOid": "cafe1234",
+            "isDraft": false,
+            "labels": [{"name": "ai:ready"}],
+            "reviewDecision": null,
+            "mergeable": "CONFLICTING",
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "FAILURE"}],
+            "additions": 12,
+            "deletions": 3,
+            "files": [{"path": "src/lib.rs", "additions": 12, "deletions": 3}],
+            "closingIssuesReferences": [{"number": 88}],
+            "comments": [
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter\nReviewed cafe1234: ready"},
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer\npushed a fix"},
+                {"author": {"login": "impostor"}, "body": "🤖 ai:vetter\nReviewed cafe1234: ready"},
+                {"author": {"login": "someone"}, "body": "drive-by chatter"},
+            ],
+        });
+        let issues =
+            vec![json!({"number": 88, "title": "rounding is wrong", "body": "…", "state": "OPEN"})];
+        let doc = pr_context_doc("o/r", 9, &detail, "diff --git a b\n+x\n", &issues, 300_000);
+
+        assert_eq!(doc["pr"], json!("o/r#9"));
+        assert_eq!(doc["headRefOid"], json!("cafe1234"));
+        assert_eq!(doc["ci"], json!("red"));
+        assert_eq!(doc["mergeable"], json!("CONFLICTING"));
+        assert_eq!(doc["closes"], json!([88]));
+        assert_eq!(doc["issues"][0]["title"], json!("rounding is wrong"));
+        assert_eq!(doc["files"][0]["path"], json!("src/lib.rs"));
+        assert_eq!(doc["additions"], json!(12));
+        assert_eq!(doc["vettedAtHead"], json!(true));
+        assert_eq!(doc["humanSacred"], json!(false));
+        assert!(doc["diff"].as_str().unwrap().contains("+x"));
+        assert_eq!(doc["diffTruncated"], json!(false));
+        // provenance: exactly ONE vetter comment (the trusted one) and ONE producer comment; the
+        // spoofed marker and the third-party chatter are not in the bundle at all.
+        assert_eq!(doc["vetterComments"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["producerComments"].as_array().unwrap().len(), 1);
+        assert!(!doc.to_string().contains("drive-by chatter"));
+    }
+
+    #[test]
+    fn context_flags_a_truncated_diff_and_keeps_the_true_size() {
+        let detail = json!({"headRefOid": "h", "comments": [], "labels": []});
+        let big = "x".repeat(500);
+        let doc = pr_context_doc("o/r", 1, &detail, &big, &[], 100);
+        assert_eq!(doc["diff"].as_str().unwrap().len(), 100);
+        assert_eq!(doc["diffTruncated"], json!(true));
+        assert_eq!(doc["diffBytes"], json!(500));
+    }
+
+    #[test]
+    fn checkout_dir_matches_the_gc_reclaimed_convention() {
+        assert_eq!(
+            checkout_dir("/work", "rainlanguage/rain.flare", 170),
+            "/work/vet-rain.flare-170"
+        );
+        assert_eq!(checkout_dir("/work/", "o/r", 1), "/work/vet-r-1");
+    }
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A recording fake for the effectful half: every VALIDATED call lands here, so a test can assert
+    /// both what reached the effect and — crucially — what did NOT.
+    struct FakeExec {
+        calls: std::cell::RefCell<Vec<McpCall>>,
+        reply: Result<String, String>,
+        profile: McpProfile,
+        roots: Vec<String>,
+    }
+
+    impl FakeExec {
+        fn ok() -> Self {
+            FakeExec {
+                calls: std::cell::RefCell::new(Vec::new()),
+                reply: Ok("{\"ok\":true}".to_string()),
+                profile: McpProfile::Vetter,
+                roots: vec!["/work".to_string()],
+            }
+        }
+        fn failing(msg: &str) -> Self {
+            FakeExec {
+                reply: Err(msg.to_string()),
+                ..FakeExec::ok()
+            }
+        }
+        fn producer() -> Self {
+            FakeExec {
+                profile: McpProfile::Producer,
+                ..FakeExec::ok()
+            }
+        }
+        fn with_roots(mut self, roots: &[&str]) -> Self {
+            self.roots = roots.iter().map(|r| r.to_string()).collect();
+            self
+        }
+        fn handle(&self, req: &Value) -> Option<Value> {
+            let mut f = |c: McpCall| {
+                self.calls.borrow_mut().push(c);
+                self.reply.clone()
+            };
+            mcp_handle(self.profile, &self.roots, req, &mut f)
+        }
+        fn calls(&self) -> Vec<McpCall> {
+            self.calls.borrow().iter().cloned().collect()
+        }
+    }
+
+    fn call(name: &str, args: Value) -> Value {
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": name, "arguments": args}})
+    }
+
+    fn is_error(resp: &Value) -> bool {
+        resp["result"]["isError"].as_bool().unwrap_or(false)
+    }
+
+    fn text(resp: &Value) -> String {
+        resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    // --- handshake ------------------------------------------------------------------------------
+
+    #[test]
+    fn initialize_negotiates_a_version_the_client_knows() {
+        // A supported request is echoed back verbatim.
+        assert_eq!(mcp_protocol_version(Some("2024-11-05")), "2024-11-05");
+        assert_eq!(mcp_protocol_version(Some("2025-11-25")), "2025-11-25");
+        // An unknown/absent revision falls back to one we speak — never to the client's unknown
+        // string, which is what makes a client abort the handshake.
+        assert_eq!(
+            mcp_protocol_version(Some("1999-01-01")),
+            MCP_PROTOCOL_DEFAULT
+        );
+        assert_eq!(mcp_protocol_version(None), MCP_PROTOCOL_DEFAULT);
+        assert!(MCP_PROTOCOL_SUPPORTED.contains(&MCP_PROTOCOL_DEFAULT));
+    }
+
+    #[test]
+    fn initialize_advertises_tools_and_identity() {
+        let f = FakeExec::ok();
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                            "params": {"protocolVersion": "2025-06-18"}}))
+            .expect("initialize is a request, not a notification");
+        assert_eq!(resp["jsonrpc"], json!("2.0"));
+        assert_eq!(resp["id"], json!(0));
+        assert_eq!(resp["result"]["protocolVersion"], json!("2025-06-18"));
+        // the tools capability must be advertised or no client ever calls tools/list.
+        assert!(resp["result"]["capabilities"]["tools"].is_object());
+        assert_eq!(resp["result"]["serverInfo"]["name"], json!("fsm"));
+    }
+
+    #[test]
+    fn a_notification_is_never_answered() {
+        let f = FakeExec::ok();
+        // `notifications/initialized` carries no id; replying to it is a protocol violation.
+        assert!(f
+            .handle(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .is_none());
+        assert!(f
+            .handle(&json!({"jsonrpc": "2.0", "id": null, "method": "notifications/cancelled"}))
+            .is_none());
+    }
+
+    #[test]
+    fn an_unknown_method_is_a_jsonrpc_error_not_a_tool_result() {
+        let f = FakeExec::ok();
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 4, "method": "resources/list"}))
+            .unwrap();
+        assert_eq!(resp["error"]["code"], json!(-32601));
+        assert!(resp.get("result").is_none());
+    }
+
+    // --- the surface itself ---------------------------------------------------------------------
+
+    #[test]
+    fn tools_list_is_exactly_the_vetter_fsm_surface() {
+        let f = FakeExec::ok();
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+            .unwrap();
+        let tools = resp["result"]["tools"].as_array().unwrap().clone();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "unvetted",
+                "pr_context",
+                "pr_checkout",
+                "record_verdict",
+                // `pr_checkout` creates a clone, so the vetter owns the move that disposes of it.
+                "clone_release",
+                // The second subject: producer close-candidate flags on issues (#72).
+                "unvetted_close_candidates",
+                "close_candidate_context",
+                "record_close_candidate_verdict",
+            ]
+        );
+        // Every tool is callable: a name, a one-line description, an object schema.
+        for t in &tools {
+            assert!(!t["description"].as_str().unwrap().is_empty());
+            assert_eq!(t["inputSchema"]["type"], json!("object"));
+        }
+        // The surface stays SMALL on purpose (#52: schemas ride in every request's preamble).
+        // Two subjects × (state-load, read one, record one verdict), plus clone_release.
+        assert!(tools.len() <= 9, "keep the tool surface small");
+
+        // The close-candidate write is constrained by SCHEMA, so the prompt cannot invent a
+        // verdict and the vetter cannot reach for a `human:*` disposition.
+        let cc = tools
+            .iter()
+            .find(|t| t["name"] == json!("record_close_candidate_verdict"))
+            .unwrap();
+        let cc_verdicts: Vec<&str> = cc["inputSchema"]["properties"]["verdict"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        // Pinned to the vocabulary itself, so the schema and CC_VERDICTS cannot drift apart.
+        assert_eq!(cc_verdicts, CC_VERDICTS.to_vec());
+
+        let rv = tools
+            .iter()
+            .find(|t| t["name"] == json!("record_verdict"))
+            .unwrap();
+        let required: Vec<&str> = rv["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        // cost is REQUIRED by the schema — the prompt could only ask for it.
+        assert!(required.contains(&"cost"));
+        assert!(required.contains(&"verdict"));
+        let verdicts: Vec<&str> = rv["inputSchema"]["properties"]["verdict"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(verdicts, VETTER_VERDICTS.to_vec());
+    }
+
+    // --- pr refs --------------------------------------------------------------------------------
+
+    #[test]
+    fn pr_refs_parse_only_in_owner_repo_number_form() {
+        assert_eq!(
+            parse_pr_ref("rainlanguage/rain.flare#170"),
+            Ok(("rainlanguage/rain.flare".to_string(), 170))
+        );
+        assert_eq!(parse_pr_ref("  o/r#1  "), Ok(("o/r".to_string(), 1)));
+        for bad in [
+            "rain.flare#170", // no owner — the org must never be guessed
+            "o/r",            // no number
+            "o/r#",
+            "o/r#abc",
+            "o/r#0", // PR numbers start at 1
+            "o/r#-1",
+            "a/b/c#1", // not a slug
+            "/r#1",
+            "o/#1",
+            "",
+        ] {
+            assert!(parse_pr_ref(bad).is_err(), "{bad:?} must not parse");
+        }
+    }
+
+    // --- the transition guard -------------------------------------------------------------------
+
+    #[test]
+    fn a_verdict_outside_the_vocabulary_is_refused_and_never_reaches_the_effect() {
+        let f = FakeExec::ok();
+        for bogus in ["approve", "merge", "close-candidate", "READY", "ready!", ""] {
+            let resp = f
+                .handle(&call(
+                    "record_verdict",
+                    json!({"pr": "o/r#1", "verdict": bogus, "note": "n", "cost": 10, "basis": "b"}),
+                ))
+                .unwrap();
+            assert!(is_error(&resp), "{bogus:?} must be refused");
+        }
+        // The refusal is structural: nothing reached the write path.
+        assert!(f.calls().is_empty());
+    }
+
+    #[test]
+    fn record_verdict_requires_a_scored_cost_a_note_and_a_short_basis() {
+        let f = FakeExec::ok();
+        let base = |extra: Value| {
+            let mut m = json!({"pr": "o/r#1", "verdict": "ready", "note": "closes #88 — pinned by test", "cost": 300, "basis": "small diff"});
+            for (k, v) in extra.as_object().unwrap() {
+                m.as_object_mut().unwrap().insert(k.clone(), v.clone());
+            }
+            m
+        };
+        // cost is mandatory and 0-1000.
+        for bad in [
+            json!({"cost": null}),
+            json!({"cost": 1001}),
+            json!({"cost": -1}),
+            json!({"cost": "300"}),
+        ] {
+            let resp = f
+                .handle(&call("record_verdict", base(bad.clone())))
+                .unwrap();
+            assert!(is_error(&resp), "cost {bad} must be refused");
+        }
+        // a note that says nothing is refused; so is a basis that is a paragraph.
+        assert!(is_error(
+            &f.handle(&call("record_verdict", base(json!({"note": "   "}))))
+                .unwrap()
+        ));
+        assert!(is_error(&f
+            .handle(&call(
+                "record_verdict",
+                base(json!({"basis": "one two three four five six seven eight nine ten eleven twelve thirteen"}))
+            ))
+            .unwrap()));
+        assert!(f.calls().is_empty(), "no invalid verdict reached the write");
+
+        // the boundaries themselves are legal.
+        for good in [
+            json!({"cost": 0}),
+            json!({"cost": 1000}),
+            json!({"basis": "docs-only"}),
+        ] {
+            let resp = f
+                .handle(&call("record_verdict", base(good.clone())))
+                .unwrap();
+            assert!(!is_error(&resp), "{good} must be accepted");
+        }
+        assert_eq!(f.calls().len(), 3);
+    }
+
+    #[test]
+    fn a_valid_verdict_reaches_the_write_exactly_as_given() {
+        let f = FakeExec::ok();
+        let resp = f
+            .handle(&call(
+                "record_verdict",
+                json!({"pr": "cyclofinance/cyclo.site#369", "verdict": "reject", "note": "closes #12 — no discriminating test", "cost": 640, "basis": "accounting path"}),
+            ))
+            .unwrap();
+        assert!(!is_error(&resp));
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::RecordVerdict {
+                slug: "cyclofinance/cyclo.site".to_string(),
+                num: 369,
+                verdict: "reject".to_string(),
+                note: "closes #12 — no discriminating test".to_string(),
+                cost: 640,
+                basis: "accounting path".to_string(),
+            }]
+        );
+    }
+
+    // The human-sacred backstop lives in the shared write path (verdict_plan → RefuseHuman, exit 3);
+    // the MCP layer must SURFACE that refusal to the model rather than swallow it into a success.
+    #[test]
+    fn a_human_decided_pr_refusal_comes_back_as_a_tool_error() {
+        // the guard itself, on the JSON the write path reads:
+        let human = json!({"labels": [{"name": "human:reject"}], "comments": [], "headRefOid": "h", "reviewDecision": null});
+        assert_eq!(
+            verdict_plan(&human, "ai:ready", "ready"),
+            VerdictPlan::RefuseHuman
+        );
+        let approved =
+            json!({"labels": [], "comments": [], "headRefOid": "h", "reviewDecision": "APPROVED"});
+        assert_eq!(
+            verdict_plan(&approved, "ai:ready", "ready"),
+            VerdictPlan::RefuseHuman
+        );
+
+        // …and its surfacing:
+        let f = FakeExec::failing("human verdict present on o/r#1; not overriding [exit 3]");
+        let resp = f
+            .handle(&call(
+                "record_verdict",
+                json!({"pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b"}),
+            ))
+            .unwrap();
+        assert!(is_error(&resp));
+        assert!(text(&resp).contains("not overriding"));
+    }
+
+    #[test]
+    fn tools_outside_the_surface_do_not_exist() {
+        let f = FakeExec::ok();
+        for name in [
+            "merge",
+            "gh",
+            "record-verdict", // the CLI spelling is not the tool name
+            "flag_close_candidate",
+            "worklist",
+            "",
+            // the producer's clone-management tools are not the vetter's moves
+            "clone_create",
+            "clone_gc",
+            "clone_list",
+        ] {
+            let resp = f.handle(&call(name, json!({}))).unwrap();
+            assert!(is_error(&resp), "{name:?} must not exist");
+            assert!(
+                text(&resp).contains("unvetted"),
+                "the error names the real surface"
+            );
+        }
+        assert!(f.calls().is_empty());
+    }
+
+    #[test]
+    fn read_tools_validate_their_arguments() {
+        let f = FakeExec::ok();
+        // a missing/ill-formed pr ref never reaches a fetch.
+        assert!(is_error(&f.handle(&call("pr_context", json!({}))).unwrap()));
+        assert!(is_error(
+            &f.handle(&call("pr_context", json!({"pr": "r#1"}))).unwrap()
+        ));
+        assert!(is_error(
+            &f.handle(&call("pr_checkout", json!({"pr": 12}))).unwrap()
+        ));
+        // an absurd diff cap is refused rather than silently clamped.
+        assert!(is_error(
+            &f.handle(&call(
+                "pr_context",
+                json!({"pr": "o/r#1", "max_diff_bytes": 0})
+            ))
+            .unwrap()
+        ));
+        assert!(is_error(
+            &f.handle(&call(
+                "pr_context",
+                json!({"pr": "o/r#1", "max_diff_bytes": 99_000_000u64})
+            ))
+            .unwrap()
+        ));
+        assert!(f.calls().is_empty());
+
+        // defaults: no cap given -> the documented default; unvetted lists only what needs vetting.
+        f.handle(&call("pr_context", json!({"pr": "o/r#1"})))
+            .unwrap();
+        f.handle(&call("unvetted", json!({}))).unwrap();
+        f.handle(&call("unvetted", json!({"include_skipped": true})))
+            .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::PrContext {
+                    slug: "o/r".to_string(),
+                    num: 1,
+                    max_diff_bytes: DEFAULT_MAX_DIFF_BYTES
+                },
+                McpCall::Unvetted {
+                    include_skipped: false
+                },
+                McpCall::Unvetted {
+                    include_skipped: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_effect_failure_is_reported_not_swallowed() {
+        let f = FakeExec::failing("error: `gh pr diff o/r#1` failed");
+        let resp = f
+            .handle(&call("pr_context", json!({"pr": "o/r#1"})))
+            .unwrap();
+        assert!(is_error(&resp));
+        assert!(text(&resp).contains("gh pr diff"));
+    }
+
+    // --- profiles -------------------------------------------------------------------------------
+
+    #[test]
+    fn the_producer_surface_is_clone_lifecycle_and_nothing_else() {
+        let f = FakeExec::producer();
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+            .unwrap();
+        let tools = resp["result"]["tools"].as_array().unwrap().clone();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            vec!["clone_create", "clone_release", "clone_list", "clone_gc"]
+        );
+        for t in &tools {
+            assert!(!t["description"].as_str().unwrap().is_empty());
+            assert_eq!(t["inputSchema"]["type"], json!("object"));
+        }
+    }
+
+    // A profile is a real boundary, not a listing cosmetic: the vetter's WRITE must be unreachable
+    // from the producer's server even when it is named directly.
+    #[test]
+    fn a_profile_boundary_is_enforced_on_the_call_not_just_the_listing() {
+        let p = FakeExec::producer();
+        for vetter_only in ["record_verdict", "unvetted", "pr_context", "pr_checkout"] {
+            let resp = p.handle(&call(vetter_only, json!({"pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b"}))).unwrap();
+            assert!(is_error(&resp), "{vetter_only} must not exist for producer");
+            assert!(text(&resp).contains("clone_create"));
+        }
+        assert!(
+            p.calls().is_empty(),
+            "no vetter transition reached an effect"
+        );
+
+        let v = FakeExec::ok();
+        for producer_only in ["clone_create", "clone_gc", "clone_list"] {
+            let resp = v
+                .handle(&call(
+                    producer_only,
+                    json!({"repo": "o/r", "name": "x", "branch": "b"}),
+                ))
+                .unwrap();
+            assert!(is_error(&resp), "{producer_only} must not exist for vetter");
+        }
+        assert!(v.calls().is_empty());
+    }
+
+    // Every tool the profiles LIST must be handled by the guard: a listed-but-unvalidated name would
+    // be an advertised tool that always errors.
+    #[test]
+    fn every_listed_tool_is_handled_by_the_guard() {
+        for profile in [McpProfile::Vetter, McpProfile::Producer] {
+            for name in profile.tool_names() {
+                let err = validate_call(profile, &["/work".to_string()], name, &json!({}))
+                    .err()
+                    .unwrap_or_default();
+                assert!(
+                    !err.contains("no such tool") && !err.contains("listed but not implemented"),
+                    "{profile:?}/{name} is listed but unhandled: {err}"
+                );
+            }
+        }
+    }
+
+    // --- the path guard: a refused clone argument never reaches an effect -------------------------
+
+    #[test]
+    fn a_clone_name_must_be_one_component_inside_the_root() {
+        let root = "/home/gildlab/code";
+        // the only accepted shapes: a bare name, or the full path of a direct child.
+        assert_eq!(
+            clone_name_in_root(root, "raindex-2444"),
+            Ok("raindex-2444".to_string())
+        );
+        assert_eq!(
+            clone_name_in_root(root, "/home/gildlab/code/raindex-2444"),
+            Ok("raindex-2444".to_string())
+        );
+        assert_eq!(
+            clone_name_in_root(root, "  /home/gildlab/code/vet-x-1/  "),
+            Ok("vet-x-1".to_string())
+        );
+        // a trailing slash on the ROOT is the same root.
+        assert_eq!(
+            clone_name_in_root("/home/gildlab/code/", "x"),
+            Ok("x".to_string())
+        );
+
+        for (bad, why) in [
+            ("", "empty"),
+            ("   ", "empty"),
+            (".", "hidden/dot"),
+            ("..", "traversal"),
+            ("../etc", "traversal"),
+            ("../../../etc/passwd", "traversal"),
+            (
+                "/home/gildlab/code/../../etc",
+                "traversal laundered through the root prefix",
+            ),
+            (
+                "/home/gildlab/code/x/../../y",
+                "traversal after a valid component",
+            ),
+            ("/etc", "absolute, outside"),
+            ("/etc/passwd", "absolute, outside"),
+            ("/", "the filesystem root"),
+            ("/home/gildlab", "an ANCESTOR of the root"),
+            ("/home/gildlab/code", "the root itself"),
+            ("/home/gildlab/code/", "the root itself"),
+            // the sibling-prefix trick: `/home/gildlab/codeEVIL` shares a string prefix with the root
+            // but is a different directory. This is the exact class of bug the deny rule had.
+            (
+                "/home/gildlab/codeEVIL/x",
+                "sibling sharing a string prefix",
+            ),
+            ("/home/gildlab/code2", "sibling sharing a string prefix"),
+            ("a/b", "nested"),
+            ("raindex-2444/target", "nested"),
+            ("//etc", "nested/absolute"),
+            (".git", "dot-prefixed"),
+            (".ssh", "dot-prefixed"),
+            ("x\0y", "embedded NUL"),
+        ] {
+            assert!(
+                clone_name_in_root(root, bad).is_err(),
+                "{bad:?} must be refused ({why})"
+            );
+        }
+        // a root that is not absolute is refused outright — it would resolve against an inherited cwd.
+        assert!(clone_name_in_root("code", "x").is_err());
+        assert!(clone_name_in_root("", "x").is_err());
+        assert!(clone_name_in_root("./code", "x").is_err());
+    }
+
+    // The `..` check must be the one doing the work, not a coincidence of the later "direct child"
+    // rule: a traversal has to be REPORTED as a traversal. Otherwise relaxing the direct-child rule
+    // (e.g. to allow a nested clone dir) would silently re-open traversal.
+    #[test]
+    fn a_traversal_is_refused_as_a_traversal_not_incidentally() {
+        let root = "/home/gildlab/code";
+        for bad in [
+            "..",
+            "../etc",
+            "/home/gildlab/code/../../etc",
+            "/home/gildlab/code/x/../../y",
+            "a/../../b",
+        ] {
+            let e = clone_name_in_root(root, bad).unwrap_err();
+            assert!(
+                e.contains("`..` traversal"),
+                "{bad:?} must be refused FOR the traversal, got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_clone_resolves_against_any_configured_root_and_reports_them_all() {
+        let roots = vec!["/work".to_string(), "/install".to_string()];
+        assert_eq!(
+            clone_in_roots(&roots, "raindex-1"),
+            Ok(("/work".to_string(), "raindex-1".to_string()))
+        );
+        // the stranded vet-* clones: named by full path in the SECOND root.
+        assert_eq!(
+            clone_in_roots(&roots, "/install/vet-rain.flare-170"),
+            Ok(("/install".to_string(), "vet-rain.flare-170".to_string()))
+        );
+        let err = clone_in_roots(&roots, "/etc/passwd").unwrap_err();
+        assert!(err.contains("/work") && err.contains("/install"), "{err}");
+        assert!(clone_in_roots(&[], "x").is_err());
+    }
+
+    // The refusal standard used for invalid verdicts, applied to the dangerous tool: an argument the
+    // guard rejects must record ZERO calls — there is no effect for it to have partially performed.
+    #[test]
+    fn a_refused_clone_argument_reaches_no_effect() {
+        let f = FakeExec::producer().with_roots(&["/work"]);
+        for bad in [
+            json!({"clone": "/etc"}),
+            json!({"clone": "/"}),
+            json!({"clone": ".."}),
+            json!({"clone": "../../etc"}),
+            json!({"clone": "/work/../../etc"}),
+            json!({"clone": "/work"}),
+            json!({"clone": "/workEVIL/x"}),
+            json!({"clone": "sub/dir"}),
+            json!({"clone": ".git"}),
+            json!({"clone": ""}),
+            json!({}),
+            json!({"clone": 7}),
+        ] {
+            let resp = f.handle(&call("clone_release", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(
+            f.calls().is_empty(),
+            "a refused clone argument performed no effect at all"
+        );
+
+        // …and the accepted shapes DO reach the effect, with the guard's output — not the raw string.
+        f.handle(&call("clone_release", json!({"clone": "raindex-2444"})))
+            .unwrap();
+        f.handle(&call(
+            "clone_release",
+            json!({"clone": "/work/vet-x-1", "discard_uncommitted": true}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::CloneRelease {
+                    root: "/work".to_string(),
+                    name: "raindex-2444".to_string(),
+                    discard_uncommitted: false,
+                },
+                McpCall::CloneRelease {
+                    root: "/work".to_string(),
+                    name: "vet-x-1".to_string(),
+                    discard_uncommitted: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn clone_create_validates_the_repo_the_name_and_the_branch() {
+        let f = FakeExec::producer().with_roots(&["/work", "/install"]);
+        for bad in [
+            json!({"repo": "raindex", "name": "x", "branch": "b"}), // no owner
+            json!({"repo": "a/b/c", "name": "x", "branch": "b"}),
+            json!({"repo": "/b", "name": "x", "branch": "b"}),
+            json!({"repo": "o/r", "name": "../x", "branch": "b"}),
+            json!({"repo": "o/r", "name": "/etc", "branch": "b"}),
+            json!({"repo": "o/r", "name": "a/b", "branch": "b"}),
+            json!({"repo": "o/r", "name": "x"}),   // no branch
+            json!({"repo": "o/r", "branch": "b"}), // no name
+            json!({"name": "x", "branch": "b"}),   // no repo
+            json!({"repo": "o/r", "name": "x", "branch": "--upload-pack=evil"}),
+            json!({"repo": "o/r", "name": "x", "branch": "two words"}),
+        ] {
+            let resp = f.handle(&call("clone_create", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(f.calls().is_empty());
+
+        // a new clone is ALWAYS built in the first root, never in the legacy install root.
+        f.handle(&call(
+            "clone_create",
+            json!({"repo": "rainlanguage/raindex", "name": "raindex-2444", "branch": "2026-07-22-issue-2444"}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::CloneCreate {
+                root: "/work".to_string(),
+                name: "raindex-2444".to_string(),
+                slug: "rainlanguage/raindex".to_string(),
+                branch: "2026-07-22-issue-2444".to_string(),
+                base: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn clone_gc_bounds_its_age_cap() {
+        let f = FakeExec::producer();
+        for bad in [
+            json!({"max_age_days": 0}), // would delete a clone the moment it exists
+            json!({"max_age_days": -1}),
+            json!({"max_age_days": 100000}),
+            json!({"max_age_days": "30"}),
+        ] {
+            let resp = f.handle(&call("clone_gc", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(f.calls().is_empty());
+        f.handle(&call("clone_gc", json!({}))).unwrap();
+        f.handle(&call(
+            "clone_gc",
+            json!({"dry_run": true, "max_age_days": 1}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::CloneGc {
+                    max_age_days: GC_MAX_AGE_DEFAULT,
+                    dry_run: false
+                },
+                McpCall::CloneGc {
+                    max_age_days: 1,
+                    dry_run: true
+                },
+            ]
+        );
+    }
+
+    // --- the release decision --------------------------------------------------------------------
+
+    fn st(unpushed: Option<u32>, dirt: Option<&str>) -> LocalCloneState {
+        LocalCloneState {
+            unpushed,
+            dirt: dirt.map(String::from),
+            branch: "b".to_string(),
+        }
+    }
+
+    #[test]
+    fn unpushed_work_refuses_release_and_no_flag_overrides_it() {
+        for discard in [false, true] {
+            assert!(release_decision(&st(Some(1), Some("")), discard).is_err());
+            assert!(release_decision(&st(Some(9), Some("")), discard).is_err());
+            // git could not answer -> treated as unpushed, the same fail-safe gc uses.
+            assert!(release_decision(&st(None, Some("")), discard).is_err());
+            // …and a clone whose STATUS is unknown is refused too.
+            assert!(release_decision(&st(Some(0), None), discard).is_err());
+        }
+        let e = release_decision(&st(Some(3), Some("")), true).unwrap_err();
+        assert!(
+            e.contains("3 commit(s)") && e.contains("No flag overrides"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn uncommitted_changes_refuse_unless_the_caller_accepts_losing_them() {
+        let dirty = st(Some(0), Some(" M Cargo.lock\n?? out/\n"));
+        let e = release_decision(&dirty, false).unwrap_err();
+        assert!(e.contains("2 uncommitted change(s)"), "{e}");
+        assert!(e.contains("Cargo.lock"), "the refusal SHOWS the dirt: {e}");
+        assert!(release_decision(&dirty, true).is_ok());
+        // clean + pushed releases without any flag.
+        assert!(release_decision(&st(Some(0), Some("")), false).is_ok());
+    }
+
+    // --- the filesystem half of the guard --------------------------------------------------------
+
+    /// A disposable root with a real (empty but valid) git clone in it.
+    fn tmp_root(tag: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("prr-clone-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+    fn mk_clone(root: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let d = root.join(name);
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        std::fs::write(d.join("README.md"), "x").unwrap();
+        d
+    }
+
+    #[test]
+    fn only_a_real_git_clone_directly_under_the_root_resolves() {
+        let root = tmp_root("resolve");
+        let rs = root.to_string_lossy().to_string();
+        let good = mk_clone(&root, "raindex-1");
+        assert_eq!(
+            resolve_existing_clone(&rs, "raindex-1").unwrap(),
+            std::fs::canonicalize(&good).unwrap()
+        );
+
+        // a plain directory with no .git is NOT a work clone — this is what keeps a malformed
+        // argument away from ordinary data.
+        std::fs::create_dir_all(root.join("not-a-clone/deep")).unwrap();
+        std::fs::write(root.join("not-a-clone/precious.txt"), "keep me").unwrap();
+        let e = resolve_existing_clone(&rs, "not-a-clone").unwrap_err();
+        assert!(e.contains("no .git"), "{e}");
+
+        // a FILE is refused; a missing entry is refused.
+        std::fs::write(root.join("a-file"), "x").unwrap();
+        assert!(resolve_existing_clone(&rs, "a-file").is_err());
+        assert!(resolve_existing_clone(&rs, "nope").is_err());
+
+        // a SYMLINK — even one pointing at a genuine clone — is refused: deleting it would act on
+        // whatever it points at, which is the escape the guard exists to close.
+        let escape = tmp_root("resolve-escape");
+        let outside = mk_clone(&escape, "outside-clone");
+        std::os::unix::fs::symlink(&outside, root.join("sneaky")).unwrap();
+        let e = resolve_existing_clone(&rs, "sneaky").unwrap_err();
+        assert!(e.contains("SYMLINK"), "{e}");
+        // …and it is still there afterwards. A refusal has ZERO filesystem effect.
+        assert!(outside.exists());
+        assert!(root.join("not-a-clone/precious.txt").exists());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&escape);
+    }
+
+    // `resolve_existing_clone` is the SECOND layer, so it is tested on its own terms — called
+    // directly with names `clone_name_in_root` would never emit. Reached only through the first
+    // layer, its root/ancestor check is untestable, and an untested guard is not a guard.
+    #[test]
+    fn the_filesystem_guard_refuses_the_root_and_its_ancestors_on_its_own() {
+        // Layout: <parent>/.git (so the ancestor LOOKS like a clone) and <parent>/root/<clone>.
+        let parent = tmp_root("second-layer");
+        std::fs::create_dir_all(parent.join(".git")).unwrap();
+        std::fs::write(parent.join("irreplaceable.txt"), "everything").unwrap();
+        let root = parent.join("root");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let rs = root.to_string_lossy().to_string();
+        mk_clone(&root, "legit");
+
+        // The ancestor is a directory, is not a symlink, and has a `.git` — every OTHER check
+        // passes. Only "must be a direct child of the root" stands between it and deletion.
+        let e = resolve_existing_clone(&rs, "..").unwrap_err();
+        assert!(e.contains("outside"), "{e}");
+        // The root itself, likewise.
+        let e = resolve_existing_clone(&rs, ".").unwrap_err();
+        assert!(e.contains("outside"), "{e}");
+        // …and the legitimate child still resolves, so the guard is not simply refusing everything.
+        assert!(resolve_existing_clone(&rs, "legit").is_ok());
+
+        assert!(parent.join("irreplaceable.txt").exists());
+        let _ = std::fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn release_refuses_a_non_clone_without_touching_it() {
+        let root = tmp_root("release-refuse");
+        let rs = root.to_string_lossy().to_string();
+        std::fs::create_dir_all(root.join("precious")).unwrap();
+        std::fs::write(root.join("precious/data.txt"), "irreplaceable").unwrap();
+
+        for name in ["precious", "..", "/etc", "nope"] {
+            let (r, n) = match clone_in_roots(std::slice::from_ref(&rs), name) {
+                Ok(v) => v,
+                Err(_) => continue, // refused by the pure guard, before any path exists
+            };
+            assert!(clone_release_exec(&r, &n, true).is_err(), "{name}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join("precious/data.txt")).unwrap(),
+            "irreplaceable",
+            "a refused release left the directory byte-for-byte intact"
+        );
+        // The root itself is never removed, whatever is asked.
+        assert!(root.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_real_release_removes_the_clone_and_reports_what_it_reclaimed() {
+        let root = tmp_root("release-ok");
+        let rs = root.to_string_lossy().to_string();
+        // A real repo, so the git guards run against git rather than a stub.
+        let d = root.join("throwaway");
+        std::fs::create_dir_all(&d).unwrap();
+        if git_run(&d, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // no git in this sandbox
+        }
+        std::fs::write(d.join("f.txt"), vec![b'x'; 4096]).unwrap();
+
+        // A brand-new repo has an UNBORN HEAD — no commits, so nothing can be lost — but untracked
+        // files, so it is DIRTY: release refuses until the caller accepts losing them.
+        let e = clone_release_exec(&rs, "throwaway", false).unwrap_err();
+        assert!(e.contains("uncommitted"), "{e}");
+        assert!(d.exists(), "the refusal did not delete anything");
+
+        let out = clone_release_exec(&rs, "throwaway", true).unwrap();
+        assert!(!d.exists(), "the clone is gone");
+        assert!(root.exists(), "the root is not");
+        assert!(out["bytes"].as_u64().unwrap() >= 4096, "{out}");
+        assert_eq!(out["released"], json!("throwaway"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_committed_but_unpushed_clone_is_never_released() {
+        let root = tmp_root("release-unpushed");
+        let rs = root.to_string_lossy().to_string();
+        let d = root.join("wip");
+        std::fs::create_dir_all(&d).unwrap();
+        if git_run(&d, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let _ = git_run(&d, &["config", "user.email", "t@t"]);
+        let _ = git_run(&d, &["config", "user.name", "t"]);
+        std::fs::write(d.join("f.txt"), "work").unwrap();
+        git_run(&d, &["add", "-A"]).unwrap();
+        git_run(&d, &["-c", "commit.gpgsign=false", "commit", "-qm", "wip"]).unwrap();
+
+        // clean tree, one commit on no remote: refused even with the discard flag set.
+        for discard in [false, true] {
+            let e = clone_release_exec(&rs, "wip", discard).unwrap_err();
+            assert!(e.contains("exist only in this clone"), "{e}");
+        }
+        assert!(d.join("f.txt").exists(), "the commit is still on disk");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // An interrupted clone (a `.git` with no commit yet) is NOT an unknown push state — there is
+    // nothing in it to lose. Reading it as unknown made every half-finished clone immortal, since
+    // both the sweep and release fail safe on `None`.
+    #[test]
+    fn an_unborn_head_reads_as_zero_unpushed_not_as_unknown() {
+        let root = tmp_root("unborn");
+        let d = root.join("half-cloned");
+        std::fs::create_dir_all(&d).unwrap();
+        if git_run(&d, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        assert_eq!(local_clone_state(&d).unpushed, Some(0));
+        // …while a directory that is not a repo at all stays genuinely unknown.
+        let notrepo = root.join("not-a-repo");
+        std::fs::create_dir_all(&notrepo).unwrap();
+        assert_eq!(local_clone_state(&notrepo).unpushed, None);
+        assert!(release_decision(&local_clone_state(&notrepo), true).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the sweep --------------------------------------------------------------------------------
+
+    #[test]
+    fn the_sweep_only_considers_git_clones_directly_under_a_root() {
+        let root = tmp_root("sweep");
+        let rs = root.to_string_lossy().to_string();
+        mk_clone(&root, "a-clone");
+        std::fs::create_dir_all(root.join("plain-dir/nested")).unwrap();
+        std::fs::write(root.join("loose-file"), "x").unwrap();
+        // a clone one level too deep is NOT a candidate.
+        mk_clone(&root.join("plain-dir"), "deep-clone");
+
+        let mut seen = Vec::new();
+        let recs = gc_clones_sweep(&rs, 30, true, &mut |r| seen.push(r.name.clone())).unwrap();
+        assert_eq!(
+            recs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            vec!["a-clone"]
+        );
+        assert_eq!(
+            seen,
+            vec!["a-clone"],
+            "every decision is streamed as it is made"
+        );
+        // dry-run touches nothing.
+        assert!(root.join("a-clone").exists());
+        assert!(root.join("plain-dir/nested").exists());
+        assert!(root.join("loose-file").exists());
+        // an unreadable root is an error, not a silent zero-clone success.
+        assert!(gc_clones_sweep("/no/such/root", 30, true, &mut |_| {}).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dir_size_counts_files_and_never_follows_symlinks() {
+        let root = tmp_root("size");
+        std::fs::create_dir_all(root.join("d/sub")).unwrap();
+        std::fs::write(root.join("d/a"), vec![b'x'; 1000]).unwrap();
+        std::fs::write(root.join("d/sub/b"), vec![b'x'; 2000]).unwrap();
+        assert_eq!(dir_size_bytes(&root.join("d")), 3000);
+        // a symlink to a big tree outside must not be counted as if it lived inside.
+        std::fs::write(root.join("huge"), vec![b'x'; 100_000]).unwrap();
+        std::os::unix::fs::symlink(root.join("huge"), root.join("d/link")).unwrap();
+        let with_link = dir_size_bytes(&root.join("d"));
+        assert!(
+            with_link < 4000,
+            "a symlink must not pull its target's size in: {with_link}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn human_bytes_is_readable_at_every_scale() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(999), "999 B");
+        assert_eq!(human_bytes(1024), "1.0 KB");
+        assert_eq!(human_bytes(1536), "1.5 KB");
+        assert_eq!(human_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(human_bytes(195 * 1024 * 1024 * 1024), "195.0 GB");
     }
 }

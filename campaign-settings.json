@@ -1,6 +1,11 @@
 {
   "permissions": {
     "allow": [
+      "mcp__fsm__clone_create",
+      "mcp__fsm__clone_release",
+      "mcp__fsm__clone_list",
+      "mcp__fsm__clone_gc",
+      "ToolSearch",
       "Bash(nix:*)",
       "Bash(git:*)",
       "Bash(gh:*)",

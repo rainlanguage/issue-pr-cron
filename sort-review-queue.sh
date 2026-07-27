@@ -2,7 +2,7 @@
 # Print the human review queue sorted by verification cost (cheapest first).
 # Thin wrapper: delegates to `pr-review-report queue` in pr-review-report-rs/,
 # the single owner of ledger parsing (last-wins-by-position over
-# review-verdicts.jsonl) — one parser for the report AND the queue.
+# GitHub labels) — one parser for the report AND the queue.
 #
 # Queue = every OPEN, non-draft PR whose effective verdict is ready/ai-campaign.
 # Cost from the verdict line's `cost`, else review-costs.jsonl (sha mismatch
