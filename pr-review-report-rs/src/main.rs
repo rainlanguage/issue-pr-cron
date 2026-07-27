@@ -13677,16 +13677,16 @@ mod mcp_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// Backdate a directory's mtime. No `filetime` crate here, so this shells out to `touch` —
-    /// available wherever `git` is, and only ever pointed at a temp dir this test made.
+    /// Backdate a file's or directory's mtime, via `std::fs::File::set_times` rather than a `touch`
+    /// subprocess: BSD `touch` — macOS, where `rainix-rs-test` also runs — does not accept GNU's
+    /// `-d @<epoch>`, so the subprocess form passes on one CI runner and fails on the other.
     fn filetime_set(p: &std::path::Path, t: std::time::SystemTime) {
-        let secs = t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        let out = std::process::Command::new("touch")
-            .args(["-d", &format!("@{secs}")])
-            .arg(p)
-            .status()
-            .expect("touch");
-        assert!(out.success());
+        let f = std::fs::File::options()
+            .read(true)
+            .open(p)
+            .unwrap_or_else(|e| panic!("open {}: {e}", p.display()));
+        f.set_times(std::fs::FileTimes::new().set_accessed(t).set_modified(t))
+            .unwrap_or_else(|e| panic!("set_times {}: {e}", p.display()));
     }
 }
 
