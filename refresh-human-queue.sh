@@ -10,7 +10,7 @@
 # uses `git diff --quiet && exit 0` as a conditional and tolerates best-effort steps.
 set +o errexit
 
-# --- self-locate + bare-cron env (mirrors campaign-run.sh) ---
+# --- locate the install dir + bare-cron env (mirrors campaign-run.sh) ---
 # $0 is a read-only nix store path now, so the install dir comes from the crontab's $CRON_DIR,
 # defaulting to the working directory for an interactive run from the checkout.
 DIR="${CRON_DIR:-$PWD}"

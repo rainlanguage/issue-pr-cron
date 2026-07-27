@@ -7,16 +7,19 @@
 # cron runners (campaign/review-run.sh) export RAINIX_CRON_HOOK so this
 # only ever fires for cron runs, never interactive sessions.
 #
-# WHY: the cron runner already wraps claude in `nix shell nixpkgs#gh nixpkgs#jq …`,
-# so gh and jq are on PATH — the model MUST invoke BARE `gh`/`jq`. Re-wrapping gh
-# in a nested `nix shell nixpkgs#gh --command gh …` (or `nix run nixpkgs#gh -- …`,
-# or `nix shell nixpkgs#gh --command bash -c '… gh pr edit …'`) makes the command
-# start with `nix`, so the `Bash(gh …)` deny-list (prefix-matched) never fires —
-# letting a denied gh subcommand (pr edit/merge/close, issue close/comment/edit,
-# workflow run, …) through. The prompt forbids this (step 7) but the model has
-# done it anyway, so enforce it here where it cannot be bypassed. gh being on the
-# cron PATH means there is NO legitimate reason for a cron tool-call to name
-# `nixpkgs#gh`; blocking that token forces bare gh and re-arms the deny-list.
+# WHY: the cron runner is a flake package whose runtimeInputs put `gh` and `jq` on
+# PATH from the repo's locked nixpkgs, so the model MUST invoke BARE `gh`/`jq`.
+# Re-wrapping gh in a nested `nix shell nixpkgs#gh --command gh …` (or
+# `nix run nixpkgs#gh -- …`, or `nix shell nixpkgs#gh --command bash -c '… gh pr
+# edit …'`) makes the command start with `nix`, so the `Bash(gh …)` deny-list
+# (prefix-matched) never fires — letting a denied gh subcommand (pr edit/merge/
+# close, issue close/comment/edit, workflow run, …) through. The prompt forbids
+# this (step 7) but the model has done it anyway, so enforce it here where it
+# cannot be bypassed. gh being on the cron PATH means there is NO legitimate
+# reason for a cron tool-call to name `nixpkgs#gh`; blocking that token forces
+# bare gh and re-arms the deny-list. That matters MORE now, not less: a wrapped
+# `nixpkgs#gh` would also be an UNPINNED gh resolved through the global registry,
+# defeating the closure as well as the deny-list.
 #
 # Exit codes: 0 -> allow; 2 -> block (stderr surfaces to the model).
 

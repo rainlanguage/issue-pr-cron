@@ -320,10 +320,11 @@ and evidence that answers a narrower question than the issue asked.
 Deployment-specific values are **not** committed. Copy `cron.env.example` to
 `cron.env` (gitignored) and set at least `PR_ASSIGNEE` (the GitHub handle every
 opened PR is assigned to). `WORK_DIR`, `MODEL`, `MAXTIME`, `KEEP_RUNS` have
-defaults and may be overridden there. The runner self-locates its install dir
-and rebuilds `PATH`/nix from `$HOME`, so there are no machine paths in the repo;
-`campaign-prompt.txt` uses `{{WORK_DIR}}` / `{{CLOSE_CANDIDATES}}` /
-`{{ASSIGNEE}}` placeholders that the runner substitutes at run time.
+defaults and may be overridden there. The runner takes its install dir from
+`CRON_DIR` (falling back to the working directory) and gets its `PATH` from the
+flake closure, so there are no machine paths in the repo; `campaign-prompt.txt`
+uses `{{WORK_DIR}}` / `{{CLOSE_CANDIDATES}}` / `{{ASSIGNEE}}` placeholders that
+the runner substitutes at run time.
 
 ## Reviewing the output — the merge pipeline
 

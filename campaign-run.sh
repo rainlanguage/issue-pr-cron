@@ -18,7 +18,7 @@
 # uses `grep -q … &&` as a conditional, both of which would abort the run under errexit.
 set +o errexit
 
-# --- self-locate: the INSTALL dir (cron.env, prompts, logs, ledgers) ---
+# --- locate the INSTALL dir (cron.env, prompts, logs, ledgers) ---
 # Not derived from $0 any more: $0 is now a path in the nix store, which is read-only and holds
 # none of the run's state. $CRON_DIR is set by the crontab line; it falls back to the working
 # directory, which is what an interactive `nix run .#campaign-run` from the checkout gets.

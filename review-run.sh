@@ -16,7 +16,7 @@
 # errexit. Same reasoning as campaign-run.sh.
 set +o errexit
 
-# --- self-locate: the INSTALL dir (cron.env, prompts, logs). $0 is a read-only nix store path
+# --- locate the INSTALL dir (cron.env, prompts, logs). $0 is a read-only nix store path
 # now, so the install dir comes from the crontab's $CRON_DIR, defaulting to the working directory
 # for an interactive `nix run .#review-run` from the checkout. ---
 DIR="${CRON_DIR:-$PWD}"
