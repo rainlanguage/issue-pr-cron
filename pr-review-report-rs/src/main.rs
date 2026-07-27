@@ -259,11 +259,13 @@ fn parse_orgs(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// The GraphQL `search` qualifier string for the org scope — same `ORGS` source as
-/// `org_owner_args`, rendered as `is:pr is:open org:<a> org:<b> …`.
-fn org_search_query() -> String {
+/// The GraphQL `search` qualifier string for the org scope — same `ORGS` source and same
+/// pure-fn/env-wrapper split as `parse_orgs` / `org_owner_args`, rendered as
+/// `is:pr is:open org:<a> org:<b> …`. Both qualifiers matter: `search(type:ISSUE)` returns issues
+/// as well as PRs, and dropping `is:open` would count closed PRs' references as live coverage.
+fn org_search_query(raw: &str) -> String {
     let mut q = String::from("is:pr is:open");
-    for o in org_names(&std::env::var("ORGS").unwrap_or_default()) {
+    for o in org_names(raw) {
         q.push_str(" org:");
         q.push_str(&o);
     }
@@ -272,6 +274,10 @@ fn org_search_query() -> String {
 
 fn org_owner_args() -> Vec<String> {
     parse_orgs(&std::env::var("ORGS").unwrap_or_default())
+}
+
+fn org_search_scope() -> String {
+    org_search_query(&std::env::var("ORGS").unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -305,6 +311,26 @@ mod org_tests {
     fn org_names_defaults_and_splits() {
         assert_eq!(super::org_names(""), ["rainlanguage", "cyclofinance"]);
         assert_eq!(super::org_names("a, b\tc"), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn org_search_query_scopes_to_open_prs_in_every_org() {
+        // The exact qualifier string, not "it contains an org" — `search(type:ISSUE)` also serves
+        // ISSUES, and a closed PR's closing references are not live coverage, so losing either
+        // `is:pr` or `is:open` silently changes what `uncovered-issues` counts as covered.
+        assert_eq!(
+            super::org_search_query(""),
+            "is:pr is:open org:rainlanguage org:cyclofinance"
+        );
+        assert_eq!(
+            super::org_search_query("S01-Issuer"),
+            "is:pr is:open org:S01-Issuer"
+        );
+        // Every configured org is scoped, in order — the same split `org_names` does.
+        assert_eq!(
+            super::org_search_query("a, b\tc"),
+            "is:pr is:open org:a org:b org:c"
+        );
     }
 }
 
@@ -1381,6 +1407,16 @@ fn already_fixed_recency_gate(slug: &str, issue: &str, reason: &str, issue_json:
         ),
         FixAnchor::NotApplicable => unreachable!("returned above"),
     };
+    recency_exit_code(slug, issue, &what, &landed, filed)
+}
+
+/// PURE: the verdict once an anchor's landing date has been looked up. 0 = the cited fix postdates
+/// the report, so the flag may proceed; 4 = the evidence predates it and the claim is unsupported;
+/// 1 = no usable date at all (unmerged PR, failed lookup, or a pair that cannot be ordered), which
+/// fails CLOSED. Split out of `already_fixed_recency_gate` so every arm is reachable without a
+/// network round trip — the "proceed" arm most of all: a gate that refuses everything looks exactly
+/// as green as one that works.
+fn recency_exit_code(slug: &str, issue: &str, what: &str, landed: &str, filed: &str) -> i32 {
     if landed.is_empty() {
         eprintln!(
             "error: could not resolve a date for {what} in {slug} (unmerged, or the lookup \
@@ -1388,7 +1424,7 @@ fn already_fixed_recency_gate(slug: &str, issue: &str, reason: &str, issue_json:
         );
         return 1;
     }
-    match landed_after_filed(&landed, filed) {
+    match landed_after_filed(landed, filed) {
         Some(true) => 0,
         Some(false) => {
             eprintln!(
@@ -1435,8 +1471,11 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         eprintln!("error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data");
         return 1;
     };
-    if let rc @ 1..=4 = already_fixed_recency_gate(slug, issue, reason, &j) {
-        return rc;
+    // ANY non-zero verdict from the gate is the answer — a numeric range here would silently let a
+    // future exit code fall through into "flag it anyway", the fail-OPEN direction.
+    let gate = already_fixed_recency_gate(slug, issue, reason, &j);
+    if gate != 0 {
+        return gate;
     }
     let state = j.get("state").and_then(|s| s.as_str()).unwrap_or("");
     let labels: Vec<String> = j
@@ -5740,45 +5779,79 @@ fn covered_from_search_prs(nodes: &[Value]) -> std::collections::HashSet<(String
     covered
 }
 
-/// All open PRs in the org scope with their native `closingIssuesReferences`, one paged GraphQL
-/// search. `None` if any page fails — the caller must abort rather than treat unseen coverage as
-/// uncovered (a false uncovered row makes the producer open a duplicate PR).
-fn search_open_prs_closing_refs() -> Option<Vec<Value>> {
-    const QUERY: &str = "query($q:String!,$c:String){search(query:$q,type:ISSUE,first:100,after:$c){pageInfo{hasNextPage endCursor}nodes{... on PullRequest{closingIssuesReferences(first:50){nodes{number repository{nameWithOwner}}}}}}}";
-    let q = format!("q={}", org_search_query());
-    let query = format!("query={QUERY}");
+/// The GraphQL `search` connection serves at most 1000 results, so the page size asked for in
+/// [`CLOSING_REFS_QUERY`] and the page cap [`SEARCH_MAX_PAGES`] must multiply out to exactly that.
+/// A smaller product silently under-reports coverage; a larger one just walks into GitHub's own cap.
+const SEARCH_PAGE_SIZE: usize = 100;
+const SEARCH_MAX_PAGES: usize = 10;
+const CLOSING_REFS_QUERY: &str = "query($q:String!,$c:String){search(query:$q,type:ISSUE,first:100,after:$c){pageInfo{hasNextPage endCursor}nodes{... on PullRequest{closingIssuesReferences(first:50){nodes{number repository{nameWithOwner}}}}}}}";
+
+/// PURE given `fetch`: walk a cursor-paged GraphQL `search` to the end, concatenating every page's
+/// `nodes`. `fetch(cursor)` performs one page (`None` on the first page, then the previous page's
+/// `endCursor`).
+///
+/// Returns `(nodes, truncated)`. `truncated` is true when GitHub still reported `hasNextPage` and
+/// the walk stopped anyway — either [`SEARCH_MAX_PAGES`] ran out, or the page reported no
+/// `endCursor` to advance on. Both are the SAME hazard and the caller must treat them the same way:
+/// unseen pages mean unseen coverage, and unseen coverage reads as *uncovered*, which makes the
+/// producer open a duplicate PR. A failing page returns `None` for the whole walk, never a short
+/// vec — a partial read is indistinguishable from a complete one once it is just a `Vec`.
+///
+/// The page cap is the constant, not an argument: it is a property of GitHub's `search` connection,
+/// and a call site free to pass its own number is a call site free to cap coverage at one page.
+fn paged_search_nodes<F>(mut fetch: F) -> Option<(Vec<Value>, bool)>
+where
+    F: FnMut(Option<&str>) -> Option<Value>,
+{
     let mut nodes: Vec<Value> = Vec::new();
     let mut cursor: Option<String> = None;
-    // `search` serves at most 1000 results (10 pages of 100) — the same cap as the previous
-    // `gh search prs --limit 1000` path.
-    for _ in 0..10 {
-        let mut args: Vec<&str> = vec!["api", "graphql", "-f", &query, "-f", &q];
-        let cf;
-        if let Some(c) = &cursor {
-            cf = format!("c={c}");
-            args.push("-f");
-            args.push(&cf);
-        }
-        let v = gh_json(&args)?;
+    for _ in 0..SEARCH_MAX_PAGES {
+        let v = fetch(cursor.as_deref())?;
         let search = v.pointer("/data/search")?;
         if let Some(arr) = search.get("nodes").and_then(|n| n.as_array()) {
             nodes.extend(arr.iter().cloned());
         }
-        let next = search
+        if !search
             .pointer("/pageInfo/hasNextPage")
             .and_then(|b| b.as_bool())
-            .unwrap_or(false);
-        cursor = search
+            .unwrap_or(false)
+        {
+            return Some((nodes, false));
+        }
+        match search
             .pointer("/pageInfo/endCursor")
             .and_then(|s| s.as_str())
-            .map(String::from);
-        if !next || cursor.is_none() {
-            return Some(nodes);
+        {
+            Some(c) => cursor = Some(c.to_string()),
+            // More pages exist and there is no cursor to reach them with.
+            None => return Some((nodes, true)),
         }
     }
-    eprintln!(
-        "warning: open-PR search truncated at the 1000-result search cap — coverage from PRs beyond it is unseen"
-    );
+    Some((nodes, true))
+}
+
+/// All open PRs in the org scope with their native `closingIssuesReferences`, one paged GraphQL
+/// search. `None` if any page fails — the caller must abort rather than treat unseen coverage as
+/// uncovered (a false uncovered row makes the producer open a duplicate PR).
+fn search_open_prs_closing_refs() -> Option<Vec<Value>> {
+    let q = format!("q={}", org_search_scope());
+    let query = format!("query={CLOSING_REFS_QUERY}");
+    let (nodes, truncated) = paged_search_nodes(|cursor| {
+        let mut args: Vec<&str> = vec!["api", "graphql", "-f", &query, "-f", &q];
+        let cf;
+        if let Some(c) = cursor {
+            cf = format!("c={c}");
+            args.push("-f");
+            args.push(&cf);
+        }
+        gh_json(&args)
+    })?;
+    if truncated {
+        eprintln!(
+            "warning: open-PR search truncated at the {}-result search cap — coverage from PRs beyond it is unseen",
+            SEARCH_PAGE_SIZE * SEARCH_MAX_PAGES
+        );
+    }
     Some(nodes)
 }
 
@@ -6784,6 +6857,34 @@ mod queue_tests {
         ] {
             assert_eq!(already_fixed_anchor(reason), FixAnchor::Missing, "{reason}");
         }
+        // A reason typed with leading whitespace is the same claim — without the trim it reads as
+        // "not an already-fixed claim" and the gate is skipped entirely, which is the fail-OPEN
+        // direction (the flag lands unchecked).
+        assert_eq!(
+            already_fixed_anchor("  \talready-fixed-on-main: fixed by #2420"),
+            FixAnchor::Pr("2420".into())
+        );
+        // The FIRST `#` may be prose; a real reference later in the reason still counts.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: not foo#bar — fixed by #2420"),
+            FixAnchor::Pr("2420".into())
+        );
+        // Sha length boundaries: 7 (git's short sha) and 40 (a full sha) are both in, 41 is not —
+        // past 40 the hex run is no longer a sha and dating it would be resolving a coincidence.
+        assert_eq!(
+            already_fixed_anchor("already-fixed-on-main: a665ea9 fixed it"),
+            FixAnchor::Commit("a665ea9".into())
+        );
+        let full = "a665ea9f7c3b21d04e8f6a5b9c0d1e2f3a4b5c6d";
+        assert_eq!(full.len(), 40);
+        assert_eq!(
+            already_fixed_anchor(&format!("already-fixed-on-main: {full} fixed it")),
+            FixAnchor::Commit(full.into())
+        );
+        assert_eq!(
+            already_fixed_anchor(&format!("already-fixed-on-main: {full}a fixed it")),
+            FixAnchor::Missing
+        );
     }
 
     #[test]
@@ -6809,6 +6910,28 @@ mod queue_tests {
             landed_after_filed("2024-04-01", "2024-04-01T11:06:35Z"),
             None
         );
+        // BOTH sides are validated, not just the landing date — an unusable `createdAt` must not
+        // be silently compared against a good landing date.
+        assert_eq!(
+            landed_after_filed("2024-06-01T00:00:00Z", "2024-04-01"),
+            None
+        );
+        // A zoneless instant (19 chars) is not the `…Z` form GitHub emits — fail closed rather
+        // than compare two strings that are not on the same clock.
+        assert_eq!(
+            landed_after_filed("2024-04-01T11:06:35", "2024-04-01T11:06:35Z"),
+            None
+        );
+        // Long enough but not a date at all: without the `T` check this compares as plain text
+        // and returns a confident, meaningless verdict.
+        assert_eq!(
+            landed_after_filed("not a date at all!!!!", "2024-04-01T11:06:35Z"),
+            None
+        );
+        assert_eq!(
+            landed_after_filed("2024-06-01T00:00:00Z", "no idea when this was"),
+            None
+        );
     }
 
     #[test]
@@ -6832,6 +6955,73 @@ mod queue_tests {
         assert_eq!(
             already_fixed_recency_gate("o/r", "1", "invalid: premise obsolete", &json!({})),
             0
+        );
+    }
+
+    #[test]
+    fn recency_exit_code_admits_only_a_fix_that_postdates_the_report() {
+        // The PASS arm. Without it a gate that refuses every flag is indistinguishable from one
+        // that works — the whole `already-fixed-on-main` category would just stop, silently.
+        assert_eq!(
+            recency_exit_code(
+                "o/r",
+                "529",
+                "PR #2420",
+                "2024-06-01T00:00:00Z",
+                "2024-04-03T10:00:00Z"
+            ),
+            0
+        );
+        // raindex#512's shape: the cited change landed BEFORE the bug was reported -> unsupported
+        // claim (4). This is the defect #71 exists for; 0 here is a human closing a live bug.
+        assert_eq!(
+            recency_exit_code(
+                "o/r",
+                "512",
+                "commit 2a319034",
+                "2024-03-16T09:00:00Z",
+                "2024-04-01T11:06:35Z"
+            ),
+            4
+        );
+        // Same instant is not "after" — a fix cannot be its own report.
+        assert_eq!(
+            recency_exit_code(
+                "o/r",
+                "1",
+                "PR #7",
+                "2024-04-01T11:06:35Z",
+                "2024-04-01T11:06:35Z"
+            ),
+            4
+        );
+        // No date resolved (an UNMERGED PR, or the lookup failed) -> 1, never 0. The producer
+        // citing an open PR as the landed fix is the common case here.
+        assert_eq!(
+            recency_exit_code("o/r", "1", "PR #2420", "", "2024-04-01T11:06:35Z"),
+            1
+        );
+        // A date that will not parse is also fail-closed, and distinct from 4: nothing was
+        // disproved, it just could not be checked.
+        assert_eq!(
+            recency_exit_code(
+                "o/r",
+                "1",
+                "commit deadbeef",
+                "2024-06-01",
+                "2024-04-01T11:06:35Z"
+            ),
+            1
+        );
+        assert_eq!(
+            recency_exit_code(
+                "o/r",
+                "1",
+                "commit deadbeef",
+                "2024-06-01T00:00:00Z",
+                "2024"
+            ),
+            1
         );
     }
 
@@ -9226,6 +9416,120 @@ mod worklist_tests {
             ]}}),
         ];
         assert!(covered_from_search_prs(&nodes).is_empty());
+    }
+
+    /// One `search` page: `n` nodes tagged with `tag` so the fold's ORDER and COMPLETENESS are
+    /// observable, plus the page-info the walk steers on.
+    fn search_page(tag: &str, n: usize, next: Option<&str>) -> Value {
+        json!({"data": {"search": {
+            "pageInfo": {
+                "hasNextPage": next.is_some(),
+                "endCursor": next.map(Value::from).unwrap_or(Value::Null),
+            },
+            "nodes": (0..n).map(|i| json!({"tag": format!("{tag}{i}")})).collect::<Vec<_>>(),
+        }}})
+    }
+
+    fn tags(nodes: &[Value]) -> Vec<String> {
+        nodes
+            .iter()
+            .map(|n| n["tag"].as_str().unwrap_or("").to_string())
+            .collect()
+    }
+
+    #[test]
+    fn paged_search_walks_every_page_and_threads_the_cursor() {
+        // Three pages, the last one ending the walk. Every page's nodes land, in page order, and
+        // each request after the first carries the PREVIOUS page's endCursor.
+        let seen = std::cell::RefCell::new(Vec::<Option<String>>::new());
+        let got = paged_search_nodes(|cursor| {
+            seen.borrow_mut().push(cursor.map(String::from));
+            Some(match cursor {
+                None => search_page("a", 2, Some("C1")),
+                Some("C1") => search_page("b", 1, Some("C2")),
+                Some("C2") => search_page("c", 2, None),
+                other => panic!("unexpected cursor {other:?}"),
+            })
+        });
+        let (nodes, truncated) = got.expect("a complete walk is Some");
+        assert_eq!(tags(&nodes), ["a0", "a1", "b0", "c0", "c1"]);
+        assert!(!truncated);
+        assert_eq!(
+            *seen.borrow(),
+            [None, Some("C1".to_string()), Some("C2".to_string())]
+        );
+    }
+
+    #[test]
+    fn paged_search_aborts_the_whole_walk_when_a_page_fails() {
+        // THE fail-safe: a mid-walk failure must not degrade to "here are the pages that worked".
+        // A short vec is indistinguishable from a complete one, and missing coverage reads as
+        // UNCOVERED — the producer would open a duplicate PR for an issue that already has one.
+        let calls = std::cell::Cell::new(0);
+        let got = paged_search_nodes(|cursor| {
+            calls.set(calls.get() + 1);
+            match cursor {
+                None => Some(search_page("a", 2, Some("C1"))),
+                _ => None,
+            }
+        });
+        assert!(got.is_none());
+        assert_eq!(calls.get(), 2);
+
+        // A page that comes back without `data.search` (a shape change, a partial GraphQL error)
+        // is the same kind of failure, not an empty page.
+        assert!(paged_search_nodes(|_| Some(json!({"data": {}}))).is_none());
+    }
+
+    #[test]
+    fn paged_search_reports_truncation_it_cannot_read_past() {
+        // Page cap reached with GitHub still saying `hasNextPage` -> truncated, and exactly
+        // `SEARCH_MAX_PAGES` pages were read (not one more, not one fewer) — the cap is the whole
+        // 1000-result budget, so stopping early would silently shrink the coverage set.
+        let calls = std::cell::Cell::new(0);
+        let (nodes, truncated) = paged_search_nodes(|_| {
+            calls.set(calls.get() + 1);
+            Some(search_page("p", 1, Some("C")))
+        })
+        .expect("a capped walk still returns what it read");
+        assert_eq!(calls.get(), SEARCH_MAX_PAGES);
+        assert_eq!(nodes.len(), SEARCH_MAX_PAGES);
+        assert!(truncated);
+
+        // `hasNextPage` with no `endCursor` to advance on is the SAME hazard — more pages exist
+        // and are unreachable — so it must report truncated too, not pass as a clean finish.
+        let (nodes, truncated) = paged_search_nodes(|_| {
+            Some(json!({"data": {"search": {
+                "pageInfo": {"hasNextPage": true, "endCursor": null},
+                "nodes": [{"tag": "x0"}],
+            }}}))
+        })
+        .unwrap();
+        assert_eq!(tags(&nodes), ["x0"]);
+        assert!(truncated);
+
+        // A single complete page is NOT truncated — otherwise every run would cry wolf.
+        let (nodes, truncated) = paged_search_nodes(|_| Some(search_page("s", 1, None))).unwrap();
+        assert_eq!(tags(&nodes), ["s0"]);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn closing_refs_query_pages_githubs_whole_1000_result_cap() {
+        // GitHub's `search` connection serves at most 1000 results. The page size in the query and
+        // the page cap are two halves of one fact: shrink either and coverage silently stops short
+        // of PRs the old `gh search prs --limit 1000` path did see.
+        assert_eq!(SEARCH_PAGE_SIZE * SEARCH_MAX_PAGES, 1000);
+        assert!(
+            CLOSING_REFS_QUERY.contains(&format!("first:{SEARCH_PAGE_SIZE},after:$c")),
+            "{CLOSING_REFS_QUERY}"
+        );
+        // The reference set is keyed off the ISSUE's repo, so the query must ask for it.
+        assert!(
+            CLOSING_REFS_QUERY.contains("closingIssuesReferences")
+                && CLOSING_REFS_QUERY.contains("nodes{number repository{nameWithOwner}}"),
+            "{CLOSING_REFS_QUERY}"
+        );
     }
 
     #[test]
