@@ -3534,6 +3534,10 @@ struct CloneState {
     pr: Option<PrState>,
     /// Days since the clone was last modified.
     age_days: u64,
+    /// This is an audit-lens checkout (`vet-<repo>-<n>`), created by `pr_checkout` and holding no
+    /// work by construction — as opposed to a producer work clone, where an open PR means the work
+    /// is live.
+    vet: bool,
 }
 
 /// Map a `gh pr list` state string to a [`PrState`].
@@ -3560,11 +3564,34 @@ fn parse_repo_slug(remote_url: &str) -> Option<String> {
     Some(format!("{owner}/{repo}"))
 }
 
+/// How long an audit-lens checkout may sit idle before the sweep reclaims it, INDEPENDENT of the
+/// caller's `max_age_days` (which is the backstop for ad-hoc clones nobody modeled).
+///
+/// One day is ~12x the vetter's own `REVIEW_MAXTIME` ceiling of 2h, so a clone this idle cannot
+/// belong to a run in flight, while the daily sweep still reclaims every leaked checkout within two
+/// passes.
+const VET_CLONE_MAX_AGE_DAYS: u64 = 1;
+
+/// PURE: is this clone an audit-lens checkout? The name is the signal because it is the ONE thing
+/// `pr_checkout` controls end to end ([`checkout_dir`]) and it survives a run that died before
+/// releasing — which is precisely the clone that leaks.
+fn is_vet_checkout(name: &str) -> bool {
+    name.starts_with(VET_CLONE_PREFIX)
+}
+
 /// Decide whether a clone is safe to garbage-collect, with a reason. Precedence is deliberate:
-/// unpushed/uncommitted work is ALWAYS preserved (never gc'd, whatever the PR state); then a
-/// merged/closed PR means the work has landed or been abandoned upstream, so the clone is disposable;
-/// an open PR is active work (kept); a clone with no resolvable PR is kept until it goes stale (the
-/// age backstop) so ad-hoc clones with no PR don't accumulate forever.
+/// unpushed/uncommitted work is ALWAYS preserved (never gc'd, whatever the PR state); then an
+/// audit-lens checkout is disposable on age alone; then a merged/closed PR means the work has landed
+/// or been abandoned upstream, so the clone is disposable; an open PR is active work (kept); a clone
+/// with no resolvable PR is kept until it goes stale (the age backstop) so ad-hoc clones with no PR
+/// don't accumulate forever.
+///
+/// The `vet` arm is #81. `pr_checkout` clones the PR the vetter is JUDGING, which is by definition an
+/// OPEN PR, so the "open PR → active work" rule made every leaked audit checkout immortal: 83 of
+/// them, 349 MB, none reclaimable by a sweep that was running nightly the whole time. A `vet-*` clone
+/// is not work — it is a read-only copy of a commit that is already on GitHub, reproducible in
+/// seconds, and its lifetime is ONE vetter run. The dirt/unpushed guards above still apply first, so
+/// "never delete something that holds work" survives intact.
 fn gc_decision(s: &CloneState, max_age_days: u64) -> GcAction {
     if !s.clean {
         return GcAction::Keep("uncommitted changes".into());
@@ -3575,6 +3602,16 @@ fn gc_decision(s: &CloneState, max_age_days: u64) -> GcAction {
         None => return GcAction::Keep("unpushed state unknown".into()),
         Some(n) if n > 0 => return GcAction::Keep(format!("{n} unpushed commit(s)")),
         Some(_) => {}
+    }
+    if s.vet {
+        return if s.age_days >= VET_CLONE_MAX_AGE_DAYS {
+            GcAction::Delete(format!("vet checkout, idle {}d", s.age_days))
+        } else {
+            GcAction::Keep(format!(
+                "vet checkout, idle {}d < {VET_CLONE_MAX_AGE_DAYS}d",
+                s.age_days
+            ))
+        };
     }
     match s.pr {
         Some(PrState::Merged) => GcAction::Delete("PR merged".into()),
@@ -3698,10 +3735,13 @@ fn gc_clones_sweep(
         let local = local_clone_state(dir);
         let clean = local.dirt.as_deref().map(|d| d.is_empty()).unwrap_or(false);
         let unpushed = local.unpushed;
+        let vet = is_vet_checkout(&name);
         // Only pay for the `gh pr list` network round-trip once the clone is otherwise deletable: a
         // dirty or unpushed clone is KEPT regardless of its PR state, so skipping the call for it is
-        // what keeps a full pass over hundreds of clones from dragging past any timeout.
-        let pr = if clean && matches!(unpushed, Some(0)) {
+        // what keeps a full pass over hundreds of clones from dragging past any timeout. A `vet-*`
+        // checkout skips it too — `gc_decision` never consults `pr` for one, so the call would buy
+        // nothing but latency, once per leaked checkout.
+        let pr = if clean && !vet && matches!(unpushed, Some(0)) {
             resolve_pr_state(dir)
         } else {
             None
@@ -3711,6 +3751,7 @@ fn gc_clones_sweep(
             unpushed,
             pr,
             age_days: clone_age_days(dir),
+            vet,
         };
         let rec = match gc_decision(&state, max_age_days) {
             GcAction::Delete(reason) => {
@@ -5850,11 +5891,58 @@ fn vet_work_dir() -> String {
     })
 }
 
+/// The name prefix every audit-lens checkout carries. It is what tells the unattended sweep that a
+/// clone is a THROWAWAY the vetter created, not work someone is doing — see [`gc_decision`].
+const VET_CLONE_PREFIX: &str = "vet-";
+
 /// PURE: the per-PR throwaway clone path — the `vet-<repo>-<n>` convention `gc-clones` already
 /// reclaims, so an MCP-driven checkout is garbage-collected exactly like a hand-rolled one.
 fn checkout_dir(work_dir: &str, slug: &str, num: u64) -> String {
     let repo = slug.rsplit('/').next().unwrap_or(slug);
-    format!("{}/vet-{repo}-{num}", work_dir.trim_end_matches('/'))
+    format!(
+        "{}/{VET_CLONE_PREFIX}{repo}-{num}",
+        work_dir.trim_end_matches('/')
+    )
+}
+
+/// PURE: the local branch an audit-lens checkout lands on. Derived from the PR NUMBER alone, so no
+/// extra API round trip is needed to learn the head ref's name, and one code path serves same-repo
+/// and fork PRs alike.
+fn checkout_branch(num: u64) -> String {
+    format!("pr-{num}")
+}
+
+/// PURE: the refspec that fetches ONE PR's head into a remote-tracking ref.
+///
+/// `refs/pull/<n>/head` is the ref to use, not `refs/heads/<headRefName>`:
+///
+/// - it exists on the BASE repo for every PR, fork or not, so forks need no second remote;
+/// - it needs no `gh pr view` round trip to discover a branch name;
+/// - the destination is under `refs/remotes/`, which is what makes the checked-out commit count as
+///   PUSHED. `gh pr checkout` on a FORK PR lands the head on a plain LOCAL branch, so
+///   `rev-list HEAD --not --remotes` reports the whole branch as unpushed and both `clone_release`
+///   and the sweep then refuse to reclaim the clone — forever (#81).
+fn pr_head_refspec(num: u64) -> String {
+    format!("+refs/pull/{num}/head:refs/remotes/origin/pr/{num}")
+}
+
+/// PURE: the failure a caller of `pr_checkout` must act on. It is an ERROR (`isError: true`), and it
+/// spends its words on the ONE thing the model does next, because the observed failure was not the
+/// checkout — it was what the vetter did after it (#81).
+///
+/// Having no tree, the vetter globbed for one, found a `vet-*` leftover from an unrelated run, and
+/// began enumerating THAT repo's sources as if they were the PR's. So the message states the
+/// postcondition (the dir does not exist), names the specific wrong answer a filesystem search
+/// returns, and gives the only two legal next moves.
+fn checkout_failure_error(pr: &str, dir: &str, why: &str) -> String {
+    format!(
+        "error: `pr_checkout` could not produce a working tree for {pr}: {why}. There is NO \
+         checkout — {dir} does not exist, and nothing was left behind at that path. Do NOT search \
+         the filesystem for a substitute tree: a `{VET_CLONE_PREFIX}*` directory is some OTHER \
+         PR's checkout, and a verdict read off it is a confident verdict about code this PR never \
+         touched. Re-call `pr_checkout` ONCE; if it fails again you have no audit lens for this PR \
+         — record NO verdict for it and name it in your run summary."
+    )
 }
 
 /// Run `gh` for its exit status only, optionally inside `dir`, capturing BOTH streams (nothing leaks
@@ -5880,30 +5968,107 @@ fn gh_quiet(dir: Option<&std::path::Path>, args: &[&str]) -> Result<(), String> 
     ))
 }
 
+/// Land the PR's head commit in an EXISTING clone and return the sha. The half of the checkout that
+/// touches the clone, split out so the shallow-clone behaviour #81 is about is testable against a
+/// local repository instead of GitHub.
+///
+/// Two commands, no `gh`:
+///
+/// - the fetch carries an EXPLICIT destination refspec, which is what the shallow clone's
+///   single-branch `remote.origin.fetch` cannot supply. `gh pr checkout` fetches without one, so the
+///   head lands as a bare ref and `git checkout --track origin/<head>` refuses it — "cannot set up
+///   tracking information", on every same-repo PR;
+/// - `checkout -f -B` states the destination rather than deriving it from tracking configuration, so
+///   there is nothing left to refuse, and a reused clone left half-modified is RESET to the PR head
+///   rather than failing the checkout on a dirty tree.
+///
+/// Plain `git` is enough for auth: `gh repo clone` persists gh's credential helper into the clone's
+/// own config, so the fetch is authenticated exactly as the clone was.
+fn checkout_pr_head(path: &std::path::Path, num: u64) -> Result<String, String> {
+    git_run(
+        path,
+        &["fetch", "--depth", "1", "origin", &pr_head_refspec(num)],
+    )?;
+    git_run(
+        path,
+        &[
+            "checkout",
+            "-f",
+            "-B",
+            &checkout_branch(num),
+            &format!("refs/remotes/origin/pr/{num}"),
+        ],
+    )?;
+    git_out(path, &["rev-parse", "HEAD"])
+        .ok_or_else(|| "the checkout left no resolvable HEAD".to_string())
+}
+
 /// Check a PR out into its throwaway clone so the `audit` skill has SOURCE to read. LOCAL read only:
-/// a shallow clone plus `gh pr checkout` — never a push, a commit, or any GitHub write. Reuses an
-/// existing clone (fetching the PR head into it) rather than re-cloning.
+/// a shallow clone plus a shallow fetch of the PR head — never a push, a commit, or any GitHub
+/// write. Reuses an existing clone (re-fetching the PR head into it) rather than re-cloning.
+///
+/// POSTCONDITION, and the whole point of #81: when this returns `Ok`, `dir` holds the PR's head
+/// commit; when it returns `Err`, `dir` DOES NOT EXIST. There is no third state in which a directory
+/// named after this PR sits on disk holding some other commit — which is exactly what the old code
+/// left behind, because `gh repo clone --depth 1` succeeded (leaving the DEFAULT BRANCH checked out
+/// at the canonical path) and only the subsequent `gh pr checkout` failed.
+///
+/// `gh pr checkout` is gone from this path. In a `--depth 1` clone the fetch refspec is
+/// `+refs/heads/<default>:refs/remotes/origin/<default>`, so a same-repo PR's head arrives as a bare
+/// fetched ref rather than a remote-tracking branch and `git checkout --track` refuses it with
+/// "cannot set up tracking information" — for EVERY same-repo PR. See [`pr_head_refspec`] for why
+/// `refs/pull/<n>/head` replaces it rather than a widened refspec: widening makes the follow-up fetch
+/// deepen the clone to nearly full history (measured on raindex: 156 MiB of pack against 4 MiB),
+/// which trades this bug for the disk-full one that silently killed both crons for ~17h (#56).
 fn pr_checkout_exec(slug: &str, num: u64) -> Result<Value, String> {
-    let dir = checkout_dir(&vet_work_dir(), slug, num);
+    pr_checkout_at(&vet_work_dir(), slug, num)
+}
+
+/// [`pr_checkout_exec`] with the work root passed in rather than read from the environment, so the
+/// postcondition above can be tested against a temp root without a process-global `set_var` racing
+/// every other test in the binary.
+fn pr_checkout_at(work_dir: &str, slug: &str, num: u64) -> Result<Value, String> {
+    let pr = format!("{slug}#{num}");
+    let dir = checkout_dir(work_dir, slug, num);
     let path = std::path::Path::new(&dir);
     let reused = path.join(".git").is_dir();
-    if !reused {
-        if path.exists() {
-            return Err(format!(
-                "{dir} exists but is not a git clone — refusing to touch it"
-            ));
-        }
-        gh_quiet(None, &["repo", "clone", slug, &dir, "--", "--depth", "1"])?;
+    if !reused && path.exists() {
+        // The ONE failure that must not delete: this entry is not ours, so it is refused before
+        // anything is touched — and the refusal says so rather than claiming the path is clear.
+        return Err(format!(
+            "error: `pr_checkout` could not produce a working tree for {pr}: {dir} exists but is \
+             not a git clone — refusing to touch it. Move that path aside; nothing was changed."
+        ));
     }
-    gh_quiet(
-        Some(path),
-        &["pr", "checkout", &num.to_string(), "-R", slug],
-    )?;
+    let branch = checkout_branch(num);
+    let build = || -> Result<String, String> {
+        if !reused {
+            gh_quiet(None, &["repo", "clone", slug, &dir, "--", "--depth", "1"])?;
+        }
+        checkout_pr_head(path, num)
+    };
+    let head = match build() {
+        Ok(h) => h,
+        Err(why) => {
+            // Restore the postcondition. A best-effort remove: if it fails the path may still hold a
+            // wrong tree, so the message says so instead of promising it is gone.
+            if std::fs::remove_dir_all(path).is_err() && path.exists() {
+                return Err(format!(
+                    "error: `pr_checkout` could not produce a working tree for {pr}: {why}. \
+                     {dir} could NOT be removed either and may hold a DIFFERENT commit — do not \
+                     read it. Record no verdict for this PR and name it in your run summary."
+                ));
+            }
+            return Err(checkout_failure_error(&pr, &dir, &why));
+        }
+    };
     Ok(serde_json::json!({
-        "pr": format!("{slug}#{num}"),
+        "pr": pr,
         "dir": dir,
+        "head": head,
+        "branch": branch,
         "reused": reused,
-        "note": "local read-only checkout for the audit lens; reclaimed by `pr-review-report gc-clones`",
+        "note": "local read-only checkout for the audit lens. This `dir` is the ONLY tree that is this PR's source — never search for another. Release it with `clone_release` when done.",
     }))
 }
 
@@ -6268,16 +6433,43 @@ fn call_result_budget(call: &McpCall) -> usize {
     }
 }
 
+/// PURE: which argument, if any, actually makes THIS call's result fit.
+///
+/// `None` for `pr_context`, and that is arithmetic, not caution. Its budget is
+/// `max_diff_bytes + MCP_MAX_RESULT_BYTES` and its diff is TRUNCATED to `max_diff_bytes`, so
+/// lowering the argument lowers the budget by exactly as much as it lowers the content: a
+/// `pr_context` that is over budget is over it on METADATA (body, file list, linked issues, trusted
+/// comments), which no argument shrinks. Telling the caller to "re-call narrower" there sends it
+/// round a loop that cannot terminate — the same shape as #81's failed checkout, where a wrong
+/// instruction was what the model improvised from.
+fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
+    match call {
+        McpCall::PrContext { .. } => None,
+        _ => Some("limit"),
+    }
+}
+
 /// PURE: the over-budget refusal. It is an ERROR, not a truncation and not a spill, and it names the
 /// argument that makes the call smaller — the caller's next move must be a narrower call, not an
 /// improvised one. (#78: the vetter met an over-budget state-load, invented a fallback that dropped
-/// the open-threads accounting, and nothing in the run said so.)
-fn oversize_result_error(name: &str, len: usize, budget: usize) -> String {
-    format!(
+/// the open-threads accounting, and nothing in the run said so.) When NO argument makes it smaller
+/// it says that instead, and names the only honest move left.
+fn oversize_result_error(name: &str, len: usize, budget: usize, narrow: Option<&str>) -> String {
+    let head = format!(
         "error: tool `{name}` produced {len} bytes, over the {budget}-byte budget one tool result \
          must fit in. Nothing was truncated or spilled — a partial state-load cannot say what it is \
-         missing. Re-call NARROWER: lower `limit` on a state-load, `max_diff_bytes` on `pr_context`."
-    )
+         missing. "
+    );
+    match narrow {
+        Some(arg) => format!("{head}Re-call NARROWER: lower `{arg}`."),
+        None => format!(
+            "{head}NO argument makes this call smaller — `max_diff_bytes` caps the diff and raises \
+             this budget by the same amount, so this result is over budget on its METADATA alone. \
+             Do not retry it with a different `max_diff_bytes` expecting a different answer, and do \
+             not improvise a substitute read: record NO verdict for this PR and name it in your run \
+             summary."
+        ),
+    }
 }
 
 fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -6532,15 +6724,18 @@ fn mcp_handle(
             let out = match validate_call(profile, roots, name, &args) {
                 Err(e) => tool_result(e, true),
                 Ok(call) => {
-                    // The budget is read off the VALIDATED call, before the effect runs, because
-                    // `exec` consumes it — and because it is a property of what was asked for.
+                    // The budget AND the narrowing advice are read off the VALIDATED call, before the
+                    // effect runs, because `exec` consumes it — and because both are properties of
+                    // what was asked for.
                     let budget = call_result_budget(&call);
+                    let narrow = narrowing_argument(&call);
                     match exec(call) {
                         // A result over budget is THIS server's error to raise. Handing it back and
                         // letting the harness reject it is what left the vetter improvising (#78).
-                        Ok(text) if text.len() > budget => {
-                            tool_result(oversize_result_error(name, text.len(), budget), true)
-                        }
+                        Ok(text) if text.len() > budget => tool_result(
+                            oversize_result_error(name, text.len(), budget, narrow),
+                            true,
+                        ),
                         Ok(text) => tool_result(text, false),
                         Err(e) => tool_result(e, true),
                     }
@@ -9693,8 +9888,8 @@ mod record_verdict_tests {
 #[cfg(test)]
 mod gc_tests {
     use super::{
-        gc_decision, nix_gc_args, parse_pr_state, parse_repo_slug, should_nix_gc, CloneState,
-        GcAction, PrState,
+        checkout_dir, gc_decision, is_vet_checkout, nix_gc_args, parse_pr_state, parse_repo_slug,
+        should_nix_gc, CloneState, GcAction, PrState, VET_CLONE_MAX_AGE_DAYS,
     };
 
     fn st(clean: bool, unpushed: Option<u32>, pr: Option<PrState>, age_days: u64) -> CloneState {
@@ -9703,6 +9898,15 @@ mod gc_tests {
             unpushed,
             pr,
             age_days,
+            vet: false,
+        }
+    }
+
+    /// The same clone, but an audit-lens checkout (`vet-<repo>-<n>`).
+    fn vst(clean: bool, unpushed: Option<u32>, pr: Option<PrState>, age_days: u64) -> CloneState {
+        CloneState {
+            vet: true,
+            ..st(clean, unpushed, pr, age_days)
         }
     }
 
@@ -9814,6 +10018,86 @@ mod gc_tests {
             gc_decision(&st(true, Some(0), None, 14), 14),
             GcAction::Delete("no PR, idle 14d".into())
         );
+    }
+
+    // #81: the leak. A `vet-*` checkout is a copy of the PR the vetter is JUDGING, so its PR is
+    // always OPEN — and `gc_keeps_open_pr` therefore made every leaked audit checkout immortal. 83
+    // of them, 349 MB, under a sweep that had been running nightly the whole time. The vet arm must
+    // ignore PR state entirely.
+    #[test]
+    fn gc_reclaims_a_stale_vet_checkout_whose_pr_is_still_open() {
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), Some(PrState::Open), 17), 30),
+            GcAction::Delete("vet checkout, idle 17d".into()),
+            "an open PR must not keep an audit-lens checkout alive"
+        );
+        // Its OWN cap, not the caller's: at `--max-age-days 365` a leaked checkout is still reaped.
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), Some(PrState::Open), 2), 365),
+            GcAction::Delete("vet checkout, idle 2d".into())
+        );
+        // A merged/closed PR reads the same way — one rule, not two.
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), Some(PrState::Merged), 5), 30),
+            GcAction::Delete("vet checkout, idle 5d".into())
+        );
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), None, 5), 30),
+            GcAction::Delete("vet checkout, idle 5d".into())
+        );
+    }
+
+    // The other side of the cap: a checkout the RUNNING vetter is reading is not residue. The
+    // vetter's own `REVIEW_MAXTIME` ceiling is 2h, so a same-day checkout can still be in use.
+    #[test]
+    fn gc_keeps_a_vet_checkout_younger_than_its_cap() {
+        assert_eq!(
+            gc_decision(&vst(true, Some(0), Some(PrState::Open), 0), 30),
+            GcAction::Keep("vet checkout, idle 0d < 1d".into())
+        );
+        // Boundary is inclusive, exactly as the no-PR backstop's is.
+        assert!(matches!(
+            gc_decision(
+                &vst(true, Some(0), Some(PrState::Open), VET_CLONE_MAX_AGE_DAYS),
+                30
+            ),
+            GcAction::Delete(_)
+        ));
+    }
+
+    // The safety guards still win. "Reclaim leaked checkouts" must never become "delete work that
+    // happens to sit under a vet-* name" — the vet arm is placed AFTER the dirt/unpushed ladder.
+    #[test]
+    fn gc_never_deletes_a_dirty_or_unpushed_vet_checkout() {
+        assert_eq!(
+            gc_decision(&vst(false, Some(0), Some(PrState::Open), 99), 30),
+            GcAction::Keep("uncommitted changes".into())
+        );
+        assert_eq!(
+            gc_decision(&vst(true, Some(2), Some(PrState::Open), 99), 30),
+            GcAction::Keep("2 unpushed commit(s)".into())
+        );
+        assert_eq!(
+            gc_decision(&vst(true, None, Some(PrState::Open), 99), 30),
+            GcAction::Keep("unpushed state unknown".into())
+        );
+    }
+
+    // The classifier and the path builder must agree, or the sweep applies the producer rule to a
+    // checkout (the leak) or the vet rule to real work (data loss).
+    #[test]
+    fn vet_classifier_matches_what_pr_checkout_actually_creates() {
+        let dir = checkout_dir("/work", "rainlanguage/rain.factory", 47);
+        let name = dir.rsplit('/').next().unwrap();
+        assert_eq!(name, "vet-rain.factory-47");
+        assert!(is_vet_checkout(name));
+        // Producer work clones are named after the ISSUE, never `vet-`.
+        assert!(!is_vet_checkout("raindex-2444"));
+        assert!(!is_vet_checkout("cyclo.site"));
+        // The improvised names the vetter left behind before `pr_checkout` returned its dir are
+        // still checkouts, and still reclaimable.
+        assert!(is_vet_checkout("vet-st0x.deploy-243-h2"));
+        assert!(is_vet_checkout("vet-rain.factory-dep"));
     }
 }
 
@@ -12608,6 +12892,74 @@ mod mcp_tests {
         assert!(text(&resp).contains("max_diff_bytes"));
     }
 
+    // #81: the refusal must not hand out advice that cannot work. `pr_context`'s budget is
+    // `max_diff_bytes + MCP_MAX_RESULT_BYTES` and its diff is truncated to `max_diff_bytes`, so
+    // lowering the argument lowers the budget by exactly as much as it lowers the content — the
+    // "re-call NARROWER" instruction #78 shipped sends the caller round a loop with no exit. A wrong
+    // instruction in an error message is what the model improvises from; that is the whole of #81.
+    #[test]
+    fn pr_context_over_budget_does_not_tell_the_caller_to_narrow() {
+        let too_big = FakeExec {
+            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
+            ..FakeExec::ok()
+        };
+        let t = text(
+            &too_big
+                .handle(&call(
+                    "pr_context",
+                    json!({"pr": "o/r#1", "max_diff_bytes": 1_000}),
+                ))
+                .unwrap(),
+        );
+        assert!(
+            !t.contains("NARROWER"),
+            "no argument narrows a pr_context: {t}"
+        );
+        assert!(
+            t.contains("NO argument makes this call smaller"),
+            "the refusal says so outright: {t}"
+        );
+        assert!(
+            t.contains("record NO verdict"),
+            "and names the only honest move left: {t}"
+        );
+        // A state-load's advice is unchanged and still actionable.
+        let load = text(&too_big.handle(&call("unvetted", json!({}))).unwrap());
+        assert!(load.contains("Re-call NARROWER: lower `limit`."), "{load}");
+    }
+
+    // #81, link 2 of the wrong-tree chain. `pr_checkout`'s contract is "a working tree at path P";
+    // when it cannot, the caller must meet a typed refusal, not a sentence it can reason around. The
+    // transport half was already right (an `Err` from exec becomes `isError: true` — the live trace
+    // of 2026-07-27 shows `is_error: True` on both failed calls), and what was NOT right is that the
+    // text was a bare `gh … failed: fatal: cannot set up tracking information`: a git message with no
+    // statement of what the caller now has, and no instruction. This pins BOTH halves together,
+    // because either alone is what the vetter improvised past.
+    #[test]
+    fn a_failed_checkout_is_an_error_carrying_the_do_not_substitute_instruction() {
+        let f = FakeExec::failing(&checkout_failure_error(
+            "rainlanguage/rain.factory#47",
+            "/home/gildlab/code/vet-rain.factory-47",
+            "git fetch failed: could not read refs/pull/47/head",
+        ));
+        let resp = f
+            .handle(&call(
+                "pr_checkout",
+                json!({"pr": "rainlanguage/rain.factory#47"}),
+            ))
+            .unwrap();
+        assert!(
+            is_error(&resp),
+            "a checkout that produced no tree is not a successful call"
+        );
+        let t = text(&resp);
+        assert!(t.contains("There is NO checkout"), "{t}");
+        assert!(t.contains("Do NOT search the filesystem"), "{t}");
+        assert!(t.contains("record NO verdict"), "{t}");
+        // No path is offered, so nothing in the result can be read as "the tree is over there".
+        assert!(!t.contains("vet-rain.factory-dep"), "{t}");
+    }
+
     #[test]
     fn an_effect_failure_is_reported_not_swallowed() {
         let f = FakeExec::failing("error: `gh pr diff o/r#1` failed");
@@ -13190,5 +13542,436 @@ mod mcp_tests {
         assert_eq!(human_bytes(1536), "1.5 KB");
         assert_eq!(human_bytes(1024 * 1024), "1.0 MB");
         assert_eq!(human_bytes(195 * 1024 * 1024 * 1024), "195.0 GB");
+    }
+
+    // #81: a `vet-*` checkout is reclaimed by the sweep even though its PR is open, end to end
+    // through the real filesystem — `gc_reclaims_a_stale_vet_checkout_whose_pr_is_still_open` pins
+    // the decision, this pins that the sweep applies it to a directory `pr_checkout` would create.
+    // The clone here has NO remote, so `resolve_pr_state` cannot answer and the OLD code fell to the
+    // 30-day no-PR backstop; against real GitHub it answered "open PR" and kept it forever. Either
+    // way the directory survived, and either way it must not now.
+    #[test]
+    fn the_sweep_reclaims_a_leaked_vet_checkout_but_not_a_producer_clone() {
+        let outer = tmp_root("sweep-vet");
+        // The upstream lives OUTSIDE the swept root, so the sweep sees only the two clones.
+        let up = outer.join("upstream");
+        let root = outer.join("root");
+        std::fs::create_dir_all(&up).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let rs = root.to_string_lossy().to_string();
+        if git_run(&up, &["init", "-q", "-b", "main"]).is_err() {
+            let _ = std::fs::remove_dir_all(&outer);
+            panic!("git is required to run this test");
+        }
+        let id = ["-c", "user.email=t@t", "-c", "user.name=t"];
+        std::fs::write(up.join("src.sol"), "contract C {}").unwrap();
+        git_run(&up, &["add", "-A"]).unwrap();
+        let mut c = id.to_vec();
+        c.extend_from_slice(&["-c", "commit.gpgsign=false", "commit", "-qm", "the PR head"]);
+        git_run(&up, &c).unwrap();
+
+        // A leaked audit checkout: a clean clone whose commit is on origin — exactly what
+        // `pr_checkout` leaves behind when the run dies before `clone_release`.
+        let leaked = root.join("vet-rain.factory-47");
+        git_run(
+            std::path::Path::new("."),
+            &[
+                "clone",
+                "-q",
+                &format!("file://{}", up.display()),
+                &leaked.to_string_lossy(),
+            ],
+        )
+        .unwrap();
+        // Age it past the vet cap. The dir's mtime is what `clone_age_days` reads.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 86_400);
+        filetime_set(&leaked, old);
+
+        // A producer work clone of the same age, holding one commit that exists only here.
+        let work = root.join("rain.factory-46");
+        git_run(
+            std::path::Path::new("."),
+            &[
+                "clone",
+                "-q",
+                &format!("file://{}", up.display()),
+                &work.to_string_lossy(),
+            ],
+        )
+        .unwrap();
+        std::fs::write(work.join("fix.sol"), "contract Fix {}").unwrap();
+        git_run(&work, &["add", "-A"]).unwrap();
+        let mut c = id.to_vec();
+        c.extend_from_slice(&["-c", "commit.gpgsign=false", "commit", "-qm", "wip"]);
+        git_run(&work, &c).unwrap();
+        filetime_set(&work, old);
+
+        let recs = gc_clones_sweep(&rs, 30, false, &mut |_| {}).unwrap();
+        let outcome = |n: &str| {
+            recs.iter()
+                .find(|r| r.name == n)
+                .map(|r| (r.outcome, r.reason.clone()))
+                .unwrap_or(("missing", String::new()))
+        };
+        assert_eq!(
+            outcome("vet-rain.factory-47"),
+            ("deleted", "vet checkout, idle 3d".to_string())
+        );
+        assert!(!leaked.exists(), "the leaked audit checkout is gone");
+        // The producer clone holds a commit on no remote — unpushed work, kept whatever its age.
+        assert_eq!(
+            outcome("rain.factory-46"),
+            ("kept", "1 unpushed commit(s)".to_string())
+        );
+        assert!(work.exists(), "a clone holding work is never touched");
+        let _ = std::fs::remove_dir_all(&outer);
+    }
+
+    /// Backdate a directory's mtime. No `filetime` crate here, so this shells out to `touch` —
+    /// available wherever `git` is, and only ever pointed at a temp dir this test made.
+    fn filetime_set(p: &std::path::Path, t: std::time::SystemTime) {
+        let secs = t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let out = std::process::Command::new("touch")
+            .args(["-d", &format!("@{secs}")])
+            .arg(p)
+            .status()
+            .expect("touch");
+        assert!(out.success());
+    }
+}
+
+// ─── pr_checkout: the audit lens's working tree ──────────────────────────────
+//
+// These drive REAL `git` against a REAL local repository over `file://`, because the bug in #81 is a
+// property of git's refspec handling in a shallow clone — a stub would have asserted our belief
+// about git rather than what git does. Nothing here touches the network: the "upstream" is a
+// directory, and `refs/pull/<n>/head` is written into it with `update-ref` exactly as GitHub
+// publishes it.
+#[cfg(test)]
+mod pr_checkout_tests {
+    use super::{
+        checkout_branch, checkout_dir, checkout_failure_error, checkout_pr_head, git_out, git_run,
+        local_clone_state, pr_checkout_at, pr_head_refspec,
+    };
+
+    fn tmp_root(tag: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("prr-checkout-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn commit(dir: &std::path::Path, msg: &str) -> String {
+        git_run(dir, &["add", "-A"]).unwrap();
+        git_run(
+            dir,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                msg,
+            ],
+        )
+        .unwrap();
+        git_out(dir, &["rev-parse", "HEAD"]).unwrap()
+    }
+
+    /// An "upstream" whose PR head is published ONLY at `refs/pull/<n>/head` — the shape a FORK PR
+    /// has, and the shape a same-repo PR has as far as a single-branch shallow clone can see.
+    /// Returns (upstream path, PR head sha).
+    fn upstream(root: &std::path::Path, num: u64) -> (std::path::PathBuf, String) {
+        let up = root.join("upstream");
+        std::fs::create_dir_all(&up).unwrap();
+        git_run(&up, &["init", "-q", "-b", "main"]).expect("git is required to run this test");
+        std::fs::write(up.join("base.txt"), "base").unwrap();
+        let base = commit(&up, "base");
+        git_run(&up, &["checkout", "-q", "-b", "pr-head"]).unwrap();
+        std::fs::write(up.join("only-in-the-pr.sol"), "contract Reviewed {}").unwrap();
+        let head = commit(&up, "the PR commit");
+        git_run(&up, &["checkout", "-q", "main"]).unwrap();
+        git_run(
+            &up,
+            &["update-ref", &format!("refs/pull/{num}/head"), &head],
+        )
+        .unwrap();
+        assert_ne!(base, head);
+        (up, head)
+    }
+
+    /// The clone `pr_checkout` makes: `--depth 1`, which is what leaves
+    /// `remote.origin.fetch = +refs/heads/main:refs/remotes/origin/main`.
+    fn shallow_clone(up: &std::path::Path, dest: &std::path::Path) {
+        git_run(
+            std::path::Path::new("."),
+            &[
+                "clone",
+                "-q",
+                "--depth",
+                "1",
+                &format!("file://{}", up.display()),
+                &dest.to_string_lossy(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            git_out(dest, &["config", "--get", "remote.origin.fetch"]).unwrap(),
+            "+refs/heads/main:refs/remotes/origin/main",
+            "the fixture must reproduce the SINGLE-BRANCH refspec a shallow clone gets — that is the \
+             whole precondition of #81"
+        );
+    }
+
+    // THE regression. On a shallow clone the old path (`gh pr checkout`, i.e. fetch the head with no
+    // destination refspec then `git checkout --track origin/<head>`) died with "cannot set up
+    // tracking information; starting point 'origin/<head>' is not a branch" — for EVERY same-repo
+    // PR, so the audit lens never ran at all.
+    #[test]
+    fn a_shallow_clone_gets_the_pr_head_checked_out() {
+        let root = tmp_root("head");
+        let (up, head) = upstream(&root, 47);
+        let clone = root.join("vet-upstream-47");
+        shallow_clone(&up, &clone);
+
+        assert_eq!(checkout_pr_head(&clone, 47).unwrap(), head);
+        assert_eq!(git_out(&clone, &["rev-parse", "HEAD"]).unwrap(), head);
+        assert_eq!(
+            git_out(&clone, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(),
+            checkout_branch(47)
+        );
+        // The audit lens reads FILES, so the working tree — not just the ref — must be the PR's.
+        assert_eq!(
+            std::fs::read_to_string(clone.join("only-in-the-pr.sol")).unwrap(),
+            "contract Reviewed {}"
+        );
+        assert_eq!(
+            git_out(&clone, &["status", "--porcelain"]).unwrap(),
+            "",
+            "a checkout that leaves dirt would make the clone unreleasable"
+        );
+        // Still shallow: the fix must not have traded #81 for the disk-full outage.
+        assert_eq!(
+            git_out(&clone, &["rev-parse", "--is-shallow-repository"]).unwrap(),
+            "true"
+        );
+        assert_eq!(
+            git_out(&clone, &["rev-list", "--count", "HEAD"]).unwrap(),
+            "1"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The second, quieter half of the leak. `gh pr checkout` puts a FORK PR's head on a plain LOCAL
+    // branch, so `rev-list HEAD --not --remotes` counts the whole branch as unpushed and BOTH
+    // `clone_release` and the sweep refuse the clone forever. Fetching into `refs/remotes/origin/pr/<n>`
+    // is what makes the checked-out commit provably pushed — and therefore reclaimable.
+    #[test]
+    fn the_checked_out_head_counts_as_pushed_so_the_clone_stays_reclaimable() {
+        let root = tmp_root("pushed");
+        let (up, _head) = upstream(&root, 12);
+        let clone = root.join("vet-upstream-12");
+        shallow_clone(&up, &clone);
+        checkout_pr_head(&clone, 12).unwrap();
+
+        let s = local_clone_state(&clone);
+        assert_eq!(
+            s.unpushed,
+            Some(0),
+            "the PR head must be reachable from a remote-tracking ref, or the clone is immortal"
+        );
+        assert_eq!(s.dirt.as_deref(), Some(""));
+        assert!(super::release_decision(&s, false).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The refspec is load-bearing in two independent ways; both are asserted rather than implied.
+    #[test]
+    fn the_refspec_names_the_pull_ref_and_an_explicit_remote_destination() {
+        let r = pr_head_refspec(47);
+        assert_eq!(r, "+refs/pull/47/head:refs/remotes/origin/pr/47");
+        assert!(
+            r.contains("refs/pull/"),
+            "a heads-based refspec cannot see a fork PR's head at all"
+        );
+        assert!(
+            r.split(':').nth(1).unwrap().starts_with("refs/remotes/"),
+            "no destination (or a non-remote one) is what makes the head read as unpushed"
+        );
+    }
+
+    // THE wrong-tree defect. `gh repo clone --depth 1` SUCCEEDED and only the checkout failed, so the
+    // old code returned an error while leaving `vet-<repo>-<n>` on disk holding the DEFAULT BRANCH —
+    // a directory named after this PR, at the exact path the audit lens looks for, containing code
+    // the PR never touched. (The live artifact: /home/gildlab/code/vet-rain.factory-47, HEAD 832e457
+    // = main, while rain.factory#47's head is 58a938e.) The postcondition is now binary: the PR head,
+    // or nothing.
+    #[test]
+    fn a_failed_checkout_leaves_no_directory_at_the_path_the_audit_lens_would_read() {
+        let root = tmp_root("teardown");
+        let (up, _) = upstream(&root, 47);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        // The clone exists and is valid — as it does after `gh repo clone` succeeds. Only the PR ref
+        // is missing (PR 99 was never opened), so the fetch fails exactly where the old one did.
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 99);
+        let path = std::path::PathBuf::from(&dir);
+        shallow_clone(&up, &path);
+        assert!(
+            path.join("base.txt").exists(),
+            "the wrong tree IS on disk here"
+        );
+
+        let e = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 99).unwrap_err();
+        assert!(
+            !path.exists(),
+            "the failed checkout must not leave a tree at {dir}"
+        );
+        // …and the error is the one that tells the caller not to go looking for a replacement.
+        assert!(e.contains("There is NO checkout"), "{e}");
+        assert!(e.contains("record NO verdict"), "{e}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The chain #81 observed ran: checkout fails → the vetter searches → a `vet-*` leftover from an
+    // unrelated run answers the search → the audit lens enumerates the WRONG repo's sources. Two
+    // links are closed here. The tool never names a directory it did not create (so nothing in its
+    // output can be mistaken for one), and its failure message names the exact wrong answer a
+    // filesystem search returns. The third link — that the leftover exists at all — is
+    // `the_sweep_reclaims_a_leaked_vet_checkout_but_not_a_producer_clone`; the fourth is the vetter
+    // prompt's "never search for a checkout".
+    #[test]
+    fn a_leftover_vet_directory_is_never_offered_as_a_substitute_tree() {
+        let root = tmp_root("leftover");
+        let (up, _) = upstream(&root, 47);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        // Exactly the observed leftover: another run's checkout, full of plausible sources.
+        let leftover = work.join("vet-rain.factory-dep");
+        std::fs::create_dir_all(leftover.join("src")).unwrap();
+        std::fs::write(
+            leftover.join("src/LibCloneFactoryDeploy.sol"),
+            "// other PR",
+        )
+        .unwrap();
+
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 99);
+        shallow_clone(&up, std::path::Path::new(&dir));
+        let e = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 99).unwrap_err();
+
+        assert!(
+            !e.contains("vet-rain.factory-dep"),
+            "the tool must not hand back a path it did not create: {e}"
+        );
+        assert!(
+            e.contains("Do NOT search the filesystem"),
+            "the refusal forbids the move that produced the wrong-tree verdict: {e}"
+        );
+        assert!(
+            e.contains("some OTHER PR's checkout"),
+            "…and names what a search would actually return: {e}"
+        );
+        // The leftover is another run's business: refusing must not delete it either.
+        assert!(leftover.join("src/LibCloneFactoryDeploy.sol").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A reused checkout must end at the PR head whatever state the last run left it in — the tool's
+    // contract is the tree, not a best effort at it. Without `-f`, a modified file makes `checkout`
+    // refuse, which under the postcondition above would DELETE a clone that only needed resetting.
+    #[test]
+    fn a_reused_checkout_is_reset_to_the_pr_head_even_when_the_tree_was_modified() {
+        let root = tmp_root("reuse");
+        let (up, head) = upstream(&root, 47);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 47);
+        let path = std::path::PathBuf::from(&dir);
+        shallow_clone(&up, &path);
+
+        let first = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 47).unwrap();
+        assert_eq!(first["reused"], serde_json::json!(true));
+        assert_eq!(first["head"], serde_json::json!(head));
+
+        std::fs::write(path.join("only-in-the-pr.sol"), "contract Tampered {}").unwrap();
+        let again = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 47).unwrap();
+        assert_eq!(again["head"], serde_json::json!(head));
+        assert_eq!(
+            std::fs::read_to_string(path.join("only-in-the-pr.sol")).unwrap(),
+            "contract Reviewed {}",
+            "the reused clone was reset to the PR head, not left half-modified"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The vetter burned four Glob calls — two of them 20-second ripgrep timeouts against
+    // /home/gildlab/code — looking for a directory the tool already knew. The success value carries
+    // the path AND the sha, so "locate my own tool's output" is not a step that exists.
+    #[test]
+    fn a_successful_checkout_returns_the_path_and_the_sha_it_produced() {
+        let root = tmp_root("returns");
+        let (up, head) = upstream(&root, 47);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 47);
+        shallow_clone(&up, std::path::Path::new(&dir));
+
+        let out = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 47).unwrap();
+        assert_eq!(out["dir"], serde_json::json!(dir));
+        assert_eq!(out["head"], serde_json::json!(head));
+        assert_eq!(out["branch"], serde_json::json!(checkout_branch(47)));
+        assert_eq!(out["pr"], serde_json::json!("o/upstream#47"));
+        // The sha is what lets the caller cross-check the tree against `pr_context.headRefOid`
+        // instead of trusting that the right thing happened.
+        assert_eq!(
+            git_out(std::path::Path::new(&dir), &["rev-parse", "HEAD"]).unwrap(),
+            out["head"].as_str().unwrap()
+        );
+        // The note tells the reader the same thing the prompt does, so the rule survives a prompt
+        // edit that forgets it.
+        let note = out["note"].as_str().unwrap();
+        assert!(note.contains("ONLY tree"), "{note}");
+        assert!(note.contains("clone_release"), "{note}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The one failure that must NOT delete: something that is not our clone sits at the path. The
+    // teardown exists to remove a tree WE made; turning it into "delete whatever is in the way"
+    // would be a far worse bug than the one it fixes.
+    #[test]
+    fn a_non_clone_at_the_checkout_path_is_refused_without_being_touched() {
+        let root = tmp_root("occupied");
+        let work = root.join("work");
+        let dir = checkout_dir(&work.to_string_lossy(), "o/upstream", 47);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(format!("{dir}/irreplaceable.txt"), "everything").unwrap();
+
+        let e = pr_checkout_at(&work.to_string_lossy(), "o/upstream", 47).unwrap_err();
+        assert!(e.contains("not a git clone"), "{e}");
+        assert!(e.contains("nothing was changed"), "{e}");
+        assert_eq!(
+            std::fs::read_to_string(format!("{dir}/irreplaceable.txt")).unwrap(),
+            "everything"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The message is the whole of link 2→3, so its content is pinned rather than left to prose drift.
+    #[test]
+    fn the_failure_message_states_the_postcondition_and_the_only_two_next_moves() {
+        let m = checkout_failure_error("o/r#47", "/work/vet-r-47", "git fetch failed: no such ref");
+        assert!(m.starts_with("error:"), "{m}");
+        assert!(m.contains("o/r#47") && m.contains("/work/vet-r-47"), "{m}");
+        assert!(
+            m.contains("git fetch failed: no such ref"),
+            "the cause survives: {m}"
+        );
+        assert!(m.contains("does not exist"), "{m}");
+        assert!(m.contains("Re-call `pr_checkout` ONCE"), "{m}");
+        assert!(m.contains("record NO verdict"), "{m}");
     }
 }

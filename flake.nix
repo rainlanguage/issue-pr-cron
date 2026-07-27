@@ -48,6 +48,12 @@
           version = "0.1.0";
           inherit src;
           cargoLock.lockFile = ./Cargo.lock;
+          # `git` is needed by the CHECK phase only, so it stays out of the runtime closure. The
+          # clone-lifecycle and `pr_checkout` tests drive real repositories through real `git`
+          # invocations against `file://` remotes — the shallow-clone behaviour of #81 is a property
+          # of git's refspec handling, and a fake would have asserted our own belief about it rather
+          # than what git does. No network: every fixture is local.
+          nativeCheckInputs = [ pkgs.git ];
         };
 
         # Lift a repo script into a real package: nix builds its PATH from runtimeInputs,

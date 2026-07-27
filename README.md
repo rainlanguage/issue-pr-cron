@@ -104,7 +104,7 @@ server is the vetter's **only** tool surface.
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list |
 | `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                           |
-| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source                                                                                                                       |
+| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                              |
 | `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                                                                                                |
 | `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                             |
 | `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                               |
@@ -161,6 +161,43 @@ for unresolved threads (and their `unresolvedThreads` counts) are the only
 skipped rows carrying information the vetter can act on, and making that
 accounting depend on an optional argument is exactly how it went missing.
 
+### The audit lens's working tree: the PR head, or nothing
+
+`pr_checkout` shallow-clones the repo and fetches **`refs/pull/<n>/head`** into
+`refs/remotes/origin/pr/<n>`, then checks that out as `pr-<n>`. Three properties
+follow, and each fixes a distinct failure:
+
+- **It works on a shallow clone.** `gh pr checkout` does not: a `--depth 1`
+  clone's fetch refspec is `+refs/heads/<default>:refs/remotes/origin/<default>`,
+  so a same-repo PR's head arrives as a bare fetched ref and
+  `git checkout --track` refuses it — _"cannot set up tracking information;
+  starting point 'origin/<head>' is not a branch"_ — for **every** same-repo PR,
+  i.e. every PR that needed the audit lens (#81).
+- **It stays shallow.** The obvious repair — widen the refspec and keep
+  `gh pr checkout` — makes the follow-up fetch deepen the clone to nearly full
+  history. Measured on raindex: **156 MiB** of pack against **3.9 MiB** for the
+  pull-ref fetch, with `--depth 1 --no-single-branch` at 78 MiB and a full clone
+  at 180 MiB. Disk-full silently killed both crons for ~17h (#56), so the fix
+  that costs nothing over the shallow clone already intended is the only one that
+  is not a trade.
+- **The head is on a remote-tracking ref**, which is what makes the commit count
+  as pushed. `gh pr checkout` puts a **fork** PR's head on a plain local branch,
+  so `rev-list HEAD --not --remotes` reports the whole branch as unpushed and both
+  `clone_release` and the sweep refuse the clone forever.
+
+**Its postcondition is binary: the PR head at `dir`, or no `dir` at all.** The
+old code returned an error while leaving the directory behind, because
+`gh repo clone` had succeeded and only the checkout failed — so a directory named
+after the PR sat at exactly the path the audit lens looks for, holding the
+**default branch**. On 2026-07-27 the vetter met that failure, went looking for a
+tree, found the leftover `vet-rain.factory-dep` from an unrelated run, and began
+enumerating its Solidity sources as `rain.factory#47`'s. The chain is broken in
+four places: the checkout works; a failed one deletes what it made; the failure is
+an `isError` that names the wrong answer a filesystem search returns and forbids
+it; and the sweep reclaims the leftovers a search would otherwise find. The
+success value carries the `dir` **and** the `head` sha, so locating (or
+recognising) the tool's own output is not a step that exists.
+
 **What the vetter therefore does not verify.** With no Bash it cannot build, and
 cannot execute anything in the clone `pr_checkout` gives it — it reads source,
 it does not run it. Two checks live elsewhere as a result, and the vetter prompt
@@ -212,6 +249,18 @@ an unknown push state); uncommitted changes refuse too, overridable with
 `discard_uncommitted` once the caller has confirmed the dirt is build output.
 `clone_gc` remains the unattended backstop with the old, deliberately
 conservative rule — it deletes only what it can prove is finished.
+
+**Audit-lens checkouts are the one exception, and they had to be.** A `vet-*`
+clone is the PR the vetter is **judging**, so its PR is always OPEN, and
+"open PR → active work" made every leaked checkout immortal: 83 of them, 349 MB,
+under a sweep that had been running nightly the whole time (#81). They are now
+disposable on **age alone** — one day, ~12× the vetter's own 2h `REVIEW_MAXTIME`
+ceiling, independent of `--max-age-days`. The dirt/unpushed guards still run
+first, so "never delete something that holds work" is unchanged; what changed is
+that a read-only copy of a commit already on GitHub stopped being treated as
+work. This sweep is the **only** thing that reclaims a leaked checkout, and it
+has to be: a run that dies is exactly the run that leaks, so a `clone_release`
+on the way out can never be the mechanism.
 
 The machine has **no dead-ends**: every state has an exit back into the
 lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle
@@ -441,6 +490,16 @@ reads `cron.env` for `ORG` / `ORGS` / `PR_ASSIGNEE`.
   every evaluation, and the install dir accumulates gitignored work clones and
   traces (~5GB against ~1MB of tracked files). CI asserts the two refs produce
   identical derivations, so the cheap one is always safe.
+
+  The **disk sweep** gets its own line, at midnight — the one run-free gap, since
+  every producer/vetter tick is on an odd hour. It must name **every** clone
+  root: clones land in `WORK_DIR`, and `vet-*` checkouts also accumulate in the
+  install dir, which a `WORK_DIR`-only sweep never looks at (that omission is
+  where 83 leaked checkouts and 349 MB sat, #81).
+
+  ```cron
+  0 0 * * * PATH=$HOME/.nix-profile/bin:/usr/bin:/bin nix run git+file://<install-dir>#pr-review-report -- gc <work-dir> <install-dir> >> <install-dir>/gc.log 2>&1
+  ```
 - **Pause:** `touch DISABLED` · **Resume:** `rm DISABLED`
 - **Watch:** `tail -f campaign.log` · **Run now:**
   `CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run`
