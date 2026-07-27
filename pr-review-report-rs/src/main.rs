@@ -725,9 +725,21 @@ fn run_metrics(content: &str) -> RunMetrics {
     m
 }
 
-/// `--run-metrics <trace.jsonl>`: print the run's metrics (startup overhead, duration, tokens,
-/// cost) as one JSON line — the input to a committed metrics/runs.jsonl and the #7 dashboard.
-fn run_metrics_mode(path: &str) -> i32 {
+/// `run-metrics <trace.jsonl> [--run-id --role --model --exit-code]`: print the run's metrics
+/// (startup overhead, duration, tokens, cost) as one JSON line — the input to a committed
+/// metrics/runs.jsonl and the #7 dashboard.
+///
+/// With the run-identity flags it emits the FULL runs.jsonl record. The runners used to pipe this
+/// through `jq '. + {runId:…, role:…, model:…, exitCode:…, outcome:…}'`; folding the merge in here
+/// means the record's shape lives in one tested place, and `outcome` is derived by
+/// [`classify_run`] rather than by grepping the trace in bash.
+fn run_metrics_mode(
+    path: &str,
+    run_id: Option<&str>,
+    role: Option<&str>,
+    model: Option<&str>,
+    exit_code: Option<i32>,
+) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
@@ -736,7 +748,7 @@ fn run_metrics_mode(path: &str) -> i32 {
         }
     };
     let m = run_metrics(&content);
-    let doc = serde_json::json!({
+    let mut doc = serde_json::json!({
         "trace": path,
         "toolCalls": m.tool_calls,
         "startupToolCalls": m.startup_tool_calls,
@@ -752,7 +764,269 @@ fn run_metrics_mode(path: &str) -> i32 {
         "cacheCreation": m.cache_creation,
         "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
     });
+    // Only enrich when the caller supplied run identity, so a bare `run-metrics <trace>` keeps
+    // emitting exactly the record it always has (the dashboard re-derives history from traces).
+    if let Some(obj) = doc.as_object_mut() {
+        if let Some(run_id) = run_id {
+            obj.insert("runId".into(), serde_json::json!(run_id));
+        }
+        if let Some(role) = role {
+            obj.insert("role".into(), serde_json::json!(role));
+        }
+        if let Some(model) = model {
+            obj.insert("model".into(), serde_json::json!(model));
+        }
+        if let Some(rc) = exit_code {
+            obj.insert("exitCode".into(), serde_json::json!(rc));
+            obj.insert(
+                "outcome".into(),
+                serde_json::json!(classify_run(&content, rc).as_str()),
+            );
+        }
+    }
     println!("{}", serde_json::to_string(&doc).unwrap());
+    0
+}
+
+/// How a run ended. This is a TYPE, not a grep over the trace bytes.
+///
+/// The runners used to decide model-fallback with
+/// `grep -qiE '"api_error_status": ?429|reached your [^"]*limit|usage limit|session limit'`
+/// across the whole trace AND its stderr sidecar. That matched anywhere — including inside a
+/// tool RESULT quoting an unrelated 429, or a PR body the run happened to read — so an
+/// unaffected model could be skipped for a quota problem that was never ours.
+///
+/// Here the discriminant is structural: only `result` events are consulted, and only their
+/// typed fields. Text is read from `.result` alone (the model's own final message), never from
+/// arbitrary trace bytes.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum RunOutcome {
+    Ok,
+    /// The model is quota/usage limited — the ONLY outcome that should advance model fallback.
+    QuotaLimited,
+    Error,
+}
+
+impl RunOutcome {
+    /// The wire word written into metrics/runs.jsonl. `session-limit` is kept verbatim: the
+    /// committed history already uses it and the dashboard reads it.
+    fn as_str(self) -> &'static str {
+        match self {
+            RunOutcome::Ok => "ok",
+            RunOutcome::QuotaLimited => "session-limit",
+            RunOutcome::Error => "error",
+        }
+    }
+}
+
+/// True when a `result` event says *this run* was refused for quota/usage limits.
+///
+/// Checked in order of decreasing structure:
+///   1. `api_error_status` == 429 (typed, unambiguous — a real HTTP status field),
+///   2. `subtype` naming a limit (the SDK's own enumerated reason),
+///   3. the `result` string itself, which is the model's final message and the only place a
+///      limit is reported in prose. Scoped to that one field, so a 429 quoted inside a tool
+///      result or a fetched page can never trip it.
+fn result_event_is_quota_limited(ev: &Value) -> bool {
+    if ev.get("type").and_then(|t| t.as_str()) != Some("result") {
+        return false;
+    }
+    // 1. Typed status field. Accept both the numeric and stringified spellings the SDK has used.
+    if let Some(status) = ev.get("api_error_status") {
+        let is_429 = status.as_i64() == Some(429)
+            || status.as_str().map(|s| s.trim() == "429").unwrap_or(false);
+        if is_429 {
+            return true;
+        }
+    }
+    // 2. Enumerated subtype.
+    if let Some(sub) = ev.get("subtype").and_then(|s| s.as_str()) {
+        let sub = sub.to_ascii_lowercase();
+        if sub.contains("usage_limit") || sub.contains("session_limit") || sub.contains("rate_limit")
+        {
+            return true;
+        }
+    }
+    // 3. The model's own final message, and nothing else.
+    if let Some(text) = ev.get("result").and_then(|r| r.as_str()) {
+        let t = text.to_ascii_lowercase();
+        if t.contains("usage limit") || t.contains("session limit") || t.contains("reached your") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Classify a whole trace. `exit_code` is the runner's own observation of the claude process, so a
+/// process that died without ever emitting a `result` event is still an error rather than an "ok".
+fn classify_run(trace: &str, exit_code: i32) -> RunOutcome {
+    let quota = trace
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .any(|ev| result_event_is_quota_limited(&ev));
+    if quota {
+        return RunOutcome::QuotaLimited;
+    }
+    if exit_code != 0 {
+        return RunOutcome::Error;
+    }
+    RunOutcome::Ok
+}
+
+/// `trace-outcome <trace> --exit-code <n>`: print the typed outcome word and exit 0.
+///
+/// The runners' model-fallback loop consumes this instead of grepping. Kept separate from
+/// `run-metrics` because the loop must decide whether to try the next model *before* the run's
+/// metrics line is assembled.
+fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
+    // An unreadable/absent trace is not itself an error to report on: the runner already
+    // distinguishes "no event stream" separately. Treat it as an empty trace.
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    println!("{}", classify_run(&content, exit_code).as_str());
+    0
+}
+
+/// One `{ts, counts}` rollup line for human-queue-history.jsonl, from a human-queue.json snapshot.
+///
+/// Replaces `jq -c --arg ts "$ts" '{ts: $ts, counts: .counts}'` in refresh-human-queue.sh and the
+/// per-commit `select(.counts != null) | …` in backfill-human-queue-history.sh — one implementation
+/// for the live append and the historical backfill, so the two can never drift into different line
+/// shapes for the same file.
+///
+/// Returns None when the snapshot has no `counts` (the backfill's `select`): early commits of
+/// human-queue.json predate the key, and those commits must be skipped, not emitted as null.
+fn queue_history_line(snapshot: &str, ts: &str) -> Option<String> {
+    let doc: Value = serde_json::from_str(snapshot).ok()?;
+    let counts = doc.get("counts")?;
+    if counts.is_null() {
+        return None;
+    }
+    let line = serde_json::json!({ "ts": ts, "counts": counts });
+    Some(serde_json::to_string(&line).unwrap())
+}
+
+/// `queue-history-line [<snapshot.json>] --ts <iso8601>`: emit the rollup line, or nothing.
+///
+/// Reads stdin when no path is given, because the backfill feeds it `git show <sha>:human-queue.json`
+/// per commit rather than a file on disk.
+fn queue_history_line_mode(path: Option<&str>, ts: &str) -> i32 {
+    let snapshot = match path {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("error: cannot read snapshot {p}: {e}");
+                return 2;
+            }
+        },
+        None => {
+            use std::io::Read;
+            let mut buf = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+                eprintln!("error: cannot read snapshot from stdin: {e}");
+                return 2;
+            }
+            buf
+        }
+    };
+    // No counts => print nothing and succeed. The backfill loop appends our stdout directly, so a
+    // skipped commit must contribute zero bytes rather than a `null` line.
+    if let Some(line) = queue_history_line(&snapshot, ts) {
+        println!("{line}");
+    }
+    0
+}
+
+/// Render one trace event as the human-readable log line the runners tee into `$LOG`.
+///
+/// This is the jq distiller from campaign-run.sh/review-run.sh, moved into the binary so both
+/// runners share one implementation and so the truncation widths are covered by tests rather than
+/// by an 8-line jq program duplicated in two shell scripts.
+///
+/// Widths and glyphs are preserved exactly: tool calls and assistant text clip to 200 characters,
+/// result lines to 800. Clipping is by CHARACTER, matching jq's `.[0:200]` (which slices
+/// codepoints), so a multi-byte glyph is never cut in half.
+fn distill_event(ev: &Value) -> Vec<String> {
+    fn flatten(s: &str, limit: usize) -> String {
+        s.replace('\n', " ").chars().take(limit).collect()
+    }
+    let mut out = Vec::new();
+    match ev.get("type").and_then(|t| t.as_str()) {
+        Some("assistant") => {
+            let content = ev
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array());
+            for item in content.into_iter().flatten() {
+                match item.get("type").and_then(|t| t.as_str()) {
+                    Some("tool_use") => {
+                        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        // Same precedence as the jq: the command, else the description, else the
+                        // whole input rendered as JSON.
+                        let input = item.get("input");
+                        let detail = input
+                            .and_then(|i| i.get("command"))
+                            .and_then(|c| c.as_str())
+                            .map(|s| s.to_string())
+                            .or_else(|| {
+                                input
+                                    .and_then(|i| i.get("description"))
+                                    .and_then(|d| d.as_str())
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| match input {
+                                Some(i) => serde_json::to_string(i).unwrap_or_default(),
+                                None => String::new(),
+                            });
+                        out.push(format!("  ▸ {}  {}", name, flatten(&detail, 200)));
+                    }
+                    Some("text") => {
+                        let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                        out.push(format!("  · {}", flatten(text, 200)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Some("result") => {
+            let subtype = ev
+                .get("subtype")
+                .and_then(|s| s.as_str())
+                .unwrap_or("done")
+                .to_ascii_uppercase();
+            let result = ev.get("result").and_then(|r| r.as_str()).unwrap_or("");
+            out.push(format!("  ⟹ {}: {}", subtype, flatten(result, 800)));
+        }
+        _ => {}
+    }
+    out
+}
+
+/// `distill-trace`: stream stream-json on stdin, write the human log lines on stdout.
+///
+/// Flushed per line, matching jq's `--unbuffered`: the runner tees this into the live log while the
+/// run is still going, and a human watching `tail -f` must see progress rather than a block at exit.
+/// Unparseable lines are skipped rather than fatal — the trace is written by another process and a
+/// torn final line must not lose the whole distillation.
+fn distill_trace_mode() -> i32 {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(ev) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        for out in distill_event(&ev) {
+            if writeln!(stdout, "{out}").is_err() {
+                return 0; // downstream closed (the runner's `|| cat >/dev/null` path)
+            }
+        }
+        let _ = stdout.flush();
+    }
     0
 }
 
@@ -5459,7 +5733,40 @@ enum Cmd {
         nix_threshold: u8,
     },
     /// Emit one enriched per-run metrics JSON line distilled from a stream-json trace.
-    RunMetrics { trace: String },
+    RunMetrics {
+        trace: String,
+        /// Run id (the runner's UTC timestamp). Enriches the record with `runId`.
+        #[arg(long)]
+        run_id: Option<String>,
+        /// producer | vetter.
+        #[arg(long)]
+        role: Option<String>,
+        /// The model that actually ran (after any fallback).
+        #[arg(long)]
+        model: Option<String>,
+        /// claude's exit code. Also selects `outcome`, classified from the trace.
+        #[arg(long)]
+        exit_code: Option<i32>,
+    },
+    /// Print the typed outcome of a run trace: `ok`, `session-limit`, or `error`.
+    /// The runners' model-fallback loop branches on this instead of grepping the trace.
+    TraceOutcome {
+        trace: String,
+        /// claude's exit code, so a run that died without a result event classifies as `error`.
+        #[arg(long, default_value_t = 0)]
+        exit_code: i32,
+    },
+    /// Emit one `{ts, counts}` rollup line from a human-queue.json snapshot (stdin if no path).
+    /// Prints nothing when the snapshot predates the `counts` key.
+    QueueHistoryLine {
+        /// Snapshot path; omit to read stdin.
+        snapshot: Option<String>,
+        /// ISO-8601 timestamp for the line.
+        #[arg(long)]
+        ts: String,
+    },
+    /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
+    DistillTrace,
     /// The producer's whole in-flight worklist in ONE call: own open PRs with CI/failing-checks/
     /// mergeState/threads/closes/markers and a computed next_action. Replaces the hand-rolled startup.
     Worklist {
@@ -6320,7 +6627,24 @@ fn main() {
                 nix_threshold,
             )
         }
-        Cmd::RunMetrics { trace } => run_metrics_mode(&trace),
+        Cmd::RunMetrics {
+            trace,
+            run_id,
+            role,
+            model,
+            exit_code,
+        } => run_metrics_mode(
+            &trace,
+            run_id.as_deref(),
+            role.as_deref(),
+            model.as_deref(),
+            exit_code,
+        ),
+        Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
+        Cmd::QueueHistoryLine { snapshot, ts } => {
+            queue_history_line_mode(snapshot.as_deref(), &ts)
+        }
+        Cmd::DistillTrace => distill_trace_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
         Cmd::FlagBlockedDeploy {
@@ -8748,12 +9072,84 @@ mod cli_tests {
 
     #[test]
     fn run_metrics_trace() {
+        // Bare form is unchanged: the enrichment flags are all optional, so the dashboard's
+        // re-derivation from raw traces keeps working untouched.
         assert_eq!(
             parse(&["prr", "run-metrics", "/path/to/trace.jsonl"]),
             Cmd::RunMetrics {
                 trace: "/path/to/trace.jsonl".to_string(),
+                run_id: None,
+                role: None,
+                model: None,
+                exit_code: None,
             }
         );
+        // The form the runners now use in place of the `| jq '. + {…}'` pipe.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--run-id",
+                "20260727T100743Z",
+                "--role",
+                "producer",
+                "--model",
+                "claude-fable-5",
+                "--exit-code",
+                "0"
+            ]),
+            Cmd::RunMetrics {
+                trace: "/t.jsonl".to_string(),
+                run_id: Some("20260727T100743Z".to_string()),
+                role: Some("producer".to_string()),
+                model: Some("claude-fable-5".to_string()),
+                exit_code: Some(0),
+            }
+        );
+    }
+
+    #[test]
+    fn trace_outcome_cli() {
+        assert_eq!(
+            parse(&["prr", "trace-outcome", "/t.jsonl"]),
+            Cmd::TraceOutcome {
+                trace: "/t.jsonl".to_string(),
+                exit_code: 0,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "trace-outcome", "/t.jsonl", "--exit-code", "124"]),
+            Cmd::TraceOutcome {
+                trace: "/t.jsonl".to_string(),
+                exit_code: 124,
+            }
+        );
+    }
+
+    #[test]
+    fn queue_history_line_cli() {
+        // Path form (refresh-human-queue.sh).
+        assert_eq!(
+            parse(&["prr", "queue-history-line", "/q.json", "--ts", "2026-07-27T10:00:00Z"]),
+            Cmd::QueueHistoryLine {
+                snapshot: Some("/q.json".to_string()),
+                ts: "2026-07-27T10:00:00Z".to_string(),
+            }
+        );
+        // Stdin form (backfill-human-queue-history.sh pipes `git show` into it).
+        assert_eq!(
+            parse(&["prr", "queue-history-line", "--ts", "2026-07-27T10:00:00Z"]),
+            Cmd::QueueHistoryLine {
+                snapshot: None,
+                ts: "2026-07-27T10:00:00Z".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn distill_trace_cli() {
+        assert_eq!(parse(&["prr", "distill-trace"]), Cmd::DistillTrace);
     }
 
     // The pre-conversion `--foo` dispatch forms are gone: clap must REJECT them as unknown args

@@ -9,23 +9,21 @@
 # Idempotent: rewrites the file from scratch each run. Matches the line shape that
 # refresh-human-queue.sh appends going forward.
 #
-# jq comes via `nix shell` like the producer/vetter runners (not on the bare cron PATH);
-# re-exec self inside the shell once so the per-commit loop uses bare jq (one startup,
-# not one per commit).
+# Packaged as a flake output, so `pr-review-report` and `git` are already on PATH from the
+# flake's locked nixpkgs — the old `command -v jq || exec nix shell …` self-re-exec
+# existed only because a bare script could not assume its tools, and is gone.
 set -euo pipefail
-command -v jq >/dev/null 2>&1 || exec nix shell nixpkgs#jq --command "$0" "$@"
 
-DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# $0 is a read-only nix store path now; the repo comes from $CRON_DIR, defaulting to $PWD.
+DIR="${CRON_DIR:-$PWD}"
 out="$DIR/human-queue-history.jsonl"
 : >"$out"
 
 # --reverse => oldest first; %H = commit sha, %ad with iso-strict = ISO-8601 author date.
 git -C "$DIR" log --reverse --date=iso-strict --format='%H %ad' -- human-queue.json |
   while read -r sha ts; do
-    # shellcheck disable=SC2016  # $ts is a jq --arg var (single-quoted jq program), not shell
     git -C "$DIR" show "$sha:human-queue.json" 2>/dev/null |
-      jq -c --arg ts "$ts" 'select(.counts != null) | {ts: $ts, counts: .counts}' \
-        >>"$out" || true
+      pr-review-report queue-history-line --ts "$ts" >>"$out" || true
   done
 
 echo "backfilled $(wc -l <"$out") lines into $out"

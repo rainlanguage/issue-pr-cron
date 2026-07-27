@@ -12,27 +12,38 @@
 # Guardrails: curated allowlist (campaign-settings.json) + the prompt forbids merge/deploy/
 # force-push/issue-close. Concurrency: flock -n so ticks never stack; timeout caps a hung run.
 
-set -uo pipefail
+# This script is packaged as a flake output (`packages.campaign-run`), so nix builds its PATH
+# from the flake's locked nixpkgs. writeShellApplication forces `set -euo pipefail`; errexit is
+# turned back OFF here because this runner is written without it — it checks `rc` explicitly and
+# uses `grep -q … &&` as a conditional, both of which would abort the run under errexit.
+set +o errexit
 
-# --- self-locate: the install dir is wherever this script lives (no hardcoded paths) ---
-DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# --- self-locate: the INSTALL dir (cron.env, prompts, logs, ledgers) ---
+# Not derived from $0 any more: $0 is now a path in the nix store, which is read-only and holds
+# none of the run's state. $CRON_DIR is set by the crontab line; it falls back to the working
+# directory, which is what an interactive `nix run .#campaign-run` from the checkout gets.
+DIR="${CRON_DIR:-$PWD}"
+if [ ! -f "$DIR/campaign-prompt.txt" ]; then
+  echo "campaign-run: no campaign-prompt.txt in '$DIR' — set CRON_DIR to the install dir" >&2
+  exit 1
+fi
 
-# --- environment: cron starts bare. Derive HOME for the invoking user, then nix + PATH. ---
+# --- environment: cron starts bare. Derive HOME for the invoking user. ---
 : "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"
 export HOME
-# cron's env lacks USER/LOGNAME; nix.sh and some tools reference them, and under `set -u`
-# an unbound USER aborts the run before anything logs. Derive them explicitly.
+# cron's env lacks USER/LOGNAME; some tools reference them, and under `set -u` an unbound USER
+# aborts the run before anything logs. Derive them explicitly.
 : "${USER:=$(id -un)}"; export USER
 : "${LOGNAME:=$USER}"; export LOGNAME
-# Flag this as a cron run so the block-nix-wrap-gh PreToolUse hook enforces bare gh
-# (gh is on PATH below) and closes the deny-list nix-wrap bypass — cron-scoped only.
+# Flag this as a cron run so the block-nix-wrap-gh PreToolUse hook enforces bare gh and closes
+# the deny-list nix-wrap bypass — cron-scoped only.
 export RAINIX_CRON_HOOK=1
-export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-# nix.sh is third-party and references unbound vars; relax `set -u` only around it.
-set +u
-# shellcheck disable=SC1091
-[ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
-set -u
+# `claude` is installed by its own npm-based installer into ~/.local/bin and is not a nixpkgs
+# package, so it is the one tool the flake cannot put on PATH. APPENDED, so every tool nix does
+# provide — gh above all, which campaign-settings.json's deny-list is written against — still
+# wins. ~/.nix-profile/bin is deliberately NOT re-added: it put whatever a human last installed
+# ahead of the pinned closure (#76 item 3).
+export PATH="$PATH:$HOME/.local/bin"
 
 # --- deployment config (defaults here; override in ./cron.env) ---
 WORK_DIR="$HOME/code"          # where issue clones are made
@@ -111,25 +122,29 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
   echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(hostname)) trace=$RUNLOG"
 } >> "$LOG"
 
-# Run claude with gh + jq ON PATH (via nix shell) so the model invokes them DIRECTLY:
-#   - bare `gh ...` is subject to campaign-settings.json's deny-list (nix-wrapped gh bypasses it),
-#   - bare `jq` means dedup is one jq pass, not the byte-grep pathology that stalls runs,
-#   - no nix git-hooks WARNING banner leaking into close-candidates.jsonl.
+# gh, jq and pr-review-report are on PATH as BARE executables, put there by nix from the flake's
+# runtimeInputs, so the model invokes them DIRECTLY:
+#   - bare `gh ...` is subject to campaign-settings.json's deny-list (a nix-wrapped gh bypasses it),
+#   - bare `jq` means dedup is one jq pass, not the byte-grep pathology that stalls runs.
+# They are the flake's LOCKED nixpkgs. The old `nix shell` composed the runtime
+# at run time from the global registry (channels.nixos.org/nixpkgs-unstable), which floats
+# independently of flake.lock — that is how the cron came to run jq 1.8.2 while the lock pinned
+# 1.8.1, with no commit to point at.
 # `--mcp-config campaign-mcp.json` adds the FSM server's PRODUCER profile: clone_create /
 # clone_release / clone_list / clone_gc. Work-clone lifecycle is a TOOL rather than shell because the
 # `Bash(rm -rf /:*)` deny rule is prefix-matched and so also denied `rm -rf $WORK_DIR/<clone>` — the
 # very deletion campaign-prompt mandated (#56). NO `--strict-mcp-config` here, unlike the vetter: the
 # producer keeps its Bash and whatever servers its skill plugins bring, and this server is ADDITIVE.
-# Stream every event as JSON. tee keeps the full trace even if the jq distiller is missing/errors.
+# Stream every event as JSON. tee keeps the full trace even if the distiller is missing/errors.
 # Model fallback: try $MODEL, then each $FALLBACK_MODELS in order, advancing to the next ONLY when a
-# model is quota-limited (HTTP 429 / "reached your … limit"). Any other outcome (success, a nix/auth
-# startup failure, or a real error) stops the loop — so one model's exhausted quota can't stall the
-# pipeline, yet we never thrash through models on a failure that isn't about quota.
+# model is quota-limited. Any other outcome (success, an auth/startup failure, or a real error) stops
+# the loop — so one model's exhausted quota can't stall the pipeline, yet we never thrash through
+# models on a failure that isn't about quota.
 USED_MODEL="$MODEL"
 rc=1
 for USED_MODEL in $MODEL $FALLBACK_MODELS; do
   echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" >> "$LOG"
-  timeout "$MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
+  timeout "$MAXTIME" claude --print "$PROMPT" \
     --model "$USED_MODEL" \
     --settings "$DIR/campaign-settings.json" \
     --mcp-config "$DIR/campaign-mcp.json" \
@@ -139,19 +154,14 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     --add-dir "$DIR" \
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
-    | { nix shell nixpkgs#jq --command jq --unbuffered -rc '
-          if .type=="assistant" then
-            (.message.content[]?
-              | if .type=="tool_use" then "  ▸ "+.name+"  "+(((.input.command // .input.description // (.input|tostring)))|tostring|gsub("\n";" ")|.[0:200])
-                elif .type=="text" then "  · "+((.text|gsub("\n";" "))|.[0:200])
-                else empty end)
-          elif .type=="result" then "  ⟹ "+(((.subtype//"done"))|ascii_upcase)+": "+(((.result//"")|gsub("\n";" "))|.[0:800])
-          else empty end
-        ' 2>/dev/null || cat >/dev/null ; } >> "$LOG"
+    | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}
-  # Advance to the next model ONLY on a usage/quota limit (429); any other outcome is final.
-  if grep -qiE '"api_error_status": ?429|reached your [^"]*limit|usage limit|session limit' "$RUNLOG" "$ERRLOG" 2>/dev/null; then
-    echo "  !! model $USED_MODEL is quota-limited (429) — falling back to next model" >> "$LOG"
+  # Advance to the next model ONLY on a usage/quota limit; any other outcome is final. The verdict
+  # is a TYPE computed from the trace's result events (see `classify_run`), not a grep over the
+  # trace bytes — the old regex also matched a 429 quoted inside an unrelated tool result, which
+  # could skip a model that was never quota-limited at all.
+  if [ "$(pr-review-report trace-outcome "$RUNLOG" --exit-code "$rc")" = "session-limit" ]; then
+    echo "  !! model $USED_MODEL is quota-limited — falling back to next model" >> "$LOG"
     continue
   fi
   break
@@ -168,14 +178,13 @@ echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)
 # Persist per-run metrics BEFORE the next run's rotation deletes this trace.
 # Appends one enriched JSON line to metrics/runs.jsonl (committed periodically,
 # never from here — the cron does not push). Best-effort: never fail the run on it.
+# `run-metrics` emits the whole enriched record itself now, including `outcome` — which it derives
+# with the same typed classifier the fallback loop uses, so the metrics line and the fallback
+# decision can never disagree about whether a run was quota-limited.
 if [ -s "$RUNLOG" ]; then
-  outcome="ok"; [ "$rc" -ne 0 ] && outcome="error"
-  grep -qi "session limit\|usage limit" "$RUNLOG" "$ERRLOG" 2>/dev/null && outcome="session-limit"
   mkdir -p "$DIR/metrics"
-  # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
-  nix run "path:$DIR#pr-review-report" -- run-metrics "$RUNLOG" 2>/dev/null \
-    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$USED_MODEL" --arg oc "$outcome" --argjson rc "$rc" \
-      '. + {runId:$ts, role:"producer", model:$model, exitCode:$rc, outcome:$oc}' \
+  pr-review-report run-metrics "$RUNLOG" \
+    --run-id "$TS" --role producer --model "$USED_MODEL" --exit-code "$rc" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
 fi
 exit 0

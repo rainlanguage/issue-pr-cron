@@ -10,11 +10,22 @@
 #   RUN NOW:  ./review-run.sh
 # Deployment values come from ./cron.env (PR_ASSIGNEE, optional REVIEW_MODEL/REVIEW_MAXTIME/REVIEW_KEEP_RUNS).
 
-set -uo pipefail
+# Packaged as a flake output (`packages.review-run`), so nix builds PATH from the flake's locked
+# nixpkgs. writeShellApplication forces `set -euo pipefail`; errexit is turned back OFF because
+# this runner checks `rc` explicitly and uses `grep -q … &&` as a conditional — both abort under
+# errexit. Same reasoning as campaign-run.sh.
+set +o errexit
 
-DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# --- self-locate: the INSTALL dir (cron.env, prompts, logs). $0 is a read-only nix store path
+# now, so the install dir comes from the crontab's $CRON_DIR, defaulting to the working directory
+# for an interactive `nix run .#review-run` from the checkout. ---
+DIR="${CRON_DIR:-$PWD}"
+if [ ! -f "$DIR/review-prompt.txt" ]; then
+  echo "review-run: no review-prompt.txt in '$DIR' — set CRON_DIR to the install dir" >&2
+  exit 1
+fi
 
-# --- environment: cron's env is bare. Derive HOME/USER, then nix + PATH (same fix as campaign-run.sh). ---
+# --- environment: cron's env is bare. Derive HOME/USER (same fix as campaign-run.sh). ---
 : "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"
 export HOME
 : "${USER:=$(id -un)}"; export USER
@@ -23,11 +34,10 @@ export HOME
 # scoped to Bash. The vetter's surface has no Bash, so nothing fires; it is set so the hooks
 # cover any Bash the session were ever granted.
 export RAINIX_CRON_HOOK=1
-export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-set +u
-# shellcheck disable=SC1091
-[ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
-set -u
+# `claude` is not a nixpkgs package (npm installer -> ~/.local/bin); it is the one tool the flake
+# cannot provide. Appended, so nix-provided tools — `gh` above all — still take precedence.
+# ~/.nix-profile/bin is deliberately not re-added (#76 item 3).
+export PATH="$PATH:$HOME/.local/bin"
 
 # --- deployment config (defaults; override in ./cron.env) ---
 PR_ASSIGNEE=""
@@ -110,16 +120,18 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
   echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(hostname)) trace=$RUNLOG"
 } >> "$LOG"
 
-# gh + jq on PATH (via nix shell) for the MCP SERVER, which shells out to gh for every GitHub read
-# and for its one write; the model itself has no Bash and never invokes them.
+# `gh` is on PATH as a bare executable, put there by nix from the flake's runtimeInputs, for the MCP
+# SERVER — it shells out to gh for every GitHub read and for its one write. The vetter model itself
+# has no Bash and never invokes it. No `jq` here: the vetter's only jq uses were the trace distiller
+# and the metrics merge, both now `pr-review-report` subcommands.
 # Model fallback: try $REVIEW_MODEL, then each $FALLBACK_MODELS in order, advancing ONLY on a
-# quota/usage limit (HTTP 429) so one model's exhausted quota can't stall vetting. Any other outcome
-# (success, nix/auth startup failure, real error) is final.
+# quota/usage limit so one model's exhausted quota can't stall vetting. Any other outcome (success,
+# auth/startup failure, real error) is final.
 USED_MODEL="$REVIEW_MODEL"
 rc=1
 for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
   echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" >> "$LOG"
-  timeout "$REVIEW_MAXTIME" nix shell nixpkgs#gh nixpkgs#jq "path:$DIR#pr-review-report" --command claude --print "$PROMPT" \
+  timeout "$REVIEW_MAXTIME" claude --print "$PROMPT" \
     --model "$USED_MODEL" \
     --settings "$SETTINGS_FILE" \
     "${MCP_ARGS[@]}" \
@@ -129,18 +141,12 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
     --add-dir "$WORK_DIR" \
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
-    | { nix shell nixpkgs#jq --command jq --unbuffered -rc '
-          if .type=="assistant" then
-            (.message.content[]?
-              | if .type=="tool_use" then "  ▸ "+.name+"  "+(((.input.command // .input.description // (.input|tostring)))|tostring|gsub("\n";" ")|.[0:200])
-                elif .type=="text" then "  · "+((.text|gsub("\n";" "))|.[0:200])
-                else empty end)
-          elif .type=="result" then "  ⟹ "+(((.subtype//"done"))|ascii_upcase)+": "+(((.result//"")|gsub("\n";" "))|.[0:800])
-          else empty end
-        ' 2>/dev/null || cat >/dev/null ; } >> "$LOG"
+    | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}
-  if grep -qiE '"api_error_status": ?429|reached your [^"]*limit|usage limit|session limit' "$RUNLOG" "$ERRLOG" 2>/dev/null; then
-    echo "  !! model $USED_MODEL is quota-limited (429) — falling back to next model" >> "$LOG"
+  # Typed verdict from the trace's result events, not a grep over the trace bytes (see
+  # `classify_run`): the old regex also matched a 429 quoted inside an unrelated tool result.
+  if [ "$(pr-review-report trace-outcome "$RUNLOG" --exit-code "$rc")" = "session-limit" ]; then
+    echo "  !! model $USED_MODEL is quota-limited — falling back to next model" >> "$LOG"
     continue
   fi
   break
@@ -153,14 +159,12 @@ fi
 
 echo "$(date -u +%FT%TZ) review run END (exit=$rc, trace=$RUNLOG)" >> "$LOG"
 
+# `run-metrics` emits the whole enriched record, deriving `outcome` with the same typed classifier
+# the fallback loop uses, so the two can never disagree about whether a run was quota-limited.
 if [ -s "$RUNLOG" ]; then
-  outcome="ok"; [ "$rc" -ne 0 ] && outcome="error"
-  grep -qi "session limit\|usage limit" "$RUNLOG" 2>/dev/null && outcome="session-limit"
   mkdir -p "$DIR/metrics"
-  # shellcheck disable=SC2016  # $ts/$model/$rc below are jq --arg vars, not shell expansion
-  nix run "path:$DIR#pr-review-report" -- run-metrics "$RUNLOG" 2>/dev/null \
-    | nix shell nixpkgs#jq --command jq -c --arg ts "$TS" --arg model "$USED_MODEL" --arg oc "$outcome" --argjson rc "$rc" \
-      '. + {runId:$ts, role:"vetter", model:$model, exitCode:$rc, outcome:$oc}' \
+  pr-review-report run-metrics "$RUNLOG" \
+    --run-id "$TS" --role vetter --model "$USED_MODEL" --exit-code "$rc" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
 fi
 exit 0
