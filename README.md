@@ -100,16 +100,16 @@ Bash deny-list is prefix-matched and bypassable. For the vetter that gap is
 closed: `pr-review-report mcp` serves its transitions over MCP (stdio), and that
 server is the vetter's **only** tool surface.
 
-| Tool                             | The move it makes                                                                                                              |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `unvetted`                       | state-load: the open PRs to vet this run, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable/unresolvedThreads |
-| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                              |
-| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source                                                          |
-| `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                                   |
-| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                |
-| `unvetted_close_candidates`      | state-load: the producer close-candidate flags to judge this run, each with its `flagAt` + stated evidence                     |
-| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                        |
-| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                        |
+| Tool                             | The move it makes                                                                                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list |
+| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                           |
+| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source                                                                                                                       |
+| `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                                                                                                |
+| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                             |
+| `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                               |
+| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                     |
+| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                     |
 
 The last three are the vetter's **second subject**. A PR asks a human to merge
 code; a close-candidate flag asks a human to **destroy work**, so the flag is
@@ -127,6 +127,39 @@ plus `Read`/`Grep`/`Glob`/`Skill`/`ToolSearch` — **no Bash**, so there is no r
 that selects one. The guards (verdict vocabulary, a mandatory 0-1000 cost, a
 well-formed `owner/repo#n`, the human-sacred refusal) are enforced in the server
 and unit-tested rather than restated in the prompt.
+
+Those thirteen schemas are **presented, not deferred**: `review-run.sh` exports
+`ENABLE_TOOL_SEARCH=false`, so the surface rides in the preamble instead of
+costing the vetter a first-turn `ToolSearch` to rediscover a fixed allowlist by
+name. `ToolSearch` nonetheless stays in the allow-list as the fail-safe — if a
+harness defers anyway, a vetter that cannot call it sees its own tools as
+nonexistent and records nothing at all (#63). The producer keeps deferral: it
+has Bash and a far larger surface, where the round trip pays for itself.
+
+### Every tool result is bounded, and going over is the tool's error
+
+A state-load is a **page**, not a dump. `unvetted` and
+`unvetted_close_candidates` return at most `limit` rows (default 10, max 25)
+with the whole-queue `counts` alongside and `more` naming what the page left
+behind; the vetter re-calls for the next page, and because each `record_verdict`
+removes its subject from the queue, paging converges without an offset argument.
+The page size is what makes the bound structural — the payload no longer grows
+with the number of open PRs.
+
+Every result is then checked against a byte budget (32,000 bytes; `pr_context`
+gets that plus the `max_diff_bytes` the caller explicitly asked for), and a
+result over budget is returned as a **tool error naming the argument to narrow**
+— never truncated, never spilled. On 2026-07-27
+`unvetted {"include_skipped":
+true}` returned 63,742 characters on one line, the
+harness refused it, and the vetter improvised a fallback that silently dropped
+the whole open-threads accounting; the run log looked normal. A partial
+state-load cannot say what it is missing, so the tool refuses to produce one.
+
+The `openThreads` list is unconditional for the same reason: the PRs withheld
+for unresolved threads (and their `unresolvedThreads` counts) are the only
+skipped rows carrying information the vetter can act on, and making that
+accounting depend on an optional argument is exactly how it went missing.
 
 **What the vetter therefore does not verify.** With no Bash it cannot build, and
 cannot execute anything in the clone `pr_checkout` gives it — it reads source,
@@ -360,9 +393,11 @@ rain-org-health#128 with four threads open, so neither the status check nor an
 `Actionable comments posted: N` line is evidence of clean.
 
 - `unvetted` (the vetter's state-load) withholds a thread-dirty PR: it is
-  counted as `skipOpenThreads` and never handed over, so no `ai:ready` verdict
-  can be recorded while a thread is open. The vetter itself has no `gh` — the
-  exclusion has to happen in the tool that builds its list.
+  counted as `skipOpenThreads`, listed in `openThreads` with its thread count,
+  and never handed over, so no `ai:ready` verdict can be recorded while a thread
+  is open. The vetter itself has no `gh` — the exclusion has to happen in the
+  tool that builds its list, and the accounting has to come back unconditionally
+  or the vetter cannot tell a withheld PR from an absent one.
 - `queue` (the human approval queue) withholds it a second time, counted as
   `open-threads`, in case a PR was vetted before a thread was opened.
 
