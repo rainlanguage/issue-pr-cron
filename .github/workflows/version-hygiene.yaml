@@ -1,0 +1,73 @@
+name: version hygiene
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  # A plugin's version lives in TWO hand-maintained files: the marketplace listing
+  # installers read, and the plugin manifest it points at. `/plugin` detects an update
+  # by comparing version STRINGS, so a listing naming the old version silently serves
+  # stale content — adversarial-mutation-test once advertised 0.26.0 against its own
+  # 0.27.0, and rain-org-health omits the listing version altogether.
+  #
+  # The check is a `pr-review-report` SUBCOMMAND, not a jq script here, per CLAUDE.md's
+  # north star: everything it does is parsing, so it belongs in the binary, where it is
+  # unit-tested, runs locally against any checkout, and cannot drift from what CI asserts.
+  # Exit 0 satisfied, 2 a listing is wrong, 3 the gate could not be evaluated at all.
+  lockstep:
+    name: marketplace and plugin versions agree
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - run: cargo run --quiet -p pr-review-report -- plugin-version-lockstep
+
+  # A plugin's CONTENT is its release. Editing the commands without bumping the version
+  # is invisible to version-based update detection, so every install silently keeps
+  # running the stale copy. Only reachable on a PR, where a base to diff against exists.
+  bump:
+    name: a plugin change bumps its version
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Full history so the PR base is available to diff and read against.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: a change under plugins/ must bump that plugin's version
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          # Every plugin the marketplace lists, so a second plugin is covered the day it
+          # is added rather than the day someone remembers to extend this loop.
+          sources="$(jq -r '.plugins[].source' .claude-plugin/marketplace.json | sed 's#^\./##;s#/$##')"
+          for src in $sources; do
+            manifest="$src/.claude-plugin/plugin.json"
+            if git diff --quiet "$BASE" "$HEAD" -- "$src"; then
+              echo "$src unchanged — no bump required."
+              continue
+            fi
+            # A plugin added in this PR has no base version to compare; shipping 0.1.0 is
+            # the bump.
+            if ! git cat-file -e "$BASE:$manifest" 2>/dev/null; then
+              echo "$src is new in this PR — its first version is the bump."
+              continue
+            fi
+            base_version="$(git show "$BASE:$manifest" | jq -r '.version')"
+            head_version="$(git show "$HEAD:$manifest" | jq -r '.version')"
+            if [ "$base_version" = "$head_version" ]; then
+              echo "::error::$src changed but $manifest is still $head_version. Bump it (and the marketplace entry to match) — a content change is a release, and version-based update detection cannot see an in-place edit."
+              fail=1
+            else
+              echo "$src changed and version bumped: $base_version -> $head_version"
+            fi
+          done
+          exit "$fail"
