@@ -252,6 +252,11 @@
     ],
     "ai:ready": [
       {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 6,
+        "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
+      },
+      {
         "repo": "rainlanguage/claude-audit-skills",
         "number": 50,
         "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
@@ -463,6 +468,31 @@
       }
     ],
     "ai:reject": [
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 5,
+        "title": "Migrate to the rolling-candidate snapshot model"
+      },
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 4,
+        "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
+      },
+      {
+        "repo": "rainlanguage/rain.deploy",
+        "number": 19,
+        "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found"
+      },
+      {
+        "repo": "cyclofinance/cyclo.sol",
+        "number": 56,
+        "title": "anchor audit PDFs under audit/protofire/ so the org health scan sees them"
+      },
+      {
+        "repo": "rainlanguage/rain.factory",
+        "number": 47,
+        "title": "Slim rain.factory to the interface library (#46)"
+      },
       {
         "repo": "cyclofinance/cyclo.site",
         "number": 436,
@@ -1099,20 +1129,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 12,
+        "count": 6,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 6,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
-            "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
-            "title": "Migrate to the rolling-candidate snapshot model"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 101,
@@ -1130,30 +1148,6 @@
             "number": 289,
             "url": "https://github.com/rainlanguage/rainix/pull/289",
             "title": "Fail over fork RPC endpoints with an archive-aware preflight"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 4,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4",
-            "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 19,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/19",
-            "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found"
-          },
-          {
-            "repo": "cyclofinance/cyclo.sol",
-            "number": 56,
-            "url": "https://github.com/cyclofinance/cyclo.sol/pull/56",
-            "title": "anchor audit PDFs under audit/protofire/ so the org health scan sees them"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 47,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/47",
-            "title": "Slim rain.factory to the interface library (#46)"
           },
           {
             "repo": "rainlanguage/rain.uniswap",
@@ -1260,8 +1254,14 @@
         ]
       },
       "ai:ready": {
-        "count": 42,
+        "count": 43,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 6,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
+            "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
+          },
           {
             "repo": "rainlanguage/claude-audit-skills",
             "number": 50,
@@ -1517,8 +1517,38 @@
         ]
       },
       "ai:reject": {
-        "count": 30,
+        "count": 35,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 5,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
+            "title": "Migrate to the rolling-candidate snapshot model"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 4,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4",
+            "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 19,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/19",
+            "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found"
+          },
+          {
+            "repo": "cyclofinance/cyclo.sol",
+            "number": 56,
+            "url": "https://github.com/cyclofinance/cyclo.sol/pull/56",
+            "title": "anchor audit PDFs under audit/protofire/ so the org health scan sees them"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 47,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/47",
+            "title": "Slim rain.factory to the interface library (#46)"
+          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 436,
@@ -1731,11 +1761,6 @@
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
-      "repo": "rainlanguage/rain.erc4626.words",
-      "number": 93,
-      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 2174,
       "title": "Invalid values shown on stack in the strategy studio."
@@ -1779,11 +1804,6 @@
       "repo": "rainlanguage/raindex",
       "number": 623,
       "title": "implement/test context properly for obv4 associated actions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 589,
-      "title": "trading chart should indicate direction somehow"
     }
   ],
   "closeCandidateUnvetted": [
@@ -1803,11 +1823,6 @@
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
-      "repo": "rainlanguage/rain.erc4626.words",
-      "number": 93,
-      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 2174,
       "title": "Invalid values shown on stack in the strategy studio."
@@ -1844,22 +1859,38 @@
     },
     {
       "repo": "rainlanguage/raindex",
-      "number": 632,
-      "title": "sometimes the QR code for wallet connect doesn't show"
-    },
-    {
-      "repo": "rainlanguage/raindex",
       "number": 623,
       "title": "implement/test context properly for obv4 associated actions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 589,
-      "title": "trading chart should indicate direction somehow"
     }
   ],
-  "closeCandidateUpheld": [],
+  "closeCandidateUpheld": [
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 632,
+      "title": "sometimes the QR code for wallet connect doesn't show"
+    }
+  ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 86,
+      "title": "Human FSM transitions have no tooling — only raw gh, with no guards or provenance"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 85,
+      "title": "Vetter cannot read audit PDFs — poppler-utils missing from the closure"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 84,
+      "title": "Split startupMs into boot + ttl, record both, and chart both"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 83,
+      "title": "Producer opens PRs without the QA evidence block QA-GUIDE §8 requires"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 60,
@@ -2774,6 +2805,11 @@
       "repo": "rainlanguage/raindex",
       "number": 2788,
       "title": "Allow the order input token to be optional"
+    },
+    {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 93,
+      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
       "repo": "rainlanguage/rain.erc4626.words",
@@ -5001,20 +5037,20 @@
     }
   ],
   "counts": {
-    "ready": 42,
+    "ready": 43,
     "design": 6,
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 14,
-    "closeCandidateUnvetted": 14,
-    "closeCandidateUpheld": 0,
+    "closeCandidateIssues": 12,
+    "closeCandidateUnvetted": 11,
+    "closeCandidateUpheld": 1,
     "leaks": 17,
     "totalProducerPrs": 170,
-    "uncoveredIssues": 607,
-    "unvetted": 12,
+    "uncoveredIssues": 612,
+    "unvetted": 6,
     "awaitingReVet": 0,
-    "reject": 30,
+    "reject": 35,
     "relink": 1,
     "closeCandidatePrs": 6,
     "humanReject": 30,
