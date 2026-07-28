@@ -1,24 +1,23 @@
-//! Behavioural tests for `hooks/require-qa-block.sh`.
+//! Behavioural tests for `pr-review-report require-qa-block`.
 //!
-//! The hook is the producer-side half of QA-GUIDE.md section 8: a PR opened without the evidence
-//! block is known-bad the moment it is opened, so it is refused at `gh pr create` rather than
-//! discovered a queue round-trip later by the vetter (#83). What it guards is a CONTENT invariant
-//! on a command line, and a command line is not something a static read of the script can judge —
-//! the failure modes are all parsing (a chained command, a relative `--body-file`, a heading whose
-//! section a subheading truncates). So every test here drives the real script with a real hook
-//! payload and asserts what it actually did: the exit code the harness reads (0 allow, 2 block)
-//! and the stderr the model reads.
+//! The subcommand is the producer-side half of QA-GUIDE.md section 8: a PR opened without the
+//! evidence block is known-bad the moment it is opened, so it is refused at `gh pr create` rather
+//! than discovered a queue round-trip later by the vetter (#83). What it guards is a CONTENT
+//! invariant on a command line, and a command line is not something a static read of the source can
+//! judge — the failure modes are all parsing (a chained command, a relative `--body-file`, a heading
+//! whose section a subheading truncates). So every test here drives the real binary with a real
+//! PreToolUse payload and asserts what it actually did: the exit code the harness reads (0 allow,
+//! 2 block) and the stderr the model reads.
 //!
 //! These live in `tests/` for the same reasons as `refresh_human_queue.rs`: they need nothing from
-//! the binary's internals, and the crate's unit tests are one 14k-line file. In the nix build
-//! sandbox the repo root is not part of the derivation's source (the fileset is the manifests plus
-//! the crate), so the script is absent and every test returns early — `rainix-rs-test` runs `cargo
-//! test` against a full checkout, which is where these execute.
+//! the binary's internals, and the crate's unit tests are one 14k-line file.
 //!
-//! `python3` is asserted rather than tolerated on Linux: every hook this repo ships parses its
-//! payload with it, so a Linux box without it is a broken environment, not a skip.
+//! Unlike the shell hook this replaced, NOTHING here is skippable. The subject is
+//! `env!("CARGO_BIN_EXE_pr-review-report")` — a build artefact of this crate — so the suite runs
+//! wherever cargo does, INCLUDING inside the nix derivation's check phase, where the repo root is
+//! not part of the source and every test that drove a `hooks/*.sh` script returned early instead.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 /// A section-8-complete QA block: all four lines, the shape the guide's template gives.
@@ -28,56 +27,19 @@ const COMPLETE_BLOCK: &str = "## QA\n\
      - Oracle: the issue's worked example, not the implementation\n\
      - Category check: issue asks A,B; covered A,B\n";
 
-/// The repo root, one level up from the crate.
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("the crate always has a parent directory")
-        .to_path_buf()
-}
-
-/// `None` when the checkout is not there (nix build sandbox) — enforced by the rs-test gate.
-fn hook_under_test() -> Option<PathBuf> {
-    let p = repo_root().join("hooks").join("require-qa-block.sh");
-    p.is_file().then_some(p)
-}
-
-/// Is the hook's own runtime present? Only `python3` is in question; bash is on both CI platforms.
-fn python3_available() -> bool {
-    let have = Command::new("python3")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-    assert!(
-        have || !cfg!(target_os = "linux"),
-        "python3 is missing on a Linux host: every hook this repo ships parses its payload with \
-         it, so this is a broken environment, not a test that may be skipped"
-    );
-    have
-}
-
-/// The hook plus a scratch directory it can be pointed at. `None` when there is nothing to drive.
+/// The gate under test, plus a scratch directory it can be pointed at.
 struct Fixture {
-    hook: PathBuf,
     dir: PathBuf,
 }
 
 impl Fixture {
-    fn new(name: &str) -> Option<Self> {
-        // Hook first: in the nix sandbox there is no checkout, and that is the reason to skip —
-        // the python3 assertion must not fire there.
-        let hook = hook_under_test()?;
-        if !python3_available() {
-            return None;
-        }
+    fn new(name: &str) -> Self {
         let dir = std::env::temp_dir()
             .join("require-qa-block-tests")
             .join(format!("{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create fixture dir");
-        Some(Self { hook, dir })
+        Self { dir }
     }
 
     /// Write a PR body file and return its absolute path as a string.
@@ -91,7 +53,7 @@ impl Fixture {
         self.dir.join(name).display().to_string()
     }
 
-    /// Drive the hook with a Bash payload from the fixture dir. Returns (exit code, stderr).
+    /// Drive the gate with a Bash payload from the fixture dir. Returns (exit code, stderr).
     fn bash(&self, command: &str) -> (i32, String) {
         self.bash_from(&self.dir.display().to_string(), command)
     }
@@ -106,34 +68,40 @@ impl Fixture {
         }))
     }
 
-    /// Drive the hook with a whole payload, so a non-Bash tool can be exercised too.
+    /// Drive the gate with a whole payload, so a non-Bash tool can be exercised too.
     fn payload(&self, payload: &serde_json::Value) -> (i32, String) {
         self.payload_env(payload, &[])
     }
 
     fn payload_env(&self, payload: &serde_json::Value, env: &[(&str, &str)]) -> (i32, String) {
-        let mut child = Command::new(&self.hook)
-            .envs(env.iter().copied())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn the hook");
-        {
-            use std::io::Write;
-            child
-                .stdin
-                .as_mut()
-                .expect("hook stdin")
-                .write_all(payload.to_string().as_bytes())
-                .expect("write the hook payload");
-        }
-        let out = child.wait_with_output().expect("hook exit");
-        (
-            out.status.code().expect("the hook always exits normally"),
-            String::from_utf8_lossy(&out.stderr).to_string(),
-        )
+        run_gate(payload.to_string().as_bytes(), env)
     }
+}
+
+/// Feed the subcommand a raw payload on stdin, exactly as Claude Code's PreToolUse hook does.
+fn run_gate(payload: &[u8], env: &[(&str, &str)]) -> (i32, String) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pr-review-report"))
+        .arg("require-qa-block")
+        .envs(env.iter().copied())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the gate");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .as_mut()
+            .expect("gate stdin")
+            .write_all(payload)
+            .expect("write the hook payload");
+    }
+    let out = child.wait_with_output().expect("gate exit");
+    (
+        out.status.code().expect("the gate always exits normally"),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
 }
 
 /// `gh pr create` naming a body file, in the shape the producer traces actually use.
@@ -157,9 +125,7 @@ fn assert_allowed(code: i32, stderr: &str) {
 
 #[test]
 fn a_body_carrying_the_section_8_block_opens() {
-    let Some(f) = Fixture::new("complete") else {
-        return;
-    };
+    let f = Fixture::new("complete");
     let body = f.body_file(
         "body.md",
         &format!("Closes #1\n\nA fix.\n\n{COMPLETE_BLOCK}"),
@@ -170,9 +136,7 @@ fn a_body_carrying_the_section_8_block_opens() {
 
 #[test]
 fn a_body_with_no_qa_heading_is_blocked() {
-    let Some(f) = Fixture::new("no-heading") else {
-        return;
-    };
+    let f = Fixture::new("no-heading");
     let body = f.body_file("body.md", "Closes #1\n\nA fix with no evidence at all.\n");
     let (code, err) = f.bash(&open_pr(&body));
     assert_blocked(code, &err);
@@ -188,9 +152,7 @@ fn a_body_with_no_qa_heading_is_blocked() {
 
 #[test]
 fn an_incomplete_qa_section_is_blocked() {
-    let Some(f) = Fixture::new("incomplete") else {
-        return;
-    };
+    let f = Fixture::new("incomplete");
     let body = f.body_file(
         "body.md",
         "Closes #1\n\n## QA\n- Discriminating tests: t_one\n- Mutations applied: L1 -> flip -> t_one\n- Oracle: the issue\n",
@@ -201,9 +163,7 @@ fn an_incomplete_qa_section_is_blocked() {
 
 #[test]
 fn the_refusal_names_the_lines_that_are_missing_and_the_ones_that_are_not() {
-    let Some(f) = Fixture::new("names-missing") else {
-        return;
-    };
+    let f = Fixture::new("names-missing");
     let body = f.body_file(
         "body.md",
         "Closes #1\n\n## QA\n- Discriminating tests: t_one\n- Mutations applied: L1 -> flip -> t_one\n- Oracle: the issue\n",
@@ -222,9 +182,7 @@ fn the_refusal_names_the_lines_that_are_missing_and_the_ones_that_are_not() {
 
 #[test]
 fn all_four_subjects_on_one_line_is_not_the_block() {
-    let Some(f) = Fixture::new("one-liner") else {
-        return;
-    };
+    let f = Fixture::new("one-liner");
     // Section 8 is four SEPARATE entries. A single bullet naming all four subjects satisfies a
     // per-keyword search while being nothing like the block, so it must not pass.
     let body = f.body_file(
@@ -241,9 +199,7 @@ fn all_four_subjects_on_one_line_is_not_the_block() {
 
 #[test]
 fn one_entry_per_line_is_the_block() {
-    let Some(f) = Fixture::new("one-per-line") else {
-        return;
-    };
+    let f = Fixture::new("one-per-line");
     // The control for the test above, and for the distinctness check generally: a body whose
     // first line names two subjects still passes when a distinct line exists for each of them.
     let body = f.body_file(
@@ -257,10 +213,27 @@ fn one_entry_per_line_is_the_block() {
 }
 
 #[test]
+fn an_oracle_inside_a_longer_word_does_not_count() {
+    let f = Fixture::new("oracle-substring");
+    // `Oracle` is the one subject matched as a WHOLE WORD: a filename that happens to contain the
+    // stem is not an oracle line. A substring search would take `oracles.md` for the Oracle entry
+    // and then fail on distinctness instead — a refusal naming the wrong defect.
+    let body = f.body_file(
+        "body.md",
+        "Closes #1\n\n## QA\n- Discriminating tests: t_one\n\
+         - Mutations applied: see oracles.md\n- Category check: asks A; covered A\n",
+    );
+    let (code, err) = f.bash(&open_pr(&body));
+    assert_blocked(code, &err);
+    assert!(
+        err.contains("still missing: Oracle"),
+        "a stem inside a longer word is not the Oracle line: {err}"
+    );
+}
+
+#[test]
 fn the_refusal_prints_the_section_8_template() {
-    let Some(f) = Fixture::new("template") else {
-        return;
-    };
+    let f = Fixture::new("template");
     let body = f.body_file("body.md", "Closes #1\n");
     let (code, err) = f.bash(&open_pr(&body));
     assert_blocked(code, &err);
@@ -279,9 +252,7 @@ fn the_refusal_prints_the_section_8_template() {
 
 #[test]
 fn an_inline_body_is_checked_like_a_file() {
-    let Some(f) = Fixture::new("inline") else {
-        return;
-    };
+    let f = Fixture::new("inline");
     let (code, err) = f.bash(&format!(
         "gh pr create --title t --body \"Closes #1\n\n{COMPLETE_BLOCK}\""
     ));
@@ -292,9 +263,7 @@ fn an_inline_body_is_checked_like_a_file() {
 
 #[test]
 fn an_equals_form_body_flag_is_parsed() {
-    let Some(f) = Fixture::new("equals") else {
-        return;
-    };
+    let f = Fixture::new("equals");
     let body = f.body_file("body.md", COMPLETE_BLOCK);
     let (code, err) = f.bash(&format!("gh pr create --title t --body-file={body}"));
     assert_allowed(code, &err);
@@ -303,13 +272,51 @@ fn an_equals_form_body_flag_is_parsed() {
     assert_blocked(code, &err);
 }
 
+#[test]
+fn the_short_body_flags_are_the_same_flags() {
+    let f = Fixture::new("short-flags");
+    // `-b` and `-F` are gh's own spellings of `--body` and `--body-file`. Dropping either would not
+    // show up as a leak — an unrecognised flag reads as "no body at all", which still blocks — it
+    // would show up as a COMPLIANT PR refused, so the allow cases are what pin them.
+    let body = f.body_file("body.md", COMPLETE_BLOCK);
+    let (code, err) = f.bash(&format!("gh pr create --title t -F {body}"));
+    assert_allowed(code, &err);
+    let (code, err) = f.bash(&format!("gh pr create --title t -b \"{COMPLETE_BLOCK}\""));
+    assert_allowed(code, &err);
+    let (code, err) = f.bash("gh pr create --title t -b \"Closes #1\"");
+    assert_blocked(code, &err);
+}
+
+#[test]
+fn when_several_bodies_are_named_a_complete_one_passes_and_the_first_bad_one_is_reported() {
+    let f = Fixture::new("several-bodies");
+    let good = f.body_file("good.md", COMPLETE_BLOCK);
+    let bare = f.body_file("bare.md", "Closes #1\n");
+    let other = f.body_file("other.md", "Closes #2\n");
+    // gh takes ONE body, so a line naming two is already malformed — but which one it would use is
+    // gh's business, not the gate's. Refusing on the strength of a body gh may discard would block
+    // a compliant PR, so a complete body ANYWHERE in the invocation passes.
+    let (code, err) = f.bash(&format!(
+        "gh pr create --title t --body-file {bare} --body-file {good}"
+    ));
+    assert_allowed(code, &err);
+    // When none is complete the FIRST is the one reported: it is the one the author wrote first,
+    // and a refusal that names a later argument sends the fix to the wrong file.
+    let (code, err) = f.bash(&format!(
+        "gh pr create --title t --body-file {bare} --body-file {other}"
+    ));
+    assert_blocked(code, &err);
+    assert!(
+        err.contains(&bare) && !err.contains(&other),
+        "the refusal must name the first incomplete body: {err}"
+    );
+}
+
 // --- the QA section's extent ---------------------------------------------------------------
 
 #[test]
 fn a_subheading_does_not_truncate_the_qa_section() {
-    let Some(f) = Fixture::new("subheading") else {
-        return;
-    };
+    let f = Fixture::new("subheading");
     let body = f.body_file(
         "body.md",
         "Closes #1\n\n## QA\n\n### Discriminating tests\nt_one\n\n### Mutations applied\nL1 -> flip -> t_one\n\n### Oracle\nthe issue\n\n### Category check\nasks A; covered A\n",
@@ -320,9 +327,7 @@ fn a_subheading_does_not_truncate_the_qa_section() {
 
 #[test]
 fn evidence_after_the_qa_section_ends_does_not_count() {
-    let Some(f) = Fixture::new("outside") else {
-        return;
-    };
+    let f = Fixture::new("outside");
     let body = f.body_file(
         "body.md",
         "Closes #1\n\n## QA\n- Discriminating tests: t_one\n- Mutations applied: L1 -> flip -> t_one\n- Oracle: the issue\n\n## Notes\n- Category check: issue asks A; covered A\n",
@@ -335,13 +340,86 @@ fn evidence_after_the_qa_section_ends_does_not_count() {
     );
 }
 
+#[test]
+fn an_issue_reference_at_the_start_of_a_line_is_not_a_heading() {
+    let f = Fixture::new("hash-number");
+    // A heading needs whitespace after its hashes. Without that requirement `#83` — an issue
+    // reference, which QA blocks in this repo write constantly — reads as an `<h1>` and TRUNCATES
+    // the section, so the lines after it stop counting and a complete block is refused.
+    let body = f.body_file(
+        "body.md",
+        "Closes #83\n\n## QA\n- Discriminating tests: t_one\n\
+         - Mutations applied: L1 -> flip -> t_one\n\
+         #83 is what this covers, and the block continues:\n\
+         - Oracle: the issue\n- Category check: asks A; covered A\n",
+    );
+    let (code, err) = f.bash(&open_pr(&body));
+    assert_allowed(code, &err);
+}
+
+#[test]
+fn a_line_that_is_not_a_markdown_heading_does_not_open_the_block() {
+    let f = Fixture::new("not-a-heading");
+    // Two spellings that LOOK like the heading and are not: four spaces of indent makes it an
+    // indented code block (PR bodies in this repo quote section 8's template that way), and seven
+    // hashes is past markdown's six. Either one taken for the heading would let a body that merely
+    // QUOTES the template pass as one that carries it.
+    for heading in ["    ## QA", "####### QA"] {
+        let body = f.body_file(
+            "body.md",
+            &format!(
+                "Closes #1\n\n{heading}\n- Discriminating tests: t_one\n\
+                 - Mutations applied: L1 -> flip -> t_one\n- Oracle: the issue\n\
+                 - Category check: asks A; covered A\n"
+            ),
+        );
+        let (code, err) = f.bash(&open_pr(&body));
+        assert_blocked(code, &err);
+        assert!(
+            err.contains("no `## QA` heading"),
+            "{heading:?} is not a markdown heading: {err}"
+        );
+    }
+}
+
+#[test]
+fn a_bolded_qa_heading_is_the_same_heading() {
+    let f = Fixture::new("bold-heading");
+    // `## **QA**` is what a body written in a bold-headings style produces, and the corpus has it.
+    let body = f.body_file(
+        "body.md",
+        "Closes #1\n\n## **QA**\n- Discriminating tests: t_one\n\
+         - Mutations applied: L1 -> flip -> t_one\n- Oracle: the issue\n\
+         - Category check: asks A; covered A\n",
+    );
+    let (code, err) = f.bash(&open_pr(&body));
+    assert_allowed(code, &err);
+}
+
+#[test]
+fn a_heading_that_merely_starts_with_qa_is_not_the_block() {
+    let f = Fixture::new("qa-prefix");
+    // `QA` has to end on a word boundary. Without that, `## QAnything` opens the block and every
+    // line under an unrelated heading counts as evidence.
+    let body = f.body_file(
+        "body.md",
+        "Closes #1\n\n## QAnything\n- Discriminating tests: t_one\n\
+         - Mutations applied: L1 -> flip -> t_one\n- Oracle: the issue\n\
+         - Category check: asks A; covered A\n",
+    );
+    let (code, err) = f.bash(&open_pr(&body));
+    assert_blocked(code, &err);
+    assert!(
+        err.contains("no `## QA` heading"),
+        "a heading that merely starts with QA is not the QA heading: {err}"
+    );
+}
+
 // --- bodies gh would build for itself, and bodies that cannot be read ----------------------
 
 #[test]
 fn a_pr_create_with_no_body_flag_is_blocked() {
-    let Some(f) = Fixture::new("no-body") else {
-        return;
-    };
+    let f = Fixture::new("no-body");
     let (code, err) = f.bash("gh pr create --assignee thedavidmeister --title t");
     assert_blocked(code, &err);
     assert!(
@@ -352,10 +430,15 @@ fn a_pr_create_with_no_body_flag_is_blocked() {
 
 #[test]
 fn fill_cannot_substitute_for_the_block() {
-    let Some(f) = Fixture::new("fill") else {
-        return;
-    };
-    for flag in ["--fill", "-f", "--fill-first", "--template pr.md"] {
+    let f = Fixture::new("fill");
+    for flag in [
+        "--fill",
+        "-f",
+        "--fill-first",
+        "--fill-verbose",
+        "--template pr.md",
+        "-T pr.md",
+    ] {
         let (code, err) = f.bash(&format!("gh pr create --title t {flag}"));
         assert_blocked(code, &err);
         assert!(
@@ -367,9 +450,7 @@ fn fill_cannot_substitute_for_the_block() {
 
 #[test]
 fn an_unreadable_body_file_fails_closed() {
-    let Some(f) = Fixture::new("unreadable") else {
-        return;
-    };
+    let f = Fixture::new("unreadable");
     let missing = f.path("never-written.md");
     let (code, err) = f.bash(&open_pr(&missing));
     assert_blocked(code, &err);
@@ -382,10 +463,8 @@ fn an_unreadable_body_file_fails_closed() {
 #[test]
 fn a_body_file_read_from_stdin_is_blocked() {
     // NOT named "stdin-…": the fixture's own path appears in the refusal, so a fixture name
-    // containing the word would satisfy the assertion below without the hook saying anything.
-    let Some(f) = Fixture::new("dash-body") else {
-        return;
-    };
+    // containing the word would satisfy the assertion below without the gate saying anything.
+    let f = Fixture::new("dash-body");
     let (code, err) = f.bash("gh pr create --title t --body-file -");
     assert_blocked(code, &err);
     assert!(
@@ -396,9 +475,7 @@ fn a_body_file_read_from_stdin_is_blocked() {
 
 #[test]
 fn a_body_file_relative_to_a_leading_cd_is_resolved() {
-    let Some(f) = Fixture::new("relative-cd") else {
-        return;
-    };
+    let f = Fixture::new("relative-cd");
     // The `cd` target is NOT the session cwd, so only the `cd` can resolve `body.md`.
     let sub = f.dir.join("sub");
     std::fs::create_dir_all(&sub).expect("create sub");
@@ -415,9 +492,7 @@ fn a_body_file_relative_to_a_leading_cd_is_resolved() {
 
 #[test]
 fn the_last_cd_before_the_invocation_is_the_one_that_counts() {
-    let Some(f) = Fixture::new("sequential-cd") else {
-        return;
-    };
+    let f = Fixture::new("sequential-cd");
     // `cd good; cd bad; gh pr create --body-file body.md` opens the PR from `bad`. Checking the
     // FIRST cd would read `good/body.md` — a file the shell never opens — and pass a bad PR.
     for (dir, contents) in [("good", COMPLETE_BLOCK), ("bad", "Closes #1\n")] {
@@ -443,10 +518,27 @@ fn the_last_cd_before_the_invocation_is_the_one_that_counts() {
 }
 
 #[test]
+fn relative_cds_compound_and_dot_dot_resolves() {
+    let f = Fixture::new("compounding-cd");
+    // Sequential `cd`s are not "the last one wins" — they COMPOUND, so `cd sub` then `cd ..` is
+    // back where it started. Resolving each against the session cwd instead would read
+    // `sub/body.md` (complete) for a command the shell runs against `body.md` (bare).
+    std::fs::create_dir_all(f.dir.join("sub")).expect("create sub");
+    std::fs::write(f.dir.join("sub/body.md"), COMPLETE_BLOCK).expect("write sub body");
+    std::fs::write(f.dir.join("body.md"), "Closes #1\n").expect("write bare body");
+    let (code, err) = f.bash("cd sub && gh pr create --title t --body-file body.md");
+    assert_allowed(code, &err);
+    let (code, err) = f.bash("cd sub && cd .. && gh pr create --title t --body-file body.md");
+    assert_blocked(code, &err);
+    assert!(
+        err.contains("no `## QA` heading"),
+        "`cd sub && cd ..` lands back at the session cwd, whose body is bare: {err}"
+    );
+}
+
+#[test]
 fn a_body_file_relative_to_the_session_cwd_is_resolved() {
-    let Some(f) = Fixture::new("relative-cwd") else {
-        return;
-    };
+    let f = Fixture::new("relative-cwd");
     f.body_file("body.md", COMPLETE_BLOCK);
     // No `cd`: the session's own directory is the only thing that can resolve it.
     let (code, err) = f.bash("gh pr create --title t --body-file body.md");
@@ -461,9 +553,7 @@ fn a_body_file_relative_to_the_session_cwd_is_resolved() {
 
 #[test]
 fn a_chained_pr_create_is_still_gated() {
-    let Some(f) = Fixture::new("chained") else {
-        return;
-    };
+    let f = Fixture::new("chained");
     let bare = f.body_file("bare.md", "Closes #1\n");
     let (code, err) = f.bash(&format!(
         "git -C /w push -q -u origin br && gh pr create -R o/r --head br --body-file {bare}"
@@ -473,23 +563,22 @@ fn a_chained_pr_create_is_still_gated() {
 
 #[test]
 fn gh_reached_through_a_prefix_command_is_still_gated() {
-    let Some(f) = Fixture::new("prefixed") else {
-        return;
-    };
+    let f = Fixture::new("prefixed");
     let (code, err) = f.bash("timeout 60 gh pr create --title t --body \"no evidence\"");
     assert_blocked(code, &err);
 }
 
 #[test]
 fn an_interpreter_wrapped_pr_create_is_still_gated() {
-    let Some(f) = Fixture::new("wrapped") else {
-        return;
-    };
-    // shlex sees the script as ONE token, so there is no `gh` `pr` `create` word sequence to
+    let f = Fixture::new("wrapped");
+    // The lexer sees the script as ONE token, so there is no `gh` `pr` `create` word sequence to
     // find and the line would sail through — the wrapper bypass block-nix-wrap-gh.sh exists for.
     for cmd in [
         "bash -c 'gh pr create --title t --body \"no evidence\"'",
         "sh -c 'gh pr create --title t --body \"no evidence\"'",
+        // `-lc`/`-ic` are the login/interactive spellings — a `-c` flag is any `-<letters>c`, not
+        // the literal two characters, or a login shell is a way out.
+        "bash -lc 'gh pr create --title t --body \"no evidence\"'",
         "nix shell nixpkgs#gh --command bash -c 'gh pr create --title t --body \"no evidence\"'",
     ] {
         let (code, err) = f.bash(cmd);
@@ -499,9 +588,7 @@ fn an_interpreter_wrapped_pr_create_is_still_gated() {
 
 #[test]
 fn an_interpreter_wrapped_pr_create_with_the_block_opens() {
-    let Some(f) = Fixture::new("wrapped-ok") else {
-        return;
-    };
+    let f = Fixture::new("wrapped-ok");
     let body = f.body_file("body.md", COMPLETE_BLOCK);
     let (code, err) = f.bash(&format!(
         "bash -c 'gh pr create --title t --body-file {body}'"
@@ -511,13 +598,11 @@ fn an_interpreter_wrapped_pr_create_with_the_block_opens() {
 
 #[test]
 fn a_second_pr_create_in_one_command_is_not_missed() {
-    let Some(f) = Fixture::new("second") else {
-        return;
-    };
+    let f = Fixture::new("second");
     let good = f.body_file("good.md", COMPLETE_BLOCK);
     let bare = f.body_file("bare.md", "Closes #2\n");
     // Both separators, because they take different paths through the parser: `&&` becomes two
-    // segments, while a newline is whitespace to shlex and leaves TWO invocations in ONE segment.
+    // segments, while a newline is whitespace to the lexer and leaves TWO invocations in ONE segment.
     for sep in [" && ", "\n"] {
         let (code, err) = f.bash(&format!(
             "gh pr create --title one --body-file {good}{sep}gh pr create --title two --body-file {bare}"
@@ -532,9 +617,7 @@ fn a_second_pr_create_in_one_command_is_not_missed() {
 
 #[test]
 fn a_draft_pr_is_gated_too() {
-    let Some(f) = Fixture::new("draft") else {
-        return;
-    };
+    let f = Fixture::new("draft");
     let bare = f.body_file("bare.md", "Closes #1\n");
     let (code, err) = f.bash(&format!(
         "gh pr create --draft --title t --body-file {bare}"
@@ -544,9 +627,7 @@ fn a_draft_pr_is_gated_too() {
 
 #[test]
 fn an_unparseable_command_that_opens_a_pr_fails_closed() {
-    let Some(f) = Fixture::new("unparseable") else {
-        return;
-    };
+    let f = Fixture::new("unparseable");
     let (code, err) = f.bash("gh pr create --title t --body \"unterminated");
     assert_blocked(code, &err);
     assert!(
@@ -555,13 +636,38 @@ fn an_unparseable_command_that_opens_a_pr_fails_closed() {
     );
 }
 
-// --- everything the hook must keep its hands off --------------------------------------------
+#[test]
+fn a_command_ending_in_a_dangling_escape_fails_closed() {
+    let f = Fixture::new("dangling-escape");
+    // The other way a line stops lexing: it ends mid-escape, so the last word is unknowable. A
+    // trailing backslash is what a line-continuation looks like when the continuation is lost.
+    let (code, err) = f.bash("gh pr create --title t --body-file body.md \\");
+    assert_blocked(code, &err);
+    assert!(
+        err.contains("could not parse"),
+        "an unfinished escape must fail closed like an unbalanced quote: {err}"
+    );
+}
+
+#[test]
+fn escaped_quotes_inside_a_body_do_not_end_it() {
+    let f = Fixture::new("escaped-quote");
+    // A `\"` inside a double-quoted body is a literal quote, not the end of the argument. Getting
+    // that wrong splits the body in two and the block goes missing from a body that has it.
+    let (code, err) = f.bash(&format!(
+        "gh pr create --title t --body \"He said \\\"ship it\\\".\n\n{COMPLETE_BLOCK}\""
+    ));
+    assert_allowed(code, &err);
+    let (code, err) =
+        f.bash("gh pr create --title t --body \"He said \\\"ship it\\\".\n\nno evidence\"");
+    assert_blocked(code, &err);
+}
+
+// --- everything the gate must keep its hands off --------------------------------------------
 
 #[test]
 fn commands_that_do_not_open_a_pr_pass_through() {
-    let Some(f) = Fixture::new("passthrough") else {
-        return;
-    };
+    let f = Fixture::new("passthrough");
     for cmd in [
         "gh pr view 12 --json body",
         "gh issue create --title t --body \"no qa block here\"",
@@ -570,6 +676,12 @@ fn commands_that_do_not_open_a_pr_pass_through() {
         "gh pr list --state open",
         "grep -rn \"gh pr create\" campaign-prompt.txt",
         "rg 'gh pr create' --files-with-matches",
+        // A line that does not lex is only failed closed when it still looks like a PR open. These
+        // two do not: one names none of the three words, the other names them OUT OF ORDER. An
+        // unordered or unconditional fail-closed here would wedge every unbalanced-quote command
+        // on the box, which is a far worse failure than the one this gate guards.
+        "git commit -m \"unterminated",
+        "echo \"create a pr with gh",
     ] {
         let (code, err) = f.bash(cmd);
         assert_eq!(code, 0, "{cmd} must pass through untouched: {err}");
@@ -578,9 +690,7 @@ fn commands_that_do_not_open_a_pr_pass_through() {
 
 #[test]
 fn an_unquoted_gh_pr_create_anywhere_in_the_line_is_treated_as_the_command() {
-    let Some(f) = Fixture::new("overmatch") else {
-        return;
-    };
+    let f = Fixture::new("overmatch");
     // Deliberate over-match, not an oversight. Requiring `gh` at the head of its segment would
     // let every prefix spelling through — `timeout 60 gh pr create`, `nix develop -c gh pr
     // create` — and the wrapper trick is exactly how a guard in this repo has been bypassed
@@ -592,9 +702,7 @@ fn an_unquoted_gh_pr_create_anywhere_in_the_line_is_treated_as_the_command() {
 
 #[test]
 fn a_non_bash_tool_call_is_ignored() {
-    let Some(f) = Fixture::new("non-bash") else {
-        return;
-    };
+    let f = Fixture::new("non-bash");
     for input in [
         serde_json::json!({"file_path": "/tmp/x.md", "content": "gh pr create --body no-qa"}),
         // A `command` key on a tool that is not Bash is not hypothetical — MCP tool inputs are
@@ -611,29 +719,10 @@ fn a_non_bash_tool_call_is_ignored() {
 
 #[test]
 fn an_unparseable_payload_is_not_a_block() {
-    let Some(f) = Fixture::new("bad-payload") else {
-        return;
-    };
-    let mut child = Command::new(&f.hook)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn the hook");
-    {
-        use std::io::Write;
-        child
-            .stdin
-            .as_mut()
-            .expect("hook stdin")
-            .write_all(b"{not json, but it does mention create}")
-            .expect("write");
-    }
-    let out = child.wait_with_output().expect("hook exit");
+    let (code, err) = run_gate(b"{not json, but it does mention create}", &[]);
     assert_eq!(
-        out.status.code(),
-        Some(0),
-        "a payload the harness never sends must not wedge every Bash call"
+        code, 0,
+        "a payload the harness never sends must not wedge every Bash call: {err}"
     );
 }
 
@@ -641,16 +730,14 @@ fn an_unparseable_payload_is_not_a_block() {
 
 #[test]
 fn the_gate_is_not_scoped_to_the_cron() {
-    let Some(f) = Fixture::new("scope") else {
-        return;
-    };
+    let f = Fixture::new("scope");
     let bare = f.body_file("bare.md", "Closes #1\n");
     let payload = serde_json::json!({
         "tool_name": "Bash",
         "cwd": f.dir.display().to_string(),
         "tool_input": {"command": open_pr(&bare)},
     });
-    // The other two hooks in this repo return early unless RAINIX_CRON_HOOK is set. This one must
+    // The two hooks left in `hooks/` return early unless RAINIX_CRON_HOOK is set. This gate must
     // not: the PRs that leaked (#83) were opened by sessions the cron env never touched, and the
     // cron producer is the population that was already complying.
     for env in [vec![], vec![("RAINIX_CRON_HOOK", "1")]] {

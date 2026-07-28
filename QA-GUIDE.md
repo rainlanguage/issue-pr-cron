@@ -104,9 +104,10 @@ the reason** (a docs-only diff has no mutations to apply); an absent line is not
 an option.
 
 That is enforced where the PR is opened, not only where it is judged.
-`hooks/require-qa-block.sh` is a PreToolUse hook that refuses a `gh pr create`
-whose body has no `## QA` section, or whose section names fewer than all four
-lines, and its refusal lists the ones that are missing. So "a PR without its QA
-evidence does not get opened" is literal: it costs one retry inside the run
-instead of a round trip through the vetter's queue. The hook checks that the
-block is PRESENT; whether its claims hold is still the vetter's call.
+`pr-review-report require-qa-block`, wired as a PreToolUse hook, refuses a
+`gh pr create` whose body has no `## QA` section, or whose section names fewer
+than all four lines, and its refusal lists the ones that are missing. So "a PR
+without its QA evidence does not get opened" is literal: it costs one retry
+inside the run instead of a round trip through the vetter's queue. The gate
+checks that the block is PRESENT; whether its claims hold is still the vetter's
+call.

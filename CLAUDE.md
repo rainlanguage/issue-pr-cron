@@ -27,16 +27,19 @@ framing is what keeps it debuggable and honest:
 North star for any change here: if you're about to instruct a prompt to call
 `gh`, stop and add (or extend) a tool subcommand instead.
 
-**Where a subcommand cannot reach, a PreToolUse hook can.** A tool surface binds
-only a session that was launched with it, so it holds nothing for a session
-opened outside the cron — and the loose `gh pr create` transition is reachable
-from every session on the box. `hooks/` is where those guards live: the
-deny-list bypasses (`block-nix-wrap-gh.sh`, `block-cron-git-bypass.sh`) and the
-QA-GUIDE section-8 gate on `gh pr create` (`require-qa-block.sh`, #83). A hook
-is not an excuse to leave a transition loose — it is what holds the invariant
-while it still is, and it is tested like a subcommand
-(`pr-review-report-rs/tests/require_qa_block.rs`), not asserted in prose. See
-[README.md](README.md#hooks--guards-a-prompt-cannot-hold).
+**Where a subcommand cannot reach, a PreToolUse hook can — and the hook should
+still BE a subcommand.** A tool surface binds only a session that was launched
+with it, so it holds nothing for a session opened outside the cron, while the
+loose `gh pr create` transition is reachable from every session on the box. That
+is a reason to change WHERE the transition function is invoked from, not a
+licence to write the guard in bash: `require-qa-block` is a `pr-review-report`
+subcommand that Claude Code runs as a PreToolUse `Bash` hook (#83), so the gate
+is tested, shipped in the flake closure, and covered by the nix build like every
+other transition. `hooks/` holds what has not been converted yet — the two
+deny-list bypass guards (`block-nix-wrap-gh.sh`, `block-cron-git-bypass.sh`),
+tracked by #10. A hook is not an excuse to leave a transition loose; it is what
+holds the invariant while it still is. See
+[README.md](README.md#pretooluse-guards--what-a-prompt-cannot-hold).
 
 ## Transitions (subcommands)
 
@@ -55,6 +58,7 @@ transition functions:
 | `unvetted_close_candidates` (MCP)                          | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                    |
 | `record_close_candidate_verdict` (MCP)                     | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                        |
 | `mcp [--profile vetter\|producer]`                         | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                         |
+| `require-qa-block`                                         | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session   |
 
 ## The FSM as a tool surface (MCP)
 
