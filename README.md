@@ -461,11 +461,11 @@ A prompt is advice and a permission deny-list is prefix-matched, so some
 invariants can only be held by a PreToolUse hook, which sees the actual tool
 call. Three are wired that way. **Only two of them are scripts:**
 
-| Guard                                | Holds                                                                                                                                                   |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pr-review-report require-qa-block`  | QA-GUIDE.md section 8 — a `gh pr create` whose body has no `## QA` section, or names fewer than all four evidence lines, is refused with what's missing |
-| `hooks/block-nix-wrap-gh.sh`         | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                  |
-| `hooks/block-cron-git-bypass.sh`     | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                  |
+| Guard                               | Holds                                                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr-review-report require-qa-block` | QA-GUIDE.md section 8 — a `gh pr create` whose body has no `## QA` section, or names fewer than all four evidence lines, is refused with what's missing |
+| `hooks/block-nix-wrap-gh.sh`        | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                  |
+| `hooks/block-cron-git-bypass.sh`    | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                  |
 
 The QA gate is a **subcommand**, per CLAUDE.md's north star: everything it does
 is parsing — a shell word-splitter, a heading scanner, a distinct-line
@@ -473,8 +473,9 @@ assignment — which is the work this binary exists to own. Being in the binary
 also means it ships in the flake closure and its tests run inside the nix build;
 a script under `hooks/` cannot, because the derivation's fileset is the
 manifests plus the crate, so a repo-root script is absent there and every test
-driving one skipped. The other two are still bash and still untested — [#10](https://github.com/rainlanguage/issue-pr-cron/issues/10)
-tracks giving them the same treatment.
+driving one skipped. The other two are still bash and still untested —
+[#10](https://github.com/rainlanguage/issue-pr-cron/issues/10) tracks giving
+them the same treatment.
 
 Nothing here is **installed by the flake as a hook**: wire each into the box's
 user `settings.json` as a PreToolUse `Bash` hook. The two scripts carry their
@@ -493,8 +494,14 @@ around it:
           // otherwise use the absolute path from
           // `nix build --no-link --print-out-paths <install-dir>#pr-review-report`.
           { "type": "command", "command": "pr-review-report require-qa-block" },
-          { "type": "command", "command": "<install-dir>/hooks/block-nix-wrap-gh.sh" },
-          { "type": "command", "command": "<install-dir>/hooks/block-cron-git-bypass.sh" }
+          {
+            "type": "command",
+            "command": "<install-dir>/hooks/block-nix-wrap-gh.sh"
+          },
+          {
+            "type": "command",
+            "command": "<install-dir>/hooks/block-cron-git-bypass.sh"
+          }
         ]
       }
     ]

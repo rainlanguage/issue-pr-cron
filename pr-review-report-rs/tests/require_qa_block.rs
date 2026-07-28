@@ -534,6 +534,27 @@ fn relative_cds_compound_and_dot_dot_resolves() {
         err.contains("no `## QA` heading"),
         "`cd sub && cd ..` lands back at the session cwd, whose body is bare: {err}"
     );
+    // And it is named the way the shell would land on it. The kernel resolves `..` either way, so
+    // an unnormalised path still READS the right file — it just tells the model to go fix
+    // `sub/../body.md`, a path that is not where the body is.
+    assert!(
+        err.contains(&format!("--body-file {}/body.md", f.dir.display())),
+        "the refusal must name the resolved path, not the walk that reached it: {err}"
+    );
+}
+
+#[test]
+fn an_invocations_arguments_stop_at_the_shell_operator() {
+    let f = Fixture::new("segment-bounds");
+    let body = f.body_file("body.md", COMPLETE_BLOCK);
+    // A chained command's flags are not this invocation's flags. Without the split on `&&`, the
+    // `--body-file` belonging to the command AFTER it is read as one of `gh pr create`'s own — so a
+    // note the run writes later fails a compliant PR open closed, naming a file gh never touches.
+    let (code, err) = f.bash(&format!(
+        "gh pr create --title t --body-file {body} && gh issue comment 83 --body-file {}",
+        f.path("note-written-later.md")
+    ));
+    assert_allowed(code, &err);
 }
 
 #[test]
@@ -641,12 +662,36 @@ fn a_command_ending_in_a_dangling_escape_fails_closed() {
     let f = Fixture::new("dangling-escape");
     // The other way a line stops lexing: it ends mid-escape, so the last word is unknowable. A
     // trailing backslash is what a line-continuation looks like when the continuation is lost.
-    let (code, err) = f.bash("gh pr create --title t --body-file body.md \\");
-    assert_blocked(code, &err);
-    assert!(
-        err.contains("could not parse"),
-        "an unfinished escape must fail closed like an unbalanced quote: {err}"
-    );
+    // Both positions, because they are different states of the lexer: after a space the escape
+    // OPENS a word, glued to the previous token it continues one.
+    for cmd in [
+        "gh pr create --title t --body-file body.md \\",
+        "gh pr create --title t --body-file body.md\\",
+    ] {
+        let (code, err) = f.bash(cmd);
+        assert_blocked(code, &err);
+        assert!(
+            err.contains("could not parse"),
+            "{cmd:?}: an unfinished escape must fail closed like an unbalanced quote: {err}"
+        );
+    }
+}
+
+#[test]
+fn a_backslash_escape_is_removed_from_the_argument_it_escapes() {
+    let f = Fixture::new("escape-removed");
+    // Inside double quotes a backslash escapes `"` and `\` and is REMOVED — everything else keeps
+    // it, so `"\n"` stays two characters. Keeping the removed ones would hand the gate a path two
+    // characters off from the one the shell opens: it would then fail a compliant PR closed on a
+    // file that does not exist, which is the exact false-block a fail-closed gate cannot afford.
+    let dir = f.dir.join("quote\"and\\slash");
+    std::fs::create_dir_all(&dir).expect("create dir");
+    std::fs::write(dir.join("body.md"), COMPLETE_BLOCK).expect("write body");
+    let (code, err) = f.bash(&format!(
+        "gh pr create --title t --body-file \"{}/quote\\\"and\\\\slash/body.md\"",
+        f.dir.display()
+    ));
+    assert_allowed(code, &err);
 }
 
 #[test]
