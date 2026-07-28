@@ -111,9 +111,21 @@ export INSTALL_DIR="$DIR"
 
 # rotate per-run traces (keep newest $KEEP_RUNS .jsonl + their .err sidecars)
 find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d" " -f2- | tail -n +$((KEEP_RUNS + 1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
+# per-run infra records (#108): kept a week so the last few runs' raw records can be read by hand,
+# then dropped — their contents are already folded into metrics/runs.jsonl, which is the durable copy.
+find "$DIR/metrics" -maxdepth 1 -name ".infra-*.jsonl" -mtime +7 -delete 2>/dev/null
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
+
+# --- the run's infra record (#108) -------------------------------------------------------------
+# Where `infra-down` writes and where `run-metrics` / `run-infra` read it back. Named for THIS run's
+# id, so one run's finding can never be read as another's — the staleness bug a fixed path would
+# have had, and the reason the model is never asked to pass a path it could get wrong.
+# It replaces the `ai:blocked-infra` label: ending the run leaves NO state on GitHub, only this line.
+INFRAREC="$DIR/metrics/.infra-$TS.jsonl"
+export RUN_INFRA_FILE="$INFRAREC"
+rm -f "$INFRAREC"
 
 # --- harness read-time dependencies: resolved BEFORE a token is spent -------------------------
 # Same check, same reason, as review-run.sh. The producer drains the `audit`-labelled backlog
@@ -213,6 +225,22 @@ echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)
 if [ -s "$RUNLOG" ]; then
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role producer --model "$USED_MODEL" --exit-code "$rc" \
+    --infra "$INFRAREC" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+fi
+
+# --- did the run end because the infrastructure was down? (#108) ------------------------------
+# Every other exit in this script is PRE-MODEL: disabled, usage-gated, locked, preflight. So nothing
+# the model LEARNED could ever end its run — it could only label the victims and carry on queueing
+# work behind the same dead infrastructure, which is what run 20260728T111645Z did. `run-infra` reads
+# the finding the model recorded mid-flight and exits 12. That code is the preflight abort's, and it
+# means the same thing: the run could not usefully proceed, the code is fine, retry next tick. The
+# fact is already on the metrics line above, so the record survives the exit, and the record file
+# itself is per-run and rotates with the traces.
+_ri="$(pr-review-report run-infra "$INFRAREC")"; _rirc=$?
+printf '%s\n' "$_ri" | sed 's/^/  /' >> "$LOG"
+if [ "$_rirc" -eq 12 ]; then
+  echo "$(date -u +%FT%TZ) campaign run ENDED EARLY: infrastructure down (see infraReason in metrics/runs.jsonl)" >> "$LOG"
+  exit 12
 fi
 exit 0
