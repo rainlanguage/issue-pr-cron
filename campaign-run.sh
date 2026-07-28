@@ -113,6 +113,25 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
 
+# --- harness read-time dependencies: resolved BEFORE a token is spent -------------------------
+# Same check, same reason, as review-run.sh. The producer drains the `audit`-labelled backlog
+# first, and those issues cite `audit/protofire/*.pdf` as their source (raindex#2619 names the file
+# outright) — a producer that cannot open the report it is implementing against writes a PR body
+# asserting something it never read. A missing dependency ends the run rather than degrading it.
+_pf="$(pr-review-report preflight)"; _pfrc=$?
+printf '%s\n' "$_pf" | sed 's/^/  /' >> "$LOG"
+if [ "$_pfrc" -ne 0 ]; then
+  _missing="$(printf '%s\n' "$_pf" | sed -n 's/^missing=//p')"
+  echo "$(date -u +%FT%TZ) campaign run ABORT: harness tools missing from PATH: $_missing" >> "$LOG"
+  : > "$RUNLOG"
+  mkdir -p "$DIR/metrics"
+  pr-review-report run-metrics "$RUNLOG" \
+    --run-id "$TS" --role producer --model "$MODEL" --exit-code "$_pfrc" \
+    --preflight-missing "$_missing" \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+  exit "$_pfrc"
+fi
+
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \

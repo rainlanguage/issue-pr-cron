@@ -93,6 +93,29 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
 
+# --- harness read-time dependencies: resolved BEFORE a token is spent -------------------------
+# The audit lens reads whatever the PR ships, and this org's audit evidence is PDF, which the
+# harness renders by shelling out to poppler. A missing renderer does not crash the run: `Read`
+# returns a typed error, the model vets what it can still see, records a verdict, and claude exits
+# 0. That is how #85's run vetted `ready` a PR the previous run had `reject`ed — the dependency
+# moved the verdict. So the check runs here and a miss ENDS the run: no verdict at all beats a
+# verdict from a lens that was blind without saying so.
+_pf="$(pr-review-report preflight)"; _pfrc=$?
+printf '%s\n' "$_pf" | sed 's/^/  /' >> "$LOG"
+if [ "$_pfrc" -ne 0 ]; then
+  _missing="$(printf '%s\n' "$_pf" | sed -n 's/^missing=//p')"
+  echo "$(date -u +%FT%TZ) review run ABORT: harness tools missing from PATH: $_missing" >> "$LOG"
+  # An empty trace, so the record's shape still comes from `run-metrics` — there is no second
+  # place that knows what a runs.jsonl line looks like.
+  : > "$RUNLOG"
+  mkdir -p "$DIR/metrics"
+  pr-review-report run-metrics "$RUNLOG" \
+    --run-id "$TS" --role vetter --model "$REVIEW_MODEL" --exit-code "$_pfrc" \
+    --preflight-missing "$_missing" \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+  exit "$_pfrc"
+fi
+
 # --- tool surface: the FSM MCP server, and nothing else (issue #52) ---------------------------
 # The vetter runs against the FSM MCP server in pr-review-report: its whole tool surface is
 # `mcp__fsm__{unvetted,pr_context,pr_checkout,record_verdict}` (+ Read/Grep/Glob/Skill/ToolSearch)

@@ -915,6 +915,7 @@ fn run_metrics_mode(
     role: Option<&str>,
     model: Option<&str>,
     exit_code: Option<i32>,
+    preflight_missing: &[String],
 ) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -924,6 +925,7 @@ fn run_metrics_mode(
         }
     };
     let m = run_metrics(&content);
+    let tooling = trace_tooling_report(&content);
     let mut doc = serde_json::json!({
         "trace": path,
         "toolCalls": m.tool_calls,
@@ -939,6 +941,12 @@ fn run_metrics_mode(
         "cacheRead": m.cache_read,
         "cacheCreation": m.cache_creation,
         "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
+        // Always present, so the dashboard can distinguish "no tooling trouble" from "this record
+        // predates the field". `unreadableFiles` is what makes the outcome `tooling-failure`;
+        // `commandsNotFound` is reported but never decides the outcome (see trace_tooling_report).
+        "unreadableFiles": tooling.unreadable,
+        "commandsNotFound": tooling.command_not_found,
+        "missingTools": preflight_missing,
     });
     // Only enrich when the caller supplied run identity, so a bare `run-metrics <trace>` keeps
     // emitting exactly the record it always has (the dashboard re-derives history from traces).
@@ -956,12 +964,277 @@ fn run_metrics_mode(
             obj.insert("exitCode".into(), serde_json::json!(rc));
             obj.insert(
                 "outcome".into(),
-                serde_json::json!(classify_trace(&content, rc).as_str()),
+                serde_json::json!(classify_outcome(&content, rc, preflight_missing).as_str()),
             );
         }
     }
     println!("{}", serde_json::to_string(&doc).unwrap());
     0
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tooling failures (#85).
+//
+// A run whose TOOLS could not do their job is not a successful run. Before this, one could be:
+// the vetter's `Read` of `audit/protofire/*.pdf` came back `isError: pdftoppm is not installed`,
+// the model recorded a verdict on what it could still check, claude exited 0, and the run was
+// classified `ok`. The same PR was vetted `reject` by a run that read more of it and `ready` by
+// the run that could not — the missing dependency did not merely reduce coverage, it moved the
+// verdict.
+//
+// Two mechanisms, because the failure has two shapes:
+//
+//   KNOWN — a dependency we have already discovered. [`HARNESS_TOOLS`] declares it, the runner
+//   resolves it BEFORE spending a token, and a missing one ends the run then and there. No model
+//   runs, so no confident answer is built on evidence it cannot read.
+//
+//   UNKNOWN — a dependency nobody has hit yet, which by definition cannot be pre-declared. Caught
+//   from the trace by [`trace_tooling_report`], on a structural relation rather than on the error
+//   prose: a file the environment ITSELF listed as existing, which the run then could not read.
+//   That is an environment failure whatever the artifact type and whatever the message says, so
+//   the NEXT undeclared reader dependency fails the same way this one does, with no new code.
+// ---------------------------------------------------------------------------------------------
+
+/// An external binary the HARNESS execs on the model's behalf, with the evidence for needing it.
+///
+/// Nothing in this repo — no script, no prompt, no skill — names these. They are reached at READ
+/// time by the harness's own `Read` tool, which is exactly why the #77 closure gate could not see
+/// them: that gate proves every DECLARED tool resolves from the locked nixpkgs, and an undeclared
+/// one is invisible to a walk over declarations. This table is where such a dependency becomes
+/// declared, and `.github/workflows/rust.yml` asserts each entry is in both model runners' closures.
+struct HarnessTool {
+    /// The executable name, as the harness spawns it.
+    bin: &'static str,
+    /// Why the pipeline needs it — a fact that can be checked, not a guess.
+    why: &'static str,
+}
+
+/// The declared set. Deliberately short: a preflight that demands tools the work does not use gets
+/// switched off the first time it blocks a run for nothing.
+///
+/// Derived by enumerating the literal command names the harness's own exec helper can be called
+/// with (`strings claude | grep -o 'an("[a-z…]*"'` — its spawn helper is
+/// `function an(e,t,r={timeout:…,useCwd:…})`), then keeping only those reachable from a tool the
+/// pipeline's models actually hold, on Linux, for an artifact type the audited repos contain.
+/// Everything else in that enumeration is platform glue (`osascript`, `powershell.exe`, `pacman`,
+/// `tmux`, `xclip`, …), plugin-install machinery the crons disable via `--strict-mcp-config`
+/// (`unzip`, which the harness also falls back to a JS implementation for), or already declared
+/// (`gh`, `git`).
+const HARNESS_TOOLS: &[HarnessTool] = &[
+    HarnessTool {
+        bin: "pdftoppm",
+        why: "Read renders PDF pages with `pdftoppm -jpeg -r 100`; the org's external audit \
+              evidence is audit/protofire/*.pdf (110 files across the work clones)",
+    },
+    HarnessTool {
+        bin: "pdfinfo",
+        why: "Read asks pdfinfo for a PDF's page count before rendering a requested page range",
+    },
+];
+
+/// Resolve `bin` against `$PATH`, returning the first executable match.
+///
+/// The structural half of the discriminant: "a dependency is absent" is a fact about the
+/// ENVIRONMENT, decidable with a directory walk and an executable-bit test, with no error text to
+/// interpret. It cannot be confused with "the input was bad" because it never looks at an input.
+/// The PATH string is a PARAMETER so the lookup is testable without mutating the process
+/// environment — a test that sets `PATH` would race every other test in the binary.
+fn resolve_in(path: &std::ffi::OsStr, bin: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    for dir in std::env::split_paths(path) {
+        // An empty PATH element means "the current directory" to some shells. Skipped here: a
+        // runner must not acquire a tool from whatever directory the cron happened to start in.
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let cand = dir.join(bin);
+        let Ok(md) = std::fs::metadata(&cand) else {
+            continue;
+        };
+        if md.is_file() && md.permissions().mode() & 0o111 != 0 {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+fn resolve_on_path(bin: &str) -> Option<std::path::PathBuf> {
+    resolve_in(&std::env::var_os("PATH")?, bin)
+}
+
+/// `preflight`: resolve every [`HARNESS_TOOLS`] entry, print what was found, exit non-zero when
+/// any is missing.
+///
+/// Exit 12 is its own code (like the usage gate's 10) so the runner can tell "a dependency is
+/// missing" from "the binary itself failed".
+fn preflight_mode() -> i32 {
+    let mut missing = Vec::new();
+    for t in HARNESS_TOOLS {
+        match resolve_on_path(t.bin) {
+            Some(p) => println!("ok      {:<10} {}", t.bin, p.display()),
+            None => {
+                println!("MISSING {:<10} {}", t.bin, t.why);
+                missing.push(t.bin);
+            }
+        }
+    }
+    if missing.is_empty() {
+        return 0;
+    }
+    // stdout carries the machine-readable list; the runner passes it straight to `run-metrics`.
+    println!("missing={}", missing.join(","));
+    eprintln!(
+        "error: {} harness tool(s) missing from PATH: {}",
+        missing.len(),
+        missing.join(", ")
+    );
+    12
+}
+
+/// What a trace says about the run's tools, as distinct from the model's judgement.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ToolingReport {
+    /// Files the environment listed as existing and the run then failed to read. Non-empty means
+    /// the run was blind to evidence that was there — a TOOLING failure, whatever the cause.
+    unreadable: Vec<String>,
+    /// Bash commands that exited 127. Surfaced, never raised to a failed outcome — see below.
+    command_not_found: Vec<String>,
+}
+
+/// Read a `tool_result` block's content as text, whatever shape the harness used for it.
+fn tool_result_text(item: &Value) -> String {
+    match item.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Derive the tooling report from a trace, WITHOUT reading any error message.
+///
+/// The signal for `unreadable` is a relation between two tool results, not the text of either:
+///
+///   1. a SUCCESSFUL `Glob` result is a filesystem enumeration — every line of it is the absolute
+///      path of a file that existed when the run looked;
+///   2. a FAILED `Read` names its target in the typed `file_path` input;
+///   3. if (2)'s path is in (1)'s enumeration, the input was valid — the file was there — so the
+///      failure belongs to the environment, not to the model's choice of argument.
+///
+/// That is the discrimination the message text is usually used for, obtained structurally. It
+/// generalises: a future harness that cannot read some new artifact type for want of some new
+/// binary produces exactly this shape, with no rule about that binary anywhere.
+///
+/// It fails SAFE in both directions. A Read error for a path nothing enumerated (the model guessed
+/// at a filename) stays an input error and is not reported. A path corroborated only by `Grep` is
+/// not counted either — Grep's lines carry `path:line:` prefixes and matching them would mean
+/// parsing output shape rather than reading an enumeration.
+///
+/// Validated against every trace this box has kept: 67 runs, ~5 months, and it fires on exactly
+/// the two Reads of #85's audit PDFs — no other run in the corpus produces a corroborated Read
+/// error.
+///
+/// `command_not_found` is the weaker sibling and is deliberately NOT part of the outcome. The
+/// harness renders a failed Bash with a first line of `Exit code <n>`, so a 127 is POSIX's
+/// "command not found" — typed, not prose. But the producer's Bash is a general-purpose surface
+/// where the model legitimately PROBES for tools it does not need (`which node npm`, `node
+/// --version`): 2 of the 5 historical 127s on this box are probes of that kind. Raising them to a
+/// failed run would spend the outcome's credibility on non-failures, so they are surfaced as a
+/// field for a human to read instead. (The other 3 are real: `node`, `npm` and `fc-list` are
+/// undeclared in the producer's closure to this day.)
+fn trace_tooling_report(content: &str) -> ToolingReport {
+    let mut names: std::collections::HashMap<String, (String, Value)> =
+        std::collections::HashMap::new();
+    let mut listed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut failed_reads: Vec<String> = Vec::new();
+    let mut report = ToolingReport::default();
+
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match ev.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                let blocks = ev
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                for b in blocks.into_iter().flatten() {
+                    if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                        continue;
+                    }
+                    let (Some(id), Some(name)) = (
+                        b.get("id").and_then(|i| i.as_str()),
+                        b.get("name").and_then(|n| n.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    let input = b.get("input").cloned().unwrap_or(Value::Null);
+                    names.insert(id.to_string(), (name.to_string(), input));
+                }
+            }
+            Some("user") => {
+                let blocks = ev
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                for b in blocks.into_iter().flatten() {
+                    if b.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+                        continue;
+                    }
+                    let id = b.get("tool_use_id").and_then(|i| i.as_str()).unwrap_or("");
+                    let Some((tool, input)) = names.get(id) else {
+                        continue;
+                    };
+                    let is_error = b.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+                    match (tool.as_str(), is_error) {
+                        // A successful Glob IS the filesystem's own statement that these files exist.
+                        ("Glob", false) => {
+                            for l in tool_result_text(b).lines() {
+                                let l = l.trim();
+                                if l.starts_with('/') {
+                                    listed.insert(l.to_string());
+                                }
+                            }
+                        }
+                        ("Read", true) => {
+                            if let Some(p) = input.get("file_path").and_then(|p| p.as_str()) {
+                                failed_reads.push(p.to_string());
+                            }
+                        }
+                        ("Bash", true) => {
+                            let text = tool_result_text(b);
+                            let first = text.lines().next().unwrap_or("").trim();
+                            if first
+                                .strip_prefix("Exit code ")
+                                .and_then(|n| n.trim().parse::<i32>().ok())
+                                == Some(127)
+                            {
+                                // The COMMAND comes from the typed tool_use input, so even this
+                                // human-facing detail is not scraped out of an error message.
+                                let cmd = input
+                                    .get("command")
+                                    .and_then(|c| c.as_str())
+                                    .unwrap_or("")
+                                    .chars()
+                                    .take(120)
+                                    .collect::<String>();
+                                report.command_not_found.push(cmd);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Evaluated after the whole trace so corroboration is order-independent.
+    for p in failed_reads {
+        if listed.contains(&p) && !report.unreadable.contains(&p) {
+            report.unreadable.push(p);
+        }
+    }
+    report
 }
 
 /// How a run ended. This is a TYPE, not a grep over the trace bytes.
@@ -980,6 +1253,12 @@ enum TraceOutcome {
     Ok,
     /// The model is quota/usage limited — the ONLY outcome that should advance model fallback.
     QuotaLimited,
+    /// The run's TOOLS could not do their job: a declared dependency was absent before the run
+    /// started, or the run failed to read a file the environment had listed as existing. Not the
+    /// model's mistake, and never `ok` — a blind run that answers anyway is the failure #85
+    /// recorded, where the same PR came out `ready` from the run that could not read its evidence
+    /// and `reject` from the run that could.
+    ToolingFailure,
     Error,
 }
 
@@ -990,6 +1269,7 @@ impl TraceOutcome {
         match self {
             TraceOutcome::Ok => "ok",
             TraceOutcome::QuotaLimited => "session-limit",
+            TraceOutcome::ToolingFailure => "tooling-failure",
             TraceOutcome::Error => "error",
         }
     }
@@ -1046,10 +1326,28 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
     if quota {
         return TraceOutcome::QuotaLimited;
     }
+    // Ordered AFTER quota so the runners' model-fallback loop still sees `session-limit` and
+    // advances: a run the API refused never got far enough for its tools to matter.
+    if !trace_tooling_report(trace).unreadable.is_empty() {
+        return TraceOutcome::ToolingFailure;
+    }
     if exit_code != 0 {
         return TraceOutcome::Error;
     }
     TraceOutcome::Ok
+}
+
+/// The whole run's outcome: what the trace says, plus what `preflight` found before the trace
+/// existed.
+///
+/// A preflight failure has no trace to classify — the model never ran — so the fact arrives as the
+/// list of binaries that would not resolve. It outranks everything else: a run that was stopped
+/// before it started is neither quota-limited nor merely errored.
+fn classify_outcome(trace: &str, exit_code: i32, preflight_missing: &[String]) -> TraceOutcome {
+    if !preflight_missing.is_empty() {
+        return TraceOutcome::ToolingFailure;
+    }
+    classify_trace(trace, exit_code)
 }
 
 /// `trace-outcome <trace> --exit-code <n>`: print the typed outcome word and exit 0.
@@ -7076,7 +7374,18 @@ enum Cmd {
         /// claude's exit code. Also selects `outcome`, classified from the trace.
         #[arg(long)]
         exit_code: Option<i32>,
+        /// Binaries `preflight` could not resolve, comma-separated. Present means the run was
+        /// stopped before the model started, so there is no trace to classify — the outcome is
+        /// `tooling-failure` on this fact alone.
+        #[arg(long, value_delimiter = ',')]
+        preflight_missing: Vec<String>,
     },
+    /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
+    ///
+    /// Run before the model, by both runners. A dependency that is absent must stop the run, not
+    /// degrade it: the failure that motivated this was a vetter that could not render an audit PDF,
+    /// vetted the PR on what was left, and reported success (#85).
+    Preflight,
     /// Print the typed outcome of a run trace: `ok`, `session-limit`, or `error`.
     /// The runners' model-fallback loop branches on this instead of grepping the trace.
     TraceOutcome {
@@ -8038,13 +8347,16 @@ fn main() {
             role,
             model,
             exit_code,
+            preflight_missing,
         } => run_metrics_mode(
             &trace,
             run_id.as_deref(),
             role.as_deref(),
             model.as_deref(),
             exit_code,
+            &preflight_missing,
         ),
+        Cmd::Preflight => preflight_mode(),
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
@@ -10942,6 +11254,7 @@ mod cli_tests {
                 role: None,
                 model: None,
                 exit_code: None,
+                preflight_missing: vec![],
             }
         );
         // The form the runners now use in place of the `| jq '. + {…}'` pipe.
@@ -10965,6 +11278,27 @@ mod cli_tests {
                 role: Some("producer".to_string()),
                 model: Some("claude-fable-5".to_string()),
                 exit_code: Some(0),
+                preflight_missing: vec![],
+            }
+        );
+        // The abort form: `preflight` found nothing to render with, so the model never started.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--exit-code",
+                "12",
+                "--preflight-missing",
+                "pdftoppm,pdfinfo"
+            ]),
+            Cmd::RunMetrics {
+                trace: "/t.jsonl".to_string(),
+                run_id: None,
+                role: None,
+                model: None,
+                exit_code: Some(12),
+                preflight_missing: vec!["pdftoppm".to_string(), "pdfinfo".to_string()],
             }
         );
     }
@@ -11089,6 +11423,275 @@ mod cli_tests {
         assert_eq!(TraceOutcome::Ok.as_str(), "ok");
         assert_eq!(TraceOutcome::QuotaLimited.as_str(), "session-limit");
         assert_eq!(TraceOutcome::Error.as_str(), "error");
+        assert_eq!(TraceOutcome::ToolingFailure.as_str(), "tooling-failure");
+    }
+
+    // ---- tooling failures (#85) ----------------------------------------------------------
+    //
+    // The fixtures below are cut down from the real trace that produced #85
+    // (review-runs/20260728T055940Z.jsonl): a Glob that enumerated the repo, then two Reads of
+    // audit PDFs that came back `is_error` because the closure had no `pdftoppm`.
+
+    /// One assistant `tool_use` event.
+    fn tu(id: &str, name: &str, input: Value) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "id": id, "name": name, "input": input}]}
+        })
+        .to_string()
+    }
+
+    /// One `tool_result` event for a given tool_use id.
+    fn tr(id: &str, content: &str, is_error: bool) -> String {
+        serde_json::json!({
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "content": content, "is_error": is_error}
+            ]}
+        })
+        .to_string()
+    }
+
+    const PDF_A: &str = "/home/gildlab/code/vet-x/audit/protofire/a.pdf";
+    const PDF_B: &str = "/home/gildlab/code/vet-x/audit/protofire/b.pdf";
+    // The harness's own words. Nothing in the classifier reads them; they are here so a future
+    // reader can see the test does not depend on them.
+    const POPPLER_ERR: &str = "pdftoppm is not installed. Install poppler-utils (e.g. `brew install poppler` or `apt-get install poppler-utils`) to enable PDF page rendering.";
+
+    fn blind_pdf_trace() -> String {
+        [
+            tu("g1", "Glob", serde_json::json!({"pattern": "**/*"})),
+            tr(
+                "g1",
+                &format!("{PDF_A}\n{PDF_B}\n/home/gildlab/code/vet-x/README.md"),
+                false,
+            ),
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", POPPLER_ERR, true),
+            tu("r2", "Read", serde_json::json!({"file_path": PDF_B})),
+            tr("r2", POPPLER_ERR, true),
+            r#"{"type":"result","subtype":"success","num_turns":9}"#.to_string(),
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn a_read_that_fails_on_an_enumerated_file_is_a_tooling_failure() {
+        let r = trace_tooling_report(&blind_pdf_trace());
+        assert_eq!(r.unreadable, vec![PDF_A.to_string(), PDF_B.to_string()]);
+        // And it decides the run's outcome, on a trace claude exited 0 on.
+        assert_eq!(
+            classify_trace(&blind_pdf_trace(), 0),
+            TraceOutcome::ToolingFailure,
+            "a run that could not read evidence the filesystem listed is not `ok`"
+        );
+    }
+
+    #[test]
+    fn the_classifier_never_reads_the_error_message() {
+        // Same structure, a message with no hint of a missing tool in it. If the rule were
+        // matching prose ("is not installed", "poppler"), this would come back `ok` — which is
+        // exactly how the NEXT undeclared dependency would slip through.
+        let t = blind_pdf_trace().replace(POPPLER_ERR, "Could not render this file.");
+        assert!(!t.contains("pdftoppm"));
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::ToolingFailure);
+    }
+
+    #[test]
+    fn a_read_of_a_path_nothing_listed_is_an_input_error_not_a_tooling_failure() {
+        // The model guessed at a filename. The environment never said it existed, so this is the
+        // run doing its job — and making it red would spend the outcome's credibility.
+        let t = [
+            tu(
+                "r1",
+                "Read",
+                serde_json::json!({"file_path": "/home/gildlab/code/vet-x/nope.pdf"}),
+            ),
+            tr("r1", "File does not exist.", true),
+        ]
+        .join("\n");
+        assert_eq!(trace_tooling_report(&t), ToolingReport::default());
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn only_a_successful_glob_corroborates() {
+        // A FAILED Glob's output is not an enumeration of anything.
+        let t = [
+            tu("g1", "Glob", serde_json::json!({"pattern": "**/*"})),
+            tr("g1", &format!("Ripgrep search timed out\n{PDF_A}"), true),
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", POPPLER_ERR, true),
+        ]
+        .join("\n");
+        assert!(trace_tooling_report(&t).unreadable.is_empty());
+    }
+
+    #[test]
+    fn grep_hits_do_not_corroborate() {
+        // Grep lines are `path:line:text`, so the path is a prefix of the line rather than the
+        // line. Counting them would mean parsing output shape instead of reading an enumeration.
+        let t = [
+            tu("g1", "Grep", serde_json::json!({"pattern": "pdf"})),
+            tr("g1", &format!("{PDF_A}:5:  \"pdf\": \"a.pdf\","), false),
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", POPPLER_ERR, true),
+        ]
+        .join("\n");
+        assert!(trace_tooling_report(&t).unreadable.is_empty());
+    }
+
+    #[test]
+    fn corroboration_is_order_independent() {
+        // The Glob lands AFTER the failed Read. Still corroborated: the question is whether the
+        // file existed, not when the run learned it did.
+        let t = [
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", POPPLER_ERR, true),
+            tu("g1", "Glob", serde_json::json!({"pattern": "**/*"})),
+            tr("g1", PDF_A, false),
+        ]
+        .join("\n");
+        assert_eq!(trace_tooling_report(&t).unreadable, vec![PDF_A.to_string()]);
+    }
+
+    #[test]
+    fn a_successful_read_of_an_enumerated_file_is_not_a_failure() {
+        let t = [
+            tu("g1", "Glob", serde_json::json!({"pattern": "**/*"})),
+            tr("g1", PDF_A, false),
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", "<pdf pages>", false),
+        ]
+        .join("\n");
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn quota_outranks_a_tooling_failure() {
+        // The fallback loop keys on `session-limit` to advance models. A run the API refused never
+        // got far enough for its tools to be the problem, so quota must still win.
+        let t = format!(
+            "{}\n{}",
+            blind_pdf_trace(),
+            r#"{"type":"result","subtype":"error","api_error_status":429}"#
+        );
+        assert_eq!(classify_trace(&t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    #[test]
+    fn bash_exit_127_is_reported_but_does_not_decide_the_outcome() {
+        let t = [
+            tu(
+                "b1",
+                "Bash",
+                serde_json::json!({"command": "node --version"}),
+            ),
+            tr(
+                "b1",
+                "Exit code 127\n/bin/bash: line 1: node: command not found",
+                true,
+            ),
+        ]
+        .join("\n");
+        let r = trace_tooling_report(&t);
+        assert_eq!(r.command_not_found, vec!["node --version".to_string()]);
+        assert!(r.unreadable.is_empty());
+        // Surfaced, not raised: `which node npm` is a legitimate probe for a tool the run does not
+        // need, and 2 of this box's 5 historical 127s are exactly that.
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn a_bash_failure_that_is_not_127_is_not_a_missing_command() {
+        for first in [
+            "Exit code 1",
+            "Exit code 12",
+            "Exit code 1270",
+            "Permission denied",
+        ] {
+            let t = [
+                tu("b1", "Bash", serde_json::json!({"command": "gh pr list"})),
+                tr("b1", &format!("{first}\nsomething went wrong"), true),
+            ]
+            .join("\n");
+            assert!(
+                trace_tooling_report(&t).command_not_found.is_empty(),
+                "{first:?} must not read as command-not-found"
+            );
+        }
+    }
+
+    #[test]
+    fn preflight_failure_outranks_everything_and_needs_no_trace() {
+        // The model never ran, so there is no trace to classify. The outcome comes from the fact
+        // that a declared binary would not resolve.
+        let missing = vec!["pdftoppm".to_string()];
+        assert_eq!(
+            classify_outcome("", 12, &missing),
+            TraceOutcome::ToolingFailure
+        );
+        // …and an empty list must not change what the trace already said.
+        assert_eq!(classify_outcome("", 0, &[]), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn the_harness_read_dependencies_stay_declared() {
+        // These are named NOWHERE else in the repo: no script, no prompt, no skill mentions them.
+        // This list and the closure check in .github/workflows/rust.yml are the only two places a
+        // read-time dependency exists at all, so dropping one here must fail a named test.
+        let bins: Vec<&str> = HARNESS_TOOLS.iter().map(|t| t.bin).collect();
+        assert!(bins.contains(&"pdftoppm"), "PDF rendering: {bins:?}");
+        assert!(bins.contains(&"pdfinfo"), "PDF page count: {bins:?}");
+        for t in HARNESS_TOOLS {
+            assert!(
+                !t.why.trim().is_empty(),
+                "{} must carry the evidence for needing it",
+                t.bin
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_in_finds_only_executables_in_named_directories() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("prr-preflight-{}", std::process::id()));
+        let bin = root.join("bin");
+        let other = root.join("other");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(bin.join("real-tool"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(
+            bin.join("real-tool"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        // Present but not executable — a data file of the same name is not the tool.
+        std::fs::write(bin.join("not-exec"), "x").unwrap();
+        // Present, executable, but in a directory PATH does not name.
+        std::fs::write(other.join("unlisted"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(
+            other.join("unlisted"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        assert_eq!(
+            resolve_in(&path, "real-tool"),
+            Some(bin.join("real-tool")),
+            "an executable on PATH resolves"
+        );
+        assert_eq!(resolve_in(&path, "not-exec"), None, "not executable");
+        assert_eq!(resolve_in(&path, "unlisted"), None, "not on PATH");
+        assert_eq!(resolve_in(&path, "absent"), None);
+        // An empty PATH element must not mean "look in the cwd".
+        let with_empty = std::ffi::OsString::from(format!(":{}", bin.to_string_lossy()));
+        assert_eq!(
+            resolve_in(&with_empty, "real-tool"),
+            Some(bin.join("real-tool"))
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ---- queue-history-line: one implementation for the live append and the backfill ----
