@@ -77,6 +77,20 @@
             text = builtins.readFile file;
           };
 
+        # `pdftoppm` + `pdfinfo`, for the HARNESS's own PDF read path — not for anything the
+        # scripts or the prompts name. Claude Code's Read tool renders a PDF by shelling out to
+        # `pdftoppm -jpeg -r 100 …` (page count via `pdfinfo`) and, when the binary is absent,
+        # returns a tool result of `isError: pdftoppm is not installed…` instead of pages. That is
+        # a SILENT failure mode for this pipeline: the model records a verdict or opens a PR
+        # anyway, the run exits 0, and the only trace is one tool result nothing asserts on.
+        #
+        # The org's external audit evidence lives at `audit/protofire/*.pdf` — 110 such files
+        # across the work clones on this box — so both runners read PDFs as a matter of course:
+        # the vetter through its audit lens, the producer through the `audit`-labelled backlog it
+        # is told to drain first (e.g. raindex#2619, whose stated source IS
+        # `audit/protofire/raindex.e686b4d.apr-2026.pdf`).
+        pdf-tools = pkgs.poppler-utils;
+
         # The producer. `gh` and `jq` are here because the MODEL shells out to them from its
         # Bash tool — bare, so campaign-settings.json's deny-list (which matches the literal
         # command text) still applies. `git` likewise: the producer commits and pushes.
@@ -94,6 +108,7 @@
             pkgs.gnused
             pkgs.util-linux # flock, for the single-run lock
             pkgs.getent # resolves HOME when cron starts without it
+            pdf-tools # audit evidence is PDF; see pdf-tools above
           ];
         };
 
@@ -114,6 +129,7 @@
             pkgs.gnused # {{…}} substitution into the prompt template
             pkgs.util-linux # flock, for the single-run lock
             pkgs.getent # resolves HOME when cron starts without it
+            pdf-tools # audit evidence is PDF; see pdf-tools above
           ];
         };
 
