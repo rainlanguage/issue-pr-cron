@@ -759,6 +759,9 @@ struct RunMetrics {
     cache_read: u64,
     cache_creation: u64,
     cost_usd: f64,
+    // Per-window `rate_limit_event` summary — see [`RateLimitProbe`]. An object (`{}` when the run
+    // saw none), never absent, so "no limit events" reads differently from "record predates #97".
+    rate_limits: Value,
 }
 
 impl RunMetrics {
@@ -1021,12 +1024,319 @@ impl StartupProbe {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Live token usage (#97).
+//
+// `run_metrics` reads tokens from the terminal `result` event, so a run that is killed reports
+// zeros — and that is the run whose spend you most want. The events needed to reconstruct the
+// input side are already in the stream; the trap is that summing them naively is wrong twice over,
+// and both wrong answers look plausible. Measured against the 81 archived traces under
+// `runs/`, `review-runs/` and `merge-runs/`:
+//
+// ```
+//                                             cacheRead    output
+//   naive sum over every assistant event      9,657,649       526
+//   deduped by message id only                8,240,864       395   (still counts subagents)
+//   MAIN-THREAD + deduped by message id       6,099,441       395
+//   authoritative (the `result` event)        6,099,441    41,026
+// ```
+//
+// Two independent corrections are needed, and each alone still gives a wrong number:
+//
+//   1. ONE MESSAGE, MANY EVENTS. The SDK emits a separate `assistant` event per CONTENT BLOCK
+//      (thinking, text, each tool_use) and repeats the SAME `message.usage` on every one of them,
+//      byte for byte. In `20260728T100257Z` that is 118 events carrying 37 unique `message.id`s,
+//      33 of them repeated 2–5×, every repeat identical. So the usage must be taken ONCE per
+//      `message.id`; summing events triple-counts. (First/last/max per id are all equal — the
+//      repeats never differ — so which one is kept cannot matter, and a test pins that.)
+//
+//   2. SUBAGENTS ARE NOT IN `result.usage`. Events with a `parent_tool_use_id` are a Task
+//      subagent's messages, and the terminal `result.usage` does NOT include them — only
+//      `modelUsage` does. `20260718T050002Z` has 381 main-thread events (170 ids) and 828
+//      subagent events (292 ids) worth 23,116,424 cache-read tokens; counting them overstates the
+//      run against its own `result` by 66%.
+//
+// With both corrections, this probe reproduces `result.usage` EXACTLY — input, cache-read and
+// cache-creation — on 77 of the 81 archived traces that have a `result` event. The 4 that differ
+// are the only ones with MORE THAN ONE top-level `result` (28, 7, 6 and 5 of them): those files
+// are several claude invocations appended together, and `run_metrics` deliberately reports just
+// the largest, while this probe reports their sum. The live filter cannot hit that case at all —
+// it sits in ONE invocation's pipe (`tee "$RUNLOG" | run-timings`), so it sees one invocation's
+// stream by construction.
+//
+// OUTPUT TOKENS ARE NOT RECOVERABLE, and this probe does not pretend otherwise. `output_tokens`
+// on an `assistant` event is a snapshot taken at MESSAGE START, not a streaming delta: it reads
+// 2–5 on messages that went on to emit ~1,100 tokens, which is why every repeat of a message id
+// carries the same value. Across the 60 traces with a terminal total, the deduped sum is
+// 0.2%–20.6% of the truth — never within 5×. The only other output signal in the stream is
+// `system`/`thinking_tokens`, whose `estimated_tokens_delta` is both explicitly an ESTIMATE and
+// thinking-only: over 53 traces it ranges from 9.7% to 76.2% of the true output, so it is not a
+// usable proxy either. An exhaustive scan of every numeric token/usage/cost field over all 97
+// trace files found no third source. A live `tokensOut` would therefore have to be a guess, so
+// there is none — `usage` records carry the three fields that are exact and omit the one that is
+// not.
+//
+// That still leaves most of the money in view. Solving each model's per-token rates out of its own
+// `modelUsage`/`costUSD` (sonnet-4-6 fits to 0.00% error, opus-4-8 to 0.07%), the three exact
+// fields account for a MEDIAN 72% of a run's spend, range 55–91% over the 36 model-runs where the
+// rate is solvable. Cache-read alone is the term that runs away — the $37.02 run in #97 read 26.4M
+// cached tokens. So this is a real spend gauge, just an input-side one.
+// ---------------------------------------------------------------------------------------------
+
+/// How many NEW main-thread messages between live `usage` records.
+///
+/// A record per message would be ~600 lines for a long producer run; one only at the end would not
+/// be watchable while the run is happening, which is the point (#97: "watching it by hand today, I
+/// could see tool counts and timing accumulate but had no signal on spend at all"). 25 puts a
+/// vetter run at 1–2 mid-run records and the longest producer run seen at 24, and a final record is
+/// written when the stream ends however it ends — so a killed run's last numbers are never more
+/// than 24 messages stale, and usually not stale at all.
+const USAGE_RECORD_STRIDE: usize = 25;
+
+/// Running token usage, reconstructed from the LIVE stream — see the section comment above for why
+/// this is neither a sum over events nor a sum over messages.
+#[derive(Default)]
+struct UsageProbe {
+    /// `message.id`s already counted. Membership, not order: the repeats carry identical usage, so
+    /// the first occurrence is taken and every later one ignored.
+    counted: std::collections::HashSet<String>,
+    tokens_in: u64,
+    cache_read: u64,
+    cache_creation: u64,
+    /// Distinct main-thread messages counted — what [`USAGE_RECORD_STRIDE`] paces on, and a
+    /// sanity field on the record (37 messages against 6.1M cache-read tokens is legible; a bare
+    /// token count is not).
+    messages: usize,
+}
+
+impl UsageProbe {
+    /// Feed one trace event. Returns true when this event carried a message NOT seen before, i.e.
+    /// when the totals actually moved.
+    fn observe(&mut self, ev: &Value) -> bool {
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            return false;
+        }
+        // A subagent's messages. `null` and absent both mean main thread; anything else is a
+        // Task's own turn, which `result.usage` does not count and neither may we.
+        if !ev
+            .get("parent_tool_use_id")
+            .map(|p| p.is_null())
+            .unwrap_or(true)
+        {
+            return false;
+        }
+        let Some(msg) = ev.get("message") else {
+            return false;
+        };
+        // No id means the event cannot be deduped against anything, and counting it would
+        // double-count the message it belongs to. Skipping is the only safe read.
+        let Some(id) = msg.get("id").and_then(|i| i.as_str()) else {
+            return false;
+        };
+        if id.is_empty() || !self.counted.insert(id.to_string()) {
+            return false;
+        }
+        let u = msg.get("usage");
+        let g = |k: &str| {
+            u.and_then(|u| u.get(k))
+                .and_then(|n| n.as_u64())
+                .unwrap_or(0)
+        };
+        self.tokens_in += g("input_tokens");
+        self.cache_read += g("cache_read_input_tokens");
+        self.cache_creation += g("cache_creation_input_tokens");
+        self.messages += 1;
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The five-hour rate-limit window (#97).
+//
+// `rate_limit_event`s are in every trace and nothing read them. They name windows the weekly
+// `usage-gate` does not model — above all `five_hour`, which resets ~4.8× a day. A run that trips
+// it mid-flight stalls, and with the events dropped there was no evidence anywhere of why. Across
+// the 97 archived traces there are 187 such events over 84 files, and the failure mode is real:
+// `five_hour` reached `rejected` 5 times and `seven_day_overage_included` 4 times.
+// ---------------------------------------------------------------------------------------------
+
+/// Which limit window an event is about, as a typed discriminant.
+///
+/// Matched on the exact `rateLimitType` word, never by substring: `seven_day` and
+/// `seven_day_overage_included` are DIFFERENT windows with different resets, and a `contains`
+/// test would fold the second into the first. Unrecognised words are kept verbatim under `Other`
+/// rather than dropped — a window this binary has never seen is exactly the one worth seeing.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+enum RateLimitWindow {
+    FiveHour,
+    SevenDay,
+    SevenDayOverageIncluded,
+    Other(String),
+}
+
+impl RateLimitWindow {
+    fn from_wire(s: &str) -> Self {
+        match s {
+            "five_hour" => RateLimitWindow::FiveHour,
+            "seven_day" => RateLimitWindow::SevenDay,
+            "seven_day_overage_included" => RateLimitWindow::SevenDayOverageIncluded,
+            other => RateLimitWindow::Other(other.to_string()),
+        }
+    }
+    fn as_str(&self) -> &str {
+        match self {
+            RateLimitWindow::FiveHour => "five_hour",
+            RateLimitWindow::SevenDay => "seven_day",
+            RateLimitWindow::SevenDayOverageIncluded => "seven_day_overage_included",
+            RateLimitWindow::Other(s) => s,
+        }
+    }
+}
+
+/// How bad a reading is. The DECLARATION ORDER is the severity order — `derive(Ord)` reads it —
+/// and that ordering is the whole behaviour: a window's recorded status is the WORST ever seen,
+/// so a rejection at minute two cannot be erased by an `allowed` at minute twenty. Recording the
+/// last status instead would hide precisely the event the record exists to explain.
+///
+/// `Unknown` sits ABOVE the two allow states and BELOW `Rejected` on purpose. A status word this
+/// binary does not know must not be silently downgraded to "allowed" (it could be worse than
+/// that), and must not outrank a real `rejected` either (that one is certain, and is the finding).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum RateLimitStatus {
+    Allowed,
+    AllowedWarning,
+    Unknown,
+    Rejected,
+}
+
+impl RateLimitStatus {
+    fn from_wire(s: &str) -> Self {
+        match s {
+            "allowed" => RateLimitStatus::Allowed,
+            "allowed_warning" => RateLimitStatus::AllowedWarning,
+            "rejected" => RateLimitStatus::Rejected,
+            _ => RateLimitStatus::Unknown,
+        }
+    }
+    fn as_str(self) -> &'static str {
+        match self {
+            RateLimitStatus::Allowed => "allowed",
+            RateLimitStatus::AllowedWarning => "allowed_warning",
+            RateLimitStatus::Unknown => "unknown",
+            RateLimitStatus::Rejected => "rejected",
+        }
+    }
+}
+
+/// What one window looked like over a whole run.
+#[derive(Clone, Debug, PartialEq)]
+struct RateLimitWindowState {
+    /// WORST status seen — see [`RateLimitStatus`].
+    status: RateLimitStatus,
+    /// LAST `resetsAt` seen, as the epoch SECONDS the wire uses. The window moves while the run
+    /// runs, and the useful question after a stall is when the limit in force will next clear.
+    resets_at: Option<i64>,
+    /// LAST `utilization` seen, when present (only ~half the events carry it).
+    ///
+    /// This is a FRACTION in 0..=1 on the wire (`0.91` means 91%), which is NOT the unit
+    /// `usage-gate` works in — [`UsageReading::used`] is a 0..=100 percent compared against a
+    /// `USAGE_CEILING_PCT` of 90. It is echoed here exactly as the wire spelled it, so the record
+    /// says what the API said; anything that ever wires the two together must convert.
+    utilization: Option<f64>,
+    events: usize,
+}
+
+/// Streaming accumulator for `rate_limit_event`s, one state per window.
+#[derive(Default)]
+struct RateLimitProbe {
+    windows: std::collections::BTreeMap<RateLimitWindow, RateLimitWindowState>,
+}
+
+impl RateLimitProbe {
+    /// Feed one trace event. Returns true when a window's worst status got WORSE on this event —
+    /// including the first event for a window, which moves it from unrecorded to recorded. That is
+    /// the trigger for writing a live record: escalations are rare (at most three per window) and
+    /// are the whole diagnostic, so they go to disk the moment they happen rather than waiting for
+    /// the next [`USAGE_RECORD_STRIDE`].
+    fn observe(&mut self, ev: &Value) -> bool {
+        if ev.get("type").and_then(|t| t.as_str()) != Some("rate_limit_event") {
+            return false;
+        }
+        let Some(info) = ev.get("rate_limit_info") else {
+            return false;
+        };
+        // An event with no `rateLimitType` names no window (2 of the 187 archived events).
+        // Attributing it to one would be inventing data; it is counted under `Other("")`-free
+        // silence instead — i.e. skipped.
+        let Some(window) = info.get("rateLimitType").and_then(|t| t.as_str()) else {
+            return false;
+        };
+        let window = RateLimitWindow::from_wire(window);
+        let status = info
+            .get("status")
+            .and_then(|s| s.as_str())
+            .map(RateLimitStatus::from_wire)
+            .unwrap_or(RateLimitStatus::Unknown);
+        let resets_at = info.get("resetsAt").and_then(|r| r.as_i64());
+        let utilization = info.get("utilization").and_then(|u| u.as_f64());
+        match self.windows.get_mut(&window) {
+            Some(state) => {
+                state.events += 1;
+                if resets_at.is_some() {
+                    state.resets_at = resets_at;
+                }
+                if utilization.is_some() {
+                    state.utilization = utilization;
+                }
+                if status > state.status {
+                    state.status = status;
+                    return true;
+                }
+                false
+            }
+            None => {
+                self.windows.insert(
+                    window,
+                    RateLimitWindowState {
+                        status,
+                        resets_at,
+                        utilization,
+                        events: 1,
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// The `rateLimits` field: one object per window seen, keyed by the wire word.
+    ///
+    /// ALWAYS emitted, `{}` when no event arrived, so a consumer can tell "this run saw no limit
+    /// events" from "this record predates the field" — the same contract `unreadableFiles` has.
+    fn to_value(&self) -> Value {
+        let mut obj = serde_json::Map::new();
+        for (window, s) in &self.windows {
+            obj.insert(
+                window.as_str().to_string(),
+                serde_json::json!({
+                    "status": s.status.as_str(),
+                    "resetsAt": s.resets_at,
+                    "utilization": s.utilization,
+                    "events": s.events,
+                }),
+            );
+        }
+        Value::Object(obj)
+    }
+}
+
 /// Parse a stream-json trace: count tool calls in order, find the first mutation, and take
 /// the usage/duration/cost from the result event with the most turns (the main run — trailing
 /// short result events from continuations are ignored).
 fn run_metrics(content: &str) -> RunMetrics {
     let mut m = RunMetrics::default();
     let mut probe = StartupProbe::default();
+    let mut rate_limits = RateLimitProbe::default();
     let mut best_turns = 0u64;
     for line in content.lines() {
         let v: serde_json::Value = match serde_json::from_str(line) {
@@ -1034,6 +1344,7 @@ fn run_metrics(content: &str) -> RunMetrics {
             Err(_) => continue,
         };
         probe.observe(&v);
+        rate_limits.observe(&v);
         if v.get("type").and_then(|t| t.as_str()) == Some("result") {
             let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
             if turns >= best_turns {
@@ -1058,6 +1369,7 @@ fn run_metrics(content: &str) -> RunMetrics {
         }
     }
     probe.fill(&mut m);
+    m.rate_limits = rate_limits.to_value();
     m
 }
 
@@ -1123,6 +1435,43 @@ fn partial_record(
     doc
 }
 
+/// The `stage` of a LIVE USAGE record: token spend and rate-limit state as of this instant (#97).
+///
+/// Unlike `boot`/`ttl`, which fire once each when a single number becomes knowable, a run emits
+/// MANY of these — every [`USAGE_RECORD_STRIDE`] messages, on every rate-limit escalation, and
+/// once when the stream ends. They are a monotonic series rather than competing versions of one
+/// record, so the reconciliation rule for a `runId` extends rather than changes: `final`
+/// supersedes everything; among `usage` records the LAST is current; `boot`/`ttl` are unaffected
+/// because they carry fields no `usage` record has, and vice versa.
+const STAGE_USAGE: &str = "usage";
+
+/// One live usage record: the token totals that are EXACTLY knowable mid-run, plus rate-limit
+/// state.
+///
+/// There is deliberately no `tokensOut` here. See the "Live token usage" section comment: the
+/// per-event `output_tokens` is a message-start snapshot that runs 0.2%–20.6% of the truth, and
+/// the only other output signal in the stream is an explicitly-estimated, thinking-only counter
+/// that ranges 9.7%–76.2% of it. A field carrying either would read as measurement. The three
+/// fields present are the ones that reproduce `result.usage` exactly.
+fn usage_record(
+    usage: &UsageProbe,
+    rate_limits: &RateLimitProbe,
+    trace: &str,
+    id: &RunIdentity,
+) -> Value {
+    let mut doc = serde_json::json!({
+        "trace": trace,
+        "stage": STAGE_USAGE,
+        "messages": usage.messages,
+        "tokensIn": usage.tokens_in,
+        "cacheRead": usage.cache_read,
+        "cacheCreation": usage.cache_creation,
+        "rateLimits": rate_limits.to_value(),
+    });
+    stamp_identity(&mut doc, id);
+    doc
+}
+
 /// Append one record to the metrics file, creating it (and its directory) if absent.
 ///
 /// Best-effort by contract: this runs INSIDE the runner's live pipe, and a metrics write must
@@ -1163,10 +1512,15 @@ fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let mut probe = StartupProbe::default();
+    let mut usage = UsageProbe::default();
+    let mut rate_limits = RateLimitProbe::default();
+    // Messages counted at the last `usage` record, so the stride paces on NEW messages and the
+    // end-of-stream record is skipped when nothing has moved since.
+    let mut recorded_at = 0usize;
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if writeln!(stdout, "{line}").is_err() {
-            return 0; // downstream closed
+            break; // downstream closed — still write what this run reached
         }
         let _ = stdout.flush();
         let Ok(ev) = serde_json::from_str::<Value>(&line) else {
@@ -1175,6 +1529,20 @@ fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
         for phase in probe.observe(&ev) {
             let _ = append_record(out, &partial_record(&probe, phase, trace, id));
         }
+        // An escalation goes to disk immediately; token totals go on the stride. Both write the
+        // same record, so an escalation also refreshes the numbers and vice versa.
+        let escalated = rate_limits.observe(&ev);
+        let moved = usage.observe(&ev);
+        if escalated || (moved && usage.messages - recorded_at >= USAGE_RECORD_STRIDE) {
+            recorded_at = usage.messages;
+            let _ = append_record(out, &usage_record(&usage, &rate_limits, trace, id));
+        }
+    }
+    // The stream is over — the process was killed, timed out, or finished. Whichever it was, this
+    // is the last chance to record what the run actually spent, and it is the case #97 is about.
+    // Skipped only when a record already carries these exact numbers.
+    if usage.messages > recorded_at {
+        let _ = append_record(out, &usage_record(&usage, &rate_limits, trace, id));
     }
     0
 }
@@ -1192,6 +1560,7 @@ fn run_metrics_mode(
     id: &RunIdentity,
     exit_code: Option<i32>,
     preflight_missing: &[String],
+    infra_path: Option<&str>,
 ) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -1202,7 +1571,13 @@ fn run_metrics_mode(
     };
     let m = run_metrics(&content);
     let tooling = trace_tooling_report(&content);
-    let outcome = exit_code.map(|rc| (rc, classify_outcome(&content, rc, preflight_missing)));
+    let infra = infra_record_at(infra_path);
+    let outcome = exit_code.map(|rc| {
+        (
+            rc,
+            classify_outcome(&content, rc, preflight_missing, &infra),
+        )
+    });
     println!(
         "{}",
         serde_json::to_string(&final_record(
@@ -1211,7 +1586,8 @@ fn run_metrics_mode(
             id,
             outcome,
             &tooling,
-            preflight_missing
+            preflight_missing,
+            &infra
         ))
         .unwrap()
     );
@@ -1229,6 +1605,7 @@ fn final_record(
     outcome: Option<(i32, TraceOutcome)>,
     tooling: &ToolingReport,
     preflight_missing: &[String],
+    infra: &InfraRecord,
 ) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
@@ -1248,12 +1625,28 @@ fn final_record(
         "cacheRead": m.cache_read,
         "cacheCreation": m.cache_creation,
         "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
+        // Per-window rate-limit summary (#97). Coerced to an object here rather than trusted from
+        // the caller so the "always an object" contract holds even for a `RunMetrics` built by
+        // hand, whose `Default` for a `Value` is null.
+        "rateLimits": if m.rate_limits.is_object() {
+            m.rate_limits.clone()
+        } else {
+            serde_json::json!({})
+        },
         // Always present, so the dashboard can distinguish "no tooling trouble" from "this record
         // predates the field". `unreadableFiles` is what makes the outcome `tooling-failure`;
         // `commandsNotFound` is reported but never decides the outcome (see trace_tooling_report).
         "unreadableFiles": tooling.unreadable,
         "commandsNotFound": tooling.command_not_found,
         "missingTools": preflight_missing,
+        // #108. `infraDown` true means the run ENDED because the infrastructure the work depends
+        // on was unavailable. This is the ONLY trace of that — nothing is written to GitHub — so
+        // the fields are always present, and counting `infraDown` across runs is how a passing
+        // flake is told apart from a standing outage. A label could never do that: labels do not
+        // accumulate, errors do.
+        "infraDown": infra.down,
+        "infraReason": infra.reason,
+        "infraRootCause": infra.root_cause,
     });
     stamp_identity(&mut doc, id);
     if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
@@ -2129,6 +2522,11 @@ enum TraceOutcome {
     /// and `reject` from the run that could.
     ToolingFailure,
     Error,
+    /// The run ENDED because the infrastructure the work depends on was down (#108). NOT `ok`: a
+    /// run that stopped early did less than it was asked to, and the whole point of replacing
+    /// `ai:blocked-infra` with an exit is that the fact must ACCUMULATE somewhere countable. One is
+    /// noise; the same one across twenty runs is the signal a human acts on.
+    InfraDown,
 }
 
 impl TraceOutcome {
@@ -2140,6 +2538,7 @@ impl TraceOutcome {
             TraceOutcome::QuotaLimited => "session-limit",
             TraceOutcome::ToolingFailure => "tooling-failure",
             TraceOutcome::Error => "error",
+            TraceOutcome::InfraDown => "infra-down",
         }
     }
 }
@@ -2212,11 +2611,26 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
 /// A preflight failure has no trace to classify — the model never ran — so the fact arrives as the
 /// list of binaries that would not resolve. It outranks everything else: a run that was stopped
 /// before it started is neither quota-limited nor merely errored.
-fn classify_outcome(trace: &str, exit_code: i32, preflight_missing: &[String]) -> TraceOutcome {
+///
+/// An infra exit (#108) is folded in LAST and only over an otherwise-`ok` run. The ordering is
+/// deliberate: a run that also died, was quota-refused, or was blind to its evidence has a WORSE
+/// story than "it stopped early on purpose", and the headline word must be the worst of them. The
+/// fact is on the record either way — `infraDown` is what a human counts, the word is only what the
+/// dashboard shows first.
+fn classify_outcome(
+    trace: &str,
+    exit_code: i32,
+    preflight_missing: &[String],
+    infra: &InfraRecord,
+) -> TraceOutcome {
     if !preflight_missing.is_empty() {
         return TraceOutcome::ToolingFailure;
     }
-    classify_trace(trace, exit_code)
+    let base = classify_trace(trace, exit_code);
+    if base == TraceOutcome::Ok && infra.down {
+        return TraceOutcome::InfraDown;
+    }
+    base
 }
 
 /// `trace-outcome <trace> --exit-code <n>`: print the typed outcome word and exit 0.
@@ -2514,6 +2928,37 @@ fn oauth_token(creds: &str) -> Option<String> {
 /// The `seven_day` block: `utilization` is the percent used, `resets_at` is authoritative.
 /// Both must be present and well-formed or the whole reading is discarded — pacing against a
 /// usage number with no trustworthy reset date would be guessing.
+///
+/// # Why this gate does NOT also pace on the five-hour window (#97)
+///
+/// The traces carry `rate_limit_event`s naming a `five_hour` window this gate does not model, and
+/// #97 asked for a deliberate decision on whether it should. The decision is **no — record it,
+/// do not gate on it** ([`RateLimitProbe`] is the recording half), for four reasons, in
+/// descending order of how much they would cost to get wrong:
+///
+///  1. **The mechanism does not transfer.** What this gate does is LINEAR PACING: compare usage
+///     against how far through the budget window the clock is ([`linear_pct`], which hardcodes
+///     [`USAGE_WEEK_MS`]). Pacing presumes load can be spread across the window. A five-hour
+///     window resets ~4.8× a day while the crons fire on a fixed schedule roughly every two
+///     hours, so "am I ahead of a linear burn in the CURRENT five-hour window" flips meaning
+///     between consecutive ticks. It would pause ticks on where they happen to land in a window,
+///     which is noise wearing the costume of a budget.
+///  2. **It is not the binding constraint.** Over the 97 archived traces (187 rate-limit events,
+///     84 files) `five_hour` reached `rejected` in 5 events, all inside one run — which still
+///     produced a `result`. The window self-clears well inside the gap between ticks. The
+///     seven-day ceiling is what actually stops work, and this gate already holds it.
+///  3. **A second pause condition contradicts this gate's design commitment.** Every failure path
+///     here is deliberately INERT (see [`usage_gate_decide`]) because the repo has an incident on
+///     record where the gate silently paused both crons for 22 consecutive ticks. Adding a
+///     faster-cycling reason to pause is the same hazard, with 4.8 chances a day to fire.
+///  4. **The units differ and would fail silently.** `utilization` on a `rate_limit_event` is a
+///     FRACTION in 0..=1 (`0.91`); [`UsageReading::used`] here is a PERCENT in 0..=100 compared
+///     against a default ceiling of 90. Wiring them together without converting would compare
+///     0.91 to 90.0 and never fire — a gate that looks installed and is not.
+///
+/// What #97 actually needed from the five-hour window was diagnosis, not pacing: a run that trips
+/// it "presents as an unexplained stall with no evidence of why". `rateLimits` on the run record —
+/// written live, so a killed run keeps it — is that evidence.
 fn parse_seven_day(raw: &str) -> Option<UsageReading> {
     let week = serde_json::from_str::<Value>(raw)
         .ok()?
@@ -3432,6 +3877,12 @@ fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str) -> String {
 /// guard-before-write shape as [`VerdictPlan`].
 #[derive(Debug, PartialEq)]
 enum CcVerdictPlan {
+    /// The verdict was pointed at a PULL REQUEST. `gh issue view <n>` answers for one, so without
+    /// this the ISSUE-side authority silently reaches a PR — where `ai:close-candidate` is not a
+    /// producer CLAIM awaiting judgement but the vetter's own `record_verdict … close`. The refusal
+    /// that fired here instead was `NoFlag`'s "nothing to judge", which reads as "this PR has no
+    /// human path at all" and was recorded as exactly that misreading on #94.
+    NotAnIssue,
     /// A human already ruled: never overwritten.
     RefuseHuman,
     /// The issue is closed — the flag is moot.
@@ -3447,8 +3898,21 @@ enum CcVerdictPlan {
     },
 }
 
+/// The `gh issue view --json` field list the flag verdict fetches. Named for the same reason
+/// [`ISSUE_RULE_FIELDS`] is: a field the plan READS but the fetch OMITS is a guard that silently
+/// stops firing.
+const CC_VERDICT_FIELDS: &str = "state,labels,comments,url";
+
 /// PURE: may the vetter record `verdict` on this flagged issue, and what does it change?
 fn cc_verdict_plan(issue_json: &Value, verdict: &str) -> CcVerdictPlan {
+    // Subject type FIRST, so a closed PR is told what it is rather than that its flag is moot.
+    if issue_json
+        .get("url")
+        .and_then(|u| u.as_str())
+        .is_some_and(|u| u.contains("/pull/"))
+    {
+        return CcVerdictPlan::NotAnIssue;
+    }
     let state = issue_json
         .get("state")
         .and_then(|s| s.as_str())
@@ -3760,7 +4224,6 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
 fn state_noun(label: &str) -> &'static str {
     match label {
         "ai:blocked-deploy" => "Blocked-deploy",
-        "ai:blocked-infra" => "Blocked-infra",
         "ai:blocked-on" => "Blocked-on",
         "ai:design" => "Design-question",
         _ => "State",
@@ -3769,12 +4232,20 @@ fn state_noun(label: &str) -> &'static str {
 
 /// The producer's human-gated state labels — the states a hand-off can land in. `ai:ready` is the
 /// vetter's; the producer transitions to these via [`flag_state_mode`], never a bare prose note.
-const PRODUCER_STATE_LABELS: [&str; 4] = [
-    "ai:design",
-    "ai:blocked-deploy",
-    "ai:blocked-infra",
-    "ai:blocked-on",
-];
+///
+/// `ai:blocked-infra` was the fourth and is RETIRED (#108) — see [`RETIRED_STATE_LABEL`].
+const PRODUCER_STATE_LABELS: [&str; 3] = ["ai:design", "ai:blocked-deploy", "ai:blocked-on"];
+
+/// RETIRED (#108). Never written again, and never PARKS a PR — [`next_action`] deliberately does not
+/// consult this, so a PR a pre-#108 run labelled re-enters the ordinary red/green lifecycle the next
+/// time the producer looks at it, with no human intervention.
+///
+/// It is still RECOGNISED by [`classify_lane`] so the thirteen PRs already carrying it stay visible
+/// in `human-queue` instead of silently reclassifying as un-vetted, and `retire-blocked-infra`
+/// strips it for good. (`labels_to_remove` also clears it as a side effect of any later transition,
+/// since that strips every `ai:*` but the target — but a PR nothing transitions would keep it
+/// forever, which is exactly the trap #108 is about.)
+const RETIRED_STATE_LABEL: &str = "ai:blocked-infra";
 
 /// Pure plan for a producer state-transition ([`flag_state_mode`]). Mirrors [`verdict_plan`]'s guard —
 /// a `human:*` label OR a native GitHub review is sacred (refuse) — then the label move (strip every
@@ -4362,6 +4833,11 @@ enum RuleStep {
     AddLabel,
     /// Remove a label this ruling supersedes or contradicts.
     RemoveLabel(String),
+    /// CLOSE the subject — the TERMINAL edge, and therefore always last. Every ruling plan reads a
+    /// closed subject as [`HumanRulePlan::Moot`], so a close performed before the labels would make
+    /// them permanently unreachable: the retry that should finish the transition would report
+    /// "nothing to do" over a half-written one.
+    Close,
 }
 
 /// PURE: the ORDER a ruling's writes happen in — the fail-safe, and the reverse of the AI verdict
@@ -4398,9 +4874,71 @@ fn human_rule_steps(
     steps
 }
 
+/// PURE: the `gh` argv one step invokes. Extracted from the effect so WHICH GitHub operation each
+/// step performs is a tested property rather than a line only a live run can check — `Close`
+/// spelled as `edit`, or an `--add-label` where a `--remove-label` belongs, are both silent in a
+/// unit suite that only sees the step list.
+fn rule_step_argv<'a>(
+    step: &'a RuleStep,
+    noun: &'a str,
+    slug: &'a str,
+    n: &'a str,
+    target: &'a str,
+    comment: &'a str,
+) -> Vec<&'a str> {
+    match step {
+        RuleStep::Comment => vec![noun, "comment", n, "-R", slug, "--body", comment],
+        RuleStep::EnsureLabel => {
+            let (color, desc) = label_meta(target);
+            vec![
+                "label",
+                "create",
+                target,
+                "-R",
+                slug,
+                "--color",
+                color,
+                "--description",
+                desc,
+                "--force",
+            ]
+        }
+        RuleStep::AddLabel => vec![noun, "edit", n, "-R", slug, "--add-label", target],
+        RuleStep::RemoveLabel(l) => vec![noun, "edit", n, "-R", slug, "--remove-label", l],
+        RuleStep::Close => vec![noun, "close", n, "-R", slug],
+    }
+}
+
+/// PURE: the half-state a failed step leaves behind, named so a caller knows exactly what to
+/// re-run. `EnsureLabel` is `None`: it is best-effort, and a repo that already has the label is the
+/// normal case.
+fn rule_step_failure(step: &RuleStep, slug: &str, n: &str, target: &str) -> Option<(i32, String)> {
+    let msg = match step {
+        RuleStep::Comment => format!(
+            "error: failed to post the ruling comment on {slug}#{n} — no label was written, so the \
+             ruling is not half-recorded"
+        ),
+        RuleStep::EnsureLabel => return None,
+        RuleStep::AddLabel => {
+            format!("error: posted the ruling on {slug}#{n} but FAILED to add {target}")
+        }
+        RuleStep::RemoveLabel(l) => format!(
+            "error: {slug}#{n} now carries {target} but FAILED to remove {l} — it holds two \
+             contradictory states"
+        ),
+        RuleStep::Close => format!(
+            "error: {slug}#{n} is ruled {target} and its labels are settled, but the CLOSE failed \
+             — it is ruled and still open. Re-run the same command to finish it: every step before \
+             this one is idempotent."
+        ),
+    };
+    Some((1, msg))
+}
+
 /// The EFFECT half of a human ruling, shared by both subjects — `gh pr …` and `gh issue …` take the
-/// same arguments, so `noun` is the only difference. The order comes from [`human_rule_steps`]; this
-/// function only performs it and names the half-state each failure leaves behind.
+/// same arguments, so `noun` is the only difference. The order comes from [`human_rule_steps`], the
+/// argv from [`rule_step_argv`] and the half-state from [`rule_step_failure`]; this function only
+/// performs them, so everything it decides is decided somewhere testable.
 fn human_rule_write(
     noun: &str,
     slug: &str,
@@ -4410,56 +4948,12 @@ fn human_rule_write(
     steps: &[RuleStep],
 ) -> Result<(), (i32, String)> {
     for step in steps {
-        match step {
-            RuleStep::Comment => {
-                if !gh_run(&[noun, "comment", n, "-R", slug, "--body", comment]) {
-                    return Err((
-                        1,
-                        format!(
-                            "error: failed to post the ruling comment on {slug}#{n} — no label was \
-                             written, so the ruling is not half-recorded"
-                        ),
-                    ));
-                }
-            }
-            RuleStep::EnsureLabel => {
-                let (color, desc) = label_meta(target);
-                if !gh_run(&[
-                    "label",
-                    "create",
-                    target,
-                    "-R",
-                    slug,
-                    "--color",
-                    color,
-                    "--description",
-                    desc,
-                    "--force",
-                ]) {
-                    eprintln!("warning: could not ensure label {target} exists in {slug}");
-                }
-            }
-            RuleStep::AddLabel => {
-                if !gh_run(&[noun, "edit", n, "-R", slug, "--add-label", target]) {
-                    return Err((
-                        1,
-                        format!(
-                            "error: posted the ruling on {slug}#{n} but FAILED to add {target}"
-                        ),
-                    ));
-                }
-            }
-            RuleStep::RemoveLabel(l) => {
-                if !gh_run(&[noun, "edit", n, "-R", slug, "--remove-label", l]) {
-                    return Err((
-                        1,
-                        format!(
-                            "error: {slug}#{n} now carries {target} but FAILED to remove {l} — it \
-                             holds two contradictory states"
-                        ),
-                    ));
-                }
-            }
+        if gh_run(&rule_step_argv(step, noun, slug, n, target, comment)) {
+            continue;
+        }
+        match rule_step_failure(step, slug, n, target) {
+            Some(err) => return Err(err),
+            None => eprintln!("warning: could not ensure label {target} exists in {slug}"),
         }
     }
     Ok(())
@@ -4518,9 +5012,11 @@ fn strands_flag_error(slug: &str, issue: &str, target: &str, flag_at: &str) -> (
             "refusing: {slug}#{issue} carries a LIVE producer close-candidate flag (@{flag_at}), \
              and `{target}` would strand it — every AI transition refuses once a human has ruled, \
              so `record_close_candidate_verdict` could never judge this flag again.\n\
-             The three moves that ARE available here, one command each:\n  \
-             human-rule-issue {slug} {issue} close-candidate \"…\"          — the flag is right; the \
-             issue is yours to close (sacred; the flag stands as the record of what you ruled on)\n  \
+             The moves that ARE available here, one command each:\n  \
+             human-close {slug} {issue} \"…\"                                — the flag is right AND \
+             you are acting on it now: rules close-candidate, clears the flag, closes the issue\n  \
+             human-rule-issue {slug} {issue} close-candidate \"…\"          — the flag is right but \
+             the issue stays open for now (sacred; the flag stands as the pending claim)\n  \
              human-rule-issue {slug} {issue} keep-open \"…\"                 — the flag is wrong AND \
              this must never be re-flagged (sacred; clears ai:close-candidate)\n  \
              record-close-candidate-verdict {slug} {issue} reject \"…\"      — the flag is wrong on \
@@ -4539,6 +5035,43 @@ fn human_ruling_note_error() -> (i32, String) {
          recorded reason is the bare label this transition replaces)"
             .to_string(),
     )
+}
+
+/// PURE: the refusal when `gh pr view` could not answer, given whether a follow-up probe found an
+/// ISSUE at that reference.
+///
+/// The mirror of [`HumanRulePlan::NotAnIssue`], and it exists for the same reason: the two
+/// subjects share a number space, so a caller who names the wrong one must be told WHICH they
+/// named and handed the command that is right. "not writing on incomplete data" is true and
+/// useless — it reads as an API failure, and the next move a human makes after reading it is raw
+/// `gh`. Only the redirection is a refusal a caller can act on.
+fn pr_view_failed_error(slug: &str, pr: &str, ruling: &str, is_issue: bool) -> (i32, String) {
+    if is_issue {
+        return (
+            2,
+            format!(
+                "refusing: {slug}#{pr} is an ISSUE, not a pull request — `gh pr view` cannot see \
+                 one, and the PR vocabulary pins to a head sha an issue does not have.\n  \
+                 Use: pr-review-report human-rule-issue {slug} {pr} {ruling} \"…\""
+            ),
+        );
+    }
+    (
+        1,
+        format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
+    )
+}
+
+/// Does this reference resolve to an ISSUE? Only ever asked on an error path, so the extra round
+/// trip costs a refusal, never a successful transition.
+fn reference_is_an_issue(slug: &str, n: &str) -> bool {
+    gh_json(&["issue", "view", n, "-R", slug, "--json", "url"])
+        .and_then(|j| {
+            j.get("url")
+                .and_then(|u| u.as_str())
+                .map(|u| !u.contains("/pull/"))
+        })
+        .unwrap_or(false)
 }
 
 /// `human-rule <owner/repo> <pr> <reject|design|close-candidate> "<note>"`: the human's transition
@@ -4561,9 +5094,11 @@ fn human_rule_pr_apply(
         return Err(human_ruling_note_error());
     }
     let Some(prj) = gh_json(&["pr", "view", pr, "-R", slug, "--json", PR_RULE_FIELDS]) else {
-        return Err((
-            1,
-            format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
+        return Err(pr_view_failed_error(
+            slug,
+            pr,
+            ruling.trim(),
+            reference_is_an_issue(slug, pr),
         ));
     };
     let (anchor, supersedes, clears, has_target, skip) =
@@ -4750,6 +5285,444 @@ fn human_rule_issue_apply(
     ))
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// the TERMINAL human edge: rule, retire the pending flag, close.
+//
+// `iupheld --> [*] : human closes` and `hclose --> [*] : human closes` are two edges of the state
+// diagram that had no transition function, so the only way to take them was raw `gh issue close` —
+// which knows nothing about the FSM. #94 measured what that cost: at the time it was filed, **74**
+// terminal subjects across the org (55 issues, 19 PRs) were CLOSED and still carrying
+// `ai:close-candidate`, a state no modeled transition produces. The one ruling in the same sitting
+// that went through a tool (`rain.dia#42`, a flag `reject`) came out clean. The asymmetry is the
+// whole argument: the transition with a tool is consistent, the transition without one was wrong
+// every single time.
+//
+// It is deliberately ONE transition rather than a command that chains two. A slash command that
+// called `human-rule-issue` and then `gh issue close` would put the ORDER — and the flag clear —
+// in a prompt, which is exactly the "loose transition" CLAUDE.md forbids: unenforced, untested, and
+// free to drift. Here the order is [`human_close_steps`], a tested property, and the close is last
+// because a closed subject reads as `Moot` to every ruling plan.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The one `ai:*` label that means "a human still has to ACT on this subject", rather than "an AI
+/// judged its code". On an ISSUE it is the producer's pending close-candidate claim; on a PR it is
+/// the vetter's pending `close` verdict. Both name a queue, and closing the subject is the act that
+/// empties it — which is why the terminal edge retires it and no other `ai:*` label.
+const PENDING_CLOSE_FLAG: &str = "ai:close-candidate";
+/// The label the terminal edge writes. Not a parameter: `human-close` IS the `close-candidate`
+/// ruling plus its terminal act, so a second verb here would be a second spelling of one state.
+const HUMAN_CLOSE_TARGET: &str = "human:close-candidate";
+
+/// The terminal-close decision. Delegates every guard to the ruling plan the subject's own type
+/// selects — so vocabulary, note, anchor, stranding and idempotence are the SAME code, tested once —
+/// and adds only what closing itself decides.
+#[derive(Debug, PartialEq)]
+enum HumanClosePlan {
+    /// Already terminal and carrying no pending flag: the transition has fully happened.
+    Settled,
+    /// Already terminal but STILL FLAGGED — the state a raw `gh <noun> close` leaves behind, and
+    /// the one #94 was filed about. It is given an exit rather than left inexpressible: the machine
+    /// has no dead ends, and 74 subjects sat in this state with no command that could move them.
+    ///
+    /// Only the stale flag is dropped. No ruling is invented after the fact: the human's close is
+    /// already recorded by GitHub's own close event, and a `👤 human` comment posted now would date
+    /// the reason to today rather than to the decision — manufactured provenance is worse than
+    /// none, and provenance is the entire point of this surface.
+    StaleFlag,
+    /// The live transition, or the ruling plan's own refusal.
+    Rule(HumanRulePlan),
+}
+
+/// PURE: may the human close this subject, and what does it move?
+///
+/// `is_pr` is resolved by LOOKUP before this is called, never guessed from the number: one label
+/// name covers two separately-sized populations (`lanes.vetter-verdicts.ai:close-candidate` counts
+/// PRs, `closeCandidateIssues` counts issues), and a bare number would eventually rule on the wrong
+/// one.
+fn human_close_plan(subject: &Value, is_pr: bool) -> HumanClosePlan {
+    let flagged = label_names(subject).iter().any(|l| l == PENDING_CLOSE_FLAG);
+    let plan = if is_pr {
+        human_pr_rule_plan(subject, "close-candidate", HUMAN_CLOSE_TARGET)
+    } else {
+        human_issue_rule_plan(subject, "close-candidate", HUMAN_CLOSE_TARGET)
+    };
+    match plan {
+        HumanRulePlan::Moot if flagged => HumanClosePlan::StaleFlag,
+        HumanRulePlan::Moot => HumanClosePlan::Settled,
+        HumanRulePlan::Record {
+            anchor,
+            supersedes,
+            mut clears,
+            has_target,
+            skip_comment,
+        } => {
+            // The ruling alone leaves the flag standing — while the subject is OPEN the flag is
+            // still the live record of a pending claim, and `closeCandidateUpheld` still counts it.
+            // The terminal act is what retires it.
+            if flagged && !clears.iter().any(|l| l == PENDING_CLOSE_FLAG) {
+                clears.push(PENDING_CLOSE_FLAG.to_string());
+            }
+            HumanClosePlan::Rule(HumanRulePlan::Record {
+                anchor,
+                supersedes,
+                clears,
+                has_target,
+                skip_comment,
+            })
+        }
+        other => HumanClosePlan::Rule(other),
+    }
+}
+
+/// PURE: the terminal edge's write order — the ruling's own sequence with the close appended.
+/// Reusing [`human_rule_steps`] rather than restating it keeps ONE fail-safe order: a second list
+/// could be re-ordered without the property test that guards the first one noticing.
+fn human_close_steps(
+    supersedes: &[String],
+    clears: &[String],
+    has_target: bool,
+    skip_comment: bool,
+) -> Vec<RuleStep> {
+    let mut steps = human_rule_steps(supersedes, clears, has_target, skip_comment);
+    steps.push(RuleStep::Close);
+    steps
+}
+
+/// PURE: the report the terminal edge prints — the ruling's report plus the act that made it
+/// terminal, so one line says everything that moved.
+fn human_close_report(
+    slug: &str,
+    n: &str,
+    anchor: &str,
+    supersedes: &[String],
+    clears: &[String],
+    skip_comment: bool,
+) -> String {
+    format!(
+        "{} [closed]",
+        human_rule_report(
+            slug,
+            n,
+            HUMAN_CLOSE_TARGET,
+            anchor,
+            supersedes,
+            clears,
+            skip_comment
+        )
+    )
+}
+
+/// `human-close <owner/repo> <n> "<note>"`: the human's TERMINAL transition on an issue OR a PR.
+///
+/// One reference, one call, both populations. `gh issue view <n>` answers for a pull request too,
+/// and its `url` is the discriminator — the same one [`human_issue_rule_plan`] already uses — so the
+/// subject type is READ, never inferred from which command was typed. An issue costs one fetch; a PR
+/// costs a second, because its anchor is the head sha and `gh issue view` cannot report one.
+fn human_close_apply(
+    slug: &str,
+    n: &str,
+    note: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    if note.trim().is_empty() {
+        return Err(human_ruling_note_error());
+    }
+    let Some(seen) = gh_json(&["issue", "view", n, "-R", slug, "--json", ISSUE_RULE_FIELDS]) else {
+        return Err((
+            1,
+            format!("error: `gh issue view {slug}#{n}` failed — not writing on incomplete data"),
+        ));
+    };
+    let is_pr = seen
+        .get("url")
+        .and_then(|u| u.as_str())
+        .is_some_and(|u| u.contains("/pull/"));
+    let (noun, subject) = if is_pr {
+        let Some(prj) = gh_json(&["pr", "view", n, "-R", slug, "--json", PR_RULE_FIELDS]) else {
+            return Err((
+                1,
+                format!("error: `gh pr view {slug}#{n}` failed — not writing on incomplete data"),
+            ));
+        };
+        ("pr", prj)
+    } else {
+        ("issue", seen)
+    };
+    let (anchor, supersedes, clears, has_target, skip) = match human_close_plan(&subject, is_pr) {
+        HumanClosePlan::Settled => {
+            return Ok(format!(
+                "{slug}#{n} is already closed and carries no {PENDING_CLOSE_FLAG} — nothing written"
+            ));
+        }
+        HumanClosePlan::StaleFlag => {
+            if dry_run {
+                return Ok(format!(
+                    "[dry-run] {slug}#{n} is already closed but still flagged — remove \
+                     {PENDING_CLOSE_FLAG}; no ruling is written after the fact"
+                ));
+            }
+            human_rule_write(
+                noun,
+                slug,
+                n,
+                PENDING_CLOSE_FLAG,
+                "",
+                &[RuleStep::RemoveLabel(PENDING_CLOSE_FLAG.to_string())],
+            )?;
+            return Ok(format!(
+                "{slug}#{n} was already closed — cleared {PENDING_CLOSE_FLAG} [no ruling written: \
+                 the close is already on the record and a reason dated today would not be one]"
+            ));
+        }
+        HumanClosePlan::Rule(HumanRulePlan::NoAnchor) => {
+            return Err((
+                1,
+                format!(
+                    "error: {slug}#{n} has nothing to pin a ruling to ({}) — a close recorded \
+                     against nothing is the bare `gh close` this transition replaces",
+                    if is_pr {
+                        "no headRefOid"
+                    } else {
+                        "no createdAt"
+                    }
+                ),
+            ));
+        }
+        // Unreachable by construction and handled anyway: the type is resolved before the plan runs
+        // (never NotAnIssue), `close-candidate` is flag-disposing (never StrandsFlag), and `Moot` is
+        // consumed above. A future change to the shared plan must not become a panic mid-transition.
+        HumanClosePlan::Rule(HumanRulePlan::NotAnIssue) => {
+            return Err((
+                2,
+                format!("refusing: {slug}#{n} is not the subject type it was fetched as"),
+            ));
+        }
+        HumanClosePlan::Rule(HumanRulePlan::StrandsFlag { flag_at }) => {
+            return Err(strands_flag_error(slug, n, HUMAN_CLOSE_TARGET, &flag_at));
+        }
+        HumanClosePlan::Rule(HumanRulePlan::Moot) => {
+            return Ok(format!("{slug}#{n} is not open — nothing written"));
+        }
+        HumanClosePlan::Rule(HumanRulePlan::Record {
+            anchor,
+            supersedes,
+            clears,
+            has_target,
+            skip_comment,
+        }) => (anchor, supersedes, clears, has_target, skip_comment),
+    };
+    let comment = human_rule_comment(&anchor, "close-candidate", note);
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {}\n  comment: {}",
+            human_close_report(slug, n, &anchor, &supersedes, &clears, skip),
+            if skip {
+                "skip (same ruling at same anchor already posted)".to_string()
+            } else {
+                comment.replace('\n', " / ")
+            }
+        ));
+    }
+    human_rule_write(
+        noun,
+        slug,
+        n,
+        HUMAN_CLOSE_TARGET,
+        &comment,
+        &human_close_steps(&supersedes, &clears, has_target, skip),
+    )?;
+    Ok(human_close_report(
+        slug,
+        n,
+        &anchor,
+        &supersedes,
+        &clears,
+        skip,
+    ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// the marketplace gate — one version, stored twice.
+//
+// A Claude Code plugin's version lives in TWO hand-maintained files: the marketplace listing that
+// installers read, and the plugin manifest it points at. `/plugin` detects an update by comparing
+// version STRINGS, so a listing that names the old version silently serves stale content to every
+// installer — `adversarial-mutation-test` once advertised 0.26.0 while its own manifest said
+// 0.27.0, and `rain-org-health` currently omits the listing version entirely.
+//
+// Two copies of a definitionally-identical value with nothing enforcing agreement is a drift
+// hazard, so this repo does not ship one: the agreement is a gate. It is a SUBCOMMAND rather than
+// a CI shell script for the same reason `require-qa-block` is (CLAUDE.md's north star) — everything
+// it does is parsing, so it belongs in the binary, where it is tested, runs locally against any
+// checkout, and ships in the flake closure.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The verdict on ONE marketplace entry. Typed rather than a message, so a caller branches on the
+/// FAILURE, never on wording.
+#[derive(Debug, PartialEq)]
+enum PluginVersionCheck {
+    Agree {
+        name: String,
+        version: String,
+    },
+    /// The listing points at a `source` with no readable plugin manifest — an entry that installs
+    /// nothing. Reachable the moment a plugin is moved without updating the listing.
+    NoManifest {
+        name: String,
+        source: String,
+    },
+    /// The listing carries no `version`. NOT the same as disagreeing: there is nothing to disagree
+    /// with, and `/plugin`'s version comparison has no left-hand side. This is `rain-org-health`'s
+    /// state, and a check that only compared present values would call it healthy.
+    NoListedVersion {
+        name: String,
+    },
+    NoManifestVersion {
+        name: String,
+    },
+    /// The listing and the manifest name different plugins — the entry is wired to the wrong
+    /// directory, so its version agreeing would prove nothing.
+    NameMismatch {
+        listed: String,
+        manifest: String,
+    },
+    Drift {
+        name: String,
+        listed: String,
+        manifest: String,
+    },
+}
+
+impl PluginVersionCheck {
+    /// PURE: the one line this verdict prints. Failures lead with the fix, because a CI log is read
+    /// once and acted on immediately.
+    fn report(&self) -> String {
+        match self {
+            PluginVersionCheck::Agree { name, version } => format!("ok   {name} {version}"),
+            PluginVersionCheck::NoManifest { name, source } => format!(
+                "FAIL {name}: no plugin manifest at {source}/.claude-plugin/plugin.json — the \
+                 listing installs nothing"
+            ),
+            PluginVersionCheck::NoListedVersion { name } => format!(
+                "FAIL {name}: the marketplace entry has no `version`. `/plugin` detects an update \
+                 by comparing version strings, so an entry without one can never advertise a new \
+                 release — add it and keep it in lockstep with the manifest"
+            ),
+            PluginVersionCheck::NoManifestVersion { name } => {
+                format!("FAIL {name}: the plugin manifest has no `version`")
+            }
+            PluginVersionCheck::NameMismatch { listed, manifest } => format!(
+                "FAIL {listed}: its `source` holds the plugin {manifest:?} — the entry is wired to \
+                 the wrong directory"
+            ),
+            PluginVersionCheck::Drift {
+                name,
+                listed,
+                manifest,
+            } => format!(
+                "FAIL {name}: the marketplace lists {listed} but the plugin is {manifest} — bump \
+                 both together; installers read the listing"
+            ),
+        }
+    }
+    fn passed(&self) -> bool {
+        matches!(self, PluginVersionCheck::Agree { .. })
+    }
+}
+
+/// PURE: check one marketplace entry against the manifest found at its `source` (`None` when there
+/// is no readable manifest there).
+fn plugin_version_check(entry: &Value, manifest: Option<&Value>) -> PluginVersionCheck {
+    let str_at = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let name = str_at(entry, "name").unwrap_or_default();
+    let source = str_at(entry, "source").unwrap_or_default();
+    let Some(manifest) = manifest else {
+        return PluginVersionCheck::NoManifest { name, source };
+    };
+    if let Some(m) = str_at(manifest, "name") {
+        if m != name {
+            return PluginVersionCheck::NameMismatch {
+                listed: name,
+                manifest: m,
+            };
+        }
+    }
+    let Some(listed) = str_at(entry, "version") else {
+        return PluginVersionCheck::NoListedVersion { name };
+    };
+    let Some(from_manifest) = str_at(manifest, "version") else {
+        return PluginVersionCheck::NoManifestVersion { name };
+    };
+    if listed != from_manifest {
+        return PluginVersionCheck::Drift {
+            name,
+            listed,
+            manifest: from_manifest,
+        };
+    }
+    PluginVersionCheck::Agree {
+        name,
+        version: listed,
+    }
+}
+
+/// `plugin-version-lockstep [--root <dir>]`: every plugin the marketplace lists resolves to a real
+/// manifest carrying the same version. Exit 0 satisfied, 2 a listing is wrong, 3 the gate could not
+/// be evaluated at all (no marketplace to read).
+fn plugin_version_lockstep_mode(root: &str) -> i32 {
+    let root = root.trim_end_matches('/');
+    let path = format!("{root}/.claude-plugin/marketplace.json");
+    let Some(market) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    else {
+        eprintln!("error: cannot read {path} as JSON — the gate cannot be evaluated");
+        return 3;
+    };
+    let Some(plugins) = market.get("plugins").and_then(|p| p.as_array()) else {
+        eprintln!("error: {path} has no `plugins` array");
+        return 3;
+    };
+    if plugins.is_empty() {
+        eprintln!("error: {path} lists no plugins");
+        return 3;
+    }
+    let mut failed = false;
+    for entry in plugins {
+        let source = entry
+            .get("source")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim_start_matches("./")
+            .trim_end_matches('/');
+        let manifest_path = if source.is_empty() {
+            format!("{root}/.claude-plugin/plugin.json")
+        } else {
+            format!("{root}/{source}/.claude-plugin/plugin.json")
+        };
+        let manifest = std::fs::read_to_string(&manifest_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+        let check = plugin_version_check(entry, manifest.as_ref());
+        if check.passed() {
+            println!("{}", check.report());
+        } else {
+            eprintln!("{}", check.report());
+            failed = true;
+        }
+    }
+    if failed {
+        2
+    } else {
+        0
+    }
+}
+
 /// Thin CLI shell over any `*_apply` transition: it OWNS the printing so the cores stay usable by
 /// the MCP server, whose stdout is the JSON-RPC stream. Generalises [`record_verdict_mode`]'s shape
 /// — success on stdout, refusal on stderr, the apply's own exit code.
@@ -4829,6 +5802,12 @@ fn classify_lane(
             return (Lane::ProducerBlocked, b.to_string());
         }
     }
+    // The retired state (#108) is still bucketed so a PR a pre-#108 run parked stays VISIBLE in the
+    // queue until `retire-blocked-infra` clears it — dropping it here would make thirteen PRs
+    // reappear as `un-vetted` and hide the very thing that needs unpicking.
+    if has(RETIRED_STATE_LABEL) {
+        return (Lane::ProducerBlocked, RETIRED_STATE_LABEL.to_string());
+    }
     if has("ai:ready") {
         return if ready_vetted_at_head == Some(false) {
             (Lane::VetLifecycle, "awaiting-re-vet".to_string())
@@ -4848,13 +5827,107 @@ fn classify_lane(
     }
 }
 
-/// A producer PR reduced to what lane bucketing needs — free of gh JSON so [`lanes_doc`] is
-/// unit-testable without a network.
-struct QueuePr {
+/// A reference to ONE GitHub subject — an issue or a PR — in the ONE shape `human-queue --json`
+/// emits every such reference in: `{repo, number, url, title}`.
+///
+/// This exists because the two shapes drifted (#114). Lane items carried `url`; the six top-level
+/// arrays (`states`, `closeCandidateIssues`, `closeCandidateUnvetted`, `closeCandidateUpheld`,
+/// `uncoveredIssues`, `leaks`) carried only `{repo, number, title}`, and a consumer holding one of
+/// those cannot build a link at all — the field is simply not there.
+///
+/// Nor can it derive one: `{repo, number}` does not say whether the number is an issue or a PR, and
+/// the arrays split BOTH ways (`states`/`leaks` are PRs, the rest are issues). That split is an
+/// implementation fact — `gh search issues` scopes to issues, `gh search prs` to PRs — not
+/// something the payload states, so a consumer has to hard-code a per-key rule it cannot verify and
+/// that changes silently if a key's source query ever changes. GitHub does redirect
+/// `/pull/<n>` ↔ `/issues/<n>`, so a guessed link survives a browser click today; it does not
+/// survive a non-following API client, a link checker, or a subject transferred to another repo.
+/// The resolved `url` is already in hand at every one of those sites (each array is built from a
+/// `gh search` / `gh issue view` payload that returns it), so carrying it costs nothing.
+///
+/// Being ONE type is the point. Adding a field here is a compile error at every construction site,
+/// and removing one is a compile error at every reader — which is what turns the next divergence
+/// into a build failure instead of an empty list on a dashboard. [`SubjectRef::to_json`] is the ONLY
+/// place a subject reference is serialised, so lane items and top-level items cannot disagree by
+/// construction.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SubjectRef {
+    /// `owner/repo`.
     repo: String,
     number: u64,
-    title: String,
+    /// The RESOLVED `https://github.com/…/{issues,pull}/<n>` url, as GitHub reported it — never
+    /// reconstructed from `repo` + `number`, because that is the guess this type exists to remove.
     url: String,
+    title: String,
+}
+
+impl SubjectRef {
+    fn new(
+        repo: impl Into<String>,
+        number: u64,
+        url: impl Into<String>,
+        title: impl Into<String>,
+    ) -> Self {
+        SubjectRef {
+            repo: repo.into(),
+            number,
+            url: url.into(),
+            title: title.into(),
+        }
+    }
+
+    /// PURE: read a subject reference out of a row that already carries the four keys (a `cc_row`
+    /// vet-queue row, whose `url` came from `gh issue view`). Absent keys yield empty/zero rather
+    /// than a fabricated url — an unknown link is reported as unknown, never guessed.
+    fn from_row(row: &Value) -> Self {
+        let s = |k: &str| {
+            row.get(k)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        SubjectRef {
+            repo: s("repo"),
+            number: row.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
+            url: s("url"),
+            title: s("title"),
+        }
+    }
+
+    /// The ONE emitted JSON object for a subject reference. Every array in `human-queue --json`
+    /// goes through here.
+    fn to_json(&self) -> Value {
+        serde_json::json!({
+            "repo": self.repo,
+            "number": self.number,
+            "url": self.url,
+            "title": self.title,
+        })
+    }
+
+    /// [`SubjectRef::to_json`] plus array-specific keys (`leaks` carries `reason`). The base object
+    /// still comes from the one serialiser, so an extra key can never be paid for by dropping a
+    /// shared one.
+    fn to_json_with(&self, extra: &[(&str, Value)]) -> Value {
+        let mut v = self.to_json();
+        let obj = v.as_object_mut().expect("to_json is an object");
+        for (k, val) in extra {
+            obj.insert((*k).to_string(), val.clone());
+        }
+        v
+    }
+
+    /// The whole array, emitted.
+    fn array(refs: &[SubjectRef]) -> Vec<Value> {
+        refs.iter().map(SubjectRef::to_json).collect()
+    }
+}
+
+/// A producer PR reduced to what lane bucketing needs — free of gh JSON so [`lanes_doc`] is
+/// unit-testable without a network. The emitted identity is a [`SubjectRef`], so a lane item and a
+/// top-level item are the same shape by construction, not by two structs agreeing.
+struct QueuePr {
+    subject: SubjectRef,
     labels: Vec<String>,
     /// For an `ai:ready` PR: `Some(false)` when the head has moved past its last verdict. `None`
     /// when not computed (non-`ai:ready` PRs never need it).
@@ -4880,12 +5953,7 @@ fn lanes_doc(prs: &[QueuePr]) -> Value {
             .or_default()
             .entry(state)
             .or_default()
-            .push(serde_json::json!({
-                "repo": p.repo,
-                "number": p.number,
-                "url": p.url,
-                "title": p.title,
-            }));
+            .push(p.subject.to_json());
     }
     let doc: serde_json::Map<String, Value> = lanes
         .into_iter()
@@ -4913,6 +5981,149 @@ fn lane_state_count(lanes: &Value, lane: &str, state: &str) -> usize {
         .pointer(&format!("/{lane}/{state}/count"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize
+}
+
+/// PURE: the `closeCandidateIssues` subject list, parsed from `gh search issues --json
+/// url,number,repository,title` rows. The row's `url` is the emitted link — the slug is parsed OUT
+/// of it, so the resolved url is always already in hand and never refetched (#114).
+fn close_candidate_issue_refs(found: &[Value]) -> Vec<SubjectRef> {
+    found
+        .iter()
+        .filter_map(|i| {
+            let url = i.get("url").and_then(|u| u.as_str())?.to_string();
+            let num = i.get("number").and_then(|n| n.as_u64())?;
+            let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
+            let slug = url
+                .strip_prefix("https://github.com/")?
+                .split("/issues/")
+                .next()?
+                .to_string();
+            Some(SubjectRef::new(slug, num, url, title))
+        })
+        .collect()
+}
+
+/// PURE: the `uncoveredIssues` (producer backlog) subject list, from the shared coverage
+/// computation's uncovered keys + per-issue meta. The meta is the raw `gh search issues` row, which
+/// already carries `url` — the backlog previously kept only `title` from it (#114).
+///
+/// An issue whose meta is missing is kept (a missing row must not silently shrink the backlog) with
+/// an empty url, because there is no honest link to emit for it — never a `/issues/<n>` guess.
+fn producer_backlog_refs(
+    open: &[(String, u64)],
+    meta: &std::collections::HashMap<(String, u64), Value>,
+) -> Vec<SubjectRef> {
+    open.iter()
+        .filter(|k| meta.get(*k).map(is_producer_backlog).unwrap_or(true))
+        .map(|(slug, num)| {
+            let field = |k: &str| {
+                meta.get(&(slug.clone(), *num))
+                    .and_then(|m| m.get(k))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            };
+            SubjectRef::new(slug, *num, field("url"), field("title"))
+        })
+        .collect()
+}
+
+/// PURE: clip to `n` CHARACTERS. Titles and leak reasons carry unicode (em-dash, middle-dot,
+/// emoji), so a byte-index slice would panic mid-codepoint.
+fn clip_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+/// PURE: the two lines the human-readable daily review prints for one subject — its RESOLVED url
+/// and its clipped title.
+///
+/// The url is the one GitHub reported, NOT `https://github.com/{repo}/pull/{number}`. This list
+/// also renders `closeCandidateIssues`, so the reconstruction printed a `/pull/` link for every
+/// close-candidate ISSUE — the same guess #114 removes from the JSON.
+fn review_subject_block(s: &SubjectRef, clip_to: usize) -> String {
+    format!("   {}\n      {}", s.url, clip_chars(&s.title, clip_to))
+}
+
+/// PURE: the two lines the leak section prints — the leaking PR's resolved url + clipped title,
+/// then the producer's stated reason.
+fn review_leak_block(s: &SubjectRef, reason: &str) -> String {
+    format!(
+        "   {}  {}\n      {}",
+        s.url,
+        clip_chars(&s.title, 52),
+        clip_chars(reason, 140)
+    )
+}
+
+/// PURE: the whole `human-queue --json` document, assembled from already-fetched parts.
+///
+/// Split out of [`human_queue_mode`] so the emitted SHAPE is reachable by a test: every top-level
+/// subject array used to be built inline behind a network call, which is exactly why `url` could go
+/// missing from four of them without a single test failing (#114). Every array here is
+/// [`SubjectRef::array`] or a `to_json_with` on top of it, so no array can carry a different set of
+/// subject keys than `lanes` does.
+#[allow(clippy::too_many_arguments)]
+fn human_queue_doc(
+    buckets: &std::collections::BTreeMap<String, Vec<SubjectRef>>,
+    lanes: &Value,
+    close_issues: &[SubjectRef],
+    cc_unvetted: Value,
+    cc_unvetted_n: usize,
+    cc_upheld: Value,
+    cc_upheld_n: usize,
+    backlog: &[SubjectRef],
+    leaks: &[(SubjectRef, String)],
+    total_producer_prs: usize,
+) -> Value {
+    let bmap: serde_json::Map<String, Value> = buckets
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::Array(SubjectRef::array(v))))
+        .collect();
+    serde_json::json!({
+        "states": bmap,
+        "lanes": lanes,
+        "closeCandidateIssues": SubjectRef::array(close_issues),
+        // Same key at top level (the ITEM ARRAY) and under `counts` (its length), exactly as
+        // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
+        "closeCandidateUnvetted": cc_unvetted,
+        "closeCandidateUpheld": cc_upheld,
+        "uncoveredIssues": SubjectRef::array(backlog),
+        "leaks": leaks
+            .iter()
+            .map(|(s, reason)| s.to_json_with(&[("reason", Value::from(reason.as_str()))]))
+            .collect::<Vec<_>>(),
+        "counts": {
+            // Legacy label-based counts (UNCHANGED — the dashboard reads these).
+            "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
+            "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
+            "blockedDeploy": buckets.get("ai:blocked-deploy").map(|v| v.len()).unwrap_or(0),
+            "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
+            "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
+            "closeCandidateIssues": close_issues.len(),
+            // Close-candidate VET lifecycle (#72/#73). `closeCandidateIssues` above keeps its
+            // meaning — every issue carrying the label — and these split it by vet state:
+            //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
+            //   upheld   = the vetter judged the evidence sound; genuinely queued for the human
+            // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the issue
+            // leaves this set entirely and reappears under `uncoveredIssues`.
+            "closeCandidateUnvetted": cc_unvetted_n,
+            "closeCandidateUpheld": cc_upheld_n,
+            "leaks": leaks.len(),
+            "totalProducerPrs": total_producer_prs,
+            // Producer untouched backlog — open issues with no covering open PR, excluding
+            // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
+            "uncoveredIssues": backlog.len(),
+            // Additive lane-based counts (each PR counted once, human-override dominant) — the
+            // states previously invisible to the dashboard.
+            "unvetted": lane_state_count(lanes, "vet-lifecycle", "un-vetted"),
+            "awaitingReVet": lane_state_count(lanes, "vet-lifecycle", "awaiting-re-vet"),
+            "reject": lane_state_count(lanes, "vetter-verdicts", "ai:reject"),
+            "relink": lane_state_count(lanes, "vetter-verdicts", "ai:relink"),
+            "closeCandidatePrs": lane_state_count(lanes, "vetter-verdicts", "ai:close-candidate"),
+            "humanReject": lane_state_count(lanes, "human-decisions", "human:reject"),
+            "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
+            "humanCloseCandidate": lane_state_count(lanes, "human-decisions", "human:close-candidate"),
+        }
+    })
 }
 
 /// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
@@ -4950,12 +6161,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
         return 1;
     };
 
-    // One pass: the legacy label bucket (`states`, unchanged) + a per-PR `(slug,num,title,url,labels)`
+    // One pass: the legacy label bucket (`states`, unchanged) + a per-PR `(SubjectRef, labels)`
     // record the lane classifier consumes. `unlabeled` = PRs with no `ai:*` label (leak candidates).
-    let mut buckets: std::collections::BTreeMap<String, Vec<(String, u64, String)>> =
+    // The search already returned each PR's resolved `url` — the slug is parsed OUT of it — so every
+    // downstream array carries the real link for free (#114); nothing here refetches it.
+    let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> =
         std::collections::BTreeMap::new();
-    let mut unlabeled: Vec<(String, u64, String)> = Vec::new();
-    let mut records: Vec<(String, u64, String, String, Vec<String>)> = Vec::new();
+    let mut unlabeled: Vec<SubjectRef> = Vec::new();
+    let mut records: Vec<(SubjectRef, Vec<String>)> = Vec::new();
     for p in &prs {
         let url = p
             .get("url")
@@ -4978,28 +6191,24 @@ fn human_queue_mode(json_out: bool) -> i32 {
                     .collect()
             })
             .unwrap_or_default();
+        let subject = SubjectRef::new(slug, num, url, title);
         match ai_state_label(&labels) {
-            Some(state) => {
-                buckets
-                    .entry(state)
-                    .or_default()
-                    .push((slug.clone(), num, title.clone()))
-            }
-            None => unlabeled.push((slug.clone(), num, title.clone())),
+            Some(state) => buckets.entry(state).or_default().push(subject.clone()),
+            None => unlabeled.push(subject.clone()),
         }
-        records.push((slug, num, title, url, labels));
+        records.push((subject, labels));
     }
 
     // Leak detection: an unlabeled PR the producer has commented on = a hand-off with no modeled
     // state (the FSM leaking). An unlabeled PR with NO producer comment is just freshly-open/unvetted.
-    let mut leaks: Vec<(String, u64, String, String)> = Vec::new();
-    for (slug, num, title) in &unlabeled {
+    let mut leaks: Vec<(SubjectRef, String)> = Vec::new();
+    for subject in &unlabeled {
         let Some(j) = gh_json(&[
             "pr",
             "view",
-            &num.to_string(),
+            &subject.number.to_string(),
             "-R",
-            slug,
+            &subject.repo,
             "--json",
             "comments",
         ]) else {
@@ -5008,7 +6217,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
         let notes = trusted_comments(&j, Some("🤖 ai:producer"));
         if let Some(last) = notes.last() {
             let reason = last.replace('\n', " ");
-            leaks.push((slug.clone(), *num, title.clone(), reason));
+            leaks.push((subject.clone(), reason));
         }
     }
 
@@ -5016,8 +6225,10 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // verdict is awaiting-re-vet, not ready (the established `queue`/`vetted_at_head` notion). Fetch
     // only the ai:ready PRs that would actually reach the ai:ready lane branch (no dominating
     // human:* / ai:blocked-* label) — one `gh pr view` each.
-    let leak_keys: std::collections::HashSet<(String, u64)> =
-        leaks.iter().map(|(s, n, _, _)| (s.clone(), *n)).collect();
+    let leak_keys: std::collections::HashSet<(String, u64)> = leaks
+        .iter()
+        .map(|(s, _)| (s.repo.clone(), s.number))
+        .collect();
     let dominated = |labels: &[String]| {
         let has = |name: &str| labels.iter().any(|l| l == name);
         HUMAN_DECISION_LABELS.iter().any(|h| has(h))
@@ -5027,19 +6238,22 @@ fn human_queue_mode(json_out: bool) -> i32 {
     };
     let mut ready_vetted: std::collections::HashMap<(String, u64), bool> =
         std::collections::HashMap::new();
-    for (slug, num, _t, _u, labels) in &records {
+    for (subject, labels) in &records {
         if labels.iter().any(|l| l == "ai:ready") && !dominated(labels) {
             if let Some(j) = gh_json(&[
                 "pr",
                 "view",
-                &num.to_string(),
+                &subject.number.to_string(),
                 "-R",
-                slug,
+                &subject.repo,
                 "--json",
                 "headRefOid,comments",
             ]) {
                 let head = j.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
-                ready_vetted.insert((slug.clone(), *num), vetted_at_head(&j, head));
+                ready_vetted.insert(
+                    (subject.repo.clone(), subject.number),
+                    vetted_at_head(&j, head),
+                );
             }
         }
     }
@@ -5047,14 +6261,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // The full lane-grouped inventory (each PR bucketed once, by FSM precedence).
     let queue_prs: Vec<QueuePr> = records
         .iter()
-        .map(|(slug, num, title, url, labels)| QueuePr {
-            repo: slug.clone(),
-            number: *num,
-            title: title.clone(),
-            url: url.clone(),
-            labels: labels.clone(),
-            ready_vetted_at_head: ready_vetted.get(&(slug.clone(), *num)).copied(),
-            producer_commented: leak_keys.contains(&(slug.clone(), *num)),
+        .map(|(subject, labels)| {
+            let key = (subject.repo.clone(), subject.number);
+            QueuePr {
+                subject: subject.clone(),
+                labels: labels.clone(),
+                ready_vetted_at_head: ready_vetted.get(&key).copied(),
+                producer_commented: leak_keys.contains(&key),
+            }
         })
         .collect();
     let lanes = lanes_doc(&queue_prs);
@@ -5077,26 +6291,11 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .map(|s| s.to_string()),
     );
     let iref: Vec<&str> = iargs.iter().map(String::as_str).collect();
-    let close_issues: Vec<(String, u64, String)> = gh_json(&iref)
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|i| {
-            let url = i.get("url").and_then(|u| u.as_str())?.to_string();
-            let num = i.get("number").and_then(|n| n.as_u64())?;
-            let title = i
-                .get("title")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string();
-            let slug = url
-                .strip_prefix("https://github.com/")?
-                .split("/issues/")
-                .next()?
-                .to_string();
-            Some((slug, num, title))
-        })
-        .collect();
+    let close_issues = close_candidate_issue_refs(
+        &gh_json(&iref)
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default(),
+    );
 
     // Close-candidate vet state, as `(unvetted, upheld)`. Computed from the same state-load the
     // vetter reads, so the dashboard and the vetter can never disagree about the size of the inbox.
@@ -5127,94 +6326,33 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // previously invisible on the FSM dashboard. Same coverage computation as `uncovered-issues`
     // (via `coverage_uncovered`); `is_producer_backlog` narrows it to the producer's share. A gh
     // failure leaves it empty rather than aborting the whole queue render — it is additive.
-    let backlog: Vec<(String, u64, String)> = coverage_uncovered()
-        .map(|(open, meta)| {
-            open.iter()
-                .filter(|k| meta.get(*k).map(is_producer_backlog).unwrap_or(true))
-                .map(|(slug, num)| {
-                    let title = meta
-                        .get(&(slug.clone(), *num))
-                        .and_then(|m| m.get("title"))
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    (slug.clone(), *num, title)
-                })
-                .collect()
-        })
+    let backlog: Vec<SubjectRef> = coverage_uncovered()
+        .map(|(open, meta)| producer_backlog_refs(&open, &meta))
         .unwrap_or_default();
 
     if json_out {
-        let bmap: serde_json::Map<String, Value> = buckets
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    Value::Array(
-                        v.iter()
-                            .map(
-                                |(s, n, t)| serde_json::json!({"repo": s, "number": n, "title": t}),
-                            )
-                            .collect(),
-                    ),
-                )
-            })
-            .collect();
-        let doc = serde_json::json!({
-            "states": bmap,
-            "lanes": lanes,
-            "closeCandidateIssues": close_issues.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
-            // Same key at top level (the ITEM ARRAY) and under `counts` (its length), exactly as
-            // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
-            "closeCandidateUnvetted": cc_unvetted,
-            "closeCandidateUpheld": cc_upheld,
-            "uncoveredIssues": backlog.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
-            "leaks": leaks.iter().map(|(s,n,t,r)| serde_json::json!({"repo": s, "number": n, "title": t, "reason": r})).collect::<Vec<_>>(),
-            "counts": {
-                // Legacy label-based counts (UNCHANGED — the dashboard reads these).
-                "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
-                "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
-                "blockedDeploy": buckets.get("ai:blocked-deploy").map(|v| v.len()).unwrap_or(0),
-                "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
-                "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
-                "closeCandidateIssues": close_issues.len(),
-                // Close-candidate VET lifecycle (#72/#73). `closeCandidateIssues` above keeps its
-                // meaning — every issue carrying the label — and these split it by vet state:
-                //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
-                //   upheld   = the vetter judged the evidence sound; genuinely queued for the human
-                // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the issue
-                // leaves this set entirely and reappears under `uncoveredIssues`.
-                "closeCandidateUnvetted": cc_unvetted_n,
-                "closeCandidateUpheld": cc_upheld_n,
-                "leaks": leaks.len(),
-                "totalProducerPrs": prs.len(),
-                // Producer untouched backlog — open issues with no covering open PR, excluding
-                // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
-                "uncoveredIssues": backlog.len(),
-                // Additive lane-based counts (each PR counted once, human-override dominant) — the
-                // states previously invisible to the dashboard.
-                "unvetted": lane_state_count(&lanes, "vet-lifecycle", "un-vetted"),
-                "awaitingReVet": lane_state_count(&lanes, "vet-lifecycle", "awaiting-re-vet"),
-                "reject": lane_state_count(&lanes, "vetter-verdicts", "ai:reject"),
-                "relink": lane_state_count(&lanes, "vetter-verdicts", "ai:relink"),
-                "closeCandidatePrs": lane_state_count(&lanes, "vetter-verdicts", "ai:close-candidate"),
-                "humanReject": lane_state_count(&lanes, "human-decisions", "human:reject"),
-                "humanDesign": lane_state_count(&lanes, "human-decisions", "human:design"),
-                "humanCloseCandidate": lane_state_count(&lanes, "human-decisions", "human:close-candidate"),
-            }
-        });
+        let doc = human_queue_doc(
+            &buckets,
+            &lanes,
+            &close_issues,
+            cc_unvetted,
+            cc_unvetted_n,
+            cc_upheld,
+            cc_upheld_n,
+            &backlog,
+            &leaks,
+            prs.len(),
+        );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
     }
 
-    // Human-readable daily review. Truncate on CHAR boundaries — titles/reasons carry unicode
-    // (em-dash, middle-dot, emoji), so a byte-index slice would panic mid-codepoint.
-    let clip = |s: &str, n: usize| s.chars().take(n).collect::<String>();
-    let show = |title: &str, items: &[(String, u64, String)]| {
+    // Human-readable daily review. Every line is rendered by a pure block builder (`clip_chars`
+    // truncates on CHAR boundaries) so the printed link is the same resolved url the JSON emits.
+    let show = |title: &str, items: &[SubjectRef]| {
         println!("\n▓▓ {title}  ({})", items.len());
-        for (slug, num, t) in items {
-            println!("   https://github.com/{slug}/pull/{num}");
-            println!("      {}", clip(t, 66));
+        for s in items {
+            println!("{}", review_subject_block(s, 66));
         }
     };
     // Print a lane/state bucket straight from the lane doc (the states without a legacy label bucket).
@@ -5226,10 +6364,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
             .unwrap_or(&empty);
         println!("\n▓▓ {title}  ({})", items.len());
         for it in items {
-            let url = it.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let t = it.get("title").and_then(|v| v.as_str()).unwrap_or("");
-            println!("   {url}");
-            println!("      {}", clip(t, 66));
+            println!("{}", review_subject_block(&SubjectRef::from_row(it), 66));
         }
     };
     println!(
@@ -5296,9 +6431,8 @@ fn human_queue_mode(json_out: bool) -> i32 {
         "\n⚠⚠ NOT IN ANY MODELED STATE (FSM leak — should trend to 0)  ({})",
         leaks.len()
     );
-    for (slug, num, t, reason) in &leaks {
-        println!("   https://github.com/{slug}/pull/{num}  {}", clip(t, 52));
-        println!("      {}", clip(reason, 140));
+    for (s, reason) in &leaks {
+        println!("{}", review_leak_block(s, reason));
     }
     0
 }
@@ -7096,8 +8230,14 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
 }
 
 /// PURE: split an `unvetted_close_candidates` document into the two dashboard ITEM ARRAYS —
-/// `(unvetted, upheld)` — in the same `{repo, number, title}` shape `closeCandidateIssues` and
-/// `uncoveredIssues` already emit.
+/// `(unvetted, upheld)` — in the ONE [`SubjectRef`] shape every subject array emits.
+///
+/// The `url` comes from the row, which got it from the `gh issue view` that built the row — this
+/// projection used to drop it, which is the drift #114 is about. The projection carries whatever
+/// url the row holds rather than rebuilding one from `repo` + `number`: `ai:close-candidate` is a
+/// label the producer also puts on PRs (see `lanes.vetter-verdicts.ai:close-candidate`), so
+/// "close-candidate ⇒ `/issues/`" is a rule about which query fed this array, not about the
+/// concept, and it is not the projection's to encode.
 ///
 /// Both the arrays and their counts are derived from THIS one document, which is what makes an
 /// array/count mismatch unrepresentable: a box that renders "5" and then lists three issues when
@@ -7107,13 +8247,7 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
 /// label stripped, so it cannot appear in this search at all — an issue still carrying the label
 /// AND vetted at its current flag was necessarily upheld.
 fn cc_item_arrays(doc: &Value) -> (Vec<Value>, Vec<Value>) {
-    let item = |r: &Value| {
-        serde_json::json!({
-            "repo": r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
-            "number": r.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
-            "title": r.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-        })
-    };
+    let item = |r: &Value| SubjectRef::from_row(r).to_json();
     let unvetted: Vec<Value> = doc
         .get("issues")
         .and_then(|v| v.as_array())
@@ -7348,7 +8482,7 @@ fn record_cc_verdict_apply(
         "-R",
         slug,
         "--json",
-        "state,labels,comments",
+        CC_VERDICT_FIELDS,
     ]) else {
         return Err((
             1,
@@ -7358,6 +8492,22 @@ fn record_cc_verdict_apply(
         ));
     };
     let (flag_at, remove_label, skip) = match cc_verdict_plan(&j, verdict) {
+        CcVerdictPlan::NotAnIssue => {
+            return Err((
+                2,
+                format!(
+                    "refusing: {slug}#{issue} is a PULL REQUEST, not an issue — `gh issue view` \
+                     answers for either. A close-candidate FLAG is a producer claim on an ISSUE; on \
+                     a PR `ai:close-candidate` is the VETTER's own verdict, which no second AI \
+                     judgement applies to. This is not a PR without a path — it has three:\n  \
+                     human-close {slug} {issue} \"…\"             — the verdict is right: rule, \
+                     clear the flag and close it, one command\n  \
+                     human-rule {slug} {issue} reject \"…\"       — the verdict is wrong; it needs \
+                     rework\n  \
+                     human-rule {slug} {issue} design \"…\"       — it raises a design question"
+                ),
+            ));
+        }
         CcVerdictPlan::AlreadyClosed => {
             return Ok(format!("{slug}#{issue} already closed — nothing to vet"));
         }
@@ -8114,11 +9264,17 @@ impl McpProfile {
             // `human-queue`, which renders whole org-wide sets and does not fit one tool result.
             // `record_close_candidate_verdict` is absent too — it is the vetter's authority, and the
             // ruling that mistook it for a human one is exactly what `human_rule_issue` refuses.
+            //
+            // `human_close` is the TERMINAL edge (#94). It is a tool rather than something the
+            // caller composes because the alternative — rule with `human_rule_issue`, then close
+            // with a Bash `gh` — is a transition half in a tool and half in a prompt, and that half
+            // is the one that was wrong on all 74 closed subjects carrying a live flag.
             McpProfile::Human => &[
                 "pr_context",
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
+                "human_close",
             ],
         }
     }
@@ -8254,6 +9410,18 @@ fn mcp_all_tools() -> Value {
             }
         },
         {
+            "name": "human_close",
+            "description": "The human's TERMINAL transition on an issue OR a PR, in one call: apply human:close-candidate + a pinned 👤 human comment, retire the pending ai:close-candidate flag, then close. The subject type is resolved by lookup, so one reference cannot act on the wrong one of the two populations that share the label name. On an already-closed subject it only clears a stale flag, and invents no ruling.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string", "description": "owner/repo#number — an issue OR a pull request."},
+                    "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."}
+                },
+                "required": ["subject", "note"]
+            }
+        },
+        {
             "name": "clone_create",
             "description": "Make (or re-sync to current base) the per-issue work clone. Returns its dir. Refuses to re-sync over unpushed commits.",
             "inputSchema": {
@@ -8349,6 +9517,13 @@ enum McpCall {
         slug: String,
         num: u64,
         ruling: String,
+        note: String,
+    },
+    /// The TERMINAL edge. No `ruling` field: `human-close` IS the `close-candidate` ruling plus the
+    /// act that makes it terminal, so a verb here would be a second spelling of one state.
+    HumanClose {
+        slug: String,
+        num: u64,
         note: String,
     },
     /// `root`/`name` are the OUTPUT of the path guard, not the model's argument: by the time this
@@ -8625,6 +9800,17 @@ fn validate_call(
                 note,
             })
         }
+        // The terminal edge takes `subject`, not `pr`/`issue`: the argument NAME would otherwise be
+        // the caller asserting a type the tool is about to resolve, and a wrong assertion there is
+        // how a ruling lands in the other population.
+        "human_close" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "subject")?)?;
+            let note = match req_str(args, "note") {
+                Ok(n) if !n.trim().is_empty() => n.trim().to_string(),
+                _ => return Err(human_ruling_note_error().1),
+            };
+            Ok(McpCall::HumanClose { slug, num, note })
+        }
         // --- work-clone lifecycle. The path guard runs HERE, before any effect exists, which is why
         // a refused clone argument can be proven to have touched nothing.
         "clone_create" => {
@@ -8844,6 +10030,10 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             note,
         } => human_rule_issue_apply(&slug, &num.to_string(), &ruling, &note, false)
             .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::HumanClose { slug, num, note } => {
+            human_close_apply(&slug, &num.to_string(), &note, false)
+                .map_err(|(code, msg)| format!("{msg} [exit {code}]"))
+        }
         McpCall::CloneCreate {
             root,
             name,
@@ -9980,6 +11170,10 @@ enum Cmd {
         /// `tooling-failure` on this fact alone.
         #[arg(long, value_delimiter = ',')]
         preflight_missing: Vec<String>,
+        /// The run's infra record (`$RUN_INFRA_FILE`). An outage in it is folded onto the metrics
+        /// line and makes the outcome `infra-down` rather than `ok` (#108).
+        #[arg(long)]
+        infra: Option<String>,
     },
     /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
     ///
@@ -10069,21 +11263,34 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// END THE RUN: the infrastructure the work depends on is down. Records the reason on the run
+    /// record and exits 12. Writes NOTHING to any PR — no label, no comment (#108).
+    InfraDown {
+        /// What is unavailable, and the evidence (trailing words are joined).
+        reason: Vec<String>,
+        /// The PR that would fix it, if one exists — e.g. `rainlanguage/rainix#289`.
+        #[arg(long, default_value = "")]
+        root_cause: String,
+    },
+    /// What this run recorded about infrastructure. Exit 12 when it recorded an outage — how the
+    /// RUNNER learns the model ended its own run on something it discovered mid-flight.
+    RunInfra {
+        /// Run record path; defaults to $RUN_INFRA_FILE.
+        record: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// One-shot: strip the RETIRED `ai:blocked-infra` label from every open PR still carrying it.
+    RetireBlockedInfra {
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Producer transition: flag a PR into ai:blocked-deploy (a deploy the producer can't complete).
     FlagBlockedDeploy {
         /// owner/repo
         slug: String,
         pr: String,
         /// Reason (trailing words are joined).
-        reason: Vec<String>,
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Producer transition: flag a PR into ai:blocked-infra (infra/tooling gap OR can't-classify).
-    FlagBlockedInfra {
-        /// owner/repo
-        slug: String,
-        pr: String,
         reason: Vec<String>,
         #[arg(long)]
         dry_run: bool,
@@ -10138,6 +11345,19 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Human TERMINAL transition on an issue OR a PR: rule human:close-candidate, retire the
+    /// pending ai:close-candidate flag, and close — one transition. The subject type is resolved by
+    /// lookup, so one owner/repo #n reference can never act on the wrong one of the two populations.
+    HumanClose {
+        /// owner/repo
+        slug: String,
+        /// Issue or PR number.
+        number: String,
+        /// One-line ruling + evidence (trailing words are joined).
+        note: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Vetter transition on a close-candidate FLAG: uphold (queued for the human) or reject (drop
     /// ai:close-candidate, back to the producer). The CLI twin of the MCP tool — `human-rule-issue`
     /// names it in the refusal it raises on a flagged issue, and a human at a terminal has no MCP.
@@ -10169,6 +11389,13 @@ enum Cmd {
         /// one caller that may ask for the whole queue. The MCP surface always pages (#78).
         #[arg(long)]
         limit: Option<usize>,
+    },
+    /// CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a real manifest
+    /// carrying the SAME version. Exit 2 if a listing is wrong, 3 if the gate cannot be evaluated.
+    PluginVersionLockstep {
+        /// Repo root holding `.claude-plugin/marketplace.json`.
+        #[arg(long, default_value = ".")]
+        root: String,
     },
     /// PreToolUse `Bash` gate (QA-GUIDE section 8): refuse a `gh pr create` whose PR body carries
     /// no `## QA` evidence block, naming the lines that are missing. Hook payload on stdin; exit 0
@@ -10964,6 +12191,335 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     0
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// Infrastructure down (#108) — END THE RUN, log an error. Nothing else.
+//
+// `ai:blocked-infra` used to be an FSM destination, and it was a trap. The prompt made the label a
+// cross-run marker ("skip a PR already in that state"), so a PR that met a ten-minute outage was
+// parked until a human removed the label by hand. Thirteen ordinary PRs sat there — a `pi` constant
+// word, a staleness-overflow fix, a README setup fix — none of them infra problems. It was also the
+// declared total-function fallback, so everything unclassifiable landed in that same permanent park.
+//
+// Infrastructure being down is a property of the MOMENT, not of a PR. The response is therefore not
+// a state, and not a per-PR anything: it is ONE EXIT.
+//
+// THERE IS DELIBERATELY NO DETECTOR HERE. No threshold, no failure-signature classifier, no
+// "is this a real outage or just a flake". The model declares what it saw and the run ends. That is
+// not laziness about correctness — it follows from the cost asymmetry, which is lopsided enough to
+// settle the design on its own:
+//
+//   * a FALSE exit costs one skipped run. The cron runs again in four hours and re-derives
+//     everything from scratch. Exiting on a flake is fine.
+//   * a FALSE NEGATIVE costs a whole run producing PRs nothing can verify — which is precisely what
+//     run 20260728T111645Z did, with labelling churn on seven PRs as the visible half.
+//
+// Every line of detection logic is machinery that can be wrong in the expensive direction, in
+// service of avoiding an outcome that costs nothing. So there is none. If the model believes the
+// environment is impeding the work, that is sufficient; it does not have to prove it.
+//
+// This is #91's rule one step later. `preflight` ends the run before a token is spent when a
+// harness tool is missing, on the grounds that "no verdict at all beats a verdict from a lens that
+// was blind without saying so". Here: no PRs at all beats PRs against a fleet whose CI cannot pass.
+// The only difference is that this blocker is discovered MID-RUN, so the exit has to be reachable
+// from inside the model's loop — which is what nothing in `campaign-run.sh` was.
+//
+// Errors accumulate; labels do not. One exit is noise. The same exit across twenty runs is a signal
+// a human can act on, and nobody has to audit labels to find it.
+//
+// What this is NOT: a red one PR can green is still that PR's work (the 3b rules are untouched),
+// and anything genuinely permanent that needs a PERSON — a secret that exists nowhere, a harness
+// that cannot render a stack — is a question for the human, which is `flag-design`.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Epoch seconds → `YYYY-MM-DDTHH:MM:SSZ`.
+///
+/// The inverse of [`iso_to_epoch_ms`]'s civil-day maths (Howard Hinnant's `civil_from_days`), so a
+/// timestamp this binary WRITES round-trips through the reader it uses on GitHub's own. Written out
+/// rather than pulled in with a date crate: this binary's whole dependency set is three crates, and
+/// one format in one direction does not justify a fourth.
+fn epoch_to_iso(secs: i64) -> String {
+    let days = secs.div_euclid(86400);
+    let rem = secs.rem_euclid(86400);
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y,
+        m,
+        d,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+fn now_iso() -> String {
+    epoch_to_iso(now_unix())
+}
+
+/// The exit code for "infrastructure is down, end the run". Shares [`CLOSURE_UNSATISFIED`]'s value
+/// on purpose: both mean the same operational thing — the run cannot usefully proceed, nothing is
+/// wrong with the code, retry on the next tick.
+const INFRA_DOWN_EXIT: i32 = 12;
+
+/// The run-scoped JSONL `infra-down` writes and `run-metrics` reads back.
+///
+/// `RUN_INFRA_FILE` is exported by the runner and carries the run id, so one run's finding can never
+/// be read as another's — the staleness bug a fixed path would have, and the reason the model is
+/// never asked to supply a path it could get wrong. Outside a run it falls back to the install dir,
+/// which is what makes the subcommands usable by hand.
+fn run_record_path() -> String {
+    run_record_path_from(
+        std::env::var("RUN_INFRA_FILE").ok().as_deref(),
+        std::env::var("INSTALL_DIR").ok().as_deref(),
+    )
+}
+
+/// The environment is a PARAMETER, not a global read — the same shape [`preflight_report`] uses, and
+/// for the same reason: `cargo test` is multi-threaded and a process-global `set_var` would race
+/// every other test in the binary. An EMPTY value counts as unset, because that is how an exported
+/// but never-assigned shell variable arrives.
+fn run_record_path_from(run_infra: Option<&str>, install_dir: Option<&str>) -> String {
+    if let Some(p) = run_infra.filter(|p| !p.trim().is_empty()) {
+        return p.to_string();
+    }
+    match install_dir.filter(|d| !d.trim().is_empty()) {
+        Some(d) => format!("{d}/metrics/run-infra.jsonl"),
+        None => "run-infra.jsonl".to_string(),
+    }
+}
+
+fn append_run_record(path: &str, doc: &Value) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(f, "{}", serde_json::to_string(doc)?)
+}
+
+/// PURE: the one line `infra-down` appends.
+///
+/// `reason` is the model's own diagnosis — the prose the observed run produced and then had nowhere
+/// to put, so it wrote it onto seven PRs instead. It lands ONCE, here. `root_cause` is the optional
+/// PR that would fix it (`rainix#289` in that run): the single flag worth writing about an outage is
+/// the one pointing at its fix, and on the record it costs nothing to unpick later.
+fn infra_record(reason: &str, root_cause: &str, ts: &str) -> Value {
+    serde_json::json!({
+        "record": "infra",
+        "status": "down",
+        "reason": reason,
+        "rootCause": root_cause,
+        "ts": ts,
+    })
+}
+
+/// What `run-metrics` folds onto the run's `runs.jsonl` line. Every field is always present, so the
+/// dashboard can tell "infra was fine" from "this record predates the fields" — the same guarantee
+/// #91 gave `unreadableFiles`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct InfraRecord {
+    down: bool,
+    reason: String,
+    root_cause: String,
+}
+
+/// PURE: fold a run record file's contents. The LAST `infra` line wins, so a second, better-informed
+/// call supersedes the first. Unparseable lines are skipped rather than fatal — this is a report,
+/// and a truncated final line (a killed run) must not lose the records before it.
+fn infra_record_from_lines(content: &str) -> InfraRecord {
+    let mut rec = InfraRecord::default();
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("record").and_then(|r| r.as_str()) != Some("infra") {
+            continue;
+        }
+        rec.down = v.get("status").and_then(|s| s.as_str()) == Some("down");
+        rec.reason = v
+            .get("reason")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        rec.root_cause = v
+            .get("rootCause")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    rec
+}
+
+fn infra_record_at(path: Option<&str>) -> InfraRecord {
+    match path {
+        Some(p) => infra_record_from_lines(&std::fs::read_to_string(p).unwrap_or_default()),
+        None => InfraRecord::default(),
+    }
+}
+
+/// `infra-down "<what is down>" [--root-cause <owner/repo#n>]`: the mid-run exit.
+///
+/// Records the finding once and exits 12. It touches NO PR — no label, no comment, no GitHub call at
+/// all — so nothing has to be unpicked when the provider recovers, and it takes no view on whether
+/// the model is right: the model is the trigger, and a wrong trigger costs one run.
+fn infra_down_mode(reason: &str, root_cause: &str) -> i32 {
+    infra_down_to(&run_record_path(), reason, root_cause)
+}
+
+/// [`infra_down_mode`] with the record path as a PARAMETER, so the exit code and the line it writes
+/// are testable without touching the process environment.
+fn infra_down_to(path: &str, reason: &str, root_cause: &str) -> i32 {
+    if reason.trim().is_empty() {
+        eprintln!(
+            "usage: pr-review-report infra-down \"<what is unavailable, and the evidence>\" [--root-cause <owner/repo#n>]"
+        );
+        return 2;
+    }
+    let doc = infra_record(reason.trim(), root_cause.trim(), &now_iso());
+    if let Err(e) = append_run_record(path, &doc) {
+        // Still exit 12: the run must end whether or not the record could be written, and a lost
+        // record is a reporting failure, not a reason to carry on producing unverifiable PRs.
+        eprintln!("warning: cannot append the infra record to {path}: {e}");
+    }
+    println!("infra down — recorded, END THIS RUN NOW: {}", reason.trim());
+    if !root_cause.trim().is_empty() {
+        println!("  root cause: {}", root_cause.trim());
+    }
+    INFRA_DOWN_EXIT
+}
+
+/// `run-infra [<record>]`: what the run recorded about infrastructure, for the RUNNER.
+///
+/// Exit 12 when the record says down. This is the mid-run exit path #108 asked for: every other exit
+/// in `campaign-run.sh` is PRE-model, so nothing the model LEARNED could end its run — it could only
+/// label the victims and keep queueing work behind the same dead infrastructure, which is exactly
+/// what run 20260728T111645Z did. Absence of a record is exit 0; a run that never hit an outage is
+/// not a blocked run.
+fn run_infra_mode(path: Option<&str>, json_out: bool) -> i32 {
+    let p = path.map(String::from).unwrap_or_else(run_record_path);
+    let rec = infra_record_at(Some(&p));
+    if json_out {
+        println!(
+            "{}",
+            serde_json::json!({
+                "down": rec.down,
+                "reason": rec.reason,
+                "rootCause": rec.root_cause,
+            })
+        );
+    } else if rec.down {
+        println!("run-infra: DOWN — {}", rec.reason);
+        if !rec.root_cause.is_empty() {
+            println!("  root cause: {}", rec.root_cause);
+        }
+    } else {
+        println!("run-infra: no infrastructure outage recorded");
+    }
+    if rec.down {
+        return INFRA_DOWN_EXIT;
+    }
+    0
+}
+
+/// PURE: the `(slug, number)` pairs a `gh search prs --label ai:blocked-infra` result names.
+fn retire_targets(search: &Value) -> Vec<(String, u64)> {
+    let empty = Vec::new();
+    search
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|p| {
+            let slug = p
+                .get("repository")
+                .and_then(|r| r.get("nameWithOwner"))
+                .and_then(|s| s.as_str())?;
+            let num = p.get("number").and_then(|n| n.as_u64())?;
+            Some((slug.to_string(), num))
+        })
+        .collect()
+}
+
+/// `retire-blocked-infra [--dry-run]`: strip the retired `ai:blocked-infra` label from every open PR
+/// still carrying it.
+///
+/// #108 item 4. The thirteen PRs already parked did not choose that state and cannot leave it
+/// unaided: nothing writes the label any more and [`next_action`] no longer parks on it, but a label
+/// nothing writes is also a label nothing removes, and a PR that never sees another transition would
+/// keep it forever. This is the one-shot that frees them. It posts NO comment — they simply re-enter
+/// the ordinary red/green lifecycle on the next run, which is what should have happened when the
+/// outage cleared.
+fn retire_blocked_infra_mode(dry_run: bool) -> i32 {
+    let mut search: Vec<String> = vec!["search".into(), "prs".into()];
+    search.extend(org_owner_args());
+    search.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            RETIRED_STATE_LABEL,
+            "--limit",
+            "200",
+            "--json",
+            "number,repository,title,url",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&sref) else {
+        eprintln!("error: `gh search prs --label {RETIRED_STATE_LABEL}` failed — not editing on incomplete data");
+        return 1;
+    };
+    let targets = retire_targets(&val);
+    if targets.is_empty() {
+        println!("no open PR carries {RETIRED_STATE_LABEL}");
+        return 0;
+    }
+    println!(
+        "{} PR(s) carry the retired {RETIRED_STATE_LABEL} state:",
+        targets.len()
+    );
+    let mut failed = 0;
+    for (slug, num) in &targets {
+        if dry_run {
+            println!("  [dry-run] {slug}#{num} -> remove {RETIRED_STATE_LABEL}");
+            continue;
+        }
+        if gh_run(&[
+            "pr",
+            "edit",
+            &num.to_string(),
+            "-R",
+            slug,
+            "--remove-label",
+            RETIRED_STATE_LABEL,
+        ]) {
+            println!("  {slug}#{num} -> unparked");
+        } else {
+            eprintln!("  {slug}#{num} -> FAILED to remove {RETIRED_STATE_LABEL}");
+            failed += 1;
+        }
+    }
+    if failed > 0 {
+        return 1;
+    }
+    0
+}
+
 fn main() {
     let code = match Cli::parse().command {
         Cmd::Queue { n } => {
@@ -11033,6 +12589,7 @@ fn main() {
             model,
             exit_code,
             preflight_missing,
+            infra,
         } => run_metrics_mode(
             &trace,
             &RunIdentity {
@@ -11042,6 +12599,7 @@ fn main() {
             },
             exit_code,
             &preflight_missing,
+            infra.as_deref(),
         ),
         Cmd::Preflight => preflight_mode(),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
@@ -11068,18 +12626,15 @@ fn main() {
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
+        Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
+        Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
         Cmd::FlagBlockedDeploy {
             slug,
             pr,
             reason,
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:blocked-deploy", &reason.join(" "), dry_run),
-        Cmd::FlagBlockedInfra {
-            slug,
-            pr,
-            reason,
-            dry_run,
-        } => flag_state_mode(&slug, &pr, "ai:blocked-infra", &reason.join(" "), dry_run),
         Cmd::FlagBlockedOn {
             slug,
             pr,
@@ -11119,6 +12674,12 @@ fn main() {
             &note.join(" "),
             dry_run,
         )),
+        Cmd::HumanClose {
+            slug,
+            number,
+            note,
+            dry_run,
+        } => print_transition_result(human_close_apply(&slug, &number, &note.join(" "), dry_run)),
         Cmd::RecordCloseCandidateVerdict {
             slug,
             issue,
@@ -11138,6 +12699,7 @@ fn main() {
             include_skipped,
             limit,
         } => unvetted_mode(json, include_skipped, limit),
+        Cmd::PluginVersionLockstep { root } => plugin_version_lockstep_mode(&root),
         Cmd::RequireQaBlock => require_qa_block_mode(),
         Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
             Ok(p) => mcp_serve(p),
@@ -11337,34 +12899,51 @@ mod queue_tests {
     // issues is the drift worth pinning.
     #[test]
     fn cc_item_arrays_are_populated_and_agree_with_their_counts() {
-        let row = |repo: &str, num: u64, title: &str, action: &str| {
+        // `url` is what `cc_row` put in the row, straight from `gh issue view` — a PR flagged
+        // close-candidate carries a `/pull/` url, an issue an `/issues/` one, and the projection
+        // must carry whichever it was rather than let a consumer guess (#114).
+        let row = |repo: &str, num: u64, title: &str, action: &str, kind: &str| {
             json!({"issue": format!("{repo}#{num}"), "repo": repo, "number": num,
+                   "url": format!("https://github.com/{repo}/{kind}/{num}"),
                    "title": title, "action": action})
         };
         let doc = json!({
             "issues": [
-                row("rainlanguage/raindex", 512, "orderbooks should fallback", "vet"),
-                row("rainlanguage/raindex", 592, "Fix inverted IO ratio", "vet"),
+                row("rainlanguage/raindex", 512, "orderbooks should fallback", "vet", "issues"),
+                // A PR-shaped row. `ai:close-candidate` is a label the producer also applies to
+                // PRs, so the projection must carry whatever url the row holds — it is not the
+                // place to encode "this array is fed by an issues-only search".
+                row("rainlanguage/raindex", 592, "Fix inverted IO ratio", "vet", "pull"),
             ],
             "skipped": [
-                row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag"),
+                row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag", "issues"),
                 // Neither of these is UPHELD: one is a human ruling, one has no flag to judge.
-                row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided"),
-                row("rainlanguage/raindex", 999, "no flag", "skip-no-flag"),
+                row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided", "issues"),
+                row("rainlanguage/raindex", 999, "no flag", "skip-no-flag", "issues"),
             ],
         });
         let (unvetted, upheld) = cc_item_arrays(&doc);
 
-        // Populated, and each item carries EXACTLY the generic issue-item shape.
+        // Populated, and each item carries EXACTLY the generic subject-item shape — `url` included.
         assert_eq!(unvetted.len(), 2);
         assert_eq!(upheld.len(), 1);
         assert_eq!(
             unvetted[0],
-            json!({"repo": "rainlanguage/raindex", "number": 512, "title": "orderbooks should fallback"})
+            json!({"repo": "rainlanguage/raindex", "number": 512,
+                   "url": "https://github.com/rainlanguage/raindex/issues/512",
+                   "title": "orderbooks should fallback"})
+        );
+        // The PR-shaped member keeps its PR url: reconstructing `/issues/512` for both would have
+        // been indistinguishable here, which is exactly why the field has to be carried.
+        assert_eq!(
+            unvetted[1]["url"],
+            json!("https://github.com/rainlanguage/raindex/pull/592")
         );
         assert_eq!(
             upheld[0],
-            json!({"repo": "rainlanguage/raindex", "number": 523, "title": "nothing visual happens"})
+            json!({"repo": "rainlanguage/raindex", "number": 523,
+                   "url": "https://github.com/rainlanguage/raindex/issues/523",
+                   "title": "nothing visual happens"})
         );
         // Only `skip-vetted-at-flag` is upheld — a human ruling or a missing flag is neither.
         for r in &upheld {
@@ -12584,8 +14163,8 @@ mod run_metrics_tests {
 #[cfg(test)]
 mod startup_split_tests {
     use super::{
-        final_record, is_mutation_tool, partial_record, run_metrics, RunIdentity, RunMetrics,
-        StartupPhase, StartupProbe, ToolingReport, TraceOutcome, STAGE_FINAL,
+        final_record, is_mutation_tool, partial_record, run_metrics, InfraRecord, RunIdentity,
+        RunMetrics, StartupPhase, StartupProbe, ToolingReport, TraceOutcome, STAGE_FINAL,
     };
     use serde_json::{json, Value};
 
@@ -12901,6 +14480,7 @@ mod startup_split_tests {
             Some((0, TraceOutcome::Ok)),
             &ToolingReport::default(),
             &[],
+            &InfraRecord::default(),
         );
         assert_eq!(doc["stage"], STAGE_FINAL);
         assert_eq!(doc["bootMs"], 1125);
@@ -12929,12 +14509,567 @@ mod startup_split_tests {
             role: None,
             model: None,
         };
-        let doc = final_record("/t.jsonl", &m, &bare, None, &ToolingReport::default(), &[]);
+        let doc = final_record(
+            "/t.jsonl",
+            &m,
+            &bare,
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+        );
         assert!(doc.get("runId").is_none());
         assert!(doc.get("role").is_none());
         assert!(doc.get("outcome").is_none());
         assert_eq!(doc["bootMs"], 1125);
         assert_eq!(doc["ttlMs"], 297_016);
+    }
+}
+
+/// Live token usage and the rate-limit windows (#97).
+///
+/// The oracle for the token half is not this code's own output: it is the `result` event that the
+/// SAME trace ends with. Every reconciliation assertion below compares the streaming probe against
+/// that terminal total, so a "plausible" implementation cannot pass by agreeing with itself.
+///
+/// Both fixtures are REAL traces, reduced to the fields the probes read and nothing else — the
+/// event order, the message ids, the duplication pattern and every number are the ones those runs
+/// produced. That matters: the bug this closes is invisible to a hand-written stream, because a
+/// hand-written stream does not repeat a message id across content blocks.
+#[cfg(test)]
+mod usage_probe_tests {
+    use super::*;
+
+    /// `review-runs/20260728T100257Z.jsonl` — the vetter run #97 was measured against. 118
+    /// `assistant` events carrying 37 unique message ids, 33 of them repeated 2–5×, plus the 9
+    /// `rate_limit_event`s and the terminal `result`.
+    const VETTER: &str = include_str!("../tests/fixtures/vetter-20260728T100257Z.usage.jsonl");
+
+    /// `runs/20260718T050002Z.jsonl` — a producer run that used Task subagents. Every main-thread
+    /// event is here; the subagent events are the 60 heaviest, worth 6,827,448 cache-read tokens
+    /// that `result.usage` does not count.
+    const PRODUCER: &str = include_str!("../tests/fixtures/producer-20260718T050002Z.usage.jsonl");
+
+    fn events(fixture: &str) -> Vec<Value> {
+        fixture
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).expect("fixture line parses"))
+            .collect()
+    }
+
+    /// The trace's own terminal totals — the oracle.
+    fn result_usage(evs: &[Value]) -> &Value {
+        evs.iter()
+            .find(|e| e["type"] == "result")
+            .expect("fixture has a result event")
+            .get("usage")
+            .expect("result carries usage")
+    }
+
+    fn run(evs: &[Value]) -> UsageProbe {
+        let mut p = UsageProbe::default();
+        for e in evs {
+            p.observe(e);
+        }
+        p
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The reconciliation itself.
+    // -----------------------------------------------------------------------------------------
+
+    /// THE acceptance test of #97. On the real vetter trace the probe must land on the
+    /// `result` event's own numbers — not on either of the two plausible wrong answers.
+    #[test]
+    fn probe_reproduces_the_terminal_result_usage_exactly() {
+        let evs = events(VETTER);
+        let p = run(&evs);
+        let want = result_usage(&evs);
+        assert_eq!(p.tokens_in, want["input_tokens"].as_u64().unwrap());
+        assert_eq!(
+            p.cache_read,
+            want["cache_read_input_tokens"].as_u64().unwrap()
+        );
+        assert_eq!(
+            p.cache_creation,
+            want["cache_creation_input_tokens"].as_u64().unwrap()
+        );
+        // Pinned literally as well, so a fixture edited to agree with a broken probe still fails.
+        assert_eq!(p.cache_read, 6_099_441, "the authoritative cache-read");
+        assert_eq!(p.tokens_in, 74);
+        assert_eq!(p.cache_creation, 303_723);
+    }
+
+    /// The first wrong answer from #97: summing every event. It over-counts cache-read by ~58%
+    /// because one message is emitted once per content block. Asserting the naive number is
+    /// REACHABLE from this fixture is what proves the fixture can tell the two apart.
+    #[test]
+    fn naive_sum_over_every_event_is_the_wrong_answer_this_fixture_catches() {
+        let evs = events(VETTER);
+        let naive: u64 = evs
+            .iter()
+            .filter(|e| e["type"] == "assistant")
+            .map(|e| {
+                e["message"]["usage"]["cache_read_input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0)
+            })
+            .sum();
+        assert_eq!(naive, 18_771_942, "naive per-event sum");
+        assert_ne!(naive, run(&evs).cache_read);
+    }
+
+    /// The duplication is the reason dedup is needed, so it is asserted directly: a fixture that
+    /// lost this shape would let a per-event sum pass.
+    #[test]
+    fn the_fixture_has_many_events_per_message_id() {
+        let evs = events(VETTER);
+        let assistants: Vec<_> = evs.iter().filter(|e| e["type"] == "assistant").collect();
+        let ids: std::collections::BTreeSet<&str> = assistants
+            .iter()
+            .map(|e| e["message"]["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(assistants.len(), 118, "assistant events");
+        assert_eq!(ids.len(), 37, "unique message ids");
+        let repeated = ids
+            .iter()
+            .filter(|id| {
+                assistants
+                    .iter()
+                    .filter(|e| e["message"]["id"].as_str() == Some(**id))
+                    .count()
+                    > 1
+            })
+            .count();
+        assert_eq!(repeated, 33, "message ids appearing more than once");
+    }
+
+    /// Every repeat of a message id carries byte-identical usage. This is WHY first/last/max per
+    /// id are interchangeable — and if the SDK ever changes that, this test is the tripwire that
+    /// says the "take the first" rule has to be revisited.
+    #[test]
+    fn repeats_of_one_message_id_carry_identical_usage() {
+        let mut by_id: std::collections::BTreeMap<String, Vec<&Value>> = Default::default();
+        let evs = events(VETTER);
+        for e in evs.iter().filter(|e| e["type"] == "assistant") {
+            by_id
+                .entry(e["message"]["id"].as_str().unwrap().to_string())
+                .or_default()
+                .push(&e["message"]["usage"]);
+        }
+        for (id, us) in &by_id {
+            assert!(
+                us.iter().all(|u| *u == us[0]),
+                "usage differs between events of {id}"
+            );
+        }
+    }
+
+    /// The second correction, on a trace that actually has subagents: their messages are NOT in
+    /// `result.usage`, so counting them overstates the run against its own terminal total.
+    #[test]
+    fn subagent_messages_are_excluded_from_the_total() {
+        let evs = events(PRODUCER);
+        let p = run(&evs);
+        let want = result_usage(&evs);
+        assert_eq!(
+            p.cache_read,
+            want["cache_read_input_tokens"].as_u64().unwrap()
+        );
+        assert_eq!(p.cache_read, 35_249_217);
+        assert_eq!(p.tokens_in, want["input_tokens"].as_u64().unwrap());
+        assert_eq!(
+            p.cache_creation,
+            want["cache_creation_input_tokens"].as_u64().unwrap()
+        );
+        assert_eq!(p.messages, 170, "distinct MAIN-THREAD messages");
+    }
+
+    /// …and the subagent events in that fixture are heavy enough that including them could not be
+    /// mistaken for a rounding difference. Guards the fixture, not the code.
+    #[test]
+    fn the_producer_fixture_carries_substantial_subagent_usage() {
+        let evs = events(PRODUCER);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut sub_cache_read = 0u64;
+        for e in evs.iter().filter(|e| e["type"] == "assistant") {
+            if e.get("parent_tool_use_id")
+                .map(|p| p.is_null())
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            if seen.insert(e["message"]["id"].as_str().unwrap().to_string()) {
+                sub_cache_read += e["message"]["usage"]["cache_read_input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
+            }
+        }
+        assert_eq!(sub_cache_read, 6_827_448, "excluded subagent cache-read");
+        assert_eq!(seen.len(), 28, "distinct subagent messages in the fixture");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // UsageProbe unit behaviour.
+    // -----------------------------------------------------------------------------------------
+
+    fn assistant(id: &str, cache_read: u64) -> Value {
+        serde_json::json!({"type":"assistant","message":{"id":id,
+            "usage":{"input_tokens":1,"output_tokens":999,"cache_read_input_tokens":cache_read,
+                     "cache_creation_input_tokens":2}}})
+    }
+
+    #[test]
+    fn a_repeated_message_id_is_counted_once() {
+        let mut p = UsageProbe::default();
+        assert!(p.observe(&assistant("m1", 100)), "first sighting counts");
+        assert!(!p.observe(&assistant("m1", 100)), "repeat does not");
+        assert!(!p.observe(&assistant("m1", 100)));
+        assert_eq!(p.cache_read, 100);
+        assert_eq!(p.messages, 1);
+    }
+
+    #[test]
+    fn distinct_message_ids_accumulate() {
+        let mut p = UsageProbe::default();
+        p.observe(&assistant("m1", 100));
+        p.observe(&assistant("m2", 250));
+        assert_eq!(p.cache_read, 350);
+        assert_eq!(p.messages, 2);
+        assert_eq!(p.tokens_in, 2);
+        assert_eq!(p.cache_creation, 4);
+    }
+
+    /// `output_tokens` is present on every event and must never reach a total — it is a
+    /// message-start snapshot, not a count. 999 per message here; nothing may equal it.
+    #[test]
+    fn output_tokens_are_never_accumulated() {
+        let mut p = UsageProbe::default();
+        p.observe(&assistant("m1", 100));
+        p.observe(&assistant("m2", 100));
+        for (name, v) in [
+            ("tokens_in", p.tokens_in),
+            ("cache_read", p.cache_read),
+            ("cache_creation", p.cache_creation),
+        ] {
+            assert_ne!(v, 999, "{name} picked up output_tokens");
+            assert_ne!(v, 1998, "{name} summed output_tokens");
+        }
+    }
+
+    #[test]
+    fn a_subagent_event_moves_nothing() {
+        let mut p = UsageProbe::default();
+        let mut sub = assistant("m1", 5_000);
+        sub["parent_tool_use_id"] = serde_json::json!("toolu_01abc");
+        assert!(!p.observe(&sub));
+        assert_eq!(p.cache_read, 0);
+        assert_eq!(p.messages, 0);
+    }
+
+    /// An explicit `null` is the main thread, exactly as an absent key is. The real traces spell it
+    /// both ways and they must not diverge.
+    #[test]
+    fn an_explicit_null_parent_is_the_main_thread() {
+        let mut p = UsageProbe::default();
+        let mut ev = assistant("m1", 700);
+        ev["parent_tool_use_id"] = Value::Null;
+        assert!(p.observe(&ev));
+        assert_eq!(p.cache_read, 700);
+    }
+
+    #[test]
+    fn non_assistant_events_are_ignored() {
+        let mut p = UsageProbe::default();
+        for t in ["result", "user", "system", "rate_limit_event"] {
+            let ev = serde_json::json!({"type":t,"message":{"id":"m1",
+                "usage":{"input_tokens":9,"cache_read_input_tokens":9,"cache_creation_input_tokens":9}}});
+            assert!(!p.observe(&ev), "{t} must not count");
+        }
+        assert_eq!(p.cache_read, 0);
+        assert_eq!(p.tokens_in, 0);
+    }
+
+    /// An event with no `message.id` cannot be deduped, so counting it would double-count the
+    /// message it belongs to. It contributes nothing rather than a plausible-looking increment.
+    #[test]
+    fn an_event_without_a_message_id_contributes_nothing() {
+        let mut p = UsageProbe::default();
+        let no_id = serde_json::json!({"type":"assistant","message":{
+            "usage":{"input_tokens":5,"cache_read_input_tokens":5,"cache_creation_input_tokens":5}}});
+        assert!(!p.observe(&no_id));
+        let empty_id = serde_json::json!({"type":"assistant","message":{"id":"",
+            "usage":{"input_tokens":5,"cache_read_input_tokens":5,"cache_creation_input_tokens":5}}});
+        assert!(!p.observe(&empty_id));
+        let no_msg = serde_json::json!({"type":"assistant"});
+        assert!(!p.observe(&no_msg));
+        assert_eq!(p.cache_read, 0);
+        assert_eq!(p.messages, 0);
+    }
+
+    /// Missing usage fields read as zero rather than panicking — the filter runs inside the live
+    /// pipe and may never take the run down.
+    #[test]
+    fn a_message_with_no_usage_counts_as_a_message_worth_zero() {
+        let mut p = UsageProbe::default();
+        assert!(p.observe(&serde_json::json!({"type":"assistant","message":{"id":"m1"}})));
+        assert_eq!(p.messages, 1);
+        assert_eq!(p.cache_read, 0);
+        assert_eq!(p.tokens_in, 0);
+        assert_eq!(p.cache_creation, 0);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Rate-limit windows.
+    // -----------------------------------------------------------------------------------------
+
+    fn rl(window: &str, status: &str, resets_at: i64) -> Value {
+        serde_json::json!({"type":"rate_limit_event",
+            "rate_limit_info":{"rateLimitType":window,"status":status,"resetsAt":resets_at}})
+    }
+
+    fn rate_limits(evs: &[Value]) -> RateLimitProbe {
+        let mut p = RateLimitProbe::default();
+        for e in evs {
+            p.observe(e);
+        }
+        p
+    }
+
+    /// The nine events in the real vetter run, all `five_hour`, land as one window.
+    #[test]
+    fn the_vetter_trace_records_its_five_hour_window() {
+        let p = rate_limits(&events(VETTER));
+        let v = p.to_value();
+        assert_eq!(v["five_hour"]["events"], 9);
+        assert_eq!(v["five_hour"]["status"], "allowed");
+        // LAST resetsAt seen, not the first — the run saw 1785237000 and 1785236400 alternating.
+        assert_eq!(v["five_hour"]["resetsAt"], 1_785_237_000i64);
+        assert_eq!(v.as_object().unwrap().len(), 1, "only one window seen");
+    }
+
+    /// The property the whole field exists for: a run that was REJECTED must still say so after it
+    /// recovers. Recording the last status would report `allowed` and erase the finding.
+    #[test]
+    fn a_rejection_is_not_erased_by_a_later_allowed() {
+        let p = rate_limits(&[
+            rl("five_hour", "allowed", 1),
+            rl("five_hour", "rejected", 2),
+            rl("five_hour", "allowed", 3),
+            rl("five_hour", "allowed", 4),
+        ]);
+        let v = p.to_value();
+        assert_eq!(v["five_hour"]["status"], "rejected");
+        assert_eq!(v["five_hour"]["resetsAt"], 4, "resetsAt is still the LAST");
+        assert_eq!(v["five_hour"]["events"], 4);
+    }
+
+    #[test]
+    fn worst_status_climbs_but_never_falls() {
+        let p = rate_limits(&[
+            rl("five_hour", "allowed", 1),
+            rl("five_hour", "allowed_warning", 2),
+            rl("five_hour", "allowed", 3),
+        ]);
+        assert_eq!(p.to_value()["five_hour"]["status"], "allowed_warning");
+    }
+
+    /// Severity ordering, asserted on the enum itself: `Unknown` outranks the allow states so an
+    /// unrecognised word is never read as "fine", and is outranked by `Rejected` so a certain
+    /// refusal is never masked by an unfamiliar one.
+    #[test]
+    fn status_severity_is_ordered_allowed_warning_unknown_rejected() {
+        assert!(RateLimitStatus::Allowed < RateLimitStatus::AllowedWarning);
+        assert!(RateLimitStatus::AllowedWarning < RateLimitStatus::Unknown);
+        assert!(RateLimitStatus::Unknown < RateLimitStatus::Rejected);
+        assert_eq!(
+            RateLimitStatus::from_wire("something_new"),
+            RateLimitStatus::Unknown
+        );
+        let p = rate_limits(&[
+            rl("five_hour", "rejected", 1),
+            rl("five_hour", "something_new", 2),
+        ]);
+        assert_eq!(
+            p.to_value()["five_hour"]["status"],
+            "rejected",
+            "an unknown word must not mask a real rejection"
+        );
+        let q = rate_limits(&[
+            rl("five_hour", "allowed_warning", 1),
+            rl("five_hour", "something_new", 2),
+        ]);
+        assert_eq!(
+            q.to_value()["five_hour"]["status"],
+            "unknown",
+            "an unknown word must not be read as allowed"
+        );
+    }
+
+    /// `seven_day` and `seven_day_overage_included` are different windows with different resets.
+    /// A substring match would collapse them; exact matching keeps them apart.
+    #[test]
+    fn the_two_seven_day_windows_stay_separate() {
+        let p = rate_limits(&[
+            rl("seven_day", "allowed_warning", 100),
+            rl("seven_day_overage_included", "rejected", 200),
+        ]);
+        let v = p.to_value();
+        assert_eq!(v["seven_day"]["status"], "allowed_warning");
+        assert_eq!(v["seven_day"]["resetsAt"], 100);
+        assert_eq!(v["seven_day_overage_included"]["status"], "rejected");
+        assert_eq!(v["seven_day_overage_included"]["resetsAt"], 200);
+        assert_eq!(v.as_object().unwrap().len(), 2);
+        assert_eq!(
+            RateLimitWindow::from_wire("seven_day_overage_included"),
+            RateLimitWindow::SevenDayOverageIncluded
+        );
+    }
+
+    /// A window word this binary has never seen is kept verbatim rather than dropped.
+    #[test]
+    fn an_unrecognised_window_is_kept_under_its_own_name() {
+        let p = rate_limits(&[rl("one_hour", "rejected", 7)]);
+        let v = p.to_value();
+        assert_eq!(v["one_hour"]["status"], "rejected");
+        assert_eq!(
+            RateLimitWindow::from_wire("one_hour"),
+            RateLimitWindow::Other("one_hour".into())
+        );
+    }
+
+    /// 2 of the 187 archived events carry no `rateLimitType`. They name no window, so they are
+    /// skipped — attributing them to one would invent data.
+    #[test]
+    fn an_event_with_no_window_is_skipped() {
+        let mut p = RateLimitProbe::default();
+        assert!(!p.observe(&serde_json::json!({"type":"rate_limit_event",
+            "rate_limit_info":{"status":"allowed","isUsingOverage":false}})));
+        assert!(!p.observe(&serde_json::json!({"type":"rate_limit_event"})));
+        assert!(!p.observe(&serde_json::json!({"type":"assistant"})));
+        assert_eq!(p.to_value().as_object().unwrap().len(), 0);
+    }
+
+    /// `utilization` is a 0..=1 FRACTION on the wire and is echoed unconverted; absent when no
+    /// event carried it, and the LAST one when several did.
+    #[test]
+    fn utilization_is_the_last_fraction_seen_and_null_when_never_sent() {
+        let mut ev = rl("five_hour", "allowed_warning", 1);
+        ev["rate_limit_info"]["utilization"] = serde_json::json!(0.9);
+        let mut ev2 = rl("five_hour", "allowed_warning", 2);
+        ev2["rate_limit_info"]["utilization"] = serde_json::json!(0.92);
+        let p = rate_limits(&[ev, ev2, rl("five_hour", "allowed_warning", 3)]);
+        let v = p.to_value();
+        assert_eq!(v["five_hour"]["utilization"], 0.92);
+        assert_eq!(v["five_hour"]["resetsAt"], 3);
+        let q = rate_limits(&[rl("seven_day", "allowed", 1)]);
+        assert!(q.to_value()["seven_day"]["utilization"].is_null());
+    }
+
+    /// `observe` returns true ONLY on an escalation — that is what makes a live record rare rather
+    /// than one per event (the vetter run had 9 events and 1 escalation).
+    #[test]
+    fn only_an_escalation_reports_true() {
+        let mut p = RateLimitProbe::default();
+        assert!(p.observe(&rl("five_hour", "allowed", 1)), "first sighting");
+        assert!(!p.observe(&rl("five_hour", "allowed", 2)), "same status");
+        assert!(p.observe(&rl("five_hour", "rejected", 3)), "escalation");
+        assert!(!p.observe(&rl("five_hour", "allowed", 4)), "de-escalation");
+        assert!(p.observe(&rl("seven_day", "allowed", 5)), "new window");
+    }
+
+    /// Absent means "predates the field"; `{}` means "this run saw none". They must not be the
+    /// same value.
+    #[test]
+    fn rate_limits_is_an_empty_object_when_nothing_was_seen() {
+        let v = RateLimitProbe::default().to_value();
+        assert!(v.is_object());
+        assert_eq!(v.as_object().unwrap().len(), 0);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Record shapes.
+    // -----------------------------------------------------------------------------------------
+
+    fn ident() -> RunIdentity<'static> {
+        RunIdentity {
+            run_id: Some("20260728T100257Z"),
+            role: Some("vetter"),
+            model: Some("claude-fable-5"),
+        }
+    }
+
+    #[test]
+    fn a_usage_record_carries_the_exact_fields_and_no_token_guess() {
+        let evs = events(VETTER);
+        let usage = run(&evs);
+        let limits = rate_limits(&evs);
+        let doc = usage_record(&usage, &limits, "/t.jsonl", &ident());
+        assert_eq!(doc["stage"], STAGE_USAGE);
+        assert_eq!(doc["tokensIn"], 74);
+        assert_eq!(doc["cacheRead"], 6_099_441);
+        assert_eq!(doc["cacheCreation"], 303_723);
+        assert_eq!(doc["messages"], 37);
+        assert_eq!(doc["rateLimits"]["five_hour"]["events"], 9);
+        assert_eq!(doc["runId"], "20260728T100257Z");
+        assert_eq!(doc["role"], "vetter");
+        assert!(
+            doc.get("tokensOut").is_none(),
+            "output tokens are not knowable mid-run and must not appear"
+        );
+    }
+
+    /// `run-metrics` over a whole archived trace grows the same field, so history and live records
+    /// answer the rate-limit question the same way.
+    #[test]
+    fn a_final_record_always_carries_a_rate_limits_object() {
+        let m = run_metrics(VETTER);
+        assert_eq!(m.rate_limits["five_hour"]["events"], 9);
+        let doc = final_record(
+            "/t.jsonl",
+            &m,
+            &ident(),
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+        );
+        assert_eq!(doc["rateLimits"]["five_hour"]["status"], "allowed");
+        // The terminal totals stay authoritative — including the output count the probe cannot
+        // reach, which is exactly why `run-metrics` still reads the `result` event.
+        assert_eq!(doc["tokensOut"], 41_026);
+        assert_eq!(doc["cacheRead"], 6_099_441);
+
+        // A record built by hand still gets an object, never null.
+        let bare = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &ident(),
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+        );
+        assert!(
+            bare["rateLimits"].is_object(),
+            "rateLimits must never be null"
+        );
+        assert_eq!(bare["rateLimits"].as_object().unwrap().len(), 0);
+    }
+
+    /// The stride is what bounds how many live records a long run writes, and how stale a killed
+    /// run's last one can be. Both properties are read off this constant, so it is pinned.
+    #[test]
+    fn the_usage_record_stride_is_bounded_and_nonzero() {
+        assert_eq!(USAGE_RECORD_STRIDE, 25);
+        let evs = events(PRODUCER);
+        let p = run(&evs);
+        assert!(
+            p.messages / USAGE_RECORD_STRIDE <= 24,
+            "a long producer run writes at most 24 mid-run usage records, got {}",
+            p.messages / USAGE_RECORD_STRIDE
+        );
     }
 }
 
@@ -13989,10 +16124,13 @@ mod cli_tests {
             ]),
             Cmd::FlagBlockedDeploy { .. }
         ));
-        assert!(matches!(
-            parse(&["prr", "flag-blocked-infra", "o/r", "1", "missing", "secret"]),
-            Cmd::FlagBlockedInfra { .. }
-        ));
+        // `flag-blocked-infra` is RETIRED (#108) — the surface must not accept it at all, or a
+        // prompt that still says it would keep parking PRs with a tool that quietly still worked.
+        assert!(
+            Cli::try_parse_from(["prr", "flag-blocked-infra", "o/r", "1", "missing", "secret"])
+                .is_err(),
+            "flag-blocked-infra must be GONE, not merely unmentioned in the prompt"
+        );
         assert!(matches!(
             parse(&["prr", "flag-blocked-on", "o/r", "1", "waiting", "on", "#9"]),
             Cmd::FlagBlockedOn { .. }
@@ -14062,6 +16200,38 @@ mod cli_tests {
                 dry_run: false,
             }
         );
+        // The TERMINAL edge (#94). A human rules at a terminal, and #86's own lesson was that a
+        // transition reachable only over MCP is unavailable exactly where the ruling is made.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "human-close",
+                "o/r",
+                "93",
+                "already",
+                "fixed",
+                "on",
+                "main",
+                "--dry-run"
+            ]),
+            Cmd::HumanClose {
+                slug: "o/r".to_string(),
+                number: "93".to_string(),
+                note: s(&["already", "fixed", "on", "main"]),
+                dry_run: true,
+            }
+        );
+        // It takes NO ruling argument: `human-close` IS the close-candidate ruling plus the act
+        // that makes it terminal, so a verb here would be a second spelling of one state.
+        assert_eq!(
+            parse(&["prr", "human-close", "o/r", "93", "dup"]),
+            Cmd::HumanClose {
+                slug: "o/r".to_string(),
+                number: "93".to_string(),
+                note: s(&["dup"]),
+                dry_run: false,
+            }
+        );
         // The vetter's flag verdict, which `human-rule-issue`'s stranded-flag refusal names.
         assert_eq!(
             parse(&[
@@ -14089,17 +16259,18 @@ mod cli_tests {
         assert_eq!(
             parse(&[
                 "prr",
-                "flag-blocked-infra",
+                "flag-blocked-deploy",
                 "o/r",
                 "1",
-                "missing",
-                "FLARE_RPC_URL",
+                "dispatch",
+                "returned",
+                "422",
                 "--dry-run"
             ]),
-            Cmd::FlagBlockedInfra {
+            Cmd::FlagBlockedDeploy {
                 slug: "o/r".to_string(),
                 pr: "1".to_string(),
-                reason: s(&["missing", "FLARE_RPC_URL"]),
+                reason: s(&["dispatch", "returned", "422"]),
                 dry_run: true,
             }
         );
@@ -14427,6 +16598,7 @@ mod cli_tests {
                 model: None,
                 exit_code: None,
                 preflight_missing: vec![],
+                infra: None,
             }
         );
         // The form the runners now use in place of the `| jq '. + {…}'` pipe.
@@ -14451,6 +16623,7 @@ mod cli_tests {
                 model: Some("claude-fable-5".to_string()),
                 exit_code: Some(0),
                 preflight_missing: vec![],
+                infra: None,
             }
         );
         // The abort form: `preflight` found nothing to render with, so the model never started.
@@ -14471,6 +16644,7 @@ mod cli_tests {
                 model: None,
                 exit_code: Some(12),
                 preflight_missing: vec!["pdftoppm".to_string(), "pdfinfo".to_string()],
+                infra: None,
             }
         );
     }
@@ -14588,6 +16762,24 @@ mod cli_tests {
     fn require_qa_block_cli() {
         assert_eq!(parse(&["prr", "require-qa-block"]), Cmd::RequireQaBlock);
         assert!(Cli::try_parse_from(["prr", "require-qa-block", "extra"]).is_err());
+    }
+
+    // A CI gate must run locally against any checkout, so its root is an argument with a working
+    // default rather than a path baked into a workflow.
+    #[test]
+    fn plugin_version_lockstep_cli() {
+        assert_eq!(
+            parse(&["prr", "plugin-version-lockstep"]),
+            Cmd::PluginVersionLockstep {
+                root: ".".to_string()
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "plugin-version-lockstep", "--root", "/tmp/x"]),
+            Cmd::PluginVersionLockstep {
+                root: "/tmp/x".to_string()
+            }
+        );
     }
 
     // ---- trace classification: the typed replacement for the runners' fallback grep ----
@@ -14866,11 +17058,14 @@ mod cli_tests {
         // that a declared binary would not resolve.
         let missing = vec!["pdftoppm".to_string()];
         assert_eq!(
-            classify_outcome("", 12, &missing),
+            classify_outcome("", 12, &missing, &InfraRecord::default()),
             TraceOutcome::ToolingFailure
         );
         // …and an empty list must not change what the trace already said.
-        assert_eq!(classify_outcome("", 0, &[]), TraceOutcome::Ok);
+        assert_eq!(
+            classify_outcome("", 0, &[], &InfraRecord::default()),
+            TraceOutcome::Ok
+        );
     }
 
     #[test]
@@ -15080,7 +17275,6 @@ mod worklist_tests {
         for label in [
             "ai:design",
             "ai:blocked-deploy",
-            "ai:blocked-infra",
             "ai:blocked-on",
             "ai:close-candidate",
         ] {
@@ -15097,6 +17291,24 @@ mod worklist_tests {
         let mut s = sig(Ci::Green, "CLEAN");
         s.state_label = Some("ai:ready".to_string());
         assert_eq!(next_action(&s), NextAction::GreenReady);
+    }
+
+    /// #108: the RETIRED `ai:blocked-infra` must NOT park. This is how the thirteen PRs a pre-#108
+    /// run froze free themselves — a label nothing writes is also a label nothing removes, so if it
+    /// kept parking them they would sit there forever waiting on a human who has no reason to look.
+    /// A red one goes straight back to 3b; a green one is presentable.
+    #[test]
+    fn the_retired_infra_label_no_longer_parks_a_pr() {
+        let mut red = sig(Ci::Red, "CLEAN");
+        red.state_label = Some(RETIRED_STATE_LABEL.to_string());
+        assert_eq!(
+            next_action(&red),
+            NextAction::Needs3b,
+            "a retired-label PR must re-enter the ordinary lifecycle, not stay frozen"
+        );
+        let mut green = sig(Ci::Green, "CLEAN");
+        green.state_label = Some(RETIRED_STATE_LABEL.to_string());
+        assert_eq!(next_action(&green), NextAction::GreenReady);
     }
 
     #[test]
@@ -15725,10 +17937,12 @@ mod fsm_completeness_tests {
         producer_commented: bool,
     ) -> QueuePr {
         QueuePr {
-            repo: "o/r".to_string(),
-            number: num,
-            title: format!("pr {num}"),
-            url: format!("https://github.com/o/r/pull/{num}"),
+            subject: SubjectRef::new(
+                "o/r",
+                num,
+                format!("https://github.com/o/r/pull/{num}"),
+                format!("pr {num}"),
+            ),
             labels: s(labels),
             ready_vetted_at_head,
             producer_commented,
@@ -15791,6 +18005,351 @@ mod fsm_completeness_tests {
             }
         }
         assert_eq!(total, prs.len());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// subject-reference shape — `human-queue --json` (#114).
+//
+// The defect these pin: lane items shipped `{repo, number, url, title}` while the six top-level
+// subject arrays shipped `{repo, number, title}`. Nothing failed. One consumer (rain-org-health's
+// pipeline panel) simply could not render a link, because the field was not there — and could not
+// derive one, because `{repo, number}` alone does not say whether the number is an issue or a PR.
+// The arrays split BOTH ways (`states`/`leaks` PRs, the rest issues), and which way is a fact about
+// each key's source query, not something the payload states.
+//
+// The oracle is the LANE item, which was always right: every top-level subject item must carry the
+// same key set. That comparison, not a hard-coded key list, is what makes the next divergence a
+// test failure rather than a silent one.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod subject_ref_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sref(repo: &str, n: u64, kind: &str, title: &str) -> SubjectRef {
+        SubjectRef::new(
+            repo,
+            n,
+            format!("https://github.com/{repo}/{kind}/{n}"),
+            title,
+        )
+    }
+
+    /// The keys of a JSON object, sorted — the shape, independent of values.
+    fn keys(v: &Value) -> Vec<String> {
+        let mut k: Vec<String> = v
+            .as_object()
+            .expect("a subject item is a JSON object")
+            .keys()
+            .cloned()
+            .collect();
+        k.sort();
+        k
+    }
+
+    /// A populated `human-queue --json` document, built from the same pure assembler the live
+    /// subcommand calls — so what this asserts is literally what ships.
+    fn doc() -> Value {
+        let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> =
+            std::collections::BTreeMap::new();
+        buckets.insert(
+            "ai:ready".into(),
+            vec![sref("rainlanguage/raindex", 10, "pull", "ready pr")],
+        );
+        buckets.insert(
+            "ai:design".into(),
+            vec![sref("rainlanguage/raindex", 11, "pull", "design pr")],
+        );
+        let lanes = lanes_doc(&[QueuePr {
+            subject: sref("rainlanguage/raindex", 10, "pull", "ready pr"),
+            labels: vec!["ai:ready".to_string()],
+            ready_vetted_at_head: Some(true),
+            producer_commented: false,
+        }]);
+        // One issue-shaped and one PR-shaped member, each with the url it really has: the emitted
+        // link must come from the payload, not from a per-key assumption about what the array holds.
+        let (cc_unvetted, cc_unvetted_n) = issue_state_pair(vec![
+            sref("rainlanguage/raindex", 512, "issues", "an issue").to_json(),
+            sref("rainlanguage/raindex", 592, "pull", "a pr").to_json(),
+        ]);
+        let (cc_upheld, cc_upheld_n) =
+            issue_state_pair(vec![
+                sref("rainlanguage/raindex", 523, "issues", "upheld").to_json()
+            ]);
+        human_queue_doc(
+            &buckets,
+            &lanes,
+            &[sref("rainlanguage/raindex", 700, "issues", "flagged")],
+            cc_unvetted,
+            cc_unvetted_n,
+            cc_upheld,
+            cc_upheld_n,
+            &[sref(
+                "rainlanguage/rain.math.float",
+                42,
+                "issues",
+                "backlog",
+            )],
+            &[(
+                sref("rainlanguage/raindex", 99, "pull", "leaking pr"),
+                "blocked on a deploy".to_string(),
+            )],
+            2,
+        )
+    }
+
+    /// The top-level arrays holding subject references, by JSON pointer. `leaks` is here too: it is
+    /// a subject reference with one EXTRA key, not a different shape.
+    const SUBJECT_ARRAYS: &[&str] = &[
+        "/states/ai:ready",
+        "/states/ai:design",
+        "/closeCandidateIssues",
+        "/closeCandidateUnvetted",
+        "/closeCandidateUpheld",
+        "/uncoveredIssues",
+        "/leaks",
+    ];
+
+    // The ask: every top-level subject array carries `url`, and it is the RESOLVED one.
+    #[test]
+    fn every_top_level_subject_array_carries_the_resolved_url() {
+        let d = doc();
+        for ptr in SUBJECT_ARRAYS {
+            let arr = d
+                .pointer(ptr)
+                .and_then(|v| v.as_array())
+                .unwrap_or_else(|| panic!("{ptr} is an array"));
+            assert!(
+                !arr.is_empty(),
+                "{ptr} must be populated for this to prove anything"
+            );
+            for it in arr {
+                let url = it.get("url").and_then(|v| v.as_str()).unwrap_or_else(|| {
+                    panic!("{ptr} item has no `url`: {it} — a consumer cannot link to it")
+                });
+                let repo = it.get("repo").and_then(|v| v.as_str()).unwrap();
+                let num = it.get("number").and_then(|v| v.as_u64()).unwrap();
+                // Not merely present: the url GitHub reported, path segment and all.
+                assert!(
+                    url.starts_with(&format!("https://github.com/{repo}/"))
+                        && url.ends_with(&format!("/{num}")),
+                    "{ptr} item url {url} is not the resolved link for {repo}#{num}"
+                );
+            }
+        }
+        // The specific hazard, stated as data: two members of ONE array, same repo, whose links
+        // differ in a segment `{repo, number}` cannot supply.
+        let ccu = d
+            .pointer("/closeCandidateUnvetted")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            ccu[0]["url"],
+            json!("https://github.com/rainlanguage/raindex/issues/512")
+        );
+        assert_eq!(
+            ccu[1]["url"],
+            json!("https://github.com/rainlanguage/raindex/pull/592")
+        );
+    }
+
+    // The shared type, stated as its purpose: one shape, so lane and top-level items cannot drift.
+    // The lane item is the oracle — it is the shape that was already right.
+    #[test]
+    fn every_subject_item_has_exactly_the_lane_item_shape() {
+        let d = doc();
+        let lane_item = d
+            .pointer("/lanes/vetter-verdicts/ai:ready/prs/0")
+            .expect("a lane item to compare against");
+        let expected = keys(lane_item);
+        assert_eq!(expected, vec!["number", "repo", "title", "url"]);
+        for ptr in SUBJECT_ARRAYS {
+            for it in d.pointer(ptr).unwrap().as_array().unwrap() {
+                let mut k = keys(it);
+                // `leaks` is the one array with an extra key; it must be an ADDITION, never a swap.
+                if *ptr == "/leaks" {
+                    assert!(
+                        k.contains(&"reason".to_string()),
+                        "leaks item lost `reason`: {it}"
+                    );
+                    k.retain(|x| x != "reason");
+                }
+                assert_eq!(
+                    k, expected,
+                    "{ptr} item shape {k:?} differs from the lane item shape {expected:?} — \
+                     a consumer written against one breaks on the other"
+                );
+            }
+        }
+    }
+
+    // The serialiser is the single point of truth: `to_json_with` ADDS to it, never replaces it.
+    #[test]
+    fn to_json_with_extends_the_shared_shape_rather_than_replacing_it() {
+        let s = sref("o/r", 7, "pull", "t");
+        let base = s.to_json();
+        let extended = s.to_json_with(&[("reason", Value::from("because"))]);
+        for (k, v) in base.as_object().unwrap() {
+            assert_eq!(extended.get(k), Some(v), "extending dropped `{k}`");
+        }
+        assert_eq!(extended["reason"], json!("because"));
+    }
+
+    // `closeCandidateIssues` is parsed from a `gh search issues` payload that ALREADY returns
+    // `url` — the slug is parsed out of that same url. Carrying it costs no extra call.
+    #[test]
+    fn close_candidate_issue_refs_carry_the_url_the_search_returned() {
+        let found = vec![
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
+                   "number": 512, "title": "an issue",
+                   "repository": {"nameWithOwner": "rainlanguage/raindex"}}),
+            json!({"url": "https://github.com/rainlanguage/rain.math.float/issues/9",
+                   "number": 9, "title": "another",
+                   "repository": {"nameWithOwner": "rainlanguage/rain.math.float"}}),
+            // Unparseable — dropped, exactly as before.
+            json!({"number": 1, "title": "no url"}),
+        ];
+        let refs = close_candidate_issue_refs(&found);
+        assert_eq!(refs.len(), 2);
+        assert_eq!(
+            refs[0],
+            SubjectRef::new(
+                "rainlanguage/raindex",
+                512,
+                "https://github.com/rainlanguage/raindex/issues/512",
+                "an issue"
+            )
+        );
+        assert_eq!(
+            refs[1].url,
+            "https://github.com/rainlanguage/rain.math.float/issues/9"
+        );
+    }
+
+    // `uncoveredIssues` is the biggest array (hundreds of entries). Its url comes from the meta the
+    // shared coverage computation ALREADY holds — the `gh search issues` row — so no per-issue
+    // fetch is added. A missing meta row keeps the entry (never silently shrink the backlog) with
+    // an empty url: an unknown link is reported unknown, never guessed.
+    #[test]
+    fn producer_backlog_refs_carry_the_url_from_the_coverage_meta() {
+        let mut meta: std::collections::HashMap<(String, u64), Value> =
+            std::collections::HashMap::new();
+        meta.insert(
+            ("rainlanguage/raindex".into(), 512),
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
+                   "title": "backlog issue", "labels": []}),
+        );
+        // Excluded: an `ai:close-candidate` issue is the human's queue, not the producer's.
+        meta.insert(
+            ("rainlanguage/raindex".into(), 700),
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/700",
+                   "title": "flagged", "labels": [{"name": "ai:close-candidate"}]}),
+        );
+        let open = vec![
+            ("rainlanguage/raindex".to_string(), 512),
+            ("rainlanguage/raindex".to_string(), 700),
+            // No meta row at all — kept, with no fabricated link.
+            ("rainlanguage/rain.math.float".to_string(), 3),
+        ];
+        let refs = producer_backlog_refs(&open, &meta);
+        assert_eq!(
+            refs.len(),
+            2,
+            "the close-candidate issue is excluded, the meta-less one is not"
+        );
+        assert_eq!(
+            refs[0],
+            SubjectRef::new(
+                "rainlanguage/raindex",
+                512,
+                "https://github.com/rainlanguage/raindex/issues/512",
+                "backlog issue"
+            )
+        );
+        assert_eq!(refs[1].repo, "rainlanguage/rain.math.float");
+        assert_eq!(
+            refs[1].url, "",
+            "no meta means no link — never a guessed one"
+        );
+    }
+
+    // The human-readable daily review prints the same resolved url. It renders
+    // `closeCandidateIssues` through the SAME block builder as the PR lists, so the old
+    // `https://github.com/{repo}/pull/{n}` reconstruction printed a `/pull/` link for every
+    // close-candidate ISSUE.
+    #[test]
+    fn the_daily_review_prints_the_resolved_url_not_a_pull_guess() {
+        let issue = sref("rainlanguage/raindex", 700, "issues", "a flagged issue");
+        let block = review_subject_block(&issue, 66);
+        assert!(
+            block.contains("https://github.com/rainlanguage/raindex/issues/700"),
+            "{block}"
+        );
+        assert!(
+            !block.contains("/pull/700"),
+            "an ISSUE must not be printed as a pull URL: {block}"
+        );
+        let pr = sref("rainlanguage/raindex", 10, "pull", "a pr");
+        assert!(review_leak_block(&pr, "blocked")
+            .contains("https://github.com/rainlanguage/raindex/pull/10"));
+        assert!(review_leak_block(&pr, "blocked").contains("blocked"));
+    }
+
+    // Titles and leak reasons carry unicode; clipping on BYTES would panic mid-codepoint.
+    #[test]
+    fn review_blocks_clip_on_char_boundaries() {
+        let s = SubjectRef::new("o/r", 1, "https://github.com/o/r/pull/1", "—•🤖 a title");
+        assert!(review_subject_block(&s, 3).ends_with("—•🤖"));
+        assert!(review_leak_block(&s, "—•🤖 reason").contains("—•🤖 reason"));
+    }
+
+    // `from_row` reads the shared keys back out of a row that carries them, and reports an absent
+    // url as absent rather than inventing one.
+    #[test]
+    fn from_row_reads_the_shared_keys_and_never_invents_a_url() {
+        let r = json!({"repo": "o/r", "number": 5, "url": "https://github.com/o/r/issues/5",
+                       "title": "t", "action": "vet"});
+        assert_eq!(
+            SubjectRef::from_row(&r),
+            SubjectRef::new("o/r", 5, "https://github.com/o/r/issues/5", "t")
+        );
+        let bare = SubjectRef::from_row(&json!({"repo": "o/r", "number": 5, "title": "t"}));
+        assert_eq!(bare.url, "");
+    }
+
+    // The counts still label their own arrays — carrying `url` must not disturb the click-through
+    // invariant `counts.X == X.len()`.
+    #[test]
+    fn adding_url_leaves_every_count_equal_to_its_arrays_length() {
+        let d = doc();
+        for key in [
+            "closeCandidateIssues",
+            "closeCandidateUnvetted",
+            "closeCandidateUpheld",
+            "uncoveredIssues",
+            "leaks",
+        ] {
+            let n = d
+                .pointer(&format!("/{key}"))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len();
+            assert_eq!(
+                d.pointer(&format!("/counts/{key}"))
+                    .unwrap()
+                    .as_u64()
+                    .unwrap() as usize,
+                n,
+                "counts.{key} must be the length of the {key} array it labels"
+            );
+        }
+        // The legacy label-based counts read the same buckets the `states` arrays are built from.
+        assert_eq!(d.pointer("/counts/ready").unwrap(), &json!(1));
+        assert_eq!(d.pointer("/counts/design").unwrap(), &json!(1));
+        assert_eq!(d.pointer("/counts/totalProducerPrs").unwrap(), &json!(2));
     }
 }
 
@@ -16086,7 +18645,7 @@ mod human_rule_tests {
     // The refusal must name every legal move, or it is an obstruction rather than a redirection —
     // a tool harder to use than raw `gh` gets bypassed, which is the failure to avoid above all.
     #[test]
-    fn the_stranding_refusal_names_all_three_legal_moves() {
+    fn the_stranding_refusal_names_every_legal_move() {
         let flagged = issue(
             &["ai:close-candidate"],
             "2026-01-01T00:00:00Z",
@@ -16108,8 +18667,10 @@ mod human_rule_tests {
         );
         // It says WHICH flag it is protecting …
         assert!(msg.contains("@2026-07-17T21:23:11Z"), "{msg}");
-        // … and names all three ways out, each spelled as it is actually invoked.
+        // … and names every way out, each spelled as it is actually invoked — including the
+        // TERMINAL one, which is the move a human upholding a flag actually wants (#94).
         for named in [
+            "human-close o/r 93",
             "human-rule-issue o/r 93 close-candidate",
             "human-rule-issue o/r 93 keep-open",
             "record-close-candidate-verdict o/r 93 reject",
@@ -16119,6 +18680,7 @@ mod human_rule_tests {
         // Every command it names must PARSE — advice the caller's own surface cannot execute is
         // exactly the "reach for a tool that does not exist" that produced #93.
         for argv in [
+            vec!["prr", "human-close", "o/r", "93", "x"],
             vec![
                 "prr",
                 "human-rule-issue",
@@ -16271,6 +18833,40 @@ mod human_rule_tests {
             (Lane::VetterVerdicts, "ai:ready".to_string()),
             "a keep-open PR is invisible to the human lane — which is why this is refused"
         );
+    }
+
+    // The MIRROR of the guard above. `gh pr view` refuses an issue outright, and reporting that as
+    // "not writing on incomplete data" reads as an API failure — the next move a human makes after
+    // reading it is raw `gh`. Both directions must name the subject and hand over the right command.
+    #[test]
+    fn a_pr_ruling_pointed_at_an_issue_is_told_so_and_handed_the_issue_command() {
+        let (code, msg) = pr_view_failed_error("o/r", "93", "reject", true);
+        assert_eq!(code, 2, "a mis-typed subject is usage, not an API failure");
+        assert!(msg.contains("is an ISSUE, not a pull request"), "{msg}");
+        assert!(
+            msg.contains("pr-review-report human-rule-issue o/r 93 reject"),
+            "{msg}"
+        );
+        assert!(
+            Cli::try_parse_from(["prr", "human-rule-issue", "o/r", "93", "reject", "x"]).is_ok(),
+            "the refusal names an unrunnable command"
+        );
+        // The ruling the caller asked for is carried into the redirection, so the retry is the
+        // SAME decision on the right surface rather than a fresh one they have to re-type.
+        for ruling in human_rulings(&HUMAN_DECISION_LABELS) {
+            assert!(
+                pr_view_failed_error("o/r", "93", ruling, true)
+                    .1
+                    .contains(&format!("human-rule-issue o/r 93 {ruling}")),
+                "{ruling}"
+            );
+        }
+        // A genuine fetch failure is still a fetch failure — the redirection must not swallow it,
+        // or a transient API outage would be reported as the caller's mistake.
+        let (code, msg) = pr_view_failed_error("o/r", "93", "reject", false);
+        assert_eq!(code, 1);
+        assert!(msg.contains("`gh pr view o/r#93` failed"), "{msg}");
+        assert!(!msg.contains("human-rule-issue"), "{msg}");
     }
 
     // A guard can only fire on data that was fetched. A field the plan reads but the `gh … --json`
@@ -16509,6 +19105,547 @@ mod human_rule_tests {
         assert!(!r.contains("superseded"), "{r}");
         assert!(!r.contains("cleared"), "{r}");
         assert!(r.contains("comment deduped"), "{r}");
+    }
+
+    // --- the TERMINAL edge (#94): rule, retire the pending flag, close ---------------------------
+
+    fn close_record(plan: HumanClosePlan) -> (String, Vec<String>, Vec<String>, bool, bool) {
+        match plan {
+            HumanClosePlan::Rule(p) => record(p),
+            other => panic!("expected Rule(Record), got {other:?}"),
+        }
+    }
+
+    // The defect the issue was filed about: `gh issue close` knows nothing about the FSM, so the
+    // pending flag survived the close on 74 subjects org-wide. The terminal transition retires it,
+    // and it is the ONLY `ai:*` label it touches — every other one is a judgement about the code.
+    #[test]
+    fn closing_retires_the_pending_flag_and_no_other_ai_label() {
+        let flagged = issue(
+            &["ai:close-candidate", "bug", "audit"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        let (anchor, supersedes, clears, has_target, skip) =
+            close_record(human_close_plan(&flagged, false));
+        assert_eq!(clears, s(&["ai:close-candidate"]));
+        assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
+        assert!(supersedes.is_empty());
+        assert!(!has_target);
+        assert!(!skip);
+
+        // The RULING alone still leaves it standing — while the subject is open the flag is the
+        // live pending claim, and `closeCandidateUpheld` still counts it. The terminal act retires
+        // it. These two must not be made to agree: that difference is the transition.
+        let (_, _, ruling_clears, ..) = record(human_issue_rule_plan(
+            &flagged,
+            "close-candidate",
+            "human:close-candidate",
+        ));
+        assert!(
+            ruling_clears.is_empty(),
+            "the open-state ruling must leave the pending claim standing"
+        );
+
+        // A PR carries the same label for a different reason (the vetter's own `close` verdict) and
+        // is retired the same way — one reference, both populations.
+        let (anchor, _, clears, ..) = close_record(human_close_plan(
+            &pr("deadbeef", &["ai:close-candidate", "ai:ready"], vec![]),
+            true,
+        ));
+        assert_eq!(clears, s(&["ai:close-candidate"]));
+        assert_eq!(anchor, "deadbeef", "a PR close pins to the head sha");
+
+        // An unflagged subject closes with nothing to clear — the clause is a repair, not a sweep.
+        let (_, _, clears, ..) = close_record(human_close_plan(
+            &issue(&["bug"], "2026-01-01T00:00:00Z", None, vec![]),
+            false,
+        ));
+        assert!(clears.is_empty());
+    }
+
+    // A closed-and-still-flagged subject is the state 74 hand-closes left behind, and it had no
+    // command that could move it. It gets an exit — the machine has no dead ends — but ONLY the
+    // stale label is dropped: a `👤 human` reason written today would date the decision to today.
+    #[test]
+    fn an_already_closed_subject_is_repaired_without_inventing_a_ruling() {
+        let mut closed = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        closed["state"] = json!("CLOSED");
+        assert_eq!(human_close_plan(&closed, false), HumanClosePlan::StaleFlag);
+
+        // Already clean ⇒ nothing at all. A repair that also fires on a settled subject would post
+        // a label edit per invocation for ever.
+        let mut clean = issue(&["bug"], "2026-01-01T00:00:00Z", None, vec![]);
+        clean["state"] = json!("CLOSED");
+        assert_eq!(human_close_plan(&clean, false), HumanClosePlan::Settled);
+
+        // Same on the PR side, in both of a PR's terminal states.
+        for state in ["CLOSED", "MERGED"] {
+            let mut p = pr("sha1", &["ai:close-candidate"], vec![]);
+            p["state"] = json!(state);
+            assert_eq!(
+                human_close_plan(&p, true),
+                HumanClosePlan::StaleFlag,
+                "{state}"
+            );
+            let mut q = pr("sha1", &[], vec![]);
+            q["state"] = json!(state);
+            assert_eq!(
+                human_close_plan(&q, true),
+                HumanClosePlan::Settled,
+                "{state}"
+            );
+        }
+
+        // An OPEN subject is never repaired-instead-of-ruled: that would close it with no record.
+        assert!(matches!(
+            human_close_plan(
+                &issue(
+                    &["ai:close-candidate"],
+                    "2026-01-01T00:00:00Z",
+                    Some("2026-07-17T21:23:11Z"),
+                    vec![]
+                ),
+                false
+            ),
+            HumanClosePlan::Rule(HumanRulePlan::Record { .. })
+        ));
+    }
+
+    // The close is TERMINAL, so it is last. Closing before the labels would make them permanently
+    // unreachable: every ruling plan reads a closed subject as `Moot`, so the retry that should
+    // finish the transition would report "nothing to do" over a half-written one.
+    #[test]
+    fn the_close_is_the_last_write_and_never_precedes_the_record() {
+        let steps = human_close_steps(
+            &s(&["human:design"]),
+            &s(&["ai:close-candidate"]),
+            false,
+            false,
+        );
+        assert_eq!(
+            steps,
+            vec![
+                RuleStep::Comment,
+                RuleStep::EnsureLabel,
+                RuleStep::AddLabel,
+                RuleStep::RemoveLabel("human:design".to_string()),
+                RuleStep::RemoveLabel("ai:close-candidate".to_string()),
+                RuleStep::Close,
+            ]
+        );
+        assert_eq!(steps.last(), Some(&RuleStep::Close));
+        // Stated as the property too, so a re-order that keeps the same members still fails.
+        let close_at = steps.iter().position(|x| x == &RuleStep::Close).unwrap();
+        for (i, step) in steps.iter().enumerate() {
+            assert!(
+                i == close_at || step != &RuleStep::Close,
+                "the close must happen exactly once"
+            );
+            assert!(i <= close_at, "no write may follow the close");
+        }
+        // It is the ruling's own order plus one step — not a second list that could drift.
+        let mut ruling = human_rule_steps(
+            &s(&["human:design"]),
+            &s(&["ai:close-candidate"]),
+            false,
+            false,
+        );
+        assert_eq!(&steps[..steps.len() - 1], &ruling[..]);
+        ruling.push(RuleStep::Close);
+        assert_eq!(steps, ruling);
+        // A re-run of a ruling already recorded still closes: dedup drops the comment, the present
+        // label drops the add, and the terminal act is what remains to do.
+        assert_eq!(
+            human_close_steps(&[], &[], true, true),
+            vec![RuleStep::EnsureLabel, RuleStep::Close]
+        );
+    }
+
+    // WHICH GitHub operation each step performs. A `Close` spelled as an `edit`, or an
+    // `--add-label` where a `--remove-label` belongs, is invisible to a suite that only checks the
+    // step LIST — and the close is the step whose mis-spelling would leave the exact state (#94)
+    // was filed about, so it is asserted here rather than only by a live run.
+    #[test]
+    fn each_step_invokes_the_gh_operation_it_names() {
+        let argv = |step: &RuleStep, noun: &str| {
+            rule_step_argv(step, noun, "o/r", "93", "human:close-candidate", "body").join(" ")
+        };
+        assert_eq!(
+            argv(&RuleStep::Close, "issue"),
+            "issue close 93 -R o/r",
+            "the terminal step must CLOSE, and take no label or body"
+        );
+        assert_eq!(argv(&RuleStep::Close, "pr"), "pr close 93 -R o/r");
+        assert_eq!(
+            argv(&RuleStep::Comment, "issue"),
+            "issue comment 93 -R o/r --body body"
+        );
+        assert_eq!(
+            argv(&RuleStep::AddLabel, "issue"),
+            "issue edit 93 -R o/r --add-label human:close-candidate"
+        );
+        assert_eq!(
+            argv(
+                &RuleStep::RemoveLabel("ai:close-candidate".to_string()),
+                "issue"
+            ),
+            "issue edit 93 -R o/r --remove-label ai:close-candidate"
+        );
+        // The label step is repo-scoped, never subject-scoped, so it carries no noun at all.
+        let ensure = argv(&RuleStep::EnsureLabel, "issue");
+        assert!(
+            ensure.starts_with("label create human:close-candidate -R o/r"),
+            "{ensure}"
+        );
+        assert!(ensure.ends_with("--force"), "{ensure}");
+        assert!(!ensure.contains(" 93 "), "{ensure}");
+
+        // Every failure names the half-state it leaves, so the caller knows what to re-run — except
+        // EnsureLabel, which is best-effort and must NOT abort a ruling.
+        assert_eq!(
+            rule_step_failure(&RuleStep::EnsureLabel, "o/r", "93", "human:close-candidate"),
+            None
+        );
+        for step in [
+            RuleStep::Comment,
+            RuleStep::AddLabel,
+            RuleStep::RemoveLabel("x".to_string()),
+            RuleStep::Close,
+        ] {
+            let (code, msg) =
+                rule_step_failure(&step, "o/r", "93", "human:close-candidate").expect("named");
+            assert_eq!(code, 1, "{step:?}");
+            assert!(msg.contains("o/r#93"), "{step:?}: {msg}");
+        }
+        // The close's failure says the subject is ruled but still OPEN, and that a re-run finishes
+        // it — the one half-state a caller can and must complete.
+        let (_, msg) =
+            rule_step_failure(&RuleStep::Close, "o/r", "93", "human:close-candidate").unwrap();
+        assert!(msg.contains("still open"), "{msg}");
+        assert!(msg.contains("Re-run"), "{msg}");
+    }
+
+    // The report says the subject was closed, on top of everything the ruling's report already
+    // says — a transition whose terminal half is invisible reads as a ruling that did not land.
+    #[test]
+    fn the_close_report_names_the_close_as_well_as_the_ruling() {
+        let r = human_close_report(
+            "o/r",
+            "93",
+            "close-candidate @2026-07-17T21:23:11Z",
+            &[],
+            &s(&["ai:close-candidate"]),
+            false,
+        );
+        assert!(r.contains("ruled human:close-candidate on o/r#93"), "{r}");
+        assert!(r.contains("cleared ai:close-candidate"), "{r}");
+        assert!(r.contains("[closed]"), "{r}");
+        // The label it writes is the sacred one, not a fifth invented state.
+        assert!(HUMAN_RULING_LABELS.contains(&HUMAN_CLOSE_TARGET));
+        assert!(HUMAN_DECISION_LABELS.contains(&HUMAN_CLOSE_TARGET));
+        // And the flag it retires is the one both populations share.
+        assert_eq!(PENDING_CLOSE_FLAG, "ai:close-candidate");
+    }
+
+    // The flag verdict is ISSUE-side authority. Pointed at a PR it used to answer "nothing to
+    // judge", which reads as "this PR has no human path" — and was recorded as exactly that
+    // misreading. It now says what the subject is and names the three moves that DO apply.
+    #[test]
+    fn the_flag_verdict_refuses_a_pull_request_by_naming_its_moves() {
+        let mut p = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        p["url"] = json!("https://github.com/o/r/pull/28");
+        assert_eq!(cc_verdict_plan(&p, "uphold"), CcVerdictPlan::NotAnIssue);
+        // Type before state: a CLOSED PR must be told what it is, not that its flag is moot.
+        p["state"] = json!("CLOSED");
+        assert_eq!(cc_verdict_plan(&p, "reject"), CcVerdictPlan::NotAnIssue);
+        // An issue URL is not a PR, and a subject whose URL was not fetched is still judged.
+        p["url"] = json!("https://github.com/o/r/issues/28");
+        p["state"] = json!("OPEN");
+        assert!(matches!(
+            cc_verdict_plan(&p, "uphold"),
+            CcVerdictPlan::Record { .. }
+        ));
+        // The guard can only fire on a field the fetch asks for.
+        for field in ["url", "state", "labels", "comments"] {
+            assert!(
+                CC_VERDICT_FIELDS.split(',').any(|x| x == field),
+                "the flag-verdict fetch drops {field:?}, silently disabling a guard"
+            );
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// the marketplace gate — one version, stored twice.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod marketplace_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn read_json(rel: &str) -> Option<Value> {
+        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
+        let text = std::fs::read_to_string(&path).ok()?;
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+    }
+
+    // The whole point: installers read the LISTING, so a listing that names a different version
+    // than the plugin it serves publishes the wrong release and nothing says so.
+    #[test]
+    fn a_listing_that_disagrees_with_its_plugin_fails() {
+        let entry =
+            json!({"name": "human-fsm", "source": "./plugins/human-fsm", "version": "0.1.0"});
+        assert_eq!(
+            plugin_version_check(
+                &entry,
+                Some(&json!({"name": "human-fsm", "version": "0.1.0"}))
+            ),
+            PluginVersionCheck::Agree {
+                name: "human-fsm".to_string(),
+                version: "0.1.0".to_string(),
+            }
+        );
+        let drift = plugin_version_check(
+            &entry,
+            Some(&json!({"name": "human-fsm", "version": "0.2.0"})),
+        );
+        assert_eq!(
+            drift,
+            PluginVersionCheck::Drift {
+                name: "human-fsm".to_string(),
+                listed: "0.1.0".to_string(),
+                manifest: "0.2.0".to_string(),
+            }
+        );
+        assert!(!drift.passed());
+        // The report names BOTH values and the fix — a gate that only says "mismatch" makes the
+        // reader open two files to find out which one is stale.
+        let r = drift.report();
+        assert!(r.contains("0.1.0") && r.contains("0.2.0"), "{r}");
+        assert!(r.contains("bump both together"), "{r}");
+    }
+
+    // A MISSING listing version is not agreement. This is `rain-org-health`'s live state, and a
+    // check that only compared present values would call it healthy while `/plugin` has no
+    // left-hand side to compare and can never see an update.
+    #[test]
+    fn a_missing_version_on_either_side_is_a_failure_not_a_pass() {
+        let no_listed = plugin_version_check(
+            &json!({"name": "p", "source": "./plugins/p"}),
+            Some(&json!({"name": "p", "version": "0.2.0"})),
+        );
+        assert_eq!(
+            no_listed,
+            PluginVersionCheck::NoListedVersion {
+                name: "p".to_string()
+            }
+        );
+        assert!(!no_listed.passed());
+        assert!(no_listed.report().contains("no `version`"));
+        assert_eq!(
+            plugin_version_check(
+                &json!({"name": "p", "source": "./plugins/p", "version": "0.2.0"}),
+                Some(&json!({"name": "p"})),
+            ),
+            PluginVersionCheck::NoManifestVersion {
+                name: "p".to_string()
+            }
+        );
+        // An empty string is a missing value, not a version that happens to match another one.
+        assert!(!plugin_version_check(
+            &json!({"name": "p", "source": "./p", "version": "  "}),
+            Some(&json!({"name": "p", "version": "  "})),
+        )
+        .passed());
+    }
+
+    // Versions agreeing proves nothing if the entry points at the wrong directory, or at one with
+    // no plugin in it at all — both are reachable the moment a plugin is moved.
+    #[test]
+    fn an_entry_must_resolve_to_the_plugin_it_names() {
+        assert_eq!(
+            plugin_version_check(
+                &json!({"name": "human-fsm", "source": "./plugins/gone", "version": "0.1.0"}),
+                None,
+            ),
+            PluginVersionCheck::NoManifest {
+                name: "human-fsm".to_string(),
+                source: "./plugins/gone".to_string(),
+            }
+        );
+        assert_eq!(
+            plugin_version_check(
+                &json!({"name": "human-fsm", "source": "./plugins/other", "version": "0.1.0"}),
+                Some(&json!({"name": "other", "version": "0.1.0"})),
+            ),
+            PluginVersionCheck::NameMismatch {
+                listed: "human-fsm".to_string(),
+                manifest: "other".to_string(),
+            }
+        );
+        // The name check runs BEFORE the version comparison: agreeing versions on a mis-wired
+        // entry is the case that would otherwise pass silently.
+        let m = plugin_version_check(
+            &json!({"name": "human-fsm", "source": "./p", "version": "0.9.9"}),
+            Some(&json!({"name": "other", "version": "0.9.9"})),
+        );
+        assert!(matches!(m, PluginVersionCheck::NameMismatch { .. }));
+    }
+
+    // The gate's EXIT CODES, which are the whole of its CI contract: 0 satisfied, 2 a listing is
+    // wrong, 3 it could not be evaluated. Conflating 2 and 3 is the failure that matters — a
+    // marketplace that cannot be read would then look identical to one that is correct.
+    #[test]
+    fn the_gate_exits_two_on_drift_and_three_when_it_cannot_be_evaluated() {
+        let base = std::env::temp_dir().join(format!("prr-mk-{}", std::process::id()));
+        let write = |rel: &str, body: &str| {
+            let p = base.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        let root = base.to_string_lossy().to_string();
+        let _ = std::fs::remove_dir_all(&base);
+
+        // No marketplace at all: the gate cannot be evaluated, and must not report success.
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(plugin_version_lockstep_mode(&root), 3);
+
+        // A marketplace listing nothing is inert, not healthy.
+        write(
+            ".claude-plugin/marketplace.json",
+            r#"{"name":"m","plugins":[]}"#,
+        );
+        assert_eq!(plugin_version_lockstep_mode(&root), 3);
+
+        write(
+            ".claude-plugin/marketplace.json",
+            r#"{"name":"m","plugins":[{"name":"p","source":"./plugins/p","version":"0.1.0"}]}"#,
+        );
+        // The listing resolves to nothing yet.
+        assert_eq!(plugin_version_lockstep_mode(&root), 2);
+        write(
+            "plugins/p/.claude-plugin/plugin.json",
+            r#"{"name":"p","version":"0.2.0"}"#,
+        );
+        assert_eq!(plugin_version_lockstep_mode(&root), 2, "drift");
+        write(
+            "plugins/p/.claude-plugin/plugin.json",
+            r#"{"name":"p","version":"0.1.0"}"#,
+        );
+        assert_eq!(plugin_version_lockstep_mode(&root), 0, "in lockstep");
+        // A trailing slash on the root is the same root — a workflow that passes `$PWD/` must not
+        // read as a different tree.
+        assert_eq!(plugin_version_lockstep_mode(&format!("{root}/")), 0);
+        // A SECOND plugin is checked too: the gate walks the listing, so a repo that grows one is
+        // covered the day it is added rather than the day someone extends a loop.
+        write(
+            ".claude-plugin/marketplace.json",
+            r#"{"name":"m","plugins":[{"name":"p","source":"./plugins/p","version":"0.1.0"},{"name":"q","source":"./plugins/q","version":"9.9.9"}]}"#,
+        );
+        write(
+            "plugins/q/.claude-plugin/plugin.json",
+            r#"{"name":"q","version":"0.0.1"}"#,
+        );
+        assert_eq!(plugin_version_lockstep_mode(&root), 2);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // THIS repo's own manifests, so the gate is not merely testable but satisfied.
+    #[test]
+    fn this_repos_marketplace_is_in_lockstep() {
+        let Some(market) = read_json(".claude-plugin/marketplace.json") else {
+            return; // not checked out (nix build sandbox) — the CI job runs the gate itself
+        };
+        let plugins = market["plugins"].as_array().expect("plugins array");
+        assert!(
+            !plugins.is_empty(),
+            "a marketplace with no plugins is inert"
+        );
+        for entry in plugins {
+            let source = entry["source"].as_str().unwrap().trim_start_matches("./");
+            let manifest = read_json(&format!("{source}/.claude-plugin/plugin.json"));
+            let check = plugin_version_check(entry, manifest.as_ref());
+            assert!(check.passed(), "{}", check.report());
+        }
+    }
+
+    // The commands are the plugin's payload, and a plugin whose command directory is empty
+    // installs a name and nothing else. Each one must also carry the frontmatter the loader reads,
+    // or it is listed with no description and no argument hint.
+    #[test]
+    fn every_shipped_command_carries_its_frontmatter() {
+        let dir = format!(
+            "{}/../plugins/human-fsm/commands",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return; // not checked out (nix build sandbox)
+        };
+        let mut seen = Vec::new();
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("md") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable command");
+            let name = path.file_stem().unwrap().to_string_lossy().to_string();
+            assert!(
+                text.starts_with("---\n"),
+                "{name}: no frontmatter — the loader shows it with no description"
+            );
+            let front = text
+                .split("\n---\n")
+                .next()
+                .expect("frontmatter is delimited");
+            for key in ["description:", "argument-hint:", "allowed-tools:"] {
+                assert!(front.contains(key), "{name}: frontmatter has no {key}");
+            }
+            // What a command RUNS is what is inside its fenced blocks. Asserted there rather than
+            // over the whole document, because the prose says `gh issue close` in order to FORBID
+            // it — a substring scan cannot tell a prohibition from an instruction, and the first
+            // version of this test failed on its own warning.
+            let fenced: Vec<&str> = text.split("```").skip(1).step_by(2).collect();
+            assert!(
+                !fenced.is_empty(),
+                "{name}: no fenced command — nothing for the caller to run"
+            );
+            let runnable: Vec<&str> = fenced
+                .iter()
+                .flat_map(|b| b.lines())
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            assert!(
+                runnable.iter().any(|l| l.starts_with("pr-review-report ")),
+                "{name}: names no pr-review-report transition"
+            );
+            for line in &runnable {
+                assert!(
+                    line.starts_with("pr-review-report ") || line.starts_with("/"),
+                    "{name}: fenced line {line:?} is not a transition of this binary — a raw \
+                     gh/git state change is a transition outside the state machine"
+                );
+            }
+            seen.push(name);
+        }
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec!["close-candidate", "design", "keep-open", "reject"],
+            "the shipped command set changed"
+        );
     }
 }
 
@@ -17841,6 +20978,9 @@ mod mcp_tests {
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
+                // The TERMINAL edge (#94). Composing it from `human_rule_issue` + a Bash `gh close`
+                // would put half a transition in a prompt — and that half was wrong every time.
+                "human_close",
             ]
         );
         // The vetter's inbox and its verdict write are NOT the human's authority.
@@ -17867,11 +21007,11 @@ mod mcp_tests {
             (FakeExec::ok(), "vetter"),
             (FakeExec::producer(), "producer"),
         ] {
-            for tool in ["human_rule", "human_rule_issue"] {
+            for tool in ["human_rule", "human_rule_issue", "human_close"] {
                 let resp = f
                     .handle(&call(
                         tool,
-                        json!({"pr": "o/r#1", "issue": "o/r#1", "ruling": "reject", "note": "x"}),
+                        json!({"pr": "o/r#1", "issue": "o/r#1", "subject": "o/r#1", "ruling": "reject", "note": "x"}),
                     ))
                     .unwrap();
                 assert!(is_error(&resp), "{who} must not reach {tool}");
@@ -18001,6 +21141,66 @@ mod mcp_tests {
                 ruling: "keep-open".to_string(),
                 note: "audit finding is live".to_string(),
             }]
+        );
+    }
+
+    // The TERMINAL edge takes `subject`, not `pr`/`issue`: the argument NAME would otherwise be the
+    // caller ASSERTING a type the tool is about to resolve, and a wrong assertion there is how a
+    // ruling lands in the other of the two populations that share the `ai:close-candidate` name.
+    #[test]
+    fn the_terminal_close_takes_one_subject_and_resolves_its_type_itself() {
+        let f = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        f.handle(&call(
+            "human_close",
+            json!({"subject": "o/r#93", "note": "  already fixed on main  "}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::HumanClose {
+                slug: "o/r".to_string(),
+                num: 93,
+                note: "already fixed on main".to_string(),
+            }]
+        );
+        // No `ruling` argument exists to get wrong, and none is accepted as a substitute for the
+        // note — a close with no recorded reason is the bare `gh close` this replaces.
+        let g = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        for (args, why) in [
+            (json!({"subject": "o/r#93"}), "missing note"),
+            (json!({"subject": "o/r#93", "note": "   "}), "blank note"),
+            (json!({"note": "x"}), "missing subject"),
+            (json!({"subject": "93", "note": "x"}), "no owner/repo"),
+            (json!({"pr": "o/r#93", "note": "x"}), "wrong argument name"),
+        ] {
+            let resp = g.handle(&call("human_close", args)).unwrap();
+            assert!(is_error(&resp), "{why} must be refused");
+        }
+        assert!(g.calls().is_empty(), "a refused close reached an effect");
+        // The schema requires both, so a model cannot even propose the refused shapes above.
+        let all = mcp_all_tools();
+        let t = all
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == json!("human_close"))
+            .expect("human_close is defined");
+        let required: Vec<&str> = t["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["subject", "note"]);
+        assert!(
+            t["inputSchema"]["properties"]["ruling"].is_null(),
+            "the terminal edge has no ruling to choose"
         );
     }
 
@@ -19656,5 +22856,370 @@ mod closure_gate_tests {
             "`pdftoppm` exited on a signal: (no stderr)",
             "a signal death is not exit 0"
         );
+    }
+}
+
+#[cfg(test)]
+mod infra_down_tests {
+    use super::*;
+
+    /// A scratch dir per test, so nothing here reads or writes the process environment — the
+    /// record path is a parameter everywhere it matters.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("prr-infra-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).expect("scratch");
+        p
+    }
+
+    // ---- the timestamp the record carries -------------------------------------------------
+
+    /// The writer and the reader must agree. `epoch_to_iso` exists only to stamp the record, and
+    /// `iso_to_epoch_ms` is what every other timestamp in this binary is read with — so the record's
+    /// own `ts` has to survive that reader, including across the month/leap-year arithmetic where a
+    /// hand-rolled calendar is most likely to be wrong.
+    #[test]
+    fn the_record_timestamp_round_trips_through_the_reader_this_binary_already_uses() {
+        for secs in [
+            0,             // 1970-01-01T00:00:00Z
+            1_769_600_205, // 2026-01-28T…
+            1_774_000_000, // 2026-03-20T… (past a leap-day boundary)
+            1_767_225_599, // 2025-12-31T23:59:59Z
+            1_583_020_800, // 2020-03-01T00:00:00Z — the day AFTER a real leap day
+            4_102_444_800, // 2100-01-01T00:00:00Z — a non-leap century
+        ] {
+            let iso = epoch_to_iso(secs);
+            assert_eq!(
+                iso_to_epoch_ms(&iso),
+                Some(secs * 1000),
+                "{secs} stamped as {iso} did not read back"
+            );
+        }
+        assert_eq!(epoch_to_iso(0), "1970-01-01T00:00:00Z");
+        // Every field is zero-padded: an unpadded month would still parse as a DIFFERENT instant.
+        assert_eq!(epoch_to_iso(1_767_225_599), "2025-12-31T23:59:59Z");
+    }
+
+    // ---- the record itself -----------------------------------------------------------------
+
+    /// The record must name BOTH what is down and what would fix it. `rootCause` is the one flag
+    /// worth writing about an outage — and on the record it costs nothing to unpick, unlike the
+    /// seven `flag-blocked-on` labels the run that motivated this wrote instead.
+    #[test]
+    fn the_record_names_what_is_down_and_what_would_fix_it() {
+        let r = infra_record(
+            "fork RPCs: HTTP 500 across the fleet",
+            "rainlanguage/rainix#289",
+            "2026-07-28T11:25:00Z",
+        );
+        assert_eq!(r["record"], "infra");
+        assert_eq!(r["status"], "down");
+        assert_eq!(r["reason"], "fork RPCs: HTTP 500 across the fleet");
+        assert_eq!(r["rootCause"], "rainlanguage/rainix#289");
+        assert_eq!(r["ts"], "2026-07-28T11:25:00Z");
+    }
+
+    /// Only `record: "infra"` lines count. The file is shared with whatever else a future run wants
+    /// to append, and a foreign line must never be read as an outage.
+    #[test]
+    fn only_infra_lines_are_read_and_the_last_one_wins() {
+        let lines = concat!(
+            r#"{"record":"other","status":"down","reason":"not mine"}"#,
+            "\n",
+            r#"{"record":"infra","status":"down","reason":"first look","rootCause":""}"#,
+            "\n",
+            r#"{"record":"infra","status":"down","reason":"after diagnosis","rootCause":"o/r#289"}"#,
+            "\n",
+            // A foreign record AFTER the infra ones. "last line wins" must mean "last INFRA line
+            // wins" — a reader that took the last line of any kind would report this one, which is
+            // both `up` and about something else entirely.
+            r#"{"record":"gc","status":"up","reason":"swept 3 clones","rootCause":"nope"}"#,
+            "\n"
+        );
+        let rec = infra_record_from_lines(lines);
+        assert!(rec.down, "a later foreign record must not clear the outage");
+        assert_eq!(
+            rec.reason, "after diagnosis",
+            "the later INFRA call supersedes"
+        );
+        assert_eq!(rec.root_cause, "o/r#289");
+    }
+
+    /// A run that never hit an outage is not a blocked run, and neither is one whose record file
+    /// does not exist. Both must read as UP — the exit is expensive enough that it may only fire on
+    /// a line that positively says `down`.
+    #[test]
+    fn no_record_at_all_is_not_an_outage() {
+        assert!(!infra_record_from_lines("").down);
+        assert!(!infra_record_from_lines(r#"{"record":"other"}"#).down);
+        assert_eq!(infra_record_at(None), InfraRecord::default());
+        assert!(!infra_record_at(Some("/nonexistent/prr-infra-none.jsonl")).down);
+        // A line that is *about* infra but does not say `down` is not `down` either.
+        assert!(!infra_record_from_lines(r#"{"record":"infra","status":"up"}"#).down);
+    }
+
+    /// A killed run leaves a half-written final line, and a concurrent appender can leave a torn
+    /// one in the middle. An unparseable line is SKIPPED, never a stop: the records around it are
+    /// the whole point of the file, and a reader that gave up at the first bad byte would report a
+    /// blocked run as a normal one.
+    #[test]
+    fn an_unparseable_line_is_skipped_not_a_stop() {
+        // Garbage BEFORE the record that matters — a reader that aborts here reports `up`.
+        let interrupted = concat!(
+            r#"{"record":"infra","status":"up","reason":""}"#,
+            "\n",
+            "{not json at all",
+            "\n",
+            r#"{"record":"infra","status":"down","reason":"flare fork RPC 500s","rootCause":""}"#,
+            "\n"
+        );
+        let rec = infra_record_from_lines(interrupted);
+        assert!(rec.down, "a torn line must not hide the outage after it");
+        assert_eq!(rec.reason, "flare fork RPC 500s");
+
+        // Truncated FINAL line — the killed-run shape. What came before survives.
+        let truncated = concat!(
+            r#"{"record":"infra","status":"down","reason":"flare fork RPC 500s","rootCause":""}"#,
+            "\n",
+            r#"{"record":"infra","status":"do"#
+        );
+        let rec = infra_record_from_lines(truncated);
+        assert!(rec.down);
+        assert_eq!(rec.reason, "flare fork RPC 500s");
+    }
+
+    // ---- the mid-run exit ------------------------------------------------------------------
+
+    /// The whole subcommand: one line on the record, exit 12, and NOTHING else. The exit code is
+    /// what `campaign-run.sh` and the model both branch on.
+    #[test]
+    fn infra_down_records_the_finding_and_exits_12() {
+        let dir = scratch("write");
+        let path = dir.join("rec.jsonl");
+        let p = path.to_string_lossy().to_string();
+        assert_eq!(
+            infra_down_to(&p, "  flare fork RPC quota -32001  ", " o/r#289 "),
+            12,
+            "the exit code IS the mid-run exit path"
+        );
+        let rec = infra_record_at(Some(&p));
+        assert!(rec.down);
+        assert_eq!(rec.reason, "flare fork RPC quota -32001", "trimmed");
+        assert_eq!(rec.root_cause, "o/r#289");
+
+        // A second call APPENDS. "the last infra line wins" is only meaningful if the earlier ones
+        // are still there — a writer that truncated would make the reader's ordering rule vacuous
+        // and would erase a first finding the moment a better-informed second one arrived.
+        assert_eq!(infra_down_to(&p, "and now cachix too", ""), 12);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap().lines().count(),
+            2,
+            "the record is append-only"
+        );
+        assert_eq!(infra_record_at(Some(&p)).reason, "and now cachix too");
+    }
+
+    /// A record whose parent directory does not exist yet must still be written — the metrics dir
+    /// is created by the runner, but the subcommand is also usable by hand.
+    #[test]
+    fn the_record_directory_is_created_on_demand() {
+        let dir = scratch("mkdir");
+        let path = dir.join("nested").join("deeper").join("rec.jsonl");
+        let p = path.to_string_lossy().to_string();
+        assert_eq!(infra_down_to(&p, "cachix down", ""), 12);
+        assert!(path.exists(), "append must create the parent directory");
+    }
+
+    /// An empty reason is a usage error, not an outage: the reason IS the record, and a blank one
+    /// would end the run while telling a human nothing. Exit 2, and no line written.
+    #[test]
+    fn infra_down_refuses_an_empty_reason_and_writes_nothing() {
+        let dir = scratch("empty");
+        let path = dir.join("rec.jsonl");
+        let p = path.to_string_lossy().to_string();
+        assert_eq!(infra_down_to(&p, "   ", ""), 2);
+        assert!(!path.exists(), "a refused call must not write a record");
+        assert!(!infra_record_at(Some(&p)).down);
+    }
+
+    /// The runner's read-back. Exit 12 ONLY on a recorded outage — an absent or clean record is a
+    /// normal run, and turning that into an early exit would silently halve the pipeline.
+    #[test]
+    fn run_infra_exits_12_only_when_the_record_says_down() {
+        let dir = scratch("readback");
+        let clean = dir.join("clean.jsonl");
+        std::fs::write(&clean, "").unwrap();
+        assert_eq!(run_infra_mode(Some(&clean.to_string_lossy()), false), 0);
+        assert_eq!(
+            run_infra_mode(Some("/nonexistent/prr-infra-absent.jsonl"), false),
+            0,
+            "no record = the run was never blocked"
+        );
+        let down = dir.join("down.jsonl");
+        assert_eq!(
+            infra_down_to(&down.to_string_lossy(), "rpc dead", "o/r#1"),
+            12
+        );
+        assert_eq!(run_infra_mode(Some(&down.to_string_lossy()), false), 12);
+        assert_eq!(run_infra_mode(Some(&down.to_string_lossy()), true), 12);
+    }
+
+    /// The run-scoped env var wins over the install dir, and an EMPTY value counts as unset — an
+    /// exported-but-unassigned shell variable arrives as `Some("")`, and treating that as a path
+    /// would write the record to a file named nothing.
+    #[test]
+    fn the_run_scoped_path_wins_and_an_empty_value_counts_as_unset() {
+        assert_eq!(
+            run_record_path_from(Some("/run/.infra-20260728T111645Z.jsonl"), Some("/install")),
+            "/run/.infra-20260728T111645Z.jsonl"
+        );
+        assert_eq!(
+            run_record_path_from(None, Some("/install")),
+            "/install/metrics/run-infra.jsonl"
+        );
+        assert_eq!(
+            run_record_path_from(Some("  "), Some("/install")),
+            "/install/metrics/run-infra.jsonl"
+        );
+        assert_eq!(run_record_path_from(None, Some("")), "run-infra.jsonl");
+        assert_eq!(run_record_path_from(None, None), "run-infra.jsonl");
+    }
+
+    // ---- the error on the run record --------------------------------------------------------
+
+    /// An infra exit is NOT `ok` — that is the entire output of the feature, and a run that reads
+    /// `ok` is invisible on the dashboard. But it never outranks a worse story: the headline word
+    /// must be the worst thing that happened, or a quota-limited run would stop advancing the
+    /// model-fallback loop.
+    #[test]
+    fn an_infra_exit_is_not_ok_and_never_outranks_a_worse_outcome() {
+        let down = InfraRecord {
+            down: true,
+            reason: "fork RPC 500s".into(),
+            root_cause: String::new(),
+        };
+        let up = InfraRecord::default();
+        assert_eq!(
+            classify_outcome("", 0, &[], &down),
+            TraceOutcome::InfraDown,
+            "an otherwise-clean run that stopped early must not read as ok"
+        );
+        assert_eq!(classify_outcome("", 0, &[], &up), TraceOutcome::Ok);
+        // Worse outcomes win.
+        assert_eq!(classify_outcome("", 1, &[], &down), TraceOutcome::Error);
+        assert_eq!(
+            classify_outcome("", 0, &["pdftoppm".to_string()], &down),
+            TraceOutcome::ToolingFailure
+        );
+        let quota = r#"{"type":"result","api_error_status":429,"result":""}"#;
+        assert_eq!(
+            classify_outcome(quota, 0, &[], &down),
+            TraceOutcome::QuotaLimited,
+            "a quota refusal must still advance model fallback"
+        );
+        assert_eq!(TraceOutcome::InfraDown.as_str(), "infra-down");
+    }
+
+    /// The fields are ALWAYS present, so the dashboard can tell "infra was fine" from "this record
+    /// predates the fields" — the guarantee #91 gave `unreadableFiles`. They are also what makes a
+    /// repeat countable: `select(.infraDown)` over runs.jsonl is the whole chase.
+    #[test]
+    fn the_metrics_line_always_carries_the_infra_fields() {
+        let id = RunIdentity {
+            run_id: Some("20260728T111645Z"),
+            role: Some("producer"),
+            model: Some("claude-fable-5"),
+        };
+        let clean = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &id,
+            Some((0, TraceOutcome::Ok)),
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+        );
+        assert_eq!(clean["infraDown"], false);
+        assert_eq!(clean["infraReason"], "");
+        assert_eq!(clean["infraRootCause"], "");
+        assert_eq!(clean["outcome"], "ok");
+
+        let down = InfraRecord {
+            down: true,
+            reason: "fork RPCs erroring org-wide".into(),
+            root_cause: "rainlanguage/rainix#289".into(),
+        };
+        let doc = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &id,
+            Some((0, TraceOutcome::InfraDown)),
+            &ToolingReport::default(),
+            &[],
+            &down,
+        );
+        assert_eq!(doc["infraDown"], true);
+        assert_eq!(doc["infraReason"], "fork RPCs erroring org-wide");
+        assert_eq!(doc["infraRootCause"], "rainlanguage/rainix#289");
+        assert_eq!(doc["outcome"], "infra-down");
+    }
+
+    // ---- the retirement ---------------------------------------------------------------------
+
+    /// `ai:blocked-infra` must not be reachable as a destination — not in the writable state set,
+    /// and not as a noun a transition could name.
+    #[test]
+    fn the_retired_label_is_no_longer_a_destination() {
+        assert!(
+            !PRODUCER_STATE_LABELS.contains(&RETIRED_STATE_LABEL),
+            "the retired state must not be writable"
+        );
+        assert_eq!(PRODUCER_STATE_LABELS.len(), 3);
+        assert_eq!(state_noun(RETIRED_STATE_LABEL), "State");
+        for still_live in ["ai:design", "ai:blocked-deploy", "ai:blocked-on"] {
+            assert!(PRODUCER_STATE_LABELS.contains(&still_live));
+        }
+    }
+
+    /// …but a PR a pre-#108 run already parked stays VISIBLE in the queue. Dropping the label from
+    /// the classifier would make thirteen PRs reappear as `un-vetted` and hide the very thing that
+    /// needs unpicking.
+    #[test]
+    fn a_pr_still_carrying_the_retired_label_stays_visible_as_producer_blocked() {
+        assert_eq!(
+            classify_lane(&[RETIRED_STATE_LABEL.to_string()], None, false),
+            (Lane::ProducerBlocked, RETIRED_STATE_LABEL.to_string())
+        );
+        // A human decision still dominates it, as it dominates every other state.
+        assert_eq!(
+            classify_lane(
+                &["human:reject".to_string(), RETIRED_STATE_LABEL.to_string()],
+                None,
+                false
+            ),
+            (Lane::HumanDecisions, "human:reject".to_string())
+        );
+    }
+
+    /// The one-shot's target list: every open PR the search names, and nothing it cannot identify.
+    /// A row missing its repo or number is skipped rather than guessed at — this edits PRs.
+    #[test]
+    fn retire_targets_reads_every_identifiable_pr_and_skips_the_rest() {
+        let search = serde_json::json!([
+            {"number": 535, "repository": {"nameWithOwner": "rainlanguage/rainlang"}},
+            {"number": 385, "repository": {"nameWithOwner": "cyclofinance/cyclo.site"}},
+            {"number": 60},
+            {"repository": {"nameWithOwner": "rainlanguage/rain.dia"}},
+            {"number": 1, "repository": {}}
+        ]);
+        assert_eq!(
+            retire_targets(&search),
+            vec![
+                ("rainlanguage/rainlang".to_string(), 535),
+                ("cyclofinance/cyclo.site".to_string(), 385),
+            ]
+        );
+        assert!(retire_targets(&serde_json::json!([])).is_empty());
+        assert!(retire_targets(&serde_json::Value::Null).is_empty());
     }
 }
