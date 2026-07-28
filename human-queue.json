@@ -136,6 +136,21 @@
     ],
     "ai:blocked-on": [
       {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 6,
+        "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
+      },
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 5,
+        "title": "Migrate to the rolling-candidate snapshot model"
+      },
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 4,
+        "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
+      },
+      {
         "repo": "rainlanguage/rain.dia",
         "number": 59,
         "title": "fix(ci): drop stale submodule prelude steps from manual-sol-artifacts"
@@ -188,6 +203,11 @@
     ],
     "ai:design": [
       {
+        "repo": "rainlanguage/rainix",
+        "number": 289,
+        "title": "Fail over fork RPC endpoints with an archive-aware preflight"
+      },
+      {
         "repo": "cyclofinance/cyclo.site",
         "number": 426,
         "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
@@ -220,11 +240,6 @@
     ],
     "ai:ready": [
       {
-        "repo": "rainlanguage/rain.factory.deploy",
-        "number": 6,
-        "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
-      },
-      {
         "repo": "rainlanguage/rain.solmem",
         "number": 101,
         "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
@@ -233,11 +248,6 @@
         "repo": "rainlanguage/rain.solmem",
         "number": 100,
         "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
-      },
-      {
-        "repo": "rainlanguage/rainix",
-        "number": 289,
-        "title": "Fail over fork RPC endpoints with an archive-aware preflight"
       },
       {
         "repo": "rainlanguage/claude-audit-skills",
@@ -416,16 +426,6 @@
       }
     ],
     "ai:reject": [
-      {
-        "repo": "rainlanguage/rain.factory.deploy",
-        "number": 5,
-        "title": "Migrate to the rolling-candidate snapshot model"
-      },
-      {
-        "repo": "rainlanguage/rain.factory.deploy",
-        "number": 4,
-        "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
-      },
       {
         "repo": "rainlanguage/rain.deploy",
         "number": 19,
@@ -1016,8 +1016,26 @@
         ]
       },
       "ai:blocked-on": {
-        "count": 10,
+        "count": 13,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 6,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
+            "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 5,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
+            "title": "Migrate to the rolling-candidate snapshot model"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 4,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4",
+            "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
+          },
           {
             "repo": "rainlanguage/rain.dia",
             "number": 59,
@@ -1083,8 +1101,26 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 3,
+        "count": 6,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 104,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/104",
+            "title": "fix(vetter): a question for the human is `design`, not `ready`"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 139,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/139",
+            "title": "Publish the plugin's version and gate the two manifests against drift"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 98,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/98",
+            "title": "Record live token spend and the five-hour rate-limit window"
+          },
           {
             "repo": "rainlanguage/rain.uniswap",
             "number": 31,
@@ -1108,8 +1144,14 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 6,
+        "count": 7,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 289,
+            "url": "https://github.com/rainlanguage/rainix/pull/289",
+            "title": "Fail over fork RPC endpoints with an archive-aware preflight"
+          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 426,
@@ -1149,14 +1191,8 @@
         ]
       },
       "ai:ready": {
-        "count": 39,
+        "count": 37,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 6,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
-            "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 101,
@@ -1168,12 +1204,6 @@
             "number": 100,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
             "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 289,
-            "url": "https://github.com/rainlanguage/rainix/pull/289",
-            "title": "Fail over fork RPC endpoints with an archive-aware preflight"
           },
           {
             "repo": "rainlanguage/claude-audit-skills",
@@ -1388,20 +1418,8 @@
         ]
       },
       "ai:reject": {
-        "count": 35,
+        "count": 33,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
-            "title": "Migrate to the rolling-candidate snapshot model"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 4,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4",
-            "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 19,
@@ -1633,8 +1651,18 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 97,
-      "title": "Token metrics are terminal-only, and the five-hour rate-limit window is never recorded"
+      "number": 106,
+      "title": "The producer has no scratch dir, so six weeks of it is sitting in the live install"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 140,
+      "title": "Sparkline issue age, not just queue size — the count cannot tell turnover from stagnation"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 99,
+      "title": "Vetter records `ready` on PRs that exist to ask the human a question"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -4853,20 +4881,20 @@
     }
   ],
   "counts": {
-    "ready": 39,
-    "design": 6,
+    "ready": 37,
+    "design": 7,
     "blockedDeploy": 13,
     "blockedInfra": 13,
-    "blockedOn": 10,
+    "blockedOn": 13,
     "closeCandidateIssues": 1,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 1,
     "leaks": 18,
-    "totalProducerPrs": 158,
-    "uncoveredIssues": 622,
-    "unvetted": 3,
+    "totalProducerPrs": 161,
+    "uncoveredIssues": 624,
+    "unvetted": 6,
     "awaitingReVet": 0,
-    "reject": 35,
+    "reject": 33,
     "relink": 1,
     "closeCandidatePrs": 0,
     "humanReject": 31,
