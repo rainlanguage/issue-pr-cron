@@ -16225,18 +16225,43 @@ mod closure_gate_tests {
             std::fs::create_dir_all(&d).expect("bin dir");
             d
         }
+
+        /// Write an executable stub, and do not return until the kernel will actually exec it.
+        ///
+        /// `cargo test` is multi-threaded and every spawn snapshots the process's open file
+        /// descriptors, so another test's `Command` can be holding this file's write handle at the
+        /// moment this one tries to run it — ETXTBSY, surfacing as `Unspawnable(ExecutableFileBusy)`
+        /// in place of whatever the test was asserting. That is a property of writing an executable
+        /// inside a threaded process, not of the gate under test, so it is waited out here rather
+        /// than left to flake an assertion. Errno, not a message, decides.
+        fn stub(&self, dir: &std::path::Path, name: &str, body: &str) {
+            let p = dir.join(name);
+            std::fs::write(&p, body).expect("stub");
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            // The probe RUNS the stub, so its argv target is a directory nothing reads back — a
+            // page written into the render dir would be counted as output.
+            let probe = self.0.join(".probe");
+            std::fs::create_dir_all(&probe).expect("probe dir");
+            for _ in 0..500 {
+                match Command::new(&p)
+                    .arg(probe.join("probe"))
+                    .env_clear()
+                    .output()
+                {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    _ => return,
+                }
+            }
+            panic!("{} never became executable", p.display());
+        }
     }
 
     impl Drop for Scratch {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
-    }
-
-    fn exec_stub(dir: &std::path::Path, name: &str, body: &str) {
-        let p = dir.join(name);
-        std::fs::write(&p, body).expect("stub");
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     }
 
     fn closure_of(dir: &std::path::Path) -> RunnerClosure {
@@ -16343,7 +16368,7 @@ mod closure_gate_tests {
         let s = Scratch::new("preflight");
         let bin = s.bindir("bin");
         for t in HARNESS_TOOLS {
-            exec_stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
+            s.stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
         }
         let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
         assert_eq!(
@@ -16474,7 +16499,7 @@ mod closure_gate_tests {
         let dir = s.bindir("out");
         let pdf = s.join("f.pdf");
         std::fs::write(&pdf, fixture_pdf()).unwrap();
-        exec_stub(
+        s.stub(
             &bin,
             "pdftoppm",
             "#!/bin/sh\necho 'error while loading shared libraries' >&2\nexit 127\n",
@@ -16497,7 +16522,7 @@ mod closure_gate_tests {
         let dir = s.bindir("out");
         let pdf = s.join("f.pdf");
         std::fs::write(&pdf, fixture_pdf()).unwrap();
-        exec_stub(&bin, "pdftoppm", "#!/bin/sh\nexit 0\n");
+        s.stub(&bin, "pdftoppm", "#!/bin/sh\nexit 0\n");
         assert_eq!(
             render_from_closure(&closure_of(&bin), &pdf, &dir),
             Err(RenderFault::NoPages)
@@ -16511,7 +16536,7 @@ mod closure_gate_tests {
         let dir = s.bindir("out");
         let pdf = s.join("f.pdf");
         std::fs::write(&pdf, fixture_pdf()).unwrap();
-        exec_stub(
+        s.stub(
             &bin,
             "pdftoppm",
             "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf 'not an image' > \"$out-01.jpg\"\n",
@@ -16529,7 +16554,7 @@ mod closure_gate_tests {
         let dir = s.bindir("out");
         let pdf = s.join("f.pdf");
         std::fs::write(&pdf, fixture_pdf()).unwrap();
-        exec_stub(
+        s.stub(
             &bin,
             "pdftoppm",
             "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf '\\377\\330\\377\\340jpeg' > \"$out-01.jpg\"\nprintf '\\377\\330\\377\\340jpeg' > \"$out-02.jpg\"\n",
@@ -16546,7 +16571,7 @@ mod closure_gate_tests {
         let dir = s.bindir("out");
         let pdf = s.join("f.pdf");
         std::fs::write(&pdf, fixture_pdf()).unwrap();
-        exec_stub(
+        s.stub(
             &bin,
             "pdftoppm",
             "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf '%s\\n' \"$@\" > \"$out.argv\"\nprintf '\\377\\330\\377' > \"$out-01.jpg\"\n",
@@ -16582,7 +16607,7 @@ mod closure_gate_tests {
         let dir = s.bindir("out");
         let pdf = s.join("f.pdf");
         std::fs::write(&pdf, fixture_pdf()).unwrap();
-        exec_stub(
+        s.stub(
             &bin,
             "pdftoppm",
             &format!(
@@ -16617,9 +16642,9 @@ mod closure_gate_tests {
         let store = s.bindir("store");
         let owned = store.join("abc-poppler/bin");
         std::fs::create_dir_all(&owned).unwrap();
-        exec_stub(&owned, "pdftoppm", "#!/bin/sh\n");
+        s.stub(&owned, "pdftoppm", "#!/bin/sh\n");
         let ambient = s.bindir("usr-local-bin");
-        exec_stub(&ambient, "pdftoppm-ambient", "#!/bin/sh\n");
+        s.stub(&ambient, "pdftoppm-ambient", "#!/bin/sh\n");
 
         let path = std::ffi::OsString::from(format!(
             "{}:{}",
