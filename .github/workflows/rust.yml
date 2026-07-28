@@ -234,3 +234,114 @@ jobs:
         run: nix run .#pr-review-report -- closure-surface
       - name: flake check
         run: nix flake check --print-build-logs
+  # The producer's scratch dir (#106) is held together by ONE non-obvious harness fact, and every
+  # part of it looks redundant to a reader who does not know that fact:
+  #
+  #   `--add-dir` does NOT make a directory writable by bash output redirection.
+  #
+  # Verified against claude 2.1.220: a redirection is a `create` operation, and working-directory
+  # membership — all that `--add-dir` and `permissions.additionalDirectories` confer — authorises
+  # `create` only in `acceptEdits` mode. Under `--permission-mode default` the decision falls
+  # through to an edit-kind ALLOW RULE. So `--allowedTools "Edit(//$SCRATCH_DIR/**)"` sitting next
+  # to two `--add-dir` flags reads like a belt-and-braces duplicate, and deleting it silently
+  # returns the producer to writing scratch wherever it can — which is how the install dir came to
+  # hold six weeks of it. The refusal it gets even NAMES the directory as allowed, so the symptom
+  # does not point at the cause either.
+  #
+  # None of this can be caught by running the code (the run still exits 0; it just quietly litters),
+  # so it is asserted statically, the same way the ambient-tool-acquisition traps above are.
+  producer-scratch-dir-is-writable:
+    name: producer scratch dir is writable
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: the scratch grant is an Edit(//...) allow rule, not --add-dir
+        run: |
+          set -euo pipefail
+          fail=0
+          if ! grep -Eq -- '--allowedTools[[:space:]]+"Edit\(//\$SCRATCH_DIR/\*\*\)"' campaign-run.sh; then
+            echo "::error::campaign-run.sh no longer grants the scratch dir with"
+            echo '  --allowedTools "Edit(//$SCRATCH_DIR/**)"'
+            echo "Without it the model cannot redirect into its own scratch dir: --add-dir grants"
+            echo "READS, and an output redirection is a create, which needs an edit-kind ALLOW RULE."
+            fail=1
+          fi
+          # `Edit(/abs/**)` is not a stricter spelling of `Edit(//abs/**)` — it is inert. A rule that
+          # never matches fails exactly like no rule at all, with nothing in any log to say so.
+          # Scoped to the flag's own line: the block comment above it spells the broken form out.
+          if grep -- '--allowedTools' campaign-run.sh | grep -Eq 'Edit\(/[^/]'; then
+            echo "::error::A single-slash Edit(/...) rule in campaign-run.sh is silently inert."
+            echo "Absolute paths in a path rule need the // prefix: Edit(//abs/path/**)."
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "scratch grant present and in the matching form"
+          exit "$fail"
+      - name: the scratch path reaches the prompt as a literal
+        run: |
+          set -euo pipefail
+          fail=0
+          if ! grep -Fq 's#{{SCRATCH_DIR}}#' campaign-run.sh; then
+            echo "::error::campaign-run.sh stopped substituting {{SCRATCH_DIR}} into the prompt."
+            fail=1
+          fi
+          if ! grep -Fq '{{SCRATCH_DIR}}' campaign-prompt.txt; then
+            echo "::error::campaign-prompt.txt never names {{SCRATCH_DIR}}, so the run has a scratch"
+            echo "dir the model is never told about — which is the state #106 was filed against."
+            fail=1
+          fi
+          # The harness refuses any redirect target containing '$' as unevaluable shell expansion,
+          # so a prompt that writes the redirect through the variable teaches a command that fails.
+          if grep -Eq '>[[:space:]]*\$SCRATCH_DIR' campaign-prompt.txt; then
+            echo "::error::campaign-prompt.txt gives \$SCRATCH_DIR as a redirect target. A redirect"
+            echo "target containing '\$' is refused by the harness — the prompt must use the"
+            echo "{{SCRATCH_DIR}} placeholder so the model receives the literal path."
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "prompt receives the literal scratch path"
+          exit "$fail"
+      - name: scratch is per-run and reclaimed
+        run: |
+          set -euo pipefail
+          fail=0
+          # Per-run is what makes the footprint one run's worth. A path without $TS is shared
+          # between runs, and a shared dir nothing deletes is the pile #106 is about.
+          if ! grep -Eq '^SCRATCH_DIR=.*\$TS' campaign-run.sh; then
+            echo "::error::SCRATCH_DIR is no longer per-run (\$TS): runs would share one directory."
+            fail=1
+          fi
+          # …and $TS alone is not unique. The flock is per-install-dir while WORK_DIR defaults to
+          # $HOME/code, so two installs sharing a WORK_DIR run concurrently and can start in the
+          # same second — colliding on the path, then deleting each other's scratch on the way out.
+          if ! grep -Eq '^SCRATCH_DIR=.*\$\$' campaign-run.sh; then
+            echo "::error::SCRATCH_DIR has no per-process component (\$\$). Two installs sharing a"
+            echo "WORK_DIR can start in the same second and collide on \$TS alone."
+            fail=1
+          fi
+          if ! grep -Fq 'rm -rf "$SCRATCH_DIR"' campaign-run.sh; then
+            echo "::error::campaign-run.sh no longer deletes its scratch dir at the end of the run."
+            fail=1
+          fi
+          # `-mtime +1` truncates to whole days, so it leaves a 25-hour-old leftover until it is 48
+          # hours old. Wrong quietly, never loudly — the sweep still runs and still reports nothing.
+          if grep -Eq 'find .*scratch.*-mtime' campaign-run.sh; then
+            echo "::error::The stale-scratch sweep uses -mtime, which rounds to whole days."
+            echo "Use -mmin +1440 so a leftover is reclaimed once it actually exceeds a day."
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "scratch is per-run, unique, and reclaimed"
+          exit "$fail"
+      - name: a scratch dir that cannot be created stops the run
+        run: |
+          set -euo pipefail
+          # errexit is off in this runner, so an unchecked mkdir falls through on a full disk or a
+          # permission fault and the model is handed an authorised path that does not exist. Every
+          # redirect into it then fails — the pre-#106 state, minus the clue that something broke.
+          if ! grep -Eq 'if ! mkdir -p "\$SCRATCH_DIR"; then' campaign-run.sh; then
+            echo "::error::campaign-run.sh does not check that the scratch dir was created."
+            echo "With errexit off, a failed mkdir must end the run before a model invocation."
+            exit 1
+          fi
+          echo "a failed scratch mkdir ends the run"
