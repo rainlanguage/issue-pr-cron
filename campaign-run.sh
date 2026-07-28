@@ -161,8 +161,10 @@ fi
 # and so scratch shares the disk already sized for clones. gc ignores it (no `.git` inside).
 SCRATCH_DIR="$WORK_DIR/scratch/$TS"
 # A run killed outright (SIGKILL, box reboot) never reaches its own cleanup, so reclaim on the way
-# IN as well as on the way out. Anything a day old cannot belong to a live run: MAXTIME caps a run
-# at hours and the flock means only one exists at a time.
+# IN as well as on the way out. AGE-BOUNDED rather than "everything that is not mine": the lock is
+# per-INSTALL-dir while WORK_DIR defaults to $HOME/code, so a second install pointed at the same
+# WORK_DIR runs concurrently by design, and an unbounded sweep would delete a live run's scratch
+# out from under it. A day is far past MAXTIME, so nothing it removes can still be in use.
 find "$WORK_DIR/scratch" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null
 mkdir -p "$SCRATCH_DIR"
 export SCRATCH_DIR

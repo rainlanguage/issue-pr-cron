@@ -643,8 +643,32 @@ opened PR is assigned to). `WORK_DIR`, `MODEL`, `MAXTIME`, `KEEP_RUNS` have
 defaults and may be overridden there. The runner takes its install dir from
 `CRON_DIR` (falling back to the working directory) and gets its `PATH` from the
 flake closure, so there are no machine paths in the repo; `campaign-prompt.txt`
-uses `{{WORK_DIR}}` / `{{CLOSE_CANDIDATES}}` / `{{ASSIGNEE}}` placeholders that
-the runner substitutes at run time.
+uses `{{WORK_DIR}}` / `{{SCRATCH_DIR}}` / `{{CLOSE_CANDIDATES}}` / `{{ASSIGNEE}}`
+placeholders that the runner substitutes at run time.
+
+### The producer's scratch dir
+
+Each producer run gets `$WORK_DIR/scratch/<run-id>`, created before the model
+starts, handed to the prompt as `{{SCRATCH_DIR}}`, and deleted when the run
+ends. It is where every throwaway file goes — cached tool output, a PR body
+being drafted — so that no run has to invent a path of its own. Before it
+existed they all did, and the results sat in the install dir for six weeks
+behind `.gitignore`'s `/*` (#106).
+
+The part that is not guessable: **`--add-dir` does not make a directory
+writable by bash output redirection.** A redirection is a `create` operation,
+and working-directory membership — all that `--add-dir` and
+`permissions.additionalDirectories` confer — authorises `create` only in
+`acceptEdits` mode. Under `--permission-mode default` it needs an edit-kind
+allow rule, which is why the runner also passes
+`--allowedTools "Edit(//$SCRATCH_DIR/**)"`; the `//` prefix is required, as
+`Edit(/abs/**)` never matches and fails silently. The refusal a model gets
+without that rule names the directory it just tried as allowed, so the symptom
+points nowhere near the cause — hence the `producer scratch dir is writable`
+CI job, which asserts the rule, the substitution and the cleanup still line up.
+
+The vetter needs none of this: `review-settings.json` denies `Bash`, `Write`
+and `Edit` outright, so it has no way to write a file at all.
 
 ## Reviewing the output — the merge pipeline
 
