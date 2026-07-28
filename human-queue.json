@@ -225,6 +225,21 @@
         "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
       },
       {
+        "repo": "rainlanguage/rain.solmem",
+        "number": 101,
+        "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
+      },
+      {
+        "repo": "rainlanguage/rain.solmem",
+        "number": 100,
+        "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
+      },
+      {
+        "repo": "rainlanguage/rainix",
+        "number": 289,
+        "title": "Fail over fork RPC endpoints with an archive-aware preflight"
+      },
+      {
         "repo": "rainlanguage/claude-audit-skills",
         "number": 50,
         "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
@@ -393,11 +408,6 @@
         "repo": "rainlanguage/rain.flare",
         "number": 170,
         "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths"
-      },
-      {
-        "repo": "rainlanguage/rain.vats",
-        "number": 325,
-        "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -1072,56 +1082,9 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 2,
-        "prs": [
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 325,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/325",
-            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 137,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/137",
-            "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 8,
+        "count": 3,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 92,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/92",
-            "title": "feat(fsm): the human's transitions are transitions, not raw gh (#86)"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 87,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/87",
-            "title": "fix(gate): refuse a `gh pr create` whose body lacks the QA-GUIDE §8 evidence block — as a `pr-review-report` subcommand"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-            "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-            "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 289,
-            "url": "https://github.com/rainlanguage/rainix/pull/289",
-            "title": "Fail over fork RPC endpoints with an archive-aware preflight"
-          },
           {
             "repo": "rainlanguage/rain.uniswap",
             "number": 31,
@@ -1186,13 +1149,31 @@
         ]
       },
       "ai:ready": {
-        "count": 35,
+        "count": 39,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 6,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
             "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 101,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
+            "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 100,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
+            "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 289,
+            "url": "https://github.com/rainlanguage/rainix/pull/289",
+            "title": "Fail over fork RPC endpoints with an archive-aware preflight"
           },
           {
             "repo": "rainlanguage/claude-audit-skills",
@@ -1397,6 +1378,12 @@
             "number": 170,
             "url": "https://github.com/rainlanguage/rain.flare/pull/170",
             "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 137,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/137",
+            "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
           }
         ]
       },
@@ -1635,15 +1622,25 @@
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     }
   ],
-  "closeCandidateUnvetted": [
+  "closeCandidateUnvetted": [],
+  "closeCandidateUpheld": [
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 248,
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     }
   ],
-  "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 97,
+      "title": "Token metrics are terminal-only, and the five-hour rate-limit window is never recorded"
+    },
+    {
+      "repo": "rainlanguage/rain.vats",
+      "number": 331,
+      "title": "Reentrancy row 18 untested, and a stale rain-factory-0.1.1 remapping hides dependency drift"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 96,
@@ -4856,19 +4853,19 @@
     }
   ],
   "counts": {
-    "ready": 37,
+    "ready": 39,
     "design": 6,
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
     "closeCandidateIssues": 1,
-    "closeCandidateUnvetted": 1,
-    "closeCandidateUpheld": 0,
+    "closeCandidateUnvetted": 0,
+    "closeCandidateUpheld": 1,
     "leaks": 18,
-    "totalProducerPrs": 161,
-    "uncoveredIssues": 620,
-    "unvetted": 8,
-    "awaitingReVet": 2,
+    "totalProducerPrs": 158,
+    "uncoveredIssues": 622,
+    "unvetted": 3,
+    "awaitingReVet": 0,
     "reject": 35,
     "relink": 1,
     "closeCandidatePrs": 0,
