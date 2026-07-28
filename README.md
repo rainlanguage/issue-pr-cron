@@ -858,15 +858,102 @@ Each line carries a typed `stage`:
   inside the runner's live pipe the moment each number becomes knowable. They
   carry only what is known then: no `toolCalls`, `startupPct`, `durationMs`,
   `outcome`, and no `startupMs` (its end anchor has not arrived).
+- **`usage`** — LIVE SPEND, also from `run-timings`. Many per run rather than
+  one: every 25 main-thread messages, on every rate-limit escalation, and once
+  when the stream ends however it ends. See below.
 - **`final`** — the complete record, written by `run-metrics` after the run.
 
-So one run produces up to three lines with the same `runId` — more when model
+So one run produces several lines with the same `runId` — more when model
 fallback retried it, since each attempt measures itself. A consumer keeps the
 most complete (`final` > `ttl` > `boot`), and the **last** of those, which is
-the attempt that actually ran. The partials exist because `run-metrics` only
-ever runs after the claude process exits: a run that is killed or times out is
-exactly the run whose startup timings you want, and it was precisely the one
-that left no trace of them at all.
+the attempt that actually ran; `usage` records are a monotonic series alongside
+those rather than competing versions of them, so the **last** `usage` line is
+the current one and `final` supersedes them all. The partials exist because
+`run-metrics` only ever runs after the claude process exits: a run that is
+killed or times out is exactly the run whose startup timings you want, and it
+was precisely the one that left no trace of them at all.
+
+### Live token spend — and the one number that is not knowable
+
+`run-metrics` reads tokens from the terminal `result` event, so a killed run
+reported zeros. `usage` records fix that for the input side, and are honest
+about the rest:
+
+| field           | live (`usage`) | final | notes                            |
+| --------------- | -------------- | ----- | -------------------------------- |
+| `tokensIn`      | exact          | exact |                                  |
+| `cacheRead`     | exact          | exact | the term that runs away          |
+| `cacheCreation` | exact          | exact |                                  |
+| `messages`      | exact          | —     | distinct main-thread messages    |
+| `tokensOut`     | **absent**     | exact | not knowable mid-run — see below |
+| `costUsd`       | absent         | exact | needs `tokensOut`                |
+
+The trace **cannot be naively summed**, in two independent ways, and both wrong
+answers look plausible. On `review-runs/20260728T100257Z.jsonl`:
+
+```
+naive sum over every assistant event      cacheRead  9,657,649   output    526
+deduped by message id only                cacheRead  8,240,864   output    395
+MAIN-THREAD + deduped by message id       cacheRead  6,099,441   output    395
+authoritative (the `result` event)        cacheRead  6,099,441   output 41,026
+```
+
+1. The SDK emits one `assistant` event **per content block** and repeats the
+   same `message.usage` on each — 118 events carrying 37 message ids here, 33
+   repeated 2–5×, every repeat byte-identical. Usage is taken once per
+   `message.id`.
+2. Events with a `parent_tool_use_id` are a **Task subagent's** messages, and
+   `result.usage` does not include them (only `modelUsage` does). In
+   `runs/20260718T050002Z.jsonl` they are worth 23.1M cache-read tokens — 66% on
+   top of that run's own reported total.
+
+With both corrections the live probe reproduces `result.usage` **exactly** on 77
+of the 81 archived traces that have a `result`. The 4 that differ are the only
+ones with more than one top-level `result` — several claude invocations appended
+to one file, where `run-metrics` deliberately reports just the largest. The live
+filter cannot hit that case: it sits in one invocation's pipe.
+
+**`tokensOut` is deliberately absent from `usage` records.** `output_tokens` on
+an `assistant` event is a snapshot taken at message START, not a streaming delta
+— it reads 2–5 on messages that went on to emit ~1,100 tokens, which is why
+every repeat of a message id carries the same value. Across the 60 traces with a
+terminal total, the deduped sum is 0.2%–20.6% of the truth. The only other
+output signal in the stream is `system`/`thinking_tokens`, which is both
+explicitly an estimate and thinking-only: 9.7%–76.2% of true output across 53
+traces. An exhaustive scan of every numeric token/usage/cost field across all 97
+traces found no third source. So there is no live output count rather than a
+guessed one.
+
+That still leaves a real gauge: solving each model's per-token rates out of its
+own `modelUsage`/`costUSD` (sonnet-4-6 and opus-4-8 both fit to <0.1% error),
+the three exact fields account for a **median 72%** of a run's spend, range
+55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
+the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
+
+### Rate-limit windows — `rateLimits`
+
+Every record (`usage` and `final`) carries a `rateLimits` object, keyed by the
+window word the API uses, always present and `{}` when the run saw no events:
+
+```json
+"rateLimits": {"five_hour": {"status":"rejected","resetsAt":1783879200,"utilization":null,"events":5}}
+```
+
+`status` is the **worst** status seen, not the last — a rejection at minute two
+must not be erased by an `allowed` at minute twenty, since explaining that
+rejection is the entire reason the field exists. `resetsAt` and `utilization`
+are the last seen. `utilization` is a **fraction in 0..=1** as the wire spells
+it, which is _not_ the unit `usage-gate` works in (a 0..=100 percent).
+
+`usage-gate` paces on `seven_day` only and deliberately does **not** gate on
+`five_hour` — the reasoning is on `parse_seven_day` in `src/main.rs`. In short:
+linear pacing does not transfer to a window that resets 4.8× a day against a
+2-hourly schedule; across 97 traces `five_hour` reached `rejected` in 5 events
+in a single run that still completed; a second, faster-cycling pause condition
+is the same hazard as the incident that made every failure path in that gate
+inert; and the two sources disagree on units in a way that would fail silently.
+What the five-hour window was missing was diagnosis, not pacing — which is what
+recording it provides.
 
 ## Runtime state (NOT tracked — see `.gitignore`)
 
