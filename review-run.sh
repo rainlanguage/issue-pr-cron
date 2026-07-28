@@ -85,6 +85,9 @@ if ! flock -n 9; then
 fi
 
 mkdir -p "$RUNDIR"
+# The metrics dir must exist BEFORE the run, not just after it: `run-timings` appends this run's
+# boot/ttl records from inside the live pipe, long before the end-of-run `run-metrics` line.
+mkdir -p "$DIR/metrics"
 cd "$DIR" || exit 1
 
 # rotate per-run traces
@@ -162,6 +165,8 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
     --add-dir "$WORK_DIR" \
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
+    | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
+          --run-id "$TS" --role vetter --model "$USED_MODEL" 2>/dev/null || cat ; } \
     | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}
   # Typed verdict from the trace's result events, not a grep over the trace bytes (see
@@ -182,8 +187,9 @@ echo "$(date -u +%FT%TZ) review run END (exit=$rc, trace=$RUNLOG)" >> "$LOG"
 
 # `run-metrics` emits the whole enriched record, deriving `outcome` with the same typed classifier
 # the fallback loop uses, so the two can never disagree about whether a run was quota-limited.
+# This is the run's `stage: final` line. Its `stage: boot` / `stage: ttl` lines were already
+# appended mid-run by `run-timings` above — reaching HERE at all is what a killed run cannot do.
 if [ -s "$RUNLOG" ]; then
-  mkdir -p "$DIR/metrics"
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role vetter --model "$USED_MODEL" --exit-code "$rc" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
