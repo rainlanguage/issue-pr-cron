@@ -221,6 +221,42 @@ fn the_refusal_names_the_lines_that_are_missing_and_the_ones_that_are_not() {
 }
 
 #[test]
+fn all_four_subjects_on_one_line_is_not_the_block() {
+    let Some(f) = Fixture::new("one-liner") else {
+        return;
+    };
+    // Section 8 is four SEPARATE entries. A single bullet naming all four subjects satisfies a
+    // per-keyword search while being nothing like the block, so it must not pass.
+    let body = f.body_file(
+        "body.md",
+        "Closes #1\n\n## QA\n- Discriminating mutation oracle category: all done\n",
+    );
+    let (code, err) = f.bash(&open_pr(&body));
+    assert_blocked(code, &err);
+    assert!(
+        err.contains("not on four distinct lines"),
+        "the refusal must say what is wrong with it: {err}"
+    );
+}
+
+#[test]
+fn one_entry_per_line_is_the_block() {
+    let Some(f) = Fixture::new("one-per-line") else {
+        return;
+    };
+    // The control for the test above, and for the distinctness check generally: a body whose
+    // first line names two subjects still passes when a distinct line exists for each of them.
+    let body = f.body_file(
+        "body.md",
+        "Closes #1\n\n## QA\n- Discriminating test, mutation-validated: t_one\n\
+         - Mutations applied: L1 -> flip -> t_one\n- Oracle: the issue\n\
+         - Category check: asks A; covered A\n",
+    );
+    let (code, err) = f.bash(&open_pr(&body));
+    assert_allowed(code, &err);
+}
+
+#[test]
 fn the_refusal_prints_the_section_8_template() {
     let Some(f) = Fixture::new("template") else {
         return;
@@ -378,6 +414,35 @@ fn a_body_file_relative_to_a_leading_cd_is_resolved() {
 }
 
 #[test]
+fn the_last_cd_before_the_invocation_is_the_one_that_counts() {
+    let Some(f) = Fixture::new("sequential-cd") else {
+        return;
+    };
+    // `cd good; cd bad; gh pr create --body-file body.md` opens the PR from `bad`. Checking the
+    // FIRST cd would read `good/body.md` — a file the shell never opens — and pass a bad PR.
+    for (dir, contents) in [("good", COMPLETE_BLOCK), ("bad", "Closes #1\n")] {
+        let d = f.dir.join(dir);
+        std::fs::create_dir_all(&d).expect("create dir");
+        std::fs::write(d.join("body.md"), contents).expect("write body");
+    }
+    // Both separators, because they walk different lines of the shell-state walk: `;` puts each
+    // `cd` in its own segment (state carried BETWEEN segments), a newline leaves all three in one
+    // (state carried WITHIN a segment, up to the invocation).
+    for sep in ["\n", " ; "] {
+        let (code, err) = f.bash(&format!(
+            "cd {good}{sep}cd {bad}{sep}gh pr create --title t --body-file body.md",
+            good = f.dir.join("good").display(),
+            bad = f.dir.join("bad").display()
+        ));
+        assert_blocked(code, &err);
+        assert!(
+            err.contains("/bad/body.md"),
+            "the refusal must name the body the SHELL would open: {err}"
+        );
+    }
+}
+
+#[test]
 fn a_body_file_relative_to_the_session_cwd_is_resolved() {
     let Some(f) = Fixture::new("relative-cwd") else {
         return;
@@ -413,6 +478,35 @@ fn gh_reached_through_a_prefix_command_is_still_gated() {
     };
     let (code, err) = f.bash("timeout 60 gh pr create --title t --body \"no evidence\"");
     assert_blocked(code, &err);
+}
+
+#[test]
+fn an_interpreter_wrapped_pr_create_is_still_gated() {
+    let Some(f) = Fixture::new("wrapped") else {
+        return;
+    };
+    // shlex sees the script as ONE token, so there is no `gh` `pr` `create` word sequence to
+    // find and the line would sail through — the wrapper bypass block-nix-wrap-gh.sh exists for.
+    for cmd in [
+        "bash -c 'gh pr create --title t --body \"no evidence\"'",
+        "sh -c 'gh pr create --title t --body \"no evidence\"'",
+        "nix shell nixpkgs#gh --command bash -c 'gh pr create --title t --body \"no evidence\"'",
+    ] {
+        let (code, err) = f.bash(cmd);
+        assert_blocked(code, &err);
+    }
+}
+
+#[test]
+fn an_interpreter_wrapped_pr_create_with_the_block_opens() {
+    let Some(f) = Fixture::new("wrapped-ok") else {
+        return;
+    };
+    let body = f.body_file("body.md", COMPLETE_BLOCK);
+    let (code, err) = f.bash(&format!(
+        "bash -c 'gh pr create --title t --body-file {body}'"
+    ));
+    assert_allowed(code, &err);
 }
 
 #[test]

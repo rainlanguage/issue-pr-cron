@@ -35,7 +35,7 @@ deny-list bypasses (`block-nix-wrap-gh.sh`, `block-cron-git-bypass.sh`) and the
 QA-GUIDE section-8 gate on `gh pr create` (`require-qa-block.sh`, #83). A hook
 is not an excuse to leave a transition loose — it is what holds the invariant
 while it still is, and it is tested like a subcommand
-(`tests/require_qa_block.rs`), not asserted in prose. See
+(`pr-review-report-rs/tests/require_qa_block.rs`), not asserted in prose. See
 [README.md](README.md#hooks--guards-a-prompt-cannot-hold).
 
 ## Transitions (subcommands)

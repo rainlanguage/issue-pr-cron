@@ -108,9 +108,33 @@ def qa_section(body):
     return rest[: nxt.start()] if nxt else rest
 
 
+def line_candidates(section):
+    """Per section-8 line, the indices of the QA section's lines that name it."""
+    rows = (section or "").split("\n")
+    return [{i for i, row in enumerate(rows) if pat.search(row)} for _, pat in REQUIRED]
+
+
+def assignable(cands, used=()):
+    """Is there a DISTINCT line for every entry? Exhaustive backtracking; four entries."""
+    if not cands:
+        return True
+    return any(i not in used and assignable(cands[1:], used + (i,)) for i in cands[0])
+
+
 def missing_lines(section):
-    """Section 8's lines the QA section does not name (all four when there is none)."""
-    return [name for name, pat in REQUIRED if not (section and pat.search(section))]
+    """Section 8's lines the QA section does not name AT ALL (all four when there is none)."""
+    names = [name for name, _ in REQUIRED]
+    return [name for name, cand in zip(names, line_candidates(section)) if not cand]
+
+
+def block_is_complete(section):
+    """Section 8 is four SEPARATE entries, so both halves are checked.
+
+    A single line naming all four subjects ("discriminating mutation oracle
+    category") satisfies a per-keyword search while being nothing like the
+    block, so the four matches must also land on four distinct lines.
+    """
+    return not missing_lines(section) and assignable(line_candidates(section))
 
 
 def refuse(reason, detail, section=None):
@@ -133,7 +157,10 @@ def refuse(reason, detail, section=None):
     ]
     if present:
         lines.append("  already present: " + ", ".join(present))
-    lines.append("  still missing: " + ", ".join(missing))
+    if missing:
+        lines.append("  still missing: " + ", ".join(missing))
+    else:
+        lines.append("  all four named, but not on four distinct lines - write one entry per line")
     lines += [
         "",
         "You ran the mutation testing to get here - transcribe what it produced.",
@@ -175,17 +202,25 @@ def pr_create_spans(seg):
     return [(s, starts[j + 1] if j + 1 < len(starts) else len(seg)) for j, s in enumerate(starts)]
 
 
-def resolve(path, tokens):
-    """Absolute as given; otherwise relative to a leading `cd <dir>`, else the session cwd."""
-    if os.path.isabs(path):
-        return path
-    for s in segments(tokens):
-        if s[:1] == ["cd"] and len(s) > 1:
-            return os.path.join(s[1], path)
-    return os.path.join(cwd, path) if cwd else path
+def apply_cds(base, toks):
+    """`base` after every `cd <dir>` in `toks`, in order.
+
+    The LAST one before the invocation wins, and they compound: `cd a; cd b`
+    lands in `a/b`, exactly as the shell would. Taking the FIRST `cd` in the
+    line would check a file the shell never opens.
+    """
+    for i, t in enumerate(toks):
+        if t == "cd" and i + 1 < len(toks) and not toks[i + 1].startswith("-"):
+            base = os.path.normpath(os.path.join(base, toks[i + 1]) if base else toks[i + 1])
+    return base
 
 
-def bodies(argv, tokens):
+def resolve(path, base):
+    """Absolute as given; otherwise against the directory the shell is in by then."""
+    return path if os.path.isabs(path) else (os.path.join(base, path) if base else path)
+
+
+def bodies(argv, base):
     """Every body this invocation supplies, plus whether gh was told to generate one.
 
     Returns (list of (source, text), generated).
@@ -208,7 +243,7 @@ def bodies(argv, tokens):
                     "Write the body to a file and pass its absolute path.",
                 )
             else:
-                path = resolve(val, tokens)
+                path = resolve(val, base)
                 try:
                     with open(path, encoding="utf-8", errors="replace") as fh:
                         found.append(("--body-file " + path, fh.read()))
@@ -223,46 +258,83 @@ def bodies(argv, tokens):
     return found, generated
 
 
-try:
-    tokens = shlex.split(command, comments=False)
-except ValueError:
-    # Unparseable (unbalanced quote, stray backslash). Fail CLOSED if it still
-    # looks like a PR open — a parse failure must not become the way through.
-    if re.search(r"\bgh\b[\s\S]*\bpr\b[\s\S]*\bcreate\b", command):
-        refuse(
-            "could not parse this command line, so its PR body cannot be checked.",
-            "Open the PR with a plain `gh pr create … --body-file <absolute path>`.",
-        )
-    sys.exit(0)
+def nested_commands(tokens):
+    """Command strings this line hands to an interpreter, e.g. `bash -c '<script>'`.
 
-for seg in segments(tokens):
-    for start, end in pr_create_spans(seg):
-        found, generated = bodies(seg[start:end], tokens)
-        if not found:
+    shlex sees such a script as ONE token, so `bash -c 'gh pr create --body x'`
+    has no `gh` `pr` `create` word sequence to find and would sail through. That
+    is the same wrapper bypass `hooks/block-nix-wrap-gh.sh` exists for, so the
+    payload is re-checked as a command in its own right.
+
+    Only the argument of a `-…c` flag is followed (`bash -c`, `sh -c`, `zsh -ic`,
+    and the `nix shell … --command bash -c` spelling, whose inner `-c` is what
+    carries the script) — never a `--body` value, so quoting `gh pr create`
+    inside a PR body cannot trigger it. A `--command` whose argument is a bare
+    word list needs nothing here: those tokens stay on the line and the ordinary
+    word-sequence match already sees them.
+    """
+    return [
+        tokens[i + 1]
+        for i, t in enumerate(tokens[:-1])
+        if re.fullmatch(r"-[A-Za-z]*c", t) and re.search(r"\s", tokens[i + 1])
+    ]
+
+
+def check(command, depth=0):
+    try:
+        tokens = shlex.split(command, comments=False)
+    except ValueError:
+        # Unparseable (unbalanced quote, stray backslash). Fail CLOSED if it still
+        # looks like a PR open — a parse failure must not become the way through.
+        if re.search(r"\bgh\b[\s\S]*\bpr\b[\s\S]*\bcreate\b", command):
             refuse(
-                "`--fill`/`--template` builds the body from commits or a repo template."
-                if generated
-                else "this `gh pr create` supplies no body to carry the block.",
-                "Pass `--body-file <absolute path>` with the section-8 block in it.",
+                "could not parse this command line, so its PR body cannot be checked.",
+                "Open the PR with a plain `gh pr create … --body-file <absolute path>`.",
             )
-        # gh takes one body; if several are named, a complete one anywhere passes.
-        worst = None
-        for source, text in found:
-            section = qa_section(text)
-            if not missing_lines(section):
-                worst = None
-                break
+        return
+
+    # The shell's own working directory, walked forward so each invocation is
+    # checked against the directory it will actually run in.
+    base = cwd
+    for seg in segments(tokens):
+        prev = 0
+        for start, end in pr_create_spans(seg):
+            base = apply_cds(base, seg[prev:start])
+            prev = end
+            found, generated = bodies(seg[start:end], base)
+            if not found:
+                refuse(
+                    "`--fill`/`--template` builds the body from commits or a repo template."
+                    if generated
+                    else "this `gh pr create` supplies no body to carry the block.",
+                    "Pass `--body-file <absolute path>` with the section-8 block in it.",
+                )
+            # gh takes one body; if several are named, a complete one anywhere passes.
+            worst = None
+            for source, text in found:
+                section = qa_section(text)
+                if block_is_complete(section):
+                    worst = None
+                    break
+                if worst is None:
+                    worst = (source, section)
             if worst is None:
-                worst = (source, section)
-        if worst is None:
-            continue
-        source, section = worst
-        if section is None:
-            refuse("the body (%s) has no `## QA` heading." % source, "")
-        refuse(
-            "the `## QA` section in the body (%s) is incomplete." % source,
-            "A heading is not the block — section 8 is all four lines.",
-            section,
-        )
+                continue
+            source, section = worst
+            if section is None:
+                refuse("the body (%s) has no `## QA` heading." % source, "")
+            refuse(
+                "the `## QA` section in the body (%s) is incomplete." % source,
+                "A heading is not the block — section 8 is four separate lines.",
+                section,
+            )
+        base = apply_cds(base, seg[prev:])
+
+    if depth < 3:
+        for nested in nested_commands(tokens):
+            check(nested, depth + 1)
+
+
+check(command)
 sys.exit(0)
 PY
