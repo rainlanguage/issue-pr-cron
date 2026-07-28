@@ -22410,11 +22410,19 @@ mod infra_down_tests {
             r#"{"record":"infra","status":"down","reason":"first look","rootCause":""}"#,
             "\n",
             r#"{"record":"infra","status":"down","reason":"after diagnosis","rootCause":"o/r#289"}"#,
+            "\n",
+            // A foreign record AFTER the infra ones. "last line wins" must mean "last INFRA line
+            // wins" — a reader that took the last line of any kind would report this one, which is
+            // both `up` and about something else entirely.
+            r#"{"record":"gc","status":"up","reason":"swept 3 clones","rootCause":"nope"}"#,
             "\n"
         );
         let rec = infra_record_from_lines(lines);
-        assert!(rec.down);
-        assert_eq!(rec.reason, "after diagnosis", "the later call supersedes");
+        assert!(rec.down, "a later foreign record must not clear the outage");
+        assert_eq!(
+            rec.reason, "after diagnosis",
+            "the later INFRA call supersedes"
+        );
         assert_eq!(rec.root_cause, "o/r#289");
     }
 
@@ -22431,16 +22439,32 @@ mod infra_down_tests {
         assert!(!infra_record_from_lines(r#"{"record":"infra","status":"up"}"#).down);
     }
 
-    /// A killed run leaves a half-written final line. The records BEFORE it are the whole point of
-    /// the file, so a parse failure skips that line rather than discarding the report.
+    /// A killed run leaves a half-written final line, and a concurrent appender can leave a torn
+    /// one in the middle. An unparseable line is SKIPPED, never a stop: the records around it are
+    /// the whole point of the file, and a reader that gave up at the first bad byte would report a
+    /// blocked run as a normal one.
     #[test]
-    fn a_truncated_final_line_does_not_lose_the_records_before_it() {
-        let lines = concat!(
+    fn an_unparseable_line_is_skipped_not_a_stop() {
+        // Garbage BEFORE the record that matters — a reader that aborts here reports `up`.
+        let interrupted = concat!(
+            r#"{"record":"infra","status":"up","reason":""}"#,
+            "\n",
+            "{not json at all",
+            "\n",
+            r#"{"record":"infra","status":"down","reason":"flare fork RPC 500s","rootCause":""}"#,
+            "\n"
+        );
+        let rec = infra_record_from_lines(interrupted);
+        assert!(rec.down, "a torn line must not hide the outage after it");
+        assert_eq!(rec.reason, "flare fork RPC 500s");
+
+        // Truncated FINAL line — the killed-run shape. What came before survives.
+        let truncated = concat!(
             r#"{"record":"infra","status":"down","reason":"flare fork RPC 500s","rootCause":""}"#,
             "\n",
             r#"{"record":"infra","status":"do"#
         );
-        let rec = infra_record_from_lines(lines);
+        let rec = infra_record_from_lines(truncated);
         assert!(rec.down);
         assert_eq!(rec.reason, "flare fork RPC 500s");
     }
@@ -22463,6 +22487,17 @@ mod infra_down_tests {
         assert!(rec.down);
         assert_eq!(rec.reason, "flare fork RPC quota -32001", "trimmed");
         assert_eq!(rec.root_cause, "o/r#289");
+
+        // A second call APPENDS. "the last infra line wins" is only meaningful if the earlier ones
+        // are still there — a writer that truncated would make the reader's ordering rule vacuous
+        // and would erase a first finding the moment a better-informed second one arrived.
+        assert_eq!(infra_down_to(&p, "and now cachix too", ""), 12);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap().lines().count(),
+            2,
+            "the record is append-only"
+        );
+        assert_eq!(infra_record_at(Some(&p)).reason, "and now cachix too");
     }
 
     /// A record whose parent directory does not exist yet must still be written — the metrics dir
