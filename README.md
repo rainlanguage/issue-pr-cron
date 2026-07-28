@@ -453,6 +453,37 @@ and evidence that answers a narrower question than the issue asked.
 | `campaign-mcp.json`      | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                         |
 | `cron.env.example`       | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                     |
 | `pr-review-report.sh`    | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / relink / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
+| `hooks/`                 | PreToolUse hooks — the guards that cannot live in a prompt or a deny-list. See [Hooks](#hooks-guards-a-prompt-cannot-hold).                                                                                                                                                                                      |
+
+## Hooks — guards a prompt cannot hold
+
+A prompt is advice and a permission deny-list is prefix-matched, so some
+invariants can only be held by a PreToolUse hook, which sees the actual tool
+call. Three live in `hooks/`:
+
+| Hook                       | Holds                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `block-nix-wrap-gh.sh`     | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                  |
+| `block-cron-git-bypass.sh` | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                  |
+| `require-qa-block.sh`      | QA-GUIDE.md section 8 — a `gh pr create` whose body has no `## QA` section, or names fewer than all four evidence lines, is refused with what's missing |
+
+They are **not installed by the flake**: copy them to the box's claude hooks dir
+and add each as a PreToolUse `Bash` hook in the user `settings.json`. Each
+carries its own `DEPLOY:` note.
+
+The first two return early unless `RAINIX_CRON_HOOK=1` (the cron runners export
+it), so interactive sessions are untouched. `require-qa-block.sh` deliberately
+does not: the producer cron was the population already honouring section 8 —
+every PR body in `runs/` carries the block — and the five PRs the vetter
+rejected for a missing block (#83) were opened while that cron was `DISABLED`,
+by interactive sessions under the same bot account. A guard scoped to the cron
+would have covered everything except the thing that failed, and for the same
+reason this cannot be an MCP tool: a tool surface binds only a session launched
+with it, while a hook binds every session on the box.
+
+Its behaviour is covered by `pr-review-report-rs/tests/require_qa_block.rs` — a
+content invariant on a command line is all parsing, and parsing is not something
+a static read of the script can judge.
 
 ## Configuration
 

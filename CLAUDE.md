@@ -27,6 +27,17 @@ framing is what keeps it debuggable and honest:
 North star for any change here: if you're about to instruct a prompt to call
 `gh`, stop and add (or extend) a tool subcommand instead.
 
+**Where a subcommand cannot reach, a PreToolUse hook can.** A tool surface binds
+only a session that was launched with it, so it holds nothing for a session
+opened outside the cron — and the loose `gh pr create` transition is reachable
+from every session on the box. `hooks/` is where those guards live: the
+deny-list bypasses (`block-nix-wrap-gh.sh`, `block-cron-git-bypass.sh`) and the
+QA-GUIDE section-8 gate on `gh pr create` (`require-qa-block.sh`, #83). A hook
+is not an excuse to leave a transition loose — it is what holds the invariant
+while it still is, and it is tested like a subcommand
+(`tests/require_qa_block.rs`), not asserted in prose. See
+[README.md](README.md#hooks--guards-a-prompt-cannot-hold).
+
 ## Transitions (subcommands)
 
 The state diagram lives in [README.md](README.md#pipeline-state-machine). The
