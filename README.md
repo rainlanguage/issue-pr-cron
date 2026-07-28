@@ -25,8 +25,8 @@ stateDiagram-v2
     state "ai:design" as design
     state "ai:close-candidate (PR)" as close
     state "ai:blocked-deploy" as bdeploy
-    state "ai:blocked-infra" as binfra
     state "ai:blocked-on" as bon
+    state "skipped · no state written" as skipped
     state "human:reject" as hreject
     state "human:design" as hdesign
     state "human:close-candidate" as hclose
@@ -71,11 +71,14 @@ stateDiagram-v2
     %% producer deploy + blocked hand-offs → human resolves → re-work
     ready --> ready : producer deploy · red prod-pin → green
     ready --> bdeploy : flag-blocked-deploy · deploy FAILED
-    unvetted --> binfra : flag-blocked-infra · infra/tooling gap OR can't classify
-    unvetted --> bon : flag-blocked-on · waiting on a dependency PR
+    unvetted --> bon : flag-blocked-on · waiting on a NAMED dependency PR
+    unvetted --> design : flag-design · anything a human must answer or supply
     bdeploy --> unvetted : human resolves deploy → re-work
-    binfra --> unvetted : human clears infra / models a new state → re-work
     bon --> unvetted : dependency merges → producer re-works
+
+    %% infrastructure down is NOT a state — skip-work records it, the PR is untouched (#108)
+    unvetted --> skipped : infra-gate says the repo cannot be verified
+    skipped --> unvetted : next run · the gate re-derives and the outage is gone
 
     %% human decisions are sacred — the vetter never re-verdicts these
     ready --> hreject : human-rule reject + Rework note
@@ -436,8 +439,8 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   verdict).
 - **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:relink`, `ai:design`,
   `ai:close-candidate`.
-- **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-infra`,
-  `ai:blocked-on`.
+- **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-on`, and the RETIRED
+  `ai:blocked-infra` for as long as any PR still carries it (#108).
 - **human-decisions** — `human:reject`, `human:design`, `human:close-candidate`.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
@@ -472,15 +475,47 @@ groups PRs.
 
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
-`blocked-deploy`, `blocked-infra`, or `blocked-on`. Those five plus `ready` (the
-merge queue) are the **human-gated states** — the daily review queue, a plain
-label search, no prose scraping. `blocked-infra` is the **total-function
-fallback**: any situation the producer cannot classify into a state lands there
-with a free-text reason, so it can never act _outside_ the machine. Reviewing
-the `blocked-infra` queue is exactly where a human decides what needs to change
-to move each item back into a well-defined state — fix the infra, model a new
-state, or forbid the behavior; a recurring `blocked-infra` reason is the
-evidence to promote it to a first-class state.
+`blocked-deploy`, or `blocked-on`. Those four plus `ready` (the merge queue) are
+the **human-gated states** — the daily review queue, a plain label search, no
+prose scraping. `design` is the **total-function fallback**: a situation the
+producer cannot classify is, by definition, one a human has to look at, and
+`design` already means exactly that.
+
+### Infrastructure down is not a state (#108)
+
+`ai:blocked-infra` used to be the fourth blocked state and the total-function
+fallback. It is **retired**. The prompt made the label a cross-run marker —
+_"skip a PR already in that state"_ — so a PR that met a ten-minute outage was
+parked until a human removed the label by hand. Thirteen ordinary PRs sat there
+(a `pi` constant word, a staleness-overflow fix, a README setup fix); none of
+them were infra problems. **Infrastructure being down is a property of the
+moment, not of a PR**, and durable PR state is the wrong encoding for it — one
+write per victim on the way in, one human deletion per victim on the way out.
+
+What replaces it:
+
+| Piece | What it does |
+| --- | --- |
+| `infra-gate [--json]` | Before work starts: which checks cannot currently verify anything, and which repos that blocks. Derived from the fleet's OWN live check state — a check failing on 2+ distinct heads that has not succeeded since, inside a 6 h evidence window (`INFRA_EVIDENCE_HOURS`). Exit **12** = every candidate repo is blocked. |
+| `skip-work <owner/repo> [--pr N\|--issue N] --check C --reason "…"` | Records that an item was not attempted. Writes to the run record and to **nothing else** — no label, no comment, no GitHub call. |
+| `run-skips [<record>]` | The runner's read-back: the gate verdict + the run's skips. Exit **12** on `nothing-verifiable`, which is how `campaign-run.sh` ends a run on something the model learned **mid-flight** (every other exit in that script is pre-model). |
+| `skip-report [--runs metrics/runs.jsonl]` | What keeps being skipped, per target, across runs — the walk from "this is skipped every run" back to the PR. |
+| `retire-blocked-infra [--dry-run]` | One-shot: strips the retired label from every open PR still carrying it. |
+
+The skips land on the `runs.jsonl` line as `infraSkips` / `infraOutages` /
+`infraGate`, beside #91's `unreadableFiles` / `commandsNotFound` /
+`missingTools`, and make the run's `outcome` **`infra-skipped`** rather than
+`ok`. That is the whole argument for the swap: **errors accumulate, labels do
+not.** One skip is noise; the same skip across twenty runs is a signal, and
+`skip-report` names the PR without anyone auditing labels to find it. A
+transient outage costs one run's skip and nothing else.
+
+Two things stay as they were. A red that **one PR can green** is still that PR's
+work (the 3b rules are untouched) — the gate needs two distinct failing heads
+precisely so a single PR's red is never mistaken for an outage. And anything
+genuinely permanent that needs a **person** — a secret that exists nowhere, a
+harness that cannot render a stack — is a question for the human, so it goes to
+`flag-design`, not to a skip that would silently retry forever.
 
 The three crons are **staggered by 2 h** so work flows downstream within each
 4-hour cycle (all times UTC):

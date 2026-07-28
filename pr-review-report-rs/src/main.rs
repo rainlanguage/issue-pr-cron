@@ -1192,6 +1192,7 @@ fn run_metrics_mode(
     id: &RunIdentity,
     exit_code: Option<i32>,
     preflight_missing: &[String],
+    skips: Option<&str>,
 ) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -1202,7 +1203,9 @@ fn run_metrics_mode(
     };
     let m = run_metrics(&content);
     let tooling = trace_tooling_report(&content);
-    let outcome = exit_code.map(|rc| (rc, classify_outcome(&content, rc, preflight_missing)));
+    let infra = infra_record_at(skips);
+    let outcome =
+        exit_code.map(|rc| (rc, classify_outcome(&content, rc, preflight_missing, &infra)));
     println!(
         "{}",
         serde_json::to_string(&final_record(
@@ -1211,7 +1214,8 @@ fn run_metrics_mode(
             id,
             outcome,
             &tooling,
-            preflight_missing
+            preflight_missing,
+            &infra
         ))
         .unwrap()
     );
@@ -1229,6 +1233,7 @@ fn final_record(
     outcome: Option<(i32, TraceOutcome)>,
     tooling: &ToolingReport,
     preflight_missing: &[String],
+    infra: &InfraRecord,
 ) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
@@ -1254,6 +1259,14 @@ fn final_record(
         "unreadableFiles": tooling.unreadable,
         "commandsNotFound": tooling.command_not_found,
         "missingTools": preflight_missing,
+        // #108. Work the run declined because the infrastructure that verifies it was unavailable.
+        // These are the ONLY trace of such a decision — nothing is written to GitHub — so they are
+        // always present, one entry per skipped item, and `skip-report` rolls them up per target
+        // across runs. `infraOutages` is the finding recorded ONCE (not once per victim);
+        // `infraGate` is the last gate verdict, `nothing-verifiable` meaning the run ended here.
+        "infraSkips": infra.skips,
+        "infraOutages": infra.outages,
+        "infraGate": infra.verdict,
     });
     stamp_identity(&mut doc, id);
     if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
@@ -2129,6 +2142,11 @@ enum TraceOutcome {
     /// and `reject` from the run that could.
     ToolingFailure,
     Error,
+    /// The run declined work because the infrastructure that verifies it was down (#108). NOT `ok`:
+    /// a run that skipped is a run that did less than it was asked to, and the whole point of
+    /// replacing `ai:blocked-infra` with a skip is that skips must ACCUMULATE somewhere countable.
+    /// One is noise; the same one across twenty runs is the signal a human acts on.
+    InfraSkipped,
 }
 
 impl TraceOutcome {
@@ -2140,6 +2158,7 @@ impl TraceOutcome {
             TraceOutcome::QuotaLimited => "session-limit",
             TraceOutcome::ToolingFailure => "tooling-failure",
             TraceOutcome::Error => "error",
+            TraceOutcome::InfraSkipped => "infra-skipped",
         }
     }
 }
@@ -2212,11 +2231,28 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
 /// A preflight failure has no trace to classify — the model never ran — so the fact arrives as the
 /// list of binaries that would not resolve. It outranks everything else: a run that was stopped
 /// before it started is neither quota-limited nor merely errored.
-fn classify_outcome(trace: &str, exit_code: i32, preflight_missing: &[String]) -> TraceOutcome {
+///
+/// Infra skips (#108) are folded in LAST and only over an otherwise-`ok` run. Ordering matters and
+/// is deliberate: a run that also died, was quota-refused, or was blind to its evidence has a WORSE
+/// story than "it declined some work", and the headline word must be the worst of them. The skips
+/// themselves are on the record either way — `infraSkips` is what a human counts, the word is only
+/// what the dashboard shows first.
+fn classify_outcome(
+    trace: &str,
+    exit_code: i32,
+    preflight_missing: &[String],
+    infra: &InfraRecord,
+) -> TraceOutcome {
     if !preflight_missing.is_empty() {
         return TraceOutcome::ToolingFailure;
     }
-    classify_trace(trace, exit_code)
+    let base = classify_trace(trace, exit_code);
+    if base == TraceOutcome::Ok
+        && (!infra.skips.is_empty() || infra.verdict == GateVerdict::NothingVerifiable.as_str())
+    {
+        return TraceOutcome::InfraSkipped;
+    }
+    base
 }
 
 /// `trace-outcome <trace> --exit-code <n>`: print the typed outcome word and exit 0.
@@ -3760,7 +3796,6 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
 fn state_noun(label: &str) -> &'static str {
     match label {
         "ai:blocked-deploy" => "Blocked-deploy",
-        "ai:blocked-infra" => "Blocked-infra",
         "ai:blocked-on" => "Blocked-on",
         "ai:design" => "Design-question",
         _ => "State",
@@ -3769,12 +3804,21 @@ fn state_noun(label: &str) -> &'static str {
 
 /// The producer's human-gated state labels — the states a hand-off can land in. `ai:ready` is the
 /// vetter's; the producer transitions to these via [`flag_state_mode`], never a bare prose note.
-const PRODUCER_STATE_LABELS: [&str; 4] = [
-    "ai:design",
-    "ai:blocked-deploy",
-    "ai:blocked-infra",
-    "ai:blocked-on",
-];
+///
+/// `ai:blocked-infra` was the fourth and is RETIRED (#108) — see [`RETIRED_STATE_LABEL`].
+const PRODUCER_STATE_LABELS: [&str; 3] =
+    ["ai:design", "ai:blocked-deploy", "ai:blocked-on"];
+
+/// RETIRED (#108). Never written again, and never PARKS a PR — [`next_action`] deliberately does not
+/// consult this, so a PR a pre-#108 run labelled re-enters the ordinary red/green lifecycle the next
+/// time the producer looks at it, with no human intervention.
+///
+/// It is still RECOGNISED by [`classify_lane`] so the thirteen PRs already carrying it stay visible
+/// in `human-queue` instead of silently reclassifying as un-vetted, and `retire-blocked-infra`
+/// strips it for good. (`labels_to_remove` also clears it as a side effect of any later transition,
+/// since that strips every `ai:*` but the target — but a PR nothing transitions would keep it
+/// forever, which is exactly the trap #108 is about.)
+const RETIRED_STATE_LABEL: &str = "ai:blocked-infra";
 
 /// Pure plan for a producer state-transition ([`flag_state_mode`]). Mirrors [`verdict_plan`]'s guard —
 /// a `human:*` label OR a native GitHub review is sacred (refuse) — then the label move (strip every
@@ -3827,6 +3871,21 @@ fn flag_state_mode(slug: &str, pr: &str, target: &str, reason: &str, dry_run: bo
             "usage: pr-review-report flag-<state> <owner/repo> <pr> \"<reason>\" [--dry-run]"
         );
         return 2;
+    }
+    // `blocked-on` means THIS PR waits on THAT PR. With `blocked-infra` retired (#108) this is the
+    // nearest surviving state an environmental red could be misfiled into, and the run that
+    // motivated #108 did exactly that seven times over for one dead RPC endpoint. A dependency the
+    // reason cannot name is not a dependency.
+    if target == "ai:blocked-on" && blocked_on_target(reason).is_none() {
+        eprintln!(
+            "refusing: `blocked-on` is a relation between two PRs, and this reason names no PR to \
+             wait on (expected `owner/repo#N`, `#N`, or a pull URL).\n  reason: {reason}\n  \
+             If the blocker is INFRASTRUCTURE — a dead RPC, a failing provider, a CI outage — that \
+             is a property of the moment, not of this PR: SKIP the work and record it with \
+             `pr-review-report skip-work` (#108), leaving no state behind to unpick.\n  If it needs \
+             a human decision, that is `flag-design`."
+        );
+        return 4;
     }
     let Some(pr_json) = gh_json(&[
         "pr",
@@ -4828,6 +4887,12 @@ fn classify_lane(
         if b != "ai:design" && has(b) {
             return (Lane::ProducerBlocked, b.to_string());
         }
+    }
+    // The retired state (#108) is still bucketed so a PR a pre-#108 run parked stays VISIBLE in the
+    // queue until `retire-blocked-infra` clears it — dropping it here would make thirteen PRs
+    // reappear as `un-vetted` and hide the very thing that needs unpicking.
+    if has(RETIRED_STATE_LABEL) {
+        return (Lane::ProducerBlocked, RETIRED_STATE_LABEL.to_string());
     }
     if has("ai:ready") {
         return if ready_vetted_at_head == Some(false) {
@@ -9980,6 +10045,10 @@ enum Cmd {
         /// `tooling-failure` on this fact alone.
         #[arg(long, value_delimiter = ',')]
         preflight_missing: Vec<String>,
+        /// The run's skip record (`$RUN_SKIPS_FILE`). Its skips are folded onto the metrics line as
+        /// `infraSkips` and make the outcome `infra-skipped` rather than `ok` (#108).
+        #[arg(long)]
+        skips: Option<String>,
     },
     /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
     ///
@@ -10069,6 +10138,52 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Is the infrastructure that VERIFIES each candidate repo available? Answered from the fleet's
+    /// own live check state, before any work is picked up. Exit 12 = nothing is verifiable (#108).
+    InfraGate {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record that a unit of work was SKIPPED because its verifying infrastructure is down.
+    /// Writes to the run record only — no label, no comment, nothing to unpick later (#108).
+    SkipWork {
+        /// owner/repo
+        slug: String,
+        /// The PR that was skipped.
+        #[arg(long)]
+        pr: Option<u64>,
+        /// The issue that was skipped (a PR would have been opened for it).
+        #[arg(long)]
+        issue: Option<u64>,
+        /// The check whose infrastructure was unavailable.
+        #[arg(long, default_value = "")]
+        check: String,
+        /// Why (trailing words are joined).
+        #[arg(long, num_args = 1.., value_delimiter = ' ')]
+        reason: Vec<String>,
+    },
+    /// This run's gate verdict + recorded skips. Exit 12 when the gate excluded everything, which
+    /// is how the RUNNER learns the model ended its own run on something it learned mid-flight.
+    RunSkips {
+        /// Run record path; defaults to $RUN_SKIPS_FILE.
+        record: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// What keeps being skipped, rolled up per target across runs — the walk from "this is skipped
+    /// every run" back to the PR. Errors accumulate; labels do not.
+    SkipReport {
+        /// The metrics file to read.
+        #[arg(long, default_value = "metrics/runs.jsonl")]
+        runs: String,
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+    },
+    /// One-shot: strip the RETIRED `ai:blocked-infra` label from every open PR still carrying it.
+    RetireBlockedInfra {
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Producer transition: flag a PR into ai:blocked-deploy (a deploy the producer can't complete).
     FlagBlockedDeploy {
         /// owner/repo
@@ -10079,16 +10194,8 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Producer transition: flag a PR into ai:blocked-infra (infra/tooling gap OR can't-classify).
-    FlagBlockedInfra {
-        /// owner/repo
-        slug: String,
-        pr: String,
-        reason: Vec<String>,
-        #[arg(long)]
-        dry_run: bool,
-    },
     /// Producer transition: flag a PR into ai:blocked-on (waiting on a dependency PR).
+    /// The reason MUST name that PR — an environmental blocker is a `skip-work`, not a state (#108).
     FlagBlockedOn {
         /// owner/repo
         slug: String,
@@ -10696,7 +10803,14 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
     })
 }
 
-fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
+/// The producer's whole open fleet as `(repo, number, detail)`, read through the same cache
+/// `worklist` uses. `None` on a search failure — a falsely-empty fleet would make `worklist` report
+/// no work and `infra-gate` report no outage, and both are worse than aborting.
+///
+/// Extracted so `infra-gate` reads the fleet through ONE implementation with `worklist`: two loaders
+/// could disagree about which PRs exist or how fresh their checks are, and the gate's job is to
+/// decide whether the very rows `worklist` is about to hand out can be verified at all.
+fn fleet_details(use_cache: bool) -> Option<Vec<(String, u64, Value)>> {
     let assignee = pr_assignee();
     let mut search: Vec<String> = vec!["search".into(), "prs".into()];
     search.extend(org_owner_args());
@@ -10717,7 +10831,7 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
     let sref: Vec<&str> = search.iter().map(String::as_str).collect();
     let Some(val) = gh_json(&sref) else {
         eprintln!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty worklist");
-        return 1;
+        return None;
     };
     let empty = Vec::new();
     let arr = val.as_array().unwrap_or(&empty);
@@ -10733,7 +10847,7 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10800); // 3h
     let mut live_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut rows: Vec<Value> = Vec::new();
+    let mut fleet: Vec<(String, u64, Value)> = Vec::new();
 
     for p in arr {
         let (Some(num), Some(repo)) = (
@@ -10756,7 +10870,7 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
                 let rf = row.get("fetched_at").and_then(|v| v.as_i64()).unwrap_or(0);
                 if cache_fresh(ru, rci, rf, cur_updated, now, ttl) {
                     if let Some(d) = row.get("detail") {
-                        rows.push(worklist_row(repo, d));
+                        fleet.push((repo.to_string(), num, d.clone()));
                         continue;
                     }
                 }
@@ -10772,10 +10886,10 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
         if use_cache {
             cache.insert(
                 key,
-                serde_json::json!({ "updated_at": cur_updated, "ci": ci, "fetched_at": now, "detail": detail }),
+                serde_json::json!({ "updated_at": cur_updated, "ci": ci, "fetched_at": now, "detail": detail.clone() }),
             );
         }
-        rows.push(worklist_row(repo, &detail));
+        fleet.push((repo.to_string(), num, detail));
     }
 
     if use_cache {
@@ -10787,6 +10901,18 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
         });
         save_cache(&cache);
     }
+    Some(fleet)
+}
+
+fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
+    let assignee = pr_assignee();
+    let Some(fleet) = fleet_details(use_cache) else {
+        return 1;
+    };
+    let mut rows: Vec<Value> = fleet
+        .iter()
+        .map(|(repo, _, detail)| worklist_row(repo, detail))
+        .collect();
 
     // sort: actionable first (by NextAction rank), then oldest updated first
     rows.sort_by(|a, b| {
@@ -10964,6 +11090,813 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     0
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// Infrastructure availability (#108) — a SKIP, never a state.
+//
+// `ai:blocked-infra` used to be an FSM destination, and it was a trap. The prompt made the label a
+// cross-run marker ("skip a PR already in that state"), so a PR that met a ten-minute outage was
+// parked until a human removed the label by hand. Thirteen ordinary PRs sat there — a `pi` constant
+// word, a staleness-overflow fix, a README setup fix — none of them infra problems. It was also the
+// declared total-function fallback, so everything unclassifiable landed in that same permanent park.
+//
+// Infrastructure being down is a property of the MOMENT, not of a PR. Durable PR state is the wrong
+// encoding for it, and the churn is symmetric: one write per victim on the way in, one human
+// deletion per victim on the way out.
+//
+// Three mechanisms replace it:
+//
+//   GATE — [`infra_outages`] derives, from the FLEET's own live check state, which checks cannot
+//   currently verify anything and which repos therefore cannot be verified. The producer consults
+//   it BEFORE picking work up, so no PR is opened into a repo whose CI cannot pass. The evidence is
+//   the ALREADY-OPEN PRs' check runs, so learning this costs no new PR — which is what makes the
+//   answer up-front rather than after-the-fact.
+//
+//   SKIP RECORD — every skipped item is appended to the run's record as an ERROR and folded onto
+//   the `runs.jsonl` line by `run-metrics`, exactly where #91 put `unreadableFiles` /
+//   `commandsNotFound` / `missingTools`. Nothing is written to GitHub. The asymmetry is deliberate:
+//   per-victim GITHUB STATE is the pathology (it must be unpicked when the provider recovers);
+//   per-victim LOG LINES are the point, because a skip is only chaseable if it is countable PER
+//   TARGET. Errors accumulate, labels do not — one skip is noise, the same skip across twenty runs
+//   is a signal, and `skip-report` is the walk from that signal back to the PR.
+//
+//   DESIGN — something genuinely permanent that needs a person (a CI secret nobody has provisioned,
+//   a harness that cannot render a stack) is a QUESTION FOR THE HUMAN, and that is `flag-design`.
+//   It already exists and already means "the human must act". No new label is introduced here.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Epoch seconds → `YYYY-MM-DDTHH:MM:SSZ`.
+///
+/// The inverse of [`iso_to_epoch_ms`]'s civil-day maths (Howard Hinnant's `civil_from_days`), so a
+/// timestamp this binary WRITES round-trips through the reader it uses on GitHub's own. Written out
+/// rather than pulled in with a date crate: this binary's whole dependency set is three crates, and
+/// one format in one direction does not justify a fourth.
+fn epoch_to_iso(secs: i64) -> String {
+    let days = secs.div_euclid(86400);
+    let rem = secs.rem_euclid(86400);
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y,
+        m,
+        d,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+fn now_iso() -> String {
+    epoch_to_iso(now_unix())
+}
+
+/// One TERMINAL check-run observation lifted from a PR's `statusCheckRollup`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CheckObservation {
+    repo: String,
+    pr: u64,
+    check: String,
+    failed: bool,
+    /// Epoch seconds the run finished. `0` when the rollup carried no parseable timestamp; such an
+    /// observation is dropped before any inference, so an undated rollup can only fail toward
+    /// WORKING (a gate that skips viable work is worse than no gate at all).
+    at: i64,
+}
+
+/// Lift every SETTLED check run out of one PR's rollup. Pending runs are omitted — they are not yet
+/// evidence of anything — and the failure predicate is the same conclusion/state set
+/// [`classify_ci`] and [`failing_check_names`] use, so "red" cannot mean one thing to the gate and
+/// another to the worklist.
+fn check_observations(repo: &str, pr: u64, rollup: &Value) -> Vec<CheckObservation> {
+    let empty = Vec::new();
+    let mut out = Vec::new();
+    for it in rollup.as_array().unwrap_or(&empty) {
+        let concl = it.get("conclusion").and_then(|v| v.as_str());
+        let state = it.get("state").and_then(|v| v.as_str());
+        let status = it.get("status").and_then(|v| v.as_str());
+        let failed = matches!(
+            concl,
+            Some("FAILURE")
+                | Some("TIMED_OUT")
+                | Some("CANCELLED")
+                | Some("ACTION_REQUIRED")
+                | Some("STARTUP_FAILURE")
+        ) || matches!(state, Some("FAILURE") | Some("ERROR"));
+        // Settled = the check has a verdict. A CheckRun says so with `status: COMPLETED`; a legacy
+        // StatusContext has no `status` and says so with a terminal `state`.
+        let settled = if let Some(st) = status {
+            st == "COMPLETED"
+        } else {
+            matches!(state, Some("SUCCESS") | Some("FAILURE") | Some("ERROR"))
+        };
+        if !settled {
+            continue;
+        }
+        let Some(check) = it
+            .get("name")
+            .or_else(|| it.get("context"))
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        let at = ["completedAt", "startedAt", "createdAt"]
+            .iter()
+            .find_map(|k| it.get(*k).and_then(|v| v.as_str()))
+            .and_then(iso_to_epoch_ms)
+            .map(|ms| ms / 1000)
+            .unwrap_or(0);
+        out.push(CheckObservation {
+            repo: repo.to_string(),
+            pr,
+            check: check.to_string(),
+            failed,
+            at,
+        });
+    }
+    out
+}
+
+/// A check whose failures no single PR's code can explain — i.e. the infrastructure behind it is
+/// not currently able to verify anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Outage {
+    check: String,
+    /// The distinct heads (`owner/repo#n`) seen failing it inside the evidence window, sorted.
+    heads: Vec<String>,
+    /// Repos whose MOST RECENT settled observation of this check is a fresh failure, sorted. These
+    /// are the repos the gate blocks — per repo AND per suite, which is why a fork-RPC outage stops
+    /// `rain.flare` and leaves a unit-test-only repo alone.
+    repos: Vec<String>,
+    /// Epoch seconds of the newest failure, so a human can see how old the finding is.
+    latest_failure: i64,
+}
+
+impl Outage {
+    fn to_json(&self) -> Value {
+        serde_json::json!({
+            "check": self.check,
+            "heads": self.heads,
+            "repos": self.repos,
+            "latestFailure": self.latest_failure,
+        })
+    }
+}
+
+/// Distinct heads a check must be failing on before its failures are called environmental.
+///
+/// TWO, not "org-wide". Scale is not the test — the question is whether any ONE PR's code could
+/// explain the failures, and two independent heads already answer no. Those heads may be two PRs in
+/// the SAME repo, so a single repo whose fork RPC is dead is detected exactly like fifty. The floor
+/// is what keeps the existing 3b rule intact in the other direction: one PR failing one check is
+/// that PR's own work, not an outage.
+const INFRA_MIN_HEADS: usize = 2;
+
+/// How long a settled check run stays admissible as evidence, in seconds. Just over one cron
+/// interval (4 h), so each run can see the previous run's pushes and nothing older.
+///
+/// This IS the freshness rule, and it is the whole of it: the gate keeps NO memory. It is recomputed
+/// from live check state on every call, never read back from a store, so an outage that clears in
+/// ten minutes clears the gate as soon as anything succeeds — and expires by itself within the
+/// window even if nothing re-runs at all. Overridable with `INFRA_EVIDENCE_HOURS`.
+const INFRA_EVIDENCE_SECS: i64 = 6 * 3600;
+
+fn infra_evidence_secs() -> i64 {
+    std::env::var("INFRA_EVIDENCE_HOURS")
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|h| *h > 0)
+        .map(|h| h * 3600)
+        .unwrap_or(INFRA_EVIDENCE_SECS)
+}
+
+/// PURE: which checks are currently unable to verify anything, and which repos that blocks.
+///
+/// A check is DOWN when all of the following hold, and it is deliberately hard to satisfy — the
+/// failure mode this must not have is silently skipping viable work:
+///
+///   1. its newest failure is INSIDE the evidence window (stale evidence is not evidence);
+///   2. it has NOT succeeded anywhere since that failure (a single success is proof of recovery and
+///      needs no extra API call — the fleet already carries it);
+///   3. it is failing on at least `min_heads` DISTINCT heads, so no one PR's code explains it.
+///
+/// Undated observations are dropped first: without a timestamp neither (1) nor (2) can be decided,
+/// and guessing would mean blocking work on an unfalsifiable claim.
+fn infra_outages(
+    obs: &[CheckObservation],
+    now: i64,
+    window: i64,
+    min_heads: usize,
+) -> Vec<Outage> {
+    let cutoff = now - window;
+    let mut by_check: std::collections::BTreeMap<&str, Vec<&CheckObservation>> =
+        std::collections::BTreeMap::new();
+    for o in obs.iter().filter(|o| o.at > 0) {
+        by_check.entry(o.check.as_str()).or_default().push(o);
+    }
+    let mut out = Vec::new();
+    for (check, items) in by_check {
+        let Some(latest_failure) = items.iter().filter(|o| o.failed).map(|o| o.at).max() else {
+            continue; // never failed
+        };
+        if latest_failure < cutoff {
+            continue; // (1) the evidence expired
+        }
+        let latest_ok = items
+            .iter()
+            .filter(|o| !o.failed)
+            .map(|o| o.at)
+            .max()
+            .unwrap_or(i64::MIN);
+        if latest_ok > latest_failure {
+            continue; // (2) it has verified something since — the infra is back
+        }
+        let heads: std::collections::BTreeSet<String> = items
+            .iter()
+            .filter(|o| o.failed && o.at >= cutoff)
+            .map(|o| format!("{}#{}", o.repo, o.pr))
+            .collect();
+        if heads.len() < min_heads {
+            continue; // (3) one head's failures are that head's own work
+        }
+        // A repo is blocked only if ITS most recent word on this check is a fresh failure — a repo
+        // that has since gone green on it is verifiable and must not be skipped.
+        let mut latest_per_repo: std::collections::BTreeMap<&str, (i64, bool)> =
+            std::collections::BTreeMap::new();
+        for o in &items {
+            let e = latest_per_repo
+                .entry(o.repo.as_str())
+                .or_insert((o.at, o.failed));
+            if o.at > e.0 {
+                *e = (o.at, o.failed);
+            }
+        }
+        let repos: Vec<String> = latest_per_repo
+            .into_iter()
+            .filter(|(_, (at, failed))| *failed && *at >= cutoff)
+            .map(|(r, _)| r.to_string())
+            .collect();
+        out.push(Outage {
+            check: check.to_string(),
+            heads: heads.into_iter().collect(),
+            repos,
+            latest_failure,
+        });
+    }
+    out
+}
+
+/// PURE: the repos no outage lets the producer verify.
+fn blocked_repos(outages: &[Outage]) -> std::collections::BTreeSet<String> {
+    outages
+        .iter()
+        .flat_map(|o| o.repos.iter().cloned())
+        .collect()
+}
+
+/// What the gate says about the run as a whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GateVerdict {
+    /// Some candidate repo is verifiable — work it.
+    Proceed,
+    /// There was work, and EVERY repo it lives in is unverifiable. This is the degenerate case of
+    /// the same rule, not a separate one: the run ends because the gate excluded everything.
+    NothingVerifiable,
+    /// No candidate work at all. A quiet run, not a blocked one — never an early exit.
+    NoWork,
+}
+
+impl GateVerdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            GateVerdict::Proceed => "proceed",
+            GateVerdict::NothingVerifiable => "nothing-verifiable",
+            GateVerdict::NoWork => "no-work",
+        }
+    }
+}
+
+/// The exit code `infra-gate` (and `run-skips`) uses for "everything is blocked". Shares
+/// [`CLOSURE_UNSATISFIED`]'s value on purpose: both mean the same operational thing — the run cannot
+/// usefully proceed, nothing is wrong with the code, retry on the next tick.
+const GATE_NOTHING_VERIFIABLE: i32 = 12;
+
+/// PURE: the run-level verdict from the candidate repos and the blocked set.
+fn gate_verdict(
+    candidates: &std::collections::BTreeSet<String>,
+    blocked: &std::collections::BTreeSet<String>,
+) -> GateVerdict {
+    if candidates.is_empty() {
+        return GateVerdict::NoWork;
+    }
+    if candidates.iter().all(|r| blocked.contains(r)) {
+        GateVerdict::NothingVerifiable
+    } else {
+        GateVerdict::Proceed
+    }
+}
+
+/// A `nextAction` that means the producer would TOUCH the repo this run — i.e. work whose
+/// verification the gate is answerable for. `green-ready` (present it to a human), `wait` (CI still
+/// running) and `parked-skip` (already human-gated) need no infrastructure, so they are not
+/// candidates and can never make a run "nothing-verifiable" on their own.
+fn action_needs_verification(action: &str) -> bool {
+    matches!(
+        action,
+        "deploy" | "needs-3b" | "conflict-3d" | "coderabbit-3e" | "screenshot-3c"
+    )
+}
+
+// ---------------------------------------------------------------------------------------------
+// The run record: where a skip goes instead of onto a PR.
+// ---------------------------------------------------------------------------------------------
+
+/// The run-scoped JSONL the gate and the skips append to.
+///
+/// `RUN_SKIPS_FILE` is exported by the runner and carries the run id, so a record from one run can
+/// never be read as another's — the staleness bug a fixed path would have. Outside a run it falls
+/// back to the install dir, which is what makes the subcommands usable by hand.
+fn run_record_path() -> String {
+    if let Ok(p) = std::env::var("RUN_SKIPS_FILE") {
+        if !p.trim().is_empty() {
+            return p;
+        }
+    }
+    match std::env::var("INSTALL_DIR") {
+        Ok(d) if !d.trim().is_empty() => format!("{d}/metrics/run-skips.jsonl"),
+        _ => "run-skips.jsonl".to_string(),
+    }
+}
+
+fn append_run_record(path: &str, doc: &Value) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(f, "{}", serde_json::to_string(doc)?)
+}
+
+/// PURE: one skip record. `unit` is `pr` or `issue`; `target` is `owner/repo#n` (or `owner/repo`
+/// when a whole repo is skipped). `check` is the check whose infrastructure was unavailable, and it
+/// is what makes two skips of the same target comparable across runs.
+fn skip_record(unit: &str, target: &str, check: &str, reason: &str, ts: &str) -> Value {
+    serde_json::json!({
+        "record": "skip",
+        "unit": unit,
+        "target": target,
+        "check": check,
+        "reason": reason,
+        "ts": ts,
+    })
+}
+
+fn gate_record(verdict: GateVerdict, outages: &[Outage], blocked: &[String], ts: &str) -> Value {
+    serde_json::json!({
+        "record": "gate",
+        "verdict": verdict.as_str(),
+        "outages": outages.iter().map(Outage::to_json).collect::<Vec<_>>(),
+        "blockedRepos": blocked,
+        "ts": ts,
+    })
+}
+
+/// What `run-metrics` folds onto the run's `runs.jsonl` line. Every field is always present, so the
+/// dashboard can tell "no skips this run" from "this record predates the fields" — the same
+/// guarantee #91 gave `unreadableFiles`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct InfraRecord {
+    skips: Vec<Value>,
+    outages: Vec<Value>,
+    /// The LAST gate verdict of the run, or `""` when the gate never ran.
+    verdict: String,
+}
+
+/// PURE: read a run record file's contents. Unparseable lines are skipped rather than fatal — this
+/// is a report, and a truncated final line (a killed run) must not lose the records before it.
+fn infra_record_from_lines(content: &str) -> InfraRecord {
+    let mut rec = InfraRecord::default();
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match v.get("record").and_then(|r| r.as_str()) {
+            Some("skip") => rec.skips.push(v),
+            Some("gate") => {
+                rec.verdict = v
+                    .get("verdict")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                rec.outages = v
+                    .get("outages")
+                    .and_then(|o| o.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+            }
+            _ => {}
+        }
+    }
+    rec
+}
+
+fn infra_record_at(path: Option<&str>) -> InfraRecord {
+    match path {
+        Some(p) => infra_record_from_lines(&std::fs::read_to_string(p).unwrap_or_default()),
+        None => InfraRecord::default(),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Subcommand bodies.
+// ---------------------------------------------------------------------------------------------
+
+/// `skip-work <owner/repo> [--pr N | --issue N] --check <name> --reason "<why>"`.
+///
+/// Records that a unit of work was NOT attempted because the infrastructure that verifies it is
+/// unavailable. Writes to the run record and to NOTHING else — no label, no comment, no GitHub call
+/// at all. That is the entire point: the next run re-derives availability from scratch and picks the
+/// work up the moment the environment recovers.
+fn skip_work_mode(slug: &str, pr: Option<u64>, issue: Option<u64>, check: &str, reason: &str) -> i32 {
+    if reason.trim().is_empty() {
+        eprintln!(
+            "usage: pr-review-report skip-work <owner/repo> [--pr N | --issue N] --check <check> --reason \"<why>\""
+        );
+        return 2;
+    }
+    if pr.is_some() && issue.is_some() {
+        eprintln!("error: --pr and --issue are alternatives; a work item is one or the other");
+        return 2;
+    }
+    let (unit, target) = match (pr, issue) {
+        (Some(n), _) => ("pr", format!("{slug}#{n}")),
+        (_, Some(n)) => ("issue", format!("{slug}#{n}")),
+        _ => ("repo", slug.to_string()),
+    };
+    let doc = skip_record(unit, &target, check, reason, &now_iso());
+    let path = run_record_path();
+    if let Err(e) = append_run_record(&path, &doc) {
+        eprintln!("error: cannot append the skip record to {path}: {e}");
+        return 1;
+    }
+    println!("skip recorded: {target} — {check}: {reason}");
+    0
+}
+
+/// `run-skips [<record>]`: the run's own gate verdict and skip list, for the RUNNER.
+///
+/// Exit 12 when the last gate verdict was `nothing-verifiable` — this is the path #108 asked for and
+/// `campaign-run.sh` had no equivalent of: every other exit in that script is pre-model, so nothing
+/// the model LEARNED could ever end its run. Absence of a record is exit 0; a run that never called
+/// the gate is not a blocked run.
+fn run_skips_mode(path: Option<&str>, json_out: bool) -> i32 {
+    let p = path.map(String::from).unwrap_or_else(run_record_path);
+    let rec = infra_record_at(Some(&p));
+    if json_out {
+        println!(
+            "{}",
+            serde_json::json!({
+                "verdict": rec.verdict,
+                "skips": rec.skips,
+                "outages": rec.outages,
+            })
+        );
+    } else {
+        println!(
+            "run-skips: verdict={} skips={} outages={}",
+            if rec.verdict.is_empty() {
+                "none"
+            } else {
+                &rec.verdict
+            },
+            rec.skips.len(),
+            rec.outages.len()
+        );
+        for s in &rec.skips {
+            println!(
+                "  SKIP {} [{}] {}",
+                s.get("target").and_then(|v| v.as_str()).unwrap_or(""),
+                s.get("check").and_then(|v| v.as_str()).unwrap_or(""),
+                s.get("reason").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    if rec.verdict == GateVerdict::NothingVerifiable.as_str() {
+        return GATE_NOTHING_VERIFIABLE;
+    }
+    0
+}
+
+/// PURE: skips across many runs, rolled up per target. `(target, count, last_check, last_reason,
+/// last_ts)`, most-skipped first then alphabetical.
+///
+/// This is the walk the retired label was supposed to support and did badly. The label answered
+/// "which PRs are parked" and could only be read by auditing labels; this answers "what keeps
+/// getting skipped, how often, and which PR is it" from the run record alone — and unlike a label,
+/// it distinguishes a one-off from a standing problem, because errors accumulate.
+fn skip_rollup(runs_jsonl: &str) -> Vec<(String, usize, String, String, String)> {
+    let mut agg: std::collections::BTreeMap<String, (usize, String, String, String)> =
+        std::collections::BTreeMap::new();
+    for line in runs_jsonl.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(skips) = v.get("infraSkips").and_then(|s| s.as_array()) else {
+            continue;
+        };
+        for s in skips {
+            let Some(target) = s.get("target").and_then(|t| t.as_str()) else {
+                continue;
+            };
+            let e = agg
+                .entry(target.to_string())
+                .or_insert((0, String::new(), String::new(), String::new()));
+            e.0 += 1;
+            let ts = s.get("ts").and_then(|t| t.as_str()).unwrap_or("");
+            // Keep the NEWEST detail, so the line a human reads is the current reason rather than
+            // whichever run happened to be last in the file.
+            if ts >= e.3.as_str() {
+                e.1 = s
+                    .get("check")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                e.2 = s
+                    .get("reason")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                e.3 = ts.to_string();
+            }
+        }
+    }
+    let mut rows: Vec<(String, usize, String, String, String)> = agg
+        .into_iter()
+        .map(|(t, (n, c, r, ts))| (t, n, c, r, ts))
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    rows
+}
+
+/// `skip-report [--runs <runs.jsonl>] [--top N]`: what keeps being skipped, and where to look.
+fn skip_report_mode(runs: &str, top: usize) -> i32 {
+    let content = match std::fs::read_to_string(runs) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read {runs}: {e}");
+            return 2;
+        }
+    };
+    let rows = skip_rollup(&content);
+    if rows.is_empty() {
+        println!("no infra skips recorded in {runs}");
+        return 0;
+    }
+    println!("infra skips by target (most-skipped first), from {runs}\n");
+    for (target, n, check, reason, ts) in rows.iter().take(top) {
+        println!("  {n:>4}x  {target}  [{check}]  last {ts}");
+        if !reason.is_empty() {
+            println!("        {reason}");
+        }
+    }
+    0
+}
+
+/// PURE: the `(slug, number)` pairs a `gh search prs --label ai:blocked-infra` result names.
+fn retire_targets(search: &Value) -> Vec<(String, u64)> {
+    let empty = Vec::new();
+    search
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|p| {
+            let slug = p
+                .get("repository")
+                .and_then(|r| r.get("nameWithOwner"))
+                .and_then(|s| s.as_str())?;
+            let num = p.get("number").and_then(|n| n.as_u64())?;
+            Some((slug.to_string(), num))
+        })
+        .collect()
+}
+
+/// `retire-blocked-infra [--dry-run]`: strip the retired `ai:blocked-infra` label from every open PR
+/// still carrying it.
+///
+/// #108 item 5. The thirteen PRs already parked did not choose that state and cannot leave it
+/// unaided: nothing writes the label any more, and `next_action` no longer parks on it, but a label
+/// nothing writes is also a label nothing removes. This is the one-shot that clears them. It posts
+/// no comment — the PRs simply re-enter the normal red/green lifecycle on the next run, which is
+/// what should have happened when the outage cleared.
+fn retire_blocked_infra_mode(dry_run: bool) -> i32 {
+    let mut search: Vec<String> = vec!["search".into(), "prs".into()];
+    search.extend(org_owner_args());
+    search.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            RETIRED_STATE_LABEL,
+            "--limit",
+            "200",
+            "--json",
+            "number,repository,title,url",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&sref) else {
+        eprintln!("error: `gh search prs --label {RETIRED_STATE_LABEL}` failed — not editing on incomplete data");
+        return 1;
+    };
+    let targets = retire_targets(&val);
+    if targets.is_empty() {
+        println!("no open PR carries {RETIRED_STATE_LABEL}");
+        return 0;
+    }
+    println!(
+        "{} PR(s) carry the retired {RETIRED_STATE_LABEL} state:",
+        targets.len()
+    );
+    let mut failed = 0;
+    for (slug, num) in &targets {
+        if dry_run {
+            println!("  [dry-run] {slug}#{num} -> remove {RETIRED_STATE_LABEL}");
+            continue;
+        }
+        if gh_run(&[
+            "pr",
+            "edit",
+            &num.to_string(),
+            "-R",
+            slug,
+            "--remove-label",
+            RETIRED_STATE_LABEL,
+        ]) {
+            println!("  {slug}#{num} -> unparked");
+        } else {
+            eprintln!("  {slug}#{num} -> FAILED to remove {RETIRED_STATE_LABEL}");
+            failed += 1;
+        }
+    }
+    if failed > 0 {
+        return 1;
+    }
+    0
+}
+
+/// `infra-gate [--json]`: is the infrastructure that verifies each candidate repo available?
+///
+/// Answered from the fleet's OWN check state — the PRs the producer already has open. That choice is
+/// the one #108 flagged as needing an explicit decision, and it is deliberate: a per-repo
+/// infra-dependency map would have to be written by hand, would be wrong the first time a workflow
+/// changed, and a wrong map SILENTLY SKIPS VIABLE WORK. The fleet, by contrast, is evidence the org
+/// generates continuously and for free. Reading an already-open PR's red run to decide whether to
+/// open a DIFFERENT PR is not after-the-fact: no PR is created to learn it.
+///
+/// Exits 12 when every candidate repo is blocked, so the runner can end the run on something the
+/// model learned mid-flight.
+fn infra_gate_mode(json_out: bool) -> i32 {
+    let Some(fleet) = fleet_details(true) else {
+        return 1;
+    };
+    let now = now_unix();
+    let obs: Vec<CheckObservation> = fleet
+        .iter()
+        .flat_map(|(repo, num, detail)| {
+            check_observations(
+                repo,
+                *num,
+                detail.get("statusCheckRollup").unwrap_or(&Value::Null),
+            )
+        })
+        .collect();
+    let outages = infra_outages(&obs, now, infra_evidence_secs(), INFRA_MIN_HEADS);
+    let blocked = blocked_repos(&outages);
+
+    // Candidate repos: everywhere the producer would actually do verifiable work this run.
+    let mut candidates: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (repo, _, detail) in &fleet {
+        let row = worklist_row(repo, detail);
+        if action_needs_verification(row.get("nextAction").and_then(|a| a.as_str()).unwrap_or("")) {
+            candidates.insert(repo.clone());
+        }
+    }
+    // A coverage failure must never CONCLUDE "nothing verifiable" — the backlog it could not read
+    // may be entirely workable. Report the outages and let the run proceed.
+    let mut coverage_seen = true;
+    match coverage_uncovered() {
+        Some((open, meta)) => {
+            for k in &open {
+                if meta.get(k).map(is_producer_backlog).unwrap_or(false) {
+                    candidates.insert(k.0.clone());
+                }
+            }
+        }
+        None => {
+            eprintln!("warning: uncovered-issue backlog unreadable — reporting outages only, and NOT ending the run on a partial view");
+            coverage_seen = false;
+        }
+    }
+    let verdict = if coverage_seen {
+        gate_verdict(&candidates, &blocked)
+    } else {
+        GateVerdict::Proceed
+    };
+
+    let blocked_vec: Vec<String> = blocked.iter().cloned().collect();
+    let record = gate_record(verdict, &outages, &blocked_vec, &now_iso());
+    let path = run_record_path();
+    if let Err(e) = append_run_record(&path, &record) {
+        eprintln!("warning: cannot append the gate record to {path}: {e}");
+    }
+
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(&record).unwrap_or_default());
+    } else {
+        println!("infra-gate: {}", verdict.as_str());
+        if outages.is_empty() {
+            println!("  no check is currently unable to verify — every repo is workable");
+        }
+        for o in &outages {
+            println!(
+                "  DOWN {}  failing on {} heads  blocks: {}",
+                o.check,
+                o.heads.len(),
+                if o.repos.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    o.repos.join(", ")
+                }
+            );
+        }
+        println!(
+            "  candidates={} blocked={}",
+            candidates.len(),
+            blocked_vec.len()
+        );
+    }
+    if verdict == GateVerdict::NothingVerifiable {
+        return GATE_NOTHING_VERIFIABLE;
+    }
+    0
+}
+
+/// PURE: the dependency PR a `blocked-on` reason names — `owner/repo#N`, a bare `#N`, or a pull URL.
+///
+/// `blocked-on` is a RELATION BETWEEN TWO PRs. A reason that names no PR is not expressing that
+/// relation, and the run this rule comes from is the proof: an org-wide fork-RPC outage was written
+/// onto seven PRs as `flag-blocked-on`, one fact seven times, none of them naming anything to wait
+/// for. This cannot tell a PR reference from an ISSUE reference — nothing in the text can — and it
+/// does not try to. It rejects the case that actually occurs: a reason describing an ENVIRONMENT,
+/// which mentions no number at all.
+fn blocked_on_target(reason: &str) -> Option<String> {
+    for (i, b) in reason.bytes().enumerate() {
+        if b != b'#' {
+            continue;
+        }
+        let digits: String = reason[i + 1..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if digits.is_empty() {
+            continue;
+        }
+        let head = &reason[..i];
+        let start = head
+            .rfind(|c: char| c.is_whitespace() || c == '(' || c == '[' || c == ',')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let prefix = &head[start..];
+        let prefix = if prefix.contains('/') { prefix } else { "" };
+        return Some(format!("{prefix}#{digits}"));
+    }
+    // `https://github.com/owner/repo/pull/123` — the form with no `#` in it.
+    if let Some(p) = reason.find("/pull/") {
+        let digits: String = reason[p + "/pull/".len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if !digits.is_empty() {
+            return Some(format!("#{digits}"));
+        }
+    }
+    None
+}
+
 fn main() {
     let code = match Cli::parse().command {
         Cmd::Queue { n } => {
@@ -11033,6 +11966,7 @@ fn main() {
             model,
             exit_code,
             preflight_missing,
+            skips,
         } => run_metrics_mode(
             &trace,
             &RunIdentity {
@@ -11042,6 +11976,7 @@ fn main() {
             },
             exit_code,
             &preflight_missing,
+            skips.as_deref(),
         ),
         Cmd::Preflight => preflight_mode(),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
@@ -11068,18 +12003,23 @@ fn main() {
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::InfraGate { json } => infra_gate_mode(json),
+        Cmd::SkipWork {
+            slug,
+            pr,
+            issue,
+            check,
+            reason,
+        } => skip_work_mode(&slug, pr, issue, &check, &reason.join(" ")),
+        Cmd::RunSkips { record, json } => run_skips_mode(record.as_deref(), json),
+        Cmd::SkipReport { runs, top } => skip_report_mode(&runs, top),
+        Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
         Cmd::FlagBlockedDeploy {
             slug,
             pr,
             reason,
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:blocked-deploy", &reason.join(" "), dry_run),
-        Cmd::FlagBlockedInfra {
-            slug,
-            pr,
-            reason,
-            dry_run,
-        } => flag_state_mode(&slug, &pr, "ai:blocked-infra", &reason.join(" "), dry_run),
         Cmd::FlagBlockedOn {
             slug,
             pr,

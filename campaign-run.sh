@@ -111,9 +111,21 @@ export INSTALL_DIR="$DIR"
 
 # rotate per-run traces (keep newest $KEEP_RUNS .jsonl + their .err sidecars)
 find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d" " -f2- | tail -n +$((KEEP_RUNS + 1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
+# per-run skip records (#108): kept a week so the last few runs' raw records can be read by hand,
+# then dropped — their contents are already folded into metrics/runs.jsonl, which is the durable copy.
+find "$DIR/metrics" -maxdepth 1 -name ".skips-*.jsonl" -mtime +7 -delete 2>/dev/null
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
+
+# --- the run's skip record (#108) -------------------------------------------------------------
+# Where `infra-gate` and `skip-work` write, and where `run-metrics` reads them back from. Named for
+# THIS run's id, so a record can never be read as another run's — the staleness bug a fixed path
+# would have had, and the reason the model is not asked to pass a path it could get wrong.
+# It replaces the `ai:blocked-infra` label: a skip leaves NO state on GitHub, only these lines.
+SKIPREC="$DIR/metrics/.skips-$TS.jsonl"
+export RUN_SKIPS_FILE="$SKIPREC"
+rm -f "$SKIPREC"
 
 # --- harness read-time dependencies: resolved BEFORE a token is spent -------------------------
 # Same check, same reason, as review-run.sh. The producer drains the `audit`-labelled backlog
@@ -213,6 +225,22 @@ echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)
 if [ -s "$RUNLOG" ]; then
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role producer --model "$USED_MODEL" --exit-code "$rc" \
+    --skips "$SKIPREC" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+fi
+
+# --- did the run end because NOTHING was verifiable? (#108) ------------------------------------
+# Every other exit in this script is PRE-MODEL: disabled, usage-gated, locked, preflight. So nothing
+# the model LEARNED could ever end its run — it could only label the victims and carry on picking up
+# work behind the same dead infrastructure, which is what run 20260728T111645Z did. `run-skips` reads
+# the gate verdict the model recorded mid-flight and exits 12 for `nothing-verifiable`. That code is
+# the preflight abort's, and it means the same thing: the run could not usefully proceed, the code is
+# fine, retry next tick. The skips are already on the metrics line above, so the record survives the
+# exit. The record file itself is per-run and rotates with the traces below.
+_rs="$(pr-review-report run-skips "$SKIPREC")"; _rsrc=$?
+printf '%s\n' "$_rs" | sed 's/^/  /' >> "$LOG"
+if [ "$_rsrc" -eq 12 ]; then
+  echo "$(date -u +%FT%TZ) campaign run ENDED EARLY: no candidate repo's CI can verify anything (see infraOutages in metrics/runs.jsonl)" >> "$LOG"
+  exit 12
 fi
 exit 0
