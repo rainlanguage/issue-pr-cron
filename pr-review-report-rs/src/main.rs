@@ -5776,13 +5776,102 @@ fn classify_lane(
     }
 }
 
-/// A producer PR reduced to what lane bucketing needs — free of gh JSON so [`lanes_doc`] is
-/// unit-testable without a network.
-struct QueuePr {
+/// A reference to ONE GitHub subject — an issue or a PR — in the ONE shape `human-queue --json`
+/// emits every such reference in: `{repo, number, url, title}`.
+///
+/// This exists because the two shapes drifted (#114). Lane items carried `url`; the five top-level
+/// arrays (`states`, `closeCandidateIssues`, `closeCandidateUnvetted`, `closeCandidateUpheld`,
+/// `uncoveredIssues`, `leaks`) carried only `{repo, number, title}`, and a consumer holding one of
+/// those cannot build a link: `{repo, number}` alone does not say whether the number is an issue or
+/// a PR, and `closeCandidateUnvetted` genuinely mixes both populations. GitHub happens to redirect
+/// `/pull/<n>` ↔ `/issues/<n>`, so a guessed link survives a browser — but not a non-following API
+/// client, and not a subject that has been transferred to another repo. The resolved `url` is
+/// already in hand at every one of those sites (each array is built from a `gh search` /
+/// `gh issue view` payload that returns it), so carrying it costs nothing.
+///
+/// Being ONE type is the point. Adding a field here is a compile error at every construction site,
+/// and removing one is a compile error at every reader — which is what turns the next divergence
+/// into a build failure instead of an empty list on a dashboard. [`SubjectRef::to_json`] is the ONLY
+/// place a subject reference is serialised, so lane items and top-level items cannot disagree by
+/// construction.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SubjectRef {
+    /// `owner/repo`.
     repo: String,
     number: u64,
-    title: String,
+    /// The RESOLVED `https://github.com/…/{issues,pull}/<n>` url, as GitHub reported it — never
+    /// reconstructed from `repo` + `number`, because that is the guess this type exists to remove.
     url: String,
+    title: String,
+}
+
+impl SubjectRef {
+    fn new(
+        repo: impl Into<String>,
+        number: u64,
+        url: impl Into<String>,
+        title: impl Into<String>,
+    ) -> Self {
+        SubjectRef {
+            repo: repo.into(),
+            number,
+            url: url.into(),
+            title: title.into(),
+        }
+    }
+
+    /// PURE: read a subject reference out of a row that already carries the four keys (a `cc_row`
+    /// vet-queue row, whose `url` came from `gh issue view`). Absent keys yield empty/zero rather
+    /// than a fabricated url — an unknown link is reported as unknown, never guessed.
+    fn from_row(row: &Value) -> Self {
+        let s = |k: &str| {
+            row.get(k)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        SubjectRef {
+            repo: s("repo"),
+            number: row.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
+            url: s("url"),
+            title: s("title"),
+        }
+    }
+
+    /// The ONE emitted JSON object for a subject reference. Every array in `human-queue --json`
+    /// goes through here.
+    fn to_json(&self) -> Value {
+        serde_json::json!({
+            "repo": self.repo,
+            "number": self.number,
+            "url": self.url,
+            "title": self.title,
+        })
+    }
+
+    /// [`SubjectRef::to_json`] plus array-specific keys (`leaks` carries `reason`). The base object
+    /// still comes from the one serialiser, so an extra key can never be paid for by dropping a
+    /// shared one.
+    fn to_json_with(&self, extra: &[(&str, Value)]) -> Value {
+        let mut v = self.to_json();
+        let obj = v.as_object_mut().expect("to_json is an object");
+        for (k, val) in extra {
+            obj.insert((*k).to_string(), val.clone());
+        }
+        v
+    }
+
+    /// The whole array, emitted.
+    fn array(refs: &[SubjectRef]) -> Vec<Value> {
+        refs.iter().map(SubjectRef::to_json).collect()
+    }
+}
+
+/// A producer PR reduced to what lane bucketing needs — free of gh JSON so [`lanes_doc`] is
+/// unit-testable without a network. The emitted identity is a [`SubjectRef`], so a lane item and a
+/// top-level item are the same shape by construction, not by two structs agreeing.
+struct QueuePr {
+    subject: SubjectRef,
     labels: Vec<String>,
     /// For an `ai:ready` PR: `Some(false)` when the head has moved past its last verdict. `None`
     /// when not computed (non-`ai:ready` PRs never need it).
@@ -5808,12 +5897,7 @@ fn lanes_doc(prs: &[QueuePr]) -> Value {
             .or_default()
             .entry(state)
             .or_default()
-            .push(serde_json::json!({
-                "repo": p.repo,
-                "number": p.number,
-                "url": p.url,
-                "title": p.title,
-            }));
+            .push(p.subject.to_json());
     }
     let doc: serde_json::Map<String, Value> = lanes
         .into_iter()
@@ -5841,6 +5925,149 @@ fn lane_state_count(lanes: &Value, lane: &str, state: &str) -> usize {
         .pointer(&format!("/{lane}/{state}/count"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize
+}
+
+/// PURE: the `closeCandidateIssues` subject list, parsed from `gh search issues --json
+/// url,number,repository,title` rows. The row's `url` is the emitted link — the slug is parsed OUT
+/// of it, so the resolved url is always already in hand and never refetched (#114).
+fn close_candidate_issue_refs(found: &[Value]) -> Vec<SubjectRef> {
+    found
+        .iter()
+        .filter_map(|i| {
+            let url = i.get("url").and_then(|u| u.as_str())?.to_string();
+            let num = i.get("number").and_then(|n| n.as_u64())?;
+            let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
+            let slug = url
+                .strip_prefix("https://github.com/")?
+                .split("/issues/")
+                .next()?
+                .to_string();
+            Some(SubjectRef::new(slug, num, url, title))
+        })
+        .collect()
+}
+
+/// PURE: the `uncoveredIssues` (producer backlog) subject list, from the shared coverage
+/// computation's uncovered keys + per-issue meta. The meta is the raw `gh search issues` row, which
+/// already carries `url` — the backlog previously kept only `title` from it (#114).
+///
+/// An issue whose meta is missing is kept (a missing row must not silently shrink the backlog) with
+/// an empty url, because there is no honest link to emit for it — never a `/issues/<n>` guess.
+fn producer_backlog_refs(
+    open: &[(String, u64)],
+    meta: &std::collections::HashMap<(String, u64), Value>,
+) -> Vec<SubjectRef> {
+    open.iter()
+        .filter(|k| meta.get(*k).map(is_producer_backlog).unwrap_or(true))
+        .map(|(slug, num)| {
+            let field = |k: &str| {
+                meta.get(&(slug.clone(), *num))
+                    .and_then(|m| m.get(k))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            };
+            SubjectRef::new(slug, *num, field("url"), field("title"))
+        })
+        .collect()
+}
+
+/// PURE: clip to `n` CHARACTERS. Titles and leak reasons carry unicode (em-dash, middle-dot,
+/// emoji), so a byte-index slice would panic mid-codepoint.
+fn clip_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+/// PURE: the two lines the human-readable daily review prints for one subject — its RESOLVED url
+/// and its clipped title.
+///
+/// The url is the one GitHub reported, NOT `https://github.com/{repo}/pull/{number}`. This list
+/// also renders `closeCandidateIssues`, so the reconstruction printed a `/pull/` link for every
+/// close-candidate ISSUE — the same guess #114 removes from the JSON.
+fn review_subject_block(s: &SubjectRef, clip_to: usize) -> String {
+    format!("   {}\n      {}", s.url, clip_chars(&s.title, clip_to))
+}
+
+/// PURE: the two lines the leak section prints — the leaking PR's resolved url + clipped title,
+/// then the producer's stated reason.
+fn review_leak_block(s: &SubjectRef, reason: &str) -> String {
+    format!(
+        "   {}  {}\n      {}",
+        s.url,
+        clip_chars(&s.title, 52),
+        clip_chars(reason, 140)
+    )
+}
+
+/// PURE: the whole `human-queue --json` document, assembled from already-fetched parts.
+///
+/// Split out of [`human_queue_mode`] so the emitted SHAPE is reachable by a test: every top-level
+/// subject array used to be built inline behind a network call, which is exactly why `url` could go
+/// missing from four of them without a single test failing (#114). Every array here is
+/// [`SubjectRef::array`] or a `to_json_with` on top of it, so no array can carry a different set of
+/// subject keys than `lanes` does.
+#[allow(clippy::too_many_arguments)]
+fn human_queue_doc(
+    buckets: &std::collections::BTreeMap<String, Vec<SubjectRef>>,
+    lanes: &Value,
+    close_issues: &[SubjectRef],
+    cc_unvetted: Value,
+    cc_unvetted_n: usize,
+    cc_upheld: Value,
+    cc_upheld_n: usize,
+    backlog: &[SubjectRef],
+    leaks: &[(SubjectRef, String)],
+    total_producer_prs: usize,
+) -> Value {
+    let bmap: serde_json::Map<String, Value> = buckets
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::Array(SubjectRef::array(v))))
+        .collect();
+    serde_json::json!({
+        "states": bmap,
+        "lanes": lanes,
+        "closeCandidateIssues": SubjectRef::array(close_issues),
+        // Same key at top level (the ITEM ARRAY) and under `counts` (its length), exactly as
+        // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
+        "closeCandidateUnvetted": cc_unvetted,
+        "closeCandidateUpheld": cc_upheld,
+        "uncoveredIssues": SubjectRef::array(backlog),
+        "leaks": leaks
+            .iter()
+            .map(|(s, reason)| s.to_json_with(&[("reason", Value::from(reason.as_str()))]))
+            .collect::<Vec<_>>(),
+        "counts": {
+            // Legacy label-based counts (UNCHANGED — the dashboard reads these).
+            "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
+            "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
+            "blockedDeploy": buckets.get("ai:blocked-deploy").map(|v| v.len()).unwrap_or(0),
+            "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
+            "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
+            "closeCandidateIssues": close_issues.len(),
+            // Close-candidate VET lifecycle (#72/#73). `closeCandidateIssues` above keeps its
+            // meaning — every issue carrying the label — and these split it by vet state:
+            //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
+            //   upheld   = the vetter judged the evidence sound; genuinely queued for the human
+            // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the issue
+            // leaves this set entirely and reappears under `uncoveredIssues`.
+            "closeCandidateUnvetted": cc_unvetted_n,
+            "closeCandidateUpheld": cc_upheld_n,
+            "leaks": leaks.len(),
+            "totalProducerPrs": total_producer_prs,
+            // Producer untouched backlog — open issues with no covering open PR, excluding
+            // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
+            "uncoveredIssues": backlog.len(),
+            // Additive lane-based counts (each PR counted once, human-override dominant) — the
+            // states previously invisible to the dashboard.
+            "unvetted": lane_state_count(lanes, "vet-lifecycle", "un-vetted"),
+            "awaitingReVet": lane_state_count(lanes, "vet-lifecycle", "awaiting-re-vet"),
+            "reject": lane_state_count(lanes, "vetter-verdicts", "ai:reject"),
+            "relink": lane_state_count(lanes, "vetter-verdicts", "ai:relink"),
+            "closeCandidatePrs": lane_state_count(lanes, "vetter-verdicts", "ai:close-candidate"),
+            "humanReject": lane_state_count(lanes, "human-decisions", "human:reject"),
+            "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
+            "humanCloseCandidate": lane_state_count(lanes, "human-decisions", "human:close-candidate"),
+        }
+    })
 }
 
 /// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
@@ -5878,12 +6105,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
         return 1;
     };
 
-    // One pass: the legacy label bucket (`states`, unchanged) + a per-PR `(slug,num,title,url,labels)`
+    // One pass: the legacy label bucket (`states`, unchanged) + a per-PR `(SubjectRef, labels)`
     // record the lane classifier consumes. `unlabeled` = PRs with no `ai:*` label (leak candidates).
-    let mut buckets: std::collections::BTreeMap<String, Vec<(String, u64, String)>> =
+    // The search already returned each PR's resolved `url` — the slug is parsed OUT of it — so every
+    // downstream array carries the real link for free (#114); nothing here refetches it.
+    let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> =
         std::collections::BTreeMap::new();
-    let mut unlabeled: Vec<(String, u64, String)> = Vec::new();
-    let mut records: Vec<(String, u64, String, String, Vec<String>)> = Vec::new();
+    let mut unlabeled: Vec<SubjectRef> = Vec::new();
+    let mut records: Vec<(SubjectRef, Vec<String>)> = Vec::new();
     for p in &prs {
         let url = p
             .get("url")
@@ -5906,28 +6135,24 @@ fn human_queue_mode(json_out: bool) -> i32 {
                     .collect()
             })
             .unwrap_or_default();
+        let subject = SubjectRef::new(slug, num, url, title);
         match ai_state_label(&labels) {
-            Some(state) => {
-                buckets
-                    .entry(state)
-                    .or_default()
-                    .push((slug.clone(), num, title.clone()))
-            }
-            None => unlabeled.push((slug.clone(), num, title.clone())),
+            Some(state) => buckets.entry(state).or_default().push(subject.clone()),
+            None => unlabeled.push(subject.clone()),
         }
-        records.push((slug, num, title, url, labels));
+        records.push((subject, labels));
     }
 
     // Leak detection: an unlabeled PR the producer has commented on = a hand-off with no modeled
     // state (the FSM leaking). An unlabeled PR with NO producer comment is just freshly-open/unvetted.
-    let mut leaks: Vec<(String, u64, String, String)> = Vec::new();
-    for (slug, num, title) in &unlabeled {
+    let mut leaks: Vec<(SubjectRef, String)> = Vec::new();
+    for subject in &unlabeled {
         let Some(j) = gh_json(&[
             "pr",
             "view",
-            &num.to_string(),
+            &subject.number.to_string(),
             "-R",
-            slug,
+            &subject.repo,
             "--json",
             "comments",
         ]) else {
@@ -5936,7 +6161,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
         let notes = trusted_comments(&j, Some("🤖 ai:producer"));
         if let Some(last) = notes.last() {
             let reason = last.replace('\n', " ");
-            leaks.push((slug.clone(), *num, title.clone(), reason));
+            leaks.push((subject.clone(), reason));
         }
     }
 
@@ -5944,8 +6169,10 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // verdict is awaiting-re-vet, not ready (the established `queue`/`vetted_at_head` notion). Fetch
     // only the ai:ready PRs that would actually reach the ai:ready lane branch (no dominating
     // human:* / ai:blocked-* label) — one `gh pr view` each.
-    let leak_keys: std::collections::HashSet<(String, u64)> =
-        leaks.iter().map(|(s, n, _, _)| (s.clone(), *n)).collect();
+    let leak_keys: std::collections::HashSet<(String, u64)> = leaks
+        .iter()
+        .map(|(s, _)| (s.repo.clone(), s.number))
+        .collect();
     let dominated = |labels: &[String]| {
         let has = |name: &str| labels.iter().any(|l| l == name);
         HUMAN_DECISION_LABELS.iter().any(|h| has(h))
@@ -5955,19 +6182,22 @@ fn human_queue_mode(json_out: bool) -> i32 {
     };
     let mut ready_vetted: std::collections::HashMap<(String, u64), bool> =
         std::collections::HashMap::new();
-    for (slug, num, _t, _u, labels) in &records {
+    for (subject, labels) in &records {
         if labels.iter().any(|l| l == "ai:ready") && !dominated(labels) {
             if let Some(j) = gh_json(&[
                 "pr",
                 "view",
-                &num.to_string(),
+                &subject.number.to_string(),
                 "-R",
-                slug,
+                &subject.repo,
                 "--json",
                 "headRefOid,comments",
             ]) {
                 let head = j.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
-                ready_vetted.insert((slug.clone(), *num), vetted_at_head(&j, head));
+                ready_vetted.insert(
+                    (subject.repo.clone(), subject.number),
+                    vetted_at_head(&j, head),
+                );
             }
         }
     }
@@ -5975,14 +6205,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // The full lane-grouped inventory (each PR bucketed once, by FSM precedence).
     let queue_prs: Vec<QueuePr> = records
         .iter()
-        .map(|(slug, num, title, url, labels)| QueuePr {
-            repo: slug.clone(),
-            number: *num,
-            title: title.clone(),
-            url: url.clone(),
-            labels: labels.clone(),
-            ready_vetted_at_head: ready_vetted.get(&(slug.clone(), *num)).copied(),
-            producer_commented: leak_keys.contains(&(slug.clone(), *num)),
+        .map(|(subject, labels)| {
+            let key = (subject.repo.clone(), subject.number);
+            QueuePr {
+                subject: subject.clone(),
+                labels: labels.clone(),
+                ready_vetted_at_head: ready_vetted.get(&key).copied(),
+                producer_commented: leak_keys.contains(&key),
+            }
         })
         .collect();
     let lanes = lanes_doc(&queue_prs);
@@ -6005,26 +6235,11 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .map(|s| s.to_string()),
     );
     let iref: Vec<&str> = iargs.iter().map(String::as_str).collect();
-    let close_issues: Vec<(String, u64, String)> = gh_json(&iref)
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|i| {
-            let url = i.get("url").and_then(|u| u.as_str())?.to_string();
-            let num = i.get("number").and_then(|n| n.as_u64())?;
-            let title = i
-                .get("title")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string();
-            let slug = url
-                .strip_prefix("https://github.com/")?
-                .split("/issues/")
-                .next()?
-                .to_string();
-            Some((slug, num, title))
-        })
-        .collect();
+    let close_issues = close_candidate_issue_refs(
+        &gh_json(&iref)
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default(),
+    );
 
     // Close-candidate vet state, as `(unvetted, upheld)`. Computed from the same state-load the
     // vetter reads, so the dashboard and the vetter can never disagree about the size of the inbox.
@@ -6055,94 +6270,33 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // previously invisible on the FSM dashboard. Same coverage computation as `uncovered-issues`
     // (via `coverage_uncovered`); `is_producer_backlog` narrows it to the producer's share. A gh
     // failure leaves it empty rather than aborting the whole queue render — it is additive.
-    let backlog: Vec<(String, u64, String)> = coverage_uncovered()
-        .map(|(open, meta)| {
-            open.iter()
-                .filter(|k| meta.get(*k).map(is_producer_backlog).unwrap_or(true))
-                .map(|(slug, num)| {
-                    let title = meta
-                        .get(&(slug.clone(), *num))
-                        .and_then(|m| m.get("title"))
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    (slug.clone(), *num, title)
-                })
-                .collect()
-        })
+    let backlog: Vec<SubjectRef> = coverage_uncovered()
+        .map(|(open, meta)| producer_backlog_refs(&open, &meta))
         .unwrap_or_default();
 
     if json_out {
-        let bmap: serde_json::Map<String, Value> = buckets
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    Value::Array(
-                        v.iter()
-                            .map(
-                                |(s, n, t)| serde_json::json!({"repo": s, "number": n, "title": t}),
-                            )
-                            .collect(),
-                    ),
-                )
-            })
-            .collect();
-        let doc = serde_json::json!({
-            "states": bmap,
-            "lanes": lanes,
-            "closeCandidateIssues": close_issues.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
-            // Same key at top level (the ITEM ARRAY) and under `counts` (its length), exactly as
-            // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
-            "closeCandidateUnvetted": cc_unvetted,
-            "closeCandidateUpheld": cc_upheld,
-            "uncoveredIssues": backlog.iter().map(|(s,n,t)| serde_json::json!({"repo": s, "number": n, "title": t})).collect::<Vec<_>>(),
-            "leaks": leaks.iter().map(|(s,n,t,r)| serde_json::json!({"repo": s, "number": n, "title": t, "reason": r})).collect::<Vec<_>>(),
-            "counts": {
-                // Legacy label-based counts (UNCHANGED — the dashboard reads these).
-                "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
-                "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
-                "blockedDeploy": buckets.get("ai:blocked-deploy").map(|v| v.len()).unwrap_or(0),
-                "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
-                "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
-                "closeCandidateIssues": close_issues.len(),
-                // Close-candidate VET lifecycle (#72/#73). `closeCandidateIssues` above keeps its
-                // meaning — every issue carrying the label — and these split it by vet state:
-                //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
-                //   upheld   = the vetter judged the evidence sound; genuinely queued for the human
-                // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the issue
-                // leaves this set entirely and reappears under `uncoveredIssues`.
-                "closeCandidateUnvetted": cc_unvetted_n,
-                "closeCandidateUpheld": cc_upheld_n,
-                "leaks": leaks.len(),
-                "totalProducerPrs": prs.len(),
-                // Producer untouched backlog — open issues with no covering open PR, excluding
-                // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
-                "uncoveredIssues": backlog.len(),
-                // Additive lane-based counts (each PR counted once, human-override dominant) — the
-                // states previously invisible to the dashboard.
-                "unvetted": lane_state_count(&lanes, "vet-lifecycle", "un-vetted"),
-                "awaitingReVet": lane_state_count(&lanes, "vet-lifecycle", "awaiting-re-vet"),
-                "reject": lane_state_count(&lanes, "vetter-verdicts", "ai:reject"),
-                "relink": lane_state_count(&lanes, "vetter-verdicts", "ai:relink"),
-                "closeCandidatePrs": lane_state_count(&lanes, "vetter-verdicts", "ai:close-candidate"),
-                "humanReject": lane_state_count(&lanes, "human-decisions", "human:reject"),
-                "humanDesign": lane_state_count(&lanes, "human-decisions", "human:design"),
-                "humanCloseCandidate": lane_state_count(&lanes, "human-decisions", "human:close-candidate"),
-            }
-        });
+        let doc = human_queue_doc(
+            &buckets,
+            &lanes,
+            &close_issues,
+            cc_unvetted,
+            cc_unvetted_n,
+            cc_upheld,
+            cc_upheld_n,
+            &backlog,
+            &leaks,
+            prs.len(),
+        );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
     }
 
-    // Human-readable daily review. Truncate on CHAR boundaries — titles/reasons carry unicode
-    // (em-dash, middle-dot, emoji), so a byte-index slice would panic mid-codepoint.
-    let clip = |s: &str, n: usize| s.chars().take(n).collect::<String>();
-    let show = |title: &str, items: &[(String, u64, String)]| {
+    // Human-readable daily review. Every line is rendered by a pure block builder (`clip_chars`
+    // truncates on CHAR boundaries) so the printed link is the same resolved url the JSON emits.
+    let show = |title: &str, items: &[SubjectRef]| {
         println!("\n▓▓ {title}  ({})", items.len());
-        for (slug, num, t) in items {
-            println!("   https://github.com/{slug}/pull/{num}");
-            println!("      {}", clip(t, 66));
+        for s in items {
+            println!("{}", review_subject_block(s, 66));
         }
     };
     // Print a lane/state bucket straight from the lane doc (the states without a legacy label bucket).
@@ -6154,10 +6308,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
             .unwrap_or(&empty);
         println!("\n▓▓ {title}  ({})", items.len());
         for it in items {
-            let url = it.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let t = it.get("title").and_then(|v| v.as_str()).unwrap_or("");
-            println!("   {url}");
-            println!("      {}", clip(t, 66));
+            println!("{}", review_subject_block(&SubjectRef::from_row(it), 66));
         }
     };
     println!(
@@ -6224,9 +6375,8 @@ fn human_queue_mode(json_out: bool) -> i32 {
         "\n⚠⚠ NOT IN ANY MODELED STATE (FSM leak — should trend to 0)  ({})",
         leaks.len()
     );
-    for (slug, num, t, reason) in &leaks {
-        println!("   https://github.com/{slug}/pull/{num}  {}", clip(t, 52));
-        println!("      {}", clip(reason, 140));
+    for (s, reason) in &leaks {
+        println!("{}", review_leak_block(s, reason));
     }
     0
 }
@@ -8024,8 +8174,12 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
 }
 
 /// PURE: split an `unvetted_close_candidates` document into the two dashboard ITEM ARRAYS —
-/// `(unvetted, upheld)` — in the same `{repo, number, title}` shape `closeCandidateIssues` and
-/// `uncoveredIssues` already emit.
+/// `(unvetted, upheld)` — in the ONE [`SubjectRef`] shape every subject array emits.
+///
+/// The `url` comes from the row, which got it from the `gh issue view` that built the row — this
+/// projection used to drop it, which is the drift #114 is about. `closeCandidateUnvetted` mixes
+/// issues and PRs depending on what the producer flagged, so a consumer reconstructing the link
+/// from `repo` + `number` has to guess `/issues/` vs `/pull/`; the resolved url removes the guess.
 ///
 /// Both the arrays and their counts are derived from THIS one document, which is what makes an
 /// array/count mismatch unrepresentable: a box that renders "5" and then lists three issues when
@@ -8035,13 +8189,7 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
 /// label stripped, so it cannot appear in this search at all — an issue still carrying the label
 /// AND vetted at its current flag was necessarily upheld.
 fn cc_item_arrays(doc: &Value) -> (Vec<Value>, Vec<Value>) {
-    let item = |r: &Value| {
-        serde_json::json!({
-            "repo": r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
-            "number": r.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
-            "title": r.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-        })
-    };
+    let item = |r: &Value| SubjectRef::from_row(r).to_json();
     let unvetted: Vec<Value> = doc
         .get("issues")
         .and_then(|v| v.as_array())
@@ -12348,34 +12496,49 @@ mod queue_tests {
     // issues is the drift worth pinning.
     #[test]
     fn cc_item_arrays_are_populated_and_agree_with_their_counts() {
-        let row = |repo: &str, num: u64, title: &str, action: &str| {
+        // `url` is what `cc_row` put in the row, straight from `gh issue view` — a PR flagged
+        // close-candidate carries a `/pull/` url, an issue an `/issues/` one, and the projection
+        // must carry whichever it was rather than let a consumer guess (#114).
+        let row = |repo: &str, num: u64, title: &str, action: &str, kind: &str| {
             json!({"issue": format!("{repo}#{num}"), "repo": repo, "number": num,
+                   "url": format!("https://github.com/{repo}/{kind}/{num}"),
                    "title": title, "action": action})
         };
         let doc = json!({
             "issues": [
-                row("rainlanguage/raindex", 512, "orderbooks should fallback", "vet"),
-                row("rainlanguage/raindex", 592, "Fix inverted IO ratio", "vet"),
+                row("rainlanguage/raindex", 512, "orderbooks should fallback", "vet", "issues"),
+                // The mixed population: a close-candidate flagged on a PULL REQUEST.
+                row("rainlanguage/raindex", 592, "Fix inverted IO ratio", "vet", "pull"),
             ],
             "skipped": [
-                row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag"),
+                row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag", "issues"),
                 // Neither of these is UPHELD: one is a human ruling, one has no flag to judge.
-                row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided"),
-                row("rainlanguage/raindex", 999, "no flag", "skip-no-flag"),
+                row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided", "issues"),
+                row("rainlanguage/raindex", 999, "no flag", "skip-no-flag", "issues"),
             ],
         });
         let (unvetted, upheld) = cc_item_arrays(&doc);
 
-        // Populated, and each item carries EXACTLY the generic issue-item shape.
+        // Populated, and each item carries EXACTLY the generic subject-item shape — `url` included.
         assert_eq!(unvetted.len(), 2);
         assert_eq!(upheld.len(), 1);
         assert_eq!(
             unvetted[0],
-            json!({"repo": "rainlanguage/raindex", "number": 512, "title": "orderbooks should fallback"})
+            json!({"repo": "rainlanguage/raindex", "number": 512,
+                   "url": "https://github.com/rainlanguage/raindex/issues/512",
+                   "title": "orderbooks should fallback"})
+        );
+        // The PR-shaped member keeps its PR url: reconstructing `/issues/512` for both would have
+        // been indistinguishable here, which is exactly why the field has to be carried.
+        assert_eq!(
+            unvetted[1]["url"],
+            json!("https://github.com/rainlanguage/raindex/pull/592")
         );
         assert_eq!(
             upheld[0],
-            json!({"repo": "rainlanguage/raindex", "number": 523, "title": "nothing visual happens"})
+            json!({"repo": "rainlanguage/raindex", "number": 523,
+                   "url": "https://github.com/rainlanguage/raindex/issues/523",
+                   "title": "nothing visual happens"})
         );
         // Only `skip-vetted-at-flag` is upheld — a human ruling or a missing flag is neither.
         for r in &upheld {
@@ -17331,10 +17494,12 @@ mod fsm_completeness_tests {
         producer_commented: bool,
     ) -> QueuePr {
         QueuePr {
-            repo: "o/r".to_string(),
-            number: num,
-            title: format!("pr {num}"),
-            url: format!("https://github.com/o/r/pull/{num}"),
+            subject: SubjectRef::new(
+                "o/r",
+                num,
+                format!("https://github.com/o/r/pull/{num}"),
+                format!("pr {num}"),
+            ),
             labels: s(labels),
             ready_vetted_at_head,
             producer_commented,
@@ -17397,6 +17562,348 @@ mod fsm_completeness_tests {
             }
         }
         assert_eq!(total, prs.len());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// subject-reference shape — `human-queue --json` (#114).
+//
+// The defect these pin: lane items shipped `{repo, number, url, title}` while the five top-level
+// subject arrays shipped `{repo, number, title}`. Nothing failed. One consumer (rain-org-health's
+// pipeline panel) simply could not render a link, because `{repo, number}` alone does not say
+// whether a number is an issue or a PR — and `closeCandidateUnvetted` genuinely holds both.
+//
+// The oracle is the LANE item, which was always right: every top-level subject item must carry the
+// same key set. That comparison, not a hard-coded key list, is what makes the next divergence a
+// test failure rather than a silent one.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod subject_ref_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sref(repo: &str, n: u64, kind: &str, title: &str) -> SubjectRef {
+        SubjectRef::new(
+            repo,
+            n,
+            format!("https://github.com/{repo}/{kind}/{n}"),
+            title,
+        )
+    }
+
+    /// The keys of a JSON object, sorted — the shape, independent of values.
+    fn keys(v: &Value) -> Vec<String> {
+        let mut k: Vec<String> = v
+            .as_object()
+            .expect("a subject item is a JSON object")
+            .keys()
+            .cloned()
+            .collect();
+        k.sort();
+        k
+    }
+
+    /// A populated `human-queue --json` document, built from the same pure assembler the live
+    /// subcommand calls — so what this asserts is literally what ships.
+    fn doc() -> Value {
+        let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> =
+            std::collections::BTreeMap::new();
+        buckets.insert(
+            "ai:ready".into(),
+            vec![sref("rainlanguage/raindex", 10, "pull", "ready pr")],
+        );
+        buckets.insert(
+            "ai:design".into(),
+            vec![sref("rainlanguage/raindex", 11, "pull", "design pr")],
+        );
+        let lanes = lanes_doc(&[QueuePr {
+            subject: sref("rainlanguage/raindex", 10, "pull", "ready pr"),
+            labels: vec!["ai:ready".to_string()],
+            ready_vetted_at_head: Some(true),
+            producer_commented: false,
+        }]);
+        // `closeCandidateUnvetted` mixes issues and PRs — one of each, with the url each really has.
+        let (cc_unvetted, cc_unvetted_n) = issue_state_pair(vec![
+            sref("rainlanguage/raindex", 512, "issues", "an issue").to_json(),
+            sref("rainlanguage/raindex", 592, "pull", "a pr").to_json(),
+        ]);
+        let (cc_upheld, cc_upheld_n) =
+            issue_state_pair(vec![
+                sref("rainlanguage/raindex", 523, "issues", "upheld").to_json()
+            ]);
+        human_queue_doc(
+            &buckets,
+            &lanes,
+            &[sref("rainlanguage/raindex", 700, "issues", "flagged")],
+            cc_unvetted,
+            cc_unvetted_n,
+            cc_upheld,
+            cc_upheld_n,
+            &[sref(
+                "rainlanguage/rain.math.float",
+                42,
+                "issues",
+                "backlog",
+            )],
+            &[(
+                sref("rainlanguage/raindex", 99, "pull", "leaking pr"),
+                "blocked on a deploy".to_string(),
+            )],
+            2,
+        )
+    }
+
+    /// The top-level arrays holding subject references, by JSON pointer. `leaks` is here too: it is
+    /// a subject reference with one EXTRA key, not a different shape.
+    const SUBJECT_ARRAYS: &[&str] = &[
+        "/states/ai:ready",
+        "/states/ai:design",
+        "/closeCandidateIssues",
+        "/closeCandidateUnvetted",
+        "/closeCandidateUpheld",
+        "/uncoveredIssues",
+        "/leaks",
+    ];
+
+    // The ask: every top-level subject array carries `url`, and it is the RESOLVED one.
+    #[test]
+    fn every_top_level_subject_array_carries_the_resolved_url() {
+        let d = doc();
+        for ptr in SUBJECT_ARRAYS {
+            let arr = d
+                .pointer(ptr)
+                .and_then(|v| v.as_array())
+                .unwrap_or_else(|| panic!("{ptr} is an array"));
+            assert!(
+                !arr.is_empty(),
+                "{ptr} must be populated for this to prove anything"
+            );
+            for it in arr {
+                let url = it.get("url").and_then(|v| v.as_str()).unwrap_or_else(|| {
+                    panic!("{ptr} item has no `url`: {it} — a consumer cannot link to it")
+                });
+                let repo = it.get("repo").and_then(|v| v.as_str()).unwrap();
+                let num = it.get("number").and_then(|v| v.as_u64()).unwrap();
+                // Not merely present: the url GitHub reported, path segment and all.
+                assert!(
+                    url.starts_with(&format!("https://github.com/{repo}/"))
+                        && url.ends_with(&format!("/{num}")),
+                    "{ptr} item url {url} is not the resolved link for {repo}#{num}"
+                );
+            }
+        }
+        // The specific hazard, stated as data: two members of ONE array, same repo, whose links
+        // differ in a segment `{repo, number}` cannot supply.
+        let ccu = d
+            .pointer("/closeCandidateUnvetted")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            ccu[0]["url"],
+            json!("https://github.com/rainlanguage/raindex/issues/512")
+        );
+        assert_eq!(
+            ccu[1]["url"],
+            json!("https://github.com/rainlanguage/raindex/pull/592")
+        );
+    }
+
+    // The shared type, stated as its purpose: one shape, so lane and top-level items cannot drift.
+    // The lane item is the oracle — it is the shape that was already right.
+    #[test]
+    fn every_subject_item_has_exactly_the_lane_item_shape() {
+        let d = doc();
+        let lane_item = d
+            .pointer("/lanes/vetter-verdicts/ai:ready/prs/0")
+            .expect("a lane item to compare against");
+        let expected = keys(lane_item);
+        assert_eq!(expected, vec!["number", "repo", "title", "url"]);
+        for ptr in SUBJECT_ARRAYS {
+            for it in d.pointer(ptr).unwrap().as_array().unwrap() {
+                let mut k = keys(it);
+                // `leaks` is the one array with an extra key; it must be an ADDITION, never a swap.
+                if *ptr == "/leaks" {
+                    assert!(
+                        k.contains(&"reason".to_string()),
+                        "leaks item lost `reason`: {it}"
+                    );
+                    k.retain(|x| x != "reason");
+                }
+                assert_eq!(
+                    k, expected,
+                    "{ptr} item shape {k:?} differs from the lane item shape {expected:?} — \
+                     a consumer written against one breaks on the other"
+                );
+            }
+        }
+    }
+
+    // The serialiser is the single point of truth: `to_json_with` ADDS to it, never replaces it.
+    #[test]
+    fn to_json_with_extends_the_shared_shape_rather_than_replacing_it() {
+        let s = sref("o/r", 7, "pull", "t");
+        let base = s.to_json();
+        let extended = s.to_json_with(&[("reason", Value::from("because"))]);
+        for (k, v) in base.as_object().unwrap() {
+            assert_eq!(extended.get(k), Some(v), "extending dropped `{k}`");
+        }
+        assert_eq!(extended["reason"], json!("because"));
+    }
+
+    // `closeCandidateIssues` is parsed from a `gh search issues` payload that ALREADY returns
+    // `url` — the slug is parsed out of that same url. Carrying it costs no extra call.
+    #[test]
+    fn close_candidate_issue_refs_carry_the_url_the_search_returned() {
+        let found = vec![
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
+                   "number": 512, "title": "an issue",
+                   "repository": {"nameWithOwner": "rainlanguage/raindex"}}),
+            json!({"url": "https://github.com/rainlanguage/rain.math.float/issues/9",
+                   "number": 9, "title": "another",
+                   "repository": {"nameWithOwner": "rainlanguage/rain.math.float"}}),
+            // Unparseable — dropped, exactly as before.
+            json!({"number": 1, "title": "no url"}),
+        ];
+        let refs = close_candidate_issue_refs(&found);
+        assert_eq!(refs.len(), 2);
+        assert_eq!(
+            refs[0],
+            SubjectRef::new(
+                "rainlanguage/raindex",
+                512,
+                "https://github.com/rainlanguage/raindex/issues/512",
+                "an issue"
+            )
+        );
+        assert_eq!(
+            refs[1].url,
+            "https://github.com/rainlanguage/rain.math.float/issues/9"
+        );
+    }
+
+    // `uncoveredIssues` is the biggest array (hundreds of entries). Its url comes from the meta the
+    // shared coverage computation ALREADY holds — the `gh search issues` row — so no per-issue
+    // fetch is added. A missing meta row keeps the entry (never silently shrink the backlog) with
+    // an empty url: an unknown link is reported unknown, never guessed.
+    #[test]
+    fn producer_backlog_refs_carry_the_url_from_the_coverage_meta() {
+        let mut meta: std::collections::HashMap<(String, u64), Value> =
+            std::collections::HashMap::new();
+        meta.insert(
+            ("rainlanguage/raindex".into(), 512),
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
+                   "title": "backlog issue", "labels": []}),
+        );
+        // Excluded: an `ai:close-candidate` issue is the human's queue, not the producer's.
+        meta.insert(
+            ("rainlanguage/raindex".into(), 700),
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/700",
+                   "title": "flagged", "labels": [{"name": "ai:close-candidate"}]}),
+        );
+        let open = vec![
+            ("rainlanguage/raindex".to_string(), 512),
+            ("rainlanguage/raindex".to_string(), 700),
+            // No meta row at all — kept, with no fabricated link.
+            ("rainlanguage/rain.math.float".to_string(), 3),
+        ];
+        let refs = producer_backlog_refs(&open, &meta);
+        assert_eq!(
+            refs.len(),
+            2,
+            "the close-candidate issue is excluded, the meta-less one is not"
+        );
+        assert_eq!(
+            refs[0],
+            SubjectRef::new(
+                "rainlanguage/raindex",
+                512,
+                "https://github.com/rainlanguage/raindex/issues/512",
+                "backlog issue"
+            )
+        );
+        assert_eq!(refs[1].repo, "rainlanguage/rain.math.float");
+        assert_eq!(
+            refs[1].url, "",
+            "no meta means no link — never a guessed one"
+        );
+    }
+
+    // The human-readable daily review prints the same resolved url. It renders
+    // `closeCandidateIssues` through the SAME block builder as the PR lists, so the old
+    // `https://github.com/{repo}/pull/{n}` reconstruction printed a `/pull/` link for every
+    // close-candidate ISSUE.
+    #[test]
+    fn the_daily_review_prints_the_resolved_url_not_a_pull_guess() {
+        let issue = sref("rainlanguage/raindex", 700, "issues", "a flagged issue");
+        let block = review_subject_block(&issue, 66);
+        assert!(
+            block.contains("https://github.com/rainlanguage/raindex/issues/700"),
+            "{block}"
+        );
+        assert!(
+            !block.contains("/pull/700"),
+            "an ISSUE must not be printed as a pull URL: {block}"
+        );
+        let pr = sref("rainlanguage/raindex", 10, "pull", "a pr");
+        assert!(review_leak_block(&pr, "blocked")
+            .contains("https://github.com/rainlanguage/raindex/pull/10"));
+        assert!(review_leak_block(&pr, "blocked").contains("blocked"));
+    }
+
+    // Titles and leak reasons carry unicode; clipping on BYTES would panic mid-codepoint.
+    #[test]
+    fn review_blocks_clip_on_char_boundaries() {
+        let s = SubjectRef::new("o/r", 1, "https://github.com/o/r/pull/1", "—•🤖 a title");
+        assert!(review_subject_block(&s, 3).ends_with("—•🤖"));
+        assert!(review_leak_block(&s, "—•🤖 reason").contains("—•🤖 reason"));
+    }
+
+    // `from_row` reads the shared keys back out of a row that carries them, and reports an absent
+    // url as absent rather than inventing one.
+    #[test]
+    fn from_row_reads_the_shared_keys_and_never_invents_a_url() {
+        let r = json!({"repo": "o/r", "number": 5, "url": "https://github.com/o/r/issues/5",
+                       "title": "t", "action": "vet"});
+        assert_eq!(
+            SubjectRef::from_row(&r),
+            SubjectRef::new("o/r", 5, "https://github.com/o/r/issues/5", "t")
+        );
+        let bare = SubjectRef::from_row(&json!({"repo": "o/r", "number": 5, "title": "t"}));
+        assert_eq!(bare.url, "");
+    }
+
+    // The counts still label their own arrays — carrying `url` must not disturb the click-through
+    // invariant `counts.X == X.len()`.
+    #[test]
+    fn adding_url_leaves_every_count_equal_to_its_arrays_length() {
+        let d = doc();
+        for key in [
+            "closeCandidateIssues",
+            "closeCandidateUnvetted",
+            "closeCandidateUpheld",
+            "uncoveredIssues",
+            "leaks",
+        ] {
+            let n = d
+                .pointer(&format!("/{key}"))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len();
+            assert_eq!(
+                d.pointer(&format!("/counts/{key}"))
+                    .unwrap()
+                    .as_u64()
+                    .unwrap() as usize,
+                n,
+                "counts.{key} must be the length of the {key} array it labels"
+            );
+        }
+        // The legacy label-based counts read the same buckets the `states` arrays are built from.
+        assert_eq!(d.pointer("/counts/ready").unwrap(), &json!(1));
+        assert_eq!(d.pointer("/counts/design").unwrap(), &json!(1));
+        assert_eq!(d.pointer("/counts/totalProducerPrs").unwrap(), &json!(2));
     }
 }
 

@@ -585,13 +585,35 @@ the issue leaves this set entirely and reappears under `uncoveredIssues` — the
 producer's queue — which is exactly the behaviour a rejection should have.
 
 Both are emitted exactly as `closeCandidateIssues` and `uncoveredIssues` are:
-the key appears **twice** — at the top level as the ITEM ARRAY (one
-`{repo, number, title}` per issue) and under `counts` as its length. The
-dashboard's state boxes are click-through, so a count without its array renders
-a number that then lists nothing. Arrays and counts are derived from a single
-document, so `counts.X == X.len()` holds by construction. These are ISSUE
-states, so — like `closeCandidateIssues` — they are **not** in `lanes`, which
-groups PRs.
+the key appears **twice** — at the top level as the ITEM ARRAY and under
+`counts` as its length. The dashboard's state boxes are click-through, so a
+count without its array renders a number that then lists nothing. Arrays and
+counts are derived from a single document, so `counts.X == X.len()` holds by
+construction. These are ISSUE states, so — like `closeCandidateIssues` — they
+are **not** in `lanes`, which groups PRs.
+
+### The subject-reference shape
+
+Every reference to a GitHub subject in `human-queue --json` — a lane item, a
+`states` member, `closeCandidateIssues`, `closeCandidateUnvetted`,
+`closeCandidateUpheld`, `uncoveredIssues`, `leaks` — is **one** shape:
+
+```json
+{ "repo": "owner/repo", "number": 512, "url": "https://github.com/owner/repo/issues/512", "title": "…" }
+```
+
+`leaks` adds `reason`; nothing subtracts. The `url` is the one **GitHub
+reported**, never rebuilt from `repo` + `number`: `{repo, number}` alone does
+not say whether a number is an issue or a PR, and `closeCandidateUnvetted`
+genuinely holds both (the producer can flag either). It costs nothing to carry —
+every one of those arrays is built from a `gh search` / `gh issue view` payload
+that already returns the url, so no extra call is made for it.
+
+That is enforced by a single type (`SubjectRef`) with a single serialiser, not
+by several structs agreeing: adding or removing a field is a compile error at
+every construction site and every reader. The arrays drifted apart once already
+(#114 — lane items carried `url`, the top-level arrays did not), and nothing
+failed; a consumer just could not render a link.
 
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
