@@ -21,6 +21,9 @@
 !/review-mcp.json
 # Producer's clone-lifecycle MCP surface (additive; the producer keeps its Bash):
 !/campaign-mcp.json
+# The human's own FSM transitions as a restricted surface, for an agent acting on
+# the human's behalf (#86). No cron runs it; it is pointed at with --mcp-config.
+!/human-mcp.json
 !/merge-run.sh
 !/merge-prompt.txt
 !/merge-settings.json
