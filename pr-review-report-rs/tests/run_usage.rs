@@ -285,6 +285,64 @@ fn a_rejection_is_recorded_immediately_not_at_the_next_stride() {
     assert_eq!(us[0]["messages"], 1);
 }
 
+/// The OTHER way this filter's stream ends: the DOWNSTREAM closes. `run-timings` sits in the
+/// middle of the runner's pipe (`tee "$RUNLOG" | run-timings | <distiller>`), so if the distiller
+/// dies the echo fails with `EPIPE` long before stdin runs out. That exit is not a reason to throw
+/// the run's measured spend away — the tokens were still spent — so it must write the same
+/// end-of-stream record a clean EOF does.
+///
+/// Driven deterministically: five messages are echoed into the pipe buffer and read back (so the
+/// child has certainly counted them), the read end is then dropped, and one more line is written.
+/// The child's echo of that line is what fails. Five is below the stride, so no record is due —
+/// the only record that can exist is the one this exit path writes.
+#[test]
+fn a_closed_downstream_still_records_the_spend_so_far() {
+    let dir = TempDir::new("downstream");
+    let out = dir.join("metrics/runs.jsonl");
+    let mut child = spawn(&out);
+    let mut si = child.stdin.take().expect("stdin");
+    let so = child.stdout.take().expect("stdout");
+    let mut reader = BufReader::new(so);
+
+    let msgs: Vec<String> = (0..5)
+        .map(|i| {
+            format!(
+                r#"{{"type":"assistant","message":{{"id":"m{i}","usage":{{"input_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":0}}}}}}"#
+            )
+        })
+        .collect();
+    for m in &msgs {
+        writeln!(si, "{m}").unwrap();
+    }
+    si.flush().unwrap();
+    // Read them back: the child cannot have echoed a line it had not yet parsed.
+    for _ in 0..msgs.len() {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("echo");
+        assert!(!line.is_empty());
+    }
+    drop(reader); // the distiller dies
+
+    // One more line. Echoing it is what hits EPIPE.
+    let _ = writeln!(si, "{}", msgs[0].replace("\"m0\"", "\"m9\""));
+    let _ = si.flush();
+    drop(si);
+    let _ = child.wait();
+
+    let us = usage_records(&out);
+    assert_eq!(
+        us.len(),
+        1,
+        "a closed downstream must still leave exactly the end-of-stream record"
+    );
+    assert!(
+        us[0]["messages"].as_u64().unwrap() >= 5,
+        "it must carry the messages already counted, got {}",
+        us[0]["messages"]
+    );
+    assert!(us[0]["cacheRead"].as_u64().unwrap() >= 500);
+}
+
 /// A run that never emits a message writes no usage record at all — an empty stream must not
 /// leave a line claiming a measured zero.
 #[test]

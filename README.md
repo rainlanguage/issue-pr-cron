@@ -797,7 +797,13 @@ other output signal in the stream is `system`/`thinking_tokens`, which is both
 explicitly an estimate and thinking-only: 9.7%–76.2% of true output across 53
 traces. An exhaustive scan of every numeric token/usage/cost field across all
 97 traces found no third source. So there is no live output count rather than a
-guessed one; roughly 65–75% of a run's cost sits on the fields that are exact.
+guessed one.
+
+That still leaves a real gauge: solving each model's per-token rates out of its
+own `modelUsage`/`costUSD` (sonnet-4-6 and opus-4-8 both fit to <0.1% error),
+the three exact fields account for a **median 72%** of a run's spend, range
+55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
+the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
 
 ### Rate-limit windows — `rateLimits`
 

@@ -1074,9 +1074,13 @@ impl StartupProbe {
 // usable proxy either. An exhaustive scan of every numeric token/usage/cost field over all 97
 // trace files found no third source. A live `tokensOut` would therefore have to be a guess, so
 // there is none — `usage` records carry the three fields that are exact and omit the one that is
-// not. Roughly 65–75% of a run's cost sits on the fields that ARE knowable (cache-read alone is
-// the term that runs away: the $37.02 run in #97 read 26.4M cached tokens), so this is a real
-// spend gauge, just an input-side one.
+// not.
+//
+// That still leaves most of the money in view. Solving each model's per-token rates out of its own
+// `modelUsage`/`costUSD` (sonnet-4-6 fits to 0.00% error, opus-4-8 to 0.07%), the three exact
+// fields account for a MEDIAN 72% of a run's spend, range 55–91% over the 36 model-runs where the
+// rate is solvable. Cache-read alone is the term that runs away — the $37.02 run in #97 read 26.4M
+// cached tokens. So this is a real spend gauge, just an input-side one.
 // ---------------------------------------------------------------------------------------------
 
 /// How many NEW main-thread messages between live `usage` records.
