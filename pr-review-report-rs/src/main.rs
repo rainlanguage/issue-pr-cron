@@ -710,11 +710,24 @@ struct RunMetrics {
     // any non-zero value is a regression of the no-park rule (both tools are denied in settings).
     wakeup_calls: usize,
     first_mutation_index: Option<usize>,
-    // Wall-clock ms from the first timestamped trace event to the first org-mutation's result
-    // (the state-recovery window). Only `user` events carry a `timestamp`, so the mutation is
-    // anchored to the result of its tool call, not the assistant event that issued it. None when
-    // the run never mutated, or when the anchor timestamps are absent/unparseable.
+    // Wall-clock ms from the first tool RESULT to the first org-mutation's result. Its anchor is
+    // the first `user` event, which is the result of the run's first tool call — so this window
+    // opens one tool-result LATE and excludes that first call's own latency. That is a flaw, but
+    // it is the meaning every committed record in metrics/runs.jsonl was written under, and
+    // re-anchoring it would put a step in the series that no run ever experienced. `boot_ms` +
+    // `ttl_ms` are the honest decomposition; this stays frozen. None when the run never mutated,
+    // or when the anchor timestamps are absent/unparseable.
     startup_ms: Option<i64>,
+    // LAUNCH overhead: first timestamped trace event → the run's first tool call. Nix resolving
+    // and exec'ing the flake output, the MCP handshake, the prompt load — nothing model-driven.
+    // Regresses when a derivation stops being cached or a store path is GC'd.
+    boot_ms: Option<i64>,
+    // ORIENTATION: the first tool call → the first PRODUCTIVE call (the producer's first mutation,
+    // the vetter's first verdict). State-load, queue read, checkout, skill load. Entirely model-
+    // and tool-surface-driven: it regresses when a tool returns too much, a prompt grows, or a
+    // failed call makes the model improvise. Nothing it and `boot_ms` have in common is why one
+    // fused number could not be acted on (#84).
+    ttl_ms: Option<i64>,
     duration_ms: u64,
     num_turns: u64,
     tokens_in: u64,
@@ -734,10 +747,26 @@ impl RunMetrics {
     }
 }
 
-/// A tool call is an org MUTATION when it is a Bash command that creates/edits/merges/closes
-/// a PR or issue, or commits/pushes — i.e. the run stopped recovering state and started doing
-/// work. Read-only gh/git/grep calls are NOT mutations.
+/// The vetter's GitHub WRITES on the MCP tool surface.
+///
+/// The vetter has no Bash at all (#52): `record_verdict` and `record_close_candidate_verdict` are
+/// its only two org mutations. A Bash-only detector therefore reports "never mutated" for every
+/// modern vetter run — `firstMutationIndex` null, `startupMs` null, `startupPct` a meaningless
+/// 100% — and takes the first-productive-act anchor down with it. These are the same transition
+/// the old Bash `pr-review-report record-verdict` invocation was, just no longer expressible as a
+/// command string.
+const MCP_MUTATION_TOOLS: &[&str] = &[
+    "mcp__fsm__record_verdict",
+    "mcp__fsm__record_close_candidate_verdict",
+];
+
+/// A tool call is an org MUTATION when it is one of the vetter's MCP writes, or a Bash command
+/// that creates/edits/merges/closes a PR or issue, or commits/pushes — i.e. the run stopped
+/// recovering state and started doing work. Read-only gh/git/grep calls are NOT mutations.
 fn is_mutation_tool(name: &str, input: &serde_json::Value) -> bool {
+    if MCP_MUTATION_TOOLS.contains(&name) {
+        return true;
+    }
     if name != "Bash" {
         return false;
     }
@@ -807,98 +836,323 @@ fn iso_to_epoch_ms(s: &str) -> Option<i64> {
     Some((days * 86400 + h * 3600 + mi * 60 + sec) * 1000 + ms)
 }
 
+/// Which of the two startup numbers just became KNOWN.
+///
+/// The split exists because the numbers are emitted the moment their anchor arrives rather than at
+/// run end. `run-metrics` only ever runs after the claude process exits, so a run that is killed,
+/// times out, or dies leaves NO record at all — and that is precisely the run whose timings you
+/// want. Three manual vetter runs on 2026-07-27/28 produced zero records between them (#84).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum StartupPhase {
+    /// `bootMs` is known: the run reached its first tool call.
+    Boot,
+    /// `ttlMs` is known: the run reached its first productive call.
+    Ttl,
+}
+
+impl StartupPhase {
+    /// The wire word written into a partial record's `stage`.
+    fn as_str(self) -> &'static str {
+        match self {
+            StartupPhase::Boot => "boot",
+            StartupPhase::Ttl => "ttl",
+        }
+    }
+}
+
+/// The `stage` of a COMPLETE record — written at run end with the whole usage/cost/outcome tail.
+///
+/// How a consumer tells an old record from a new one: **`stage` absent means pre-#84**. Those
+/// records carry `startupMs` under its original meaning and no `bootMs`/`ttlMs` at all, so a
+/// chart spanning the change reads them as gaps in the new series rather than as zeroes, and the
+/// `startupMs` series itself is continuous because that field's definition did not move.
+const STAGE_FINAL: &str = "final";
+
+/// Streaming detector for a run's startup anchors.
+///
+/// ONE state machine, fed events in order, driving BOTH the end-of-run `run-metrics` (over a whole
+/// trace file) and the live `run-timings` filter (over the runner's pipe) — so the number a killed
+/// run recorded mid-flight and the number a completed run records at the end can never be computed
+/// two different ways.
+#[derive(Default)]
+struct StartupProbe {
+    /// First timestamped event of ANY type: the earliest instant the trace can witness, and what
+    /// `bootMs` measures from. Derived from the trace alone on purpose — a wall-clock anchor handed
+    /// in by the runner could not be re-derived from an archived trace, and re-derivation from
+    /// `runs/*.jsonl` is how this repo backfills history.
+    run_ts: Option<i64>,
+    /// First `user` timestamp — the result of the run's FIRST tool call. This is `startupMs`'s
+    /// anchor and is deliberately left where it is; see the field's comment on [`RunMetrics`].
+    first_result_ts: Option<i64>,
+    /// Timestamp of the assistant event carrying the run's first `tool_use`.
+    first_tool_ts: Option<i64>,
+    /// Set once the first tool call is seen, whether or not its event was timestamped, so an
+    /// untimestamped first call degrades to "no boot/ttl" instead of promoting a LATER call into
+    /// the anchor and reporting a plausible, wrong number.
+    saw_first_tool: bool,
+    /// Timestamp of the assistant event carrying the first PRODUCTIVE `tool_use`. Anchored on the
+    /// call, not on its result: the model has finished orienting when it issues the call, and a run
+    /// killed in the gap before the result would otherwise lose the whole measurement.
+    productive_ts: Option<i64>,
+    tool_calls: usize,
+    startup_tool_calls: usize,
+    wakeup_calls: usize,
+    first_mutation_index: Option<usize>,
+    mutation_pending: bool,
+    mutation_result_ts: Option<i64>,
+}
+
+impl StartupProbe {
+    /// Feed one trace event. Returns the phases whose number became known ON THIS EVENT — at most
+    /// two, and two at once when the run's very first tool call is already the productive one.
+    fn observe(&mut self, ev: &Value) -> Vec<StartupPhase> {
+        let mut phases = Vec::new();
+        let ts = ev
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .and_then(iso_to_epoch_ms);
+        if ts.is_some() && self.run_ts.is_none() {
+            self.run_ts = ts;
+        }
+        match ev.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                let Some(content) = ev
+                    .get("message")
+                    .and_then(|msg| msg.get("content"))
+                    .and_then(|c| c.as_array())
+                else {
+                    return phases;
+                };
+                for block in content {
+                    if block.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                        continue;
+                    }
+                    let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let empty = serde_json::json!({});
+                    let input = block.get("input").unwrap_or(&empty);
+                    if name == "ScheduleWakeup" || name == "CronCreate" {
+                        self.wakeup_calls += 1;
+                    }
+                    if !self.saw_first_tool {
+                        self.saw_first_tool = true;
+                        self.first_tool_ts = ts;
+                        if self.boot_ms().is_some() {
+                            phases.push(StartupPhase::Boot);
+                        }
+                    }
+                    if self.first_mutation_index.is_none() {
+                        if is_mutation_tool(name, input) {
+                            self.first_mutation_index = Some(self.tool_calls);
+                            self.mutation_pending = true;
+                            self.productive_ts = ts;
+                            if self.ttl_ms().is_some() {
+                                phases.push(StartupPhase::Ttl);
+                            }
+                        } else {
+                            self.startup_tool_calls += 1;
+                        }
+                    }
+                    self.tool_calls += 1;
+                }
+            }
+            Some("user") => {
+                // A tool RESULT. The first one anchors `startupMs`; once a mutation is pending,
+                // the next one closes that window.
+                if let Some(ts) = ts {
+                    if self.first_result_ts.is_none() {
+                        self.first_result_ts = Some(ts);
+                    }
+                    if self.mutation_pending {
+                        self.mutation_result_ts = Some(ts);
+                        self.mutation_pending = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+        phases
+    }
+
+    fn boot_ms(&self) -> Option<i64> {
+        Some(self.first_tool_ts? - self.run_ts?)
+    }
+
+    fn ttl_ms(&self) -> Option<i64> {
+        Some(self.productive_ts? - self.first_tool_ts?)
+    }
+
+    fn startup_ms(&self) -> Option<i64> {
+        Some(self.mutation_result_ts? - self.first_result_ts?)
+    }
+
+    /// Copy the counted + timed fields onto a metrics record.
+    fn fill(&self, m: &mut RunMetrics) {
+        m.tool_calls = self.tool_calls;
+        m.startup_tool_calls = self.startup_tool_calls;
+        m.wakeup_calls = self.wakeup_calls;
+        m.first_mutation_index = self.first_mutation_index;
+        m.startup_ms = self.startup_ms();
+        m.boot_ms = self.boot_ms();
+        m.ttl_ms = self.ttl_ms();
+    }
+}
+
 /// Parse a stream-json trace: count tool calls in order, find the first mutation, and take
 /// the usage/duration/cost from the result event with the most turns (the main run — trailing
 /// short result events from continuations are ignored).
 fn run_metrics(content: &str) -> RunMetrics {
     let mut m = RunMetrics::default();
+    let mut probe = StartupProbe::default();
     let mut best_turns = 0u64;
-    // Wall-clock startup: anchor at the first timestamped event, close at the first mutation's
-    // result. Only `user` events carry a `timestamp`, so when the first mutation tool_use is
-    // seen we flag it and capture the NEXT user timestamp as the mutation's wall-clock anchor.
-    let mut first_ts: Option<i64> = None;
-    let mut mutation_ts: Option<i64> = None;
-    let mut mutation_pending = false;
     for line in content.lines() {
         let v: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(_) => continue,
         };
-        match v.get("type").and_then(|t| t.as_str()) {
-            Some("assistant") => {
-                if let Some(content) = v
-                    .get("message")
-                    .and_then(|msg| msg.get("content"))
-                    .and_then(|c| c.as_array())
-                {
-                    for block in content {
-                        if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            let empty = serde_json::json!({});
-                            let input = block.get("input").unwrap_or(&empty);
-                            if name == "ScheduleWakeup" || name == "CronCreate" {
-                                m.wakeup_calls += 1;
-                            }
-                            if m.first_mutation_index.is_none() {
-                                if is_mutation_tool(name, input) {
-                                    m.first_mutation_index = Some(m.tool_calls);
-                                    mutation_pending = true;
-                                } else {
-                                    m.startup_tool_calls += 1;
-                                }
-                            }
-                            m.tool_calls += 1;
-                        }
-                    }
-                }
+        probe.observe(&v);
+        if v.get("type").and_then(|t| t.as_str()) == Some("result") {
+            let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
+            if turns >= best_turns {
+                best_turns = turns;
+                m.num_turns = turns;
+                m.duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
+                m.cost_usd = v
+                    .get("total_cost_usd")
+                    .and_then(|c| c.as_f64())
+                    .unwrap_or(0.0);
+                let u = v.get("usage");
+                let g = |k: &str| {
+                    u.and_then(|u| u.get(k))
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0)
+                };
+                m.tokens_in = g("input_tokens");
+                m.tokens_out = g("output_tokens");
+                m.cache_read = g("cache_read_input_tokens");
+                m.cache_creation = g("cache_creation_input_tokens");
             }
-            Some("user") => {
-                // The only event type carrying a `timestamp`. First one seen anchors run start;
-                // once a mutation is pending, the next one closes the startup window.
-                if let Some(ts) = v
-                    .get("timestamp")
-                    .and_then(|t| t.as_str())
-                    .and_then(iso_to_epoch_ms)
-                {
-                    if first_ts.is_none() {
-                        first_ts = Some(ts);
-                    }
-                    if mutation_pending {
-                        mutation_ts = Some(ts);
-                        mutation_pending = false;
-                    }
-                }
-            }
-            Some("result") => {
-                let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
-                if turns >= best_turns {
-                    best_turns = turns;
-                    m.num_turns = turns;
-                    m.duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
-                    m.cost_usd = v
-                        .get("total_cost_usd")
-                        .and_then(|c| c.as_f64())
-                        .unwrap_or(0.0);
-                    let u = v.get("usage");
-                    let g = |k: &str| {
-                        u.and_then(|u| u.get(k))
-                            .and_then(|n| n.as_u64())
-                            .unwrap_or(0)
-                    };
-                    m.tokens_in = g("input_tokens");
-                    m.tokens_out = g("output_tokens");
-                    m.cache_read = g("cache_read_input_tokens");
-                    m.cache_creation = g("cache_creation_input_tokens");
-                }
-            }
-            _ => {}
         }
     }
-    m.startup_ms = match (first_ts, mutation_ts) {
-        (Some(start), Some(mut_ts)) => Some(mut_ts - start),
-        _ => None,
-    };
+    probe.fill(&mut m);
     m
+}
+
+/// Which run a record belongs to, as the runner knows it. Nothing here is derivable from the
+/// trace, which is why it arrives as flags.
+struct RunIdentity<'a> {
+    run_id: Option<&'a str>,
+    role: Option<&'a str>,
+    model: Option<&'a str>,
+}
+
+/// Stamp a record with the run's identity.
+///
+/// Only the fields the caller actually supplied are added, so a bare `run-metrics <trace>` keeps
+/// emitting exactly the record it always has (the dashboard re-derives history from raw traces).
+fn stamp_identity(doc: &mut Value, id: &RunIdentity) {
+    let Some(obj) = doc.as_object_mut() else {
+        return;
+    };
+    if let Some(run_id) = id.run_id {
+        obj.insert("runId".into(), serde_json::json!(run_id));
+    }
+    if let Some(role) = id.role {
+        obj.insert("role".into(), serde_json::json!(role));
+    }
+    if let Some(model) = id.model {
+        obj.insert("model".into(), serde_json::json!(model));
+    }
+}
+
+/// One PARTIAL record: everything known at the instant `phase` became knowable, and nothing else.
+///
+/// The omissions are the point. A `boot` record has no `ttlMs` because the run has not reached its
+/// first productive call; neither stage has `toolCalls`, `startupPct`, `durationMs` or `outcome`,
+/// because the run is still going and any value for them would be a guess that later reads as
+/// measurement. `startupMs` is absent from both because its end anchor is the mutation's RESULT,
+/// which has not arrived when the `ttl` record is written. A consumer distinguishes these from a
+/// complete record by `stage`, and reconciles the lines one `runId` can produce by keeping the
+/// most complete (`final` > `ttl` > `boot`) and, among equals, the LAST — model fallback re-runs
+/// this filter per attempt, and the last attempt is the one that actually ran.
+fn partial_record(
+    probe: &StartupProbe,
+    phase: StartupPhase,
+    trace: &str,
+    id: &RunIdentity,
+) -> Value {
+    let mut doc = match phase {
+        StartupPhase::Boot => serde_json::json!({
+            "trace": trace,
+            "stage": phase.as_str(),
+            "bootMs": probe.boot_ms(),
+        }),
+        StartupPhase::Ttl => serde_json::json!({
+            "trace": trace,
+            "stage": phase.as_str(),
+            "startupToolCalls": probe.startup_tool_calls,
+            "firstMutationIndex": probe.first_mutation_index,
+            "bootMs": probe.boot_ms(),
+            "ttlMs": probe.ttl_ms(),
+        }),
+    };
+    stamp_identity(&mut doc, id);
+    doc
+}
+
+/// Append one record to the metrics file, creating it (and its directory) if absent.
+///
+/// Best-effort by contract: this runs INSIDE the runner's live pipe, and a metrics write must
+/// never be able to take down the run it is measuring. One `write` of a short line to an O_APPEND
+/// fd is atomic on Linux, so these mid-run appends cannot interleave with the runner's end-of-run
+/// `run-metrics >> …` into the same file.
+fn append_record(path: &str, doc: &Value) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = std::path::Path::new(path).parent();
+    if let Some(dir) = dir {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(f, "{}", serde_json::to_string(doc).unwrap())?;
+    f.flush()
+}
+
+/// `run-timings --out <runs.jsonl> --trace <path> [--run-id --role --model]`: pass a LIVE
+/// stream-json trace through unchanged, appending a record the moment `bootMs` and then `ttlMs`
+/// become known.
+///
+/// This exists because `run-metrics` writes at the END of a run. A run that is killed, times out,
+/// or dies therefore records nothing — and that is exactly the run whose startup timings matter
+/// (#84: three manual vetter runs produced zero records between them, so the 5-minute time-to-
+/// first-verdict had to be measured off the trace by hand). Sitting in the runner's pipe, this
+/// filter has both numbers on disk long before the run's fate is decided.
+///
+/// It is a pass-through FIRST: every line is forwarded before it is parsed, so the downstream
+/// distiller keeps seeing the whole stream even if nothing here works. Every failure — an
+/// unparseable line, an unwritable metrics file — is swallowed for the same reason.
+fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    let mut probe = StartupProbe::default();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if writeln!(stdout, "{line}").is_err() {
+            return 0; // downstream closed
+        }
+        let _ = stdout.flush();
+        let Ok(ev) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        for phase in probe.observe(&ev) {
+            let _ = append_record(out, &partial_record(&probe, phase, trace, id));
+        }
+    }
+    0
 }
 
 /// `run-metrics <trace.jsonl> [--run-id --role --model --exit-code]`: print the run's metrics
@@ -911,9 +1165,7 @@ fn run_metrics(content: &str) -> RunMetrics {
 /// [`classify_trace`] rather than by grepping the trace in bash.
 fn run_metrics_mode(
     path: &str,
-    run_id: Option<&str>,
-    role: Option<&str>,
-    model: Option<&str>,
+    id: &RunIdentity,
     exit_code: Option<i32>,
     preflight_missing: &[String],
 ) -> i32 {
@@ -926,13 +1178,44 @@ fn run_metrics_mode(
     };
     let m = run_metrics(&content);
     let tooling = trace_tooling_report(&content);
+    let outcome = exit_code.map(|rc| (rc, classify_outcome(&content, rc, preflight_missing)));
+    println!(
+        "{}",
+        serde_json::to_string(&final_record(
+            path,
+            &m,
+            id,
+            outcome,
+            &tooling,
+            preflight_missing
+        ))
+        .unwrap()
+    );
+    0
+}
+
+/// The COMPLETE end-of-run record: every field in `partial_record` plus the counts, usage, cost and
+/// outcome that only exist once the run has finished. Built here rather than inline in
+/// [`run_metrics_mode`] so the record's shape — `stage` above all — is a tested value, not a
+/// side effect of printing.
+fn final_record(
+    path: &str,
+    m: &RunMetrics,
+    id: &RunIdentity,
+    outcome: Option<(i32, TraceOutcome)>,
+    tooling: &ToolingReport,
+    preflight_missing: &[String],
+) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
+        "stage": STAGE_FINAL,
         "toolCalls": m.tool_calls,
         "startupToolCalls": m.startup_tool_calls,
         "startupPct": (m.startup_pct() * 10.0).round() / 10.0,
         "wakeupCalls": m.wakeup_calls,
         "firstMutationIndex": m.first_mutation_index,
+        "bootMs": m.boot_ms,
+        "ttlMs": m.ttl_ms,
         "startupMs": m.startup_ms,
         "durationMs": m.duration_ms,
         "numTurns": m.num_turns,
@@ -948,28 +1231,12 @@ fn run_metrics_mode(
         "commandsNotFound": tooling.command_not_found,
         "missingTools": preflight_missing,
     });
-    // Only enrich when the caller supplied run identity, so a bare `run-metrics <trace>` keeps
-    // emitting exactly the record it always has (the dashboard re-derives history from traces).
-    if let Some(obj) = doc.as_object_mut() {
-        if let Some(run_id) = run_id {
-            obj.insert("runId".into(), serde_json::json!(run_id));
-        }
-        if let Some(role) = role {
-            obj.insert("role".into(), serde_json::json!(role));
-        }
-        if let Some(model) = model {
-            obj.insert("model".into(), serde_json::json!(model));
-        }
-        if let Some(rc) = exit_code {
-            obj.insert("exitCode".into(), serde_json::json!(rc));
-            obj.insert(
-                "outcome".into(),
-                serde_json::json!(classify_outcome(&content, rc, preflight_missing).as_str()),
-            );
-        }
+    stamp_identity(&mut doc, id);
+    if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
+        obj.insert("exitCode".into(), serde_json::json!(rc));
+        obj.insert("outcome".into(), serde_json::json!(verdict.as_str()));
     }
-    println!("{}", serde_json::to_string(&doc).unwrap());
-    0
+    doc
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1058,19 +1325,23 @@ fn resolve_in(path: &std::ffi::OsStr, bin: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-fn resolve_on_path(bin: &str) -> Option<std::path::PathBuf> {
-    resolve_in(&std::env::var_os("PATH")?, bin)
+/// `preflight`: resolve every [`HARNESS_TOOLS`] entry against the process's own `$PATH`, print
+/// what was found, exit non-zero when any is missing.
+///
+/// Exit [`CLOSURE_UNSATISFIED`] is its own code (like the usage gate's 10) so the runner can tell
+/// "a dependency is missing" from "the binary itself failed".
+///
+/// The environment is a PARAMETER of [`preflight_report`], not a global read, which is what lets
+/// the CI closure gate ask the identical question of a runner's BAKED path — one implementation,
+/// so the declaration and the closure cannot answer differently.
+fn preflight_mode() -> i32 {
+    preflight_report(&std::env::var_os("PATH").unwrap_or_default())
 }
 
-/// `preflight`: resolve every [`HARNESS_TOOLS`] entry, print what was found, exit non-zero when
-/// any is missing.
-///
-/// Exit 12 is its own code (like the usage gate's 10) so the runner can tell "a dependency is
-/// missing" from "the binary itself failed".
-fn preflight_mode() -> i32 {
+fn preflight_report(path: &std::ffi::OsStr) -> i32 {
     let mut missing = Vec::new();
     for t in HARNESS_TOOLS {
-        match resolve_on_path(t.bin) {
+        match resolve_in(path, t.bin) {
             Some(p) => println!("ok      {:<10} {}", t.bin, p.display()),
             None => {
                 println!("MISSING {:<10} {}", t.bin, t.why);
@@ -1088,7 +1359,581 @@ fn preflight_mode() -> i32 {
         missing.len(),
         missing.join(", ")
     );
-    12
+    CLOSURE_UNSATISFIED
+}
+
+// ---------------------------------------------------------------------------------------------
+// The closure gates (#85).
+//
+// [`HARNESS_TOOLS`] is a DECLARATION. These three subcommands are what make it true of the thing
+// a model actually runs inside: the nix closure baked into each model runner. CI calls each in one
+// line and reads the exit code.
+//
+// They share one rule, and it is the whole reason they exist separately from the runners' own
+// `preflight`: a runner's capabilities are resolved from ITS OWN baked PATH and from nothing else.
+// A tool that merely happens to be installed on the CI box must never satisfy a gate, because the
+// cron's environment is bare and the developer's is not.
+//
+// Why three, and not one:
+//
+//   `closure-preflight` — presence. Every declared read-time dependency resolves from each
+//   runner's closure. Catches "nobody added it to runtimeInputs".
+//
+//   `closure-render`    — capability. Presence is not function: a closure can carry `pdftoppm`
+//   and still fail on a missing shared library or data file, and the harness turns BOTH into the
+//   same `isError` with the run still exiting 0. So this one renders a real PDF end to end with
+//   the harness's own argv.
+//
+//   `closure-surface`   — divergence. The producer and the vetter run the same harness over the
+//   same repositories, so a capability one needs is almost always one the other needs. Note this
+//   gate is structurally blind to a capability BOTH runners lack — which is exactly #85's shape.
+//   That is why the two presence gates above are what actually hold the bug, and why a symmetry
+//   check alone would have been a false comfort.
+// ---------------------------------------------------------------------------------------------
+
+/// Exit code for "the closure does not satisfy the gate" — the same code the runners' own
+/// `preflight` exits with, because it is the same fact about the same declaration.
+const CLOSURE_UNSATISFIED: i32 = 12;
+
+/// Exit code for "the gate could not be evaluated": no package was built, or the built wrapper
+/// had no PATH in it. Distinct from [`CLOSURE_UNSATISFIED`] because knowing NOTHING about a
+/// closure is a different problem from knowing it is wrong, and sends the reader somewhere else.
+const CLOSURE_UNEVALUABLE: i32 = 2;
+
+/// The packages whose closure IS a model's environment.
+///
+/// Only these two host a harness. The other flake outputs (`refresh-human-queue`, the human entry
+/// points) run no model, read no PDF, and are deliberately not held to the harness declaration.
+const MODEL_RUNNERS: &[&str] = &["campaign-run", "review-run"];
+
+/// A binary one model runner has and the other does not, ON PURPOSE.
+struct DeclaredAsymmetry {
+    bin: &'static str,
+    /// The model runner that has it. Every other model runner must NOT.
+    only_in: &'static str,
+    /// Why it is one-sided — a fact about the role, not a shrug.
+    why: &'static str,
+}
+
+/// Every sanctioned difference between the model runners' capability surfaces.
+///
+/// #85 is precisely the shape of bug where a tool lands in one closure and not the other. Rather
+/// than trusting that whoever edits `runtimeInputs` remembers both, the asymmetry is declared, and
+/// `closure-surface` fails on any difference that is not in this table — and equally on any entry
+/// here that is no longer true, so the declaration cannot outlive the fact and quietly license a
+/// real divergence later.
+const DECLARED_ASYMMETRY: &[DeclaredAsymmetry] = &[DeclaredAsymmetry {
+    bin: "jq",
+    only_in: "campaign-run",
+    why: "the PRODUCER's model shells out to jq from its Bash tool; the vetter has no Bash and \
+          cannot invoke anything at all (flake.nix)",
+}];
+
+/// Why a closure gate is not satisfied.
+///
+/// A TYPE, so the exit code and the diagnostic are derived from the fact. Nothing downstream
+/// re-reads a rendered message to work out what happened.
+#[derive(Debug, PartialEq, Eq)]
+enum ClosureFault {
+    /// `nix build` produced no store path for the package.
+    Unbuildable { pkg: String, detail: String },
+    /// The built wrapper carries no `export PATH="…"`, or an empty one. `writeShellApplication`'s
+    /// shape changed; a gate that read that as "no tools missing" would be worse than no gate.
+    NoBakedPath { pkg: String, script: String },
+    /// A declared harness tool does not resolve from this runner's own baked PATH.
+    ToolMissing {
+        pkg: String,
+        bin: &'static str,
+        why: &'static str,
+    },
+    /// The render did not happen. What `command -v` cannot see.
+    RenderFailed { pkg: String, how: RenderFault },
+    /// A binary present to one runner and absent from the other, with nothing declaring why.
+    UndeclaredAsymmetry { pkg: String, bin: String },
+    /// A [`DECLARED_ASYMMETRY`] entry that is no longer true.
+    StaleAsymmetry {
+        pkg: &'static str,
+        bin: &'static str,
+    },
+    /// A runner with no store binaries at all. Two empty surfaces compare equal, so without this
+    /// the symmetry gate would pass loudest exactly when a closure was most broken.
+    EmptySurface { pkg: String },
+}
+
+impl ClosureFault {
+    /// Whether the gate learned nothing, as opposed to learning something bad.
+    fn is_unevaluable(&self) -> bool {
+        matches!(
+            self,
+            ClosureFault::Unbuildable { .. } | ClosureFault::NoBakedPath { .. }
+        )
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            ClosureFault::Unbuildable { pkg, detail } => {
+                format!("{pkg}: nix build produced no package ({detail})")
+            }
+            ClosureFault::NoBakedPath { pkg, script } => format!(
+                "{pkg}: no `export PATH=\"…\"` in {script} — writeShellApplication's shape changed, \
+                 so this gate cannot see the closure at all"
+            ),
+            ClosureFault::ToolMissing { pkg, bin, why } => format!(
+                "{pkg}: `{bin}` is not in the closure. Add it to this runner's runtimeInputs — {why}"
+            ),
+            ClosureFault::RenderFailed { pkg, how } => format!(
+                "{pkg}: the PDF read path does not render — {}. The harness turns this into the \
+                 same `isError` a MISSING binary produces, and the run still exits 0.",
+                how.describe()
+            ),
+            ClosureFault::UndeclaredAsymmetry { pkg, bin } => format!(
+                "{pkg}: `{bin}` is in this runner's closure and not the other's. Add it to BOTH \
+                 runners' runtimeInputs, or add it to DECLARED_ASYMMETRY with the reason it is \
+                 one-sided."
+            ),
+            ClosureFault::StaleAsymmetry { pkg, bin } => format!(
+                "DECLARED_ASYMMETRY says `{bin}` is only in {pkg}, and it is not. Drop the \
+                 declaration — a stale one licenses a real divergence later."
+            ),
+            ClosureFault::EmptySurface { pkg } => format!(
+                "{pkg}: not one /nix/store binary on its baked PATH. Two empty surfaces compare \
+                 equal, so this gate must not call that symmetric."
+            ),
+        }
+    }
+}
+
+/// The process exit code for a set of faults.
+///
+/// An un-evaluable gate OUTRANKS a failed one. If `nix build` did not produce a package there is
+/// no closure to have an opinion about, and reporting "this closure is missing a tool" for what is
+/// really a broken build sends whoever reads it to the wrong file.
+fn closure_exit_code(faults: &[ClosureFault]) -> i32 {
+    if faults.is_empty() {
+        return 0;
+    }
+    if faults.iter().any(ClosureFault::is_unevaluable) {
+        return CLOSURE_UNEVALUABLE;
+    }
+    CLOSURE_UNSATISFIED
+}
+
+/// Print every fault as a CI annotation and return the exit code, or print `ok_line` and return 0.
+fn report_closure(faults: &[ClosureFault], ok_line: &str) -> i32 {
+    for f in faults {
+        println!("::error::{}", f.describe());
+    }
+    if faults.is_empty() {
+        println!("{ok_line}");
+    }
+    closure_exit_code(faults)
+}
+
+/// A model runner's environment, exactly as the runner will see it.
+struct RunnerClosure {
+    pkg: String,
+    /// The PATH `writeShellApplication` baked into the script from `runtimeInputs`.
+    path: std::ffi::OsString,
+}
+
+/// Lift `export PATH="…"` out of a built runner script.
+///
+/// Pure, because the interesting failure is the SHAPE of the script rather than the filesystem:
+/// nixpkgs could stop emitting this line, and a gate that then reported an empty environment as
+/// "nothing missing" would be silently vacuous. An empty value is treated as absent for the same
+/// reason.
+fn baked_path(script: &str) -> Option<&str> {
+    let (_, rest) = script.split_once("export PATH=\"")?;
+    let (path, _) = rest.split_once('"')?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Build one model runner and read the PATH out of it.
+fn runner_closure(flake: &str, pkg: &str) -> Result<RunnerClosure, ClosureFault> {
+    let out = Command::new("nix")
+        .arg("build")
+        .arg("--no-link")
+        .arg("--print-out-paths")
+        .arg(format!("{flake}#{pkg}"))
+        .output();
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            return Err(ClosureFault::Unbuildable {
+                pkg: pkg.to_string(),
+                detail: format!("cannot run nix: {e}"),
+            })
+        }
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(ClosureFault::Unbuildable {
+            pkg: pkg.to_string(),
+            detail: err.trim().lines().last().unwrap_or("no output").to_string(),
+        });
+    }
+    let store = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    // The package name IS the script name for every model runner (flake.nix's `runner` builder
+    // takes one `name`), so there is no second place that has to agree about the binary's name.
+    let script = format!("{store}/bin/{pkg}");
+    let text = std::fs::read_to_string(&script).unwrap_or_default();
+    match baked_path(&text) {
+        Some(p) => Ok(RunnerClosure {
+            pkg: pkg.to_string(),
+            path: std::ffi::OsString::from(p),
+        }),
+        None => Err(ClosureFault::NoBakedPath {
+            pkg: pkg.to_string(),
+            script,
+        }),
+    }
+}
+
+/// Every model runner's closure, or the fault that stopped each from being read.
+fn model_runner_closures(flake: &str) -> (Vec<RunnerClosure>, Vec<ClosureFault>) {
+    let mut ok = Vec::new();
+    let mut faults = Vec::new();
+    for pkg in MODEL_RUNNERS {
+        match runner_closure(flake, pkg) {
+            Ok(c) => ok.push(c),
+            Err(f) => faults.push(f),
+        }
+    }
+    (ok, faults)
+}
+
+/// `closure-preflight`: every [`HARNESS_TOOLS`] entry resolves from EACH model runner's own baked
+/// PATH.
+///
+/// The sibling "each runner's closure is self-contained" gate asserts the tools the SCRIPTS name.
+/// It structurally cannot see a tool only the harness reaches for at read time — nothing in this
+/// repo names `pdftoppm`, so no walk over declarations could find it, which is how #85 passed a
+/// gate that was working correctly. This is the other half: the declaration is `HARNESS_TOOLS`,
+/// and it is enforced against the closure by the same `resolve_in` the runner uses at run time.
+fn closure_preflight_mode(flake: &str) -> i32 {
+    let (closures, mut faults) = model_runner_closures(flake);
+    for c in &closures {
+        for t in HARNESS_TOOLS {
+            match resolve_in(&c.path, t.bin) {
+                Some(p) => println!("  {:<13} {:<10} {}", c.pkg, t.bin, p.display()),
+                None => faults.push(ClosureFault::ToolMissing {
+                    pkg: c.pkg.clone(),
+                    bin: t.bin,
+                    why: t.why,
+                }),
+            }
+        }
+    }
+    report_closure(
+        &faults,
+        "every harness read-time dependency is in both model runners' closures",
+    )
+}
+
+/// How a render failed, in the harness's own terms.
+#[derive(Debug, PartialEq, Eq)]
+enum RenderFault {
+    /// `pdftoppm` is not on the closure's PATH at all.
+    NotInClosure,
+    /// The process could not be started: a broken loader, a non-executable file, a dangling
+    /// symlink out of the store.
+    Unspawnable(std::io::ErrorKind),
+    /// It ran and exited non-zero. THIS is the case presence cannot distinguish from absence — a
+    /// missing shared library or data file lands here and reaches the model as the same `isError`.
+    Exited { code: Option<i32>, stderr: String },
+    /// Exit 0 with nothing written. The harness counts the files `pdftoppm` left behind, so zero
+    /// files is its "could not read this document" path.
+    NoPages,
+    /// A page was written that is not a JPEG, so the harness has nothing it can attach.
+    NotJpeg { page: String, magic: Vec<u8> },
+}
+
+impl RenderFault {
+    fn describe(&self) -> String {
+        match self {
+            RenderFault::NotInClosure => "`pdftoppm` is not on the runner's baked PATH".to_string(),
+            RenderFault::Unspawnable(kind) => format!("`pdftoppm` would not start ({kind:?})"),
+            RenderFault::Exited { code, stderr } => format!(
+                "`pdftoppm` exited {}: {}",
+                code.map(|c| c.to_string())
+                    .unwrap_or_else(|| "on a signal".to_string()),
+                if stderr.is_empty() {
+                    "(no stderr)"
+                } else {
+                    stderr
+                }
+            ),
+            RenderFault::NoPages => "`pdftoppm` exited 0 and wrote no pages".to_string(),
+            RenderFault::NotJpeg { page, magic } => {
+                format!("{page} is not a JPEG (magic {magic:02x?})")
+            }
+        }
+    }
+}
+
+/// The three bytes every JPEG starts with (SOI + the first marker). What the harness attaches has
+/// to be a real image, not a zero-length file `pdftoppm` opened and abandoned.
+const JPEG_MAGIC: [u8; 3] = [0xff, 0xd8, 0xff];
+
+/// The one-page PDF the render gate feeds to poppler.
+///
+/// GENERATED, not committed, on purpose: a built fixture cannot rot into a stale blob nobody knows
+/// how to regenerate, and the byte offsets are its self-check — poppler reports a broken xref
+/// loudly, so a generator that computes them wrong fails the gate instead of passing a degenerate
+/// file through it.
+///
+/// It is a real document rather than a header: catalog → pages → page → content stream → font,
+/// with a MediaBox and a text-showing operator, so a render has something to rasterise and the
+/// parse has an object graph to walk.
+fn fixture_pdf() -> Vec<u8> {
+    let stream = "BT /F1 36 Tf 72 700 Td (POPPLER RENDER OK) Tj ET\n";
+    let objects = [
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n".to_string(),
+        format!("4 0 obj\n<< /Length {} >>\nstream\n{stream}endstream\nendobj\n", stream.len()),
+        "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".to_string(),
+    ];
+
+    let mut pdf = Vec::from(&b"%PDF-1.4\n"[..]);
+    let mut offsets = Vec::new();
+    for o in &objects {
+        // Taken BEFORE the object is written: an xref entry is the offset OF the object.
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(o.as_bytes());
+    }
+    let startxref = pdf.len();
+    pdf.extend_from_slice(b"xref\n");
+    // Entry 0 is the head of the free list, and the count includes it.
+    pdf.extend_from_slice(format!("0 {}\n", objects.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for off in &offsets {
+        pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{startxref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    pdf
+}
+
+/// Render `pdf` with a runner's own `pdftoppm`, and return how many pages came out.
+///
+/// The argv is byte-for-byte the harness's: `Read` renders a PDF page range with
+/// `pdftoppm -jpeg -r 100 [-f N] [-l M] <pdf> <prefix>`. Approximating it would test a call the
+/// pipeline never makes.
+///
+/// `env_clear` is the `env -i` of the gate this replaces, and stronger: not one variable of the CI
+/// box's environment reaches the renderer, so nothing installed there can stand in for the
+/// closure's own copy. `HOME` is set into the scratch dir because poppler reads user config.
+fn render_from_closure(
+    closure: &RunnerClosure,
+    pdf: &std::path::Path,
+    dir: &std::path::Path,
+) -> Result<usize, RenderFault> {
+    let Some(bin) = resolve_in(&closure.path, "pdftoppm") else {
+        return Err(RenderFault::NotInClosure);
+    };
+    let out = Command::new(&bin)
+        .args(["-jpeg", "-r", "100", "-f", "1", "-l", "1"])
+        .arg(pdf)
+        .arg(dir.join("page"))
+        .env_clear()
+        .env("PATH", &closure.path)
+        .env("HOME", dir)
+        .output()
+        .map_err(|e| RenderFault::Unspawnable(e.kind()))?;
+    if !out.status.success() {
+        return Err(RenderFault::Exited {
+            code: out.status.code(),
+            stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        });
+    }
+    let mut pages: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| RenderFault::Unspawnable(e.kind()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("jpg"))
+        .collect();
+    pages.sort();
+    let Some(first) = pages.first() else {
+        return Err(RenderFault::NoPages);
+    };
+    let bytes = std::fs::read(first).map_err(|e| RenderFault::Unspawnable(e.kind()))?;
+    if !bytes.starts_with(&JPEG_MAGIC) {
+        return Err(RenderFault::NotJpeg {
+            page: first.display().to_string(),
+            magic: bytes.iter().take(JPEG_MAGIC.len()).copied().collect(),
+        });
+    }
+    Ok(pages.len())
+}
+
+/// `closure-render`: each model runner's closure RENDERS a PDF, not merely resolves the renderer.
+///
+/// `command -v pdftoppm` proves a name resolves. It does not prove the renderer runs, and the
+/// difference is invisible from outside: the harness turns a non-zero `pdftoppm` into the same
+/// `isError` an absent one produces, and the run still exits 0. So this executes the real thing on
+/// a real document, from the runner's own closure.
+fn closure_render_mode(flake: &str) -> i32 {
+    let (closures, mut faults) = model_runner_closures(flake);
+    let root = std::env::temp_dir().join(format!("prr-closure-render-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    if let Err(e) = std::fs::create_dir_all(&root) {
+        eprintln!("error: cannot create {}: {e}", root.display());
+        return CLOSURE_UNEVALUABLE;
+    }
+    let pdf = root.join("fixture.pdf");
+    if let Err(e) = std::fs::write(&pdf, fixture_pdf()) {
+        eprintln!("error: cannot write {}: {e}", pdf.display());
+        let _ = std::fs::remove_dir_all(&root);
+        return CLOSURE_UNEVALUABLE;
+    }
+    for c in &closures {
+        let dir = root.join(&c.pkg);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("error: cannot create {}: {e}", dir.display());
+            let _ = std::fs::remove_dir_all(&root);
+            return CLOSURE_UNEVALUABLE;
+        }
+        match render_from_closure(c, &pdf, &dir) {
+            Ok(n) => println!("  {:<13} rendered {n} page(s), JPEG magic OK", c.pkg),
+            Err(how) => faults.push(ClosureFault::RenderFailed {
+                pkg: c.pkg.clone(),
+                how,
+            }),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    report_closure(
+        &faults,
+        "both model runners can render a PDF from their own closure",
+    )
+}
+
+/// Where nix keeps the closures. Only directories under here count towards a capability surface.
+const NIX_STORE: &str = "/nix/store";
+
+/// Every binary a runner can invoke: the names in every directory on `path` that nix owns.
+///
+/// Store directories ONLY. A non-store entry on a runner's PATH is the ambient-acquisition bug the
+/// sibling "no ambient tool acquisition" gate already forbids, and counting it here would let a
+/// tool the developer happens to have installed silence a real asymmetry.
+///
+/// The store root is a PARAMETER for the same reason `resolve_in`'s PATH is: the rule is what
+/// needs testing, and no test can write into `/nix/store`.
+fn capability_surface_under(
+    path: &std::ffi::OsStr,
+    store: &std::path::Path,
+) -> std::collections::BTreeSet<String> {
+    let mut bins = std::collections::BTreeSet::new();
+    for dir in std::env::split_paths(path) {
+        if !dir.starts_with(store) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            if let Some(n) = e.file_name().to_str() {
+                bins.insert(n.to_string());
+            }
+        }
+    }
+    bins
+}
+
+fn capability_surface(closure: &RunnerClosure) -> std::collections::BTreeSet<String> {
+    capability_surface_under(&closure.path, std::path::Path::new(NIX_STORE))
+}
+
+/// The faults in a set of capability surfaces, given [`DECLARED_ASYMMETRY`].
+///
+/// PURE — the rule is decided on the sets, so it is tested on fabricated surfaces rather than on
+/// whatever nixpkgs happens to ship today. Both directions are faults: an undeclared difference,
+/// and a declaration that is no longer true.
+fn surface_faults(surfaces: &[(String, std::collections::BTreeSet<String>)]) -> Vec<ClosureFault> {
+    let mut faults = Vec::new();
+    // Nothing to compare. The caller already holds the fault that stopped every closure being
+    // read, and adding "every declaration is stale" on top of it would name the wrong file.
+    if surfaces.is_empty() {
+        return faults;
+    }
+    for (pkg, bins) in surfaces {
+        if bins.is_empty() {
+            faults.push(ClosureFault::EmptySurface { pkg: pkg.clone() });
+            continue;
+        }
+        let others: std::collections::BTreeSet<&String> = surfaces
+            .iter()
+            .filter(|(p, _)| p != pkg)
+            .flat_map(|(_, b)| b.iter())
+            .collect();
+        let only: Vec<&String> = bins.iter().filter(|b| !others.contains(*b)).collect();
+        for bin in &only {
+            if !DECLARED_ASYMMETRY
+                .iter()
+                .any(|d| d.only_in == pkg && d.bin == bin.as_str())
+            {
+                faults.push(ClosureFault::UndeclaredAsymmetry {
+                    pkg: pkg.clone(),
+                    bin: (*bin).clone(),
+                });
+            }
+        }
+        for d in DECLARED_ASYMMETRY.iter().filter(|d| d.only_in == pkg) {
+            if !only.iter().any(|b| b.as_str() == d.bin) {
+                faults.push(ClosureFault::StaleAsymmetry {
+                    pkg: d.only_in,
+                    bin: d.bin,
+                });
+            }
+        }
+    }
+    // A declaration naming a runner that is not in the comparison is stale too — otherwise a
+    // typo'd or renamed package would silently exempt nothing while looking like it exempted
+    // something.
+    for d in DECLARED_ASYMMETRY {
+        if !surfaces.iter().any(|(p, _)| p == d.only_in) {
+            faults.push(ClosureFault::StaleAsymmetry {
+                pkg: d.only_in,
+                bin: d.bin,
+            });
+        }
+    }
+    faults
+}
+
+/// `closure-surface`: the model runners' capability surfaces differ only where declared.
+///
+/// This gate cannot see a capability BOTH runners lack — #85's exact shape — which is why it is
+/// the third of three and not the only one. What it does hold is the other half: a dependency
+/// discovered ONCE cannot go missing from the other side silently.
+fn closure_surface_mode(flake: &str) -> i32 {
+    let (closures, mut faults) = model_runner_closures(flake);
+    let surfaces: Vec<(String, std::collections::BTreeSet<String>)> = closures
+        .iter()
+        .map(|c| (c.pkg.clone(), capability_surface(c)))
+        .collect();
+    for (pkg, bins) in &surfaces {
+        println!("  {pkg:<13} {} binaries", bins.len());
+    }
+    for d in DECLARED_ASYMMETRY {
+        println!("  declared: {} only in {} — {}", d.bin, d.only_in, d.why);
+    }
+    faults.extend(surface_faults(&surfaces));
+    report_closure(&faults, "capability surfaces match the declared asymmetry")
 }
 
 /// What a trace says about the run's tools, as distinct from the model's judgement.
@@ -7386,6 +8231,50 @@ enum Cmd {
     /// degrade it: the failure that motivated this was a vetter that could not render an audit PDF,
     /// vetted the PR on what was left, and reported success (#85).
     Preflight,
+    /// CI gate: every `HARNESS_TOOLS` entry resolves from EACH model runner's own baked PATH.
+    /// Exit 12 if a closure is missing one, 2 if a runner could not be built or read.
+    ClosurePreflight {
+        /// Flake to build the model runners from.
+        #[arg(long, default_value = ".")]
+        flake: String,
+    },
+    /// CI gate: each model runner's closure RENDERS a generated PDF with the harness's own argv —
+    /// presence is not capability, and a broken renderer reaches the model as the same `isError`
+    /// an absent one does.
+    ClosureRender {
+        /// Flake to build the model runners from.
+        #[arg(long, default_value = ".")]
+        flake: String,
+    },
+    /// CI gate: the model runners' capability surfaces differ only where `DECLARED_ASYMMETRY`
+    /// says, in both directions (an undeclared difference AND a declaration that is now false).
+    ClosureSurface {
+        /// Flake to build the model runners from.
+        #[arg(long, default_value = ".")]
+        flake: String,
+    },
+    /// Pass a LIVE stream-json trace through on stdout, appending `bootMs` then `ttlMs` records to
+    /// the metrics file the instant each becomes known — so a killed or timed-out run, the one
+    /// `run-metrics` can never reach, still contributes its startup timings.
+    RunTimings {
+        /// The metrics file to append partial records to — the same runs.jsonl the end-of-run
+        /// `run-metrics` record lands in.
+        #[arg(long)]
+        out: String,
+        /// The trace path the runner is teeing this same stream to, recorded as `trace` so a
+        /// partial record identifies the same run its final record will.
+        #[arg(long)]
+        trace: String,
+        /// Run id (the runner's UTC timestamp). Enriches the record with `runId`.
+        #[arg(long)]
+        run_id: Option<String>,
+        /// producer | vetter.
+        #[arg(long)]
+        role: Option<String>,
+        /// The model that actually ran (after any fallback).
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Print the typed outcome of a run trace: `ok`, `session-limit`, or `error`.
     /// The runners' model-fallback loop branches on this instead of grepping the trace.
     TraceOutcome {
@@ -8350,13 +9239,33 @@ fn main() {
             preflight_missing,
         } => run_metrics_mode(
             &trace,
-            run_id.as_deref(),
-            role.as_deref(),
-            model.as_deref(),
+            &RunIdentity {
+                run_id: run_id.as_deref(),
+                role: role.as_deref(),
+                model: model.as_deref(),
+            },
             exit_code,
             &preflight_missing,
         ),
         Cmd::Preflight => preflight_mode(),
+        Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
+        Cmd::ClosureRender { flake } => closure_render_mode(&flake),
+        Cmd::ClosureSurface { flake } => closure_surface_mode(&flake),
+        Cmd::RunTimings {
+            out,
+            trace,
+            run_id,
+            role,
+            model,
+        } => run_timings_mode(
+            &out,
+            &trace,
+            &RunIdentity {
+                run_id: run_id.as_deref(),
+                role: role.as_deref(),
+                model: model.as_deref(),
+            },
+        ),
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
@@ -9830,6 +10739,369 @@ mod run_metrics_tests {
     }
 }
 
+/// The boot / ttl split (#84).
+///
+/// `startupMs` fused two costs with nothing in common — nix resolving and exec'ing the flake
+/// output, and the model orienting itself across a tool surface — so a move in it could not be
+/// attributed to either. These pin the two halves apart, and pin `startupMs` in place while they
+/// are added.
+#[cfg(test)]
+mod startup_split_tests {
+    use super::{
+        final_record, is_mutation_tool, partial_record, run_metrics, RunIdentity, RunMetrics,
+        StartupPhase, StartupProbe, ToolingReport, TraceOutcome, STAGE_FINAL,
+    };
+    use serde_json::{json, Value};
+
+    /// An assistant event carrying one `tool_use`, WITH a timestamp. The modern harness stamps
+    /// assistant events; that stamp is the only thing that makes boot and ttl measurable.
+    fn tool_at(ts: &str, name: &str) -> String {
+        json!({"type":"assistant","timestamp":ts,"message":{"content":[
+            {"type":"tool_use","name":name,"input":{"command":""}}]}})
+        .to_string()
+    }
+    /// An assistant event with no `tool_use` — the model's opening text. This is normally a run's
+    /// first timestamped event, so it is what `bootMs` measures FROM.
+    fn text_at(ts: &str) -> String {
+        json!({"type":"assistant","timestamp":ts,"message":{"content":[
+            {"type":"text","text":"starting the run"}]}})
+        .to_string()
+    }
+    /// A `user` event: a tool RESULT.
+    fn result_at(ts: &str) -> String {
+        json!({"type":"user","timestamp":ts,"message":{"content":[]}}).to_string()
+    }
+    /// An assistant `tool_use` with NO timestamp — the shape older harnesses emitted.
+    fn tool_untimed(name: &str, cmd: &str) -> String {
+        json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":name,"input":{"command":cmd}}]}})
+        .to_string()
+    }
+    fn ev(line: &str) -> Value {
+        serde_json::from_str(line).unwrap()
+    }
+    fn id() -> RunIdentity<'static> {
+        RunIdentity {
+            run_id: Some("20260728T053610Z"),
+            role: Some("vetter"),
+            model: Some("claude-fable-5"),
+        }
+    }
+
+    /// The live vetter run `review-runs/20260728T053610Z.jsonl`, reduced to its five load-bearing
+    /// events. Every number asserted below was measured off that real trace.
+    fn vetter_20260728t053610z() -> String {
+        [
+            text_at("2026-07-28T05:36:13.214Z"), // run's first timestamped event
+            tool_at("2026-07-28T05:36:14.339Z", "mcp__fsm__unvetted"), // FIRST tool call
+            result_at("2026-07-28T05:38:30.435Z"), // its result — 136 s later
+            tool_at("2026-07-28T05:41:11.355Z", "mcp__fsm__record_verdict"), // FIRST verdict
+            result_at("2026-07-28T05:41:16.994Z"), // the verdict's result
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn boot_is_the_run_start_to_the_first_tool_call() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        // Hand-measured on the real trace: 1.125 s. Launch overhead is sub-second — whatever the
+        // flake conversion cost, it did not cost boot.
+        assert_eq!(m.boot_ms, Some(1125));
+    }
+
+    #[test]
+    fn ttl_is_the_first_tool_call_to_the_first_productive_call() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        // 297.0 s of orientation before the first verdict, at tool call 17 (index 16).
+        assert_eq!(m.ttl_ms, Some(297_016));
+        assert_eq!(m.first_mutation_index, Some(1));
+    }
+
+    /// The reason the split is worth having: on this run ttl is 264× boot. One number that either
+    /// can wreck is a number you cannot act on.
+    #[test]
+    fn ttl_dominates_boot_on_a_real_vetter_run() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        let (boot, ttl) = (m.boot_ms.unwrap(), m.ttl_ms.unwrap());
+        assert!(
+            ttl > boot * 100,
+            "orientation should dwarf launch on this run: boot {boot}ms vs ttl {ttl}ms"
+        );
+    }
+
+    /// `startupMs` is FROZEN. Its anchor is the first tool RESULT, so it opens 137 s after the run
+    /// actually started and misses the first call's own latency entirely — a real flaw, but the
+    /// one every committed record was written under. Re-anchoring it would put a step in the
+    /// dashboard series that no run ever experienced, so it keeps its old value and boot+ttl are
+    /// added beside it.
+    #[test]
+    fn startup_ms_keeps_its_first_result_anchor_and_is_not_boot_plus_ttl() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        assert_eq!(m.startup_ms, Some(166_559));
+        let fused = m.boot_ms.unwrap() + m.ttl_ms.unwrap();
+        assert_eq!(fused, 298_141);
+        assert_ne!(
+            m.startup_ms,
+            Some(fused),
+            "startupMs must NOT be silently redefined as bootMs + ttlMs"
+        );
+    }
+
+    /// The vetter has no Bash at all (#52): `record_verdict` IS its mutation. A Bash-only detector
+    /// calls every modern vetter run "never mutated" and loses the ttl anchor with it.
+    #[test]
+    fn the_vetters_mcp_writes_are_mutations() {
+        assert!(is_mutation_tool("mcp__fsm__record_verdict", &json!({})));
+        assert!(is_mutation_tool(
+            "mcp__fsm__record_close_candidate_verdict",
+            &json!({})
+        ));
+        // …and its READS are not.
+        assert!(!is_mutation_tool("mcp__fsm__unvetted", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__pr_context", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__pr_checkout", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__clone_release", &json!({})));
+    }
+
+    #[test]
+    fn a_bashless_vetter_run_still_finds_its_first_productive_call() {
+        let trace = [
+            text_at("2026-07-28T05:00:00.000Z"),
+            tool_at("2026-07-28T05:00:01.000Z", "mcp__fsm__unvetted"),
+            result_at("2026-07-28T05:00:02.000Z"),
+            tool_at("2026-07-28T05:00:03.000Z", "mcp__fsm__pr_context"),
+            result_at("2026-07-28T05:00:04.000Z"),
+            tool_at("2026-07-28T05:00:09.000Z", "mcp__fsm__record_verdict"),
+            result_at("2026-07-28T05:00:10.000Z"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.first_mutation_index, Some(2));
+        assert_eq!(m.startup_tool_calls, 2);
+        assert_eq!(m.ttl_ms, Some(8000));
+    }
+
+    /// Older harnesses stamped only `user` events. boot and ttl then have no anchor and must be
+    /// null — while `startupMs`, which only ever needed `user` timestamps, still computes. That is
+    /// what keeps a re-derivation of the archived traces honest instead of inventing zeroes.
+    #[test]
+    fn boot_and_ttl_are_null_without_assistant_timestamps() {
+        let trace = [
+            tool_untimed("Bash", "gh search prs"),
+            result_at("2026-07-05T09:00:00.000Z"),
+            tool_untimed("Bash", "gh pr create -R x"),
+            result_at("2026-07-05T09:00:12.500Z"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.boot_ms, None);
+        assert_eq!(m.ttl_ms, None);
+        assert_eq!(m.startup_ms, Some(12_500));
+    }
+
+    /// An untimestamped FIRST call must not hand the anchor to a later, timestamped one: that
+    /// would report a plausible, wrong boot instead of an honest gap.
+    #[test]
+    fn an_untimestamped_first_call_does_not_promote_a_later_call_to_the_anchor() {
+        let trace = [
+            text_at("2026-07-05T09:00:00.000Z"),
+            tool_untimed("Bash", "gh search prs"), // FIRST call, no stamp
+            tool_at("2026-07-05T09:00:10.000Z", "Read"),
+            tool_untimed("Bash", "gh pr create -R x"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.boot_ms, None, "10s to the SECOND call is not boot");
+        assert_eq!(m.ttl_ms, None);
+    }
+
+    // ---- when each number becomes KNOWN --------------------------------------------------
+
+    #[test]
+    fn boot_is_known_at_the_first_tool_call_and_ttl_at_the_first_productive_one() {
+        let mut p = StartupProbe::default();
+        assert_eq!(p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z"))), vec![]);
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-28T05:36:14.339Z",
+                "mcp__fsm__unvetted"
+            ))),
+            vec![StartupPhase::Boot],
+            "boot is knowable the instant the first tool call is seen"
+        );
+        assert_eq!(p.boot_ms(), Some(1125));
+        assert_eq!(
+            p.observe(&ev(&result_at("2026-07-28T05:38:30.435Z"))),
+            vec![]
+        );
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-28T05:41:11.355Z",
+                "mcp__fsm__record_verdict"
+            ))),
+            vec![StartupPhase::Ttl],
+            "ttl is knowable at the productive CALL, not at its result"
+        );
+        assert_eq!(p.ttl_ms(), Some(297_016));
+    }
+
+    /// A run whose very first call is already productive knows both numbers on one event.
+    #[test]
+    fn both_phases_fire_when_the_first_call_is_productive() {
+        // A first call that is NOT productive settles boot alone — ttl stays open.
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        assert_eq!(
+            p.observe(&ev(&tool_at("2026-07-05T09:00:00.500Z", "Bash"))),
+            vec![StartupPhase::Boot],
+            "a Bash call with no mutating command settles boot but not ttl"
+        );
+        assert_eq!(p.ttl_ms(), None);
+
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        let productive = json!({"type":"assistant","timestamp":"2026-07-05T09:00:00.500Z",
+            "message":{"content":[{"type":"tool_use","name":"Bash",
+                "input":{"command":"gh pr create -R x"}}]}});
+        assert_eq!(
+            p.observe(&productive),
+            vec![StartupPhase::Boot, StartupPhase::Ttl]
+        );
+        assert_eq!(p.boot_ms(), Some(500));
+        assert_eq!(p.ttl_ms(), Some(0));
+    }
+
+    /// A phase fires ONCE. A second verdict must not append a second `ttl` record.
+    #[test]
+    fn each_phase_fires_exactly_once() {
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        p.observe(&ev(&tool_at("2026-07-05T09:00:01.000Z", "Read")));
+        p.observe(&ev(&tool_at(
+            "2026-07-05T09:00:02.000Z",
+            "mcp__fsm__record_verdict",
+        )));
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-05T09:00:03.000Z",
+                "mcp__fsm__record_verdict"
+            ))),
+            vec![],
+            "the SECOND verdict is not a second first-productive-act"
+        );
+        assert_eq!(p.ttl_ms(), Some(1000));
+    }
+
+    // ---- record shapes -------------------------------------------------------------------
+
+    /// A partial carries what is KNOWN and nothing else. The omissions are the contract: a run
+    /// still going has no `toolCalls`, no `startupPct`, no `durationMs`, no `outcome`, and — since
+    /// `startupMs` closes on the mutation's RESULT — no `startupMs` either.
+    #[test]
+    fn the_boot_partial_carries_boot_and_nothing_it_cannot_know() {
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z")));
+        p.observe(&ev(&tool_at(
+            "2026-07-28T05:36:14.339Z",
+            "mcp__fsm__unvetted",
+        )));
+        let doc = partial_record(&p, StartupPhase::Boot, "/t.jsonl", &id());
+        assert_eq!(doc["stage"], "boot");
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["trace"], "/t.jsonl");
+        assert_eq!(doc["runId"], "20260728T053610Z");
+        assert_eq!(doc["role"], "vetter");
+        assert_eq!(doc["model"], "claude-fable-5");
+        for absent in [
+            "ttlMs",
+            "startupMs",
+            "toolCalls",
+            "startupPct",
+            "durationMs",
+            "outcome",
+            "exitCode",
+        ] {
+            assert!(
+                doc.get(absent).is_none(),
+                "a boot partial cannot know {absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ttl_partial_carries_both_timings_and_the_call_counts_it_has() {
+        let mut p = StartupProbe::default();
+        for line in vetter_20260728t053610z().lines().take(4) {
+            p.observe(&ev(line));
+        }
+        let doc = partial_record(&p, StartupPhase::Ttl, "/t.jsonl", &id());
+        assert_eq!(doc["stage"], "ttl");
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
+        assert_eq!(doc["startupToolCalls"], 1);
+        assert_eq!(doc["firstMutationIndex"], 1);
+        for absent in ["startupMs", "toolCalls", "startupPct", "durationMs"] {
+            assert!(
+                doc.get(absent).is_none(),
+                "a ttl partial cannot know {absent}"
+            );
+        }
+    }
+
+    /// How a consumer tells old records from new: every record this build writes carries `stage`,
+    /// so `stage` ABSENT means the record predates the split and has no boot/ttl to read.
+    #[test]
+    fn every_emitted_record_carries_a_stage() {
+        let m = RunMetrics {
+            boot_ms: Some(1125),
+            ttl_ms: Some(297_016),
+            startup_ms: Some(166_559),
+            ..RunMetrics::default()
+        };
+        let doc = final_record(
+            "/t.jsonl",
+            &m,
+            &id(),
+            Some((0, TraceOutcome::Ok)),
+            &ToolingReport::default(),
+            &[],
+        );
+        assert_eq!(doc["stage"], STAGE_FINAL);
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
+        assert_eq!(doc["startupMs"], 166_559);
+        assert_eq!(doc["outcome"], "ok");
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z")));
+        p.observe(&ev(&tool_at(
+            "2026-07-28T05:36:14.339Z",
+            "mcp__fsm__unvetted",
+        )));
+        assert_eq!(
+            partial_record(&p, StartupPhase::Boot, "/t.jsonl", &id())["stage"],
+            "boot"
+        );
+    }
+
+    /// A bare `run-metrics <trace>` (no identity flags) must stay re-derivable from an archived
+    /// trace: the dashboard rebuilds history that way, so nothing here may need runner state.
+    #[test]
+    fn a_bare_record_omits_identity_but_keeps_the_split() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        let bare = RunIdentity {
+            run_id: None,
+            role: None,
+            model: None,
+        };
+        let doc = final_record("/t.jsonl", &m, &bare, None, &ToolingReport::default(), &[]);
+        assert!(doc.get("runId").is_none());
+        assert!(doc.get("role").is_none());
+        assert!(doc.get("outcome").is_none());
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
+    }
+}
+
 #[cfg(test)]
 mod settings_tests {
     use serde_json::Value;
@@ -11299,6 +12571,64 @@ mod cli_tests {
                 model: None,
                 exit_code: Some(12),
                 preflight_missing: vec!["pdftoppm".to_string(), "pdfinfo".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn run_timings_cli() {
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-timings",
+                "--out",
+                "/m/runs.jsonl",
+                "--trace",
+                "/r/20260728T053610Z.jsonl",
+                "--run-id",
+                "20260728T053610Z",
+                "--role",
+                "vetter",
+                "--model",
+                "claude-fable-5",
+            ]),
+            Cmd::RunTimings {
+                out: "/m/runs.jsonl".to_string(),
+                trace: "/r/20260728T053610Z.jsonl".to_string(),
+                run_id: Some("20260728T053610Z".to_string()),
+                role: Some("vetter".to_string()),
+                model: Some("claude-fable-5".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn closure_gate_cli() {
+        // Three gates, three subcommands, one flake flag each — so `rust.yml` is an invocation and
+        // an exit code rather than 135 lines of bash nothing can test.
+        assert_eq!(
+            parse(&["prr", "closure-preflight"]),
+            Cmd::ClosurePreflight {
+                flake: ".".to_string()
+            },
+            "CI runs in the checkout, so `.` is the default"
+        );
+        assert_eq!(
+            parse(&["prr", "closure-render"]),
+            Cmd::ClosureRender {
+                flake: ".".to_string()
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "closure-surface"]),
+            Cmd::ClosureSurface {
+                flake: ".".to_string()
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "closure-surface", "--flake", "/srv/issue-pr-cron"]),
+            Cmd::ClosureSurface {
+                flake: "/srv/issue-pr-cron".to_string()
             }
         );
     }
@@ -14854,5 +16184,636 @@ mod pr_checkout_tests {
         assert!(m.contains("does not exist"), "{m}");
         assert!(m.contains("Re-call `pr_checkout` ONCE"), "{m}");
         assert!(m.contains("record NO verdict"), "{m}");
+    }
+}
+
+// The three CI closure gates (#85), as behaviour rather than as YAML.
+//
+// These were inline bash in `.github/workflows/rust.yml` — a PDF written in `printf`, a PATH
+// scraped with `sed`, a set difference computed with `comm` — which meant the gates that decide
+// whether the pipeline can READ ITS EVIDENCE were the one part of the repo `cargo test` could not
+// see and nobody could run locally. Everything below is the same three decisions, made where they
+// can be tested and mutated.
+//
+// The render gate is driven through STUB renderers rather than real poppler: the assertions here
+// are about what the gate concludes from what a renderer did (exit non-zero, write nothing, write
+// something that is not an image, see an environment it should not), and a real pdftoppm can only
+// ever demonstrate the success path. Real poppler parsing the real fixture is what
+// `closure-render` itself does in CI.
+#[cfg(test)]
+mod closure_gate_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A scratch directory that removes itself, named per test so cargo's threads cannot collide.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let p = std::env::temp_dir().join(format!("prr-closure-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).expect("scratch dir");
+            Scratch(p)
+        }
+        fn join(&self, n: &str) -> std::path::PathBuf {
+            self.0.join(n)
+        }
+        /// A directory of executables, standing in for one store path on a runner's PATH.
+        fn bindir(&self, n: &str) -> std::path::PathBuf {
+            let d = self.0.join(n);
+            std::fs::create_dir_all(&d).expect("bin dir");
+            d
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn exec_stub(dir: &std::path::Path, name: &str, body: &str) {
+        let p = dir.join(name);
+        std::fs::write(&p, body).expect("stub");
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+
+    fn closure_of(dir: &std::path::Path) -> RunnerClosure {
+        RunnerClosure {
+            pkg: "campaign-run".to_string(),
+            path: std::ffi::OsString::from(dir.to_string_lossy().to_string()),
+        }
+    }
+
+    fn surface(pkg: &str, bins: &[&str]) -> (String, BTreeSet<String>) {
+        (
+            pkg.to_string(),
+            bins.iter().map(|b| b.to_string()).collect(),
+        )
+    }
+
+    // ---- the declaration itself ----
+
+    #[test]
+    fn the_model_runners_are_the_two_that_host_a_harness() {
+        // Both, not just the vetter. The producer drains the `audit`-labelled backlog first and
+        // those issues cite the PDF as their source, so a producer that cannot open the report it
+        // implements against writes a PR body asserting something it never read.
+        assert!(MODEL_RUNNERS.contains(&"campaign-run"), "{MODEL_RUNNERS:?}");
+        assert!(MODEL_RUNNERS.contains(&"review-run"), "{MODEL_RUNNERS:?}");
+    }
+
+    #[test]
+    fn every_declared_asymmetry_names_a_model_runner_and_carries_a_reason() {
+        for d in DECLARED_ASYMMETRY {
+            assert!(
+                MODEL_RUNNERS.contains(&d.only_in),
+                "{} is declared only-in {}, which is not a model runner",
+                d.bin,
+                d.only_in
+            );
+            assert!(
+                !d.why.trim().is_empty(),
+                "{} must say why it is one-sided",
+                d.bin
+            );
+        }
+    }
+
+    // ---- baked_path: the gate's only window onto a closure ----
+
+    #[test]
+    fn baked_path_lifts_the_first_export_path_from_a_runner_script() {
+        let script = "#!/nix/store/x/bin/bash\nset -o errexit\nexport PATH=\"/nix/store/a/bin:/nix/store/b/bin\"\nexport PATH=\"/decoy\"\n";
+        assert_eq!(
+            baked_path(script),
+            Some("/nix/store/a/bin:/nix/store/b/bin"),
+            "writeShellApplication bakes the runtimeInputs PATH first; a later line is the script's own"
+        );
+    }
+
+    #[test]
+    fn a_script_with_no_usable_baked_path_is_unevaluable_not_empty() {
+        // Each of these would otherwise resolve to "no tools missing" over an empty environment —
+        // a gate that passes hardest when it can see nothing at all.
+        assert_eq!(baked_path("#!/bin/sh\necho hi\n"), None, "no export at all");
+        assert_eq!(baked_path("export PATH=\"\"\n"), None, "empty PATH");
+        assert_eq!(
+            baked_path("export PATH=\"/nix/store/a\n"),
+            None,
+            "unterminated"
+        );
+    }
+
+    // ---- exit codes: knowing nothing is not the same as knowing it is wrong ----
+
+    #[test]
+    fn an_unevaluable_gate_outranks_an_unsatisfied_one() {
+        let missing = ClosureFault::ToolMissing {
+            pkg: "review-run".to_string(),
+            bin: "pdftoppm",
+            why: "why",
+        };
+        let unbuilt = ClosureFault::Unbuildable {
+            pkg: "review-run".to_string(),
+            detail: "error: flake output not found".to_string(),
+        };
+        assert_eq!(closure_exit_code(&[]), 0);
+        assert_eq!(closure_exit_code(std::slice::from_ref(&missing)), 12);
+        assert_eq!(closure_exit_code(std::slice::from_ref(&unbuilt)), 2);
+        assert_eq!(
+            closure_exit_code(&[missing, unbuilt]),
+            2,
+            "a broken build sends the reader to flake.nix, not to a missing tool"
+        );
+        assert_eq!(
+            closure_exit_code(&[ClosureFault::NoBakedPath {
+                pkg: "review-run".to_string(),
+                script: "/nix/store/x/bin/review-run".to_string(),
+            }]),
+            2
+        );
+    }
+
+    // ---- preflight, over a PATH that is a parameter ----
+
+    #[test]
+    fn preflight_answers_for_the_path_it_is_given_not_the_process_environment() {
+        let s = Scratch::new("preflight");
+        let bin = s.bindir("bin");
+        for t in HARNESS_TOOLS {
+            exec_stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        assert_eq!(
+            preflight_report(&path),
+            0,
+            "a PATH carrying every declared tool satisfies preflight"
+        );
+        // Drop one and the same code says so — this is the exact question `closure-preflight`
+        // asks of each runner's baked PATH, so the two cannot answer differently.
+        std::fs::remove_file(bin.join(HARNESS_TOOLS[0].bin)).unwrap();
+        assert_eq!(preflight_report(&path), CLOSURE_UNSATISFIED);
+        assert_eq!(
+            preflight_report(&std::ffi::OsString::new()),
+            CLOSURE_UNSATISFIED,
+            "an empty environment resolves nothing"
+        );
+    }
+
+    // ---- the fixture: generated, and self-checking ----
+
+    #[test]
+    fn the_generated_pdf_is_a_real_document() {
+        let pdf = fixture_pdf();
+        let text = String::from_utf8(pdf.clone()).expect("the fixture is ASCII by construction");
+        assert!(text.starts_with("%PDF-1.4\n"), "a PDF header, first");
+        assert!(text.ends_with("%%EOF\n"), "and an EOF marker, last");
+        // The object graph a renderer has to walk to produce a page.
+        for required in [
+            "/Type /Catalog",
+            "/Type /Pages",
+            "/Type /Page",
+            "/MediaBox [0 0 612 792]",
+            "/Type /Font",
+            "Tj ET",
+        ] {
+            assert!(text.contains(required), "missing {required}");
+        }
+        // The content stream declares its own length, and a wrong one is how a hand-built PDF
+        // usually dies.
+        let stream = text
+            .split_once("stream\n")
+            .and_then(|(_, r)| r.split_once("endstream"))
+            .map(|(s, _)| s)
+            .expect("a content stream");
+        assert!(
+            text.contains(&format!("/Length {}", stream.len())),
+            "declared /Length must equal the {} bytes actually written",
+            stream.len()
+        );
+    }
+
+    #[test]
+    fn every_xref_offset_points_at_the_object_it_claims() {
+        // The self-check the generated fixture is FOR: an xref entry is a byte offset, and a
+        // generator that computes one wrong produces a file poppler rejects. Read the table back
+        // and follow it, exactly as a parser would — an oracle independent of how it was built.
+        let pdf = fixture_pdf();
+        let text = String::from_utf8(pdf.clone()).unwrap();
+
+        let startxref: usize = text
+            .rsplit_once("startxref\n")
+            .and_then(|(_, r)| r.split_once('\n'))
+            .and_then(|(n, _)| n.trim().parse().ok())
+            .expect("a startxref");
+        assert!(
+            text[startxref..].starts_with("xref\n"),
+            "startxref must point AT the xref table"
+        );
+
+        let table = &text[startxref..];
+        let mut lines = table.lines();
+        assert_eq!(lines.next(), Some("xref"));
+        let header = lines.next().expect("a subsection header");
+        let count: usize = header.split_whitespace().nth(1).unwrap().parse().unwrap();
+        assert!(
+            header.starts_with("0 "),
+            "the subsection starts at object 0"
+        );
+
+        let free = lines.next().unwrap();
+        assert_eq!(free, "0000000000 65535 f ", "entry 0 heads the free list");
+
+        let mut objects = 0;
+        for (i, entry) in lines.take(count - 1).enumerate() {
+            let off: usize = entry.split_whitespace().next().unwrap().parse().unwrap();
+            assert!(
+                text[off..].starts_with(&format!("{} 0 obj", i + 1)),
+                "xref entry {} points at {:?}, not at object {}",
+                i + 1,
+                &text[off..off + 12.min(text.len() - off)],
+                i + 1
+            );
+            objects += 1;
+        }
+        assert_eq!(
+            objects,
+            count - 1,
+            "every entry but the free head is an object"
+        );
+        assert!(
+            text.contains(&format!("/Size {count}")),
+            "the trailer's /Size must match the table's entry count"
+        );
+    }
+
+    // ---- the render gate: what it concludes from what a renderer did ----
+
+    #[test]
+    fn a_closure_without_pdftoppm_cannot_render() {
+        let s = Scratch::new("render-absent");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        assert_eq!(
+            render_from_closure(&closure_of(&bin), &pdf, &dir),
+            Err(RenderFault::NotInClosure)
+        );
+    }
+
+    #[test]
+    fn a_renderer_that_exits_nonzero_is_a_render_failure_not_an_absence() {
+        // The case `command -v` structurally cannot see: the binary IS there, and a missing
+        // shared library or data file makes it fail anyway. The harness turns this into the same
+        // `isError` an absent binary produces, and the run still exits 0.
+        let s = Scratch::new("render-exit");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        exec_stub(
+            &bin,
+            "pdftoppm",
+            "#!/bin/sh\necho 'error while loading shared libraries' >&2\nexit 127\n",
+        );
+        assert_eq!(
+            render_from_closure(&closure_of(&bin), &pdf, &dir),
+            Err(RenderFault::Exited {
+                code: Some(127),
+                stderr: "error while loading shared libraries".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_renderer_that_writes_no_pages_fails_even_on_exit_zero() {
+        // The harness counts the files pdftoppm left behind, so zero files is its "cannot read
+        // this document" path — and exit 0 is not evidence of anything on its own.
+        let s = Scratch::new("render-nopages");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        exec_stub(&bin, "pdftoppm", "#!/bin/sh\nexit 0\n");
+        assert_eq!(
+            render_from_closure(&closure_of(&bin), &pdf, &dir),
+            Err(RenderFault::NoPages)
+        );
+    }
+
+    #[test]
+    fn a_page_that_is_not_a_jpeg_fails_the_render_gate() {
+        let s = Scratch::new("render-notjpeg");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        exec_stub(
+            &bin,
+            "pdftoppm",
+            "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf 'not an image' > \"$out-01.jpg\"\n",
+        );
+        match render_from_closure(&closure_of(&bin), &pdf, &dir) {
+            Err(RenderFault::NotJpeg { magic, .. }) => assert_eq!(magic, b"not".to_vec()),
+            other => panic!("expected NotJpeg, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_render_that_produces_a_jpeg_passes_and_counts_its_pages() {
+        let s = Scratch::new("render-ok");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        exec_stub(
+            &bin,
+            "pdftoppm",
+            "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf '\\377\\330\\377\\340jpeg' > \"$out-01.jpg\"\nprintf '\\377\\330\\377\\340jpeg' > \"$out-02.jpg\"\n",
+        );
+        assert_eq!(render_from_closure(&closure_of(&bin), &pdf, &dir), Ok(2));
+    }
+
+    #[test]
+    fn the_render_gate_uses_the_harness_argv() {
+        // Byte-for-byte what Claude Code's Read tool spawns. Approximating it would exercise a
+        // call the pipeline never makes, and the flags are where a broken poppler shows up.
+        let s = Scratch::new("render-argv");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        exec_stub(
+            &bin,
+            "pdftoppm",
+            "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf '%s\\n' \"$@\" > \"$out.argv\"\nprintf '\\377\\330\\377' > \"$out-01.jpg\"\n",
+        );
+        assert_eq!(render_from_closure(&closure_of(&bin), &pdf, &dir), Ok(1));
+        let argv = std::fs::read_to_string(dir.join("page.argv")).unwrap();
+        assert_eq!(
+            argv.lines().collect::<Vec<_>>(),
+            vec![
+                "-jpeg",
+                "-r",
+                "100",
+                "-f",
+                "1",
+                "-l",
+                "1",
+                pdf.to_str().unwrap(),
+                dir.join("page").to_str().unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_renderer_sees_the_closures_environment_and_nothing_else() {
+        // `env_clear` is the whole point of the gate: a tool installed on the CI box must never be
+        // able to stand in for the closure's own copy, and neither may a variable of the CI box's
+        // environment change how the closure's copy behaves.
+        let leaked = std::env::vars()
+            .find(|(k, v)| k != "PATH" && k != "HOME" && !v.is_empty())
+            .expect("the test process has some environment to leak");
+        let s = Scratch::new("render-env");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        exec_stub(
+            &bin,
+            "pdftoppm",
+            &format!(
+                "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf '%s\\n%s\\n%s\\n' \"$PATH\" \"$HOME\" \"${{{}-ABSENT}}\" > \"$out.env\"\nprintf '\\377\\330\\377' > \"$out-01.jpg\"\n",
+                leaked.0
+            ),
+        );
+        assert_eq!(render_from_closure(&closure_of(&bin), &pdf, &dir), Ok(1));
+        let seen = std::fs::read_to_string(dir.join("page.env")).unwrap();
+        let seen: Vec<&str> = seen.lines().collect();
+        assert_eq!(
+            seen[0],
+            bin.to_str().unwrap(),
+            "PATH is the closure's, only"
+        );
+        assert_eq!(seen[1], dir.to_str().unwrap(), "HOME is the scratch dir");
+        assert_eq!(
+            seen[2], "ABSENT",
+            "{} reached the renderer — the gate is not isolated",
+            leaked.0
+        );
+    }
+
+    // ---- the capability surface, and the declared asymmetry ----
+
+    #[test]
+    fn a_capability_surface_counts_only_directories_nix_owns() {
+        // A non-store entry on a runner's PATH is the ambient-acquisition bug a sibling gate
+        // forbids; counting it here would let whatever a developer installed silence a real
+        // asymmetry.
+        let s = Scratch::new("surface");
+        let store = s.bindir("store");
+        let owned = store.join("abc-poppler/bin");
+        std::fs::create_dir_all(&owned).unwrap();
+        exec_stub(&owned, "pdftoppm", "#!/bin/sh\n");
+        let ambient = s.bindir("usr-local-bin");
+        exec_stub(&ambient, "pdftoppm-ambient", "#!/bin/sh\n");
+
+        let path = std::ffi::OsString::from(format!(
+            "{}:{}",
+            owned.to_string_lossy(),
+            ambient.to_string_lossy()
+        ));
+        let bins = capability_surface_under(&path, &store);
+        assert!(bins.contains("pdftoppm"), "{bins:?}");
+        assert!(!bins.contains("pdftoppm-ambient"), "{bins:?}");
+    }
+
+    #[test]
+    fn matching_surfaces_have_no_faults() {
+        let both = ["gh", "git", "pdftoppm", "jq"];
+        let faults =
+            surface_faults(&[surface("campaign-run", &both), surface("review-run", &both)]);
+        // `jq` is declared campaign-only, so having it on BOTH sides makes that declaration stale.
+        assert_eq!(
+            faults,
+            vec![ClosureFault::StaleAsymmetry {
+                pkg: "campaign-run",
+                bin: "jq"
+            }]
+        );
+    }
+
+    #[test]
+    fn the_declared_asymmetry_is_the_only_difference_allowed() {
+        assert_eq!(
+            surface_faults(&[
+                surface("campaign-run", &["gh", "git", "pdftoppm", "jq"]),
+                surface("review-run", &["gh", "git", "pdftoppm"]),
+            ]),
+            vec![],
+            "jq producer-only is exactly what DECLARED_ASYMMETRY says"
+        );
+    }
+
+    #[test]
+    fn an_undeclared_one_sided_binary_is_a_fault() {
+        // #85's shape from the other side: a tool lands in one closure and not the other.
+        let faults = surface_faults(&[
+            surface("campaign-run", &["gh", "jq", "pdftoppm"]),
+            surface("review-run", &["gh"]),
+        ]);
+        assert_eq!(
+            faults,
+            vec![ClosureFault::UndeclaredAsymmetry {
+                pkg: "campaign-run".to_string(),
+                bin: "pdftoppm".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn an_asymmetry_declared_for_one_runner_does_not_excuse_the_other() {
+        // `jq` present ONLY to the vetter is not what the declaration says, and must not pass by
+        // matching on the binary name alone.
+        let faults = surface_faults(&[
+            surface("campaign-run", &["gh"]),
+            surface("review-run", &["gh", "jq"]),
+        ]);
+        assert!(
+            faults.contains(&ClosureFault::UndeclaredAsymmetry {
+                pkg: "review-run".to_string(),
+                bin: "jq".to_string()
+            }),
+            "{faults:?}"
+        );
+        assert!(
+            faults.contains(&ClosureFault::StaleAsymmetry {
+                pkg: "campaign-run",
+                bin: "jq"
+            }),
+            "{faults:?}"
+        );
+    }
+
+    #[test]
+    fn a_declaration_naming_no_compared_runner_is_stale() {
+        // The producer package gets renamed and the declaration is not updated: the surfaces
+        // themselves are clean, and the entry now exempts nothing while looking like it exempts
+        // something.
+        assert_eq!(
+            surface_faults(&[
+                surface("producer-run", &["gh", "jq"]),
+                surface("review-run", &["gh", "jq"]),
+            ]),
+            vec![ClosureFault::StaleAsymmetry {
+                pkg: "campaign-run",
+                bin: "jq"
+            }]
+        );
+    }
+
+    #[test]
+    fn an_empty_surface_is_never_symmetric() {
+        // Two empty sets compare equal, so without this the gate would pass loudest exactly when
+        // a closure was most broken.
+        let faults = surface_faults(&[surface("campaign-run", &[]), surface("review-run", &[])]);
+        assert!(
+            faults.contains(&ClosureFault::EmptySurface {
+                pkg: "campaign-run".to_string()
+            }),
+            "{faults:?}"
+        );
+        assert!(
+            faults.contains(&ClosureFault::EmptySurface {
+                pkg: "review-run".to_string()
+            }),
+            "{faults:?}"
+        );
+        assert_eq!(closure_exit_code(&faults), CLOSURE_UNSATISFIED);
+    }
+
+    #[test]
+    fn nothing_to_compare_produces_no_asymmetry_faults() {
+        // Every closure failed to build. The caller already holds that fault, and "every
+        // declaration is stale" on top of it would name the wrong file.
+        assert_eq!(surface_faults(&[]), vec![]);
+    }
+
+    // ---- every fault says what to do about it ----
+
+    #[test]
+    fn every_fault_names_its_package_and_what_to_change() {
+        let faults = [
+            ClosureFault::Unbuildable {
+                pkg: "review-run".to_string(),
+                detail: "no such output".to_string(),
+            },
+            ClosureFault::NoBakedPath {
+                pkg: "review-run".to_string(),
+                script: "/nix/store/x/bin/review-run".to_string(),
+            },
+            ClosureFault::ToolMissing {
+                pkg: "review-run".to_string(),
+                bin: "pdftoppm",
+                why: "Read renders PDF pages",
+            },
+            ClosureFault::RenderFailed {
+                pkg: "review-run".to_string(),
+                how: RenderFault::NoPages,
+            },
+            ClosureFault::UndeclaredAsymmetry {
+                pkg: "review-run".to_string(),
+                bin: "jq".to_string(),
+            },
+            ClosureFault::EmptySurface {
+                pkg: "review-run".to_string(),
+            },
+        ];
+        for f in &faults {
+            let m = f.describe();
+            assert!(m.contains("review-run"), "{m}");
+            assert!(m.len() > 40, "a fault must be actionable, not a word: {m}");
+        }
+    }
+
+    #[test]
+    fn a_render_fault_says_which_of_the_five_ways_it_failed() {
+        // The diagnosis is derived from the variant, never from re-reading a rendered string.
+        for (f, expect) in [
+            (RenderFault::NotInClosure, "not on the runner's baked PATH"),
+            (
+                RenderFault::Unspawnable(std::io::ErrorKind::PermissionDenied),
+                "would not start",
+            ),
+            (
+                RenderFault::Exited {
+                    code: Some(127),
+                    stderr: "boom".to_string(),
+                },
+                "exited 127",
+            ),
+            (RenderFault::NoPages, "wrote no pages"),
+            (
+                RenderFault::NotJpeg {
+                    page: "/t/page-01.jpg".to_string(),
+                    magic: vec![0x25, 0x50, 0x44],
+                },
+                "not a JPEG",
+            ),
+        ] {
+            assert!(f.describe().contains(expect), "{}", f.describe());
+        }
+        assert_eq!(
+            RenderFault::Exited {
+                code: None,
+                stderr: String::new()
+            }
+            .describe(),
+            "`pdftoppm` exited on a signal: (no stderr)",
+            "a signal death is not exit 0"
+        );
     }
 }

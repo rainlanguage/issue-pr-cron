@@ -520,6 +520,48 @@ without shell access, and cannot drift from what the PR itself shows. To approve
 a PR, approve it on GitHub. The report self-provisions `gh`+`jq` via nix and
 reads `cron.env` for `ORG` / `ORGS` / `PR_ASSIGNEE`.
 
+## Run metrics — `metrics/runs.jsonl`
+
+One JSON object per line, appended by the runners and consumed by the
+[rain-org-health dashboard](https://github.com/rainlanguage/rain-org-health).
+Startup is **two** costs, not one, and they regress for unrelated reasons:
+
+| field       | window                                                     | what moves it                                                          |
+| ----------- | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `bootMs`    | first trace event → the run's first tool call              | LAUNCH: a derivation that stopped being cached, a GC'd store path      |
+| `ttlMs`     | first tool call → the first **productive** call            | ORIENTATION: a tool returning too much, a longer prompt, a failed call |
+| `startupMs` | first tool **result** → the first productive call's result | frozen — see below                                                     |
+
+"Productive" is the producer's first org mutation and the vetter's first
+`record_verdict` (`firstMutationIndex` marks it in both cases).
+
+`startupMs` is **not** `bootMs + ttlMs` and must not be made so. Its anchor is
+the first tool RESULT, so it opens one tool-result late and excludes the first
+call's own latency — on the vetter's MCP surface that first call is `unvetted`,
+which has measured 137 s. That is a real flaw, but it is the meaning every
+committed record was written under, and re-anchoring it would put a step in the
+dashboard's longest series that no run ever experienced. `bootMs + ttlMs` is the
+honest run-start-to-first-productive-act figure; `startupMs` stays where it is.
+
+Each line carries a typed `stage`:
+
+- **`stage` absent** — a record written before the split. It has `startupMs`
+  under the meaning above and **no** `bootMs`/`ttlMs`. This absence is how a
+  consumer tells old records from new.
+- **`boot`** / **`ttl`** — PARTIAL records, appended by `run-timings` from
+  inside the runner's live pipe the moment each number becomes knowable. They
+  carry only what is known then: no `toolCalls`, `startupPct`, `durationMs`,
+  `outcome`, and no `startupMs` (its end anchor has not arrived).
+- **`final`** — the complete record, written by `run-metrics` after the run.
+
+So one run produces up to three lines with the same `runId` — more when model
+fallback retried it, since each attempt measures itself. A consumer keeps the
+most complete (`final` > `ttl` > `boot`), and the **last** of those, which is
+the attempt that actually ran. The partials exist because `run-metrics` only
+ever runs after the claude process exits: a run that is killed or times out is
+exactly the run whose startup timings you want, and it was precisely the one
+that left no trace of them at all.
+
 ## Runtime state (NOT tracked — see `.gitignore`)
 
 - `campaign.log` — distilled human-readable log (`tail -f` to watch).
@@ -587,6 +629,27 @@ Why it is not merely a coverage question: on 2026-07-28 the vetter's `Read` of
 PR on what was left, recorded `ready`, and exited 0 — for a PR an earlier run
 had `reject`ed at the same head. A missing dependency that produces a confident
 answer is indistinguishable, from outside, from a considered judgement (#85).
+
+`HARNESS_TOOLS` is only a declaration; three CI gates make it true of the
+closure a model actually runs inside. Each is a subcommand, so it runs locally
+against any checkout and is tested like the rest of the tool — `rust.yml`
+invokes it and reads the exit code (0 satisfied, 12 the closure is wrong, 2 the
+gate could not be evaluated at all).
+
+| Gate                              | Asserts                                                                                                                                                           |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr-review-report closure-preflight` | every `HARNESS_TOOLS` entry resolves from **each** model runner's own baked PATH — the same `resolve_in` the runner uses at run time, so declaration and closure cannot drift |
+| `pr-review-report closure-render`    | that closure's `pdftoppm` **renders** a generated one-page PDF with the harness's own argv, under a cleared environment. Presence is not capability: a broken renderer reaches the model as the same `isError` an absent one does |
+| `pr-review-report closure-surface`   | the two runners' binary sets differ only where `DECLARED_ASYMMETRY` says (currently `jq`, producer-only), in **both** directions — an undeclared difference and a declaration that is no longer true |
+
+The render fixture is generated rather than committed: a built PDF cannot rot
+into a stale blob nobody can regenerate, and its xref byte offsets are its own
+self-check — a generator that computes one wrong produces a file poppler
+rejects, so the gate fails loudly rather than passing a degenerate document.
+
+The surface gate is deliberately the third and not the only one. A symmetry
+check cannot see a capability **both** runners lack, which is exactly #85's
+shape; the two presence gates are what hold that bug.
 
 ## What a run does
 

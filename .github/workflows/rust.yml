@@ -213,134 +213,24 @@ jobs:
       # The step above asserts the tools the SCRIPTS name. It structurally cannot see a tool only
       # the HARNESS reaches for at read time — nothing in this repo names `pdftoppm`, so no walk
       # over declarations could find it, which is how #85 passed a gate that was working correctly.
-      # `HARNESS_TOOLS` is where those are declared; this step runs the binary's own `preflight`
-      # with ONLY the runner's baked PATH, so the declaration and the closure cannot drift apart
-      # and neither can be satisfied by a tool that merely happens to be on the CI runner.
+      #
+      # The three gates below close that, and they are SUBCOMMANDS, not bash. Each one resolves a
+      # runner's capabilities from that runner's own baked PATH and from nothing else, so neither
+      # the declaration nor the closure can drift, and nothing that merely happens to be installed
+      # on this box can satisfy them. The logic lives in `pr-review-report` because it is real
+      # computation — a PDF generator, a PATH parser, a set difference — and there it is unit
+      # tested, runnable locally, and mutation-checked like the rest of the pipeline.
       - name: each model runner satisfies its own preflight
-        run: |
-          set -euo pipefail
-          fail=0
-          for pkg in campaign-run review-run; do
-            out="$(nix build --no-link --print-out-paths ".#$pkg")"
-            wp="$(grep -o 'export PATH="[^"]*"' "$out/bin/$pkg" | head -1 | sed 's/export PATH="//;s/"$//')"
-            set +e
-            env -i PATH="$wp" pr-review-report preflight
-            rc=$?
-            set -e
-            echo "  $pkg preflight rc=$rc"
-            [ "$rc" -eq 0 ] || fail=1
-          done
-          [ "$fail" -eq 0 ] && echo "every harness read-time dependency is in both closures"
-          exit "$fail"
-      # `command -v pdftoppm` proves a name resolves. It does not prove the renderer RUNS: a
-      # closure can carry the binary and still fail on a missing shared library or data file, and
-      # the symptom is identical to the tool being absent — the harness turns a non-zero pdftoppm
-      # into the same `isError` and the run still exits 0. The check above cannot tell those apart,
-      # so this one renders a real PDF end to end, with the harness's own argv, using ONLY the
-      # package's baked PATH.
+        run: nix run .#pr-review-report -- closure-preflight
+      # Presence is not capability: a closure can carry `pdftoppm` and still fail on a missing
+      # shared library or data file, and the harness turns BOTH into the same `isError` with the
+      # run still exiting 0. This renders a generated PDF end to end with the harness's own argv.
       - name: the PDF read path renders, not just resolves
-        run: |
-          set -euo pipefail
-          # A one-page PDF built here rather than committed: it must exercise a real parse (header,
-          # object graph, byte-exact xref offsets, a content stream), and a generated fixture
-          # cannot rot into a stale blob nobody can regenerate. Wrong offsets fail loudly — poppler
-          # reports the broken xref — so the generator is self-checking.
-          pdf=fixture.pdf
-          : > "$pdf"
-          printf '%%PDF-1.4\n' >> "$pdf"
-          offs=()
-          add() { offs+=("$(wc -c < "$pdf")"); printf '%s' "$1" >> "$pdf"; }
-          add $'1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n'
-          add $'2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n'
-          add $'3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n'
-          stream=$'BT /F1 36 Tf 72 700 Td (POPPLER RENDER OK) Tj ET\n'
-          add "4 0 obj"$'\n'"<< /Length ${#stream} >>"$'\nstream\n'"$stream"$'endstream\nendobj\n'
-          add $'5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n'
-          xref="$(wc -c < "$pdf")"
-          {
-            printf 'xref\n0 6\n'
-            printf '%010d %05d f \n' 0 65535
-            for o in "${offs[@]}"; do printf '%010d %05d n \n' "$o" 0; done
-            printf 'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n' "$xref"
-          } >> "$pdf"
-
-          fail=0
-          for pkg in campaign-run review-run; do
-            out="$(nix build --no-link --print-out-paths ".#$pkg")"
-            wp="$(grep -o 'export PATH="[^"]*"' "$out/bin/$pkg" | head -1 | sed 's/export PATH="//;s/"$//')"
-            dir="render-$pkg"; rm -rf "$dir"; mkdir -p "$dir"
-            # Byte-for-byte the harness's render call: `pdftoppm -jpeg -r 100 [-f N] [-l M] <pdf> <dir>/page`.
-            # `env -i` so a tool on the ubuntu runner's PATH cannot stand in for the closure's.
-            set +e
-            env -i PATH="$wp" HOME="$PWD/$dir" pdftoppm -jpeg -r 100 -f 1 -l 1 "$pdf" "$dir/page" 2>"$dir/err"
-            rc=$?
-            set -e
-            if [ "$rc" -ne 0 ]; then
-              echo "::error::$pkg: pdftoppm exited $rc — the harness turns this into 'isError' and reads no pages."
-              sed 's/^/  /' "$dir/err"
-              fail=1; continue
-            fi
-            # The harness counts the .jpg files pdftoppm left behind; no files is its "corrupted" path.
-            n="$(find "$dir" -name '*.jpg' | wc -l)"
-            if [ "$n" -lt 1 ]; then
-              echo "::error::$pkg: pdftoppm produced no output pages."
-              fail=1; continue
-            fi
-            page="$(find "$dir" -name '*.jpg' | sort | head -1)"
-            magic="$(od -An -tx1 -N3 < "$page" | tr -d ' \n')"
-            if [ "$magic" != "ffd8ff" ]; then
-              echo "::error::$pkg: rendered page is not a JPEG (magic $magic)."
-              fail=1; continue
-            fi
-            # `/bin/sh` by absolute path: the closure carries coreutils, not a shell, so a bare
-            # `sh` under `env -i` resolves to nothing and the diagnostic prints blank.
-            echo "  $pkg: rendered $n page(s), JPEG magic OK, from $(env -i PATH="$wp" /bin/sh -c 'command -v pdftoppm')"
-          done
-          [ "$fail" -eq 0 ] && echo "both model runners can render a PDF from their own closure"
-          exit "$fail"
-      # The producer and the vetter run the same harness over the same repositories, so a
-      # capability one needs is almost always one the other needs — and #85 is precisely the shape
-      # of bug where a tool lands in one closure and not the other. Rather than trusting that
-      # whoever edits runtimeInputs remembers both, the asymmetry is DECLARED here: any binary
-      # present to one model runner and not the other must be listed with a reason, or the gate
-      # fails. That does not discover an undeclared dependency — nothing can — but it does mean a
-      # dependency discovered ONCE cannot go missing from the other side silently.
+        run: nix run .#pr-review-report -- closure-render
+      # A dependency discovered ONCE must not go missing from the other runner silently. This
+      # cannot see a capability both runners lack — #85's exact shape — which is why the two
+      # presence gates above are what actually hold that bug.
       - name: the two model runners' capability surfaces match, except where declared
-        run: |
-          set -euo pipefail
-          # Declared asymmetry. `jq` is producer-only because the PRODUCER's model shells out to it
-          # from its Bash tool; the vetter has no Bash and cannot invoke anything (flake.nix).
-          CAMPAIGN_ONLY="jq"
-          REVIEW_ONLY=""
-
-          surface() {
-            pkg="$1"
-            out="$(nix build --no-link --print-out-paths ".#$pkg")"
-            wp="$(grep -o 'export PATH="[^"]*"' "$out/bin/$pkg" | head -1 | sed 's/export PATH="//;s/"$//')"
-            printf '%s' "$wp" | tr ':' '\n' | grep '^/nix/store' | while read -r d; do
-              [ -d "$d" ] && ls "$d"
-            done | sort -u
-          }
-          surface campaign-run > campaign.bins
-          surface review-run   > review.bins
-          echo "campaign-run: $(wc -l < campaign.bins) binaries; review-run: $(wc -l < review.bins)"
-
-          fail=0
-          got_c="$(comm -23 campaign.bins review.bins | tr '\n' ' ' | sed 's/ *$//')"
-          got_r="$(comm -13 campaign.bins review.bins | tr '\n' ' ' | sed 's/ *$//')"
-          if [ "$got_c" != "$CAMPAIGN_ONLY" ]; then
-            echo "::error::producer-only binaries are '$got_c', declared '$CAMPAIGN_ONLY'."
-            fail=1
-          fi
-          if [ "$got_r" != "$REVIEW_ONLY" ]; then
-            echo "::error::vetter-only binaries are '$got_r', declared '$REVIEW_ONLY'."
-            fail=1
-          fi
-          if [ "$fail" -ne 0 ]; then
-            echo "Add the tool to BOTH runners' runtimeInputs, or state the asymmetry in this"
-            echo "step's CAMPAIGN_ONLY/REVIEW_ONLY with the reason it is one-sided."
-          fi
-          [ "$fail" -eq 0 ] && echo "capability surfaces match the declared asymmetry"
-          exit "$fail"
+        run: nix run .#pr-review-report -- closure-surface
       - name: flake check
         run: nix flake check --print-build-logs

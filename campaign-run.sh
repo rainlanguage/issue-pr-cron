@@ -96,8 +96,10 @@ if ! flock -n 9; then
   exit 0
 fi
 
-# clones live here; per-run traces here
-mkdir -p "$WORK_DIR" "$RUNDIR"
+# clones live here; per-run traces here. The metrics dir must exist BEFORE the run, not just after
+# it: `run-timings` appends this run's boot/ttl records from inside the live pipe, long before the
+# end-of-run `run-metrics` line.
+mkdir -p "$WORK_DIR" "$RUNDIR" "$DIR/metrics"
 cd "$WORK_DIR" || exit 1
 
 # The FSM MCP server reads both clone roots from the environment, never from a tool argument — a
@@ -177,6 +179,8 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     --add-dir "$DIR" \
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
+    | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
+          --run-id "$TS" --role producer --model "$USED_MODEL" 2>/dev/null || cat ; } \
     | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}
   # Advance to the next model ONLY on a usage/quota limit; any other outcome is final. The verdict
@@ -204,8 +208,9 @@ echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)
 # `run-metrics` emits the whole enriched record itself now, including `outcome` — which it derives
 # with the same typed classifier the fallback loop uses, so the metrics line and the fallback
 # decision can never disagree about whether a run was quota-limited.
+# This is the run's `stage: final` line. Its `stage: boot` / `stage: ttl` lines were already
+# appended mid-run by `run-timings` above — reaching HERE at all is what a killed run cannot do.
 if [ -s "$RUNLOG" ]; then
-  mkdir -p "$DIR/metrics"
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role producer --model "$USED_MODEL" --exit-code "$rc" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
