@@ -611,11 +611,16 @@ Every reference to a GitHub subject in `human-queue --json` — a lane item, a
 ```
 
 `leaks` adds `reason`; nothing subtracts. The `url` is the one **GitHub
-reported**, never rebuilt from `repo` + `number`: `{repo, number}` alone does
-not say whether a number is an issue or a PR, and `closeCandidateUnvetted`
-genuinely holds both (the producer can flag either). It costs nothing to carry —
-every one of those arrays is built from a `gh search` / `gh issue view` payload
-that already returns the url, so no extra call is made for it.
+reported**, never rebuilt from `repo` + `number` — `{repo, number}` alone does
+not say whether a number is an issue or a PR, and these arrays split both ways
+(`states` and `leaks` are PRs, the rest issues). Which way is a fact about each
+key's source query, not something the payload states, so a consumer rebuilding
+the link would be hard-coding a per-key rule it cannot verify. It costs nothing
+to carry: every one of those arrays is built from a `gh search` /
+`gh issue view` payload that already returns the url, so no extra call is made
+for it. The human-readable `human-queue` prints the same carried url, for the
+same reason — it used to rebuild `…/pull/<n>`, and printed that for
+close-candidate **issues**.
 
 That is enforced by a single type (`SubjectRef`) with a single serialiser, not
 by several structs agreeing: adding or removing a field is a compile error at

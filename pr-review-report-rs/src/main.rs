@@ -5830,15 +5830,20 @@ fn classify_lane(
 /// A reference to ONE GitHub subject — an issue or a PR — in the ONE shape `human-queue --json`
 /// emits every such reference in: `{repo, number, url, title}`.
 ///
-/// This exists because the two shapes drifted (#114). Lane items carried `url`; the five top-level
+/// This exists because the two shapes drifted (#114). Lane items carried `url`; the six top-level
 /// arrays (`states`, `closeCandidateIssues`, `closeCandidateUnvetted`, `closeCandidateUpheld`,
 /// `uncoveredIssues`, `leaks`) carried only `{repo, number, title}`, and a consumer holding one of
-/// those cannot build a link: `{repo, number}` alone does not say whether the number is an issue or
-/// a PR, and `closeCandidateUnvetted` genuinely mixes both populations. GitHub happens to redirect
-/// `/pull/<n>` ↔ `/issues/<n>`, so a guessed link survives a browser — but not a non-following API
-/// client, and not a subject that has been transferred to another repo. The resolved `url` is
-/// already in hand at every one of those sites (each array is built from a `gh search` /
-/// `gh issue view` payload that returns it), so carrying it costs nothing.
+/// those cannot build a link at all — the field is simply not there.
+///
+/// Nor can it derive one: `{repo, number}` does not say whether the number is an issue or a PR, and
+/// the arrays split BOTH ways (`states`/`leaks` are PRs, the rest are issues). That split is an
+/// implementation fact — `gh search issues` scopes to issues, `gh search prs` to PRs — not
+/// something the payload states, so a consumer has to hard-code a per-key rule it cannot verify and
+/// that changes silently if a key's source query ever changes. GitHub does redirect
+/// `/pull/<n>` ↔ `/issues/<n>`, so a guessed link survives a browser click today; it does not
+/// survive a non-following API client, a link checker, or a subject transferred to another repo.
+/// The resolved `url` is already in hand at every one of those sites (each array is built from a
+/// `gh search` / `gh issue view` payload that returns it), so carrying it costs nothing.
 ///
 /// Being ONE type is the point. Adding a field here is a compile error at every construction site,
 /// and removing one is a compile error at every reader — which is what turns the next divergence
@@ -8228,9 +8233,11 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
 /// `(unvetted, upheld)` — in the ONE [`SubjectRef`] shape every subject array emits.
 ///
 /// The `url` comes from the row, which got it from the `gh issue view` that built the row — this
-/// projection used to drop it, which is the drift #114 is about. `closeCandidateUnvetted` mixes
-/// issues and PRs depending on what the producer flagged, so a consumer reconstructing the link
-/// from `repo` + `number` has to guess `/issues/` vs `/pull/`; the resolved url removes the guess.
+/// projection used to drop it, which is the drift #114 is about. The projection carries whatever
+/// url the row holds rather than rebuilding one from `repo` + `number`: `ai:close-candidate` is a
+/// label the producer also puts on PRs (see `lanes.vetter-verdicts.ai:close-candidate`), so
+/// "close-candidate ⇒ `/issues/`" is a rule about which query fed this array, not about the
+/// concept, and it is not the projection's to encode.
 ///
 /// Both the arrays and their counts are derived from THIS one document, which is what makes an
 /// array/count mismatch unrepresentable: a box that renders "5" and then lists three issues when
@@ -12903,7 +12910,9 @@ mod queue_tests {
         let doc = json!({
             "issues": [
                 row("rainlanguage/raindex", 512, "orderbooks should fallback", "vet", "issues"),
-                // The mixed population: a close-candidate flagged on a PULL REQUEST.
+                // A PR-shaped row. `ai:close-candidate` is a label the producer also applies to
+                // PRs, so the projection must carry whatever url the row holds — it is not the
+                // place to encode "this array is fed by an issues-only search".
                 row("rainlanguage/raindex", 592, "Fix inverted IO ratio", "vet", "pull"),
             ],
             "skipped": [
@@ -18002,10 +18011,12 @@ mod fsm_completeness_tests {
 // ─────────────────────────────────────────────────────────────────────────────
 // subject-reference shape — `human-queue --json` (#114).
 //
-// The defect these pin: lane items shipped `{repo, number, url, title}` while the five top-level
+// The defect these pin: lane items shipped `{repo, number, url, title}` while the six top-level
 // subject arrays shipped `{repo, number, title}`. Nothing failed. One consumer (rain-org-health's
-// pipeline panel) simply could not render a link, because `{repo, number}` alone does not say
-// whether a number is an issue or a PR — and `closeCandidateUnvetted` genuinely holds both.
+// pipeline panel) simply could not render a link, because the field was not there — and could not
+// derive one, because `{repo, number}` alone does not say whether the number is an issue or a PR.
+// The arrays split BOTH ways (`states`/`leaks` PRs, the rest issues), and which way is a fact about
+// each key's source query, not something the payload states.
 //
 // The oracle is the LANE item, which was always right: every top-level subject item must carry the
 // same key set. That comparison, not a hard-coded key list, is what makes the next divergence a
@@ -18056,7 +18067,8 @@ mod subject_ref_tests {
             ready_vetted_at_head: Some(true),
             producer_commented: false,
         }]);
-        // `closeCandidateUnvetted` mixes issues and PRs — one of each, with the url each really has.
+        // One issue-shaped and one PR-shaped member, each with the url it really has: the emitted
+        // link must come from the payload, not from a per-key assumption about what the array holds.
         let (cc_unvetted, cc_unvetted_n) = issue_state_pair(vec![
             sref("rainlanguage/raindex", 512, "issues", "an issue").to_json(),
             sref("rainlanguage/raindex", 592, "pull", "a pr").to_json(),
