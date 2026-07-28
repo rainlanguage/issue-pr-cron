@@ -292,7 +292,9 @@ jobs:
               echo "::error::$pkg: rendered page is not a JPEG (magic $magic)."
               fail=1; continue
             fi
-            echo "  $pkg: rendered $n page(s), JPEG magic OK, from $(env -i PATH="$wp" sh -c 'command -v pdftoppm')"
+            # `/bin/sh` by absolute path: the closure carries coreutils, not a shell, so a bare
+            # `sh` under `env -i` resolves to nothing and the diagnostic prints blank.
+            echo "  $pkg: rendered $n page(s), JPEG magic OK, from $(env -i PATH="$wp" /bin/sh -c 'command -v pdftoppm')"
           done
           [ "$fail" -eq 0 ] && echo "both model runners can render a PDF from their own closure"
           exit "$fail"
