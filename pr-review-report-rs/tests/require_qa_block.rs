@@ -91,11 +91,17 @@ impl Fixture {
         self.dir.join(name).display().to_string()
     }
 
-    /// Drive the hook with a Bash payload. Returns (exit code, stderr).
+    /// Drive the hook with a Bash payload from the fixture dir. Returns (exit code, stderr).
     fn bash(&self, command: &str) -> (i32, String) {
+        self.bash_from(&self.dir.display().to_string(), command)
+    }
+
+    /// The same, with the session cwd chosen — the two ways a relative `--body-file` resolves
+    /// (a leading `cd`, or the session's own directory) are only distinguishable when they differ.
+    fn bash_from(&self, cwd: &str, command: &str) -> (i32, String) {
         self.payload(&serde_json::json!({
             "tool_name": "Bash",
-            "cwd": self.dir.display().to_string(),
+            "cwd": cwd,
             "tool_input": {"command": command},
         }))
     }
@@ -339,13 +345,15 @@ fn an_unreadable_body_file_fails_closed() {
 
 #[test]
 fn a_body_file_read_from_stdin_is_blocked() {
-    let Some(f) = Fixture::new("stdin-body") else {
+    // NOT named "stdin-…": the fixture's own path appears in the refusal, so a fixture name
+    // containing the word would satisfy the assertion below without the hook saying anything.
+    let Some(f) = Fixture::new("dash-body") else {
         return;
     };
     let (code, err) = f.bash("gh pr create --title t --body-file -");
     assert_blocked(code, &err);
     assert!(
-        err.contains("stdin"),
+        err.contains("reads the body from stdin"),
         "the refusal must say why a stdin body cannot be checked: {err}"
     );
 }
@@ -355,12 +363,33 @@ fn a_body_file_relative_to_a_leading_cd_is_resolved() {
     let Some(f) = Fixture::new("relative-cd") else {
         return;
     };
-    f.body_file("body.md", COMPLETE_BLOCK);
-    let (code, err) = f.bash(&format!(
-        "cd {} && gh pr create --title t --body-file body.md",
-        f.dir.display()
-    ));
+    // The `cd` target is NOT the session cwd, so only the `cd` can resolve `body.md`.
+    let sub = f.dir.join("sub");
+    std::fs::create_dir_all(&sub).expect("create sub");
+    std::fs::write(sub.join("body.md"), COMPLETE_BLOCK).expect("write body");
+    let (code, err) = f.bash_from(
+        &f.dir.display().to_string(),
+        &format!(
+            "cd {} && gh pr create --title t --body-file body.md",
+            sub.display()
+        ),
+    );
     assert_allowed(code, &err);
+}
+
+#[test]
+fn a_body_file_relative_to_the_session_cwd_is_resolved() {
+    let Some(f) = Fixture::new("relative-cwd") else {
+        return;
+    };
+    f.body_file("body.md", COMPLETE_BLOCK);
+    // No `cd`: the session's own directory is the only thing that can resolve it.
+    let (code, err) = f.bash("gh pr create --title t --body-file body.md");
+    assert_allowed(code, &err);
+    let bare = f.dir.join("bare.md");
+    std::fs::write(&bare, "Closes #1\n").expect("write bare");
+    let (code, err) = f.bash("gh pr create --title t --body-file bare.md");
+    assert_blocked(code, &err);
 }
 
 // --- finding the invocation at all ----------------------------------------------------------
@@ -393,14 +422,18 @@ fn a_second_pr_create_in_one_command_is_not_missed() {
     };
     let good = f.body_file("good.md", COMPLETE_BLOCK);
     let bare = f.body_file("bare.md", "Closes #2\n");
-    let (code, err) = f.bash(&format!(
-        "gh pr create --title one --body-file {good} && gh pr create --title two --body-file {bare}"
-    ));
-    assert_blocked(code, &err);
-    assert!(
-        err.contains(&bare),
-        "the refusal must name the SECOND body, not the first: {err}"
-    );
+    // Both separators, because they take different paths through the parser: `&&` becomes two
+    // segments, while a newline is whitespace to shlex and leaves TWO invocations in ONE segment.
+    for sep in [" && ", "\n"] {
+        let (code, err) = f.bash(&format!(
+            "gh pr create --title one --body-file {good}{sep}gh pr create --title two --body-file {bare}"
+        ));
+        assert_blocked(code, &err);
+        assert!(
+            err.contains(&bare),
+            "the refusal must name the SECOND body, not the first: {err}"
+        );
+    }
 }
 
 #[test]
@@ -468,11 +501,18 @@ fn a_non_bash_tool_call_is_ignored() {
     let Some(f) = Fixture::new("non-bash") else {
         return;
     };
-    let (code, err) = f.payload(&serde_json::json!({
-        "tool_name": "Write",
-        "tool_input": {"file_path": "/tmp/x.md", "content": "gh pr create --body no-qa"},
-    }));
-    assert_eq!(code, 0, "only Bash opens a PR: {err}");
+    for input in [
+        serde_json::json!({"file_path": "/tmp/x.md", "content": "gh pr create --body no-qa"}),
+        // A `command` key on a tool that is not Bash is not hypothetical — MCP tool inputs are
+        // arbitrary JSON. Only Bash executes one, so anything else is a string, not a PR.
+        serde_json::json!({"command": "gh pr create --title t --body no-qa"}),
+    ] {
+        let (code, err) = f.payload(&serde_json::json!({
+            "tool_name": "mcp__fsm__clone_create",
+            "tool_input": input,
+        }));
+        assert_eq!(code, 0, "only Bash opens a PR: {err}");
+    }
 }
 
 #[test]
