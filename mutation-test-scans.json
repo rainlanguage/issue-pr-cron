@@ -12,5 +12,12 @@
   "publishedTag": null,
   "scope": "pr-review-report-rs queue filter extension (take_presentable/render_queue skip-note/pr_slug)",
   "summary": "7/7 mutants killed (Q1-Q7); cumulative 44/44 across binary; non-presentables excluded from queue (--checks success + conflict filter w/ backfill)"
+ },
+ {
+  "timestamp": "2026-07-28T11:35:00Z",
+  "commit": "89aa445d7de9d29dbed0921471372c2919dce276",
+  "publishedTag": null,
+  "scope": "the human's TERMINAL close edge (human_close_plan/human_close_steps/human_close_report/human_close_apply), the gh step seam (rule_step_argv/rule_step_failure), the two subject-type redirections (CcVerdictPlan::NotAnIssue, pr_view_failed_error) and the marketplace gate (plugin_version_check/plugin_version_lockstep_mode) + the shipped commands' content invariant",
+  "summary": "22/22 mutants killed, 0 survivors, one per behaviour with the whole suite run each time and the source restored between runs; the command-content invariant is checked by a PLANTED loose `gh` fence rather than by mutating the test's own assertion; the gh subprocess seam is now covered as argv (previously recorded as untested)"
  }
 ]
