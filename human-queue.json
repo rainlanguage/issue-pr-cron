@@ -186,38 +186,6 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
-    "ai:close-candidate": [
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 177,
-        "title": "test(lts): exercise setDefaultFee through governance flow"
-      },
-      {
-        "repo": "rainlanguage/raindex",
-        "number": 2785,
-        "title": "docs(natspec): correct stale calculateClearStateChange cap description"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 204,
-        "title": "fix(run): guard against under-length inputs arrays in convertToAssets/Shares"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 154,
-        "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()"
-      },
-      {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 242,
-        "title": "Fix pow: surface ExponentOverflow instead of Panic(0x11) on negative-exp squaring"
-      },
-      {
-        "repo": "rainlanguage/rain.strategies",
-        "number": 28,
-        "title": "wip on folio"
-      }
-    ],
     "ai:design": [
       {
         "repo": "cyclofinance/cyclo.site",
@@ -455,16 +423,6 @@
         "repo": "rainlanguage/rain.flare",
         "number": 137,
         "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 130,
-        "title": "test: assert authoringMetaV2 word names and descriptions"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 372,
-        "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)"
       }
     ],
     "ai:reject": [
@@ -1128,20 +1086,25 @@
       }
     },
     "vet-lifecycle": {
+      "awaiting-re-vet": {
+        "count": 1,
+        "prs": [
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 185,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185",
+            "title": "test(readme): assert README documents both ERC4626 word names"
+          }
+        ]
+      },
       "un-vetted": {
-        "count": 11,
+        "count": 9,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 92,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/92",
             "title": "feat(fsm): the human's transitions are transitions, not raw gh (#86)"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 91,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/91",
-            "title": "fix(closure): poppler-utils, and make a tooling failure fail the run"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1151,15 +1114,9 @@
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
-            "number": 88,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/88",
-            "title": "feat(metrics): split startupMs into bootMs + ttlMs, recorded when known"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
             "number": 87,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/87",
-            "title": "fix(hooks): refuse a `gh pr create` whose body lacks the QA-GUIDE §8 evidence block"
+            "title": "fix(gate): refuse a `gh pr create` whose body lacks the QA-GUIDE §8 evidence block — as a `pr-review-report` subcommand"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1201,47 +1158,6 @@
       }
     },
     "vetter-verdicts": {
-      "ai:close-candidate": {
-        "count": 6,
-        "prs": [
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 177,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/177",
-            "title": "test(lts): exercise setDefaultFee through governance flow"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2785,
-            "url": "https://github.com/rainlanguage/raindex/pull/2785",
-            "title": "docs(natspec): correct stale calculateClearStateChange cap description"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 204,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/204",
-            "title": "fix(run): guard against under-length inputs arrays in convertToAssets/Shares"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 154,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/154",
-            "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 242,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/242",
-            "title": "Fix pow: surface ExponentOverflow instead of Panic(0x11) on negative-exp squaring"
-          },
-          {
-            "repo": "rainlanguage/rain.strategies",
-            "number": 28,
-            "url": "https://github.com/rainlanguage/rain.strategies/pull/28",
-            "title": "wip on folio"
-          }
-        ]
-      },
       "ai:design": {
         "count": 6,
         "prs": [
@@ -1284,7 +1200,7 @@
         ]
       },
       "ai:ready": {
-        "count": 43,
+        "count": 40,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -1521,28 +1437,10 @@
             "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions"
           },
           {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 185,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185",
-            "title": "test(readme): assert README documents both ERC4626 word names"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 137,
             "url": "https://github.com/rainlanguage/rain.flare/pull/137",
             "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 130,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/130",
-            "title": "test: assert authoringMetaV2 word names and descriptions"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 372,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/372",
-            "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)"
           }
         ]
       },
@@ -1790,6 +1688,41 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 96,
+      "title": "All of it should be Rust in the one pr-review-report bin — 758 lines of shell remain"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 204,
+      "title": "Fee precedence is undocumented: a category fee of 0 shadows the default for all crypto feeds"
+    },
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 61,
+      "title": "Refuse to run Pass 2 before adversarial-mutation-test has covered the repo"
+    },
+    {
+      "repo": "rainlanguage/rain.strategies",
+      "number": 125,
+      "title": "halflife decay may lose precision before the io-ratio is spent"
+    },
+    {
+      "repo": "rainlanguage/rain.strategies",
+      "number": 124,
+      "title": "fixed-spread has no min or max trade amount"
+    },
+    {
+      "repo": "rainlanguage/rain.strategies",
+      "number": 123,
+      "title": "auction-dca halflife exponent is unclamped and bricks the order past 192 epochs"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 95,
+      "title": "Collapse un-vetted and awaiting-re-vet into one needs-vet state"
+    },
     {
       "repo": "rainlanguage/raindex",
       "number": 2824,
@@ -4961,7 +4894,7 @@
     }
   ],
   "counts": {
-    "ready": 43,
+    "ready": 41,
     "design": 6,
     "blockedDeploy": 13,
     "blockedInfra": 13,
@@ -4970,13 +4903,13 @@
     "closeCandidateUnvetted": 1,
     "closeCandidateUpheld": 0,
     "leaks": 17,
-    "totalProducerPrs": 175,
-    "uncoveredIssues": 613,
-    "unvetted": 11,
-    "awaitingReVet": 0,
+    "totalProducerPrs": 165,
+    "uncoveredIssues": 620,
+    "unvetted": 9,
+    "awaitingReVet": 1,
     "reject": 35,
     "relink": 1,
-    "closeCandidatePrs": 6,
+    "closeCandidatePrs": 0,
     "humanReject": 30,
     "humanDesign": 6,
     "humanCloseCandidate": 0
