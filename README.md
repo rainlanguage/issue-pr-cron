@@ -867,14 +867,38 @@ working-directory membership — all that `--add-dir` and
 `permissions.additionalDirectories` confer — authorises `create` only in
 `acceptEdits` mode. Under `--permission-mode default` it needs an edit-kind
 allow rule, which is why the runner also passes
-`--allowedTools "Edit(//$SCRATCH_DIR/**)"`; the `//` prefix is required, as
-`Edit(/abs/**)` never matches and fails silently. The refusal a model gets
-without that rule names the directory it just tried as allowed, so the symptom
-points nowhere near the cause — hence the `producer scratch dir is writable` CI
-job, which asserts the rule, the substitution and the cleanup still line up.
+`--allowedTools "Edit(//$WORK_DIR/**),Edit(//$DIR/**)"`; the `//` prefix is
+required, as `Edit(/abs/**)` never matches and fails silently. The refusal a
+model gets without that rule names the directory it just tried as allowed, so
+the symptom points nowhere near the cause. That is what the
+`producer scratch dir is writable` CI job is for: it asserts the rule, the
+substitution and the cleanup still line up.
 
-The vetter needs none of this: `review-settings.json` denies `Bash`, `Write` and
-`Edit` outright, so it has no way to write a file at all.
+The grant covers **both `--add-dir` roots**, not just the scratch dir (which is
+inside `$WORK_DIR` and so already covered). A root given only half the grant
+refuses redirects while naming itself allowed, and scratch-only left every work
+clone in that state — which is what made a render harness, the org's way of
+producing the before/after screenshots the vetter demands, unbuildable by
+ordinary means (#118). Granting the install dir too is not a widening of what
+the producer can write: `campaign-settings.json` allows `Write` and `Edit` with
+no path constraint, and the Bash allow-list carries `cp`, `mv`, `tee` and
+friends, so refusing one write form there was never a boundary — it was a
+self-contradicting message and a wasted turn. The install dir stays clean
+because the prompt says so and because the scratch dir gives throwaway files
+somewhere legal to go, which is a guard at the level that governs.
+
+The scratch dir is reclaimed on an EXIT trap, not by a statement at the foot of
+the script: a killed run never reaches that line, and one did (#118). INT, TERM
+and HUP all run the EXIT trap; only SIGKILL and a reboot escape it, and the
+age-bounded sweep on the next run's way in reclaims those.
+
+The vetter needs none of this: `review-settings.json` denies `Bash`, `Write`,
+`Edit` and `NotebookEdit` outright, so it has no way to write a file at all —
+with no Bash tool a redirection is not even expressible, and an allow rule there
+would be inert. Its `--add-dir` flags confer the read membership `Read`/`Glob`/
+`Grep` need over the install dir and the checkouts, and nothing more. That
+omission is asserted by the `vetter has no write grant` CI job, so granting the
+vetter Bash forces the redirect question to be answered rather than inherited.
 
 ## Reviewing the output — the merge pipeline
 
