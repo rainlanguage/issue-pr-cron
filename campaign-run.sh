@@ -158,9 +158,10 @@ fi
 # or in `acceptEdits` mode ONLY. Under `--permission-mode default` a `create` falls through to an
 # EDIT-KIND ALLOW RULE, so `--add-dir $SCRATCH_DIR` on its own still leaves `... > $SCRATCH_DIR/x`
 # refused — and refused by a message that lists the directory as allowed, which is precisely what
-# sent the producer hunting for a legal path that did not exist. `--allowedTools` below is the
-# grant that works. Its `//` prefix is load-bearing: `Edit(/abs/**)` is silently inert; only
-# `Edit(//abs/**)` matches an absolute path.
+# sent the producer hunting for a legal path that did not exist. The `--allowedTools` grant below
+# is what makes the redirect work; it covers BOTH `--add-dir` roots, for the reason given there,
+# and this dir is inside one of them. Its `//` prefix is load-bearing: `Edit(/abs/**)` is silently
+# inert; only `Edit(//abs/**)` matches an absolute path.
 #
 # PER-RUN, NOT PERSISTENT: nothing accumulates, and no run can read another run's half-written
 # state and mistake it for its own. Nothing is lost by deleting it — every tool call and its full
@@ -191,6 +192,24 @@ if ! mkdir -p "$SCRATCH_DIR"; then
 fi
 export SCRATCH_DIR
 
+# Reclaim this run's scratch HOWEVER the run ends. This is what keeps the footprint one run's
+# worth rather than a growing pile, and it is a TRAP because a statement at the foot of the script
+# runs only when the script REACHES that line: a killed run left
+# `scratch/20260728T132223Z-3993293/` behind (#118) while the comment beside the statement called
+# the delete unconditional.
+# EXIT alone is the whole grant needed. Measured on bash 5.1 and on the flake's bash, with the
+# signal delivered to the script while it sits in the model pipeline: INT, TERM and HUP each run
+# the EXIT trap and reclaim, so explicit INT/TERM/HUP traps add nothing but a changed exit status.
+# SIGKILL does not, and cannot be made to by anyone; nor does a box reboot. Those two are what the
+# age-bounded sweep above reclaims, on the next run's way in.
+# Deleting on EXIT rather than in sequence moves the delete PAST the `run-metrics` line and past
+# the `run-infra` read-back that can `exit 12`. Neither reads the scratch dir — `run-metrics` reads
+# $RUNLOG and $INFRAREC, `run-infra` reads $INFRAREC — so the reordering changes when the delete
+# happens, never what survives it.
+# Installed HERE, after the mkdir succeeded: the pre-model exits above (DISABLED, usage-gate, lock,
+# preflight, and the mkdir failure itself) have no scratch dir to reclaim and must not acquire one.
+trap '[ -n "${SCRATCH_DIR:-}" ] && rm -rf "$SCRATCH_DIR"' EXIT
+
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
@@ -218,6 +237,27 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 # `Bash(rm -rf /:*)` deny rule is prefix-matched and so also denied `rm -rf $WORK_DIR/<clone>` — the
 # very deletion campaign-prompt mandated (#56). NO `--strict-mcp-config` here, unlike the vetter: the
 # producer keeps its Bash and whatever servers its skill plugins bring, and this server is ADDITIVE.
+# `--allowedTools` grants the redirect form to EVERY directory `--add-dir` names, and to nothing
+# else. One rule per root, because the two roots are siblings under $HOME and no single glob spans
+# them without also spanning the rest of $HOME. The scratch dir needs no rule of its own: it is
+# `$WORK_DIR/scratch/…`, so the WORK_DIR rule subsumes it.
+# WHY BOTH ROOTS, rather than scratch alone: `--add-dir` and an edit-kind allow rule are the two
+# halves of one grant (see the block above), and a directory given only the first half refuses
+# redirects with a message NAMING IT AS ALLOWED. Scratch-only left every one of the hundreds of
+# work clones under $WORK_DIR in that state, which is what made a render harness — components
+# written into the clone so the real one can be mounted against controlled data, the org's
+# known-good way to produce the before/after screenshots the vetter requires — unbuildable by the
+# ordinary means (#118).
+# WHY $DIR IS GRANTED TOO, and not deliberately refused: refusing it would be a boundary only if
+# the install dir were otherwise unwritable, and it is not. campaign-settings.json allows `Write`
+# and `Edit` with no path constraint, and the Bash allow-list carries `cp`, `mv`, `tee`, `touch`,
+# `sed` and `mkdir` — every one of which lands a byte anywhere this process can write. That is how
+# 78 stray files reached the install dir with the redirect form already refused. So the choice is
+# not "writable vs not"; it is "one write form refused, with a self-contradicting message, while a
+# dozen others are not" versus consistency. What keeps the install dir clean is the prompt's rule
+# plus the scratch dir that gives it somewhere legal to go — a guard at the level that actually
+# governs. A permission rule cannot express this one, and pretending it does costs a turn per
+# refusal and buys nothing.
 # Stream every event as JSON. tee keeps the full trace even if the distiller is missing/errors.
 # Model fallback: try $MODEL, then each $FALLBACK_MODELS in order, advancing to the next ONLY when a
 # model is quota-limited. Any other outcome (success, an auth/startup failure, or a real error) stops
@@ -235,7 +275,7 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     --verbose --output-format stream-json \
     --add-dir "$WORK_DIR" \
     --add-dir "$DIR" \
-    --allowedTools "Edit(//$SCRATCH_DIR/**)" \
+    --allowedTools "Edit(//$WORK_DIR/**),Edit(//$DIR/**)" \
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
     | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
@@ -276,11 +316,9 @@ if [ -s "$RUNLOG" ]; then
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
 fi
 
-# Reclaim this run's scratch. This is what makes the footprint one run's worth rather than a
-# growing pile: the metrics line above has already read everything durable off the run, and the
-# trace holds the content of anything the model wrote here. Unconditional — a failed run's scratch
-# is no more informative than a successful one's, because the trace records both identically.
-[ -n "${SCRATCH_DIR:-}" ] && rm -rf "$SCRATCH_DIR"
+# The scratch dir is reclaimed by the EXIT trap installed where the dir is created — including on
+# the `exit 12` below. A failed run's scratch is no more informative than a successful one's: the
+# trace records the content of both identically.
 
 # --- did the run end because the infrastructure was down? (#108) ------------------------------
 # Every other exit in this script is PRE-MODEL: disabled, usage-gated, locked, preflight. So nothing

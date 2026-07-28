@@ -174,6 +174,17 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
 # Model fallback: try $REVIEW_MODEL, then each $FALLBACK_MODELS in order, advancing ONLY on a
 # quota/usage limit so one model's exhausted quota can't stall vetting. Any other outcome (success,
 # auth/startup failure, real error) is final.
+# NO `--allowedTools` HERE, and that omission is the answer, not an oversight (#118). The producer
+# passes an `Edit(//…)` rule beside its `--add-dir` flags because a bash output redirection is a
+# `create` that working-directory membership alone does not authorise — see campaign-run.sh for the
+# mechanism. The vetter has no such gap to close: review-settings.json DENIES `Bash`, `Write`,
+# `Edit` and `NotebookEdit`, deny beats allow, and a session with no Bash tool cannot express a
+# redirection at all. So an edit-kind allow rule here would be inert, and would falsely advertise a
+# vetter that writes. The vetter is a READER — `pr_checkout` (the MCP tool, running server-side)
+# makes the checkout and `record_verdict` is its one write, both outside the model's tool surface —
+# and these two `--add-dir` flags confer exactly the read membership Read/Glob/Grep need over the
+# install dir and the checkouts. If Bash is ever granted here, that is the moment to decide about a
+# redirect grant; the `vetter has no write grant` CI job fails until someone does.
 USED_MODEL="$REVIEW_MODEL"
 rc=1
 for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do

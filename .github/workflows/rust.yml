@@ -242,11 +242,16 @@ jobs:
   # Verified against claude 2.1.220: a redirection is a `create` operation, and working-directory
   # membership — all that `--add-dir` and `permissions.additionalDirectories` confer — authorises
   # `create` only in `acceptEdits` mode. Under `--permission-mode default` the decision falls
-  # through to an edit-kind ALLOW RULE. So `--allowedTools "Edit(//$SCRATCH_DIR/**)"` sitting next
-  # to two `--add-dir` flags reads like a belt-and-braces duplicate, and deleting it silently
-  # returns the producer to writing scratch wherever it can — which is how the install dir came to
-  # hold six weeks of it. The refusal it gets even NAMES the directory as allowed, so the symptom
-  # does not point at the cause either.
+  # through to an edit-kind ALLOW RULE. So the `--allowedTools "Edit(//...)"` rules sitting next
+  # to the `--add-dir` flags read like a belt-and-braces duplicate, and deleting one silently
+  # returns the producer to writing wherever it can — which is how the install dir came to hold six
+  # weeks of it. The refusal it gets even NAMES the directory as allowed, so the symptom does not
+  # point at the cause either.
+  #
+  # `--add-dir` and the edit rule are two HALVES OF ONE GRANT, which is why the first gate below
+  # derives the roots from the script rather than pinning a literal: a root that gets only the
+  # first half refuses redirects while naming itself allowed, and scratch-only left every work
+  # clone in exactly that state for as long as the scratch grant looked complete (#118).
   #
   # None of this can be caught by running the code (the run still exits 0; it just quietly litters),
   # so it is asserted statically, the same way the ambient-tool-acquisition traps above are.
@@ -258,15 +263,33 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - name: the scratch grant is an Edit(//...) allow rule, not --add-dir
+      - name: every --add-dir root is also an Edit(//...) allow rule
         run: |
           set -euo pipefail
           fail=0
-          if ! grep -Eq -- '--allowedTools[[:space:]]+"Edit\(//\$SCRATCH_DIR/\*\*\)"' campaign-run.sh; then
-            echo "::error::campaign-run.sh no longer grants the scratch dir with"
-            echo '  --allowedTools "Edit(//$SCRATCH_DIR/**)"'
-            echo "Without it the model cannot redirect into its own scratch dir: --add-dir grants"
-            echo "READS, and an output redirection is a create, which needs an edit-kind ALLOW RULE."
+          # Read the roots out of the script instead of naming them here, so a third --add-dir
+          # arrives already covered by this gate rather than needing someone to remember it.
+          roots="$(grep -Eo -- '--add-dir[[:space:]]+"\$[A-Za-z_][A-Za-z0-9_]*"' campaign-run.sh \
+                   | grep -Eo '\$[A-Za-z_][A-Za-z0-9_]*' | sort -u)"
+          if [ -z "$roots" ]; then
+            echo "::error::campaign-run.sh names no --add-dir roots, so this gate can no longer see"
+            echo "what it guards. If the flags moved, move this check with them."
+            exit 1
+          fi
+          for r in $roots; do
+            if ! grep -Fq -- "Edit(//$r/**)" campaign-run.sh; then
+              echo "::error::campaign-run.sh --add-dir's $r but never grants Edit(//$r/**)."
+              echo "--add-dir grants READS. An output redirection is a create, which needs an"
+              echo "edit-kind ALLOW RULE, so that root refuses every redirect — with a message that"
+              echo "names it as allowed. Half-granting \$WORK_DIR that way is #118."
+              fail=1
+            fi
+          done
+          # The scratch dir needs no rule of its own only because it is INSIDE $WORK_DIR. Move it
+          # out and the loop above still passes while the dir #106 exists for goes unwritable.
+          if ! grep -Eq '^SCRATCH_DIR="\$WORK_DIR/' campaign-run.sh; then
+            echo "::error::SCRATCH_DIR is no longer under \$WORK_DIR, so the Edit(//\$WORK_DIR/**)"
+            echo "rule no longer covers it and it needs a grant of its own."
             fail=1
           fi
           # `Edit(/abs/**)` is not a stricter spelling of `Edit(//abs/**)` — it is inert. A rule that
@@ -277,7 +300,7 @@ jobs:
             echo "Absolute paths in a path rule need the // prefix: Edit(//abs/path/**)."
             fail=1
           fi
-          [ "$fail" -eq 0 ] && echo "scratch grant present and in the matching form"
+          [ "$fail" -eq 0 ] && echo "every --add-dir root is granted, in the matching form"
           exit "$fail"
       - name: the scratch path reaches the prompt as a literal
         run: |
@@ -324,6 +347,17 @@ jobs:
             echo "::error::campaign-run.sh no longer deletes its scratch dir at the end of the run."
             fail=1
           fi
+          # …and deleting it from a plain statement is not reclaiming it. A statement at the foot of
+          # the script runs only when the script REACHES it, which a killed run never does — one
+          # left scratch/20260728T132223Z-3993293/ behind while the comment beside it said
+          # "Unconditional" (#118). On the trap, INT/TERM/HUP all reclaim; only SIGKILL and a reboot
+          # escape, and the age-bounded sweep on the next run's way in is what covers those.
+          if ! grep -Eq '^trap .*rm -rf "\$SCRATCH_DIR".* EXIT$' campaign-run.sh; then
+            echo "::error::the scratch reclaim is not installed as an EXIT trap."
+            echo "A plain statement is skipped by every path that leaves before reaching it,"
+            echo "which is every way a run gets killed."
+            fail=1
+          fi
           # `-mtime +1` truncates to whole days, so it leaves a 25-hour-old leftover until it is 48
           # hours old. Wrong quietly, never loudly — the sweep still runs and still reports nothing.
           if grep -Eq 'find .*scratch.*-mtime' campaign-run.sh; then
@@ -345,3 +379,48 @@ jobs:
             exit 1
           fi
           echo "a failed scratch mkdir ends the run"
+  # review-run.sh carries the same two `--add-dir` flags as the producer and NO `--allowedTools`,
+  # which is the identical half-grant shape the job above rejects. Here the answer is the opposite
+  # one: the vetter gets no edit-kind allow rule because it must not write. That reading is only
+  # true while the deny list holds — deny beats allow, and with `Bash` denied outright a bash
+  # output redirection is not expressible at all, so a rule would be inert AND would advertise a
+  # writing vetter. This job is what makes the omission a decision rather than an accident (#118):
+  # grant the vetter Bash and it fails until someone answers the redirect question on purpose.
+  vetter-has-no-write-grant:
+    name: vetter has no write grant
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: review-settings.json denies every write tool
+        run: |
+          set -euo pipefail
+          fail=0
+          # Without this, a missing jq makes every check below "fail" with a message about the deny
+          # list — a true report of nothing, aimed at the wrong file.
+          command -v jq >/dev/null || { echo "::error::this gate needs jq and cannot find it"; exit 1; }
+          for t in Bash Write Edit NotebookEdit; do
+            if ! jq -e --arg t "$t" '.permissions.deny | index($t)' review-settings.json >/dev/null; then
+              echo "::error::review-settings.json no longer denies '$t' outright."
+              echo "The vetter's inability to write is what makes review-run.sh's missing"
+              echo "--allowedTools correct. Without this deny it is just a hole."
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "the vetter cannot write by any tool"
+          exit "$fail"
+      - name: review-run.sh grants no edit-kind allow rule
+        run: |
+          set -euo pipefail
+          # Comments are stripped first: the flag is NAMED in the comment that explains why it is
+          # absent, and a gate that cannot tell those apart would fire on its own documentation.
+          if grep -v '^[[:space:]]*#' review-run.sh | grep -q -- '--allowedTools'; then
+            echo "::error::review-run.sh passes --allowedTools. The vetter is a reader: pr_checkout"
+            echo "makes its checkouts server-side and record_verdict is its one write, both outside"
+            echo "the model's tool surface. An allow rule here is inert against the deny list and"
+            echo "misdescribes what the vetter does. If Bash was granted, decide this deliberately."
+            exit 1
+          fi
+          echo "the vetter's --add-dir flags confer reads and nothing else"
