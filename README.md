@@ -303,9 +303,9 @@ server is the vetter's **only** tool surface.
 | Tool                             | The move it makes                                                                                                                                                                           |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list |
-| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                            |
+| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                           |
 | `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                              |
-| `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                                                                                                 |
+| `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                                                                                                |
 | `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                             |
 | `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                               |
 | `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                     |
@@ -842,7 +842,8 @@ Both fail **closed**: a thread state that cannot be read is not presented. In
 `queue` it is reported as `fetch-error` — a transient API failure is visible
 rather than silently read as clean (which would present a dirty PR) or as dirty
 (which would blank the queue). Resolving the threads is the **producer's**
-step-3e duty, and `worklist` routes the PR there as `nextAction: coderabbit-3e`.
+step-3e duty, and `worklist` routes the PR there as `nextAction:
+coderabbit-3e`.
 
 **There is no local review ledger.** Verdict state lives on GitHub as `ai:*` /
 `human:*` labels plus sha-bound comments, so it survives a lost box, is visible
