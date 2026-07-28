@@ -30,6 +30,7 @@ stateDiagram-v2
     state "human:reject" as hreject
     state "human:design" as hdesign
     state "human:close-candidate" as hclose
+    state "human:keep-open (issue)" as ikeep
     state "presentable · in queue" as queue
     state "approved · human review" as approved
     state "merged" as merged
@@ -44,8 +45,9 @@ stateDiagram-v2
     icand --> issue : vetter reject · strips the flag → back to uncovered
     icand --> icand : producer re-flags (new evidence) → un-vetted → re-vet
     iupheld --> [*] : human closes
-    icand --> hclose : human close-candidate (sacred)
-    icand --> hreject : human reject (sacred)
+    icand --> hclose : human-rule-issue close-candidate (sacred)
+    icand --> ikeep : human-rule-issue keep-open (sacred · clears the flag)
+    ikeep --> [*] : stays open, never re-flagged
 
     %% vet lifecycle — the vetter is the sole verdict transition fn
     unvetted --> ready : vetter record-verdict
@@ -76,9 +78,9 @@ stateDiagram-v2
     bon --> unvetted : dependency merges → producer re-works
 
     %% human decisions are sacred — the vetter never re-verdicts these
-    ready --> hreject : human reject + Rework note
-    ready --> hdesign : human design ruling
-    ready --> hclose : human close-candidate
+    ready --> hreject : human-rule reject + Rework note
+    ready --> hdesign : human-rule design
+    ready --> hclose : human-rule close-candidate
     hreject --> unvetted : producer reworks → reworked-reject clears labels → re-vet
     hdesign --> [*] : human rules
     hclose --> [*] : human closes
@@ -92,6 +94,85 @@ Every transition above is a `pr-review-report` subcommand. A raw `gh` / `git`
 state change from a prompt is a _loose_ transition — unenforced and untested —
 so the prompts route **all** GitHub I/O through the tool. That is what makes
 this an actual finite state machine rather than a picture of one.
+
+### The human's transitions
+
+Every actor's hand-off is a labelled transition — including the human's. That
+was not true until #86: `human:reject`, `human:design`, `human:close-candidate`
+and `human:keep-open` appeared in the binary only as strings it **read and
+refused on**, so the one actor whose decisions everything else treats as sacred
+was also the only one improvising raw `gh issue edit --add-label`.
+
+| Transition                                             | The move it makes                                                                                     |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**                       |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed** |
+| `record-close-candidate-verdict <owner/repo> <issue>`  | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)             |
+
+The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
+(PRs) and `HUMAN_RULING_LABELS` (issues), the same constants every AI transition
+already refuses to override. A state added there gains its transition rather
+than needing one, so the transition surface and the lane classifier cannot name
+different states.
+
+**A ruling is not a label; it is a label plus what it was ruling on.** The
+comment a ruling posts pins to whatever the AI's ruling on the _same subject_
+pins to, so the two records go stale together:
+
+- a PR → its head sha: `👤 human` / `Ruled <sha>: reject — <note>`, the twin of
+  `Reviewed <sha>: …`. A rework moves the head and the ruling visibly stops
+  describing the code that is there.
+- an issue carrying a **live** producer flag → the flag's timestamp:
+  `Ruled close-candidate @<at>: keep-open — <note>`, the twin of
+  `Reviewed close-candidate @<at>: …`. A re-flag invalidates it exactly as it
+  invalidates the vetter's verdict.
+- an issue with no live flag → the issue as filed: `Ruled issue @<createdAt>:`.
+  Deliberately not a moving anchor — with no producer claim there is nothing
+  that _can_ go stale — and saying `issue @…` rather than `close-candidate @…`
+  is precisely the namespace distinction that was lost.
+
+The guards are the same shape as the vetter's, and each exists for a failure
+that has already happened:
+
+- **the vocabulary**, from the constants above (a ruling outside them writes a
+  label `classify_lane` buckets nowhere — a leak);
+- **a note is required** (an unexplained ruling is indistinguishable from a
+  mis-click, which is the whole complaint);
+- **an anchor must exist** — no head sha, no ruling (`Ruled : reject` is the
+  bound-to-nothing label this replaces);
+- **a terminal subject is moot**, not refused: a merged PR or a closed issue has
+  no state left to move out of, so nothing is written and the exit is 0;
+- **re-ruling supersedes** rather than refuses. The human owns this namespace
+  and may correct a mis-click, so the old `human:*` is removed and the new one
+  added — the second sanctioned removal of a `human:*` label after
+  `reworked-reject`, and sanctioned because the actor removing it wrote it;
+- **a ruling that would strand a live flag is refused** (exit 4). This is the
+  one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
+  `human:reject` sat on an issue whose producer close-candidate flag had not
+  been judged — and because **every** AI transition refuses once a human has
+  ruled, `record_close_candidate_verdict` could never judge it again. The flag
+  was stranded and undoing it took more raw `gh`. So on an issue carrying a live
+  flag only the two rulings that **answer** the flag are legal, and the refusal
+  names all three ways out, each a single command.
+
+That last point is the rule the whole surface is built to respect: the human is
+the top of the hierarchy, and **a tool that makes the sacred decision harder
+than raw `gh` will simply be bypassed**. Every refusal here either has no legal
+write to make or names the one-command move that is legal.
+
+A ruling moves exactly **one** label. It never strips an `ai:*` label, with one
+exception: `keep-open` clears `ai:close-candidate`, the only pair that
+contradicts outright ("keep this open" against "close this"). Everything else is
+merely stale, not contradictory — a `human:reject` PR deliberately keeps its old
+`ai:ready` until `reworked-reject` clears it — and erasing the `ai:*` label
+would erase the very claim the ruling was ruling on.
+
+The writes happen in a fail-safe **order**, which is the reverse of the AI
+verdict write's and is asserted as a property rather than left to statement
+order: the comment lands before anything sacred is written (a sacred label with
+no recorded reason is the failure being fixed), and the new ruling is added
+before the old one is removed (the reverse has a window in which the subject
+carries no human decision at all and every AI actor is free to move it).
 
 ### The vetter's transitions as an MCP surface
 
@@ -111,10 +192,23 @@ server is the vetter's **only** tool surface.
 | `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                     |
 | `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                     |
 
-The last three are the vetter's **second subject**. A PR asks a human to merge
-code; a close-candidate flag asks a human to **destroy work**, so the flag is
-judged before it reaches the triage queue. The shape is identical to the PR side
-— state-load, read one, record one verdict — including the
+There is a **third profile**, and it is the answer to "CLI subcommand or MCP
+tool?" for the human: `pr-review-report mcp --profile human` (wired by
+`human-mcp.json`) serves `pr_context`, `close_candidate_context`, `human_rule`
+and `human_rule_issue` — read the subject, rule on it. The subcommands above are
+for the human at a terminal; the profile is for **an agent acting on the human's
+behalf**, which is the case that actually went wrong in #86. A prompt rule
+cannot take a bypassable Bash away, and a `gh issue edit` that no tool offers is
+exactly what gets improvised; a profile makes the non-FSM operation
+_unavailable_. The vetter's inbox tools are deliberately absent — the human's
+inbox is `human-queue`, which renders whole org-wide sets and does not fit one
+tool result — and so is `record_close_candidate_verdict`, which is the vetter's
+authority and the very move `human_rule_issue` refuses on the human's behalf.
+
+The last three vetter tools are its **second subject**. A PR asks a human to
+merge code; a close-candidate flag asks a human to **destroy work**, so the flag
+is judged before it reaches the triage queue. The shape is identical to the PR
+side — state-load, read one, record one verdict — including the
 vetted-at-the-thing-judged rule: a PR re-vets when its head moves, a flag
 re-vets when the producer posts a new one.
 
