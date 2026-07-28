@@ -30,6 +30,11 @@ const TRUE_MESSAGES: u64 = 37;
 /// are NEITHER is what makes these tests discriminating rather than self-confirming.
 const NAIVE_PER_EVENT_CACHE_READ: u64 = 18_771_942;
 
+/// Mirrors `USAGE_RECORD_STRIDE` in the binary, which these tests cannot import. The unit test
+/// `the_usage_record_stride_is_bounded_and_nonzero` pins the real constant, so a drift between the
+/// two fails there rather than turning these into a silent no-op.
+const USAGE_RECORD_STRIDE: u64 = 25;
+
 struct TempDir(std::path::PathBuf);
 
 impl TempDir {
@@ -99,9 +104,30 @@ fn usage_records(path: &std::path::Path) -> Vec<serde_json::Value> {
 /// Wait until at least `n` usage records exist, or give up. Polling makes "the write landed" the
 /// condition rather than a guess about how fast the box is.
 fn wait_for_usage(path: &std::path::Path, n: usize) -> Vec<serde_json::Value> {
+    wait_until(path, |r| r.len() >= n)
+}
+
+/// Wait until a usage record reports at least `n` messages.
+///
+/// NOT the same condition as "n records exist". The very first `rate_limit_event` escalates a
+/// window from unrecorded to recorded and writes a record right there — legitimately reporting
+/// zero spend, because at that instant none had been incurred. In the real vetter trace that
+/// event is the FIRST line, so "one record exists" is satisfied before a single message has been
+/// counted. Waiting on record COUNT therefore raced: it passed on Linux and failed on macOS,
+/// asserting against that zero-spend record. Waiting on the quantity under test is the fix.
+fn wait_for_messages(path: &std::path::Path, n: u64) -> Vec<serde_json::Value> {
+    wait_until(path, |r| {
+        r.iter().any(|x| x["messages"].as_u64().unwrap_or(0) >= n)
+    })
+}
+
+fn wait_until(
+    path: &std::path::Path,
+    done: impl Fn(&[serde_json::Value]) -> bool,
+) -> Vec<serde_json::Value> {
     for _ in 0..600 {
         let r = usage_records(path);
-        if r.len() >= n {
+        if done(&r) {
             return r;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -189,7 +215,9 @@ fn a_killed_run_keeps_the_spend_it_had_already_incurred() {
         writeln!(si, "{e}").unwrap();
     }
     si.flush().unwrap();
-    let before = wait_for_usage(&out, 1);
+    // Wait for the STRIDE record specifically, not merely for "a record": the first
+    // `rate_limit_event` writes one before any message is counted. See `wait_for_messages`.
+    let before = wait_for_messages(&out, USAGE_RECORD_STRIDE);
     assert!(
         !before.is_empty(),
         "spend must be on disk BEFORE the process dies"
@@ -210,7 +238,7 @@ fn a_killed_run_keeps_the_spend_it_had_already_incurred() {
         read < TRUE_CACHE_READ,
         "a partial run must not report the completed total, got {read}"
     );
-    assert!(last["messages"].as_u64().unwrap() >= 25);
+    assert!(last["messages"].as_u64().unwrap() >= USAGE_RECORD_STRIDE);
     // …and nothing a killed run cannot know.
     for k in ["toolCalls", "durationMs", "outcome", "exitCode", "costUsd"] {
         assert!(
