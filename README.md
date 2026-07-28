@@ -564,7 +564,7 @@ reads `cron.env` for `ORG` / `ORGS` / `PR_ASSIGNEE`.
 ## Tooling failures are run failures, not verdict caveats
 
 A run whose tools could not do their job is not a successful run. Both runners
-resolve every external binary the *harness* needs at read time
+resolve every external binary the _harness_ needs at read time
 (`pr-review-report preflight`, declared in `HARNESS_TOOLS`) before spending a
 token; a miss ends the run with exit 12, writes one `metrics/runs.jsonl` record
 with `"outcome": "tooling-failure"`, and never starts the model.
@@ -573,12 +573,12 @@ Two fields on that record carry the detail:
 
 - `unreadableFiles` — files a successful `Glob` listed and a later `Read` then
   failed on. The file was there, so the failure is the environment's, not the
-  model's choice of argument. This is what makes the outcome
-  `tooling-failure`, and it needs no rule about any particular binary: it is a
-  relation between two tool results, not a match on an error message, so a
-  future dependency nobody has declared fails the same way.
+  model's choice of argument. This is what makes the outcome `tooling-failure`,
+  and it needs no rule about any particular binary: it is a relation between two
+  tool results, not a match on an error message, so a future dependency nobody
+  has declared fails the same way.
 - `commandsNotFound` — Bash commands that exited 127. Reported, never raised to
-  a failed outcome: the producer's Bash legitimately *probes* for tools it does
+  a failed outcome: the producer's Bash legitimately _probes_ for tools it does
   not need (`which node npm`), and a red for that would spend the outcome's
   credibility.
 
