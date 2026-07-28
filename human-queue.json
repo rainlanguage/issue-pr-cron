@@ -400,29 +400,9 @@
         "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
       },
       {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 212,
-        "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
-      },
-      {
-        "repo": "rainlanguage/rain.vats",
-        "number": 324,
-        "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 211,
-        "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 185,
-        "title": "test(readme): assert README documents both ERC4626 word names"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 137,
-        "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert"
+        "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
       }
     ],
     "ai:reject": [
@@ -654,7 +634,7 @@
         ]
       },
       "human:reject": {
-        "count": 30,
+        "count": 31,
         "prs": [
           {
             "repo": "rainlanguage/rain.flare",
@@ -751,6 +731,12 @@
             "number": 220,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/220",
             "title": "build(sh): include BuildPointers.sol and forge fmt in build.sh"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 212,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
+            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
           },
           {
             "repo": "rainlanguage/rain.vats",
@@ -1087,30 +1073,30 @@
     },
     "vet-lifecycle": {
       "awaiting-re-vet": {
-        "count": 1,
+        "count": 2,
         "prs": [
           {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 185,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185",
-            "title": "test(readme): assert README documents both ERC4626 word names"
+            "repo": "rainlanguage/rain.vats",
+            "number": 325,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/325",
+            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 137,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/137",
+            "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
           }
         ]
       },
       "un-vetted": {
-        "count": 9,
+        "count": 8,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 92,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/92",
             "title": "feat(fsm): the human's transitions are transitions, not raw gh (#86)"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 137,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/137",
-            "title": "metrics: chart boot and ttl, and record runs that died before finishing"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1200,7 +1186,7 @@
         ]
       },
       "ai:ready": {
-        "count": 40,
+        "count": 35,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -1411,36 +1397,6 @@
             "number": 170,
             "url": "https://github.com/rainlanguage/rain.flare/pull/170",
             "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths"
-          },
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 325,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/325",
-            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 212,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
-            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
-          },
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 324,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/324",
-            "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 211,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/211",
-            "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 137,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/137",
-            "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert"
           }
         ]
       },
@@ -4821,6 +4777,12 @@
       "reason": "🤖 ai:producer Producer note: PR close-candidate — queued for human close review. Superseded by #22: per the 2026-07-04 rework note on #22 (\"land the parser fix + this suite together\"), this branch was merged into #22 and the two heads are now the identical commit (0e5cfe9); #22 carries the parser fix, the adapted \"1.\" revert pin, and Closes #24. Nothing unique remains here."
     },
     {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 212,
+      "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
+      "reason": "🤖 ai:producer Producer note: rework executed — verified each of the nine `Closes` against the actual diff.  - Kept `Closes`, covered by diff: #86, #103 (integrity() `@return` tags), #119, #124 (SubParser `@title`/`@notice` + `authoringMetaV2()` docs), #81 (added in rework: LibERC4626 named returns `assetsFloat`/`sharesFloat` + decimal re-encoding precision in `@return`), #92 (added in rework: ConvertToAssets `run()` round-DOWN direction note, mirroring ConvertToShares). - Downgraded to `Refs`: #95, #109, #111 — their asks (run() `@param operand`/`@return outputs`, ConvertToShares rounding direction) already landed on main via #246, so this diff has nothing honest to add; they are fixed-on-main close-candidates. - Also corrected in rework: this PR had documented the vault address input as Float-encoded; it travels as raw stack bits (org ruling, #242). Fixed in integrity `@return` lines and both authoring meta descriptions. - Merged origin/main into the branch, regenerated meta + pointers (DESCRIBED_BY_META_HASH, BYTECODE_HASH), forge test 123/123 green locally."
+    },
+    {
       "repo": "rainlanguage/raindex",
       "number": 2778,
       "title": "fix: mask signer row operand to low byte",
@@ -4894,7 +4856,7 @@
     }
   ],
   "counts": {
-    "ready": 41,
+    "ready": 37,
     "design": 6,
     "blockedDeploy": 13,
     "blockedInfra": 13,
@@ -4902,15 +4864,15 @@
     "closeCandidateIssues": 1,
     "closeCandidateUnvetted": 1,
     "closeCandidateUpheld": 0,
-    "leaks": 17,
-    "totalProducerPrs": 165,
+    "leaks": 18,
+    "totalProducerPrs": 161,
     "uncoveredIssues": 620,
-    "unvetted": 9,
-    "awaitingReVet": 1,
+    "unvetted": 8,
+    "awaitingReVet": 2,
     "reject": 35,
     "relink": 1,
     "closeCandidatePrs": 0,
-    "humanReject": 30,
+    "humanReject": 31,
     "humanDesign": 6,
     "humanCloseCandidate": 0
   }
