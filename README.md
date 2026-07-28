@@ -602,7 +602,12 @@ Every reference to a GitHub subject in `human-queue --json` — a lane item, a
 `closeCandidateUpheld`, `uncoveredIssues`, `leaks` — is **one** shape:
 
 ```json
-{ "repo": "owner/repo", "number": 512, "url": "https://github.com/owner/repo/issues/512", "title": "…" }
+{
+  "repo": "owner/repo",
+  "number": 512,
+  "url": "https://github.com/owner/repo/issues/512",
+  "title": "…"
+}
 ```
 
 `leaks` adds `reason`; nothing subtracts. The `url` is the one **GitHub
