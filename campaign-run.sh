@@ -159,14 +159,24 @@ fi
 # It lives UNDER $WORK_DIR so the model can Read/Glob it back with no further configuration — the
 # whole point is writing something down and re-reading it instead of paying for the call twice —
 # and so scratch shares the disk already sized for clones. gc ignores it (no `.git` inside).
-SCRATCH_DIR="$WORK_DIR/scratch/$TS"
+# $TS alone is NOT unique: the flock is per-INSTALL-dir while WORK_DIR defaults to $HOME/code, so
+# two installs sharing a WORK_DIR run concurrently by design and can start within the same second.
+# $$ makes the path unique per PROCESS, which is what actually distinguishes them.
+SCRATCH_DIR="$WORK_DIR/scratch/$TS-$$"
 # A run killed outright (SIGKILL, box reboot) never reaches its own cleanup, so reclaim on the way
-# IN as well as on the way out. AGE-BOUNDED rather than "everything that is not mine": the lock is
-# per-INSTALL-dir while WORK_DIR defaults to $HOME/code, so a second install pointed at the same
-# WORK_DIR runs concurrently by design, and an unbounded sweep would delete a live run's scratch
-# out from under it. A day is far past MAXTIME, so nothing it removes can still be in use.
-find "$WORK_DIR/scratch" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null
-mkdir -p "$SCRATCH_DIR"
+# IN as well as on the way out. AGE-BOUNDED rather than "everything that is not mine", for the same
+# concurrency reason: an unbounded sweep would delete a live sibling run's scratch out from under
+# it. `-mmin +1440` and not `-mtime +1` — the latter truncates to whole days, so it would leave a
+# 25-hour-old directory in place until it was 48 hours old. A day is far past MAXTIME either way.
+find "$WORK_DIR/scratch" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null
+# errexit is off in this runner, so an unchecked mkdir would fall through on a full disk or a
+# permission fault and hand the model an authorised path that does not exist — every redirect into
+# it failing, which is exactly the state before #106, minus the clue. Same reading as the `cd
+# "$WORK_DIR" || exit 1` above: if the run cannot have its work area, it does not start.
+if ! mkdir -p "$SCRATCH_DIR"; then
+  echo "$(date -u +%FT%TZ) campaign run ABORT: cannot create scratch dir '$SCRATCH_DIR'" >> "$LOG"
+  exit 1
+fi
 export SCRATCH_DIR
 
 # substitute deployment values into the (path-free) prompt template at runtime

@@ -312,9 +312,36 @@ jobs:
             echo "::error::SCRATCH_DIR is no longer per-run (\$TS): runs would share one directory."
             fail=1
           fi
+          # …and $TS alone is not unique. The flock is per-install-dir while WORK_DIR defaults to
+          # $HOME/code, so two installs sharing a WORK_DIR run concurrently and can start in the
+          # same second — colliding on the path, then deleting each other's scratch on the way out.
+          if ! grep -Eq '^SCRATCH_DIR=.*\$\$' campaign-run.sh; then
+            echo "::error::SCRATCH_DIR has no per-process component (\$\$). Two installs sharing a"
+            echo "WORK_DIR can start in the same second and collide on \$TS alone."
+            fail=1
+          fi
           if ! grep -Fq 'rm -rf "$SCRATCH_DIR"' campaign-run.sh; then
             echo "::error::campaign-run.sh no longer deletes its scratch dir at the end of the run."
             fail=1
           fi
-          [ "$fail" -eq 0 ] && echo "scratch is per-run and reclaimed"
+          # `-mtime +1` truncates to whole days, so it leaves a 25-hour-old leftover until it is 48
+          # hours old. Wrong quietly, never loudly — the sweep still runs and still reports nothing.
+          if grep -Eq 'find .*scratch.*-mtime' campaign-run.sh; then
+            echo "::error::The stale-scratch sweep uses -mtime, which rounds to whole days."
+            echo "Use -mmin +1440 so a leftover is reclaimed once it actually exceeds a day."
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "scratch is per-run, unique, and reclaimed"
           exit "$fail"
+      - name: a scratch dir that cannot be created stops the run
+        run: |
+          set -euo pipefail
+          # errexit is off in this runner, so an unchecked mkdir falls through on a full disk or a
+          # permission fault and the model is handed an authorised path that does not exist. Every
+          # redirect into it then fails — the pre-#106 state, minus the clue that something broke.
+          if ! grep -Eq 'if ! mkdir -p "\$SCRATCH_DIR"; then' campaign-run.sh; then
+            echo "::error::campaign-run.sh does not check that the scratch dir was created."
+            echo "With errexit off, a failed mkdir must end the run before a model invocation."
+            exit 1
+          fi
+          echo "a failed scratch mkdir ends the run"
