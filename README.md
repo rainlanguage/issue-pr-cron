@@ -614,6 +614,48 @@ without shell access, and cannot drift from what the PR itself shows. To approve
 a PR, approve it on GitHub. The report self-provisions `gh`+`jq` via nix and
 reads `cron.env` for `ORG` / `ORGS` / `PR_ASSIGNEE`.
 
+## Run metrics — `metrics/runs.jsonl`
+
+One JSON object per line, appended by the runners and consumed by the
+[rain-org-health dashboard](https://github.com/rainlanguage/rain-org-health).
+Startup is **two** costs, not one, and they regress for unrelated reasons:
+
+| field       | window                                                     | what moves it                                                          |
+| ----------- | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `bootMs`    | first trace event → the run's first tool call              | LAUNCH: a derivation that stopped being cached, a GC'd store path      |
+| `ttlMs`     | first tool call → the first **productive** call            | ORIENTATION: a tool returning too much, a longer prompt, a failed call |
+| `startupMs` | first tool **result** → the first productive call's result | frozen — see below                                                     |
+
+"Productive" is the producer's first org mutation and the vetter's first
+`record_verdict` (`firstMutationIndex` marks it in both cases).
+
+`startupMs` is **not** `bootMs + ttlMs` and must not be made so. Its anchor is
+the first tool RESULT, so it opens one tool-result late and excludes the first
+call's own latency — on the vetter's MCP surface that first call is `unvetted`,
+which has measured 137 s. That is a real flaw, but it is the meaning every
+committed record was written under, and re-anchoring it would put a step in the
+dashboard's longest series that no run ever experienced. `bootMs + ttlMs` is the
+honest run-start-to-first-productive-act figure; `startupMs` stays where it is.
+
+Each line carries a typed `stage`:
+
+- **`stage` absent** — a record written before the split. It has `startupMs`
+  under the meaning above and **no** `bootMs`/`ttlMs`. This absence is how a
+  consumer tells old records from new.
+- **`boot`** / **`ttl`** — PARTIAL records, appended by `run-timings` from
+  inside the runner's live pipe the moment each number becomes knowable. They
+  carry only what is known then: no `toolCalls`, `startupPct`, `durationMs`,
+  `outcome`, and no `startupMs` (its end anchor has not arrived).
+- **`final`** — the complete record, written by `run-metrics` after the run.
+
+So one run produces up to three lines with the same `runId` — more when model
+fallback retried it, since each attempt measures itself. A consumer keeps the
+most complete (`final` > `ttl` > `boot`), and the **last** of those, which is
+the attempt that actually ran. The partials exist because `run-metrics` only
+ever runs after the claude process exits: a run that is killed or times out is
+exactly the run whose startup timings you want, and it was precisely the one
+that left no trace of them at all.
+
 ## Runtime state (NOT tracked — see `.gitignore`)
 
 - `campaign.log` — distilled human-readable log (`tail -f` to watch).

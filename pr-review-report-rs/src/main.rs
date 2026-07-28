@@ -734,11 +734,24 @@ struct RunMetrics {
     // any non-zero value is a regression of the no-park rule (both tools are denied in settings).
     wakeup_calls: usize,
     first_mutation_index: Option<usize>,
-    // Wall-clock ms from the first timestamped trace event to the first org-mutation's result
-    // (the state-recovery window). Only `user` events carry a `timestamp`, so the mutation is
-    // anchored to the result of its tool call, not the assistant event that issued it. None when
-    // the run never mutated, or when the anchor timestamps are absent/unparseable.
+    // Wall-clock ms from the first tool RESULT to the first org-mutation's result. Its anchor is
+    // the first `user` event, which is the result of the run's first tool call — so this window
+    // opens one tool-result LATE and excludes that first call's own latency. That is a flaw, but
+    // it is the meaning every committed record in metrics/runs.jsonl was written under, and
+    // re-anchoring it would put a step in the series that no run ever experienced. `boot_ms` +
+    // `ttl_ms` are the honest decomposition; this stays frozen. None when the run never mutated,
+    // or when the anchor timestamps are absent/unparseable.
     startup_ms: Option<i64>,
+    // LAUNCH overhead: first timestamped trace event → the run's first tool call. Nix resolving
+    // and exec'ing the flake output, the MCP handshake, the prompt load — nothing model-driven.
+    // Regresses when a derivation stops being cached or a store path is GC'd.
+    boot_ms: Option<i64>,
+    // ORIENTATION: the first tool call → the first PRODUCTIVE call (the producer's first mutation,
+    // the vetter's first verdict). State-load, queue read, checkout, skill load. Entirely model-
+    // and tool-surface-driven: it regresses when a tool returns too much, a prompt grows, or a
+    // failed call makes the model improvise. Nothing it and `boot_ms` have in common is why one
+    // fused number could not be acted on (#84).
+    ttl_ms: Option<i64>,
     duration_ms: u64,
     num_turns: u64,
     tokens_in: u64,
@@ -758,10 +771,26 @@ impl RunMetrics {
     }
 }
 
-/// A tool call is an org MUTATION when it is a Bash command that creates/edits/merges/closes
-/// a PR or issue, or commits/pushes — i.e. the run stopped recovering state and started doing
-/// work. Read-only gh/git/grep calls are NOT mutations.
+/// The vetter's GitHub WRITES on the MCP tool surface.
+///
+/// The vetter has no Bash at all (#52): `record_verdict` and `record_close_candidate_verdict` are
+/// its only two org mutations. A Bash-only detector therefore reports "never mutated" for every
+/// modern vetter run — `firstMutationIndex` null, `startupMs` null, `startupPct` a meaningless
+/// 100% — and takes the first-productive-act anchor down with it. These are the same transition
+/// the old Bash `pr-review-report record-verdict` invocation was, just no longer expressible as a
+/// command string.
+const MCP_MUTATION_TOOLS: &[&str] = &[
+    "mcp__fsm__record_verdict",
+    "mcp__fsm__record_close_candidate_verdict",
+];
+
+/// A tool call is an org MUTATION when it is one of the vetter's MCP writes, or a Bash command
+/// that creates/edits/merges/closes a PR or issue, or commits/pushes — i.e. the run stopped
+/// recovering state and started doing work. Read-only gh/git/grep calls are NOT mutations.
 fn is_mutation_tool(name: &str, input: &serde_json::Value) -> bool {
+    if MCP_MUTATION_TOOLS.contains(&name) {
+        return true;
+    }
     if name != "Bash" {
         return false;
     }
@@ -831,98 +860,323 @@ fn iso_to_epoch_ms(s: &str) -> Option<i64> {
     Some((days * 86400 + h * 3600 + mi * 60 + sec) * 1000 + ms)
 }
 
+/// Which of the two startup numbers just became KNOWN.
+///
+/// The split exists because the numbers are emitted the moment their anchor arrives rather than at
+/// run end. `run-metrics` only ever runs after the claude process exits, so a run that is killed,
+/// times out, or dies leaves NO record at all — and that is precisely the run whose timings you
+/// want. Three manual vetter runs on 2026-07-27/28 produced zero records between them (#84).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum StartupPhase {
+    /// `bootMs` is known: the run reached its first tool call.
+    Boot,
+    /// `ttlMs` is known: the run reached its first productive call.
+    Ttl,
+}
+
+impl StartupPhase {
+    /// The wire word written into a partial record's `stage`.
+    fn as_str(self) -> &'static str {
+        match self {
+            StartupPhase::Boot => "boot",
+            StartupPhase::Ttl => "ttl",
+        }
+    }
+}
+
+/// The `stage` of a COMPLETE record — written at run end with the whole usage/cost/outcome tail.
+///
+/// How a consumer tells an old record from a new one: **`stage` absent means pre-#84**. Those
+/// records carry `startupMs` under its original meaning and no `bootMs`/`ttlMs` at all, so a
+/// chart spanning the change reads them as gaps in the new series rather than as zeroes, and the
+/// `startupMs` series itself is continuous because that field's definition did not move.
+const STAGE_FINAL: &str = "final";
+
+/// Streaming detector for a run's startup anchors.
+///
+/// ONE state machine, fed events in order, driving BOTH the end-of-run `run-metrics` (over a whole
+/// trace file) and the live `run-timings` filter (over the runner's pipe) — so the number a killed
+/// run recorded mid-flight and the number a completed run records at the end can never be computed
+/// two different ways.
+#[derive(Default)]
+struct StartupProbe {
+    /// First timestamped event of ANY type: the earliest instant the trace can witness, and what
+    /// `bootMs` measures from. Derived from the trace alone on purpose — a wall-clock anchor handed
+    /// in by the runner could not be re-derived from an archived trace, and re-derivation from
+    /// `runs/*.jsonl` is how this repo backfills history.
+    run_ts: Option<i64>,
+    /// First `user` timestamp — the result of the run's FIRST tool call. This is `startupMs`'s
+    /// anchor and is deliberately left where it is; see the field's comment on [`RunMetrics`].
+    first_result_ts: Option<i64>,
+    /// Timestamp of the assistant event carrying the run's first `tool_use`.
+    first_tool_ts: Option<i64>,
+    /// Set once the first tool call is seen, whether or not its event was timestamped, so an
+    /// untimestamped first call degrades to "no boot/ttl" instead of promoting a LATER call into
+    /// the anchor and reporting a plausible, wrong number.
+    saw_first_tool: bool,
+    /// Timestamp of the assistant event carrying the first PRODUCTIVE `tool_use`. Anchored on the
+    /// call, not on its result: the model has finished orienting when it issues the call, and a run
+    /// killed in the gap before the result would otherwise lose the whole measurement.
+    productive_ts: Option<i64>,
+    tool_calls: usize,
+    startup_tool_calls: usize,
+    wakeup_calls: usize,
+    first_mutation_index: Option<usize>,
+    mutation_pending: bool,
+    mutation_result_ts: Option<i64>,
+}
+
+impl StartupProbe {
+    /// Feed one trace event. Returns the phases whose number became known ON THIS EVENT — at most
+    /// two, and two at once when the run's very first tool call is already the productive one.
+    fn observe(&mut self, ev: &Value) -> Vec<StartupPhase> {
+        let mut phases = Vec::new();
+        let ts = ev
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .and_then(iso_to_epoch_ms);
+        if ts.is_some() && self.run_ts.is_none() {
+            self.run_ts = ts;
+        }
+        match ev.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                let Some(content) = ev
+                    .get("message")
+                    .and_then(|msg| msg.get("content"))
+                    .and_then(|c| c.as_array())
+                else {
+                    return phases;
+                };
+                for block in content {
+                    if block.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                        continue;
+                    }
+                    let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let empty = serde_json::json!({});
+                    let input = block.get("input").unwrap_or(&empty);
+                    if name == "ScheduleWakeup" || name == "CronCreate" {
+                        self.wakeup_calls += 1;
+                    }
+                    if !self.saw_first_tool {
+                        self.saw_first_tool = true;
+                        self.first_tool_ts = ts;
+                        if self.boot_ms().is_some() {
+                            phases.push(StartupPhase::Boot);
+                        }
+                    }
+                    if self.first_mutation_index.is_none() {
+                        if is_mutation_tool(name, input) {
+                            self.first_mutation_index = Some(self.tool_calls);
+                            self.mutation_pending = true;
+                            self.productive_ts = ts;
+                            if self.ttl_ms().is_some() {
+                                phases.push(StartupPhase::Ttl);
+                            }
+                        } else {
+                            self.startup_tool_calls += 1;
+                        }
+                    }
+                    self.tool_calls += 1;
+                }
+            }
+            Some("user") => {
+                // A tool RESULT. The first one anchors `startupMs`; once a mutation is pending,
+                // the next one closes that window.
+                if let Some(ts) = ts {
+                    if self.first_result_ts.is_none() {
+                        self.first_result_ts = Some(ts);
+                    }
+                    if self.mutation_pending {
+                        self.mutation_result_ts = Some(ts);
+                        self.mutation_pending = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+        phases
+    }
+
+    fn boot_ms(&self) -> Option<i64> {
+        Some(self.first_tool_ts? - self.run_ts?)
+    }
+
+    fn ttl_ms(&self) -> Option<i64> {
+        Some(self.productive_ts? - self.first_tool_ts?)
+    }
+
+    fn startup_ms(&self) -> Option<i64> {
+        Some(self.mutation_result_ts? - self.first_result_ts?)
+    }
+
+    /// Copy the counted + timed fields onto a metrics record.
+    fn fill(&self, m: &mut RunMetrics) {
+        m.tool_calls = self.tool_calls;
+        m.startup_tool_calls = self.startup_tool_calls;
+        m.wakeup_calls = self.wakeup_calls;
+        m.first_mutation_index = self.first_mutation_index;
+        m.startup_ms = self.startup_ms();
+        m.boot_ms = self.boot_ms();
+        m.ttl_ms = self.ttl_ms();
+    }
+}
+
 /// Parse a stream-json trace: count tool calls in order, find the first mutation, and take
 /// the usage/duration/cost from the result event with the most turns (the main run — trailing
 /// short result events from continuations are ignored).
 fn run_metrics(content: &str) -> RunMetrics {
     let mut m = RunMetrics::default();
+    let mut probe = StartupProbe::default();
     let mut best_turns = 0u64;
-    // Wall-clock startup: anchor at the first timestamped event, close at the first mutation's
-    // result. Only `user` events carry a `timestamp`, so when the first mutation tool_use is
-    // seen we flag it and capture the NEXT user timestamp as the mutation's wall-clock anchor.
-    let mut first_ts: Option<i64> = None;
-    let mut mutation_ts: Option<i64> = None;
-    let mut mutation_pending = false;
     for line in content.lines() {
         let v: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(_) => continue,
         };
-        match v.get("type").and_then(|t| t.as_str()) {
-            Some("assistant") => {
-                if let Some(content) = v
-                    .get("message")
-                    .and_then(|msg| msg.get("content"))
-                    .and_then(|c| c.as_array())
-                {
-                    for block in content {
-                        if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            let empty = serde_json::json!({});
-                            let input = block.get("input").unwrap_or(&empty);
-                            if name == "ScheduleWakeup" || name == "CronCreate" {
-                                m.wakeup_calls += 1;
-                            }
-                            if m.first_mutation_index.is_none() {
-                                if is_mutation_tool(name, input) {
-                                    m.first_mutation_index = Some(m.tool_calls);
-                                    mutation_pending = true;
-                                } else {
-                                    m.startup_tool_calls += 1;
-                                }
-                            }
-                            m.tool_calls += 1;
-                        }
-                    }
-                }
+        probe.observe(&v);
+        if v.get("type").and_then(|t| t.as_str()) == Some("result") {
+            let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
+            if turns >= best_turns {
+                best_turns = turns;
+                m.num_turns = turns;
+                m.duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
+                m.cost_usd = v
+                    .get("total_cost_usd")
+                    .and_then(|c| c.as_f64())
+                    .unwrap_or(0.0);
+                let u = v.get("usage");
+                let g = |k: &str| {
+                    u.and_then(|u| u.get(k))
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0)
+                };
+                m.tokens_in = g("input_tokens");
+                m.tokens_out = g("output_tokens");
+                m.cache_read = g("cache_read_input_tokens");
+                m.cache_creation = g("cache_creation_input_tokens");
             }
-            Some("user") => {
-                // The only event type carrying a `timestamp`. First one seen anchors run start;
-                // once a mutation is pending, the next one closes the startup window.
-                if let Some(ts) = v
-                    .get("timestamp")
-                    .and_then(|t| t.as_str())
-                    .and_then(iso_to_epoch_ms)
-                {
-                    if first_ts.is_none() {
-                        first_ts = Some(ts);
-                    }
-                    if mutation_pending {
-                        mutation_ts = Some(ts);
-                        mutation_pending = false;
-                    }
-                }
-            }
-            Some("result") => {
-                let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
-                if turns >= best_turns {
-                    best_turns = turns;
-                    m.num_turns = turns;
-                    m.duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
-                    m.cost_usd = v
-                        .get("total_cost_usd")
-                        .and_then(|c| c.as_f64())
-                        .unwrap_or(0.0);
-                    let u = v.get("usage");
-                    let g = |k: &str| {
-                        u.and_then(|u| u.get(k))
-                            .and_then(|n| n.as_u64())
-                            .unwrap_or(0)
-                    };
-                    m.tokens_in = g("input_tokens");
-                    m.tokens_out = g("output_tokens");
-                    m.cache_read = g("cache_read_input_tokens");
-                    m.cache_creation = g("cache_creation_input_tokens");
-                }
-            }
-            _ => {}
         }
     }
-    m.startup_ms = match (first_ts, mutation_ts) {
-        (Some(start), Some(mut_ts)) => Some(mut_ts - start),
-        _ => None,
-    };
+    probe.fill(&mut m);
     m
+}
+
+/// Which run a record belongs to, as the runner knows it. Nothing here is derivable from the
+/// trace, which is why it arrives as flags.
+struct RunIdentity<'a> {
+    run_id: Option<&'a str>,
+    role: Option<&'a str>,
+    model: Option<&'a str>,
+}
+
+/// Stamp a record with the run's identity.
+///
+/// Only the fields the caller actually supplied are added, so a bare `run-metrics <trace>` keeps
+/// emitting exactly the record it always has (the dashboard re-derives history from raw traces).
+fn stamp_identity(doc: &mut Value, id: &RunIdentity) {
+    let Some(obj) = doc.as_object_mut() else {
+        return;
+    };
+    if let Some(run_id) = id.run_id {
+        obj.insert("runId".into(), serde_json::json!(run_id));
+    }
+    if let Some(role) = id.role {
+        obj.insert("role".into(), serde_json::json!(role));
+    }
+    if let Some(model) = id.model {
+        obj.insert("model".into(), serde_json::json!(model));
+    }
+}
+
+/// One PARTIAL record: everything known at the instant `phase` became knowable, and nothing else.
+///
+/// The omissions are the point. A `boot` record has no `ttlMs` because the run has not reached its
+/// first productive call; neither stage has `toolCalls`, `startupPct`, `durationMs` or `outcome`,
+/// because the run is still going and any value for them would be a guess that later reads as
+/// measurement. `startupMs` is absent from both because its end anchor is the mutation's RESULT,
+/// which has not arrived when the `ttl` record is written. A consumer distinguishes these from a
+/// complete record by `stage`, and reconciles the lines one `runId` can produce by keeping the
+/// most complete (`final` > `ttl` > `boot`) and, among equals, the LAST — model fallback re-runs
+/// this filter per attempt, and the last attempt is the one that actually ran.
+fn partial_record(
+    probe: &StartupProbe,
+    phase: StartupPhase,
+    trace: &str,
+    id: &RunIdentity,
+) -> Value {
+    let mut doc = match phase {
+        StartupPhase::Boot => serde_json::json!({
+            "trace": trace,
+            "stage": phase.as_str(),
+            "bootMs": probe.boot_ms(),
+        }),
+        StartupPhase::Ttl => serde_json::json!({
+            "trace": trace,
+            "stage": phase.as_str(),
+            "startupToolCalls": probe.startup_tool_calls,
+            "firstMutationIndex": probe.first_mutation_index,
+            "bootMs": probe.boot_ms(),
+            "ttlMs": probe.ttl_ms(),
+        }),
+    };
+    stamp_identity(&mut doc, id);
+    doc
+}
+
+/// Append one record to the metrics file, creating it (and its directory) if absent.
+///
+/// Best-effort by contract: this runs INSIDE the runner's live pipe, and a metrics write must
+/// never be able to take down the run it is measuring. One `write` of a short line to an O_APPEND
+/// fd is atomic on Linux, so these mid-run appends cannot interleave with the runner's end-of-run
+/// `run-metrics >> …` into the same file.
+fn append_record(path: &str, doc: &Value) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = std::path::Path::new(path).parent();
+    if let Some(dir) = dir {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(f, "{}", serde_json::to_string(doc).unwrap())?;
+    f.flush()
+}
+
+/// `run-timings --out <runs.jsonl> --trace <path> [--run-id --role --model]`: pass a LIVE
+/// stream-json trace through unchanged, appending a record the moment `bootMs` and then `ttlMs`
+/// become known.
+///
+/// This exists because `run-metrics` writes at the END of a run. A run that is killed, times out,
+/// or dies therefore records nothing — and that is exactly the run whose startup timings matter
+/// (#84: three manual vetter runs produced zero records between them, so the 5-minute time-to-
+/// first-verdict had to be measured off the trace by hand). Sitting in the runner's pipe, this
+/// filter has both numbers on disk long before the run's fate is decided.
+///
+/// It is a pass-through FIRST: every line is forwarded before it is parsed, so the downstream
+/// distiller keeps seeing the whole stream even if nothing here works. Every failure — an
+/// unparseable line, an unwritable metrics file — is swallowed for the same reason.
+fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    let mut probe = StartupProbe::default();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if writeln!(stdout, "{line}").is_err() {
+            return 0; // downstream closed
+        }
+        let _ = stdout.flush();
+        let Ok(ev) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        for phase in probe.observe(&ev) {
+            let _ = append_record(out, &partial_record(&probe, phase, trace, id));
+        }
+    }
+    0
 }
 
 /// `run-metrics <trace.jsonl> [--run-id --role --model --exit-code]`: print the run's metrics
@@ -933,13 +1187,7 @@ fn run_metrics(content: &str) -> RunMetrics {
 /// through `jq '. + {runId:…, role:…, model:…, exitCode:…, outcome:…}'`; folding the merge in here
 /// means the record's shape lives in one tested place, and `outcome` is derived by
 /// [`classify_trace`] rather than by grepping the trace in bash.
-fn run_metrics_mode(
-    path: &str,
-    run_id: Option<&str>,
-    role: Option<&str>,
-    model: Option<&str>,
-    exit_code: Option<i32>,
-) -> i32 {
+fn run_metrics_mode(path: &str, id: &RunIdentity, exit_code: Option<i32>) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
@@ -948,13 +1196,34 @@ fn run_metrics_mode(
         }
     };
     let m = run_metrics(&content);
+    let outcome = exit_code.map(|rc| (rc, classify_trace(&content, rc)));
+    println!(
+        "{}",
+        serde_json::to_string(&final_record(path, &m, id, outcome)).unwrap()
+    );
+    0
+}
+
+/// The COMPLETE end-of-run record: every field in `partial_record` plus the counts, usage, cost and
+/// outcome that only exist once the run has finished. Built here rather than inline in
+/// [`run_metrics_mode`] so the record's shape — `stage` above all — is a tested value, not a
+/// side effect of printing.
+fn final_record(
+    path: &str,
+    m: &RunMetrics,
+    id: &RunIdentity,
+    outcome: Option<(i32, TraceOutcome)>,
+) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
+        "stage": STAGE_FINAL,
         "toolCalls": m.tool_calls,
         "startupToolCalls": m.startup_tool_calls,
         "startupPct": (m.startup_pct() * 10.0).round() / 10.0,
         "wakeupCalls": m.wakeup_calls,
         "firstMutationIndex": m.first_mutation_index,
+        "bootMs": m.boot_ms,
+        "ttlMs": m.ttl_ms,
         "startupMs": m.startup_ms,
         "durationMs": m.duration_ms,
         "numTurns": m.num_turns,
@@ -964,28 +1233,12 @@ fn run_metrics_mode(
         "cacheCreation": m.cache_creation,
         "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
     });
-    // Only enrich when the caller supplied run identity, so a bare `run-metrics <trace>` keeps
-    // emitting exactly the record it always has (the dashboard re-derives history from traces).
-    if let Some(obj) = doc.as_object_mut() {
-        if let Some(run_id) = run_id {
-            obj.insert("runId".into(), serde_json::json!(run_id));
-        }
-        if let Some(role) = role {
-            obj.insert("role".into(), serde_json::json!(role));
-        }
-        if let Some(model) = model {
-            obj.insert("model".into(), serde_json::json!(model));
-        }
-        if let Some(rc) = exit_code {
-            obj.insert("exitCode".into(), serde_json::json!(rc));
-            obj.insert(
-                "outcome".into(),
-                serde_json::json!(classify_trace(&content, rc).as_str()),
-            );
-        }
+    stamp_identity(&mut doc, id);
+    if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
+        obj.insert("exitCode".into(), serde_json::json!(rc));
+        obj.insert("outcome".into(), serde_json::json!(verdict.as_str()));
     }
-    println!("{}", serde_json::to_string(&doc).unwrap());
-    0
+    doc
 }
 
 /// How a run ended. This is a TYPE, not a grep over the trace bytes.
@@ -7870,6 +8123,28 @@ enum Cmd {
         #[arg(long)]
         exit_code: Option<i32>,
     },
+    /// Pass a LIVE stream-json trace through on stdout, appending `bootMs` then `ttlMs` records to
+    /// the metrics file the instant each becomes known — so a killed or timed-out run, the one
+    /// `run-metrics` can never reach, still contributes its startup timings.
+    RunTimings {
+        /// The metrics file to append partial records to — the same runs.jsonl the end-of-run
+        /// `run-metrics` record lands in.
+        #[arg(long)]
+        out: String,
+        /// The trace path the runner is teeing this same stream to, recorded as `trace` so a
+        /// partial record identifies the same run its final record will.
+        #[arg(long)]
+        trace: String,
+        /// Run id (the runner's UTC timestamp). Enriches the record with `runId`.
+        #[arg(long)]
+        run_id: Option<String>,
+        /// producer | vetter.
+        #[arg(long)]
+        role: Option<String>,
+        /// The model that actually ran (after any fallback).
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Print the typed outcome of a run trace: `ok`, `session-limit`, or `error`.
     /// The runners' model-fallback loop branches on this instead of grepping the trace.
     TraceOutcome {
@@ -8869,10 +9144,27 @@ fn main() {
             exit_code,
         } => run_metrics_mode(
             &trace,
-            run_id.as_deref(),
-            role.as_deref(),
-            model.as_deref(),
+            &RunIdentity {
+                run_id: run_id.as_deref(),
+                role: role.as_deref(),
+                model: model.as_deref(),
+            },
             exit_code,
+        ),
+        Cmd::RunTimings {
+            out,
+            trace,
+            run_id,
+            role,
+            model,
+        } => run_timings_mode(
+            &out,
+            &trace,
+            &RunIdentity {
+                run_id: run_id.as_deref(),
+                role: role.as_deref(),
+                model: model.as_deref(),
+            },
         ),
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
@@ -10383,6 +10675,362 @@ mod run_metrics_tests {
         let m = run_metrics(&trace);
         assert_eq!(m.tool_calls, 1);
         assert_eq!(m.num_turns, 3);
+    }
+}
+
+/// The boot / ttl split (#84).
+///
+/// `startupMs` fused two costs with nothing in common — nix resolving and exec'ing the flake
+/// output, and the model orienting itself across a tool surface — so a move in it could not be
+/// attributed to either. These pin the two halves apart, and pin `startupMs` in place while they
+/// are added.
+#[cfg(test)]
+mod startup_split_tests {
+    use super::{
+        final_record, is_mutation_tool, partial_record, run_metrics, RunIdentity, RunMetrics,
+        StartupPhase, StartupProbe, TraceOutcome, STAGE_FINAL,
+    };
+    use serde_json::{json, Value};
+
+    /// An assistant event carrying one `tool_use`, WITH a timestamp. The modern harness stamps
+    /// assistant events; that stamp is the only thing that makes boot and ttl measurable.
+    fn tool_at(ts: &str, name: &str) -> String {
+        json!({"type":"assistant","timestamp":ts,"message":{"content":[
+            {"type":"tool_use","name":name,"input":{"command":""}}]}})
+        .to_string()
+    }
+    /// An assistant event with no `tool_use` — the model's opening text. This is normally a run's
+    /// first timestamped event, so it is what `bootMs` measures FROM.
+    fn text_at(ts: &str) -> String {
+        json!({"type":"assistant","timestamp":ts,"message":{"content":[
+            {"type":"text","text":"starting the run"}]}})
+        .to_string()
+    }
+    /// A `user` event: a tool RESULT.
+    fn result_at(ts: &str) -> String {
+        json!({"type":"user","timestamp":ts,"message":{"content":[]}}).to_string()
+    }
+    /// An assistant `tool_use` with NO timestamp — the shape older harnesses emitted.
+    fn tool_untimed(name: &str, cmd: &str) -> String {
+        json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":name,"input":{"command":cmd}}]}})
+        .to_string()
+    }
+    fn ev(line: &str) -> Value {
+        serde_json::from_str(line).unwrap()
+    }
+    fn id() -> RunIdentity<'static> {
+        RunIdentity {
+            run_id: Some("20260728T053610Z"),
+            role: Some("vetter"),
+            model: Some("claude-fable-5"),
+        }
+    }
+
+    /// The live vetter run `review-runs/20260728T053610Z.jsonl`, reduced to its five load-bearing
+    /// events. Every number asserted below was measured off that real trace.
+    fn vetter_20260728t053610z() -> String {
+        [
+            text_at("2026-07-28T05:36:13.214Z"), // run's first timestamped event
+            tool_at("2026-07-28T05:36:14.339Z", "mcp__fsm__unvetted"), // FIRST tool call
+            result_at("2026-07-28T05:38:30.435Z"), // its result — 136 s later
+            tool_at("2026-07-28T05:41:11.355Z", "mcp__fsm__record_verdict"), // FIRST verdict
+            result_at("2026-07-28T05:41:16.994Z"), // the verdict's result
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn boot_is_the_run_start_to_the_first_tool_call() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        // Hand-measured on the real trace: 1.125 s. Launch overhead is sub-second — whatever the
+        // flake conversion cost, it did not cost boot.
+        assert_eq!(m.boot_ms, Some(1125));
+    }
+
+    #[test]
+    fn ttl_is_the_first_tool_call_to_the_first_productive_call() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        // 297.0 s of orientation before the first verdict, at tool call 17 (index 16).
+        assert_eq!(m.ttl_ms, Some(297_016));
+        assert_eq!(m.first_mutation_index, Some(1));
+    }
+
+    /// The reason the split is worth having: on this run ttl is 264× boot. One number that either
+    /// can wreck is a number you cannot act on.
+    #[test]
+    fn ttl_dominates_boot_on_a_real_vetter_run() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        let (boot, ttl) = (m.boot_ms.unwrap(), m.ttl_ms.unwrap());
+        assert!(
+            ttl > boot * 100,
+            "orientation should dwarf launch on this run: boot {boot}ms vs ttl {ttl}ms"
+        );
+    }
+
+    /// `startupMs` is FROZEN. Its anchor is the first tool RESULT, so it opens 137 s after the run
+    /// actually started and misses the first call's own latency entirely — a real flaw, but the
+    /// one every committed record was written under. Re-anchoring it would put a step in the
+    /// dashboard series that no run ever experienced, so it keeps its old value and boot+ttl are
+    /// added beside it.
+    #[test]
+    fn startup_ms_keeps_its_first_result_anchor_and_is_not_boot_plus_ttl() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        assert_eq!(m.startup_ms, Some(166_559));
+        let fused = m.boot_ms.unwrap() + m.ttl_ms.unwrap();
+        assert_eq!(fused, 298_141);
+        assert_ne!(
+            m.startup_ms,
+            Some(fused),
+            "startupMs must NOT be silently redefined as bootMs + ttlMs"
+        );
+    }
+
+    /// The vetter has no Bash at all (#52): `record_verdict` IS its mutation. A Bash-only detector
+    /// calls every modern vetter run "never mutated" and loses the ttl anchor with it.
+    #[test]
+    fn the_vetters_mcp_writes_are_mutations() {
+        assert!(is_mutation_tool("mcp__fsm__record_verdict", &json!({})));
+        assert!(is_mutation_tool(
+            "mcp__fsm__record_close_candidate_verdict",
+            &json!({})
+        ));
+        // …and its READS are not.
+        assert!(!is_mutation_tool("mcp__fsm__unvetted", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__pr_context", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__pr_checkout", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__clone_release", &json!({})));
+    }
+
+    #[test]
+    fn a_bashless_vetter_run_still_finds_its_first_productive_call() {
+        let trace = [
+            text_at("2026-07-28T05:00:00.000Z"),
+            tool_at("2026-07-28T05:00:01.000Z", "mcp__fsm__unvetted"),
+            result_at("2026-07-28T05:00:02.000Z"),
+            tool_at("2026-07-28T05:00:03.000Z", "mcp__fsm__pr_context"),
+            result_at("2026-07-28T05:00:04.000Z"),
+            tool_at("2026-07-28T05:00:09.000Z", "mcp__fsm__record_verdict"),
+            result_at("2026-07-28T05:00:10.000Z"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.first_mutation_index, Some(2));
+        assert_eq!(m.startup_tool_calls, 2);
+        assert_eq!(m.ttl_ms, Some(8000));
+    }
+
+    /// Older harnesses stamped only `user` events. boot and ttl then have no anchor and must be
+    /// null — while `startupMs`, which only ever needed `user` timestamps, still computes. That is
+    /// what keeps a re-derivation of the archived traces honest instead of inventing zeroes.
+    #[test]
+    fn boot_and_ttl_are_null_without_assistant_timestamps() {
+        let trace = [
+            tool_untimed("Bash", "gh search prs"),
+            result_at("2026-07-05T09:00:00.000Z"),
+            tool_untimed("Bash", "gh pr create -R x"),
+            result_at("2026-07-05T09:00:12.500Z"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.boot_ms, None);
+        assert_eq!(m.ttl_ms, None);
+        assert_eq!(m.startup_ms, Some(12_500));
+    }
+
+    /// An untimestamped FIRST call must not hand the anchor to a later, timestamped one: that
+    /// would report a plausible, wrong boot instead of an honest gap.
+    #[test]
+    fn an_untimestamped_first_call_does_not_promote_a_later_call_to_the_anchor() {
+        let trace = [
+            text_at("2026-07-05T09:00:00.000Z"),
+            tool_untimed("Bash", "gh search prs"), // FIRST call, no stamp
+            tool_at("2026-07-05T09:00:10.000Z", "Read"),
+            tool_untimed("Bash", "gh pr create -R x"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.boot_ms, None, "10s to the SECOND call is not boot");
+        assert_eq!(m.ttl_ms, None);
+    }
+
+    // ---- when each number becomes KNOWN --------------------------------------------------
+
+    #[test]
+    fn boot_is_known_at_the_first_tool_call_and_ttl_at_the_first_productive_one() {
+        let mut p = StartupProbe::default();
+        assert_eq!(p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z"))), vec![]);
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-28T05:36:14.339Z",
+                "mcp__fsm__unvetted"
+            ))),
+            vec![StartupPhase::Boot],
+            "boot is knowable the instant the first tool call is seen"
+        );
+        assert_eq!(p.boot_ms(), Some(1125));
+        assert_eq!(
+            p.observe(&ev(&result_at("2026-07-28T05:38:30.435Z"))),
+            vec![]
+        );
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-28T05:41:11.355Z",
+                "mcp__fsm__record_verdict"
+            ))),
+            vec![StartupPhase::Ttl],
+            "ttl is knowable at the productive CALL, not at its result"
+        );
+        assert_eq!(p.ttl_ms(), Some(297_016));
+    }
+
+    /// A run whose very first call is already productive knows both numbers on one event.
+    #[test]
+    fn both_phases_fire_when_the_first_call_is_productive() {
+        // A first call that is NOT productive settles boot alone — ttl stays open.
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        assert_eq!(
+            p.observe(&ev(&tool_at("2026-07-05T09:00:00.500Z", "Bash"))),
+            vec![StartupPhase::Boot],
+            "a Bash call with no mutating command settles boot but not ttl"
+        );
+        assert_eq!(p.ttl_ms(), None);
+
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        let productive = json!({"type":"assistant","timestamp":"2026-07-05T09:00:00.500Z",
+            "message":{"content":[{"type":"tool_use","name":"Bash",
+                "input":{"command":"gh pr create -R x"}}]}});
+        assert_eq!(
+            p.observe(&productive),
+            vec![StartupPhase::Boot, StartupPhase::Ttl]
+        );
+        assert_eq!(p.boot_ms(), Some(500));
+        assert_eq!(p.ttl_ms(), Some(0));
+    }
+
+    /// A phase fires ONCE. A second verdict must not append a second `ttl` record.
+    #[test]
+    fn each_phase_fires_exactly_once() {
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        p.observe(&ev(&tool_at("2026-07-05T09:00:01.000Z", "Read")));
+        p.observe(&ev(&tool_at(
+            "2026-07-05T09:00:02.000Z",
+            "mcp__fsm__record_verdict",
+        )));
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-05T09:00:03.000Z",
+                "mcp__fsm__record_verdict"
+            ))),
+            vec![],
+            "the SECOND verdict is not a second first-productive-act"
+        );
+        assert_eq!(p.ttl_ms(), Some(1000));
+    }
+
+    // ---- record shapes -------------------------------------------------------------------
+
+    /// A partial carries what is KNOWN and nothing else. The omissions are the contract: a run
+    /// still going has no `toolCalls`, no `startupPct`, no `durationMs`, no `outcome`, and — since
+    /// `startupMs` closes on the mutation's RESULT — no `startupMs` either.
+    #[test]
+    fn the_boot_partial_carries_boot_and_nothing_it_cannot_know() {
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z")));
+        p.observe(&ev(&tool_at(
+            "2026-07-28T05:36:14.339Z",
+            "mcp__fsm__unvetted",
+        )));
+        let doc = partial_record(&p, StartupPhase::Boot, "/t.jsonl", &id());
+        assert_eq!(doc["stage"], "boot");
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["trace"], "/t.jsonl");
+        assert_eq!(doc["runId"], "20260728T053610Z");
+        assert_eq!(doc["role"], "vetter");
+        assert_eq!(doc["model"], "claude-fable-5");
+        for absent in [
+            "ttlMs",
+            "startupMs",
+            "toolCalls",
+            "startupPct",
+            "durationMs",
+            "outcome",
+            "exitCode",
+        ] {
+            assert!(
+                doc.get(absent).is_none(),
+                "a boot partial cannot know {absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ttl_partial_carries_both_timings_and_the_call_counts_it_has() {
+        let mut p = StartupProbe::default();
+        for line in vetter_20260728t053610z().lines().take(4) {
+            p.observe(&ev(line));
+        }
+        let doc = partial_record(&p, StartupPhase::Ttl, "/t.jsonl", &id());
+        assert_eq!(doc["stage"], "ttl");
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
+        assert_eq!(doc["startupToolCalls"], 1);
+        assert_eq!(doc["firstMutationIndex"], 1);
+        for absent in ["startupMs", "toolCalls", "startupPct", "durationMs"] {
+            assert!(
+                doc.get(absent).is_none(),
+                "a ttl partial cannot know {absent}"
+            );
+        }
+    }
+
+    /// How a consumer tells old records from new: every record this build writes carries `stage`,
+    /// so `stage` ABSENT means the record predates the split and has no boot/ttl to read.
+    #[test]
+    fn every_emitted_record_carries_a_stage() {
+        let m = RunMetrics {
+            boot_ms: Some(1125),
+            ttl_ms: Some(297_016),
+            startup_ms: Some(166_559),
+            ..RunMetrics::default()
+        };
+        let doc = final_record("/t.jsonl", &m, &id(), Some((0, TraceOutcome::Ok)));
+        assert_eq!(doc["stage"], STAGE_FINAL);
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
+        assert_eq!(doc["startupMs"], 166_559);
+        assert_eq!(doc["outcome"], "ok");
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z")));
+        p.observe(&ev(&tool_at(
+            "2026-07-28T05:36:14.339Z",
+            "mcp__fsm__unvetted",
+        )));
+        assert_eq!(
+            partial_record(&p, StartupPhase::Boot, "/t.jsonl", &id())["stage"],
+            "boot"
+        );
+    }
+
+    /// A bare `run-metrics <trace>` (no identity flags) must stay re-derivable from an archived
+    /// trace: the dashboard rebuilds history that way, so nothing here may need runner state.
+    #[test]
+    fn a_bare_record_omits_identity_but_keeps_the_split() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        let bare = RunIdentity {
+            run_id: None,
+            role: None,
+            model: None,
+        };
+        let doc = final_record("/t.jsonl", &m, &bare, None);
+        assert!(doc.get("runId").is_none());
+        assert!(doc.get("role").is_none());
+        assert!(doc.get("outcome").is_none());
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
     }
 }
 
@@ -11897,6 +12545,33 @@ mod cli_tests {
                 role: Some("producer".to_string()),
                 model: Some("claude-fable-5".to_string()),
                 exit_code: Some(0),
+            }
+        );
+    }
+
+    #[test]
+    fn run_timings_cli() {
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-timings",
+                "--out",
+                "/m/runs.jsonl",
+                "--trace",
+                "/r/20260728T053610Z.jsonl",
+                "--run-id",
+                "20260728T053610Z",
+                "--role",
+                "vetter",
+                "--model",
+                "claude-fable-5",
+            ]),
+            Cmd::RunTimings {
+                out: "/m/runs.jsonl".to_string(),
+                trace: "/r/20260728T053610Z.jsonl".to_string(),
+                run_id: Some("20260728T053610Z".to_string()),
+                role: Some("vetter".to_string()),
+                model: Some("claude-fable-5".to_string()),
             }
         );
     }
