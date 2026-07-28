@@ -192,12 +192,12 @@ wrong every time.
 then the close.
 
 - **It is one transition, not a command that chains two.** A slash command that
-  called `human-rule-issue` and then `gh issue close` would put the ORDER and the
-  flag clear in a prompt — unenforced, untested, free to drift. Here the order is
-  a tested property, and the close is **last** because a closed subject reads as
-  moot to every ruling plan: closing first would make the labels permanently
-  unreachable and a retry would report "nothing to do" over a half-written
-  transition.
+  called `human-rule-issue` and then `gh issue close` would put the ORDER and
+  the flag clear in a prompt — unenforced, untested, free to drift. Here the
+  order is a tested property, and the close is **last** because a closed subject
+  reads as moot to every ruling plan: closing first would make the labels
+  permanently unreachable and a retry would report "nothing to do" over a
+  half-written transition.
 - **It retires `ai:close-candidate` and no other `ai:*` label.** That one label
   means "a human still has to ACT on this subject" — on an issue the producer's
   pending claim, on a PR the vetter's pending `close` verdict — and closing IS
@@ -248,13 +248,13 @@ types is a Claude Code plugin, published from this repo's own marketplace:
 /plugin install human-fsm@issue-pr-cron
 ```
 
-| Command                                      | The transition it invokes                                                   |
-| -------------------------------------------- | ----------------------------------------------------------------------------- |
-| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire the flag, close. Issue **or** PR, by lookup     |
+| Command                                      | The transition it invokes                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------- |
+| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire the flag, close. Issue **or** PR, by lookup        |
 | `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer |
-| `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`                           |
-| `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                           |
-| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this"             |
+| `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`                              |
+| `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                              |
+| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this"                |
 
 Ruling on one close-candidate previously took four steps: a hand-written
 JSON-RPC frame, `pr-review-report mcp` fed from a file, a Python filter to read
@@ -317,15 +317,16 @@ tool?" for the human: `pr-review-report mcp --profile human` (wired by
 `human_rule_issue` and `human_close` — read the subject, rule on it, close it.
 `human_close` is a tool rather than something the caller composes for the reason
 above: the alternative is a transition half in a tool and half in a prompt, and
-that half was wrong on all 74 closed-and-still-flagged subjects. The subcommands above are
-for the human at a terminal; the profile is for **an agent acting on the human's
-behalf**, which is the case that actually went wrong in #86. A prompt rule
-cannot take a bypassable Bash away, and a `gh issue edit` that no tool offers is
-exactly what gets improvised; a profile makes the non-FSM operation
-_unavailable_. The vetter's inbox tools are deliberately absent — the human's
-inbox is `human-queue`, which renders whole org-wide sets and does not fit one
-tool result — and so is `record_close_candidate_verdict`, which is the vetter's
-authority and the very move `human_rule_issue` refuses on the human's behalf.
+that half was wrong on all 74 closed-and-still-flagged subjects. The subcommands
+above are for the human at a terminal; the profile is for **an agent acting on
+the human's behalf**, which is the case that actually went wrong in #86. A
+prompt rule cannot take a bypassable Bash away, and a `gh issue edit` that no
+tool offers is exactly what gets improvised; a profile makes the non-FSM
+operation _unavailable_. The vetter's inbox tools are deliberately absent — the
+human's inbox is `human-queue`, which renders whole org-wide sets and does not
+fit one tool result — and so is `record_close_candidate_verdict`, which is the
+vetter's authority and the very move `human_rule_issue` refuses on the human's
+behalf.
 
 The last three vetter tools are its **second subject**. A PR asks a human to
 merge code; a close-candidate flag asks a human to **destroy work**, so the flag

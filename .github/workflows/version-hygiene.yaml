@@ -1,9 +1,7 @@
 name: version hygiene
 on: [push, pull_request]
-
 permissions:
   contents: read
-
 jobs:
   # A plugin's version lives in TWO hand-maintained files: the marketplace listing
   # installers read, and the plugin manifest it points at. `/plugin` detects an update
@@ -24,7 +22,6 @@ jobs:
         with:
           persist-credentials: false
       - run: cargo run --quiet -p pr-review-report -- plugin-version-lockstep
-
   # A plugin's CONTENT is its release. Editing the commands without bumping the version
   # is invisible to version-based update detection, so every install silently keeps
   # running the stale copy. Only reachable on a PR, where a base to diff against exists.
