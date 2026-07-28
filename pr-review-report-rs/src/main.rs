@@ -8897,6 +8897,969 @@ fn mcp_serve(profile: McpProfile) -> i32 {
     0
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// require-qa-block — the QA-GUIDE section-8 gate on `gh pr create`.
+//
+// A Claude Code PreToolUse `Bash` hook: it reads the hook payload on stdin and refuses a
+// `gh pr create` whose PR body does not carry QA-GUIDE.md section 8's evidence block.
+//
+// WHY THIS IS A GATE AT ALL (#83). The contract was already written on both sides —
+// `campaign-prompt.txt` step 4 ("No evidence block = the PR does not open") and QA-GUIDE.md
+// section 8 ("The vetter rejects any PR whose body lacks this block") — and the cron producer
+// HONOURS it: every PR body it wrote across the traces in `runs/` carries the block. The five PRs
+// the vetter rejected on 2026-07-28 for a missing block were opened while the producer cron was
+// DISABLED, by interactive sessions under the same bot account. They never read
+// `campaign-prompt.txt`, so no wording in it could have reached them.
+//
+// That is also why it cannot be an MCP transition: a tool surface only binds a session launched
+// with that surface, and the sessions that leak are exactly the ones that were not. A PreToolUse
+// hook binds every session on the box, so the invariant holds wherever the PR is opened from. For
+// the same reason it is NOT gated on RAINIX_CRON_HOOK the way the two `hooks/*.sh` guards are —
+// the cron is the compliant population; gating it to the cron would guard everything except the
+// thing that actually failed.
+//
+// WHY IT IS A SUBCOMMAND AND NOT A SCRIPT. Everything below is parsing: a shell word-splitter, a
+// heading scanner, a bipartite match. That is the work this binary exists to own — CLAUDE.md's
+// north star is that a guard on pipeline state is a tested subcommand, not shell. As a subcommand
+// it also ships in the flake closure and its tests run inside the nix build, which a script under
+// `hooks/` cannot do: the derivation's fileset is the manifests plus the crate, so a repo-root
+// script is absent there and every test that drove one skipped.
+//
+// The gate is MECHANICAL, deliberately: the block must be PRESENT and name all four of section 8's
+// evidence lines. Whether those lines' claims HOLD is the vetter's judgement and stays there —
+// that split is the point. The mechanical half settles at the producer for one retry inside the
+// run; the judgement half is the only thing left to cost a round trip.
+//
+// Requiring all four is what makes the block a STRUCTURE rather than QA-shaped prose, and it is
+// what lets a refusal name the specific lines that are absent. Measured against the real corpus
+// (`runs/`): of the 32 bodies the producer wrote, 24 pass untouched and 8 are one-to-three lines
+// short of section 8's own template — each already carrying the heading and at least one line, so
+// the retry is a small edit, not a rewrite. All FIVE bodies the vetter rejected for a missing
+// block carry no `## QA` heading at all and fail on the first check. (Five, not six: the sixth
+// rejection that day was substantive, not a missing block — see #83.)
+//
+// SCOPE: `gh pr create` only. A rework push carries no body to inspect, so QA-GUIDE's "a rework
+// without it does not get re-pushed" stays the vetter's.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Section 8's four evidence lines. The gate's whole vocabulary: a body either names each of these
+/// on its own line inside the `## QA` section, or the `gh pr create` does not run.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum QaLine {
+    DiscriminatingTests,
+    MutationsApplied,
+    Oracle,
+    CategoryCheck,
+}
+
+impl QaLine {
+    const ALL: [QaLine; 4] = [
+        QaLine::DiscriminatingTests,
+        QaLine::MutationsApplied,
+        QaLine::Oracle,
+        QaLine::CategoryCheck,
+    ];
+
+    /// The name section 8 gives the line — what a refusal lists as present or missing.
+    fn name(self) -> &'static str {
+        match self {
+            QaLine::DiscriminatingTests => "Discriminating tests",
+            QaLine::MutationsApplied => "Mutations applied",
+            QaLine::Oracle => "Oracle",
+            QaLine::CategoryCheck => "Category check",
+        }
+    }
+
+    /// Does one line of a QA section name this subject?
+    ///
+    /// Loose on wording ("Discriminating test", "Mutation matrix", "Category:") because the corpus
+    /// writes all of those and the vetter accepted them; the SUBJECT MATTER is what is recognised,
+    /// not a fixed string. `oracle` is the one that must be word-bounded — the bare stem appears
+    /// inside ordinary words ("oracles" is fine, but a substring search would also fire on a repo
+    /// or crate name) — while `categor` is deliberately a stem so "category"/"categories" both hit.
+    fn names(self, line: &str) -> bool {
+        match self {
+            QaLine::DiscriminatingTests => contains_ignore_case(line, "discriminating"),
+            QaLine::MutationsApplied => contains_ignore_case(line, "mutation"),
+            QaLine::Oracle => find_word_ignore_case(line, "oracle", 0).is_some(),
+            QaLine::CategoryCheck => contains_ignore_case(line, "categor"),
+        }
+    }
+}
+
+/// Section 8's own template, printed verbatim in every refusal so the retry needs no lookup.
+const QA_TEMPLATE: &str = "\
+## QA
+- Discriminating tests: <test names> - each fails on base (<how verified>)
+- Mutations applied: <line -> mutation -> killing test>
+- Oracle: <where expected values come from, independent of the implementation>
+- Category check: <issue asks A,B,C; covered A,B,C / Refs because ...>";
+
+/// WHY a `gh pr create` was refused — a TYPED discriminant, never a message substring.
+///
+/// The refusal text is DERIVED from the variant, so rewording a message can never change what is
+/// enforced and no caller ever re-classifies by matching on prose. Every variant means the same
+/// thing to the harness (exit 2, block); they differ only in what the model is told to fix.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum Refusal {
+    /// `--body-file -` reads the body from stdin — a stream the hook does not have.
+    StdinBody,
+    /// The named `--body-file` could not be read at check time.
+    UnreadableBodyFile { path: String, err: String },
+    /// `--fill`/`--template`: gh builds the body from commits or a repo template, so it cannot
+    /// carry evidence this run produced.
+    GeneratedBody,
+    /// The invocation supplies no body at all.
+    NoBody,
+    /// The command line does not lex, and still looks like a PR open. Fails CLOSED.
+    Unparseable,
+    /// The command lexed, but the invocation is not three literal words — a `$VAR` or a `$(…)` sits
+    /// where `gh`, `pr` or `create` should be, so there is no argument list to read a body out of.
+    UnresolvedInvocation,
+    /// The body has no `## QA` heading anywhere.
+    NoHeading { source: String },
+    /// There is a `## QA` section, but it is not the block.
+    IncompleteBlock { source: String, section: String },
+}
+
+/// Exit code that blocks the tool call. Claude Code reads exit 2 from a PreToolUse hook as "refuse
+/// this call and give the model stderr"; every other code lets the call proceed. So the refusal is
+/// a FAILED TOOL CALL carrying the template, not advice printed alongside a PR that opened anyway —
+/// which is the whole reason this is a hook and not another line in a prompt.
+const QA_BLOCK_EXIT: i32 = 2;
+
+/// How deep a `-c` payload is followed before the gate stops recursing. Three is far past any real
+/// wrapper (`nix shell … --command bash -c '…'` is one level); the cap only exists so a pathological
+/// nesting cannot spin.
+const QA_MAX_NESTED_DEPTH: usize = 3;
+
+impl Refusal {
+    /// The one-line "  <reason>" a refusal leads with.
+    fn reason(&self) -> String {
+        match self {
+            Refusal::StdinBody => {
+                "`--body-file -` reads the body from stdin, which cannot be checked here."
+                    .to_string()
+            }
+            Refusal::UnreadableBodyFile { path, err } => {
+                format!("could not read the --body-file: {path} ({err}).")
+            }
+            Refusal::GeneratedBody => {
+                "`--fill`/`--template` builds the body from commits or a repo template.".to_string()
+            }
+            Refusal::NoBody => {
+                "this `gh pr create` supplies no body to carry the block.".to_string()
+            }
+            Refusal::Unparseable => {
+                "could not parse this command line, so its PR body cannot be checked.".to_string()
+            }
+            Refusal::UnresolvedInvocation => {
+                "this opens a PR through a variable or substitution, so the gate cannot tell which \
+                 words are the invocation or which file is the body."
+                    .to_string()
+            }
+            Refusal::NoHeading { source } => {
+                format!("the body ({source}) has no `## QA` heading.")
+            }
+            Refusal::IncompleteBlock { source, .. } => {
+                format!("the `## QA` section in the body ({source}) is incomplete.")
+            }
+        }
+    }
+
+    /// The follow-up line telling the model what to do instead. Empty when the reason says it all.
+    fn detail(&self) -> &'static str {
+        match self {
+            Refusal::StdinBody => "Write the body to a file and pass its absolute path.",
+            Refusal::UnreadableBodyFile { .. } => {
+                "Pass an ABSOLUTE path to a file that exists when the command runs."
+            }
+            Refusal::GeneratedBody | Refusal::NoBody => {
+                "Pass `--body-file <absolute path>` with the section-8 block in it."
+            }
+            Refusal::Unparseable | Refusal::UnresolvedInvocation => {
+                "Open the PR with a plain `gh pr create … --body-file <absolute path>`."
+            }
+            Refusal::NoHeading { .. } => "",
+            Refusal::IncompleteBlock { .. } => {
+                "A heading is not the block — section 8 is four separate lines."
+            }
+        }
+    }
+
+    /// The QA section the refusal was made about, if there was one to read. Drives the
+    /// present/missing lists: a refusal with no section at all reports all four as missing.
+    fn section(&self) -> Option<&str> {
+        match self {
+            Refusal::IncompleteBlock { section, .. } => Some(section),
+            _ => None,
+        }
+    }
+
+    /// The whole stderr text the model reads next.
+    fn render(&self) -> String {
+        let missing = missing_lines(self.section());
+        let present: Vec<&'static str> = QaLine::ALL
+            .iter()
+            .filter(|l| !missing.contains(l))
+            .map(|l| l.name())
+            .collect();
+        let mut lines = vec![
+            "BLOCKED - `gh pr create` without the QA-GUIDE.md section-8 evidence block."
+                .to_string(),
+            String::new(),
+            format!("  {}", self.reason()),
+        ];
+        if !self.detail().is_empty() {
+            lines.push(format!("  {}", self.detail()));
+        }
+        lines.extend([
+            String::new(),
+            "The vetter rejects any PR whose body lacks this block, so opening it now".to_string(),
+            "costs a full round trip through the queue. Put it in the body instead:".to_string(),
+            String::new(),
+            QA_TEMPLATE.to_string(),
+            String::new(),
+        ]);
+        if !present.is_empty() {
+            lines.push(format!("  already present: {}", present.join(", ")));
+        }
+        if missing.is_empty() {
+            lines.push(
+                "  all four named, but not on four distinct lines - write one entry per line"
+                    .to_string(),
+            );
+        } else {
+            let names: Vec<&'static str> = missing.iter().map(|l| l.name()).collect();
+            lines.push(format!("  still missing: {}", names.join(", ")));
+        }
+        lines.extend([
+            String::new(),
+            "You ran the mutation testing to get here - transcribe what it produced.".to_string(),
+            "`n/a` with a reason is a valid value for a line the change cannot have".to_string(),
+            "(a docs-only diff has no mutations); an ABSENT line is not.".to_string(),
+        ]);
+        lines.join("\n") + "\n"
+    }
+}
+
+/// Case-insensitive substring search, ASCII-folded. The corpus is English prose written by the
+/// pipeline itself, so ASCII folding is the whole of it; nothing here needs Unicode case mapping.
+fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    haystack.to_ascii_lowercase().contains(needle)
+}
+
+/// The END offset of the first WORD-BOUNDED `needle` at or after `from`. Case-SENSITIVE.
+///
+/// A word boundary is the regex one: the character either side must not be alphanumeric or `_`.
+/// Returning the end (not the start) is what lets a caller chain searches for words that must
+/// appear IN ORDER, which is how the unparseable-command check recognises `gh … pr … create`.
+fn find_word(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut at = from;
+    while at <= haystack.len() {
+        let rel = haystack[at..].find(needle)?;
+        let start = at + rel;
+        let end = start + needle.len();
+        let before_ok = haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_word(c));
+        let after_ok = haystack[end..].chars().next().is_none_or(|c| !is_word(c));
+        if before_ok && after_ok {
+            return Some(end);
+        }
+        // Advance past this occurrence's first character, staying on a character boundary so the
+        // next slice cannot panic on a multi-byte body (em dashes are everywhere in these bodies).
+        at = start + 1;
+        while at < haystack.len() && !haystack.is_char_boundary(at) {
+            at += 1;
+        }
+    }
+    None
+}
+
+/// [`find_word`] with the haystack ASCII-folded; `needle` must already be lowercase.
+///
+/// ASCII-lowercasing is byte-for-byte length-preserving, so an offset into the folded copy is an
+/// offset into the original — which is what lets a caller resume from a previous match's end.
+fn find_word_ignore_case(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    find_word(&haystack.to_ascii_lowercase(), needle, from)
+}
+
+/// Does an UNPARSEABLE command line still look like it opens a PR?
+///
+/// `gh`, then `pr`, then `create`, each as a whole word, in that order — and in that CASE, which is
+/// the same bar the ordinary token match applies. A fallback that recognised MORE than its primary
+/// would refuse lines the primary lets straight through, which is a gate that disagrees with itself
+/// depending on whether the line happened to lex. Only reached when the lexer gave up, and only to
+/// decide whether to fail closed — a parse failure must never become the way through.
+fn looks_like_pr_create(command: &str) -> bool {
+    find_word(command, "gh", 0)
+        .and_then(|i| find_word(command, "pr", i))
+        .and_then(|i| find_word(command, "create", i))
+        .is_some()
+}
+
+/// Split a command line into the words a POSIX shell would pass to the program, or `None` when it
+/// does not lex (an unbalanced quote, a line ending in a backslash).
+///
+/// This is a LEXER, not a shell: it resolves quoting and escaping and nothing else — no expansion,
+/// no substitution, no operator grammar. That is exactly the amount of shell needed to answer "which
+/// token is the argument of `--body-file`", and stopping there is deliberate: anything more would be
+/// a second implementation of bash whose divergences from the real one are silent.
+///
+/// The two failure modes are not distinguished because the gate does the same thing for both —
+/// [`Refusal::Unparseable`] — and a distinction no caller can act on is a distinction no test can
+/// pin.
+fn shell_split(command: &str) -> Option<Vec<String>> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Lex {
+        /// Between words.
+        Gap,
+        /// Inside an unquoted word.
+        Word,
+        /// Inside `'…'` — every character is literal, including backslashes.
+        Single,
+        /// Inside `"…"` — a backslash escapes only `"` and itself.
+        Double,
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut tok = String::new();
+    // A word can be open and still empty: `''` is a real, empty argument.
+    let mut open = false;
+    let mut state = Lex::Gap;
+    let mut chars = command.chars();
+    while let Some(c) = chars.next() {
+        match state {
+            Lex::Gap => match c {
+                ' ' | '\t' | '\r' | '\n' => {}
+                '\'' => {
+                    open = true;
+                    state = Lex::Single;
+                }
+                '"' => {
+                    open = true;
+                    state = Lex::Double;
+                }
+                '\\' => {
+                    open = true;
+                    tok.push(chars.next()?);
+                    state = Lex::Word;
+                }
+                _ => {
+                    open = true;
+                    tok.push(c);
+                    state = Lex::Word;
+                }
+            },
+            Lex::Word => match c {
+                ' ' | '\t' | '\r' | '\n' => {
+                    out.push(std::mem::take(&mut tok));
+                    open = false;
+                    state = Lex::Gap;
+                }
+                '\'' => state = Lex::Single,
+                '"' => state = Lex::Double,
+                '\\' => tok.push(chars.next()?),
+                _ => tok.push(c),
+            },
+            Lex::Single => match c {
+                '\'' => state = Lex::Word,
+                _ => tok.push(c),
+            },
+            Lex::Double => match c {
+                '"' => state = Lex::Word,
+                '\\' => {
+                    let next = chars.next()?;
+                    // Inside double quotes only `"` and `\` are escapable; every other backslash
+                    // stays literal, so a `"\n"` in a PR body is two characters, not a newline.
+                    if next != '"' && next != '\\' {
+                        tok.push('\\');
+                    }
+                    tok.push(next);
+                }
+                _ => tok.push(c),
+            },
+        }
+    }
+    match state {
+        // An unterminated quote: the rest of the line is whatever the shell would have prompted for.
+        Lex::Single | Lex::Double => None,
+        _ => {
+            if open {
+                out.push(tok);
+            }
+            Some(out)
+        }
+    }
+}
+
+/// The shell operators that end one invocation and start the next.
+const SHELL_OPERATORS: [&str; 5] = ["&&", "||", ";", "|", "&"];
+
+/// Split lexed tokens into per-invocation segments on the shell operators.
+///
+/// Only a STANDALONE operator token splits: `a && b` is two segments, `a&&b` is one word the shell
+/// would not run either. A newline is whitespace to the lexer, so newline-joined commands land in
+/// ONE segment — which is why every span/`cd` walk below has to handle several invocations inside a
+/// single segment rather than assuming one each.
+fn segments(tokens: &[String]) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut cur: Vec<String> = Vec::new();
+    for t in tokens {
+        if SHELL_OPERATORS.contains(&t.as_str()) {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(t.clone());
+        }
+    }
+    out.push(cur);
+    out
+}
+
+/// The three words that name the invocation, in order.
+const PR_CREATE_WORDS: [&str; 3] = ["gh", "pr", "create"];
+
+/// A segment's non-flag words, each with its index in the segment.
+fn non_flag_words(seg: &[String]) -> Vec<(usize, &str)> {
+    seg.iter()
+        .enumerate()
+        .filter(|(_, t)| !t.starts_with('-'))
+        .map(|(i, t)| (i, t.as_str()))
+        .collect()
+}
+
+/// A word whose VALUE the gate does not know: it still carries an unexpanded expansion.
+///
+/// The lexer resolves quoting and nothing else, deliberately — so a `$VAR`, a `$(…)` or a backtick
+/// reaches it verbatim while the shell replaces it with whatever it likes.
+fn is_unexpanded(word: &str) -> bool {
+    word.contains('$') || word.contains('`')
+}
+
+/// Does this segment run a `gh pr create` that [`pr_create_spans`] cannot see?
+///
+/// `C=create; gh pr $C …` is `gh pr create` to bash and three unrelated words to a literal match,
+/// so the gate would find no invocation, read no body, and allow the open. Where a word in the
+/// invocation position is unevaluable the gate cannot tell what the command is — and "cannot tell"
+/// has to be a refusal, the same posture the unlexable branch already takes. Without this, a
+/// command that FAILS to lex is treated as suspicious while one that lexes into something
+/// unrecognisable is treated as safe, and the second is far the easier to produce.
+///
+/// TWO of the three positions must still match literally, and exactly one be unevaluable. One
+/// literal is not enough: `echo $A $B create` would then be refused for having variables near the
+/// word "create", and the gate would start blocking ordinary commands to catch a spelling nobody
+/// produces by accident. That bound is what keeps `gh pr view $N`, `gh pr list` and
+/// `--body "the fee is $5"` untouched.
+fn segment_hides_pr_create(seg: &[String]) -> bool {
+    let words: Vec<&str> = non_flag_words(seg).into_iter().map(|(_, t)| t).collect();
+    words.windows(3).any(|w| {
+        let mut opaque = 0usize;
+        let shaped = w.iter().zip(PR_CREATE_WORDS).all(|(got, want)| {
+            if *got == want {
+                true
+            } else if is_unexpanded(got) {
+                opaque += 1;
+                true
+            } else {
+                false
+            }
+        });
+        shaped && opaque == 1
+    })
+}
+
+/// `[start, end)` index ranges of each `gh pr create` invocation inside one segment.
+///
+/// Matches `gh` `pr` `create` as CONSECUTIVE NON-FLAG WORDS rather than at the head of the segment,
+/// so `timeout 60 gh pr create …` and a newline-joined `git push` + `gh pr create …` are both seen.
+/// The over-match is the point: requiring `gh` to head its segment would let every wrapper spelling
+/// through, and a wrapper is exactly how a guard in this repo has been bypassed before
+/// (`hooks/block-nix-wrap-gh.sh`). Three consecutive UNQUOTED words cannot be spoofed by a
+/// `--title "gh pr create"`, which the lexer already collapsed into one token.
+fn pr_create_spans(seg: &[String]) -> Vec<(usize, usize)> {
+    let words = non_flag_words(seg);
+    let starts: Vec<usize> = words
+        .windows(3)
+        .filter(|w| [w[0].1, w[1].1, w[2].1] == PR_CREATE_WORDS)
+        .map(|w| w[0].0)
+        .collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(j, &s)| (s, starts.get(j + 1).copied().unwrap_or(seg.len())))
+        .collect()
+}
+
+/// `os.path.join` semantics: an ABSOLUTE `path` replaces `base` entirely.
+fn path_join(base: &str, path: &str) -> String {
+    if base.is_empty() || path.starts_with('/') {
+        path.to_string()
+    } else if base.ends_with('/') {
+        format!("{base}{path}")
+    } else {
+        format!("{base}/{path}")
+    }
+}
+
+/// Lexical `os.path.normpath`: collapse `//` and `.`, and resolve `..` against the preceding
+/// component. Deliberately does NOT touch the filesystem — the directory a chained `cd` lands in
+/// may not exist yet when the hook runs, and the gate still has to say which file the command names.
+fn normpath(path: &str) -> String {
+    if path.is_empty() {
+        return ".".to_string();
+    }
+    let absolute = path.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => match parts.last() {
+                Some(&last) if last != ".." => {
+                    parts.pop();
+                }
+                // `/..` is `/`; a relative path keeps the `..` because there is nothing above it yet.
+                _ => {
+                    if !absolute {
+                        parts.push("..");
+                    }
+                }
+            },
+            other => parts.push(other),
+        }
+    }
+    let joined = parts.join("/");
+    if absolute {
+        format!("/{joined}")
+    } else if joined.is_empty() {
+        ".".to_string()
+    } else {
+        joined
+    }
+}
+
+/// `base` after every `cd <dir>` in `toks`, in order.
+///
+/// The LAST one before the invocation wins, and they COMPOUND: `cd a; cd b` lands in `a/b`, exactly
+/// as the shell would. Taking the first `cd` in the line would check a file the shell never opens.
+fn apply_cds(base: &str, toks: &[String]) -> String {
+    let mut base = base.to_string();
+    for (i, t) in toks.iter().enumerate() {
+        if t != "cd" {
+            continue;
+        }
+        let Some(dir) = toks.get(i + 1) else { continue };
+        if dir.starts_with('-') {
+            continue;
+        }
+        base = normpath(&path_join(&base, dir));
+    }
+    base
+}
+
+/// Absolute as given; otherwise against the directory the shell is in BY THEN.
+fn resolve_body_path(path: &str, base: &str) -> String {
+    if path.starts_with('/') || base.is_empty() {
+        path.to_string()
+    } else {
+        path_join(base, path)
+    }
+}
+
+/// One body an invocation supplies, and where it came from — the source string is what a refusal
+/// names, so the model knows which file to fix.
+struct BodyArg {
+    source: String,
+    text: String,
+}
+
+/// Every body this invocation supplies, plus whether gh was told to GENERATE one.
+///
+/// Refuses from inside the scan (rather than collecting and deciding later) because the stdin and
+/// unreadable-file cases are about the ARGUMENT, not the content: there is nothing to read, so
+/// there is nothing to defer.
+fn invocation_bodies(argv: &[String], base: &str) -> Result<(Vec<BodyArg>, bool), Refusal> {
+    /// `--body`/`-b`: the body is the argument itself.
+    const BODY_FLAGS: [&str; 2] = ["--body", "-b"];
+    /// `--body-file`/`-F`: the body is in the named file.
+    const BODY_FILE_FLAGS: [&str; 2] = ["--body-file", "-F"];
+    /// gh builds the body itself from commits or a repo template; neither can carry evidence the
+    /// agent produced during this run.
+    const GENERATED_BODY_FLAGS: [&str; 6] = [
+        "--fill",
+        "-f",
+        "--fill-first",
+        "--fill-verbose",
+        "--template",
+        "-T",
+    ];
+
+    let mut found: Vec<BodyArg> = Vec::new();
+    let mut generated = false;
+    let mut i = 0;
+    while i < argv.len() {
+        let mut flag = argv[i].as_str();
+        // `--flag=value` is the same flag; gh accepts both spellings and so must the gate.
+        let mut value: Option<&str> = None;
+        if flag.starts_with("--") {
+            if let Some((f, v)) = flag.split_once('=') {
+                flag = f;
+                value = Some(v);
+            }
+        }
+        let is_body = BODY_FLAGS.contains(&flag);
+        let is_body_file = BODY_FILE_FLAGS.contains(&flag);
+        if is_body || is_body_file {
+            let value = match value {
+                Some(v) => v,
+                None => {
+                    i += 1;
+                    argv.get(i).map(String::as_str).unwrap_or("")
+                }
+            };
+            if is_body {
+                found.push(BodyArg {
+                    source: "--body".to_string(),
+                    text: value.to_string(),
+                });
+            } else if value == "-" {
+                return Err(Refusal::StdinBody);
+            } else {
+                let path = resolve_body_path(value, base);
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => found.push(BodyArg {
+                        source: format!("--body-file {path}"),
+                        text,
+                    }),
+                    Err(e) => {
+                        return Err(Refusal::UnreadableBodyFile {
+                            path,
+                            err: e.to_string(),
+                        })
+                    }
+                }
+            }
+        } else if GENERATED_BODY_FLAGS.contains(&flag) {
+            generated = true;
+        }
+        i += 1;
+    }
+    Ok((found, generated))
+}
+
+/// Command strings this line hands to an interpreter, e.g. `bash -c '<script>'`.
+///
+/// The lexer sees such a script as ONE token, so `bash -c 'gh pr create --body x'` has no
+/// `gh` `pr` `create` word sequence to find and would sail through — the same wrapper bypass
+/// `hooks/block-nix-wrap-gh.sh` exists for. Each payload is re-checked as a command in its own right.
+///
+/// Two things are followed, and only two. The argument of an INTERPRETER's `-…c` flag — `bash -c`,
+/// `sh -c`, `bash -lc`, `zsh -ic`, and the `nix shell … --command bash -c` spelling, whose inner
+/// `-c` is what carries the script. And the argument of `eval`, which is the shell interpreting its
+/// own argument and is otherwise a clean way past every literal word match here.
+///
+/// The distinction that matters is whether the token is EXECUTED, not whether it looks like a
+/// command: `eval "gh pr create …"` and `grep "gh pr create" file` are the same shape to a text
+/// scan, and only the first runs. That is why this keys on the executing word — a scan of the raw
+/// line would have to refuse the grep too, and grepping this repo's own prompt for `gh pr create`
+/// is routine.
+///
+/// Matching the FLAG SHAPE alone was not enough for the same reason: `-c` is an ordinary flag on
+/// ordinary commands (`grep -c`, `sort -c`, `wc -c`, `git commit -c <ref>`), and following their
+/// next argument refused a plain `grep -c 'gh pr create' campaign-prompt.txt`. So the flag is
+/// followed only when the command being run is a shell. The lookback skips the flags between them,
+/// because the interpreter is not always adjacent to its own flag (`bash --norc -c '…'`).
+///
+/// Never a `--body` value, so quoting `gh pr create` inside a PR body cannot trigger it. A
+/// `--command` whose argument is a bare word list needs nothing here: those tokens stay on the line
+/// and the ordinary word-sequence match already sees them.
+///
+/// The bash hook this replaced also required the payload to contain whitespace. That guard is
+/// dropped because it cannot change a verdict: a payload with no whitespace lexes to a single token,
+/// and one token can be neither a three-word `gh pr create` nor an interpreter flag with an
+/// argument, so re-checking it always returns `Ok`. Keeping it would be a branch no test could
+/// defend.
+///
+/// Returns each payload with the index of the word that hands it over, because that index is also
+/// where the child inherits its working directory.
+fn nested_commands(seg: &[String]) -> Vec<(usize, &str)> {
+    /// The shells whose `-c` argument is a script rather than data.
+    const INTERPRETERS: [&str; 5] = ["bash", "sh", "zsh", "dash", "ksh"];
+    let is_dash_c = |t: &str| {
+        t.len() >= 2
+            && t.starts_with('-')
+            && t.ends_with('c')
+            && t[1..].chars().all(|c| c.is_ascii_alphabetic())
+    };
+    let interpreter_runs = |before: &[String]| {
+        before
+            .iter()
+            .rev()
+            .find(|t| !t.starts_with('-'))
+            .is_some_and(|t| INTERPRETERS.contains(&t.rsplit('/').next().unwrap_or(t)))
+    };
+    seg.iter()
+        .enumerate()
+        .filter(|(i, t)| t.as_str() == "eval" || (is_dash_c(t) && interpreter_runs(&seg[..*i])))
+        .filter_map(|(i, _)| seg.get(i + 1).map(|p| (i, p.as_str())))
+        .collect()
+}
+
+/// The text under the body's `## QA` heading, or `None` when there is no such heading.
+///
+/// Ends at the next heading of the SAME OR HIGHER level, so a `### Mutations applied` written under
+/// `## QA` stays inside the block instead of truncating it — while a later `## Notes` ends it, and
+/// evidence written under that later heading does not count.
+fn qa_section(body: &str) -> Option<&str> {
+    let (level, end) = qa_heading(body)?;
+    let rest = &body[end..];
+    match section_closer(rest, level) {
+        Some(at) => Some(&rest[..at]),
+        None => Some(rest),
+    }
+}
+
+/// Byte offsets in `s` at which a line begins — every position a `^` would match under
+/// multiline semantics.
+fn line_starts(s: &str) -> impl Iterator<Item = usize> + '_ {
+    std::iter::once(0).chain(s.match_indices('\n').map(|(i, _)| i + 1))
+}
+
+/// The `## QA` heading: its level (how many `#`) and the byte offset just past the `QA`.
+///
+/// Accepts up to three leading spaces (markdown's own tolerance), any heading level, and a bolded
+/// `## **QA**`, because the corpus writes all of them. `QA` must end on a word boundary so a
+/// `## QARANTINE` is not the block.
+fn qa_heading(body: &str) -> Option<(usize, usize)> {
+    for start in line_starts(body) {
+        let line = &body[start..];
+        let mut rest = line;
+        let indent = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        if indent > 3 {
+            continue;
+        }
+        rest = &rest[indent..];
+        let level = rest.len() - rest.trim_start_matches('#').len();
+        if level == 0 || level > 6 {
+            continue;
+        }
+        rest = &rest[level..];
+        rest = rest.trim_start_matches([' ', '\t']);
+        for bold in ["**", "__"] {
+            if let Some(r) = rest.strip_prefix(bold) {
+                rest = r;
+                break;
+            }
+        }
+        rest = rest.trim_start_matches([' ', '\t']);
+        let Some(after) = rest.get(..2) else { continue };
+        if !after.eq_ignore_ascii_case("QA") {
+            continue;
+        }
+        let tail = &rest[2..];
+        if tail
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        return Some((level, body.len() - tail.len()));
+    }
+    None
+}
+
+/// Where the section opened by a heading of `level` ends: the first line that is itself a heading of
+/// the same or a higher level. `None` when nothing closes it and the section runs to the end.
+fn section_closer(rest: &str, level: usize) -> Option<usize> {
+    for start in line_starts(rest) {
+        let line = &rest[start..];
+        let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        if indent > 3 {
+            continue;
+        }
+        let after_indent = &line[indent..];
+        let hashes = after_indent.len() - after_indent.trim_start_matches('#').len();
+        if hashes == 0 || hashes > level {
+            continue;
+        }
+        // A heading needs whitespace after its hashes; `####` alone is not one.
+        if after_indent[hashes..].starts_with([' ', '\t']) {
+            return Some(start);
+        }
+    }
+    None
+}
+
+/// Per section-8 line, the indices of the QA section's lines that name it.
+fn line_candidates(section: Option<&str>) -> Vec<Vec<usize>> {
+    let rows: Vec<&str> = section.unwrap_or("").split('\n').collect();
+    QaLine::ALL
+        .iter()
+        .map(|l| {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, row)| l.names(row))
+                .map(|(i, _)| i)
+                .collect()
+        })
+        .collect()
+}
+
+/// Section 8's lines the QA section does not name AT ALL (all four when there is no section).
+fn missing_lines(section: Option<&str>) -> Vec<QaLine> {
+    QaLine::ALL
+        .iter()
+        .zip(line_candidates(section))
+        .filter(|(_, cand)| cand.is_empty())
+        .map(|(l, _)| *l)
+        .collect()
+}
+
+/// Is there a DISTINCT line for every entry? Exhaustive backtracking over four entries.
+fn assignable(cands: &[Vec<usize>], used: &mut Vec<usize>) -> bool {
+    let Some((first, rest)) = cands.split_first() else {
+        return true;
+    };
+    for &i in first {
+        if used.contains(&i) {
+            continue;
+        }
+        used.push(i);
+        let ok = assignable(rest, used);
+        used.pop();
+        if ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// Section 8 is four SEPARATE entries, so both halves are checked.
+///
+/// A single line naming all four subjects ("discriminating mutation oracle category") satisfies a
+/// per-keyword search while being nothing like the block, so the four matches must ALSO land on four
+/// distinct lines.
+fn block_is_complete(section: Option<&str>) -> bool {
+    missing_lines(section).is_empty() && assignable(&line_candidates(section), &mut Vec::new())
+}
+
+/// Check one command line, and every interpreter payload inside it, against the gate.
+///
+/// `cwd` is the directory this command runs in. For a nested payload that is NOT the session's own
+/// directory: a child process inherits the parent's at exec time, so `cd sub && bash -c '…'` runs
+/// the script in `sub`, and the payload is checked against the walked base rather than the start.
+fn check_command(command: &str, cwd: &str, depth: usize) -> Result<(), Refusal> {
+    let Some(tokens) = shell_split(command) else {
+        // Unparseable (unbalanced quote, dangling backslash). Fail CLOSED if it still looks like a
+        // PR open — a parse failure must not become the way through.
+        return if looks_like_pr_create(command) {
+            Err(Refusal::Unparseable)
+        } else {
+            Ok(())
+        };
+    };
+
+    // The shell's own working directory, walked FORWARD so each invocation is checked against the
+    // directory it will actually run in.
+    let mut base = cwd.to_string();
+    for seg in segments(&tokens) {
+        // Before looking for the invocation, check that it is not HIDDEN. A `gh pr $C` the word
+        // match cannot see would otherwise fall out of the loop below and straight into `Ok(())` —
+        // the asymmetry that made an unlexable line suspicious and an unrecognisable one safe.
+        if segment_hides_pr_create(&seg) {
+            return Err(Refusal::UnresolvedInvocation);
+        }
+        // Where this segment begins, so an interpreter payload inside it can be walked to the
+        // directory it is actually handed over in.
+        let seg_base = base.clone();
+        let mut prev = 0;
+        for (start, end) in pr_create_spans(&seg) {
+            base = apply_cds(&base, &seg[prev..start]);
+            prev = end;
+            let (found, generated) = invocation_bodies(&seg[start..end], &base)?;
+            if found.is_empty() {
+                return Err(if generated {
+                    Refusal::GeneratedBody
+                } else {
+                    Refusal::NoBody
+                });
+            }
+            // gh takes ONE body; if several are named, a complete one anywhere passes.
+            let mut worst: Option<(String, Option<String>)> = None;
+            for body in &found {
+                let section = qa_section(&body.text).map(str::to_string);
+                if block_is_complete(section.as_deref()) {
+                    worst = None;
+                    break;
+                }
+                if worst.is_none() {
+                    worst = Some((body.source.clone(), section));
+                }
+            }
+            if let Some((source, section)) = worst {
+                return Err(match section {
+                    None => Refusal::NoHeading { source },
+                    Some(section) => Refusal::IncompleteBlock { source, section },
+                });
+            }
+        }
+        base = apply_cds(&base, &seg[prev..]);
+
+        if depth < QA_MAX_NESTED_DEPTH {
+            for (at, payload) in nested_commands(&seg) {
+                // A child process inherits the parent's working directory AT EXEC TIME, so the
+                // payload is checked against the directory the `cd`s BEFORE it have reached — not
+                // the session's own, which is only where the line started.
+                check_command(payload, &apply_cds(&seg_base, &seg[..at]), depth + 1)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// PURE given the filesystem: a whole PreToolUse payload in, a verdict out.
+///
+/// Everything that is not a `Bash` tool call passes through untouched — a `command` key on an MCP
+/// tool input is not hypothetical (tool inputs are arbitrary JSON), but only `Bash` executes one, so
+/// anywhere else it is a string, not a PR. A payload that does not parse also passes: the harness
+/// never sends one, and a gate that wedges every Bash call on a malformed payload is a worse failure
+/// than the one it guards.
+fn qa_gate_verdict(payload: &str) -> Result<(), Refusal> {
+    let Ok(doc) = serde_json::from_str::<Value>(payload) else {
+        return Ok(());
+    };
+    if doc.get("tool_name").and_then(Value::as_str) != Some("Bash") {
+        return Ok(());
+    }
+    let command = doc
+        .get("tool_input")
+        .and_then(|t| t.get("command"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let cwd = doc.get("cwd").and_then(Value::as_str).unwrap_or("");
+    check_command(command, cwd, 0)
+}
+
+/// `require-qa-block`: the PreToolUse `Bash` hook. Payload on stdin; exit 0 allows, 2 blocks with
+/// the refusal on stderr, which is the stream Claude Code feeds back to the model.
+fn require_qa_block_mode() -> i32 {
+    use std::io::Read;
+    let mut payload = String::new();
+    // An unreadable payload is not a PR open: allow, exactly as an unparseable one does.
+    if std::io::stdin().read_to_string(&mut payload).is_err() {
+        return 0;
+    }
+    match qa_gate_verdict(&payload) {
+        Ok(()) => 0,
+        Err(refusal) => {
+            eprint!("{}", refusal.render());
+            QA_BLOCK_EXIT
+        }
+    }
+}
+
 /// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
 /// parsing, validation, and `--help`/usage (replacing the former hand-rolled `args.get(n)` dispatch).
 #[derive(Parser)]
@@ -9207,6 +10170,10 @@ enum Cmd {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// PreToolUse `Bash` gate (QA-GUIDE section 8): refuse a `gh pr create` whose PR body carries
+    /// no `## QA` evidence block, naming the lines that are missing. Hook payload on stdin; exit 0
+    /// allows the call, 2 blocks it with the refusal on stderr. Wiring: the user `settings.json`.
+    RequireQaBlock,
     /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
     /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
     Mcp {
@@ -10171,6 +11138,7 @@ fn main() {
             include_skipped,
             limit,
         } => unvetted_mode(json, include_skipped, limit),
+        Cmd::RequireQaBlock => require_qa_block_mode(),
         Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
             Ok(p) => mcp_serve(p),
             Err(e) => {
@@ -13612,6 +14580,14 @@ mod cli_tests {
     #[test]
     fn distill_trace_cli() {
         assert_eq!(parse(&["prr", "distill-trace"]), Cmd::DistillTrace);
+    }
+
+    // The name the user settings.json wires as a PreToolUse hook. It takes no arguments — the whole
+    // input is the payload on stdin — so a spelling with any is a spelling that will not run.
+    #[test]
+    fn require_qa_block_cli() {
+        assert_eq!(parse(&["prr", "require-qa-block"]), Cmd::RequireQaBlock);
+        assert!(Cli::try_parse_from(["prr", "require-qa-block", "extra"]).is_err());
     }
 
     // ---- trace classification: the typed replacement for the runners' fallback grep ----

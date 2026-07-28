@@ -98,3 +98,16 @@ definitionally-shared count) — ask "can these ever legitimately differ?" first
 
 The vetter rejects any PR whose body lacks this block or whose claims in it
 don't hold.
+
+All four lines are required. A line your change cannot have takes `n/a` **with
+the reason** (a docs-only diff has no mutations to apply); an absent line is not
+an option.
+
+That is enforced where the PR is opened, not only where it is judged.
+`pr-review-report require-qa-block`, wired as a PreToolUse hook, refuses a
+`gh pr create` whose body has no `## QA` section, or whose section names fewer
+than all four lines, and its refusal lists the ones that are missing. So "a PR
+without its QA evidence does not get opened" is literal: it costs one retry
+inside the run instead of a round trip through the vetter's queue. The gate
+checks that the block is PRESENT; whether its claims hold is still the vetter's
+call.

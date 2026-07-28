@@ -27,6 +27,31 @@ framing is what keeps it debuggable and honest:
 North star for any change here: if you're about to instruct a prompt to call
 `gh`, stop and add (or extend) a tool subcommand instead.
 
+**Where a subcommand cannot reach, a PreToolUse hook can — and the hook should
+still BE a subcommand.** A tool surface binds only a session that was launched
+with it, so it holds nothing for a session opened outside the cron, while the
+loose `gh pr create` transition is reachable from every session on the box. That
+is a reason to change WHERE the transition function is invoked from, not a
+licence to write the guard in bash: `require-qa-block` is a `pr-review-report`
+subcommand that Claude Code runs as a PreToolUse `Bash` hook (#83), so the gate
+is tested, shipped in the flake closure, and covered by the nix build like every
+other transition. `hooks/` holds what has not been converted yet — the two
+deny-list bypass guards (`block-nix-wrap-gh.sh`, `block-cron-git-bypass.sh`),
+tracked by #10. A hook is not an excuse to leave a transition loose; it is what
+holds the invariant while it still is. See
+[README.md](README.md#pretooluse-guards--what-a-prompt-cannot-hold).
+
+**A PreToolUse guard is a guard against honest omission, not a security
+boundary.** It reads a command line with a lexer that resolves quoting and
+nothing else — it is not bash and never will be — so a determined bypass always
+exists (a script file it cannot read, a variable it cannot expand). What these
+guards buy is that the common ACCIDENT becomes impossible: forgetting the QA
+block, or reaching for a `nix`-wrapped `gh` out of habit. Where the gate cannot
+tell what a command does it refuses and says so, which is the right posture for
+an accident but is not the same thing as enforcement. Do not cite one as proof
+that a rule cannot be broken — cite it as proof that breaking it has to be
+deliberate.
+
 ## Transitions (subcommands)
 
 The state diagram lives in [README.md](README.md#pipeline-state-machine). The
@@ -46,6 +71,7 @@ transition functions:
 | `human-rule <owner/repo> <n> <ruling> "<note>"`            | the HUMAN's PR ruling: `human:<ruling>` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling)                                            |
 | `human-rule-issue <owner/repo> <n> <ruling> "<note>"`      | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed                                                 |
 | `record-close-candidate-verdict <owner/repo> <n> <v> …`    | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                              |
+| `require-qa-block`                                         | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session   |
 | `mcp [--profile vetter\|producer\|human]`                  | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                         |
 
 ## The FSM as a tool surface (MCP)
