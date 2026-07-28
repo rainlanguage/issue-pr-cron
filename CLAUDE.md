@@ -70,9 +70,36 @@ transition functions:
 | `record_close_candidate_verdict` (MCP)                     | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                        |
 | `human-rule <owner/repo> <n> <ruling> "<note>"`            | the HUMAN's PR ruling: `human:<ruling>` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling)                                            |
 | `human-rule-issue <owner/repo> <n> <ruling> "<note>"`      | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed                                                 |
+| `human-close <owner/repo> <n> "<note>"`                    | the HUMAN's TERMINAL edge on either subject: rule `close-candidate`, retire the pending `ai:close-candidate`, close — ONE transition (#94)                    |
 | `record-close-candidate-verdict <owner/repo> <n> <v> …`    | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                              |
 | `require-qa-block`                                         | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session   |
 | `mcp [--profile vetter\|producer\|human]`                  | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                         |
+| `plugin-version-lockstep [--root <dir>]`                   | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                               |
+
+## The layer a human types: slash commands as a plugin
+
+The transitions above are what a tool call reaches. What a HUMAN types is a
+Claude Code plugin published from this repo's own marketplace
+(`.claude-plugin/marketplace.json` → `./plugins/human-fsm`), installed with
+`/plugin marketplace add rainlanguage/issue-pr-cron`. The org already
+distributes assets this way (`claude-audit-skills`, `adversarial-mutation-test`,
+`rain-org-health`); `rain-org-health` is the shape followed, publishing from a
+subdirectory so a repo that is primarily something else need not pretend to be a
+skills repo.
+
+**The commands are prompts and nothing else.** Every guard lives in the binary;
+a command that re-derived a transition, or reached for `gh` to do what a
+subcommand already does, is a loose transition by another name. A test reads
+each shipped command's fenced blocks and requires every runnable line to be a
+`pr-review-report` invocation — asserted on the fenced blocks specifically,
+because the prose says `gh issue close` in order to FORBID it and a substring
+scan cannot tell a prohibition from an instruction.
+
+A plugin's version is stored TWICE (the marketplace listing installers read, and
+the manifest it points at) and `/plugin` compares version strings, so a stale
+listing serves stale content silently. `plugin-version-lockstep` makes agreement
+a gate; it is a subcommand rather than a CI shell script for the same reason
+`require-qa-block` is — everything it does is parsing.
 
 ## The FSM as a tool surface (MCP)
 
@@ -85,7 +112,7 @@ neither can name the other's transitions.
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `vetter` (default) | PRs: `unvetted`, `pr_context`, `pr_checkout`, `record_verdict`, `clone_release`. Close-candidate flags: `unvetted_close_candidates`, `close_candidate_context`, `record_close_candidate_verdict` |
 | `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`                                                                                                                                        |
-| `human`            | `pr_context`, `close_candidate_context`, `human_rule`, `human_rule_issue` — read the subject, rule on it                                                                                         |
+| `human`            | `pr_context`, `close_candidate_context`, `human_rule`, `human_rule_issue`, `human_close` — read the subject, rule on it, close it                                                                |
 
 The vetter has **two subjects**, not one. A PR is judged on its diff; a producer
 `ai:close-candidate` flag is judged on its evidence — and the second matters
@@ -202,6 +229,23 @@ it finds is a different PR's code.
 - **Human decisions are sacred.** A `human:*` label OR a native `APPROVED` /
   `CHANGES_REQUESTED` review is never overwritten by the vetter —
   `--record-verdict` refuses (exit 3), closing the TOCTOU race.
+- **The human's TERMINAL edge is a transition too.** `gh issue close` knows
+  nothing about the FSM, so a hand-close left `ai:close-candidate` attached: 74
+  closed subjects org-wide (55 issues, 19 PRs) carried it when #94 was filed, a
+  state no modeled transition produces. `human-close` is that edge as ONE
+  transition — comment, `human:close-candidate`, retire the pending flag, close,
+  in that order, with the close LAST because a closed subject reads as moot to
+  every ruling plan. It retires `ai:close-candidate` and no other `ai:*` label:
+  that one means "a human still has to ACT", and closing is the act. Chaining a
+  ruling tool with a Bash `gh close` would put the order and the flag clear in a
+  prompt, which is exactly the half that was wrong every time.
+- **A ruling names its POPULATION.** `ai:close-candidate` covers two separately
+  sized sets — `closeCandidateIssues` (a producer claim on an issue) and
+  `lanes.vetter-verdicts.ai:close-candidate` (the vetter's own verdict on a PR).
+  Every human transition takes a full `owner/repo#n`; where it can act on either
+  it READS the subject's `url` rather than trusting which command was typed, and
+  where it cannot it refuses by naming what was referenced and printing the
+  command that fits — in both directions.
 - **A human ruling is a transition too, and it pins to what it ruled on.**
   `human-rule` / `human-rule-issue` are the only sanctioned way to write a
   `human:*` label: raw `gh issue edit --add-label` binds to nothing and, on an
