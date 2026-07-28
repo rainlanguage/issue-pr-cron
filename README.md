@@ -25,8 +25,8 @@ stateDiagram-v2
     state "ai:design" as design
     state "ai:close-candidate (PR)" as close
     state "ai:blocked-deploy" as bdeploy
-    state "ai:blocked-infra" as binfra
     state "ai:blocked-on" as bon
+    state "run ended · infra down" as infradown
     state "human:reject" as hreject
     state "human:design" as hdesign
     state "human:close-candidate" as hclose
@@ -71,11 +71,14 @@ stateDiagram-v2
     %% producer deploy + blocked hand-offs → human resolves → re-work
     ready --> ready : producer deploy · red prod-pin → green
     ready --> bdeploy : flag-blocked-deploy · deploy FAILED
-    unvetted --> binfra : flag-blocked-infra · infra/tooling gap OR can't classify
     unvetted --> bon : flag-blocked-on · waiting on a dependency PR
+    unvetted --> design : flag-design · anything a human must answer or supply
     bdeploy --> unvetted : human resolves deploy → re-work
-    binfra --> unvetted : human clears infra / models a new state → re-work
     bon --> unvetted : dependency merges → producer re-works
+
+    %% infra down is NOT a PR state — the RUN ends and no PR is touched (#108)
+    unvetted --> infradown : infra-down · environment is impeding the work
+    infradown --> unvetted : next tick · 4h later, from scratch
 
     %% human decisions are sacred — the vetter never re-verdicts these
     ready --> hreject : human-rule reject + Rework note
@@ -559,8 +562,8 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   verdict).
 - **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:relink`, `ai:design`,
   `ai:close-candidate`.
-- **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-infra`,
-  `ai:blocked-on`.
+- **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-on`, plus the RETIRED
+  `ai:blocked-infra` for as long as any PR still carries it (#108).
 - **human-decisions** — `human:reject`, `human:design`, `human:close-candidate`.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
@@ -617,15 +620,60 @@ failed; a consumer just could not render a link.
 
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
-`blocked-deploy`, `blocked-infra`, or `blocked-on`. Those five plus `ready` (the
-merge queue) are the **human-gated states** — the daily review queue, a plain
-label search, no prose scraping. `blocked-infra` is the **total-function
-fallback**: any situation the producer cannot classify into a state lands there
-with a free-text reason, so it can never act _outside_ the machine. Reviewing
-the `blocked-infra` queue is exactly where a human decides what needs to change
-to move each item back into a well-defined state — fix the infra, model a new
-state, or forbid the behavior; a recurring `blocked-infra` reason is the
-evidence to promote it to a first-class state.
+`blocked-deploy`, or `blocked-on`. Those four plus `ready` (the merge queue) are
+the **human-gated states** — the daily review queue, a plain label search, no
+prose scraping. `design` is the **total-function fallback**: a situation the
+producer cannot classify is by definition one a human has to look at, and
+`design` already means exactly that.
+
+### Infrastructure down ends the run (#108)
+
+`ai:blocked-infra` used to be the fourth blocked state and the total-function
+fallback. It is **retired**. The prompt made the label a cross-run marker —
+_"skip a PR already in that state"_ — so a PR that met a ten-minute outage was
+parked until a human removed the label by hand. Thirteen ordinary PRs sat there
+(a `pi` constant word, a staleness-overflow fix, a README setup fix); none of
+them were infra problems. **Infrastructure being down is a property of the
+moment, not of a PR.**
+
+The response is one exit, and nothing else:
+
+| Piece                                                              | What it does                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `infra-down "<what is unavailable>" [--root-cause <owner/repo#n>]` | The model's mid-run exit. Records the finding once, exits **12**, touches no PR — no label, no comment, no GitHub call at all.                                                                                                              |
+| `run-infra [<record>]`                                             | The runner's read-back. Exit **12** when the run recorded an outage, which is how `campaign-run.sh` ends a run on something discovered **mid-flight** — every other exit in that script (82, 90, 96, and the preflight abort) is pre-model. |
+| `run-metrics --infra <record>`                                     | Folds `infraDown` / `infraReason` / `infraRootCause` onto the `runs.jsonl` line, beside #91's `unreadableFiles` / `commandsNotFound` / `missingTools`, and makes the run's `outcome` **`infra-down`** rather than `ok`.                     |
+| `retire-blocked-infra [--dry-run]`                                 | One-shot: strips the retired label from every open PR still carrying it.                                                                                                                                                                    |
+
+**There is deliberately no detector.** No threshold, no failure-signature
+classifier, no "is this a real outage or just a flake". The model declares what
+it saw and the run ends. That follows from the cost asymmetry: a **false exit**
+costs one skipped run and the cron runs again in four hours, while a **false
+negative** costs a whole run producing PRs nothing can verify — which is exactly
+what `20260728T111645Z` did, with labelling churn on seven PRs as the visible
+half. Every line of detection logic is machinery that can be wrong in the
+expensive direction to avoid an outcome that costs nothing, so there is none.
+Exiting on a flake is fine.
+
+This is #91's rule one step later. `preflight` ends the run **before a token is
+spent** when a harness tool is missing, because _"no verdict at all beats a
+verdict from a lens that was blind without saying so"_. Here: no PRs at all
+beats PRs against a fleet whose CI cannot pass.
+
+The record is the entire output, and that is the argument for the swap: **errors
+accumulate, labels do not.** One exit is noise; `outcome == "infra-down"` across
+twenty runs is a signal a human can act on, and nobody has to audit labels to
+find it —
+
+```
+jq -r 'select(.infraDown) | "\(.runId)  \(.infraRootCause)  \(.infraReason)"' metrics/runs.jsonl
+```
+
+Two things are unchanged. A red that **one PR can green** is still that PR's
+work (the 3b rules are untouched). And anything genuinely permanent that needs a
+**person** — a secret that exists nowhere, a harness that cannot render a stack
+— is a question for the human, so it goes to `flag-design`, not to an exit that
+would end every run forever.
 
 The three crons are **staggered by 2 h** so work flows downstream within each
 4-hour cycle (all times UTC):
@@ -790,8 +838,33 @@ opened PR is assigned to). `WORK_DIR`, `MODEL`, `MAXTIME`, `KEEP_RUNS` have
 defaults and may be overridden there. The runner takes its install dir from
 `CRON_DIR` (falling back to the working directory) and gets its `PATH` from the
 flake closure, so there are no machine paths in the repo; `campaign-prompt.txt`
-uses `{{WORK_DIR}}` / `{{CLOSE_CANDIDATES}}` / `{{ASSIGNEE}}` placeholders that
-the runner substitutes at run time.
+uses `{{WORK_DIR}}` / `{{SCRATCH_DIR}}` / `{{INSTALL_DIR}}` / `{{ASSIGNEE}}` /
+`{{OWNER_FLAGS}}` / `{{ORGS}}` placeholders that the runner substitutes at run
+time.
+
+### The producer's scratch dir
+
+Each producer run gets `$WORK_DIR/scratch/<run-id>`, created before the model
+starts, handed to the prompt as `{{SCRATCH_DIR}}`, and deleted when the run
+ends. It is where every throwaway file goes — cached tool output, a PR body
+being drafted — so that no run has to invent a path of its own. Before it
+existed they all did, and the results sat in the install dir for six weeks
+behind `.gitignore`'s `/*` (#106).
+
+The part that is not guessable: **`--add-dir` does not make a directory writable
+by bash output redirection.** A redirection is a `create` operation, and
+working-directory membership — all that `--add-dir` and
+`permissions.additionalDirectories` confer — authorises `create` only in
+`acceptEdits` mode. Under `--permission-mode default` it needs an edit-kind
+allow rule, which is why the runner also passes
+`--allowedTools "Edit(//$SCRATCH_DIR/**)"`; the `//` prefix is required, as
+`Edit(/abs/**)` never matches and fails silently. The refusal a model gets
+without that rule names the directory it just tried as allowed, so the symptom
+points nowhere near the cause — hence the `producer scratch dir is writable` CI
+job, which asserts the rule, the substitution and the cleanup still line up.
+
+The vetter needs none of this: `review-settings.json` denies `Bash`, `Write` and
+`Edit` outright, so it has no way to write a file at all.
 
 ## Reviewing the output — the merge pipeline
 

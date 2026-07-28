@@ -1560,6 +1560,7 @@ fn run_metrics_mode(
     id: &RunIdentity,
     exit_code: Option<i32>,
     preflight_missing: &[String],
+    infra_path: Option<&str>,
 ) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -1570,7 +1571,13 @@ fn run_metrics_mode(
     };
     let m = run_metrics(&content);
     let tooling = trace_tooling_report(&content);
-    let outcome = exit_code.map(|rc| (rc, classify_outcome(&content, rc, preflight_missing)));
+    let infra = infra_record_at(infra_path);
+    let outcome = exit_code.map(|rc| {
+        (
+            rc,
+            classify_outcome(&content, rc, preflight_missing, &infra),
+        )
+    });
     println!(
         "{}",
         serde_json::to_string(&final_record(
@@ -1579,7 +1586,8 @@ fn run_metrics_mode(
             id,
             outcome,
             &tooling,
-            preflight_missing
+            preflight_missing,
+            &infra
         ))
         .unwrap()
     );
@@ -1597,6 +1605,7 @@ fn final_record(
     outcome: Option<(i32, TraceOutcome)>,
     tooling: &ToolingReport,
     preflight_missing: &[String],
+    infra: &InfraRecord,
 ) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
@@ -1630,6 +1639,14 @@ fn final_record(
         "unreadableFiles": tooling.unreadable,
         "commandsNotFound": tooling.command_not_found,
         "missingTools": preflight_missing,
+        // #108. `infraDown` true means the run ENDED because the infrastructure the work depends
+        // on was unavailable. This is the ONLY trace of that — nothing is written to GitHub — so
+        // the fields are always present, and counting `infraDown` across runs is how a passing
+        // flake is told apart from a standing outage. A label could never do that: labels do not
+        // accumulate, errors do.
+        "infraDown": infra.down,
+        "infraReason": infra.reason,
+        "infraRootCause": infra.root_cause,
     });
     stamp_identity(&mut doc, id);
     if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
@@ -2505,6 +2522,11 @@ enum TraceOutcome {
     /// and `reject` from the run that could.
     ToolingFailure,
     Error,
+    /// The run ENDED because the infrastructure the work depends on was down (#108). NOT `ok`: a
+    /// run that stopped early did less than it was asked to, and the whole point of replacing
+    /// `ai:blocked-infra` with an exit is that the fact must ACCUMULATE somewhere countable. One is
+    /// noise; the same one across twenty runs is the signal a human acts on.
+    InfraDown,
 }
 
 impl TraceOutcome {
@@ -2516,6 +2538,7 @@ impl TraceOutcome {
             TraceOutcome::QuotaLimited => "session-limit",
             TraceOutcome::ToolingFailure => "tooling-failure",
             TraceOutcome::Error => "error",
+            TraceOutcome::InfraDown => "infra-down",
         }
     }
 }
@@ -2588,11 +2611,26 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
 /// A preflight failure has no trace to classify — the model never ran — so the fact arrives as the
 /// list of binaries that would not resolve. It outranks everything else: a run that was stopped
 /// before it started is neither quota-limited nor merely errored.
-fn classify_outcome(trace: &str, exit_code: i32, preflight_missing: &[String]) -> TraceOutcome {
+///
+/// An infra exit (#108) is folded in LAST and only over an otherwise-`ok` run. The ordering is
+/// deliberate: a run that also died, was quota-refused, or was blind to its evidence has a WORSE
+/// story than "it stopped early on purpose", and the headline word must be the worst of them. The
+/// fact is on the record either way — `infraDown` is what a human counts, the word is only what the
+/// dashboard shows first.
+fn classify_outcome(
+    trace: &str,
+    exit_code: i32,
+    preflight_missing: &[String],
+    infra: &InfraRecord,
+) -> TraceOutcome {
     if !preflight_missing.is_empty() {
         return TraceOutcome::ToolingFailure;
     }
-    classify_trace(trace, exit_code)
+    let base = classify_trace(trace, exit_code);
+    if base == TraceOutcome::Ok && infra.down {
+        return TraceOutcome::InfraDown;
+    }
+    base
 }
 
 /// `trace-outcome <trace> --exit-code <n>`: print the typed outcome word and exit 0.
@@ -4186,7 +4224,6 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
 fn state_noun(label: &str) -> &'static str {
     match label {
         "ai:blocked-deploy" => "Blocked-deploy",
-        "ai:blocked-infra" => "Blocked-infra",
         "ai:blocked-on" => "Blocked-on",
         "ai:design" => "Design-question",
         _ => "State",
@@ -4195,12 +4232,20 @@ fn state_noun(label: &str) -> &'static str {
 
 /// The producer's human-gated state labels — the states a hand-off can land in. `ai:ready` is the
 /// vetter's; the producer transitions to these via [`flag_state_mode`], never a bare prose note.
-const PRODUCER_STATE_LABELS: [&str; 4] = [
-    "ai:design",
-    "ai:blocked-deploy",
-    "ai:blocked-infra",
-    "ai:blocked-on",
-];
+///
+/// `ai:blocked-infra` was the fourth and is RETIRED (#108) — see [`RETIRED_STATE_LABEL`].
+const PRODUCER_STATE_LABELS: [&str; 3] = ["ai:design", "ai:blocked-deploy", "ai:blocked-on"];
+
+/// RETIRED (#108). Never written again, and never PARKS a PR — [`next_action`] deliberately does not
+/// consult this, so a PR a pre-#108 run labelled re-enters the ordinary red/green lifecycle the next
+/// time the producer looks at it, with no human intervention.
+///
+/// It is still RECOGNISED by [`classify_lane`] so the thirteen PRs already carrying it stay visible
+/// in `human-queue` instead of silently reclassifying as un-vetted, and `retire-blocked-infra`
+/// strips it for good. (`labels_to_remove` also clears it as a side effect of any later transition,
+/// since that strips every `ai:*` but the target — but a PR nothing transitions would keep it
+/// forever, which is exactly the trap #108 is about.)
+const RETIRED_STATE_LABEL: &str = "ai:blocked-infra";
 
 /// Pure plan for a producer state-transition ([`flag_state_mode`]). Mirrors [`verdict_plan`]'s guard —
 /// a `human:*` label OR a native GitHub review is sacred (refuse) — then the label move (strip every
@@ -5756,6 +5801,12 @@ fn classify_lane(
         if b != "ai:design" && has(b) {
             return (Lane::ProducerBlocked, b.to_string());
         }
+    }
+    // The retired state (#108) is still bucketed so a PR a pre-#108 run parked stays VISIBLE in the
+    // queue until `retire-blocked-infra` clears it — dropping it here would make thirteen PRs
+    // reappear as `un-vetted` and hide the very thing that needs unpicking.
+    if has(RETIRED_STATE_LABEL) {
+        return (Lane::ProducerBlocked, RETIRED_STATE_LABEL.to_string());
     }
     if has("ai:ready") {
         return if ready_vetted_at_head == Some(false) {
@@ -11112,6 +11163,10 @@ enum Cmd {
         /// `tooling-failure` on this fact alone.
         #[arg(long, value_delimiter = ',')]
         preflight_missing: Vec<String>,
+        /// The run's infra record (`$RUN_INFRA_FILE`). An outage in it is folded onto the metrics
+        /// line and makes the outcome `infra-down` rather than `ok` (#108).
+        #[arg(long)]
+        infra: Option<String>,
     },
     /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
     ///
@@ -11201,21 +11256,34 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// END THE RUN: the infrastructure the work depends on is down. Records the reason on the run
+    /// record and exits 12. Writes NOTHING to any PR — no label, no comment (#108).
+    InfraDown {
+        /// What is unavailable, and the evidence (trailing words are joined).
+        reason: Vec<String>,
+        /// The PR that would fix it, if one exists — e.g. `rainlanguage/rainix#289`.
+        #[arg(long, default_value = "")]
+        root_cause: String,
+    },
+    /// What this run recorded about infrastructure. Exit 12 when it recorded an outage — how the
+    /// RUNNER learns the model ended its own run on something it discovered mid-flight.
+    RunInfra {
+        /// Run record path; defaults to $RUN_INFRA_FILE.
+        record: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// One-shot: strip the RETIRED `ai:blocked-infra` label from every open PR still carrying it.
+    RetireBlockedInfra {
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Producer transition: flag a PR into ai:blocked-deploy (a deploy the producer can't complete).
     FlagBlockedDeploy {
         /// owner/repo
         slug: String,
         pr: String,
         /// Reason (trailing words are joined).
-        reason: Vec<String>,
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Producer transition: flag a PR into ai:blocked-infra (infra/tooling gap OR can't-classify).
-    FlagBlockedInfra {
-        /// owner/repo
-        slug: String,
-        pr: String,
         reason: Vec<String>,
         #[arg(long)]
         dry_run: bool,
@@ -12116,6 +12184,335 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     0
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// Infrastructure down (#108) — END THE RUN, log an error. Nothing else.
+//
+// `ai:blocked-infra` used to be an FSM destination, and it was a trap. The prompt made the label a
+// cross-run marker ("skip a PR already in that state"), so a PR that met a ten-minute outage was
+// parked until a human removed the label by hand. Thirteen ordinary PRs sat there — a `pi` constant
+// word, a staleness-overflow fix, a README setup fix — none of them infra problems. It was also the
+// declared total-function fallback, so everything unclassifiable landed in that same permanent park.
+//
+// Infrastructure being down is a property of the MOMENT, not of a PR. The response is therefore not
+// a state, and not a per-PR anything: it is ONE EXIT.
+//
+// THERE IS DELIBERATELY NO DETECTOR HERE. No threshold, no failure-signature classifier, no
+// "is this a real outage or just a flake". The model declares what it saw and the run ends. That is
+// not laziness about correctness — it follows from the cost asymmetry, which is lopsided enough to
+// settle the design on its own:
+//
+//   * a FALSE exit costs one skipped run. The cron runs again in four hours and re-derives
+//     everything from scratch. Exiting on a flake is fine.
+//   * a FALSE NEGATIVE costs a whole run producing PRs nothing can verify — which is precisely what
+//     run 20260728T111645Z did, with labelling churn on seven PRs as the visible half.
+//
+// Every line of detection logic is machinery that can be wrong in the expensive direction, in
+// service of avoiding an outcome that costs nothing. So there is none. If the model believes the
+// environment is impeding the work, that is sufficient; it does not have to prove it.
+//
+// This is #91's rule one step later. `preflight` ends the run before a token is spent when a
+// harness tool is missing, on the grounds that "no verdict at all beats a verdict from a lens that
+// was blind without saying so". Here: no PRs at all beats PRs against a fleet whose CI cannot pass.
+// The only difference is that this blocker is discovered MID-RUN, so the exit has to be reachable
+// from inside the model's loop — which is what nothing in `campaign-run.sh` was.
+//
+// Errors accumulate; labels do not. One exit is noise. The same exit across twenty runs is a signal
+// a human can act on, and nobody has to audit labels to find it.
+//
+// What this is NOT: a red one PR can green is still that PR's work (the 3b rules are untouched),
+// and anything genuinely permanent that needs a PERSON — a secret that exists nowhere, a harness
+// that cannot render a stack — is a question for the human, which is `flag-design`.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Epoch seconds → `YYYY-MM-DDTHH:MM:SSZ`.
+///
+/// The inverse of [`iso_to_epoch_ms`]'s civil-day maths (Howard Hinnant's `civil_from_days`), so a
+/// timestamp this binary WRITES round-trips through the reader it uses on GitHub's own. Written out
+/// rather than pulled in with a date crate: this binary's whole dependency set is three crates, and
+/// one format in one direction does not justify a fourth.
+fn epoch_to_iso(secs: i64) -> String {
+    let days = secs.div_euclid(86400);
+    let rem = secs.rem_euclid(86400);
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y,
+        m,
+        d,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+fn now_iso() -> String {
+    epoch_to_iso(now_unix())
+}
+
+/// The exit code for "infrastructure is down, end the run". Shares [`CLOSURE_UNSATISFIED`]'s value
+/// on purpose: both mean the same operational thing — the run cannot usefully proceed, nothing is
+/// wrong with the code, retry on the next tick.
+const INFRA_DOWN_EXIT: i32 = 12;
+
+/// The run-scoped JSONL `infra-down` writes and `run-metrics` reads back.
+///
+/// `RUN_INFRA_FILE` is exported by the runner and carries the run id, so one run's finding can never
+/// be read as another's — the staleness bug a fixed path would have, and the reason the model is
+/// never asked to supply a path it could get wrong. Outside a run it falls back to the install dir,
+/// which is what makes the subcommands usable by hand.
+fn run_record_path() -> String {
+    run_record_path_from(
+        std::env::var("RUN_INFRA_FILE").ok().as_deref(),
+        std::env::var("INSTALL_DIR").ok().as_deref(),
+    )
+}
+
+/// The environment is a PARAMETER, not a global read — the same shape [`preflight_report`] uses, and
+/// for the same reason: `cargo test` is multi-threaded and a process-global `set_var` would race
+/// every other test in the binary. An EMPTY value counts as unset, because that is how an exported
+/// but never-assigned shell variable arrives.
+fn run_record_path_from(run_infra: Option<&str>, install_dir: Option<&str>) -> String {
+    if let Some(p) = run_infra.filter(|p| !p.trim().is_empty()) {
+        return p.to_string();
+    }
+    match install_dir.filter(|d| !d.trim().is_empty()) {
+        Some(d) => format!("{d}/metrics/run-infra.jsonl"),
+        None => "run-infra.jsonl".to_string(),
+    }
+}
+
+fn append_run_record(path: &str, doc: &Value) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(f, "{}", serde_json::to_string(doc)?)
+}
+
+/// PURE: the one line `infra-down` appends.
+///
+/// `reason` is the model's own diagnosis — the prose the observed run produced and then had nowhere
+/// to put, so it wrote it onto seven PRs instead. It lands ONCE, here. `root_cause` is the optional
+/// PR that would fix it (`rainix#289` in that run): the single flag worth writing about an outage is
+/// the one pointing at its fix, and on the record it costs nothing to unpick later.
+fn infra_record(reason: &str, root_cause: &str, ts: &str) -> Value {
+    serde_json::json!({
+        "record": "infra",
+        "status": "down",
+        "reason": reason,
+        "rootCause": root_cause,
+        "ts": ts,
+    })
+}
+
+/// What `run-metrics` folds onto the run's `runs.jsonl` line. Every field is always present, so the
+/// dashboard can tell "infra was fine" from "this record predates the fields" — the same guarantee
+/// #91 gave `unreadableFiles`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct InfraRecord {
+    down: bool,
+    reason: String,
+    root_cause: String,
+}
+
+/// PURE: fold a run record file's contents. The LAST `infra` line wins, so a second, better-informed
+/// call supersedes the first. Unparseable lines are skipped rather than fatal — this is a report,
+/// and a truncated final line (a killed run) must not lose the records before it.
+fn infra_record_from_lines(content: &str) -> InfraRecord {
+    let mut rec = InfraRecord::default();
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("record").and_then(|r| r.as_str()) != Some("infra") {
+            continue;
+        }
+        rec.down = v.get("status").and_then(|s| s.as_str()) == Some("down");
+        rec.reason = v
+            .get("reason")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        rec.root_cause = v
+            .get("rootCause")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    rec
+}
+
+fn infra_record_at(path: Option<&str>) -> InfraRecord {
+    match path {
+        Some(p) => infra_record_from_lines(&std::fs::read_to_string(p).unwrap_or_default()),
+        None => InfraRecord::default(),
+    }
+}
+
+/// `infra-down "<what is down>" [--root-cause <owner/repo#n>]`: the mid-run exit.
+///
+/// Records the finding once and exits 12. It touches NO PR — no label, no comment, no GitHub call at
+/// all — so nothing has to be unpicked when the provider recovers, and it takes no view on whether
+/// the model is right: the model is the trigger, and a wrong trigger costs one run.
+fn infra_down_mode(reason: &str, root_cause: &str) -> i32 {
+    infra_down_to(&run_record_path(), reason, root_cause)
+}
+
+/// [`infra_down_mode`] with the record path as a PARAMETER, so the exit code and the line it writes
+/// are testable without touching the process environment.
+fn infra_down_to(path: &str, reason: &str, root_cause: &str) -> i32 {
+    if reason.trim().is_empty() {
+        eprintln!(
+            "usage: pr-review-report infra-down \"<what is unavailable, and the evidence>\" [--root-cause <owner/repo#n>]"
+        );
+        return 2;
+    }
+    let doc = infra_record(reason.trim(), root_cause.trim(), &now_iso());
+    if let Err(e) = append_run_record(path, &doc) {
+        // Still exit 12: the run must end whether or not the record could be written, and a lost
+        // record is a reporting failure, not a reason to carry on producing unverifiable PRs.
+        eprintln!("warning: cannot append the infra record to {path}: {e}");
+    }
+    println!("infra down — recorded, END THIS RUN NOW: {}", reason.trim());
+    if !root_cause.trim().is_empty() {
+        println!("  root cause: {}", root_cause.trim());
+    }
+    INFRA_DOWN_EXIT
+}
+
+/// `run-infra [<record>]`: what the run recorded about infrastructure, for the RUNNER.
+///
+/// Exit 12 when the record says down. This is the mid-run exit path #108 asked for: every other exit
+/// in `campaign-run.sh` is PRE-model, so nothing the model LEARNED could end its run — it could only
+/// label the victims and keep queueing work behind the same dead infrastructure, which is exactly
+/// what run 20260728T111645Z did. Absence of a record is exit 0; a run that never hit an outage is
+/// not a blocked run.
+fn run_infra_mode(path: Option<&str>, json_out: bool) -> i32 {
+    let p = path.map(String::from).unwrap_or_else(run_record_path);
+    let rec = infra_record_at(Some(&p));
+    if json_out {
+        println!(
+            "{}",
+            serde_json::json!({
+                "down": rec.down,
+                "reason": rec.reason,
+                "rootCause": rec.root_cause,
+            })
+        );
+    } else if rec.down {
+        println!("run-infra: DOWN — {}", rec.reason);
+        if !rec.root_cause.is_empty() {
+            println!("  root cause: {}", rec.root_cause);
+        }
+    } else {
+        println!("run-infra: no infrastructure outage recorded");
+    }
+    if rec.down {
+        return INFRA_DOWN_EXIT;
+    }
+    0
+}
+
+/// PURE: the `(slug, number)` pairs a `gh search prs --label ai:blocked-infra` result names.
+fn retire_targets(search: &Value) -> Vec<(String, u64)> {
+    let empty = Vec::new();
+    search
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|p| {
+            let slug = p
+                .get("repository")
+                .and_then(|r| r.get("nameWithOwner"))
+                .and_then(|s| s.as_str())?;
+            let num = p.get("number").and_then(|n| n.as_u64())?;
+            Some((slug.to_string(), num))
+        })
+        .collect()
+}
+
+/// `retire-blocked-infra [--dry-run]`: strip the retired `ai:blocked-infra` label from every open PR
+/// still carrying it.
+///
+/// #108 item 4. The thirteen PRs already parked did not choose that state and cannot leave it
+/// unaided: nothing writes the label any more and [`next_action`] no longer parks on it, but a label
+/// nothing writes is also a label nothing removes, and a PR that never sees another transition would
+/// keep it forever. This is the one-shot that frees them. It posts NO comment — they simply re-enter
+/// the ordinary red/green lifecycle on the next run, which is what should have happened when the
+/// outage cleared.
+fn retire_blocked_infra_mode(dry_run: bool) -> i32 {
+    let mut search: Vec<String> = vec!["search".into(), "prs".into()];
+    search.extend(org_owner_args());
+    search.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            RETIRED_STATE_LABEL,
+            "--limit",
+            "200",
+            "--json",
+            "number,repository,title,url",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&sref) else {
+        eprintln!("error: `gh search prs --label {RETIRED_STATE_LABEL}` failed — not editing on incomplete data");
+        return 1;
+    };
+    let targets = retire_targets(&val);
+    if targets.is_empty() {
+        println!("no open PR carries {RETIRED_STATE_LABEL}");
+        return 0;
+    }
+    println!(
+        "{} PR(s) carry the retired {RETIRED_STATE_LABEL} state:",
+        targets.len()
+    );
+    let mut failed = 0;
+    for (slug, num) in &targets {
+        if dry_run {
+            println!("  [dry-run] {slug}#{num} -> remove {RETIRED_STATE_LABEL}");
+            continue;
+        }
+        if gh_run(&[
+            "pr",
+            "edit",
+            &num.to_string(),
+            "-R",
+            slug,
+            "--remove-label",
+            RETIRED_STATE_LABEL,
+        ]) {
+            println!("  {slug}#{num} -> unparked");
+        } else {
+            eprintln!("  {slug}#{num} -> FAILED to remove {RETIRED_STATE_LABEL}");
+            failed += 1;
+        }
+    }
+    if failed > 0 {
+        return 1;
+    }
+    0
+}
+
 fn main() {
     let code = match Cli::parse().command {
         Cmd::Queue { n } => {
@@ -12185,6 +12582,7 @@ fn main() {
             model,
             exit_code,
             preflight_missing,
+            infra,
         } => run_metrics_mode(
             &trace,
             &RunIdentity {
@@ -12194,6 +12592,7 @@ fn main() {
             },
             exit_code,
             &preflight_missing,
+            infra.as_deref(),
         ),
         Cmd::Preflight => preflight_mode(),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
@@ -12220,18 +12619,15 @@ fn main() {
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
+        Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
+        Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
         Cmd::FlagBlockedDeploy {
             slug,
             pr,
             reason,
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:blocked-deploy", &reason.join(" "), dry_run),
-        Cmd::FlagBlockedInfra {
-            slug,
-            pr,
-            reason,
-            dry_run,
-        } => flag_state_mode(&slug, &pr, "ai:blocked-infra", &reason.join(" "), dry_run),
         Cmd::FlagBlockedOn {
             slug,
             pr,
@@ -13758,8 +14154,8 @@ mod run_metrics_tests {
 #[cfg(test)]
 mod startup_split_tests {
     use super::{
-        final_record, is_mutation_tool, partial_record, run_metrics, RunIdentity, RunMetrics,
-        StartupPhase, StartupProbe, ToolingReport, TraceOutcome, STAGE_FINAL,
+        final_record, is_mutation_tool, partial_record, run_metrics, InfraRecord, RunIdentity,
+        RunMetrics, StartupPhase, StartupProbe, ToolingReport, TraceOutcome, STAGE_FINAL,
     };
     use serde_json::{json, Value};
 
@@ -14075,6 +14471,7 @@ mod startup_split_tests {
             Some((0, TraceOutcome::Ok)),
             &ToolingReport::default(),
             &[],
+            &InfraRecord::default(),
         );
         assert_eq!(doc["stage"], STAGE_FINAL);
         assert_eq!(doc["bootMs"], 1125);
@@ -14103,7 +14500,15 @@ mod startup_split_tests {
             role: None,
             model: None,
         };
-        let doc = final_record("/t.jsonl", &m, &bare, None, &ToolingReport::default(), &[]);
+        let doc = final_record(
+            "/t.jsonl",
+            &m,
+            &bare,
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+        );
         assert!(doc.get("runId").is_none());
         assert!(doc.get("role").is_none());
         assert!(doc.get("outcome").is_none());
@@ -14619,6 +15024,7 @@ mod usage_probe_tests {
             None,
             &ToolingReport::default(),
             &[],
+            &InfraRecord::default(),
         );
         assert_eq!(doc["rateLimits"]["five_hour"]["status"], "allowed");
         // The terminal totals stay authoritative — including the output count the probe cannot
@@ -14634,6 +15040,7 @@ mod usage_probe_tests {
             None,
             &ToolingReport::default(),
             &[],
+            &InfraRecord::default(),
         );
         assert!(
             bare["rateLimits"].is_object(),
@@ -15708,10 +16115,13 @@ mod cli_tests {
             ]),
             Cmd::FlagBlockedDeploy { .. }
         ));
-        assert!(matches!(
-            parse(&["prr", "flag-blocked-infra", "o/r", "1", "missing", "secret"]),
-            Cmd::FlagBlockedInfra { .. }
-        ));
+        // `flag-blocked-infra` is RETIRED (#108) — the surface must not accept it at all, or a
+        // prompt that still says it would keep parking PRs with a tool that quietly still worked.
+        assert!(
+            Cli::try_parse_from(["prr", "flag-blocked-infra", "o/r", "1", "missing", "secret"])
+                .is_err(),
+            "flag-blocked-infra must be GONE, not merely unmentioned in the prompt"
+        );
         assert!(matches!(
             parse(&["prr", "flag-blocked-on", "o/r", "1", "waiting", "on", "#9"]),
             Cmd::FlagBlockedOn { .. }
@@ -15840,17 +16250,18 @@ mod cli_tests {
         assert_eq!(
             parse(&[
                 "prr",
-                "flag-blocked-infra",
+                "flag-blocked-deploy",
                 "o/r",
                 "1",
-                "missing",
-                "FLARE_RPC_URL",
+                "dispatch",
+                "returned",
+                "422",
                 "--dry-run"
             ]),
-            Cmd::FlagBlockedInfra {
+            Cmd::FlagBlockedDeploy {
                 slug: "o/r".to_string(),
                 pr: "1".to_string(),
-                reason: s(&["missing", "FLARE_RPC_URL"]),
+                reason: s(&["dispatch", "returned", "422"]),
                 dry_run: true,
             }
         );
@@ -16178,6 +16589,7 @@ mod cli_tests {
                 model: None,
                 exit_code: None,
                 preflight_missing: vec![],
+                infra: None,
             }
         );
         // The form the runners now use in place of the `| jq '. + {…}'` pipe.
@@ -16202,6 +16614,7 @@ mod cli_tests {
                 model: Some("claude-fable-5".to_string()),
                 exit_code: Some(0),
                 preflight_missing: vec![],
+                infra: None,
             }
         );
         // The abort form: `preflight` found nothing to render with, so the model never started.
@@ -16222,6 +16635,7 @@ mod cli_tests {
                 model: None,
                 exit_code: Some(12),
                 preflight_missing: vec!["pdftoppm".to_string(), "pdfinfo".to_string()],
+                infra: None,
             }
         );
     }
@@ -16635,11 +17049,14 @@ mod cli_tests {
         // that a declared binary would not resolve.
         let missing = vec!["pdftoppm".to_string()];
         assert_eq!(
-            classify_outcome("", 12, &missing),
+            classify_outcome("", 12, &missing, &InfraRecord::default()),
             TraceOutcome::ToolingFailure
         );
         // …and an empty list must not change what the trace already said.
-        assert_eq!(classify_outcome("", 0, &[]), TraceOutcome::Ok);
+        assert_eq!(
+            classify_outcome("", 0, &[], &InfraRecord::default()),
+            TraceOutcome::Ok
+        );
     }
 
     #[test]
@@ -16849,7 +17266,6 @@ mod worklist_tests {
         for label in [
             "ai:design",
             "ai:blocked-deploy",
-            "ai:blocked-infra",
             "ai:blocked-on",
             "ai:close-candidate",
         ] {
@@ -16866,6 +17282,24 @@ mod worklist_tests {
         let mut s = sig(Ci::Green, "CLEAN");
         s.state_label = Some("ai:ready".to_string());
         assert_eq!(next_action(&s), NextAction::GreenReady);
+    }
+
+    /// #108: the RETIRED `ai:blocked-infra` must NOT park. This is how the thirteen PRs a pre-#108
+    /// run froze free themselves — a label nothing writes is also a label nothing removes, so if it
+    /// kept parking them they would sit there forever waiting on a human who has no reason to look.
+    /// A red one goes straight back to 3b; a green one is presentable.
+    #[test]
+    fn the_retired_infra_label_no_longer_parks_a_pr() {
+        let mut red = sig(Ci::Red, "CLEAN");
+        red.state_label = Some(RETIRED_STATE_LABEL.to_string());
+        assert_eq!(
+            next_action(&red),
+            NextAction::Needs3b,
+            "a retired-label PR must re-enter the ordinary lifecycle, not stay frozen"
+        );
+        let mut green = sig(Ci::Green, "CLEAN");
+        green.state_label = Some(RETIRED_STATE_LABEL.to_string());
+        assert_eq!(next_action(&green), NextAction::GreenReady);
     }
 
     #[test]
@@ -22410,5 +22844,370 @@ mod closure_gate_tests {
             "`pdftoppm` exited on a signal: (no stderr)",
             "a signal death is not exit 0"
         );
+    }
+}
+
+#[cfg(test)]
+mod infra_down_tests {
+    use super::*;
+
+    /// A scratch dir per test, so nothing here reads or writes the process environment — the
+    /// record path is a parameter everywhere it matters.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("prr-infra-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).expect("scratch");
+        p
+    }
+
+    // ---- the timestamp the record carries -------------------------------------------------
+
+    /// The writer and the reader must agree. `epoch_to_iso` exists only to stamp the record, and
+    /// `iso_to_epoch_ms` is what every other timestamp in this binary is read with — so the record's
+    /// own `ts` has to survive that reader, including across the month/leap-year arithmetic where a
+    /// hand-rolled calendar is most likely to be wrong.
+    #[test]
+    fn the_record_timestamp_round_trips_through_the_reader_this_binary_already_uses() {
+        for secs in [
+            0,             // 1970-01-01T00:00:00Z
+            1_769_600_205, // 2026-01-28T…
+            1_774_000_000, // 2026-03-20T… (past a leap-day boundary)
+            1_767_225_599, // 2025-12-31T23:59:59Z
+            1_583_020_800, // 2020-03-01T00:00:00Z — the day AFTER a real leap day
+            4_102_444_800, // 2100-01-01T00:00:00Z — a non-leap century
+        ] {
+            let iso = epoch_to_iso(secs);
+            assert_eq!(
+                iso_to_epoch_ms(&iso),
+                Some(secs * 1000),
+                "{secs} stamped as {iso} did not read back"
+            );
+        }
+        assert_eq!(epoch_to_iso(0), "1970-01-01T00:00:00Z");
+        // Every field is zero-padded: an unpadded month would still parse as a DIFFERENT instant.
+        assert_eq!(epoch_to_iso(1_767_225_599), "2025-12-31T23:59:59Z");
+    }
+
+    // ---- the record itself -----------------------------------------------------------------
+
+    /// The record must name BOTH what is down and what would fix it. `rootCause` is the one flag
+    /// worth writing about an outage — and on the record it costs nothing to unpick, unlike the
+    /// seven `flag-blocked-on` labels the run that motivated this wrote instead.
+    #[test]
+    fn the_record_names_what_is_down_and_what_would_fix_it() {
+        let r = infra_record(
+            "fork RPCs: HTTP 500 across the fleet",
+            "rainlanguage/rainix#289",
+            "2026-07-28T11:25:00Z",
+        );
+        assert_eq!(r["record"], "infra");
+        assert_eq!(r["status"], "down");
+        assert_eq!(r["reason"], "fork RPCs: HTTP 500 across the fleet");
+        assert_eq!(r["rootCause"], "rainlanguage/rainix#289");
+        assert_eq!(r["ts"], "2026-07-28T11:25:00Z");
+    }
+
+    /// Only `record: "infra"` lines count. The file is shared with whatever else a future run wants
+    /// to append, and a foreign line must never be read as an outage.
+    #[test]
+    fn only_infra_lines_are_read_and_the_last_one_wins() {
+        let lines = concat!(
+            r#"{"record":"other","status":"down","reason":"not mine"}"#,
+            "\n",
+            r#"{"record":"infra","status":"down","reason":"first look","rootCause":""}"#,
+            "\n",
+            r#"{"record":"infra","status":"down","reason":"after diagnosis","rootCause":"o/r#289"}"#,
+            "\n",
+            // A foreign record AFTER the infra ones. "last line wins" must mean "last INFRA line
+            // wins" — a reader that took the last line of any kind would report this one, which is
+            // both `up` and about something else entirely.
+            r#"{"record":"gc","status":"up","reason":"swept 3 clones","rootCause":"nope"}"#,
+            "\n"
+        );
+        let rec = infra_record_from_lines(lines);
+        assert!(rec.down, "a later foreign record must not clear the outage");
+        assert_eq!(
+            rec.reason, "after diagnosis",
+            "the later INFRA call supersedes"
+        );
+        assert_eq!(rec.root_cause, "o/r#289");
+    }
+
+    /// A run that never hit an outage is not a blocked run, and neither is one whose record file
+    /// does not exist. Both must read as UP — the exit is expensive enough that it may only fire on
+    /// a line that positively says `down`.
+    #[test]
+    fn no_record_at_all_is_not_an_outage() {
+        assert!(!infra_record_from_lines("").down);
+        assert!(!infra_record_from_lines(r#"{"record":"other"}"#).down);
+        assert_eq!(infra_record_at(None), InfraRecord::default());
+        assert!(!infra_record_at(Some("/nonexistent/prr-infra-none.jsonl")).down);
+        // A line that is *about* infra but does not say `down` is not `down` either.
+        assert!(!infra_record_from_lines(r#"{"record":"infra","status":"up"}"#).down);
+    }
+
+    /// A killed run leaves a half-written final line, and a concurrent appender can leave a torn
+    /// one in the middle. An unparseable line is SKIPPED, never a stop: the records around it are
+    /// the whole point of the file, and a reader that gave up at the first bad byte would report a
+    /// blocked run as a normal one.
+    #[test]
+    fn an_unparseable_line_is_skipped_not_a_stop() {
+        // Garbage BEFORE the record that matters — a reader that aborts here reports `up`.
+        let interrupted = concat!(
+            r#"{"record":"infra","status":"up","reason":""}"#,
+            "\n",
+            "{not json at all",
+            "\n",
+            r#"{"record":"infra","status":"down","reason":"flare fork RPC 500s","rootCause":""}"#,
+            "\n"
+        );
+        let rec = infra_record_from_lines(interrupted);
+        assert!(rec.down, "a torn line must not hide the outage after it");
+        assert_eq!(rec.reason, "flare fork RPC 500s");
+
+        // Truncated FINAL line — the killed-run shape. What came before survives.
+        let truncated = concat!(
+            r#"{"record":"infra","status":"down","reason":"flare fork RPC 500s","rootCause":""}"#,
+            "\n",
+            r#"{"record":"infra","status":"do"#
+        );
+        let rec = infra_record_from_lines(truncated);
+        assert!(rec.down);
+        assert_eq!(rec.reason, "flare fork RPC 500s");
+    }
+
+    // ---- the mid-run exit ------------------------------------------------------------------
+
+    /// The whole subcommand: one line on the record, exit 12, and NOTHING else. The exit code is
+    /// what `campaign-run.sh` and the model both branch on.
+    #[test]
+    fn infra_down_records_the_finding_and_exits_12() {
+        let dir = scratch("write");
+        let path = dir.join("rec.jsonl");
+        let p = path.to_string_lossy().to_string();
+        assert_eq!(
+            infra_down_to(&p, "  flare fork RPC quota -32001  ", " o/r#289 "),
+            12,
+            "the exit code IS the mid-run exit path"
+        );
+        let rec = infra_record_at(Some(&p));
+        assert!(rec.down);
+        assert_eq!(rec.reason, "flare fork RPC quota -32001", "trimmed");
+        assert_eq!(rec.root_cause, "o/r#289");
+
+        // A second call APPENDS. "the last infra line wins" is only meaningful if the earlier ones
+        // are still there — a writer that truncated would make the reader's ordering rule vacuous
+        // and would erase a first finding the moment a better-informed second one arrived.
+        assert_eq!(infra_down_to(&p, "and now cachix too", ""), 12);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap().lines().count(),
+            2,
+            "the record is append-only"
+        );
+        assert_eq!(infra_record_at(Some(&p)).reason, "and now cachix too");
+    }
+
+    /// A record whose parent directory does not exist yet must still be written — the metrics dir
+    /// is created by the runner, but the subcommand is also usable by hand.
+    #[test]
+    fn the_record_directory_is_created_on_demand() {
+        let dir = scratch("mkdir");
+        let path = dir.join("nested").join("deeper").join("rec.jsonl");
+        let p = path.to_string_lossy().to_string();
+        assert_eq!(infra_down_to(&p, "cachix down", ""), 12);
+        assert!(path.exists(), "append must create the parent directory");
+    }
+
+    /// An empty reason is a usage error, not an outage: the reason IS the record, and a blank one
+    /// would end the run while telling a human nothing. Exit 2, and no line written.
+    #[test]
+    fn infra_down_refuses_an_empty_reason_and_writes_nothing() {
+        let dir = scratch("empty");
+        let path = dir.join("rec.jsonl");
+        let p = path.to_string_lossy().to_string();
+        assert_eq!(infra_down_to(&p, "   ", ""), 2);
+        assert!(!path.exists(), "a refused call must not write a record");
+        assert!(!infra_record_at(Some(&p)).down);
+    }
+
+    /// The runner's read-back. Exit 12 ONLY on a recorded outage — an absent or clean record is a
+    /// normal run, and turning that into an early exit would silently halve the pipeline.
+    #[test]
+    fn run_infra_exits_12_only_when_the_record_says_down() {
+        let dir = scratch("readback");
+        let clean = dir.join("clean.jsonl");
+        std::fs::write(&clean, "").unwrap();
+        assert_eq!(run_infra_mode(Some(&clean.to_string_lossy()), false), 0);
+        assert_eq!(
+            run_infra_mode(Some("/nonexistent/prr-infra-absent.jsonl"), false),
+            0,
+            "no record = the run was never blocked"
+        );
+        let down = dir.join("down.jsonl");
+        assert_eq!(
+            infra_down_to(&down.to_string_lossy(), "rpc dead", "o/r#1"),
+            12
+        );
+        assert_eq!(run_infra_mode(Some(&down.to_string_lossy()), false), 12);
+        assert_eq!(run_infra_mode(Some(&down.to_string_lossy()), true), 12);
+    }
+
+    /// The run-scoped env var wins over the install dir, and an EMPTY value counts as unset — an
+    /// exported-but-unassigned shell variable arrives as `Some("")`, and treating that as a path
+    /// would write the record to a file named nothing.
+    #[test]
+    fn the_run_scoped_path_wins_and_an_empty_value_counts_as_unset() {
+        assert_eq!(
+            run_record_path_from(Some("/run/.infra-20260728T111645Z.jsonl"), Some("/install")),
+            "/run/.infra-20260728T111645Z.jsonl"
+        );
+        assert_eq!(
+            run_record_path_from(None, Some("/install")),
+            "/install/metrics/run-infra.jsonl"
+        );
+        assert_eq!(
+            run_record_path_from(Some("  "), Some("/install")),
+            "/install/metrics/run-infra.jsonl"
+        );
+        assert_eq!(run_record_path_from(None, Some("")), "run-infra.jsonl");
+        assert_eq!(run_record_path_from(None, None), "run-infra.jsonl");
+    }
+
+    // ---- the error on the run record --------------------------------------------------------
+
+    /// An infra exit is NOT `ok` — that is the entire output of the feature, and a run that reads
+    /// `ok` is invisible on the dashboard. But it never outranks a worse story: the headline word
+    /// must be the worst thing that happened, or a quota-limited run would stop advancing the
+    /// model-fallback loop.
+    #[test]
+    fn an_infra_exit_is_not_ok_and_never_outranks_a_worse_outcome() {
+        let down = InfraRecord {
+            down: true,
+            reason: "fork RPC 500s".into(),
+            root_cause: String::new(),
+        };
+        let up = InfraRecord::default();
+        assert_eq!(
+            classify_outcome("", 0, &[], &down),
+            TraceOutcome::InfraDown,
+            "an otherwise-clean run that stopped early must not read as ok"
+        );
+        assert_eq!(classify_outcome("", 0, &[], &up), TraceOutcome::Ok);
+        // Worse outcomes win.
+        assert_eq!(classify_outcome("", 1, &[], &down), TraceOutcome::Error);
+        assert_eq!(
+            classify_outcome("", 0, &["pdftoppm".to_string()], &down),
+            TraceOutcome::ToolingFailure
+        );
+        let quota = r#"{"type":"result","api_error_status":429,"result":""}"#;
+        assert_eq!(
+            classify_outcome(quota, 0, &[], &down),
+            TraceOutcome::QuotaLimited,
+            "a quota refusal must still advance model fallback"
+        );
+        assert_eq!(TraceOutcome::InfraDown.as_str(), "infra-down");
+    }
+
+    /// The fields are ALWAYS present, so the dashboard can tell "infra was fine" from "this record
+    /// predates the fields" — the guarantee #91 gave `unreadableFiles`. They are also what makes a
+    /// repeat countable: `select(.infraDown)` over runs.jsonl is the whole chase.
+    #[test]
+    fn the_metrics_line_always_carries_the_infra_fields() {
+        let id = RunIdentity {
+            run_id: Some("20260728T111645Z"),
+            role: Some("producer"),
+            model: Some("claude-fable-5"),
+        };
+        let clean = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &id,
+            Some((0, TraceOutcome::Ok)),
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+        );
+        assert_eq!(clean["infraDown"], false);
+        assert_eq!(clean["infraReason"], "");
+        assert_eq!(clean["infraRootCause"], "");
+        assert_eq!(clean["outcome"], "ok");
+
+        let down = InfraRecord {
+            down: true,
+            reason: "fork RPCs erroring org-wide".into(),
+            root_cause: "rainlanguage/rainix#289".into(),
+        };
+        let doc = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &id,
+            Some((0, TraceOutcome::InfraDown)),
+            &ToolingReport::default(),
+            &[],
+            &down,
+        );
+        assert_eq!(doc["infraDown"], true);
+        assert_eq!(doc["infraReason"], "fork RPCs erroring org-wide");
+        assert_eq!(doc["infraRootCause"], "rainlanguage/rainix#289");
+        assert_eq!(doc["outcome"], "infra-down");
+    }
+
+    // ---- the retirement ---------------------------------------------------------------------
+
+    /// `ai:blocked-infra` must not be reachable as a destination — not in the writable state set,
+    /// and not as a noun a transition could name.
+    #[test]
+    fn the_retired_label_is_no_longer_a_destination() {
+        assert!(
+            !PRODUCER_STATE_LABELS.contains(&RETIRED_STATE_LABEL),
+            "the retired state must not be writable"
+        );
+        assert_eq!(PRODUCER_STATE_LABELS.len(), 3);
+        assert_eq!(state_noun(RETIRED_STATE_LABEL), "State");
+        for still_live in ["ai:design", "ai:blocked-deploy", "ai:blocked-on"] {
+            assert!(PRODUCER_STATE_LABELS.contains(&still_live));
+        }
+    }
+
+    /// …but a PR a pre-#108 run already parked stays VISIBLE in the queue. Dropping the label from
+    /// the classifier would make thirteen PRs reappear as `un-vetted` and hide the very thing that
+    /// needs unpicking.
+    #[test]
+    fn a_pr_still_carrying_the_retired_label_stays_visible_as_producer_blocked() {
+        assert_eq!(
+            classify_lane(&[RETIRED_STATE_LABEL.to_string()], None, false),
+            (Lane::ProducerBlocked, RETIRED_STATE_LABEL.to_string())
+        );
+        // A human decision still dominates it, as it dominates every other state.
+        assert_eq!(
+            classify_lane(
+                &["human:reject".to_string(), RETIRED_STATE_LABEL.to_string()],
+                None,
+                false
+            ),
+            (Lane::HumanDecisions, "human:reject".to_string())
+        );
+    }
+
+    /// The one-shot's target list: every open PR the search names, and nothing it cannot identify.
+    /// A row missing its repo or number is skipped rather than guessed at — this edits PRs.
+    #[test]
+    fn retire_targets_reads_every_identifiable_pr_and_skips_the_rest() {
+        let search = serde_json::json!([
+            {"number": 535, "repository": {"nameWithOwner": "rainlanguage/rainlang"}},
+            {"number": 385, "repository": {"nameWithOwner": "cyclofinance/cyclo.site"}},
+            {"number": 60},
+            {"repository": {"nameWithOwner": "rainlanguage/rain.dia"}},
+            {"number": 1, "repository": {}}
+        ]);
+        assert_eq!(
+            retire_targets(&search),
+            vec![
+                ("rainlanguage/rainlang".to_string(), 535),
+                ("cyclofinance/cyclo.site".to_string(), 385),
+            ]
+        );
+        assert!(retire_targets(&serde_json::json!([])).is_empty());
+        assert!(retire_targets(&serde_json::Value::Null).is_empty());
     }
 }

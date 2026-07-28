@@ -111,9 +111,21 @@ export INSTALL_DIR="$DIR"
 
 # rotate per-run traces (keep newest $KEEP_RUNS .jsonl + their .err sidecars)
 find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d" " -f2- | tail -n +$((KEEP_RUNS + 1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
+# per-run infra records (#108): kept a week so the last few runs' raw records can be read by hand,
+# then dropped — their contents are already folded into metrics/runs.jsonl, which is the durable copy.
+find "$DIR/metrics" -maxdepth 1 -name ".infra-*.jsonl" -mtime +7 -delete 2>/dev/null
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
+
+# --- the run's infra record (#108) -------------------------------------------------------------
+# Where `infra-down` writes and where `run-metrics` / `run-infra` read it back. Named for THIS run's
+# id, so one run's finding can never be read as another's — the staleness bug a fixed path would
+# have had, and the reason the model is never asked to pass a path it could get wrong.
+# It replaces the `ai:blocked-infra` label: ending the run leaves NO state on GitHub, only this line.
+INFRAREC="$DIR/metrics/.infra-$TS.jsonl"
+export RUN_INFRA_FILE="$INFRAREC"
+rm -f "$INFRAREC"
 
 # --- harness read-time dependencies: resolved BEFORE a token is spent -------------------------
 # Same check, same reason, as review-run.sh. The producer drains the `audit`-labelled backlog
@@ -134,12 +146,58 @@ if [ "$_pfrc" -ne 0 ]; then
   exit "$_pfrc"
 fi
 
+# --- per-run scratch: the ONE place this run may write throwaway files ------------------------
+# WHY IT EXISTS: with no designated path, every run invented its own at the root of a clone root
+# and nothing ever reclaimed them — `covered.json`, `covered-set.json`, `covered_set.json`,
+# `covered-keys.json`, `covered-map.json`, `covered-issues.json`, `covered_issues.json`: seven
+# names for one notion, six weeks deep, and `.gitignore`'s `/*` kept the pile invisible (#106).
+#
+# WHY IT NEEDS AN ALLOW RULE, NOT JUST `--add-dir`: verified against claude 2.1.220. A bash output
+# REDIRECTION is a `create` operation, and working-directory membership — which is all that
+# `--add-dir` and `permissions.additionalDirectories` confer — short-circuits to allow for `read`
+# or in `acceptEdits` mode ONLY. Under `--permission-mode default` a `create` falls through to an
+# EDIT-KIND ALLOW RULE, so `--add-dir $SCRATCH_DIR` on its own still leaves `... > $SCRATCH_DIR/x`
+# refused — and refused by a message that lists the directory as allowed, which is precisely what
+# sent the producer hunting for a legal path that did not exist. `--allowedTools` below is the
+# grant that works. Its `//` prefix is load-bearing: `Edit(/abs/**)` is silently inert; only
+# `Edit(//abs/**)` matches an absolute path.
+#
+# PER-RUN, NOT PERSISTENT: nothing accumulates, and no run can read another run's half-written
+# state and mistake it for its own. Nothing is lost by deleting it — every tool call and its full
+# output is already in this run's trace ($RUNLOG), which is the post-mortem source and is retained
+# $KEEP_RUNS deep. A persistent dir would have to be taught to the gc, and the gc only recognises
+# directories containing `.git` (it sweeps work CLONES), so it would never have reclaimed this.
+#
+# It lives UNDER $WORK_DIR so the model can Read/Glob it back with no further configuration — the
+# whole point is writing something down and re-reading it instead of paying for the call twice —
+# and so scratch shares the disk already sized for clones. gc ignores it (no `.git` inside).
+# $TS alone is NOT unique: the flock is per-INSTALL-dir while WORK_DIR defaults to $HOME/code, so
+# two installs sharing a WORK_DIR run concurrently by design and can start within the same second.
+# $$ makes the path unique per PROCESS, which is what actually distinguishes them.
+SCRATCH_DIR="$WORK_DIR/scratch/$TS-$$"
+# A run killed outright (SIGKILL, box reboot) never reaches its own cleanup, so reclaim on the way
+# IN as well as on the way out. AGE-BOUNDED rather than "everything that is not mine", for the same
+# concurrency reason: an unbounded sweep would delete a live sibling run's scratch out from under
+# it. `-mmin +1440` and not `-mtime +1` — the latter truncates to whole days, so it would leave a
+# 25-hour-old directory in place until it was 48 hours old. A day is far past MAXTIME either way.
+find "$WORK_DIR/scratch" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null
+# errexit is off in this runner, so an unchecked mkdir would fall through on a full disk or a
+# permission fault and hand the model an authorised path that does not exist — every redirect into
+# it failing, which is exactly the state before #106, minus the clue. Same reading as the `cd
+# "$WORK_DIR" || exit 1` above: if the run cannot have its work area, it does not start.
+if ! mkdir -p "$SCRATCH_DIR"; then
+  echo "$(date -u +%FT%TZ) campaign run ABORT: cannot create scratch dir '$SCRATCH_DIR'" >> "$LOG"
+  exit 1
+fi
+export SCRATCH_DIR
+
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
               -e "s#{{INSTALL_DIR}}#$DIR#g" \
+              -e "s#{{SCRATCH_DIR}}#$SCRATCH_DIR#g" \
               "$DIR/campaign-prompt.txt")"
 
 {
@@ -177,6 +235,7 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     --verbose --output-format stream-json \
     --add-dir "$WORK_DIR" \
     --add-dir "$DIR" \
+    --allowedTools "Edit(//$SCRATCH_DIR/**)" \
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
     | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
@@ -213,6 +272,28 @@ echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)
 if [ -s "$RUNLOG" ]; then
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role producer --model "$USED_MODEL" --exit-code "$rc" \
+    --infra "$INFRAREC" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+fi
+
+# Reclaim this run's scratch. This is what makes the footprint one run's worth rather than a
+# growing pile: the metrics line above has already read everything durable off the run, and the
+# trace holds the content of anything the model wrote here. Unconditional — a failed run's scratch
+# is no more informative than a successful one's, because the trace records both identically.
+[ -n "${SCRATCH_DIR:-}" ] && rm -rf "$SCRATCH_DIR"
+
+# --- did the run end because the infrastructure was down? (#108) ------------------------------
+# Every other exit in this script is PRE-MODEL: disabled, usage-gated, locked, preflight. So nothing
+# the model LEARNED could ever end its run — it could only label the victims and carry on queueing
+# work behind the same dead infrastructure, which is what run 20260728T111645Z did. `run-infra` reads
+# the finding the model recorded mid-flight and exits 12. That code is the preflight abort's, and it
+# means the same thing: the run could not usefully proceed, the code is fine, retry next tick. The
+# fact is already on the metrics line above, so the record survives the exit, and the record file
+# itself is per-run and rotates with the traces.
+_ri="$(pr-review-report run-infra "$INFRAREC")"; _rirc=$?
+printf '%s\n' "$_ri" | sed 's/^/  /' >> "$LOG"
+if [ "$_rirc" -eq 12 ]; then
+  echo "$(date -u +%FT%TZ) campaign run ENDED EARLY: infrastructure down (see infraReason in metrics/runs.jsonl)" >> "$LOG"
+  exit 12
 fi
 exit 0
