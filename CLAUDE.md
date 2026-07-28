@@ -41,6 +41,17 @@ tracked by #10. A hook is not an excuse to leave a transition loose; it is what
 holds the invariant while it still is. See
 [README.md](README.md#pretooluse-guards--what-a-prompt-cannot-hold).
 
+**A PreToolUse guard is a guard against honest omission, not a security
+boundary.** It reads a command line with a lexer that resolves quoting and
+nothing else — it is not bash and never will be — so a determined bypass always
+exists (a script file it cannot read, a variable it cannot expand). What these
+guards buy is that the common ACCIDENT becomes impossible: forgetting the QA
+block, or reaching for a `nix`-wrapped `gh` out of habit. Where the gate cannot
+tell what a command does it refuses and says so, which is the right posture for
+an accident but is not the same thing as enforcement. Do not cite one as proof
+that a rule cannot be broken — cite it as proof that breaking it has to be
+deliberate.
+
 ## Transitions (subcommands)
 
 The state diagram lives in [README.md](README.md#pipeline-state-machine). The

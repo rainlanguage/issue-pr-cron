@@ -637,6 +637,75 @@ fn a_second_pr_create_in_one_command_is_not_missed() {
 }
 
 #[test]
+fn a_pr_create_assembled_through_a_variable_is_refused() {
+    let f = Fixture::new("expanded-word");
+    let bare = f.body_file("bare.md", "Closes #1\n");
+    // `C=create; gh pr $C …` is `gh pr create` to bash and three unrelated words to a literal
+    // match, so the gate would find no invocation, read no body, and allow the open — one shell
+    // variable defeating the whole thing. The lexer resolves quoting, never expansion, so where a
+    // word in the invocation position is unevaluable the gate cannot tell what the command is, and
+    // "cannot tell" is a refusal.
+    for cmd in [
+        format!("C=create; gh pr $C --title t --body-file {bare}"),
+        format!("gh pr $(echo create) --title t --body-file {bare}"),
+        format!("gh pr `echo create` --title t --body-file {bare}"),
+        format!("gh $SUB create --title t --body-file {bare}"),
+        format!("timeout 60 gh pr $C --title t --body-file {bare}"),
+    ] {
+        let (code, err) = f.bash(&cmd);
+        assert_blocked(code, &err);
+        assert!(
+            err.contains("cannot tell which words are the invocation"),
+            "{cmd}: the refusal must say WHY it cannot check, so the way out is obvious: {err}"
+        );
+    }
+    // The way out the refusal prints has to actually work: written literally, the same open is
+    // judged on its body like any other.
+    let good = f.body_file("good.md", COMPLETE_BLOCK);
+    let (code, err) = f.bash(&format!("gh pr create --title t --body-file {good}"));
+    assert_allowed(code, &err);
+}
+
+#[test]
+fn an_expansion_that_is_not_the_invocation_is_left_alone() {
+    let f = Fixture::new("expansion-elsewhere");
+    let good = f.body_file("good.md", COMPLETE_BLOCK);
+    // The rule costs something, so it is bounded: TWO of the three words must still be literal.
+    // Without that bound every command carrying a couple of variables near the word "create" is
+    // refused, and a gate that blocks `gh pr view $N` to catch `gh pr $C` is not worth deploying.
+    for cmd in [
+        "gh pr view $N --json body".to_string(),
+        "gh pr list --state $STATE".to_string(),
+        "echo $A $B create".to_string(),
+        "mkdir -p $DIR && cd $DIR".to_string(),
+        format!("gh pr create --title t --body-file {good}"),
+        // The `$` is in the BODY, which is data, not the invocation.
+        "gh pr create --title t --body \"the fee is $5\n\n## QA\n\
+         - Discriminating tests: t_one\n- Mutations applied: L1 -> flip -> t_one\n\
+         - Oracle: the issue\n- Category check: asks A; covered A\""
+            .to_string(),
+    ] {
+        let (code, err) = f.bash(&cmd);
+        assert_allowed(code, &err);
+    }
+}
+
+#[test]
+fn an_eval_wrapped_pr_create_is_still_gated() {
+    let f = Fixture::new("eval-wrapped");
+    // `eval` is the shell interpreting its own argument — the same hand-off as `bash -c`, and
+    // otherwise a clean way past every literal word match here, because the whole command is one
+    // token. It is followed for the same reason and with the same depth limit.
+    let (code, err) = f.bash("eval \"gh pr create --title t --body 'no evidence'\"");
+    assert_blocked(code, &err);
+    let good = f.body_file("good.md", COMPLETE_BLOCK);
+    let (code, err) = f.bash(&format!(
+        "eval \"gh pr create --title t --body-file {good}\""
+    ));
+    assert_allowed(code, &err);
+}
+
+#[test]
 fn a_draft_pr_is_gated_too() {
     let f = Fixture::new("draft");
     let bare = f.body_file("bare.md", "Closes #1\n");

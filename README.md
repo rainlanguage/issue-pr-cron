@@ -529,6 +529,14 @@ Its behaviour is covered by `pr-review-report-rs/tests/require_qa_block.rs` — 
 content invariant on a command line is all parsing, and parsing is not something
 a static read of the source can judge.
 
+**None of the three is a security boundary.** They read a command line with a
+lexer that resolves quoting and nothing else, so a determined bypass always
+exists — a script file the gate cannot read, an expansion it does not perform.
+Where the QA gate can see that a word it needs is unevaluable (`gh pr $C`) it
+refuses and says why; where it cannot see that at all, the command runs. What
+these guards buy is that the common ACCIDENT becomes impossible, not that
+evasion does.
+
 ## Configuration
 
 Deployment-specific values are **not** committed. Copy `cron.env.example` to

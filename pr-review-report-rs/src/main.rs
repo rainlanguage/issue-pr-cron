@@ -7076,6 +7076,9 @@ enum Refusal {
     NoBody,
     /// The command line does not lex, and still looks like a PR open. Fails CLOSED.
     Unparseable,
+    /// The command lexed, but the invocation is not three literal words — a `$VAR` or a `$(…)` sits
+    /// where `gh`, `pr` or `create` should be, so there is no argument list to read a body out of.
+    UnresolvedInvocation,
     /// The body has no `## QA` heading anywhere.
     NoHeading { source: String },
     /// There is a `## QA` section, but it is not the block.
@@ -7113,6 +7116,11 @@ impl Refusal {
             Refusal::Unparseable => {
                 "could not parse this command line, so its PR body cannot be checked.".to_string()
             }
+            Refusal::UnresolvedInvocation => {
+                "this opens a PR through a variable or substitution, so the gate cannot tell which \
+                 words are the invocation or which file is the body."
+                    .to_string()
+            }
             Refusal::NoHeading { source } => {
                 format!("the body ({source}) has no `## QA` heading.")
             }
@@ -7132,7 +7140,7 @@ impl Refusal {
             Refusal::GeneratedBody | Refusal::NoBody => {
                 "Pass `--body-file <absolute path>` with the section-8 block in it."
             }
-            Refusal::Unparseable => {
+            Refusal::Unparseable | Refusal::UnresolvedInvocation => {
                 "Open the PR with a plain `gh pr create … --body-file <absolute path>`."
             }
             Refusal::NoHeading { .. } => "",
@@ -7373,6 +7381,58 @@ fn segments(tokens: &[String]) -> Vec<Vec<String>> {
     out
 }
 
+/// The three words that name the invocation, in order.
+const PR_CREATE_WORDS: [&str; 3] = ["gh", "pr", "create"];
+
+/// A segment's non-flag words, each with its index in the segment.
+fn non_flag_words(seg: &[String]) -> Vec<(usize, &str)> {
+    seg.iter()
+        .enumerate()
+        .filter(|(_, t)| !t.starts_with('-'))
+        .map(|(i, t)| (i, t.as_str()))
+        .collect()
+}
+
+/// A word whose VALUE the gate does not know: it still carries an unexpanded expansion.
+///
+/// The lexer resolves quoting and nothing else, deliberately — so a `$VAR`, a `$(…)` or a backtick
+/// reaches it verbatim while the shell replaces it with whatever it likes.
+fn is_unexpanded(word: &str) -> bool {
+    word.contains('$') || word.contains('`')
+}
+
+/// Does this segment run a `gh pr create` that [`pr_create_spans`] cannot see?
+///
+/// `C=create; gh pr $C …` is `gh pr create` to bash and three unrelated words to a literal match,
+/// so the gate would find no invocation, read no body, and allow the open. Where a word in the
+/// invocation position is unevaluable the gate cannot tell what the command is — and "cannot tell"
+/// has to be a refusal, the same posture the unlexable branch already takes. Without this, a
+/// command that FAILS to lex is treated as suspicious while one that lexes into something
+/// unrecognisable is treated as safe, and the second is far the easier to produce.
+///
+/// TWO of the three positions must still match literally, and exactly one be unevaluable. One
+/// literal is not enough: `echo $A $B create` would then be refused for having variables near the
+/// word "create", and the gate would start blocking ordinary commands to catch a spelling nobody
+/// produces by accident. That bound is what keeps `gh pr view $N`, `gh pr list` and
+/// `--body "the fee is $5"` untouched.
+fn segment_hides_pr_create(seg: &[String]) -> bool {
+    let words: Vec<&str> = non_flag_words(seg).into_iter().map(|(_, t)| t).collect();
+    words.windows(3).any(|w| {
+        let mut opaque = 0usize;
+        let shaped = w.iter().zip(PR_CREATE_WORDS).all(|(got, want)| {
+            if *got == want {
+                true
+            } else if is_unexpanded(got) {
+                opaque += 1;
+                true
+            } else {
+                false
+            }
+        });
+        shaped && opaque == 1
+    })
+}
+
 /// `[start, end)` index ranges of each `gh pr create` invocation inside one segment.
 ///
 /// Matches `gh` `pr` `create` as CONSECUTIVE NON-FLAG WORDS rather than at the head of the segment,
@@ -7382,15 +7442,10 @@ fn segments(tokens: &[String]) -> Vec<Vec<String>> {
 /// (`hooks/block-nix-wrap-gh.sh`). Three consecutive UNQUOTED words cannot be spoofed by a
 /// `--title "gh pr create"`, which the lexer already collapsed into one token.
 fn pr_create_spans(seg: &[String]) -> Vec<(usize, usize)> {
-    let words: Vec<(usize, &str)> = seg
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| !t.starts_with('-'))
-        .map(|(i, t)| (i, t.as_str()))
-        .collect();
+    let words = non_flag_words(seg);
     let starts: Vec<usize> = words
         .windows(3)
-        .filter(|w| [w[0].1, w[1].1, w[2].1] == ["gh", "pr", "create"])
+        .filter(|w| [w[0].1, w[1].1, w[2].1] == PR_CREATE_WORDS)
         .map(|w| w[0].0)
         .collect();
     starts
@@ -7562,11 +7617,20 @@ fn invocation_bodies(argv: &[String], base: &str) -> Result<(Vec<BodyArg>, bool)
 /// `gh` `pr` `create` word sequence to find and would sail through — the same wrapper bypass
 /// `hooks/block-nix-wrap-gh.sh` exists for. Each payload is re-checked as a command in its own right.
 ///
-/// Only the argument of a `-…c` flag is followed — `bash -c`, `sh -c`, `bash -lc`, `zsh -ic`, and
-/// the `nix shell … --command bash -c` spelling, whose inner `-c` is what carries the script. Never
-/// a `--body` value, so quoting `gh pr create` inside a PR body cannot trigger it. A `--command`
-/// whose argument is a bare word list needs nothing here: those tokens stay on the line and the
-/// ordinary word-sequence match already sees them.
+/// Two things are followed, and only two. The argument of a `-…c` flag — `bash -c`, `sh -c`,
+/// `bash -lc`, `zsh -ic`, and the `nix shell … --command bash -c` spelling, whose inner `-c` is what
+/// carries the script. And the argument of `eval`, which is the shell interpreting its own argument
+/// and is otherwise a clean way past every literal word match here.
+///
+/// The distinction that matters is whether the token is EXECUTED, not whether it looks like a
+/// command: `eval "gh pr create …"` and `grep "gh pr create" file` are the same shape to a text
+/// scan, and only the first runs. That is why this keys on the executing word rather than on the
+/// payload's contents — a scan of the raw line would have to refuse the grep too, and grepping this
+/// repo's own prompt for `gh pr create` is routine.
+///
+/// Never a `--body` value, so quoting `gh pr create` inside a PR body cannot trigger it. A
+/// `--command` whose argument is a bare word list needs nothing here: those tokens stay on the line
+/// and the ordinary word-sequence match already sees them.
 ///
 /// The bash hook this replaced also required the payload to contain whitespace. That guard is
 /// dropped because it cannot change a verdict: a payload with no whitespace lexes to a single token,
@@ -7574,15 +7638,16 @@ fn invocation_bodies(argv: &[String], base: &str) -> Result<(Vec<BodyArg>, bool)
 /// argument, so re-checking it always returns `Ok`. Keeping it would be a branch no test could
 /// defend.
 fn nested_commands(tokens: &[String]) -> Vec<&str> {
-    let is_interpreter_flag = |t: &str| {
-        t.len() >= 2
-            && t.starts_with('-')
-            && t.ends_with('c')
-            && t[1..].chars().all(|c| c.is_ascii_alphabetic())
+    let hands_off_next = |t: &str| {
+        t == "eval"
+            || (t.len() >= 2
+                && t.starts_with('-')
+                && t.ends_with('c')
+                && t[1..].chars().all(|c| c.is_ascii_alphabetic()))
     };
     tokens
         .windows(2)
-        .filter(|w| is_interpreter_flag(&w[0]))
+        .filter(|w| hands_off_next(&w[0]))
         .map(|w| w[1].as_str())
         .collect()
 }
@@ -7745,6 +7810,12 @@ fn check_command(command: &str, cwd: &str, depth: usize) -> Result<(), Refusal> 
     // directory it will actually run in.
     let mut base = cwd.to_string();
     for seg in segments(&tokens) {
+        // Before looking for the invocation, check that it is not HIDDEN. A `gh pr $C` the word
+        // match cannot see would otherwise fall out of the loop below and straight into `Ok(())` —
+        // the asymmetry that made an unlexable line suspicious and an unrecognisable one safe.
+        if segment_hides_pr_create(&seg) {
+            return Err(Refusal::UnresolvedInvocation);
+        }
         let mut prev = 0;
         for (start, end) in pr_create_spans(&seg) {
             base = apply_cds(&base, &seg[prev..start]);
