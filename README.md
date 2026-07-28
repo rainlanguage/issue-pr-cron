@@ -754,14 +754,14 @@ was precisely the one that left no trace of them at all.
 reported zeros. `usage` records fix that for the input side, and are honest
 about the rest:
 
-| field           | live (`usage`) | final     | notes                              |
-| --------------- | -------------- | --------- | ---------------------------------- |
-| `tokensIn`      | exact          | exact     |                                    |
-| `cacheRead`     | exact          | exact     | the term that runs away            |
-| `cacheCreation` | exact          | exact     |                                    |
-| `messages`      | exact          | —         | distinct main-thread messages       |
-| `tokensOut`     | **absent**     | exact     | not knowable mid-run — see below   |
-| `costUsd`       | absent         | exact     | needs `tokensOut`                  |
+| field           | live (`usage`) | final | notes                            |
+| --------------- | -------------- | ----- | -------------------------------- |
+| `tokensIn`      | exact          | exact |                                  |
+| `cacheRead`     | exact          | exact | the term that runs away          |
+| `cacheCreation` | exact          | exact |                                  |
+| `messages`      | exact          | —     | distinct main-thread messages    |
+| `tokensOut`     | **absent**     | exact | not knowable mid-run — see below |
+| `costUsd`       | absent         | exact | needs `tokensOut`                |
 
 The trace **cannot be naively summed**, in two independent ways, and both wrong
 answers look plausible. On `review-runs/20260728T100257Z.jsonl`:
@@ -779,24 +779,24 @@ authoritative (the `result` event)        cacheRead  6,099,441   output 41,026
    `message.id`.
 2. Events with a `parent_tool_use_id` are a **Task subagent's** messages, and
    `result.usage` does not include them (only `modelUsage` does). In
-   `runs/20260718T050002Z.jsonl` they are worth 23.1M cache-read tokens — 66%
-   on top of that run's own reported total.
+   `runs/20260718T050002Z.jsonl` they are worth 23.1M cache-read tokens — 66% on
+   top of that run's own reported total.
 
-With both corrections the live probe reproduces `result.usage` **exactly** on
-77 of the 81 archived traces that have a `result`. The 4 that differ are the
-only ones with more than one top-level `result` — several claude invocations
-appended to one file, where `run-metrics` deliberately reports just the
-largest. The live filter cannot hit that case: it sits in one invocation's pipe.
+With both corrections the live probe reproduces `result.usage` **exactly** on 77
+of the 81 archived traces that have a `result`. The 4 that differ are the only
+ones with more than one top-level `result` — several claude invocations appended
+to one file, where `run-metrics` deliberately reports just the largest. The live
+filter cannot hit that case: it sits in one invocation's pipe.
 
 **`tokensOut` is deliberately absent from `usage` records.** `output_tokens` on
-an `assistant` event is a snapshot taken at message START, not a streaming
-delta — it reads 2–5 on messages that went on to emit ~1,100 tokens, which is
-why every repeat of a message id carries the same value. Across the 60 traces
-with a terminal total, the deduped sum is 0.2%–20.6% of the truth. The only
-other output signal in the stream is `system`/`thinking_tokens`, which is both
+an `assistant` event is a snapshot taken at message START, not a streaming delta
+— it reads 2–5 on messages that went on to emit ~1,100 tokens, which is why
+every repeat of a message id carries the same value. Across the 60 traces with a
+terminal total, the deduped sum is 0.2%–20.6% of the truth. The only other
+output signal in the stream is `system`/`thinking_tokens`, which is both
 explicitly an estimate and thinking-only: 9.7%–76.2% of true output across 53
-traces. An exhaustive scan of every numeric token/usage/cost field across all
-97 traces found no third source. So there is no live output count rather than a
+traces. An exhaustive scan of every numeric token/usage/cost field across all 97
+traces found no third source. So there is no live output count rather than a
 guessed one.
 
 That still leaves a real gauge: solving each model's per-token rates out of its
@@ -818,7 +818,7 @@ window word the API uses, always present and `{}` when the run saw no events:
 must not be erased by an `allowed` at minute twenty, since explaining that
 rejection is the entire reason the field exists. `resetsAt` and `utilization`
 are the last seen. `utilization` is a **fraction in 0..=1** as the wire spells
-it, which is *not* the unit `usage-gate` works in (a 0..=100 percent).
+it, which is _not_ the unit `usage-gate` works in (a 0..=100 percent).
 
 `usage-gate` paces on `seven_day` only and deliberately does **not** gate on
 `five_hour` — the reasoning is on `parse_seven_day` in `src/main.rs`. In short:
