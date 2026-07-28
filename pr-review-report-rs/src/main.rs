@@ -7204,45 +7204,55 @@ fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
     haystack.to_ascii_lowercase().contains(needle)
 }
 
-/// The END offset of the first WORD-BOUNDED, case-insensitive `needle` at or after `from`.
+/// The END offset of the first WORD-BOUNDED `needle` at or after `from`. Case-SENSITIVE.
 ///
 /// A word boundary is the regex one: the character either side must not be alphanumeric or `_`.
 /// Returning the end (not the start) is what lets a caller chain searches for words that must
 /// appear IN ORDER, which is how the unparseable-command check recognises `gh … pr … create`.
-fn find_word_ignore_case(haystack: &str, needle: &str, from: usize) -> Option<usize> {
-    // ASCII-lowercasing is byte-for-byte length-preserving, so offsets into `hay` are offsets into
-    // `haystack` — which is what lets a caller resume from a previous match's end.
-    let hay = haystack.to_ascii_lowercase();
+fn find_word(haystack: &str, needle: &str, from: usize) -> Option<usize> {
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
     let mut at = from;
-    while at <= hay.len() {
-        let rel = hay[at..].find(needle)?;
+    while at <= haystack.len() {
+        let rel = haystack[at..].find(needle)?;
         let start = at + rel;
         let end = start + needle.len();
-        let before_ok = hay[..start].chars().next_back().is_none_or(|c| !is_word(c));
-        let after_ok = hay[end..].chars().next().is_none_or(|c| !is_word(c));
+        let before_ok = haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_word(c));
+        let after_ok = haystack[end..].chars().next().is_none_or(|c| !is_word(c));
         if before_ok && after_ok {
             return Some(end);
         }
         // Advance past this occurrence's first character, staying on a character boundary so the
         // next slice cannot panic on a multi-byte body (em dashes are everywhere in these bodies).
         at = start + 1;
-        while at < hay.len() && !hay.is_char_boundary(at) {
+        while at < haystack.len() && !haystack.is_char_boundary(at) {
             at += 1;
         }
     }
     None
 }
 
+/// [`find_word`] with the haystack ASCII-folded; `needle` must already be lowercase.
+///
+/// ASCII-lowercasing is byte-for-byte length-preserving, so an offset into the folded copy is an
+/// offset into the original — which is what lets a caller resume from a previous match's end.
+fn find_word_ignore_case(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    find_word(&haystack.to_ascii_lowercase(), needle, from)
+}
+
 /// Does an UNPARSEABLE command line still look like it opens a PR?
 ///
-/// `gh`, then `pr`, then `create`, each as a whole word, in that order. Only reached when the
-/// lexer gave up, and only to decide whether to fail closed — a parse failure must never become
-/// the way through.
+/// `gh`, then `pr`, then `create`, each as a whole word, in that order — and in that CASE, which is
+/// the same bar the ordinary token match applies. A fallback that recognised MORE than its primary
+/// would refuse lines the primary lets straight through, which is a gate that disagrees with itself
+/// depending on whether the line happened to lex. Only reached when the lexer gave up, and only to
+/// decide whether to fail closed — a parse failure must never become the way through.
 fn looks_like_pr_create(command: &str) -> bool {
-    find_word_ignore_case(command, "gh", 0)
-        .and_then(|i| find_word_ignore_case(command, "pr", i))
-        .and_then(|i| find_word_ignore_case(command, "create", i))
+    find_word(command, "gh", 0)
+        .and_then(|i| find_word(command, "pr", i))
+        .and_then(|i| find_word(command, "create", i))
         .is_some()
 }
 

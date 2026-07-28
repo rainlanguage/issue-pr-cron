@@ -727,6 +727,10 @@ fn commands_that_do_not_open_a_pr_pass_through() {
         // on the box, which is a far worse failure than the one this gate guards.
         "git commit -m \"unterminated",
         "echo \"create a pr with gh",
+        // …and this one names them in order but not in the case the shell would run. The ordinary
+        // token match is case-sensitive, so a fallback that folded case would refuse a line its
+        // own primary path lets straight through.
+        "echo \"GH PR CREATE checklist: unterminated",
     ] {
         let (code, err) = f.bash(cmd);
         assert_eq!(code, 0, "{cmd} must pass through untouched: {err}");
