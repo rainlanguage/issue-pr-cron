@@ -205,9 +205,27 @@
       },
       {
         "repo": "rainlanguage/rain.dia",
+        "number": 63,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/63",
+        "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
+      },
+      {
+        "repo": "rainlanguage/rain.dia",
         "number": 60,
         "url": "https://github.com/rainlanguage/rain.dia/pull/60",
         "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
+      },
+      {
+        "repo": "rainlanguage/rain.dia",
+        "number": 58,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/58",
+        "title": "fix(ci): conform main to rainix one-contract and Build.sol gates"
+      },
+      {
+        "repo": "rainlanguage/rain.dia",
+        "number": 55,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/55",
+        "title": "Consolidate pointer codegen to canonical script/Build.sol"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -232,6 +250,12 @@
         "number": 150,
         "url": "https://github.com/S01-Issuer/st0x.deploy/pull/150",
         "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.sol",
+        "number": 42,
+        "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
+        "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
       },
       {
         "repo": "rainlanguage/rain.strategies",
@@ -296,12 +320,6 @@
         "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
       },
       {
-        "repo": "rainlanguage/rain.dia",
-        "number": 63,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/63",
-        "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 428,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
@@ -312,12 +330,6 @@
         "number": 260,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/260",
         "title": "docs(op): document convertToAssets rounding direction in run() NatSpec"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 58,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/58",
-        "title": "fix(ci): conform main to rainix one-contract and Build.sol gates"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -470,12 +482,6 @@
         "number": 62,
         "url": "https://github.com/rainlanguage/rain.dia/pull/62",
         "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 55,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/55",
-        "title": "Consolidate pointer codegen to canonical script/Build.sol"
       },
       {
         "repo": "rainlanguage/rain.sol.codegen",
@@ -913,6 +919,12 @@
         "count": 8,
         "prs": [
           {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 142,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
+            "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty"
+          },
+          {
             "repo": "cyclofinance/cyclo.site",
             "number": 410,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
@@ -947,12 +959,6 @@
             "number": 475,
             "url": "https://github.com/rainlanguage/flow/pull/475",
             "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
-          },
-          {
-            "repo": "cyclofinance/cyclo.sol",
-            "number": 42,
-            "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
-            "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1156,117 +1162,9 @@
       }
     },
     "vet-lifecycle": {
-      "un-vetted": {
-        "count": 4,
+      "awaiting-re-vet": {
+        "count": 21,
         "prs": [
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 142,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
-            "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty"
-          },
-          {
-            "repo": "rainlanguage/rain.uniswap",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.uniswap/pull/31",
-            "title": "2024 06 23 sushi v3"
-          },
-          {
-            "repo": "rainlanguage/rain-protocol",
-            "number": 675,
-            "url": "https://github.com/rainlanguage/rain-protocol/pull/675",
-            "title": "remove ob"
-          },
-          {
-            "repo": "rainlanguage/rain-protocol",
-            "number": 613,
-            "url": "https://github.com/rainlanguage/rain-protocol/pull/613",
-            "title": "add generic errors for integrity operand overflow and underflow"
-          }
-        ]
-      }
-    },
-    "vetter-verdicts": {
-      "ai:design": {
-        "count": 10,
-        "prs": [
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-            "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-            "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 289,
-            "url": "https://github.com/rainlanguage/rainix/pull/289",
-            "title": "Fail over fork RPC endpoints with an archive-aware preflight"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/60",
-            "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 426,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
-            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 161,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/161",
-            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2702,
-            "url": "https://github.com/rainlanguage/raindex/pull/2702",
-            "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 150,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/150",
-            "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
-          },
-          {
-            "repo": "rainlanguage/rain.strategies",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
-            "title": "v5 for dynamic spread"
-          },
-          {
-            "repo": "rainlanguage/rain.subgraph.docker",
-            "number": 3,
-            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
-            "title": "2023 12 23 anvil"
-          }
-        ]
-      },
-      "ai:ready": {
-        "count": 33,
-        "prs": [
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 50,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
-            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 118,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/118",
-            "title": "test: pin sourceCount(hex\"00\") == 0 explicitly"
-          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 435,
@@ -1299,45 +1197,15 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 429,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
-            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 63,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/63",
-            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
             "number": 428,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
             "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 260,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/260",
-            "title": "docs(op): document convertToAssets rounding direction in run() NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 58,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/58",
-            "title": "fix(ci): conform main to rainix one-contract and Build.sol gates"
           },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 427,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
             "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 259,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
-            "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1350,18 +1218,6 @@
             "number": 424,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/424",
             "title": "refactor: single zero-address constant source in balancesStore"
-          },
-          {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 28,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/28",
-            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 254,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254",
-            "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1430,6 +1286,185 @@
             "title": "fix(store): reject zero and null block.number from RPC"
           },
           {
+            "repo": "rainlanguage/raindex",
+            "number": 2793,
+            "url": "https://github.com/rainlanguage/raindex/pull/2793",
+            "title": "perf: eliminate redundant read_dispair calls in try_into_call"
+          }
+        ]
+      },
+      "un-vetted": {
+        "count": 5,
+        "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 119,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/119",
+            "title": "fix(producer): grant the redirect form to every --add-dir root; trap the scratch reclaim"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 144,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/144",
+            "title": "Derive the authoriser's action-role holders from the pinned grant map"
+          },
+          {
+            "repo": "rainlanguage/rain.uniswap",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.uniswap/pull/31",
+            "title": "2024 06 23 sushi v3"
+          },
+          {
+            "repo": "rainlanguage/rain-protocol",
+            "number": 675,
+            "url": "https://github.com/rainlanguage/rain-protocol/pull/675",
+            "title": "remove ob"
+          },
+          {
+            "repo": "rainlanguage/rain-protocol",
+            "number": 613,
+            "url": "https://github.com/rainlanguage/rain-protocol/pull/613",
+            "title": "add generic errors for integrity operand overflow and underflow"
+          }
+        ]
+      }
+    },
+    "vetter-verdicts": {
+      "ai:design": {
+        "count": 14,
+        "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 101,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
+            "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 100,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
+            "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 289,
+            "url": "https://github.com/rainlanguage/rainix/pull/289",
+            "title": "Fail over fork RPC endpoints with an archive-aware preflight"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 63,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/63",
+            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 60,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/60",
+            "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 58,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/58",
+            "title": "fix(ci): conform main to rainix one-contract and Build.sol gates"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 55,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/55",
+            "title": "Consolidate pointer codegen to canonical script/Build.sol"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 426,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
+            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 161,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/161",
+            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2702,
+            "url": "https://github.com/rainlanguage/raindex/pull/2702",
+            "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 150,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/150",
+            "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.sol",
+            "number": 42,
+            "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
+            "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
+          },
+          {
+            "repo": "rainlanguage/rain.strategies",
+            "number": 60,
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
+            "title": "v5 for dynamic spread"
+          },
+          {
+            "repo": "rainlanguage/rain.subgraph.docker",
+            "number": 3,
+            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
+            "title": "2023 12 23 anvil"
+          }
+        ]
+      },
+      "ai:ready": {
+        "count": 10,
+        "prs": [
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 50,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
+            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 118,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/118",
+            "title": "test: pin sourceCount(hex\"00\") == 0 explicitly"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 429,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
+            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 260,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/260",
+            "title": "docs(op): document convertToAssets rounding direction in run() NatSpec"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 259,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
+            "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 28,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/28",
+            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 254,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254",
+            "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
+          },
+          {
             "repo": "rainlanguage/rain.flare",
             "number": 196,
             "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -1442,12 +1477,6 @@
             "title": "fix(parser): comment before next binding bleeds into previous content_position"
           },
           {
-            "repo": "rainlanguage/raindex",
-            "number": 2793,
-            "url": "https://github.com/rainlanguage/raindex/pull/2793",
-            "title": "perf: eliminate redundant read_dispair calls in try_into_call"
-          },
-          {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 230,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/230",
@@ -1456,7 +1485,7 @@
         ]
       },
       "ai:reject": {
-        "count": 31,
+        "count": 30,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
@@ -1481,12 +1510,6 @@
             "number": 62,
             "url": "https://github.com/rainlanguage/rain.dia/pull/62",
             "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 55,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/55",
-            "title": "Consolidate pointer codegen to canonical script/Build.sol"
           },
           {
             "repo": "rainlanguage/rain.sol.codegen",
@@ -1662,6 +1685,18 @@
   "closeCandidateIssues": [
     {
       "repo": "rainlanguage/rain.dia",
+      "number": 43,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/43",
+      "title": "[AUDIT-M14] [medium] Dual pointer-codegen entrypoints BuildPointers.sol and Build.sol"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 22,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/22",
+      "title": "[AUDIT-L06] [low] intOrAStringToString empty and max-31 round-trips untested"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
       "number": 6,
       "url": "https://github.com/rainlanguage/rain.dia/issues/6",
       "title": "[AUDIT-M01] [medium] LibOpDiaPrice.run does not fail-closed on input arity"
@@ -1674,6 +1709,18 @@
     }
   ],
   "closeCandidateUnvetted": [
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 43,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/43",
+      "title": "[AUDIT-M14] [medium] Dual pointer-codegen entrypoints BuildPointers.sol and Build.sol"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 22,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/22",
+      "title": "[AUDIT-L06] [low] intOrAStringToString empty and max-31 round-trips untested"
+    },
     {
       "repo": "rainlanguage/rain.dia",
       "number": 6,
@@ -1691,10 +1738,10 @@
   ],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 143,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/143",
-      "title": "Deployments page shows who can upgrade but not who holds the action roles"
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 117,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/117",
+      "title": "clone_list is over budget above ~172 clones and its refusal names a `limit` it does not accept"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -5449,6 +5496,13 @@
   ],
   "leaks": [
     {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
+      "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty",
+      "reason": "🤖 ai:producer  Producer note: the 16 renders this PR produced were only linked as a `pr-screenshots` tree, so they did not render inline for review. Embedding the two states the PR actually changes, light theme, so the before/after is visible without clicking through.  **`ai:close-candidate (upheld)`** — the live symptom. Box reads `1`, expansion reads `0 items / no items in this state`; after, the row is there.  | before | after | | --- | --- | | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/upheld-before-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/upheld-after-light.png) |  **`ai:close-candidate (unvetted)`** — broken the same way, invisible while it is zero.  | before | after | | --- | --- | | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/unvetted-before-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/unvetted-after-light.png) |  **`missing`** (empty-list reason copy) and **`uncoveredIssues`** (the control — byte-identical before/after, which is the PR's evidence that the issue over-states the blast radius):  | missing before | missing after | uncovered before | uncovered after | | --- | --- | --- | --- | | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/missing-before-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/missing-after-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/uncovered-before-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/uncovered-after-light.png) |  Dark-theme counterparts are in the same tree (`141/*-dark.png`). I read the upheld pair before posting: the `before` box shows `1` over `no items in this state`, the `after` shows `1 item` over the `S01-Issuer/st0x.deploy#248` row. "
+    },
+    {
       "repo": "cyclofinance/cyclo.site",
       "number": 418,
       "url": "https://github.com/cyclofinance/cyclo.site/pull/418",
@@ -5638,13 +5692,6 @@
       "reason": "🤖 ai:producer Producer note: 3d merge-update DONE — merged origin/main (6b2dc7e, PR #485 nix-cachix CI adoption) into this branch. One conflict: .github/workflows/manual-sol-artifacts.yaml — kept this PR's rainix reusable-workflow call (rainix-manual-sol-artifacts.yaml@main), which already opens with the same nix-cachix-setup composite main adopted inline, so main's newer CI shape is fully subsumed. No source/test/pointer changes were involved (merge tree-diff vs previous head is empty), so no Flow.pointers.sol regen needed. Local verify: forge soldeer install + full forge test green (55 passed, 0 failed), matching the pre-merge all-green CI baseline. Pushed cea9445; PR shows MERGEABLE."
     },
     {
-      "repo": "cyclofinance/cyclo.sol",
-      "number": 42,
-      "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
-      "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests",
-      "reason": "🤖 ai:producer Blocked-infra: Two reds, both past back-off: (1) rainix-sol-test run 29051045944 — Arbitrum fork suites fail with 'missing trie node / older block with a non-archive node' (-32000); RPC_URL_ARBITRUM_FORK secret IS set but points at a pruned node; SAME failure class red on main (run 24800484874) — infra: the secret needs an archive endpoint. Flare fork suites pass. (2) rainix-sol-static — forge fmt --check diff in test/lib/LibCycloSiteTokens.sol after a prior fmt [3b-attempt]: local forge fmt output ≠ CI's (version skew; CI wants the multi-line require(...) collapsed). Both need infra/human resolution; no further producer pushes."
-    },
-    {
       "repo": "cyclofinance/cyclo.site",
       "number": 369,
       "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
@@ -5660,20 +5707,20 @@
     }
   ],
   "counts": {
-    "ready": 33,
-    "design": 10,
+    "ready": 31,
+    "design": 14,
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
-    "closeCandidateIssues": 2,
-    "closeCandidateUnvetted": 1,
+    "closeCandidateIssues": 4,
+    "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 1,
     "leaks": 30,
-    "totalProducerPrs": 159,
+    "totalProducerPrs": 161,
     "uncoveredIssues": 626,
-    "unvetted": 4,
-    "awaitingReVet": 0,
-    "reject": 31,
+    "unvetted": 5,
+    "awaitingReVet": 21,
+    "reject": 30,
     "relink": 1,
     "closeCandidatePrs": 0,
     "humanReject": 36,
