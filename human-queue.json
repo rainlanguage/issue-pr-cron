@@ -1294,20 +1294,8 @@
         ]
       },
       "un-vetted": {
-        "count": 5,
+        "count": 3,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 119,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/119",
-            "title": "fix(producer): grant the redirect form to every --add-dir root; trap the scratch reclaim"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 144,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/144",
-            "title": "Derive the authoriser's action-role holders from the pinned grant map"
-          },
           {
             "repo": "rainlanguage/rain.uniswap",
             "number": 31,
@@ -5716,9 +5704,9 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 1,
     "leaks": 30,
-    "totalProducerPrs": 161,
+    "totalProducerPrs": 159,
     "uncoveredIssues": 626,
-    "unvetted": 5,
+    "unvetted": 3,
     "awaitingReVet": 21,
     "reject": 30,
     "relink": 1,
