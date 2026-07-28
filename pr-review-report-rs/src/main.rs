@@ -3432,6 +3432,12 @@ fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str) -> String {
 /// guard-before-write shape as [`VerdictPlan`].
 #[derive(Debug, PartialEq)]
 enum CcVerdictPlan {
+    /// The verdict was pointed at a PULL REQUEST. `gh issue view <n>` answers for one, so without
+    /// this the ISSUE-side authority silently reaches a PR — where `ai:close-candidate` is not a
+    /// producer CLAIM awaiting judgement but the vetter's own `record_verdict … close`. The refusal
+    /// that fired here instead was `NoFlag`'s "nothing to judge", which reads as "this PR has no
+    /// human path at all" and was recorded as exactly that misreading on #94.
+    NotAnIssue,
     /// A human already ruled: never overwritten.
     RefuseHuman,
     /// The issue is closed — the flag is moot.
@@ -3447,8 +3453,21 @@ enum CcVerdictPlan {
     },
 }
 
+/// The `gh issue view --json` field list the flag verdict fetches. Named for the same reason
+/// [`ISSUE_RULE_FIELDS`] is: a field the plan READS but the fetch OMITS is a guard that silently
+/// stops firing.
+const CC_VERDICT_FIELDS: &str = "state,labels,comments,url";
+
 /// PURE: may the vetter record `verdict` on this flagged issue, and what does it change?
 fn cc_verdict_plan(issue_json: &Value, verdict: &str) -> CcVerdictPlan {
+    // Subject type FIRST, so a closed PR is told what it is rather than that its flag is moot.
+    if issue_json
+        .get("url")
+        .and_then(|u| u.as_str())
+        .is_some_and(|u| u.contains("/pull/"))
+    {
+        return CcVerdictPlan::NotAnIssue;
+    }
     let state = issue_json
         .get("state")
         .and_then(|s| s.as_str())
@@ -4362,6 +4381,11 @@ enum RuleStep {
     AddLabel,
     /// Remove a label this ruling supersedes or contradicts.
     RemoveLabel(String),
+    /// CLOSE the subject — the TERMINAL edge, and therefore always last. Every ruling plan reads a
+    /// closed subject as [`HumanRulePlan::Moot`], so a close performed before the labels would make
+    /// them permanently unreachable: the retry that should finish the transition would report
+    /// "nothing to do" over a half-written one.
+    Close,
 }
 
 /// PURE: the ORDER a ruling's writes happen in — the fail-safe, and the reverse of the AI verdict
@@ -4398,9 +4422,71 @@ fn human_rule_steps(
     steps
 }
 
+/// PURE: the `gh` argv one step invokes. Extracted from the effect so WHICH GitHub operation each
+/// step performs is a tested property rather than a line only a live run can check — `Close`
+/// spelled as `edit`, or an `--add-label` where a `--remove-label` belongs, are both silent in a
+/// unit suite that only sees the step list.
+fn rule_step_argv<'a>(
+    step: &'a RuleStep,
+    noun: &'a str,
+    slug: &'a str,
+    n: &'a str,
+    target: &'a str,
+    comment: &'a str,
+) -> Vec<&'a str> {
+    match step {
+        RuleStep::Comment => vec![noun, "comment", n, "-R", slug, "--body", comment],
+        RuleStep::EnsureLabel => {
+            let (color, desc) = label_meta(target);
+            vec![
+                "label",
+                "create",
+                target,
+                "-R",
+                slug,
+                "--color",
+                color,
+                "--description",
+                desc,
+                "--force",
+            ]
+        }
+        RuleStep::AddLabel => vec![noun, "edit", n, "-R", slug, "--add-label", target],
+        RuleStep::RemoveLabel(l) => vec![noun, "edit", n, "-R", slug, "--remove-label", l],
+        RuleStep::Close => vec![noun, "close", n, "-R", slug],
+    }
+}
+
+/// PURE: the half-state a failed step leaves behind, named so a caller knows exactly what to
+/// re-run. `EnsureLabel` is `None`: it is best-effort, and a repo that already has the label is the
+/// normal case.
+fn rule_step_failure(step: &RuleStep, slug: &str, n: &str, target: &str) -> Option<(i32, String)> {
+    let msg = match step {
+        RuleStep::Comment => format!(
+            "error: failed to post the ruling comment on {slug}#{n} — no label was written, so the \
+             ruling is not half-recorded"
+        ),
+        RuleStep::EnsureLabel => return None,
+        RuleStep::AddLabel => {
+            format!("error: posted the ruling on {slug}#{n} but FAILED to add {target}")
+        }
+        RuleStep::RemoveLabel(l) => format!(
+            "error: {slug}#{n} now carries {target} but FAILED to remove {l} — it holds two \
+             contradictory states"
+        ),
+        RuleStep::Close => format!(
+            "error: {slug}#{n} is ruled {target} and its labels are settled, but the CLOSE failed \
+             — it is ruled and still open. Re-run the same command to finish it: every step before \
+             this one is idempotent."
+        ),
+    };
+    Some((1, msg))
+}
+
 /// The EFFECT half of a human ruling, shared by both subjects — `gh pr …` and `gh issue …` take the
-/// same arguments, so `noun` is the only difference. The order comes from [`human_rule_steps`]; this
-/// function only performs it and names the half-state each failure leaves behind.
+/// same arguments, so `noun` is the only difference. The order comes from [`human_rule_steps`], the
+/// argv from [`rule_step_argv`] and the half-state from [`rule_step_failure`]; this function only
+/// performs them, so everything it decides is decided somewhere testable.
 fn human_rule_write(
     noun: &str,
     slug: &str,
@@ -4410,56 +4496,12 @@ fn human_rule_write(
     steps: &[RuleStep],
 ) -> Result<(), (i32, String)> {
     for step in steps {
-        match step {
-            RuleStep::Comment => {
-                if !gh_run(&[noun, "comment", n, "-R", slug, "--body", comment]) {
-                    return Err((
-                        1,
-                        format!(
-                            "error: failed to post the ruling comment on {slug}#{n} — no label was \
-                             written, so the ruling is not half-recorded"
-                        ),
-                    ));
-                }
-            }
-            RuleStep::EnsureLabel => {
-                let (color, desc) = label_meta(target);
-                if !gh_run(&[
-                    "label",
-                    "create",
-                    target,
-                    "-R",
-                    slug,
-                    "--color",
-                    color,
-                    "--description",
-                    desc,
-                    "--force",
-                ]) {
-                    eprintln!("warning: could not ensure label {target} exists in {slug}");
-                }
-            }
-            RuleStep::AddLabel => {
-                if !gh_run(&[noun, "edit", n, "-R", slug, "--add-label", target]) {
-                    return Err((
-                        1,
-                        format!(
-                            "error: posted the ruling on {slug}#{n} but FAILED to add {target}"
-                        ),
-                    ));
-                }
-            }
-            RuleStep::RemoveLabel(l) => {
-                if !gh_run(&[noun, "edit", n, "-R", slug, "--remove-label", l]) {
-                    return Err((
-                        1,
-                        format!(
-                            "error: {slug}#{n} now carries {target} but FAILED to remove {l} — it \
-                             holds two contradictory states"
-                        ),
-                    ));
-                }
-            }
+        if gh_run(&rule_step_argv(step, noun, slug, n, target, comment)) {
+            continue;
+        }
+        match rule_step_failure(step, slug, n, target) {
+            Some(err) => return Err(err),
+            None => eprintln!("warning: could not ensure label {target} exists in {slug}"),
         }
     }
     Ok(())
@@ -4518,9 +4560,11 @@ fn strands_flag_error(slug: &str, issue: &str, target: &str, flag_at: &str) -> (
             "refusing: {slug}#{issue} carries a LIVE producer close-candidate flag (@{flag_at}), \
              and `{target}` would strand it — every AI transition refuses once a human has ruled, \
              so `record_close_candidate_verdict` could never judge this flag again.\n\
-             The three moves that ARE available here, one command each:\n  \
-             human-rule-issue {slug} {issue} close-candidate \"…\"          — the flag is right; the \
-             issue is yours to close (sacred; the flag stands as the record of what you ruled on)\n  \
+             The moves that ARE available here, one command each:\n  \
+             human-close {slug} {issue} \"…\"                                — the flag is right AND \
+             you are acting on it now: rules close-candidate, clears the flag, closes the issue\n  \
+             human-rule-issue {slug} {issue} close-candidate \"…\"          — the flag is right but \
+             the issue stays open for now (sacred; the flag stands as the pending claim)\n  \
              human-rule-issue {slug} {issue} keep-open \"…\"                 — the flag is wrong AND \
              this must never be re-flagged (sacred; clears ai:close-candidate)\n  \
              record-close-candidate-verdict {slug} {issue} reject \"…\"      — the flag is wrong on \
@@ -4539,6 +4583,43 @@ fn human_ruling_note_error() -> (i32, String) {
          recorded reason is the bare label this transition replaces)"
             .to_string(),
     )
+}
+
+/// PURE: the refusal when `gh pr view` could not answer, given whether a follow-up probe found an
+/// ISSUE at that reference.
+///
+/// The mirror of [`HumanRulePlan::NotAnIssue`], and it exists for the same reason: the two
+/// subjects share a number space, so a caller who names the wrong one must be told WHICH they
+/// named and handed the command that is right. "not writing on incomplete data" is true and
+/// useless — it reads as an API failure, and the next move a human makes after reading it is raw
+/// `gh`. Only the redirection is a refusal a caller can act on.
+fn pr_view_failed_error(slug: &str, pr: &str, ruling: &str, is_issue: bool) -> (i32, String) {
+    if is_issue {
+        return (
+            2,
+            format!(
+                "refusing: {slug}#{pr} is an ISSUE, not a pull request — `gh pr view` cannot see \
+                 one, and the PR vocabulary pins to a head sha an issue does not have.\n  \
+                 Use: pr-review-report human-rule-issue {slug} {pr} {ruling} \"…\""
+            ),
+        );
+    }
+    (
+        1,
+        format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
+    )
+}
+
+/// Does this reference resolve to an ISSUE? Only ever asked on an error path, so the extra round
+/// trip costs a refusal, never a successful transition.
+fn reference_is_an_issue(slug: &str, n: &str) -> bool {
+    gh_json(&["issue", "view", n, "-R", slug, "--json", "url"])
+        .and_then(|j| {
+            j.get("url")
+                .and_then(|u| u.as_str())
+                .map(|u| !u.contains("/pull/"))
+        })
+        .unwrap_or(false)
 }
 
 /// `human-rule <owner/repo> <pr> <reject|design|close-candidate> "<note>"`: the human's transition
@@ -4561,9 +4642,11 @@ fn human_rule_pr_apply(
         return Err(human_ruling_note_error());
     }
     let Some(prj) = gh_json(&["pr", "view", pr, "-R", slug, "--json", PR_RULE_FIELDS]) else {
-        return Err((
-            1,
-            format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
+        return Err(pr_view_failed_error(
+            slug,
+            pr,
+            ruling.trim(),
+            reference_is_an_issue(slug, pr),
         ));
     };
     let (anchor, supersedes, clears, has_target, skip) =
@@ -4748,6 +4831,444 @@ fn human_rule_issue_apply(
         &clears,
         skip,
     ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// the TERMINAL human edge: rule, retire the pending flag, close.
+//
+// `iupheld --> [*] : human closes` and `hclose --> [*] : human closes` are two edges of the state
+// diagram that had no transition function, so the only way to take them was raw `gh issue close` —
+// which knows nothing about the FSM. #94 measured what that cost: at the time it was filed, **74**
+// terminal subjects across the org (55 issues, 19 PRs) were CLOSED and still carrying
+// `ai:close-candidate`, a state no modeled transition produces. The one ruling in the same sitting
+// that went through a tool (`rain.dia#42`, a flag `reject`) came out clean. The asymmetry is the
+// whole argument: the transition with a tool is consistent, the transition without one was wrong
+// every single time.
+//
+// It is deliberately ONE transition rather than a command that chains two. A slash command that
+// called `human-rule-issue` and then `gh issue close` would put the ORDER — and the flag clear —
+// in a prompt, which is exactly the "loose transition" CLAUDE.md forbids: unenforced, untested, and
+// free to drift. Here the order is [`human_close_steps`], a tested property, and the close is last
+// because a closed subject reads as `Moot` to every ruling plan.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The one `ai:*` label that means "a human still has to ACT on this subject", rather than "an AI
+/// judged its code". On an ISSUE it is the producer's pending close-candidate claim; on a PR it is
+/// the vetter's pending `close` verdict. Both name a queue, and closing the subject is the act that
+/// empties it — which is why the terminal edge retires it and no other `ai:*` label.
+const PENDING_CLOSE_FLAG: &str = "ai:close-candidate";
+/// The label the terminal edge writes. Not a parameter: `human-close` IS the `close-candidate`
+/// ruling plus its terminal act, so a second verb here would be a second spelling of one state.
+const HUMAN_CLOSE_TARGET: &str = "human:close-candidate";
+
+/// The terminal-close decision. Delegates every guard to the ruling plan the subject's own type
+/// selects — so vocabulary, note, anchor, stranding and idempotence are the SAME code, tested once —
+/// and adds only what closing itself decides.
+#[derive(Debug, PartialEq)]
+enum HumanClosePlan {
+    /// Already terminal and carrying no pending flag: the transition has fully happened.
+    Settled,
+    /// Already terminal but STILL FLAGGED — the state a raw `gh <noun> close` leaves behind, and
+    /// the one #94 was filed about. It is given an exit rather than left inexpressible: the machine
+    /// has no dead ends, and 74 subjects sat in this state with no command that could move them.
+    ///
+    /// Only the stale flag is dropped. No ruling is invented after the fact: the human's close is
+    /// already recorded by GitHub's own close event, and a `👤 human` comment posted now would date
+    /// the reason to today rather than to the decision — manufactured provenance is worse than
+    /// none, and provenance is the entire point of this surface.
+    StaleFlag,
+    /// The live transition, or the ruling plan's own refusal.
+    Rule(HumanRulePlan),
+}
+
+/// PURE: may the human close this subject, and what does it move?
+///
+/// `is_pr` is resolved by LOOKUP before this is called, never guessed from the number: one label
+/// name covers two separately-sized populations (`lanes.vetter-verdicts.ai:close-candidate` counts
+/// PRs, `closeCandidateIssues` counts issues), and a bare number would eventually rule on the wrong
+/// one.
+fn human_close_plan(subject: &Value, is_pr: bool) -> HumanClosePlan {
+    let flagged = label_names(subject).iter().any(|l| l == PENDING_CLOSE_FLAG);
+    let plan = if is_pr {
+        human_pr_rule_plan(subject, "close-candidate", HUMAN_CLOSE_TARGET)
+    } else {
+        human_issue_rule_plan(subject, "close-candidate", HUMAN_CLOSE_TARGET)
+    };
+    match plan {
+        HumanRulePlan::Moot if flagged => HumanClosePlan::StaleFlag,
+        HumanRulePlan::Moot => HumanClosePlan::Settled,
+        HumanRulePlan::Record {
+            anchor,
+            supersedes,
+            mut clears,
+            has_target,
+            skip_comment,
+        } => {
+            // The ruling alone leaves the flag standing — while the subject is OPEN the flag is
+            // still the live record of a pending claim, and `closeCandidateUpheld` still counts it.
+            // The terminal act is what retires it.
+            if flagged && !clears.iter().any(|l| l == PENDING_CLOSE_FLAG) {
+                clears.push(PENDING_CLOSE_FLAG.to_string());
+            }
+            HumanClosePlan::Rule(HumanRulePlan::Record {
+                anchor,
+                supersedes,
+                clears,
+                has_target,
+                skip_comment,
+            })
+        }
+        other => HumanClosePlan::Rule(other),
+    }
+}
+
+/// PURE: the terminal edge's write order — the ruling's own sequence with the close appended.
+/// Reusing [`human_rule_steps`] rather than restating it keeps ONE fail-safe order: a second list
+/// could be re-ordered without the property test that guards the first one noticing.
+fn human_close_steps(
+    supersedes: &[String],
+    clears: &[String],
+    has_target: bool,
+    skip_comment: bool,
+) -> Vec<RuleStep> {
+    let mut steps = human_rule_steps(supersedes, clears, has_target, skip_comment);
+    steps.push(RuleStep::Close);
+    steps
+}
+
+/// PURE: the report the terminal edge prints — the ruling's report plus the act that made it
+/// terminal, so one line says everything that moved.
+fn human_close_report(
+    slug: &str,
+    n: &str,
+    anchor: &str,
+    supersedes: &[String],
+    clears: &[String],
+    skip_comment: bool,
+) -> String {
+    format!(
+        "{} [closed]",
+        human_rule_report(
+            slug,
+            n,
+            HUMAN_CLOSE_TARGET,
+            anchor,
+            supersedes,
+            clears,
+            skip_comment
+        )
+    )
+}
+
+/// `human-close <owner/repo> <n> "<note>"`: the human's TERMINAL transition on an issue OR a PR.
+///
+/// One reference, one call, both populations. `gh issue view <n>` answers for a pull request too,
+/// and its `url` is the discriminator — the same one [`human_issue_rule_plan`] already uses — so the
+/// subject type is READ, never inferred from which command was typed. An issue costs one fetch; a PR
+/// costs a second, because its anchor is the head sha and `gh issue view` cannot report one.
+fn human_close_apply(
+    slug: &str,
+    n: &str,
+    note: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    if note.trim().is_empty() {
+        return Err(human_ruling_note_error());
+    }
+    let Some(seen) = gh_json(&["issue", "view", n, "-R", slug, "--json", ISSUE_RULE_FIELDS]) else {
+        return Err((
+            1,
+            format!("error: `gh issue view {slug}#{n}` failed — not writing on incomplete data"),
+        ));
+    };
+    let is_pr = seen
+        .get("url")
+        .and_then(|u| u.as_str())
+        .is_some_and(|u| u.contains("/pull/"));
+    let (noun, subject) = if is_pr {
+        let Some(prj) = gh_json(&["pr", "view", n, "-R", slug, "--json", PR_RULE_FIELDS]) else {
+            return Err((
+                1,
+                format!("error: `gh pr view {slug}#{n}` failed — not writing on incomplete data"),
+            ));
+        };
+        ("pr", prj)
+    } else {
+        ("issue", seen)
+    };
+    let (anchor, supersedes, clears, has_target, skip) = match human_close_plan(&subject, is_pr) {
+        HumanClosePlan::Settled => {
+            return Ok(format!(
+                "{slug}#{n} is already closed and carries no {PENDING_CLOSE_FLAG} — nothing written"
+            ));
+        }
+        HumanClosePlan::StaleFlag => {
+            if dry_run {
+                return Ok(format!(
+                    "[dry-run] {slug}#{n} is already closed but still flagged — remove \
+                     {PENDING_CLOSE_FLAG}; no ruling is written after the fact"
+                ));
+            }
+            human_rule_write(
+                noun,
+                slug,
+                n,
+                PENDING_CLOSE_FLAG,
+                "",
+                &[RuleStep::RemoveLabel(PENDING_CLOSE_FLAG.to_string())],
+            )?;
+            return Ok(format!(
+                "{slug}#{n} was already closed — cleared {PENDING_CLOSE_FLAG} [no ruling written: \
+                 the close is already on the record and a reason dated today would not be one]"
+            ));
+        }
+        HumanClosePlan::Rule(HumanRulePlan::NoAnchor) => {
+            return Err((
+                1,
+                format!(
+                    "error: {slug}#{n} has nothing to pin a ruling to ({}) — a close recorded \
+                     against nothing is the bare `gh close` this transition replaces",
+                    if is_pr {
+                        "no headRefOid"
+                    } else {
+                        "no createdAt"
+                    }
+                ),
+            ));
+        }
+        // Unreachable by construction and handled anyway: the type is resolved before the plan runs
+        // (never NotAnIssue), `close-candidate` is flag-disposing (never StrandsFlag), and `Moot` is
+        // consumed above. A future change to the shared plan must not become a panic mid-transition.
+        HumanClosePlan::Rule(HumanRulePlan::NotAnIssue) => {
+            return Err((
+                2,
+                format!("refusing: {slug}#{n} is not the subject type it was fetched as"),
+            ));
+        }
+        HumanClosePlan::Rule(HumanRulePlan::StrandsFlag { flag_at }) => {
+            return Err(strands_flag_error(slug, n, HUMAN_CLOSE_TARGET, &flag_at));
+        }
+        HumanClosePlan::Rule(HumanRulePlan::Moot) => {
+            return Ok(format!("{slug}#{n} is not open — nothing written"));
+        }
+        HumanClosePlan::Rule(HumanRulePlan::Record {
+            anchor,
+            supersedes,
+            clears,
+            has_target,
+            skip_comment,
+        }) => (anchor, supersedes, clears, has_target, skip_comment),
+    };
+    let comment = human_rule_comment(&anchor, "close-candidate", note);
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {}\n  comment: {}",
+            human_close_report(slug, n, &anchor, &supersedes, &clears, skip),
+            if skip {
+                "skip (same ruling at same anchor already posted)".to_string()
+            } else {
+                comment.replace('\n', " / ")
+            }
+        ));
+    }
+    human_rule_write(
+        noun,
+        slug,
+        n,
+        HUMAN_CLOSE_TARGET,
+        &comment,
+        &human_close_steps(&supersedes, &clears, has_target, skip),
+    )?;
+    Ok(human_close_report(
+        slug,
+        n,
+        &anchor,
+        &supersedes,
+        &clears,
+        skip,
+    ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// the marketplace gate — one version, stored twice.
+//
+// A Claude Code plugin's version lives in TWO hand-maintained files: the marketplace listing that
+// installers read, and the plugin manifest it points at. `/plugin` detects an update by comparing
+// version STRINGS, so a listing that names the old version silently serves stale content to every
+// installer — `adversarial-mutation-test` once advertised 0.26.0 while its own manifest said
+// 0.27.0, and `rain-org-health` currently omits the listing version entirely.
+//
+// Two copies of a definitionally-identical value with nothing enforcing agreement is a drift
+// hazard, so this repo does not ship one: the agreement is a gate. It is a SUBCOMMAND rather than
+// a CI shell script for the same reason `require-qa-block` is (CLAUDE.md's north star) — everything
+// it does is parsing, so it belongs in the binary, where it is tested, runs locally against any
+// checkout, and ships in the flake closure.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The verdict on ONE marketplace entry. Typed rather than a message, so a caller branches on the
+/// FAILURE, never on wording.
+#[derive(Debug, PartialEq)]
+enum PluginVersionCheck {
+    Agree {
+        name: String,
+        version: String,
+    },
+    /// The listing points at a `source` with no readable plugin manifest — an entry that installs
+    /// nothing. Reachable the moment a plugin is moved without updating the listing.
+    NoManifest {
+        name: String,
+        source: String,
+    },
+    /// The listing carries no `version`. NOT the same as disagreeing: there is nothing to disagree
+    /// with, and `/plugin`'s version comparison has no left-hand side. This is `rain-org-health`'s
+    /// state, and a check that only compared present values would call it healthy.
+    NoListedVersion {
+        name: String,
+    },
+    NoManifestVersion {
+        name: String,
+    },
+    /// The listing and the manifest name different plugins — the entry is wired to the wrong
+    /// directory, so its version agreeing would prove nothing.
+    NameMismatch {
+        listed: String,
+        manifest: String,
+    },
+    Drift {
+        name: String,
+        listed: String,
+        manifest: String,
+    },
+}
+
+impl PluginVersionCheck {
+    /// PURE: the one line this verdict prints. Failures lead with the fix, because a CI log is read
+    /// once and acted on immediately.
+    fn report(&self) -> String {
+        match self {
+            PluginVersionCheck::Agree { name, version } => format!("ok   {name} {version}"),
+            PluginVersionCheck::NoManifest { name, source } => format!(
+                "FAIL {name}: no plugin manifest at {source}/.claude-plugin/plugin.json — the \
+                 listing installs nothing"
+            ),
+            PluginVersionCheck::NoListedVersion { name } => format!(
+                "FAIL {name}: the marketplace entry has no `version`. `/plugin` detects an update \
+                 by comparing version strings, so an entry without one can never advertise a new \
+                 release — add it and keep it in lockstep with the manifest"
+            ),
+            PluginVersionCheck::NoManifestVersion { name } => {
+                format!("FAIL {name}: the plugin manifest has no `version`")
+            }
+            PluginVersionCheck::NameMismatch { listed, manifest } => format!(
+                "FAIL {listed}: its `source` holds the plugin {manifest:?} — the entry is wired to \
+                 the wrong directory"
+            ),
+            PluginVersionCheck::Drift {
+                name,
+                listed,
+                manifest,
+            } => format!(
+                "FAIL {name}: the marketplace lists {listed} but the plugin is {manifest} — bump \
+                 both together; installers read the listing"
+            ),
+        }
+    }
+    fn passed(&self) -> bool {
+        matches!(self, PluginVersionCheck::Agree { .. })
+    }
+}
+
+/// PURE: check one marketplace entry against the manifest found at its `source` (`None` when there
+/// is no readable manifest there).
+fn plugin_version_check(entry: &Value, manifest: Option<&Value>) -> PluginVersionCheck {
+    let str_at = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let name = str_at(entry, "name").unwrap_or_default();
+    let source = str_at(entry, "source").unwrap_or_default();
+    let Some(manifest) = manifest else {
+        return PluginVersionCheck::NoManifest { name, source };
+    };
+    if let Some(m) = str_at(manifest, "name") {
+        if m != name {
+            return PluginVersionCheck::NameMismatch {
+                listed: name,
+                manifest: m,
+            };
+        }
+    }
+    let Some(listed) = str_at(entry, "version") else {
+        return PluginVersionCheck::NoListedVersion { name };
+    };
+    let Some(from_manifest) = str_at(manifest, "version") else {
+        return PluginVersionCheck::NoManifestVersion { name };
+    };
+    if listed != from_manifest {
+        return PluginVersionCheck::Drift {
+            name,
+            listed,
+            manifest: from_manifest,
+        };
+    }
+    PluginVersionCheck::Agree {
+        name,
+        version: listed,
+    }
+}
+
+/// `plugin-version-lockstep [--root <dir>]`: every plugin the marketplace lists resolves to a real
+/// manifest carrying the same version. Exit 0 satisfied, 2 a listing is wrong, 3 the gate could not
+/// be evaluated at all (no marketplace to read).
+fn plugin_version_lockstep_mode(root: &str) -> i32 {
+    let root = root.trim_end_matches('/');
+    let path = format!("{root}/.claude-plugin/marketplace.json");
+    let Some(market) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    else {
+        eprintln!("error: cannot read {path} as JSON — the gate cannot be evaluated");
+        return 3;
+    };
+    let Some(plugins) = market.get("plugins").and_then(|p| p.as_array()) else {
+        eprintln!("error: {path} has no `plugins` array");
+        return 3;
+    };
+    if plugins.is_empty() {
+        eprintln!("error: {path} lists no plugins");
+        return 3;
+    }
+    let mut failed = false;
+    for entry in plugins {
+        let source = entry
+            .get("source")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim_start_matches("./")
+            .trim_end_matches('/');
+        let manifest_path = if source.is_empty() {
+            format!("{root}/.claude-plugin/plugin.json")
+        } else {
+            format!("{root}/{source}/.claude-plugin/plugin.json")
+        };
+        let manifest = std::fs::read_to_string(&manifest_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+        let check = plugin_version_check(entry, manifest.as_ref());
+        if check.passed() {
+            println!("{}", check.report());
+        } else {
+            eprintln!("{}", check.report());
+            failed = true;
+        }
+    }
+    if failed {
+        2
+    } else {
+        0
+    }
 }
 
 /// Thin CLI shell over any `*_apply` transition: it OWNS the printing so the cores stay usable by
@@ -7348,7 +7869,7 @@ fn record_cc_verdict_apply(
         "-R",
         slug,
         "--json",
-        "state,labels,comments",
+        CC_VERDICT_FIELDS,
     ]) else {
         return Err((
             1,
@@ -7358,6 +7879,22 @@ fn record_cc_verdict_apply(
         ));
     };
     let (flag_at, remove_label, skip) = match cc_verdict_plan(&j, verdict) {
+        CcVerdictPlan::NotAnIssue => {
+            return Err((
+                2,
+                format!(
+                    "refusing: {slug}#{issue} is a PULL REQUEST, not an issue — `gh issue view` \
+                     answers for either. A close-candidate FLAG is a producer claim on an ISSUE; on \
+                     a PR `ai:close-candidate` is the VETTER's own verdict, which no second AI \
+                     judgement applies to. This is not a PR without a path — it has three:\n  \
+                     human-close {slug} {issue} \"…\"             — the verdict is right: rule, \
+                     clear the flag and close it, one command\n  \
+                     human-rule {slug} {issue} reject \"…\"       — the verdict is wrong; it needs \
+                     rework\n  \
+                     human-rule {slug} {issue} design \"…\"       — it raises a design question"
+                ),
+            ));
+        }
         CcVerdictPlan::AlreadyClosed => {
             return Ok(format!("{slug}#{issue} already closed — nothing to vet"));
         }
@@ -8114,11 +8651,17 @@ impl McpProfile {
             // `human-queue`, which renders whole org-wide sets and does not fit one tool result.
             // `record_close_candidate_verdict` is absent too — it is the vetter's authority, and the
             // ruling that mistook it for a human one is exactly what `human_rule_issue` refuses.
+            //
+            // `human_close` is the TERMINAL edge (#94). It is a tool rather than something the
+            // caller composes because the alternative — rule with `human_rule_issue`, then close
+            // with a Bash `gh` — is a transition half in a tool and half in a prompt, and that half
+            // is the one that was wrong on all 74 closed subjects carrying a live flag.
             McpProfile::Human => &[
                 "pr_context",
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
+                "human_close",
             ],
         }
     }
@@ -8254,6 +8797,18 @@ fn mcp_all_tools() -> Value {
             }
         },
         {
+            "name": "human_close",
+            "description": "The human's TERMINAL transition on an issue OR a PR, in one call: apply human:close-candidate + a pinned 👤 human comment, retire the pending ai:close-candidate flag, then close. The subject type is resolved by lookup, so one reference cannot act on the wrong one of the two populations that share the label name. On an already-closed subject it only clears a stale flag, and invents no ruling.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string", "description": "owner/repo#number — an issue OR a pull request."},
+                    "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."}
+                },
+                "required": ["subject", "note"]
+            }
+        },
+        {
             "name": "clone_create",
             "description": "Make (or re-sync to current base) the per-issue work clone. Returns its dir. Refuses to re-sync over unpushed commits.",
             "inputSchema": {
@@ -8349,6 +8904,13 @@ enum McpCall {
         slug: String,
         num: u64,
         ruling: String,
+        note: String,
+    },
+    /// The TERMINAL edge. No `ruling` field: `human-close` IS the `close-candidate` ruling plus the
+    /// act that makes it terminal, so a verb here would be a second spelling of one state.
+    HumanClose {
+        slug: String,
+        num: u64,
         note: String,
     },
     /// `root`/`name` are the OUTPUT of the path guard, not the model's argument: by the time this
@@ -8625,6 +9187,17 @@ fn validate_call(
                 note,
             })
         }
+        // The terminal edge takes `subject`, not `pr`/`issue`: the argument NAME would otherwise be
+        // the caller asserting a type the tool is about to resolve, and a wrong assertion there is
+        // how a ruling lands in the other population.
+        "human_close" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "subject")?)?;
+            let note = match req_str(args, "note") {
+                Ok(n) if !n.trim().is_empty() => n.trim().to_string(),
+                _ => return Err(human_ruling_note_error().1),
+            };
+            Ok(McpCall::HumanClose { slug, num, note })
+        }
         // --- work-clone lifecycle. The path guard runs HERE, before any effect exists, which is why
         // a refused clone argument can be proven to have touched nothing.
         "clone_create" => {
@@ -8844,6 +9417,10 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             note,
         } => human_rule_issue_apply(&slug, &num.to_string(), &ruling, &note, false)
             .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::HumanClose { slug, num, note } => {
+            human_close_apply(&slug, &num.to_string(), &note, false)
+                .map_err(|(code, msg)| format!("{msg} [exit {code}]"))
+        }
         McpCall::CloneCreate {
             root,
             name,
@@ -10138,6 +10715,19 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Human TERMINAL transition on an issue OR a PR: rule human:close-candidate, retire the
+    /// pending ai:close-candidate flag, and close — one transition. The subject type is resolved by
+    /// lookup, so one owner/repo #n reference can never act on the wrong one of the two populations.
+    HumanClose {
+        /// owner/repo
+        slug: String,
+        /// Issue or PR number.
+        number: String,
+        /// One-line ruling + evidence (trailing words are joined).
+        note: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Vetter transition on a close-candidate FLAG: uphold (queued for the human) or reject (drop
     /// ai:close-candidate, back to the producer). The CLI twin of the MCP tool — `human-rule-issue`
     /// names it in the refusal it raises on a flagged issue, and a human at a terminal has no MCP.
@@ -10169,6 +10759,13 @@ enum Cmd {
         /// one caller that may ask for the whole queue. The MCP surface always pages (#78).
         #[arg(long)]
         limit: Option<usize>,
+    },
+    /// CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a real manifest
+    /// carrying the SAME version. Exit 2 if a listing is wrong, 3 if the gate cannot be evaluated.
+    PluginVersionLockstep {
+        /// Repo root holding `.claude-plugin/marketplace.json`.
+        #[arg(long, default_value = ".")]
+        root: String,
     },
     /// PreToolUse `Bash` gate (QA-GUIDE section 8): refuse a `gh pr create` whose PR body carries
     /// no `## QA` evidence block, naming the lines that are missing. Hook payload on stdin; exit 0
@@ -11119,6 +11716,12 @@ fn main() {
             &note.join(" "),
             dry_run,
         )),
+        Cmd::HumanClose {
+            slug,
+            number,
+            note,
+            dry_run,
+        } => print_transition_result(human_close_apply(&slug, &number, &note.join(" "), dry_run)),
         Cmd::RecordCloseCandidateVerdict {
             slug,
             issue,
@@ -11138,6 +11741,7 @@ fn main() {
             include_skipped,
             limit,
         } => unvetted_mode(json, include_skipped, limit),
+        Cmd::PluginVersionLockstep { root } => plugin_version_lockstep_mode(&root),
         Cmd::RequireQaBlock => require_qa_block_mode(),
         Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
             Ok(p) => mcp_serve(p),
@@ -14062,6 +14666,38 @@ mod cli_tests {
                 dry_run: false,
             }
         );
+        // The TERMINAL edge (#94). A human rules at a terminal, and #86's own lesson was that a
+        // transition reachable only over MCP is unavailable exactly where the ruling is made.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "human-close",
+                "o/r",
+                "93",
+                "already",
+                "fixed",
+                "on",
+                "main",
+                "--dry-run"
+            ]),
+            Cmd::HumanClose {
+                slug: "o/r".to_string(),
+                number: "93".to_string(),
+                note: s(&["already", "fixed", "on", "main"]),
+                dry_run: true,
+            }
+        );
+        // It takes NO ruling argument: `human-close` IS the close-candidate ruling plus the act
+        // that makes it terminal, so a verb here would be a second spelling of one state.
+        assert_eq!(
+            parse(&["prr", "human-close", "o/r", "93", "dup"]),
+            Cmd::HumanClose {
+                slug: "o/r".to_string(),
+                number: "93".to_string(),
+                note: s(&["dup"]),
+                dry_run: false,
+            }
+        );
         // The vetter's flag verdict, which `human-rule-issue`'s stranded-flag refusal names.
         assert_eq!(
             parse(&[
@@ -14588,6 +15224,24 @@ mod cli_tests {
     fn require_qa_block_cli() {
         assert_eq!(parse(&["prr", "require-qa-block"]), Cmd::RequireQaBlock);
         assert!(Cli::try_parse_from(["prr", "require-qa-block", "extra"]).is_err());
+    }
+
+    // A CI gate must run locally against any checkout, so its root is an argument with a working
+    // default rather than a path baked into a workflow.
+    #[test]
+    fn plugin_version_lockstep_cli() {
+        assert_eq!(
+            parse(&["prr", "plugin-version-lockstep"]),
+            Cmd::PluginVersionLockstep {
+                root: ".".to_string()
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "plugin-version-lockstep", "--root", "/tmp/x"]),
+            Cmd::PluginVersionLockstep {
+                root: "/tmp/x".to_string()
+            }
+        );
     }
 
     // ---- trace classification: the typed replacement for the runners' fallback grep ----
@@ -16086,7 +16740,7 @@ mod human_rule_tests {
     // The refusal must name every legal move, or it is an obstruction rather than a redirection —
     // a tool harder to use than raw `gh` gets bypassed, which is the failure to avoid above all.
     #[test]
-    fn the_stranding_refusal_names_all_three_legal_moves() {
+    fn the_stranding_refusal_names_every_legal_move() {
         let flagged = issue(
             &["ai:close-candidate"],
             "2026-01-01T00:00:00Z",
@@ -16108,8 +16762,10 @@ mod human_rule_tests {
         );
         // It says WHICH flag it is protecting …
         assert!(msg.contains("@2026-07-17T21:23:11Z"), "{msg}");
-        // … and names all three ways out, each spelled as it is actually invoked.
+        // … and names every way out, each spelled as it is actually invoked — including the
+        // TERMINAL one, which is the move a human upholding a flag actually wants (#94).
         for named in [
+            "human-close o/r 93",
             "human-rule-issue o/r 93 close-candidate",
             "human-rule-issue o/r 93 keep-open",
             "record-close-candidate-verdict o/r 93 reject",
@@ -16119,6 +16775,7 @@ mod human_rule_tests {
         // Every command it names must PARSE — advice the caller's own surface cannot execute is
         // exactly the "reach for a tool that does not exist" that produced #93.
         for argv in [
+            vec!["prr", "human-close", "o/r", "93", "x"],
             vec![
                 "prr",
                 "human-rule-issue",
@@ -16271,6 +16928,40 @@ mod human_rule_tests {
             (Lane::VetterVerdicts, "ai:ready".to_string()),
             "a keep-open PR is invisible to the human lane — which is why this is refused"
         );
+    }
+
+    // The MIRROR of the guard above. `gh pr view` refuses an issue outright, and reporting that as
+    // "not writing on incomplete data" reads as an API failure — the next move a human makes after
+    // reading it is raw `gh`. Both directions must name the subject and hand over the right command.
+    #[test]
+    fn a_pr_ruling_pointed_at_an_issue_is_told_so_and_handed_the_issue_command() {
+        let (code, msg) = pr_view_failed_error("o/r", "93", "reject", true);
+        assert_eq!(code, 2, "a mis-typed subject is usage, not an API failure");
+        assert!(msg.contains("is an ISSUE, not a pull request"), "{msg}");
+        assert!(
+            msg.contains("pr-review-report human-rule-issue o/r 93 reject"),
+            "{msg}"
+        );
+        assert!(
+            Cli::try_parse_from(["prr", "human-rule-issue", "o/r", "93", "reject", "x"]).is_ok(),
+            "the refusal names an unrunnable command"
+        );
+        // The ruling the caller asked for is carried into the redirection, so the retry is the
+        // SAME decision on the right surface rather than a fresh one they have to re-type.
+        for ruling in human_rulings(&HUMAN_DECISION_LABELS) {
+            assert!(
+                pr_view_failed_error("o/r", "93", ruling, true)
+                    .1
+                    .contains(&format!("human-rule-issue o/r 93 {ruling}")),
+                "{ruling}"
+            );
+        }
+        // A genuine fetch failure is still a fetch failure — the redirection must not swallow it,
+        // or a transient API outage would be reported as the caller's mistake.
+        let (code, msg) = pr_view_failed_error("o/r", "93", "reject", false);
+        assert_eq!(code, 1);
+        assert!(msg.contains("`gh pr view o/r#93` failed"), "{msg}");
+        assert!(!msg.contains("human-rule-issue"), "{msg}");
     }
 
     // A guard can only fire on data that was fetched. A field the plan reads but the `gh … --json`
@@ -16509,6 +17200,547 @@ mod human_rule_tests {
         assert!(!r.contains("superseded"), "{r}");
         assert!(!r.contains("cleared"), "{r}");
         assert!(r.contains("comment deduped"), "{r}");
+    }
+
+    // --- the TERMINAL edge (#94): rule, retire the pending flag, close ---------------------------
+
+    fn close_record(plan: HumanClosePlan) -> (String, Vec<String>, Vec<String>, bool, bool) {
+        match plan {
+            HumanClosePlan::Rule(p) => record(p),
+            other => panic!("expected Rule(Record), got {other:?}"),
+        }
+    }
+
+    // The defect the issue was filed about: `gh issue close` knows nothing about the FSM, so the
+    // pending flag survived the close on 74 subjects org-wide. The terminal transition retires it,
+    // and it is the ONLY `ai:*` label it touches — every other one is a judgement about the code.
+    #[test]
+    fn closing_retires_the_pending_flag_and_no_other_ai_label() {
+        let flagged = issue(
+            &["ai:close-candidate", "bug", "audit"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        let (anchor, supersedes, clears, has_target, skip) =
+            close_record(human_close_plan(&flagged, false));
+        assert_eq!(clears, s(&["ai:close-candidate"]));
+        assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
+        assert!(supersedes.is_empty());
+        assert!(!has_target);
+        assert!(!skip);
+
+        // The RULING alone still leaves it standing — while the subject is open the flag is the
+        // live pending claim, and `closeCandidateUpheld` still counts it. The terminal act retires
+        // it. These two must not be made to agree: that difference is the transition.
+        let (_, _, ruling_clears, ..) = record(human_issue_rule_plan(
+            &flagged,
+            "close-candidate",
+            "human:close-candidate",
+        ));
+        assert!(
+            ruling_clears.is_empty(),
+            "the open-state ruling must leave the pending claim standing"
+        );
+
+        // A PR carries the same label for a different reason (the vetter's own `close` verdict) and
+        // is retired the same way — one reference, both populations.
+        let (anchor, _, clears, ..) = close_record(human_close_plan(
+            &pr("deadbeef", &["ai:close-candidate", "ai:ready"], vec![]),
+            true,
+        ));
+        assert_eq!(clears, s(&["ai:close-candidate"]));
+        assert_eq!(anchor, "deadbeef", "a PR close pins to the head sha");
+
+        // An unflagged subject closes with nothing to clear — the clause is a repair, not a sweep.
+        let (_, _, clears, ..) = close_record(human_close_plan(
+            &issue(&["bug"], "2026-01-01T00:00:00Z", None, vec![]),
+            false,
+        ));
+        assert!(clears.is_empty());
+    }
+
+    // A closed-and-still-flagged subject is the state 74 hand-closes left behind, and it had no
+    // command that could move it. It gets an exit — the machine has no dead ends — but ONLY the
+    // stale label is dropped: a `👤 human` reason written today would date the decision to today.
+    #[test]
+    fn an_already_closed_subject_is_repaired_without_inventing_a_ruling() {
+        let mut closed = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        closed["state"] = json!("CLOSED");
+        assert_eq!(human_close_plan(&closed, false), HumanClosePlan::StaleFlag);
+
+        // Already clean ⇒ nothing at all. A repair that also fires on a settled subject would post
+        // a label edit per invocation for ever.
+        let mut clean = issue(&["bug"], "2026-01-01T00:00:00Z", None, vec![]);
+        clean["state"] = json!("CLOSED");
+        assert_eq!(human_close_plan(&clean, false), HumanClosePlan::Settled);
+
+        // Same on the PR side, in both of a PR's terminal states.
+        for state in ["CLOSED", "MERGED"] {
+            let mut p = pr("sha1", &["ai:close-candidate"], vec![]);
+            p["state"] = json!(state);
+            assert_eq!(
+                human_close_plan(&p, true),
+                HumanClosePlan::StaleFlag,
+                "{state}"
+            );
+            let mut q = pr("sha1", &[], vec![]);
+            q["state"] = json!(state);
+            assert_eq!(
+                human_close_plan(&q, true),
+                HumanClosePlan::Settled,
+                "{state}"
+            );
+        }
+
+        // An OPEN subject is never repaired-instead-of-ruled: that would close it with no record.
+        assert!(matches!(
+            human_close_plan(
+                &issue(
+                    &["ai:close-candidate"],
+                    "2026-01-01T00:00:00Z",
+                    Some("2026-07-17T21:23:11Z"),
+                    vec![]
+                ),
+                false
+            ),
+            HumanClosePlan::Rule(HumanRulePlan::Record { .. })
+        ));
+    }
+
+    // The close is TERMINAL, so it is last. Closing before the labels would make them permanently
+    // unreachable: every ruling plan reads a closed subject as `Moot`, so the retry that should
+    // finish the transition would report "nothing to do" over a half-written one.
+    #[test]
+    fn the_close_is_the_last_write_and_never_precedes_the_record() {
+        let steps = human_close_steps(
+            &s(&["human:design"]),
+            &s(&["ai:close-candidate"]),
+            false,
+            false,
+        );
+        assert_eq!(
+            steps,
+            vec![
+                RuleStep::Comment,
+                RuleStep::EnsureLabel,
+                RuleStep::AddLabel,
+                RuleStep::RemoveLabel("human:design".to_string()),
+                RuleStep::RemoveLabel("ai:close-candidate".to_string()),
+                RuleStep::Close,
+            ]
+        );
+        assert_eq!(steps.last(), Some(&RuleStep::Close));
+        // Stated as the property too, so a re-order that keeps the same members still fails.
+        let close_at = steps.iter().position(|x| x == &RuleStep::Close).unwrap();
+        for (i, step) in steps.iter().enumerate() {
+            assert!(
+                i == close_at || step != &RuleStep::Close,
+                "the close must happen exactly once"
+            );
+            assert!(i <= close_at, "no write may follow the close");
+        }
+        // It is the ruling's own order plus one step — not a second list that could drift.
+        let mut ruling = human_rule_steps(
+            &s(&["human:design"]),
+            &s(&["ai:close-candidate"]),
+            false,
+            false,
+        );
+        assert_eq!(&steps[..steps.len() - 1], &ruling[..]);
+        ruling.push(RuleStep::Close);
+        assert_eq!(steps, ruling);
+        // A re-run of a ruling already recorded still closes: dedup drops the comment, the present
+        // label drops the add, and the terminal act is what remains to do.
+        assert_eq!(
+            human_close_steps(&[], &[], true, true),
+            vec![RuleStep::EnsureLabel, RuleStep::Close]
+        );
+    }
+
+    // WHICH GitHub operation each step performs. A `Close` spelled as an `edit`, or an
+    // `--add-label` where a `--remove-label` belongs, is invisible to a suite that only checks the
+    // step LIST — and the close is the step whose mis-spelling would leave the exact state (#94)
+    // was filed about, so it is asserted here rather than only by a live run.
+    #[test]
+    fn each_step_invokes_the_gh_operation_it_names() {
+        let argv = |step: &RuleStep, noun: &str| {
+            rule_step_argv(step, noun, "o/r", "93", "human:close-candidate", "body").join(" ")
+        };
+        assert_eq!(
+            argv(&RuleStep::Close, "issue"),
+            "issue close 93 -R o/r",
+            "the terminal step must CLOSE, and take no label or body"
+        );
+        assert_eq!(argv(&RuleStep::Close, "pr"), "pr close 93 -R o/r");
+        assert_eq!(
+            argv(&RuleStep::Comment, "issue"),
+            "issue comment 93 -R o/r --body body"
+        );
+        assert_eq!(
+            argv(&RuleStep::AddLabel, "issue"),
+            "issue edit 93 -R o/r --add-label human:close-candidate"
+        );
+        assert_eq!(
+            argv(
+                &RuleStep::RemoveLabel("ai:close-candidate".to_string()),
+                "issue"
+            ),
+            "issue edit 93 -R o/r --remove-label ai:close-candidate"
+        );
+        // The label step is repo-scoped, never subject-scoped, so it carries no noun at all.
+        let ensure = argv(&RuleStep::EnsureLabel, "issue");
+        assert!(
+            ensure.starts_with("label create human:close-candidate -R o/r"),
+            "{ensure}"
+        );
+        assert!(ensure.ends_with("--force"), "{ensure}");
+        assert!(!ensure.contains(" 93 "), "{ensure}");
+
+        // Every failure names the half-state it leaves, so the caller knows what to re-run — except
+        // EnsureLabel, which is best-effort and must NOT abort a ruling.
+        assert_eq!(
+            rule_step_failure(&RuleStep::EnsureLabel, "o/r", "93", "human:close-candidate"),
+            None
+        );
+        for step in [
+            RuleStep::Comment,
+            RuleStep::AddLabel,
+            RuleStep::RemoveLabel("x".to_string()),
+            RuleStep::Close,
+        ] {
+            let (code, msg) =
+                rule_step_failure(&step, "o/r", "93", "human:close-candidate").expect("named");
+            assert_eq!(code, 1, "{step:?}");
+            assert!(msg.contains("o/r#93"), "{step:?}: {msg}");
+        }
+        // The close's failure says the subject is ruled but still OPEN, and that a re-run finishes
+        // it — the one half-state a caller can and must complete.
+        let (_, msg) =
+            rule_step_failure(&RuleStep::Close, "o/r", "93", "human:close-candidate").unwrap();
+        assert!(msg.contains("still open"), "{msg}");
+        assert!(msg.contains("Re-run"), "{msg}");
+    }
+
+    // The report says the subject was closed, on top of everything the ruling's report already
+    // says — a transition whose terminal half is invisible reads as a ruling that did not land.
+    #[test]
+    fn the_close_report_names_the_close_as_well_as_the_ruling() {
+        let r = human_close_report(
+            "o/r",
+            "93",
+            "close-candidate @2026-07-17T21:23:11Z",
+            &[],
+            &s(&["ai:close-candidate"]),
+            false,
+        );
+        assert!(r.contains("ruled human:close-candidate on o/r#93"), "{r}");
+        assert!(r.contains("cleared ai:close-candidate"), "{r}");
+        assert!(r.contains("[closed]"), "{r}");
+        // The label it writes is the sacred one, not a fifth invented state.
+        assert!(HUMAN_RULING_LABELS.contains(&HUMAN_CLOSE_TARGET));
+        assert!(HUMAN_DECISION_LABELS.contains(&HUMAN_CLOSE_TARGET));
+        // And the flag it retires is the one both populations share.
+        assert_eq!(PENDING_CLOSE_FLAG, "ai:close-candidate");
+    }
+
+    // The flag verdict is ISSUE-side authority. Pointed at a PR it used to answer "nothing to
+    // judge", which reads as "this PR has no human path" — and was recorded as exactly that
+    // misreading. It now says what the subject is and names the three moves that DO apply.
+    #[test]
+    fn the_flag_verdict_refuses_a_pull_request_by_naming_its_moves() {
+        let mut p = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        p["url"] = json!("https://github.com/o/r/pull/28");
+        assert_eq!(cc_verdict_plan(&p, "uphold"), CcVerdictPlan::NotAnIssue);
+        // Type before state: a CLOSED PR must be told what it is, not that its flag is moot.
+        p["state"] = json!("CLOSED");
+        assert_eq!(cc_verdict_plan(&p, "reject"), CcVerdictPlan::NotAnIssue);
+        // An issue URL is not a PR, and a subject whose URL was not fetched is still judged.
+        p["url"] = json!("https://github.com/o/r/issues/28");
+        p["state"] = json!("OPEN");
+        assert!(matches!(
+            cc_verdict_plan(&p, "uphold"),
+            CcVerdictPlan::Record { .. }
+        ));
+        // The guard can only fire on a field the fetch asks for.
+        for field in ["url", "state", "labels", "comments"] {
+            assert!(
+                CC_VERDICT_FIELDS.split(',').any(|x| x == field),
+                "the flag-verdict fetch drops {field:?}, silently disabling a guard"
+            );
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// the marketplace gate — one version, stored twice.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod marketplace_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn read_json(rel: &str) -> Option<Value> {
+        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
+        let text = std::fs::read_to_string(&path).ok()?;
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+    }
+
+    // The whole point: installers read the LISTING, so a listing that names a different version
+    // than the plugin it serves publishes the wrong release and nothing says so.
+    #[test]
+    fn a_listing_that_disagrees_with_its_plugin_fails() {
+        let entry =
+            json!({"name": "human-fsm", "source": "./plugins/human-fsm", "version": "0.1.0"});
+        assert_eq!(
+            plugin_version_check(
+                &entry,
+                Some(&json!({"name": "human-fsm", "version": "0.1.0"}))
+            ),
+            PluginVersionCheck::Agree {
+                name: "human-fsm".to_string(),
+                version: "0.1.0".to_string(),
+            }
+        );
+        let drift = plugin_version_check(
+            &entry,
+            Some(&json!({"name": "human-fsm", "version": "0.2.0"})),
+        );
+        assert_eq!(
+            drift,
+            PluginVersionCheck::Drift {
+                name: "human-fsm".to_string(),
+                listed: "0.1.0".to_string(),
+                manifest: "0.2.0".to_string(),
+            }
+        );
+        assert!(!drift.passed());
+        // The report names BOTH values and the fix — a gate that only says "mismatch" makes the
+        // reader open two files to find out which one is stale.
+        let r = drift.report();
+        assert!(r.contains("0.1.0") && r.contains("0.2.0"), "{r}");
+        assert!(r.contains("bump both together"), "{r}");
+    }
+
+    // A MISSING listing version is not agreement. This is `rain-org-health`'s live state, and a
+    // check that only compared present values would call it healthy while `/plugin` has no
+    // left-hand side to compare and can never see an update.
+    #[test]
+    fn a_missing_version_on_either_side_is_a_failure_not_a_pass() {
+        let no_listed = plugin_version_check(
+            &json!({"name": "p", "source": "./plugins/p"}),
+            Some(&json!({"name": "p", "version": "0.2.0"})),
+        );
+        assert_eq!(
+            no_listed,
+            PluginVersionCheck::NoListedVersion {
+                name: "p".to_string()
+            }
+        );
+        assert!(!no_listed.passed());
+        assert!(no_listed.report().contains("no `version`"));
+        assert_eq!(
+            plugin_version_check(
+                &json!({"name": "p", "source": "./plugins/p", "version": "0.2.0"}),
+                Some(&json!({"name": "p"})),
+            ),
+            PluginVersionCheck::NoManifestVersion {
+                name: "p".to_string()
+            }
+        );
+        // An empty string is a missing value, not a version that happens to match another one.
+        assert!(!plugin_version_check(
+            &json!({"name": "p", "source": "./p", "version": "  "}),
+            Some(&json!({"name": "p", "version": "  "})),
+        )
+        .passed());
+    }
+
+    // Versions agreeing proves nothing if the entry points at the wrong directory, or at one with
+    // no plugin in it at all — both are reachable the moment a plugin is moved.
+    #[test]
+    fn an_entry_must_resolve_to_the_plugin_it_names() {
+        assert_eq!(
+            plugin_version_check(
+                &json!({"name": "human-fsm", "source": "./plugins/gone", "version": "0.1.0"}),
+                None,
+            ),
+            PluginVersionCheck::NoManifest {
+                name: "human-fsm".to_string(),
+                source: "./plugins/gone".to_string(),
+            }
+        );
+        assert_eq!(
+            plugin_version_check(
+                &json!({"name": "human-fsm", "source": "./plugins/other", "version": "0.1.0"}),
+                Some(&json!({"name": "other", "version": "0.1.0"})),
+            ),
+            PluginVersionCheck::NameMismatch {
+                listed: "human-fsm".to_string(),
+                manifest: "other".to_string(),
+            }
+        );
+        // The name check runs BEFORE the version comparison: agreeing versions on a mis-wired
+        // entry is the case that would otherwise pass silently.
+        let m = plugin_version_check(
+            &json!({"name": "human-fsm", "source": "./p", "version": "0.9.9"}),
+            Some(&json!({"name": "other", "version": "0.9.9"})),
+        );
+        assert!(matches!(m, PluginVersionCheck::NameMismatch { .. }));
+    }
+
+    // The gate's EXIT CODES, which are the whole of its CI contract: 0 satisfied, 2 a listing is
+    // wrong, 3 it could not be evaluated. Conflating 2 and 3 is the failure that matters — a
+    // marketplace that cannot be read would then look identical to one that is correct.
+    #[test]
+    fn the_gate_exits_two_on_drift_and_three_when_it_cannot_be_evaluated() {
+        let base = std::env::temp_dir().join(format!("prr-mk-{}", std::process::id()));
+        let write = |rel: &str, body: &str| {
+            let p = base.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        let root = base.to_string_lossy().to_string();
+        let _ = std::fs::remove_dir_all(&base);
+
+        // No marketplace at all: the gate cannot be evaluated, and must not report success.
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(plugin_version_lockstep_mode(&root), 3);
+
+        // A marketplace listing nothing is inert, not healthy.
+        write(
+            ".claude-plugin/marketplace.json",
+            r#"{"name":"m","plugins":[]}"#,
+        );
+        assert_eq!(plugin_version_lockstep_mode(&root), 3);
+
+        write(
+            ".claude-plugin/marketplace.json",
+            r#"{"name":"m","plugins":[{"name":"p","source":"./plugins/p","version":"0.1.0"}]}"#,
+        );
+        // The listing resolves to nothing yet.
+        assert_eq!(plugin_version_lockstep_mode(&root), 2);
+        write(
+            "plugins/p/.claude-plugin/plugin.json",
+            r#"{"name":"p","version":"0.2.0"}"#,
+        );
+        assert_eq!(plugin_version_lockstep_mode(&root), 2, "drift");
+        write(
+            "plugins/p/.claude-plugin/plugin.json",
+            r#"{"name":"p","version":"0.1.0"}"#,
+        );
+        assert_eq!(plugin_version_lockstep_mode(&root), 0, "in lockstep");
+        // A trailing slash on the root is the same root — a workflow that passes `$PWD/` must not
+        // read as a different tree.
+        assert_eq!(plugin_version_lockstep_mode(&format!("{root}/")), 0);
+        // A SECOND plugin is checked too: the gate walks the listing, so a repo that grows one is
+        // covered the day it is added rather than the day someone extends a loop.
+        write(
+            ".claude-plugin/marketplace.json",
+            r#"{"name":"m","plugins":[{"name":"p","source":"./plugins/p","version":"0.1.0"},{"name":"q","source":"./plugins/q","version":"9.9.9"}]}"#,
+        );
+        write(
+            "plugins/q/.claude-plugin/plugin.json",
+            r#"{"name":"q","version":"0.0.1"}"#,
+        );
+        assert_eq!(plugin_version_lockstep_mode(&root), 2);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // THIS repo's own manifests, so the gate is not merely testable but satisfied.
+    #[test]
+    fn this_repos_marketplace_is_in_lockstep() {
+        let Some(market) = read_json(".claude-plugin/marketplace.json") else {
+            return; // not checked out (nix build sandbox) — the CI job runs the gate itself
+        };
+        let plugins = market["plugins"].as_array().expect("plugins array");
+        assert!(
+            !plugins.is_empty(),
+            "a marketplace with no plugins is inert"
+        );
+        for entry in plugins {
+            let source = entry["source"].as_str().unwrap().trim_start_matches("./");
+            let manifest = read_json(&format!("{source}/.claude-plugin/plugin.json"));
+            let check = plugin_version_check(entry, manifest.as_ref());
+            assert!(check.passed(), "{}", check.report());
+        }
+    }
+
+    // The commands are the plugin's payload, and a plugin whose command directory is empty
+    // installs a name and nothing else. Each one must also carry the frontmatter the loader reads,
+    // or it is listed with no description and no argument hint.
+    #[test]
+    fn every_shipped_command_carries_its_frontmatter() {
+        let dir = format!(
+            "{}/../plugins/human-fsm/commands",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return; // not checked out (nix build sandbox)
+        };
+        let mut seen = Vec::new();
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("md") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable command");
+            let name = path.file_stem().unwrap().to_string_lossy().to_string();
+            assert!(
+                text.starts_with("---\n"),
+                "{name}: no frontmatter — the loader shows it with no description"
+            );
+            let front = text
+                .split("\n---\n")
+                .next()
+                .expect("frontmatter is delimited");
+            for key in ["description:", "argument-hint:", "allowed-tools:"] {
+                assert!(front.contains(key), "{name}: frontmatter has no {key}");
+            }
+            // What a command RUNS is what is inside its fenced blocks. Asserted there rather than
+            // over the whole document, because the prose says `gh issue close` in order to FORBID
+            // it — a substring scan cannot tell a prohibition from an instruction, and the first
+            // version of this test failed on its own warning.
+            let fenced: Vec<&str> = text.split("```").skip(1).step_by(2).collect();
+            assert!(
+                !fenced.is_empty(),
+                "{name}: no fenced command — nothing for the caller to run"
+            );
+            let runnable: Vec<&str> = fenced
+                .iter()
+                .flat_map(|b| b.lines())
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            assert!(
+                runnable.iter().any(|l| l.starts_with("pr-review-report ")),
+                "{name}: names no pr-review-report transition"
+            );
+            for line in &runnable {
+                assert!(
+                    line.starts_with("pr-review-report ") || line.starts_with("/"),
+                    "{name}: fenced line {line:?} is not a transition of this binary — a raw \
+                     gh/git state change is a transition outside the state machine"
+                );
+            }
+            seen.push(name);
+        }
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec!["close-candidate", "design", "keep-open", "reject"],
+            "the shipped command set changed"
+        );
     }
 }
 
@@ -17841,6 +19073,9 @@ mod mcp_tests {
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
+                // The TERMINAL edge (#94). Composing it from `human_rule_issue` + a Bash `gh close`
+                // would put half a transition in a prompt — and that half was wrong every time.
+                "human_close",
             ]
         );
         // The vetter's inbox and its verdict write are NOT the human's authority.
@@ -17867,11 +19102,11 @@ mod mcp_tests {
             (FakeExec::ok(), "vetter"),
             (FakeExec::producer(), "producer"),
         ] {
-            for tool in ["human_rule", "human_rule_issue"] {
+            for tool in ["human_rule", "human_rule_issue", "human_close"] {
                 let resp = f
                     .handle(&call(
                         tool,
-                        json!({"pr": "o/r#1", "issue": "o/r#1", "ruling": "reject", "note": "x"}),
+                        json!({"pr": "o/r#1", "issue": "o/r#1", "subject": "o/r#1", "ruling": "reject", "note": "x"}),
                     ))
                     .unwrap();
                 assert!(is_error(&resp), "{who} must not reach {tool}");
@@ -18001,6 +19236,66 @@ mod mcp_tests {
                 ruling: "keep-open".to_string(),
                 note: "audit finding is live".to_string(),
             }]
+        );
+    }
+
+    // The TERMINAL edge takes `subject`, not `pr`/`issue`: the argument NAME would otherwise be the
+    // caller ASSERTING a type the tool is about to resolve, and a wrong assertion there is how a
+    // ruling lands in the other of the two populations that share the `ai:close-candidate` name.
+    #[test]
+    fn the_terminal_close_takes_one_subject_and_resolves_its_type_itself() {
+        let f = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        f.handle(&call(
+            "human_close",
+            json!({"subject": "o/r#93", "note": "  already fixed on main  "}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::HumanClose {
+                slug: "o/r".to_string(),
+                num: 93,
+                note: "already fixed on main".to_string(),
+            }]
+        );
+        // No `ruling` argument exists to get wrong, and none is accepted as a substitute for the
+        // note — a close with no recorded reason is the bare `gh close` this replaces.
+        let g = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        for (args, why) in [
+            (json!({"subject": "o/r#93"}), "missing note"),
+            (json!({"subject": "o/r#93", "note": "   "}), "blank note"),
+            (json!({"note": "x"}), "missing subject"),
+            (json!({"subject": "93", "note": "x"}), "no owner/repo"),
+            (json!({"pr": "o/r#93", "note": "x"}), "wrong argument name"),
+        ] {
+            let resp = g.handle(&call("human_close", args)).unwrap();
+            assert!(is_error(&resp), "{why} must be refused");
+        }
+        assert!(g.calls().is_empty(), "a refused close reached an effect");
+        // The schema requires both, so a model cannot even propose the refused shapes above.
+        let all = mcp_all_tools();
+        let t = all
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == json!("human_close"))
+            .expect("human_close is defined");
+        let required: Vec<&str> = t["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["subject", "note"]);
+        assert!(
+            t["inputSchema"]["properties"]["ruling"].is_null(),
+            "the terminal edge has no ruling to choose"
         );
     }
 
