@@ -1806,10 +1806,24 @@ fn verdict_label(verdict: &str) -> Option<&'static str> {
     }
 }
 
-/// GitHub colour + description for an `ai:*` verdict label (matches the taxonomy already created
-/// across the repos).
+/// GitHub colour + description for a pipeline label (matches the taxonomy already created across the
+/// repos).
+///
+/// Callers pass this to `gh label create --force`, which OVERWRITES an existing label's colour and
+/// description — so every label this binary writes must appear here with the values the org already
+/// uses. The `human:*` rows are the live ones (`gh label list`), not new ones: a human ruling that
+/// re-coloured `human:reject` and re-described it as "AI vetter verdict" (the fallback arm) in every
+/// repo it touched would be a silent, org-wide taxonomy edit performed by a transition that is
+/// supposed to move exactly one label.
 fn label_meta(label: &str) -> (&'static str, &'static str) {
     match label {
+        "human:reject" => ("b60205", "Human reviewer: needs rework"),
+        "human:design" => ("3d1a78", "Human maintainer: design question (sacred)"),
+        "human:close-candidate" => ("555555", "Human maintainer: close candidate (sacred)"),
+        "human:keep-open" => (
+            "0e8a16",
+            "Human decision: keep open (excluded from the close-candidate queue)",
+        ),
         "ai:ready" => (
             "0e8a16",
             "AI vetter: passes review, ready for human decision",
@@ -2153,10 +2167,15 @@ enum CloseFlagPlan {
 /// The human's namespace on an ISSUE. A ruling here is sacred: neither the producer's flag nor the
 /// vetter's verdict may overwrite it.
 ///
-/// `human:keep-open` is retained for compatibility but is NOT a label the org actually uses — the
-/// real set is the same three [`has_human_override`] enforces on PRs. Checking only `keep-open` +
-/// `close-candidate` (as this did) left a `human:reject` / `human:design` ruling on an issue
-/// invisible here, so the producer could flag an issue a human had already parked.
+/// This is a superset of the three [`has_human_override`] enforces on PRs, and the extra one is
+/// live: `human:keep-open` is the issue-only ruling that answers a close-candidate flag with "no",
+/// and the org carries it on real issues today (rain.erc4626.words#18/#86, rain.flare#110,
+/// flow#412). Checking only `keep-open` + `close-candidate` (as this did) left a `human:reject` /
+/// `human:design` ruling on an issue invisible here, so the producer could flag an issue a human had
+/// already parked.
+///
+/// It is also the ISSUE-side ruling vocabulary: `human-rule-issue` derives its verbs from this array
+/// (see [`human_rulings`]), so a state added here gains its transition rather than needing one.
 const HUMAN_RULING_LABELS: [&str; 4] = [
     "human:reject",
     "human:design",
@@ -2952,6 +2971,635 @@ fn reworked_reject_mode(slug: &str, pr: &str, dry_run: bool) -> i32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// human rulings — the transitions the HUMAN makes.
+//
+// Every other actor's hand-off is a labelled transition through this binary. The human's was raw
+// `gh issue edit --add-label`, and #86 records what that cost on rain.erc4626.words#93: the
+// improvised `human:reject` used the wrong NAMESPACE (the machine's move there was a vetter-class
+// `reject` on the flag), it LOCKED the issue out of its own state machine (every AI transition
+// refuses once a human has ruled, so the correct one became unreachable), and it bound to NOTHING —
+// a hand-applied label records no anchor, no reason, and no state it ruled from, so it is simply
+// true for ever.
+//
+// The vocabularies are not invented here: they ARE [`HUMAN_DECISION_LABELS`] (PRs) and
+// [`HUMAN_RULING_LABELS`] (issues), the same constants every other actor already refuses to
+// override. Derived rather than re-typed so the transition surface and the sacred label sets cannot
+// drift — a ruling outside them would write a label [`classify_lane`] buckets nowhere, i.e. a leak.
+//
+// The human is the TOP of the hierarchy, so these are not gates on the human's authority. A tool
+// that makes the sacred decision harder than raw `gh` gets bypassed, which is the failure mode above
+// all others. Every refusal below therefore either has no legal write to make (a terminal subject,
+// no anchor to pin to) or names the one-command move that IS legal.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The trusted marker a human ruling comment carries. Read back through [`trusted_comments`], so it
+/// inherits the same author guard as every `🤖 ai:*` record — the marker selects the ROLE, the
+/// author is the trust. It is a separate marker precisely because the human and the pipeline post
+/// from the same account: without it a human ruling and an AI verdict are indistinguishable.
+const HUMAN_MARKER: &str = "👤 human";
+
+/// The human rulings that DISPOSE of a live producer close-candidate flag — the two that answer the
+/// flag's own question. `close-candidate` agrees with it (the issue is the human's to close);
+/// `keep-open` contradicts it outright. Any OTHER ruling written onto a live flag strands it (see
+/// [`HumanRulePlan::StrandsFlag`]).
+const FLAG_DISPOSING_RULINGS: [&str; 2] = ["close-candidate", "keep-open"];
+
+/// PURE: the ruling VERBS a label set offers — its label names with the `human:` prefix stripped.
+fn human_rulings(set: &[&'static str]) -> Vec<&'static str> {
+    set.iter()
+        .filter_map(|l| l.strip_prefix("human:"))
+        .collect()
+}
+
+/// PURE: the label a ruling verb writes, or `None` when the verb is not in this subject's
+/// vocabulary. The vocabulary check and the label lookup are the SAME operation, so a ruling that
+/// validates always has a label to write.
+fn human_ruling_label(set: &[&'static str], ruling: &str) -> Option<&'static str> {
+    set.iter()
+        .copied()
+        .find(|l| l.strip_prefix("human:") == Some(ruling.trim()))
+}
+
+/// PROVENANCE. A human ruling pins to whatever the AI's ruling on the SAME subject pins to, so the
+/// two records go stale together:
+///
+/// - a PR → its head sha: `Ruled <sha>: …`, the twin of `Reviewed <sha>: …`. A force-push or a
+///   rework moves the head, and the ruling visibly no longer describes the code.
+/// - an issue carrying a LIVE flag → the flag's timestamp: `Ruled close-candidate @<at>: …`, the
+///   twin of `Reviewed close-candidate @<at>: …`. A re-flag invalidates it exactly as it
+///   invalidates the vetter's verdict.
+/// - an issue with no live flag → the issue as FILED: `Ruled issue @<createdAt>: …`. Deliberately
+///   not a moving anchor: with no producer claim there is nothing that CAN go stale, and saying
+///   `issue @…` rather than `close-candidate @…` is what distinguishes a ruling on the ISSUE from a
+///   ruling on a FLAG — the namespace collapse #86 is about.
+fn human_rule_comment(anchor: &str, ruling: &str, note: &str) -> String {
+    format!("{HUMAN_MARKER}\nRuled {anchor}: {ruling} — {}", note.trim())
+}
+
+/// PURE: is this exact ruling already recorded at this exact anchor? The dedup twin of
+/// [`should_skip_comment`] — re-running a ruling must not post it twice.
+fn human_ruling_recorded(subject: &Value, anchor: &str, ruling: &str) -> bool {
+    trusted_comments(subject, Some(HUMAN_MARKER))
+        .iter()
+        .any(|b| b.contains(&format!("Ruled {anchor}: {ruling}")))
+}
+
+/// PURE: the LIVE producer close-candidate flag's timestamp — a trusted flag comment AND the
+/// `ai:close-candidate` label still present. A flag the vetter already REJECTED has its label
+/// stripped, so the comment alone is history, not a pending claim, and must not anchor a ruling.
+fn live_close_candidate_flag(issue_json: &Value, labels: &[String]) -> Option<String> {
+    if !labels.iter().any(|l| l == "ai:close-candidate") {
+        return None;
+    }
+    last_close_candidate_flag(issue_json).map(|(at, _)| at)
+}
+
+/// The human-ruling decision, computed PURELY from the fetched subject JSON — the same
+/// guard-before-write shape as [`VerdictPlan`] and [`CcVerdictPlan`].
+#[derive(Debug, PartialEq)]
+enum HumanRulePlan {
+    /// The subject is already terminal (a closed issue, a merged/closed PR): there is no transition
+    /// left to make, so nothing is written. NOT a refusal of the human's authority — the state the
+    /// ruling would move it out of no longer exists.
+    Moot,
+    /// Nothing to pin the ruling to. Refuse rather than post `Ruled : reject`, which is the
+    /// bound-to-nothing label this whole surface exists to replace.
+    NoAnchor,
+    /// The issue transition was pointed at a PULL REQUEST. `gh issue view <n>` happily answers for
+    /// a PR — GitHub's API treats one as the other — so without this the issue vocabulary reaches a
+    /// PR, and `human:keep-open` on a PR is a label [`classify_lane`] buckets nowhere: the PR falls
+    /// through to whatever `ai:*` it carries and leaves the human-decisions lane entirely. The
+    /// subject's own URL is the discriminator, and it costs no extra round trip.
+    NotAnIssue,
+    /// This write would STRAND a live producer close-candidate flag. `record_close_candidate_verdict`
+    /// refuses once a human has ruled, so any non-disposing `human:*` label makes the flag's own
+    /// verdict transition permanently unreachable — the flag then sits un-judged for ever, and the
+    /// issue leaves both `closeCandidateUnvetted` and `closeCandidateUpheld` without ever being
+    /// resolved. This is precisely what happened on rain.erc4626.words#93.
+    StrandsFlag { flag_at: String },
+    Record {
+        /// The comment's provenance anchor — see [`human_rule_comment`].
+        anchor: String,
+        /// Other `human:*` labels this ruling REPLACES. The human owns this namespace and may change
+        /// their own mind, so a re-ruling is a transition, not a refusal; refusing would leave raw
+        /// `gh` as the only way to correct a mis-click, which is the bypass to avoid. This is the
+        /// SECOND sanctioned removal of a `human:*` label after `reworked-reject`, and it is
+        /// sanctioned because the actor removing it is the actor who wrote it.
+        supersedes: Vec<String>,
+        /// The `ai:*` labels this ruling directly CONTRADICTS, and therefore clears. Exactly one
+        /// pair qualifies: `keep-open` ⟂ `ai:close-candidate`. Every other combination is merely
+        /// stale, not contradictory — a `human:reject` PR deliberately KEEPS its old `ai:ready`
+        /// until `reworked-reject` clears it — and erasing the `ai:*` label would erase the very
+        /// claim the ruling was ruling on.
+        clears: Vec<String>,
+        has_target: bool,
+        skip_comment: bool,
+    },
+}
+
+/// PURE: may the human write `ruling` on this PR, and what does it change?
+fn human_pr_rule_plan(pr_json: &Value, ruling: &str, target: &str) -> HumanRulePlan {
+    if pr_json
+        .get("state")
+        .and_then(|s| s.as_str())
+        .is_some_and(|s| s != "OPEN")
+    {
+        return HumanRulePlan::Moot;
+    }
+    let sha = pr_json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if sha.is_empty() {
+        return HumanRulePlan::NoAnchor;
+    }
+    let labels = label_names(pr_json);
+    HumanRulePlan::Record {
+        supersedes: labels
+            .iter()
+            .filter(|l| l.starts_with("human:") && l.as_str() != target)
+            .cloned()
+            .collect(),
+        clears: Vec::new(),
+        has_target: labels.iter().any(|l| l == target),
+        skip_comment: human_ruling_recorded(pr_json, sha, ruling),
+        anchor: sha.to_string(),
+    }
+}
+
+/// The `gh <noun> view --json` field list each ruling fetches. Named constants because a field the
+/// plan READS but the fetch OMITS is a guard that silently stops firing: the JSON simply lacks the
+/// key, every `unwrap_or("")` returns empty, and the refusal never happens. Pinned by a test that
+/// walks the plan's own inputs.
+const PR_RULE_FIELDS: &str = "state,headRefOid,labels,comments";
+const ISSUE_RULE_FIELDS: &str = "state,labels,comments,createdAt,url";
+
+/// PURE: may the human write `ruling` on this ISSUE, and what does it change?
+fn human_issue_rule_plan(issue_json: &Value, ruling: &str, target: &str) -> HumanRulePlan {
+    if issue_json
+        .get("url")
+        .and_then(|u| u.as_str())
+        .is_some_and(|u| u.contains("/pull/"))
+    {
+        return HumanRulePlan::NotAnIssue;
+    }
+    if issue_json.get("state").and_then(|s| s.as_str()) == Some("CLOSED") {
+        return HumanRulePlan::Moot;
+    }
+    let labels = label_names(issue_json);
+    let live_flag = live_close_candidate_flag(issue_json, &labels);
+    let anchor = match &live_flag {
+        Some(flag_at) => {
+            if !FLAG_DISPOSING_RULINGS.contains(&ruling) {
+                return HumanRulePlan::StrandsFlag {
+                    flag_at: flag_at.clone(),
+                };
+            }
+            format!("close-candidate @{flag_at}")
+        }
+        None => {
+            let filed = issue_json
+                .get("createdAt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if filed.is_empty() {
+                return HumanRulePlan::NoAnchor;
+            }
+            format!("issue @{filed}")
+        }
+    };
+    HumanRulePlan::Record {
+        supersedes: labels
+            .iter()
+            .filter(|l| l.starts_with("human:") && l.as_str() != target)
+            .cloned()
+            .collect(),
+        clears: match (ruling, live_flag.is_some()) {
+            ("keep-open", true) => vec!["ai:close-candidate".to_string()],
+            _ => Vec::new(),
+        },
+        has_target: labels.iter().any(|l| l == target),
+        skip_comment: human_ruling_recorded(issue_json, &anchor, ruling),
+        anchor,
+    }
+}
+
+/// One GitHub write in a human ruling's sequence.
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum RuleStep {
+    /// Post the provenance comment.
+    Comment,
+    /// `gh label create --force`, so the label exists in a repo that has never seen it.
+    EnsureLabel,
+    /// Add the ruling's own label.
+    AddLabel,
+    /// Remove a label this ruling supersedes or contradicts.
+    RemoveLabel(String),
+}
+
+/// PURE: the ORDER a ruling's writes happen in — the fail-safe, and the reverse of the AI verdict
+/// write's. Extracted so the order is a tested property rather than an incidental statement order:
+/// every prefix of this sequence must be a state at least as safe as the one before it.
+///
+/// - `Comment` FIRST, always. A sacred label carrying no recorded reason is failure (3) of #86 and
+///   the one half-state that must be unreachable; if the comment fails, nothing sacred was written.
+/// - `AddLabel` before any `RemoveLabel`. The reverse order has a window in which the subject
+///   carries NO human label, and every AI actor is free to move it — a `gh` failure there would
+///   silently un-rule a decision.
+/// - `RemoveLabel` last, superseded rulings before contradicted `ai:*`: the sacred namespace is
+///   made consistent before the advisory one.
+fn human_rule_steps(
+    supersedes: &[String],
+    clears: &[String],
+    has_target: bool,
+    skip_comment: bool,
+) -> Vec<RuleStep> {
+    let mut steps = Vec::new();
+    if !skip_comment {
+        steps.push(RuleStep::Comment);
+    }
+    steps.push(RuleStep::EnsureLabel);
+    if !has_target {
+        steps.push(RuleStep::AddLabel);
+    }
+    steps.extend(
+        supersedes
+            .iter()
+            .chain(clears)
+            .map(|l| RuleStep::RemoveLabel(l.clone())),
+    );
+    steps
+}
+
+/// The EFFECT half of a human ruling, shared by both subjects — `gh pr …` and `gh issue …` take the
+/// same arguments, so `noun` is the only difference. The order comes from [`human_rule_steps`]; this
+/// function only performs it and names the half-state each failure leaves behind.
+fn human_rule_write(
+    noun: &str,
+    slug: &str,
+    n: &str,
+    target: &str,
+    comment: &str,
+    steps: &[RuleStep],
+) -> Result<(), (i32, String)> {
+    for step in steps {
+        match step {
+            RuleStep::Comment => {
+                if !gh_run(&[noun, "comment", n, "-R", slug, "--body", comment]) {
+                    return Err((
+                        1,
+                        format!(
+                            "error: failed to post the ruling comment on {slug}#{n} — no label was \
+                             written, so the ruling is not half-recorded"
+                        ),
+                    ));
+                }
+            }
+            RuleStep::EnsureLabel => {
+                let (color, desc) = label_meta(target);
+                if !gh_run(&[
+                    "label",
+                    "create",
+                    target,
+                    "-R",
+                    slug,
+                    "--color",
+                    color,
+                    "--description",
+                    desc,
+                    "--force",
+                ]) {
+                    eprintln!("warning: could not ensure label {target} exists in {slug}");
+                }
+            }
+            RuleStep::AddLabel => {
+                if !gh_run(&[noun, "edit", n, "-R", slug, "--add-label", target]) {
+                    return Err((
+                        1,
+                        format!(
+                            "error: posted the ruling on {slug}#{n} but FAILED to add {target}"
+                        ),
+                    ));
+                }
+            }
+            RuleStep::RemoveLabel(l) => {
+                if !gh_run(&[noun, "edit", n, "-R", slug, "--remove-label", l]) {
+                    return Err((
+                        1,
+                        format!(
+                            "error: {slug}#{n} now carries {target} but FAILED to remove {l} — it \
+                             holds two contradictory states"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// PURE: the report a completed (or dry-run) ruling prints.
+fn human_rule_report(
+    slug: &str,
+    n: &str,
+    target: &str,
+    anchor: &str,
+    supersedes: &[String],
+    clears: &[String],
+    skip_comment: bool,
+) -> String {
+    format!(
+        "ruled {target} on {slug}#{n} @ {anchor}{}{}{}",
+        if supersedes.is_empty() {
+            String::new()
+        } else {
+            format!(" [superseded {}]", supersedes.join(","))
+        },
+        if clears.is_empty() {
+            String::new()
+        } else {
+            format!(" [cleared {}]", clears.join(","))
+        },
+        if skip_comment {
+            " [comment deduped]"
+        } else {
+            " [comment posted]"
+        }
+    )
+}
+
+/// PURE: the usage refusal for a ruling verb outside a subject's vocabulary.
+fn human_ruling_vocab_error(set: &[&'static str], ruling: &str, subject: &str) -> (i32, String) {
+    (
+        2,
+        format!(
+            "{ruling:?} is not a human ruling on a {subject} — use one of: {}",
+            human_rulings(set).join(", ")
+        ),
+    )
+}
+
+/// PURE: the stranded-flag refusal — the one state-dependent guard, and the one #86 is about.
+///
+/// It is a REDIRECTION, not an obstruction: it names every move that is legal here, each a single
+/// command, so the human's intent is always expressible. A refusal that only said "no" would send
+/// the caller straight back to raw `gh`, which is the bypass this surface exists to remove.
+fn strands_flag_error(slug: &str, issue: &str, target: &str, flag_at: &str) -> (i32, String) {
+    (
+        4,
+        format!(
+            "refusing: {slug}#{issue} carries a LIVE producer close-candidate flag (@{flag_at}), \
+             and `{target}` would strand it — every AI transition refuses once a human has ruled, \
+             so `record_close_candidate_verdict` could never judge this flag again.\n\
+             The three moves that ARE available here, one command each:\n  \
+             human-rule-issue {slug} {issue} close-candidate \"…\"          — the flag is right; the \
+             issue is yours to close (sacred; the flag stands as the record of what you ruled on)\n  \
+             human-rule-issue {slug} {issue} keep-open \"…\"                 — the flag is wrong AND \
+             this must never be re-flagged (sacred; clears ai:close-candidate)\n  \
+             record-close-candidate-verdict {slug} {issue} reject \"…\"      — the flag is wrong on \
+             THIS evidence; drop it and return the issue to the producer, which may re-flag on better \
+             evidence"
+        ),
+    )
+}
+
+/// PURE: the empty-note refusal. Shared by both subjects because the reason is the same for both:
+/// the recorded reason is the entire difference between a considered ruling and a mis-click.
+fn human_ruling_note_error() -> (i32, String) {
+    (
+        2,
+        "note is required: one line saying what you ruled and on what evidence (a ruling with no \
+         recorded reason is the bare label this transition replaces)"
+            .to_string(),
+    )
+}
+
+/// `human-rule <owner/repo> <pr> <reject|design|close-candidate> "<note>"`: the human's transition
+/// on a PR — exactly [`HUMAN_DECISION_LABELS`], each pinned to the head sha it was ruled at.
+fn human_rule_pr_apply(
+    slug: &str,
+    pr: &str,
+    ruling: &str,
+    note: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    let Some(target) = human_ruling_label(&HUMAN_DECISION_LABELS, ruling) else {
+        return Err(human_ruling_vocab_error(
+            &HUMAN_DECISION_LABELS,
+            ruling,
+            "PR",
+        ));
+    };
+    if note.trim().is_empty() {
+        return Err(human_ruling_note_error());
+    }
+    let Some(prj) = gh_json(&["pr", "view", pr, "-R", slug, "--json", PR_RULE_FIELDS]) else {
+        return Err((
+            1,
+            format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
+        ));
+    };
+    let (anchor, supersedes, clears, has_target, skip) =
+        match human_pr_rule_plan(&prj, ruling.trim(), target) {
+            HumanRulePlan::Moot => {
+                return Ok(format!(
+                    "{slug}#{pr} is not open — the state a ruling would move it out of is already \
+                     terminal; nothing written"
+                ));
+            }
+            HumanRulePlan::NoAnchor => {
+                return Err((
+                    1,
+                    format!(
+                        "error: {slug}#{pr} has no head sha (headRefOid) — a ruling pinned to \
+                         nothing is the bare label this transition replaces"
+                    ),
+                ));
+            }
+            // Neither arm can arise on the PR side (a PR carries no producer close-candidate flag,
+            // and `human_pr_rule_plan` never inspects a URL). Handled rather than `unreachable!` so
+            // a future change to the shared plan cannot turn into a panic mid-transition.
+            HumanRulePlan::StrandsFlag { flag_at } => {
+                return Err((
+                    4,
+                    format!(
+                        "refusing: {slug}#{pr} carries a live close-candidate flag @ {flag_at}"
+                    ),
+                ));
+            }
+            HumanRulePlan::NotAnIssue => {
+                return Err((2, format!("refusing: {slug}#{pr} is not a pull request")));
+            }
+            HumanRulePlan::Record {
+                anchor,
+                supersedes,
+                clears,
+                has_target,
+                skip_comment,
+            } => (anchor, supersedes, clears, has_target, skip_comment),
+        };
+    let comment = human_rule_comment(&anchor, ruling.trim(), note);
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {}\n  comment: {}",
+            human_rule_report(slug, pr, target, &anchor, &supersedes, &clears, skip),
+            if skip {
+                "skip (same ruling at same anchor already posted)".to_string()
+            } else {
+                comment.replace('\n', " / ")
+            }
+        ));
+    }
+    human_rule_write(
+        "pr",
+        slug,
+        pr,
+        target,
+        &comment,
+        &human_rule_steps(&supersedes, &clears, has_target, skip),
+    )?;
+    Ok(human_rule_report(
+        slug,
+        pr,
+        target,
+        &anchor,
+        &supersedes,
+        &clears,
+        skip,
+    ))
+}
+
+/// `human-rule-issue <owner/repo> <issue> <reject|design|close-candidate|keep-open> "<note>"`: the
+/// human's transition on an ISSUE — exactly [`HUMAN_RULING_LABELS`].
+///
+/// The one state-dependent refusal lives here: on an issue carrying a LIVE producer flag, only the
+/// two flag-disposing rulings are legal, because any other one strands the flag (see
+/// [`HumanRulePlan::StrandsFlag`]). The refusal names all three legal moves, so the human's intent
+/// is always one command away.
+fn human_rule_issue_apply(
+    slug: &str,
+    issue: &str,
+    ruling: &str,
+    note: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    let Some(target) = human_ruling_label(&HUMAN_RULING_LABELS, ruling) else {
+        return Err(human_ruling_vocab_error(
+            &HUMAN_RULING_LABELS,
+            ruling,
+            "issue",
+        ));
+    };
+    if note.trim().is_empty() {
+        return Err(human_ruling_note_error());
+    }
+    let Some(j) = gh_json(&[
+        "issue",
+        "view",
+        issue,
+        "-R",
+        slug,
+        "--json",
+        ISSUE_RULE_FIELDS,
+    ]) else {
+        return Err((
+            1,
+            format!(
+                "error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data"
+            ),
+        ));
+    };
+    let (anchor, supersedes, clears, has_target, skip) = match human_issue_rule_plan(
+        &j,
+        ruling.trim(),
+        target,
+    ) {
+        HumanRulePlan::Moot => {
+            return Ok(format!(
+                "{slug}#{issue} is already closed — the state a ruling would move it out of is \
+                     already terminal; nothing written"
+            ));
+        }
+        HumanRulePlan::NoAnchor => {
+            return Err((
+                1,
+                format!(
+                    "error: {slug}#{issue} has no createdAt — not writing a ruling pinned to \
+                         nothing"
+                ),
+            ));
+        }
+        HumanRulePlan::NotAnIssue => {
+            return Err((
+                    2,
+                    format!(
+                        "refusing: {slug}#{issue} is a PULL REQUEST, not an issue — \
+                         `gh issue view` answers for either, so this would have written the ISSUE \
+                         vocabulary onto a PR, and `human:keep-open` on a PR lands in no lane at \
+                         all.\n  \
+                         Use: pr-review-report human-rule {slug} {issue} <reject|design|close-candidate> \"…\""
+                    ),
+                ));
+        }
+        HumanRulePlan::StrandsFlag { flag_at } => {
+            return Err(strands_flag_error(slug, issue, target, &flag_at));
+        }
+        HumanRulePlan::Record {
+            anchor,
+            supersedes,
+            clears,
+            has_target,
+            skip_comment,
+        } => (anchor, supersedes, clears, has_target, skip_comment),
+    };
+    let comment = human_rule_comment(&anchor, ruling.trim(), note);
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {}\n  comment: {}",
+            human_rule_report(slug, issue, target, &anchor, &supersedes, &clears, skip),
+            if skip {
+                "skip (same ruling at same anchor already posted)".to_string()
+            } else {
+                comment.replace('\n', " / ")
+            }
+        ));
+    }
+    human_rule_write(
+        "issue",
+        slug,
+        issue,
+        target,
+        &comment,
+        &human_rule_steps(&supersedes, &clears, has_target, skip),
+    )?;
+    Ok(human_rule_report(
+        slug,
+        issue,
+        target,
+        &anchor,
+        &supersedes,
+        &clears,
+        skip,
+    ))
+}
+
+/// Thin CLI shell over any `*_apply` transition: it OWNS the printing so the cores stay usable by
+/// the MCP server, whose stdout is the JSON-RPC stream. Generalises [`record_verdict_mode`]'s shape
+/// — success on stdout, refusal on stderr, the apply's own exit code.
+fn print_transition_result(result: Result<String, (i32, String)>) -> i32 {
+    match result {
+        Ok(msg) => {
+            println!("{msg}");
+            0
+        }
+        Err((code, msg)) => {
+            eprintln!("{msg}");
+            code
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // lane bucketing — the FSM's full inventory, grouped by lane for the dashboard.
 //
 // `human-queue --json` emits EVERY modeled state's inventory, not just the human-action ones, so the
@@ -2983,7 +3631,9 @@ impl Lane {
     }
 }
 
-/// The `human:*` decisions, in precedence order (a PR should carry at most one).
+/// The `human:*` decisions, in precedence order (a PR should carry at most one). Also the PR-side
+/// ruling vocabulary: `human-rule` derives its verbs from this array (see [`human_rulings`]), so the
+/// transition surface and the lane classifier cannot name different states.
 const HUMAN_DECISION_LABELS: [&str; 3] = ["human:reject", "human:design", "human:close-candidate"];
 /// The vetter's non-`ready` verdict labels (the `ready` split is handled separately by head drift).
 const VETTER_VERDICT_LABELS: [&str; 4] =
@@ -6250,6 +6900,12 @@ const _: () = assert!(DEFAULT_MAX_DIFF_BYTES <= MCP_MAX_RESULT_BYTES);
 enum McpProfile {
     Vetter,
     Producer,
+    /// An agent acting ON THE HUMAN'S BEHALF. Not the human's authority delegated — the human's
+    /// authority is the account, and this profile writes as it — but the human's TRANSITIONS made
+    /// reachable without raw `gh`. #86 is the case for it: the improvised
+    /// `gh issue edit --add-label human:reject` that stranded a live flag was available precisely
+    /// because no tool offered the move, and a prompt rule cannot take a bypassable Bash away.
+    Human,
 }
 
 impl McpProfile {
@@ -6257,7 +6913,10 @@ impl McpProfile {
         match s {
             "vetter" => Ok(McpProfile::Vetter),
             "producer" => Ok(McpProfile::Producer),
-            _ => Err(format!("unknown profile {s:?} — use vetter or producer")),
+            "human" => Ok(McpProfile::Human),
+            _ => Err(format!(
+                "unknown profile {s:?} — use vetter, producer or human"
+            )),
         }
     }
     /// The tool names this profile exposes, in listing order.
@@ -6279,6 +6938,21 @@ impl McpProfile {
                 "record_close_candidate_verdict",
             ],
             McpProfile::Producer => &["clone_create", "clone_release", "clone_list", "clone_gc"],
+            // The human's surface: read the subject, rule on it. The two reads are the vetter's
+            // existing ones re-listed, not new tools — a write-only profile cannot be used, and a
+            // ruling made without reading the subject is the mis-click this whole surface exists to
+            // make distinguishable.
+            //
+            // `unvetted*` is deliberately absent: those are the VETTER's inbox. The human's inbox is
+            // `human-queue`, which renders whole org-wide sets and does not fit one tool result.
+            // `record_close_candidate_verdict` is absent too — it is the vetter's authority, and the
+            // ruling that mistook it for a human one is exactly what `human_rule_issue` refuses.
+            McpProfile::Human => &[
+                "pr_context",
+                "close_candidate_context",
+                "human_rule",
+                "human_rule_issue",
+            ],
         }
     }
 }
@@ -6387,6 +7061,32 @@ fn mcp_all_tools() -> Value {
             }
         },
         {
+            "name": "human_rule",
+            "description": "The human's transition on a PR: apply human:<ruling> (superseding any other human:* ruling) + a HEAD-SHA-PINNED 👤 human comment carrying the reason. Leaves ai:* untouched — reworked-reject clears those once a rework lands.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pr": {"type": "string", "description": "owner/repo#number"},
+                    "ruling": {"type": "string", "enum": ["reject", "design", "close-candidate"]},
+                    "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."}
+                },
+                "required": ["pr", "ruling", "note"]
+            }
+        },
+        {
+            "name": "human_rule_issue",
+            "description": "The human's transition on an ISSUE: apply human:<ruling> + a 👤 human comment pinned to the live close-candidate flag, or to the issue as filed when there is none. On a live flag only close-candidate/keep-open are legal — anything else would strand it, and the refusal names every legal move.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "issue": {"type": "string", "description": "owner/repo#number"},
+                    "ruling": {"type": "string", "enum": ["reject", "design", "close-candidate", "keep-open"]},
+                    "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."}
+                },
+                "required": ["issue", "ruling", "note"]
+            }
+        },
+        {
             "name": "clone_create",
             "description": "Make (or re-sync to current base) the per-issue work clone. Returns its dir. Refuses to re-sync over unpushed commits.",
             "inputSchema": {
@@ -6470,6 +7170,18 @@ enum McpCall {
         slug: String,
         num: u64,
         verdict: String,
+        note: String,
+    },
+    HumanRule {
+        slug: String,
+        num: u64,
+        ruling: String,
+        note: String,
+    },
+    HumanRuleIssue {
+        slug: String,
+        num: u64,
+        ruling: String,
         note: String,
     },
     /// `root`/`name` are the OUTPUT of the path guard, not the model's argument: by the time this
@@ -6580,6 +7292,26 @@ fn oversize_result_error(name: &str, len: usize, budget: usize, narrow: Option<&
              summary."
         ),
     }
+}
+
+/// PURE: the `ruling` + `note` shared by both human transitions, validated against `set`'s
+/// vocabulary. Reuses the apply's OWN error text, so the wording a caller sees is identical whether
+/// the refusal came from the MCP guard or from the CLI — two spellings of one rule is how a caller
+/// learns to treat them as two rules.
+fn human_rule_args(
+    set: &[&'static str],
+    args: &Value,
+    subject: &str,
+) -> Result<(String, String), String> {
+    let ruling = req_str(args, "ruling")?.trim().to_string();
+    if human_ruling_label(set, &ruling).is_none() {
+        return Err(human_ruling_vocab_error(set, &ruling, subject).1);
+    }
+    let note = match req_str(args, "note") {
+        Ok(n) if !n.trim().is_empty() => n.trim().to_string(),
+        _ => return Err(human_ruling_note_error().1),
+    };
+    Ok((ruling, note))
 }
 
 fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -6700,6 +7432,29 @@ fn validate_call(
                 slug,
                 num,
                 verdict,
+                note,
+            })
+        }
+        // --- the human's transitions. The VOCABULARY guard runs here, off the same constants the
+        // rest of the binary enforces sacredness on; every STATE-dependent guard runs in the apply,
+        // which is the only place the subject's live state is known.
+        "human_rule" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            let (ruling, note) = human_rule_args(&HUMAN_DECISION_LABELS, args, "PR")?;
+            Ok(McpCall::HumanRule {
+                slug,
+                num,
+                ruling,
+                note,
+            })
+        }
+        "human_rule_issue" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "issue")?)?;
+            let (ruling, note) = human_rule_args(&HUMAN_RULING_LABELS, args, "issue")?;
+            Ok(McpCall::HumanRuleIssue {
+                slug,
+                num,
+                ruling,
                 note,
             })
         }
@@ -6907,6 +7662,20 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             verdict,
             note,
         } => record_cc_verdict_apply(&slug, &num.to_string(), &verdict, &note, false)
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::HumanRule {
+            slug,
+            num,
+            ruling,
+            note,
+        } => human_rule_pr_apply(&slug, &num.to_string(), &ruling, &note, false)
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::HumanRuleIssue {
+            slug,
+            num,
+            ruling,
+            note,
+        } => human_rule_issue_apply(&slug, &num.to_string(), &ruling, &note, false)
             .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::CloneCreate {
             root,
@@ -7161,6 +7930,42 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Human transition on a PR: apply human:<ruling> + a sha-pinned 👤 human comment.
+    HumanRule {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        /// reject | design | close-candidate
+        ruling: String,
+        /// One-line ruling + evidence (trailing words are joined).
+        note: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Human transition on an ISSUE: apply human:<ruling> + a flag-/issue-pinned 👤 human comment.
+    HumanRuleIssue {
+        /// owner/repo
+        slug: String,
+        issue: String,
+        /// reject | design | close-candidate | keep-open
+        ruling: String,
+        note: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Vetter transition on a close-candidate FLAG: uphold (queued for the human) or reject (drop
+    /// ai:close-candidate, back to the producer). The CLI twin of the MCP tool — `human-rule-issue`
+    /// names it in the refusal it raises on a flagged issue, and a human at a terminal has no MCP.
+    RecordCloseCandidateVerdict {
+        /// owner/repo
+        slug: String,
+        issue: String,
+        /// uphold | reject
+        verdict: String,
+        note: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// The daily FSM-conformance review: every open item grouped by human-gated state, plus a
     /// loud "NOT IN ANY MODELED STATE" leak bucket. The instrument for the daily status check.
     HumanQueue {
@@ -7183,7 +7988,7 @@ enum Cmd {
     /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
     /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
     Mcp {
-        /// Which role's surface to serve: `vetter` (default) or `producer`.
+        /// Which role's surface to serve: `vetter` (default), `producer` or `human`.
         #[arg(long, default_value = "vetter")]
         profile: String,
     },
@@ -8076,6 +8881,45 @@ fn main() {
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), dry_run),
         Cmd::ReworkedReject { slug, pr, dry_run } => reworked_reject_mode(&slug, &pr, dry_run),
+        Cmd::HumanRule {
+            slug,
+            pr,
+            ruling,
+            note,
+            dry_run,
+        } => print_transition_result(human_rule_pr_apply(
+            &slug,
+            &pr,
+            &ruling,
+            &note.join(" "),
+            dry_run,
+        )),
+        Cmd::HumanRuleIssue {
+            slug,
+            issue,
+            ruling,
+            note,
+            dry_run,
+        } => print_transition_result(human_rule_issue_apply(
+            &slug,
+            &issue,
+            &ruling,
+            &note.join(" "),
+            dry_run,
+        )),
+        Cmd::RecordCloseCandidateVerdict {
+            slug,
+            issue,
+            verdict,
+            note,
+            dry_run,
+        } => print_transition_result(record_cc_verdict_apply(
+            &slug,
+            &issue,
+            &verdict,
+            &note.join(" "),
+            dry_run,
+        )),
         Cmd::HumanQueue { json } => human_queue_mode(json),
         Cmd::Unvetted {
             json,
@@ -10599,6 +11443,70 @@ mod cli_tests {
         ));
     }
 
+    // The HUMAN's transitions have subcommands too (#86): a human works interactively, and a rule
+    // that exists only as an MCP tool is unavailable at the terminal where the ruling is made.
+    #[test]
+    fn human_transition_subcommands_present() {
+        assert_eq!(
+            parse(&[
+                "prr",
+                "human-rule",
+                "o/r",
+                "93",
+                "reject",
+                "leg",
+                "1",
+                "stands",
+                "--dry-run"
+            ]),
+            Cmd::HumanRule {
+                slug: "o/r".to_string(),
+                pr: "93".to_string(),
+                ruling: "reject".to_string(),
+                // Variadic + joined, and --dry-run is a flag rather than the last note word.
+                note: s(&["leg", "1", "stands"]),
+                dry_run: true,
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "prr",
+                "human-rule-issue",
+                "o/r",
+                "93",
+                "keep-open",
+                "audit",
+                "finding"
+            ]),
+            Cmd::HumanRuleIssue {
+                slug: "o/r".to_string(),
+                issue: "93".to_string(),
+                ruling: "keep-open".to_string(),
+                note: s(&["audit", "finding"]),
+                dry_run: false,
+            }
+        );
+        // The vetter's flag verdict, which `human-rule-issue`'s stranded-flag refusal names.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "record-close-candidate-verdict",
+                "o/r",
+                "93",
+                "reject",
+                "no",
+                "anchor"
+            ]),
+            Cmd::RecordCloseCandidateVerdict {
+                slug: "o/r".to_string(),
+                issue: "93".to_string(),
+                verdict: "reject".to_string(),
+                note: s(&["no", "anchor"]),
+                dry_run: false,
+            }
+        );
+    }
+
     // The reason is variadic + joined; --dry-run is a flag, not swallowed into the reason.
     #[test]
     fn flag_blocked_reason_is_variadic_and_dry_run_is_a_flag() {
@@ -11954,6 +12862,687 @@ mod fsm_completeness_tests {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// human rulings — the human's own FSM transitions (#86).
+//
+// Every guard below is stated as the failure it prevents, because each one is drawn from a real
+// consequence of the improvised `gh issue edit --add-label human:reject` on
+// rainlanguage/rain.erc4626.words#93: the wrong namespace, the stranded flag, and the label bound to
+// nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod human_rule_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    fn labels(names: &[&str]) -> Value {
+        Value::Array(names.iter().map(|n| json!({"name": n})).collect())
+    }
+
+    /// A PR as `gh pr view --json state,headRefOid,labels,comments` returns it.
+    fn pr(sha: &str, ls: &[&str], comments: Vec<Value>) -> Value {
+        json!({"state": "OPEN", "headRefOid": sha, "labels": labels(ls), "comments": comments})
+    }
+
+    /// An issue as `gh issue view --json state,labels,comments,createdAt` returns it, optionally
+    /// carrying one trusted producer close-candidate flag.
+    fn issue(ls: &[&str], filed: &str, flag_at: Option<&str>, extra: Vec<Value>) -> Value {
+        let mut comments: Vec<Value> = flag_at
+            .map(|at| {
+                vec![json!({
+                    "author": {"login": TRUSTED_AUTHOR},
+                    "createdAt": at,
+                    "body": "🤖 ai:producer\nClose-candidate: already-fixed-on-main: PR #181",
+                })]
+            })
+            .unwrap_or_default();
+        comments.extend(extra);
+        json!({"state": "OPEN", "labels": labels(ls), "createdAt": filed, "comments": comments})
+    }
+
+    fn ruling_comment(anchor: &str, ruling: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": human_rule_comment(anchor, ruling, "because"),
+        })
+    }
+
+    fn record(plan: HumanRulePlan) -> (String, Vec<String>, Vec<String>, bool, bool) {
+        match plan {
+            HumanRulePlan::Record {
+                anchor,
+                supersedes,
+                clears,
+                has_target,
+                skip_comment,
+            } => (anchor, supersedes, clears, has_target, skip_comment),
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    // --- G1 vocabulary: the machine's OWN label sets, not a second list --------------------------
+
+    // The verbs are DERIVED from the sacred label constants. Typing them out separately is what
+    // lets the transition surface and the lane classifier name different states.
+    #[test]
+    fn human_ruling_vocabulary_is_derived_from_the_sacred_label_sets() {
+        assert_eq!(
+            human_rulings(&HUMAN_DECISION_LABELS),
+            vec!["reject", "design", "close-candidate"]
+        );
+        assert_eq!(
+            human_rulings(&HUMAN_RULING_LABELS),
+            vec!["reject", "design", "close-candidate", "keep-open"]
+        );
+        // Every verb round-trips to the label it writes …
+        for set in [&HUMAN_DECISION_LABELS[..], &HUMAN_RULING_LABELS[..]] {
+            for label in set {
+                let verb = label.strip_prefix("human:").unwrap();
+                assert_eq!(human_ruling_label(set, verb), Some(*label));
+            }
+        }
+        // … and nothing else does. `keep-open` is ISSUE-only: on a PR there is no close-candidate
+        // flag for it to answer, and writing it would land the PR in no lane at all.
+        assert_eq!(
+            human_ruling_label(&HUMAN_DECISION_LABELS, "keep-open"),
+            None
+        );
+        for bad in ["", "REJECT", "human:reject", "approve", "close", " "] {
+            assert_eq!(human_ruling_label(&HUMAN_RULING_LABELS, bad), None, "{bad}");
+        }
+        // Surrounding whitespace is the caller's, not a different verb.
+        assert_eq!(
+            human_ruling_label(&HUMAN_RULING_LABELS, "  keep-open  "),
+            Some("human:keep-open")
+        );
+    }
+
+    // A ruling outside the vocabulary is a USAGE error (exit 2) that names the vocabulary — the
+    // caller's next move must be a legal verb, not an improvised label.
+    #[test]
+    fn a_ruling_outside_the_vocabulary_is_refused_with_the_vocabulary() {
+        let (code, msg) = human_ruling_vocab_error(&HUMAN_DECISION_LABELS, "keep-open", "PR");
+        assert_eq!(code, 2);
+        assert!(msg.contains("reject, design, close-candidate"), "{msg}");
+        assert!(!msg.contains("keep-open,"), "{msg}");
+        let (code, msg) = human_ruling_vocab_error(&HUMAN_RULING_LABELS, "nope", "issue");
+        assert_eq!(code, 2);
+        assert!(msg.contains("keep-open"), "{msg}");
+    }
+
+    // --- G2 note: the recorded reason IS the difference from a mis-click ------------------------
+
+    #[test]
+    fn a_ruling_with_no_recorded_reason_is_refused() {
+        assert_eq!(human_ruling_note_error().0, 2);
+        // Both surfaces refuse on the same rule, in the same words.
+        for blank in [json!(""), json!("   "), json!(null)] {
+            let args = json!({"pr": "o/r#1", "ruling": "reject", "note": blank});
+            let err = human_rule_args(&HUMAN_DECISION_LABELS, &args, "PR").unwrap_err();
+            assert_eq!(err, human_ruling_note_error().1, "{blank}");
+        }
+        // A missing note key is the same refusal, not a different one.
+        let args = json!({"pr": "o/r#1", "ruling": "reject"});
+        assert_eq!(
+            human_rule_args(&HUMAN_DECISION_LABELS, &args, "PR").unwrap_err(),
+            human_ruling_note_error().1
+        );
+        // The vocabulary is checked BEFORE the note, so an illegal verb is never masked by a
+        // missing note.
+        let args = json!({"pr": "o/r#1", "ruling": "approve"});
+        assert!(human_rule_args(&HUMAN_DECISION_LABELS, &args, "PR")
+            .unwrap_err()
+            .contains("is not a human ruling"));
+    }
+
+    // --- G3 provenance: what a ruling PINS to ---------------------------------------------------
+
+    // A PR ruling pins to the head sha, exactly as the vetter's verdict does — so a force-push or a
+    // rework makes the ruling visibly no longer about the code that is there.
+    #[test]
+    fn a_pr_ruling_pins_to_the_head_sha() {
+        let (anchor, _, _, _, _) = record(human_pr_rule_plan(
+            &pr("deadbeef", &["ai:ready"], vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert_eq!(anchor, "deadbeef");
+        assert_eq!(
+            human_rule_comment(&anchor, "reject", " leg 1 is not fixed "),
+            "👤 human\nRuled deadbeef: reject — leg 1 is not fixed"
+        );
+    }
+
+    // No head sha ⇒ no anchor ⇒ REFUSE. `Ruled : reject` is the bound-to-nothing label this whole
+    // surface exists to replace, so writing one is worse than writing nothing.
+    #[test]
+    fn a_pr_ruling_without_a_head_sha_has_no_anchor_and_is_refused() {
+        assert_eq!(
+            human_pr_rule_plan(&pr("", &[], vec![]), "reject", "human:reject"),
+            HumanRulePlan::NoAnchor
+        );
+        assert_eq!(
+            human_pr_rule_plan(&json!({"state": "OPEN"}), "reject", "human:reject"),
+            HumanRulePlan::NoAnchor
+        );
+    }
+
+    // An issue ruling pins to the LIVE flag when there is one — the same anchor
+    // `record_close_candidate_verdict` uses, so a re-flag invalidates both records together.
+    #[test]
+    fn an_issue_ruling_pins_to_the_live_flag_when_there_is_one() {
+        let j = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        let (anchor, ..) = record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
+        assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
+        // The same anchor string the vetter's own comment carries — one re-flag stales both.
+        assert!(cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x")
+            .contains("close-candidate @2026-07-17T21:23:11Z"));
+    }
+
+    // With no LIVE flag the ruling is on the ISSUE AS FILED, and it says so. That wording is the
+    // namespace distinction #86 lost: `issue @…` is a ruling on the issue, `close-candidate @…` is
+    // a ruling on a producer claim, and a reader can tell which happened.
+    #[test]
+    fn an_unflagged_issue_ruling_pins_to_the_issue_as_filed() {
+        let (anchor, ..) = record(human_issue_rule_plan(
+            &issue(&[], "2026-01-01T00:00:00Z", None, vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
+
+        // A flag COMMENT whose label the vetter already stripped is history, not a pending claim:
+        // it must not anchor a ruling, or the record would claim to judge a flag that is gone.
+        let (anchor, ..) = record(human_issue_rule_plan(
+            &issue(
+                &[],
+                "2026-01-01T00:00:00Z",
+                Some("2026-07-17T21:23:11Z"),
+                vec![],
+            ),
+            "reject",
+            "human:reject",
+        ));
+        assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
+
+        // No createdAt ⇒ nothing to pin to ⇒ refuse, same rule as a PR with no head sha.
+        assert_eq!(
+            human_issue_rule_plan(
+                &json!({"state": "OPEN", "labels": [], "comments": []}),
+                "reject",
+                "human:reject"
+            ),
+            HumanRulePlan::NoAnchor
+        );
+    }
+
+    // The comment carries the trusted MARKER, the anchor, the ruling and the reason — the four
+    // things a hand-applied label carries none of.
+    #[test]
+    fn the_ruling_comment_records_marker_anchor_ruling_and_reason() {
+        let c = human_rule_comment(
+            "close-candidate @2026-07-17T21:23:11Z",
+            "keep-open",
+            "audit finding still live",
+        );
+        assert!(c.starts_with(HUMAN_MARKER), "{c}");
+        assert!(
+            c.contains("Ruled close-candidate @2026-07-17T21:23:11Z: keep-open"),
+            "{c}"
+        );
+        assert!(c.contains("— audit finding still live"), "{c}");
+        // Distinguishable from the AI's records by marker, which is what makes the author-based
+        // trust filter able to separate them — both are posted by the same account.
+        assert_ne!(HUMAN_MARKER, "🤖 ai:vetter");
+        assert!(!c.starts_with("🤖"), "{c}");
+    }
+
+    // --- G4 the stranding guard: the one that catches rain.erc4626.words#93 ----------------------
+
+    // On an issue carrying a LIVE producer flag, only the two flag-disposing rulings are legal.
+    // Any other `human:*` label makes `record_close_candidate_verdict` (which refuses once a human
+    // has ruled) permanently unable to judge the flag — it is stranded, exactly as #93 was.
+    #[test]
+    fn a_ruling_that_would_strand_a_live_flag_is_refused() {
+        let flagged = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        for stranding in ["reject", "design"] {
+            let label = human_ruling_label(&HUMAN_RULING_LABELS, stranding).unwrap();
+            assert_eq!(
+                human_issue_rule_plan(&flagged, stranding, label),
+                HumanRulePlan::StrandsFlag {
+                    flag_at: "2026-07-17T21:23:11Z".to_string()
+                },
+                "{stranding} must not strand the flag"
+            );
+        }
+        // The two that ANSWER the flag are legal — the human is never left without a move.
+        for disposing in FLAG_DISPOSING_RULINGS {
+            let label = human_ruling_label(&HUMAN_RULING_LABELS, disposing).unwrap();
+            record(human_issue_rule_plan(&flagged, disposing, label));
+        }
+        // The guard is about a LIVE flag, not about the label alone: a bare `ai:close-candidate`
+        // with no trusted producer comment is nothing `record_close_candidate_verdict` could judge
+        // anyway (it returns NoFlag), so refusing there would block a human for no benefit.
+        let label_only = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            None,
+            vec![],
+        );
+        let (anchor, ..) = record(human_issue_rule_plan(&label_only, "reject", "human:reject"));
+        assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
+        assert_eq!(
+            cc_verdict_plan(&label_only, "reject"),
+            CcVerdictPlan::NoFlag
+        );
+    }
+
+    // The refusal must name every legal move, or it is an obstruction rather than a redirection —
+    // a tool harder to use than raw `gh` gets bypassed, which is the failure to avoid above all.
+    #[test]
+    fn the_stranding_refusal_names_all_three_legal_moves() {
+        let flagged = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        // Reach the refusal text through the plan the apply matches on (the apply itself needs gh).
+        let HumanRulePlan::StrandsFlag { flag_at } =
+            human_issue_rule_plan(&flagged, "reject", "human:reject")
+        else {
+            panic!("expected StrandsFlag");
+        };
+        assert_eq!(flag_at, "2026-07-17T21:23:11Z");
+
+        let (code, msg) = strands_flag_error("o/r", "93", "human:reject", &flag_at);
+        assert_eq!(
+            code, 4,
+            "a stranded-flag refusal is a gate refusal, not usage"
+        );
+        // It says WHICH flag it is protecting …
+        assert!(msg.contains("@2026-07-17T21:23:11Z"), "{msg}");
+        // … and names all three ways out, each spelled as it is actually invoked.
+        for named in [
+            "human-rule-issue o/r 93 close-candidate",
+            "human-rule-issue o/r 93 keep-open",
+            "record-close-candidate-verdict o/r 93 reject",
+        ] {
+            assert!(msg.contains(named), "refusal omits {named:?}: {msg}");
+        }
+        // Every command it names must PARSE — advice the caller's own surface cannot execute is
+        // exactly the "reach for a tool that does not exist" that produced #93.
+        for argv in [
+            vec![
+                "prr",
+                "human-rule-issue",
+                "o/r",
+                "93",
+                "close-candidate",
+                "x",
+            ],
+            vec!["prr", "human-rule-issue", "o/r", "93", "keep-open", "x"],
+            vec![
+                "prr",
+                "record-close-candidate-verdict",
+                "o/r",
+                "93",
+                "reject",
+                "x",
+            ],
+        ] {
+            assert!(
+                Cli::try_parse_from(&argv).is_ok(),
+                "the refusal names an unrunnable command: {argv:?}"
+            );
+        }
+    }
+
+    // --- G5 label blast radius: one sacred label, and only a CONTRADICTED ai:* ------------------
+
+    // `keep-open` is the one ruling that contradicts an `ai:*` label outright — it says "do not
+    // close" to a flag that says "close" — so it is the one that clears it. Leaving both would put
+    // the issue in the dashboard's close-candidate box under a ruling that says keep it open.
+    #[test]
+    fn keep_open_clears_the_flag_it_contradicts_and_nothing_else_does() {
+        let flagged = issue(
+            &["ai:close-candidate", "audit"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        let (_, _, clears, ..) = record(human_issue_rule_plan(
+            &flagged,
+            "keep-open",
+            "human:keep-open",
+        ));
+        assert_eq!(clears, s(&["ai:close-candidate"]));
+        // `close-candidate` AGREES with the flag: leaving it is consistent, and the flag is the
+        // record of what the ruling ruled on.
+        let (_, _, clears, ..) = record(human_issue_rule_plan(
+            &flagged,
+            "close-candidate",
+            "human:close-candidate",
+        ));
+        assert!(clears.is_empty());
+        // Nothing else is touched: `audit` is not the machine's label to remove.
+        let (_, supersedes, clears, ..) = record(human_issue_rule_plan(
+            &flagged,
+            "keep-open",
+            "human:keep-open",
+        ));
+        assert!(!supersedes.contains(&"audit".to_string()));
+        assert!(!clears.contains(&"audit".to_string()));
+        // With no live flag there is nothing to clear.
+        let (_, _, clears, ..) = record(human_issue_rule_plan(
+            &issue(&[], "2026-01-01T00:00:00Z", None, vec![]),
+            "keep-open",
+            "human:keep-open",
+        ));
+        assert!(clears.is_empty());
+    }
+
+    // A PR ruling clears NO `ai:*` label. `reworked-reject` is the transition that clears them, and
+    // it clears them only once a rework provably followed — a human:reject PR deliberately keeps
+    // its stale `ai:ready` until then, and erasing it here would erase what the human ruled on.
+    #[test]
+    fn a_pr_ruling_leaves_the_ai_label_for_reworked_reject_to_clear() {
+        let (_, supersedes, clears, ..) = record(human_pr_rule_plan(
+            &pr("sha1", &["ai:ready", "bug"], vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert!(clears.is_empty());
+        assert!(supersedes.is_empty());
+        // The lane classifier already gives the human ruling precedence, so the stale label is
+        // inert rather than ambiguous.
+        assert_eq!(
+            classify_lane(&s(&["ai:ready", "human:reject"]), Some(true), false),
+            (Lane::HumanDecisions, "human:reject".to_string())
+        );
+    }
+
+    // --- G6 re-ruling: the human may change their own mind ---------------------------------------
+
+    // A DIFFERENT human ruling already present is superseded, not refused. Refusing would leave raw
+    // `gh` as the only way to correct a mis-click — the bypass this whole surface exists to remove.
+    #[test]
+    fn a_new_human_ruling_supersedes_the_previous_one_rather_than_refusing() {
+        let (_, supersedes, ..) = record(human_pr_rule_plan(
+            &pr("sha1", &["human:design", "ai:ready"], vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert_eq!(supersedes, s(&["human:design"]));
+        // The ruling's OWN label is never in the supersede list — that would remove what it adds.
+        let (_, supersedes, _, has_target, _) = record(human_pr_rule_plan(
+            &pr("sha1", &["human:reject"], vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert!(supersedes.is_empty());
+        assert!(has_target, "the label is already there — do not re-add it");
+        // Issue side, same rule, and a hand-applied stray is superseded too.
+        let (_, supersedes, ..) = record(human_issue_rule_plan(
+            &issue(
+                &["human:reject", "human:design"],
+                "2026-01-01T00:00:00Z",
+                None,
+                vec![],
+            ),
+            "keep-open",
+            "human:keep-open",
+        ));
+        assert_eq!(supersedes, s(&["human:reject", "human:design"]));
+    }
+
+    // --- G6b the subject-type guard ---------------------------------------------------------------
+
+    // `gh issue view <n>` answers for a PULL REQUEST too — GitHub's API treats one as the other —
+    // so `human-rule-issue` pointed at a PR would write the ISSUE vocabulary onto it. That is not
+    // cosmetic: `human:keep-open` is not in `HUMAN_DECISION_LABELS`, so `classify_lane` buckets the
+    // PR by whatever `ai:*` it still carries and the ruling vanishes from the human lane entirely.
+    #[test]
+    fn an_issue_ruling_pointed_at_a_pull_request_is_refused() {
+        let mut j = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
+        j["url"] = json!("https://github.com/o/r/pull/82");
+        assert_eq!(
+            human_issue_rule_plan(&j, "keep-open", "human:keep-open"),
+            HumanRulePlan::NotAnIssue
+        );
+        // The discriminator is the URL's own path, not a substring anywhere in it.
+        j["url"] = json!("https://github.com/o/r/issues/89");
+        record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
+        // A subject whose URL was not fetched is still ruled on — the guard adds a refusal, it does
+        // not turn a missing optional field into one.
+        let mut k = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
+        k.as_object_mut().unwrap().remove("url");
+        record(human_issue_rule_plan(&k, "keep-open", "human:keep-open"));
+        // The label it would otherwise have written is exactly the one no PR lane models.
+        assert!(!HUMAN_DECISION_LABELS.contains(&"human:keep-open"));
+        assert_eq!(
+            classify_lane(&s(&["human:keep-open", "ai:ready"]), Some(true), false),
+            (Lane::VetterVerdicts, "ai:ready".to_string()),
+            "a keep-open PR is invisible to the human lane — which is why this is refused"
+        );
+    }
+
+    // A guard can only fire on data that was fetched. A field the plan reads but the `gh … --json`
+    // list omits does not error — the key is simply absent, every read falls back to empty, and the
+    // refusal silently stops happening. So the fetch is asserted field by field, each named for the
+    // guard it feeds.
+    #[test]
+    fn the_issue_transition_fetches_what_its_guards_need() {
+        let has = |list: &str, f: &str| list.split(',').any(|x| x == f);
+        for (field, guard) in [
+            ("url", "the subject-type guard"),
+            ("state", "the terminal-subject check"),
+            ("labels", "the live-flag and supersede computation"),
+            ("comments", "the trusted flag + dedup reads"),
+            ("createdAt", "the unflagged-issue anchor"),
+        ] {
+            assert!(
+                has(ISSUE_RULE_FIELDS, field),
+                "the issue fetch drops {field:?}, silently disabling {guard}"
+            );
+        }
+        for (field, guard) in [
+            ("state", "the terminal-subject check"),
+            ("headRefOid", "the anchor"),
+            ("labels", "the supersede computation"),
+            ("comments", "the dedup read"),
+        ] {
+            assert!(
+                has(PR_RULE_FIELDS, field),
+                "the PR fetch drops {field:?}, silently disabling {guard}"
+            );
+        }
+        // A PR has no `url` need and no `createdAt` need — the lists are not interchangeable.
+        assert!(!has(PR_RULE_FIELDS, "createdAt"));
+    }
+
+    // --- G7 terminal subjects are MOOT, not refused ----------------------------------------------
+
+    #[test]
+    fn a_terminal_subject_is_moot_because_there_is_no_transition_left() {
+        for state in ["MERGED", "CLOSED"] {
+            let mut p = pr("sha1", &[], vec![]);
+            p["state"] = json!(state);
+            assert_eq!(
+                human_pr_rule_plan(&p, "reject", "human:reject"),
+                HumanRulePlan::Moot,
+                "{state}"
+            );
+        }
+        let mut j = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
+        j["state"] = json!("CLOSED");
+        assert_eq!(
+            human_issue_rule_plan(&j, "reject", "human:reject"),
+            HumanRulePlan::Moot
+        );
+        // An OPEN subject is never moot — a gate that refuses everything looks as green as one
+        // that works.
+        record(human_pr_rule_plan(
+            &pr("sha1", &[], vec![]),
+            "reject",
+            "human:reject",
+        ));
+    }
+
+    // --- G8 idempotence: a re-run must not re-post -----------------------------------------------
+
+    #[test]
+    fn the_same_ruling_at_the_same_anchor_is_deduped_but_a_moved_anchor_is_not() {
+        let with = |sha: &str, anchor: &str, ruling: &str| {
+            let (.., skip) = record(human_pr_rule_plan(
+                &pr(sha, &[], vec![ruling_comment(anchor, ruling)]),
+                "reject",
+                "human:reject",
+            ));
+            skip
+        };
+        assert!(with("sha1", "sha1", "reject"), "same ruling, same anchor");
+        assert!(!with("sha2", "sha1", "reject"), "head moved -> re-record");
+        assert!(
+            !with("sha1", "sha1", "design"),
+            "ruling changed -> re-record"
+        );
+        // A spoofed marker from another account never dedups a real ruling — the author is the
+        // trust, the marker only selects the role.
+        let spoofed = json!({
+            "author": {"login": "someone-else"},
+            "body": human_rule_comment("sha1", "reject", "not mine"),
+        });
+        let (.., skip) = record(human_pr_rule_plan(
+            &pr("sha1", &[], vec![spoofed]),
+            "reject",
+            "human:reject",
+        ));
+        assert!(!skip, "an untrusted comment must not dedup a ruling");
+    }
+
+    // --- G9 write ORDER is the fail-safe ----------------------------------------------------------
+
+    // Every prefix of the sequence must leave a state at least as safe as the previous one: the
+    // comment lands before anything sacred is written, and the new ruling is added before the old
+    // one is removed, so no window exists in which the subject carries no human decision.
+    #[test]
+    fn the_write_order_never_leaves_an_unrecorded_or_unruled_subject() {
+        let steps = human_rule_steps(
+            &s(&["human:design"]),
+            &s(&["ai:close-candidate"]),
+            false,
+            false,
+        );
+        assert_eq!(
+            steps,
+            vec![
+                RuleStep::Comment,
+                RuleStep::EnsureLabel,
+                RuleStep::AddLabel,
+                RuleStep::RemoveLabel("human:design".to_string()),
+                RuleStep::RemoveLabel("ai:close-candidate".to_string()),
+            ]
+        );
+        let idx = |s: &[RuleStep], want: &RuleStep| s.iter().position(|x| x == want);
+        // Stated as the invariants, not just the literal list, so a re-ordering that keeps the same
+        // members still fails.
+        assert!(idx(&steps, &RuleStep::Comment) < idx(&steps, &RuleStep::AddLabel));
+        assert!(
+            idx(&steps, &RuleStep::AddLabel)
+                < idx(&steps, &RuleStep::RemoveLabel("human:design".to_string()))
+        );
+        // A superseded ruling is cleared before a contradicted advisory label: the sacred namespace
+        // is made consistent first.
+        assert!(
+            idx(&steps, &RuleStep::RemoveLabel("human:design".to_string()))
+                < idx(
+                    &steps,
+                    &RuleStep::RemoveLabel("ai:close-candidate".to_string())
+                )
+        );
+        // Dedup drops the comment; an already-present label drops the add. Nothing else changes.
+        assert_eq!(
+            human_rule_steps(&[], &[], true, true),
+            vec![RuleStep::EnsureLabel]
+        );
+        assert_eq!(
+            human_rule_steps(&[], &[], false, true),
+            vec![RuleStep::EnsureLabel, RuleStep::AddLabel]
+        );
+    }
+
+    // --- G10 the label taxonomy the write --forces ----------------------------------------------
+
+    // `human_rule_write` calls `gh label create --force`, which OVERWRITES colour and description.
+    // Every label this transition can write must therefore carry the org's live values, or one
+    // ruling silently re-describes a sacred label as "AI vetter verdict" in that repo.
+    #[test]
+    fn every_human_label_carries_the_orgs_live_colour_and_description() {
+        let fallback = label_meta("ai:something-unknown");
+        for label in HUMAN_RULING_LABELS {
+            let meta = label_meta(label);
+            assert_ne!(meta, fallback, "{label} falls through to the AI fallback");
+            assert!(
+                meta.1.starts_with("Human"),
+                "{label} is described as {:?}",
+                meta.1
+            );
+        }
+        // The live values, read off `gh label list` across the org.
+        assert_eq!(
+            label_meta("human:reject"),
+            ("b60205", "Human reviewer: needs rework")
+        );
+        assert_eq!(
+            label_meta("human:keep-open"),
+            (
+                "0e8a16",
+                "Human decision: keep open (excluded from the close-candidate queue)"
+            )
+        );
+    }
+
+    // --- the reports -------------------------------------------------------------------------
+
+    #[test]
+    fn the_report_names_the_anchor_and_every_label_moved() {
+        let r = human_rule_report(
+            "o/r",
+            "93",
+            "human:keep-open",
+            "close-candidate @2026-07-17T21:23:11Z",
+            &s(&["human:design"]),
+            &s(&["ai:close-candidate"]),
+            false,
+        );
+        assert!(r.contains("ruled human:keep-open on o/r#93"), "{r}");
+        assert!(r.contains("@ close-candidate @2026-07-17T21:23:11Z"), "{r}");
+        assert!(r.contains("superseded human:design"), "{r}");
+        assert!(r.contains("cleared ai:close-candidate"), "{r}");
+        assert!(r.contains("comment posted"), "{r}");
+        // Nothing moved, nothing claimed.
+        let r = human_rule_report("o/r", "1", "human:reject", "sha1", &[], &[], true);
+        assert!(!r.contains("superseded"), "{r}");
+        assert!(!r.contains("cleared"), "{r}");
+        assert!(r.contains("comment deduped"), "{r}");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // unvetted (the vetter's state-load) + the MCP FSM surface.
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(test)]
@@ -13255,11 +14844,201 @@ mod mcp_tests {
         assert!(v.calls().is_empty());
     }
 
+    // --- the human profile (#86) ------------------------------------------------------------------
+
+    // The human's surface is READ the subject + RULE on it, and nothing else. An agent acting on
+    // the human's behalf restricted to this server cannot perform a non-FSM operation — which is
+    // what a prompt rule plus a prefix-matched Bash deny-list could not achieve.
+    #[test]
+    fn the_human_profile_is_exactly_read_the_subject_and_rule_on_it() {
+        let f = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+            .unwrap();
+        let names: Vec<&str> = resp["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "pr_context",
+                "close_candidate_context",
+                "human_rule",
+                "human_rule_issue",
+            ]
+        );
+        // The vetter's inbox and its verdict write are NOT the human's authority.
+        for not_ours in [
+            "unvetted",
+            "unvetted_close_candidates",
+            "record_verdict",
+            "record_close_candidate_verdict",
+            "clone_create",
+        ] {
+            let resp = f
+                .handle(&call(not_ours, json!({"pr": "o/r#1", "issue": "o/r#1"})))
+                .unwrap();
+            assert!(is_error(&resp), "{not_ours} must not exist for the human");
+        }
+        assert!(f.calls().is_empty(), "no refused name reached an effect");
+    }
+
+    // …and symmetrically: the human's writes are unreachable from the AI profiles. The vetter
+    // recording a `human:*` label is the namespace collapse in the other direction.
+    #[test]
+    fn human_rule_tools_are_unreachable_from_the_ai_profiles() {
+        for (f, who) in [
+            (FakeExec::ok(), "vetter"),
+            (FakeExec::producer(), "producer"),
+        ] {
+            for tool in ["human_rule", "human_rule_issue"] {
+                let resp = f
+                    .handle(&call(
+                        tool,
+                        json!({"pr": "o/r#1", "issue": "o/r#1", "ruling": "reject", "note": "x"}),
+                    ))
+                    .unwrap();
+                assert!(is_error(&resp), "{who} must not reach {tool}");
+            }
+            assert!(f.calls().is_empty(), "{who} reached a human transition");
+        }
+    }
+
+    // The profile is a role name the runners pass; an unknown one must fail loudly rather than
+    // silently serve someone else's surface.
+    #[test]
+    fn profile_parse_accepts_the_three_roles_and_nothing_else() {
+        assert_eq!(McpProfile::parse("human"), Ok(McpProfile::Human));
+        assert_eq!(McpProfile::parse("vetter"), Ok(McpProfile::Vetter));
+        assert_eq!(McpProfile::parse("producer"), Ok(McpProfile::Producer));
+        for bad in ["", "Human", "human ", "admin"] {
+            let e = McpProfile::parse(bad).unwrap_err();
+            assert!(e.contains("vetter, producer or human"), "{bad}: {e}");
+        }
+    }
+
+    // The SCHEMA is the vocabulary guard's outer wall: a model cannot even propose a ruling outside
+    // the machine's own sacred label sets, and the enums are pinned to those constants so the two
+    // cannot drift.
+    #[test]
+    fn the_human_rule_schemas_pin_the_sacred_label_sets() {
+        let all = mcp_all_tools();
+        let tools = all.as_array().unwrap();
+        let enum_of = |name: &str| -> Vec<String> {
+            tools
+                .iter()
+                .find(|t| t["name"] == json!(name))
+                .unwrap_or_else(|| panic!("{name} is not defined"))["inputSchema"]["properties"]
+                ["ruling"]["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(enum_of("human_rule"), human_rulings(&HUMAN_DECISION_LABELS));
+        assert_eq!(
+            enum_of("human_rule_issue"),
+            human_rulings(&HUMAN_RULING_LABELS)
+        );
+        for name in ["human_rule", "human_rule_issue"] {
+            let t = tools.iter().find(|t| t["name"] == json!(name)).unwrap();
+            let required: Vec<&str> = t["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            // The note is REQUIRED by the schema: an unexplained ruling cannot be proposed.
+            assert!(required.contains(&"note"), "{name} may omit its note");
+            assert!(required.contains(&"ruling"), "{name} may omit its ruling");
+        }
+    }
+
+    // The guard maps a well-formed human ruling to a validated call, and refuses the malformed ones
+    // BEFORE any effect exists — the same before-the-effect property the clone path guard has.
+    #[test]
+    fn a_human_ruling_validates_or_reaches_no_effect() {
+        let f = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        f.handle(&call(
+            "human_rule",
+            json!({"pr": "o/r#93", "ruling": "reject", "note": " leg 1 stands "}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::HumanRule {
+                slug: "o/r".to_string(),
+                num: 93,
+                ruling: "reject".to_string(),
+                // Trimmed at the guard, so the effect never sees the caller's whitespace.
+                note: "leg 1 stands".to_string(),
+            }]
+        );
+
+        let g = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        for (args, why) in [
+            (
+                json!({"pr": "o/r#1", "ruling": "keep-open", "note": "x"}),
+                "keep-open is issue-only",
+            ),
+            (
+                json!({"pr": "o/r#1", "ruling": "approve", "note": "x"}),
+                "not a ruling",
+            ),
+            (
+                json!({"pr": "o/r#1", "ruling": "reject", "note": "  "}),
+                "blank note",
+            ),
+            (json!({"pr": "o/r#1", "ruling": "reject"}), "missing note"),
+            (
+                json!({"pr": "93", "ruling": "reject", "note": "x"}),
+                "bad pr ref",
+            ),
+        ] {
+            let resp = g.handle(&call("human_rule", args)).unwrap();
+            assert!(is_error(&resp), "{why} must be refused");
+        }
+        assert!(g.calls().is_empty(), "a refused ruling reached an effect");
+
+        // The issue tool takes `issue`, not `pr`, and accepts the wider vocabulary.
+        let h = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        h.handle(&call(
+            "human_rule_issue",
+            json!({"issue": "o/r#93", "ruling": "keep-open", "note": "audit finding is live"}),
+        ))
+        .unwrap();
+        assert_eq!(
+            h.calls(),
+            vec![McpCall::HumanRuleIssue {
+                slug: "o/r".to_string(),
+                num: 93,
+                ruling: "keep-open".to_string(),
+                note: "audit finding is live".to_string(),
+            }]
+        );
+    }
+
     // Every tool the profiles LIST must be handled by the guard: a listed-but-unvalidated name would
     // be an advertised tool that always errors.
     #[test]
     fn every_listed_tool_is_handled_by_the_guard() {
-        for profile in [McpProfile::Vetter, McpProfile::Producer] {
+        for profile in [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human] {
             for name in profile.tool_names() {
                 let err = validate_call(profile, &["/work".to_string()], name, &json!({}))
                     .err()
