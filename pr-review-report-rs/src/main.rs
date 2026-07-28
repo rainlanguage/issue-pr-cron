@@ -759,6 +759,9 @@ struct RunMetrics {
     cache_read: u64,
     cache_creation: u64,
     cost_usd: f64,
+    // Per-window `rate_limit_event` summary — see [`RateLimitProbe`]. An object (`{}` when the run
+    // saw none), never absent, so "no limit events" reads differently from "record predates #97".
+    rate_limits: Value,
 }
 
 impl RunMetrics {
@@ -1021,12 +1024,315 @@ impl StartupProbe {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Live token usage (#97).
+//
+// `run_metrics` reads tokens from the terminal `result` event, so a run that is killed reports
+// zeros — and that is the run whose spend you most want. The events needed to reconstruct the
+// input side are already in the stream; the trap is that summing them naively is wrong twice over,
+// and both wrong answers look plausible. Measured against the 81 archived traces under
+// `runs/`, `review-runs/` and `merge-runs/`:
+//
+// ```
+//                                             cacheRead    output
+//   naive sum over every assistant event      9,657,649       526
+//   deduped by message id only                8,240,864       395   (still counts subagents)
+//   MAIN-THREAD + deduped by message id       6,099,441       395
+//   authoritative (the `result` event)        6,099,441    41,026
+// ```
+//
+// Two independent corrections are needed, and each alone still gives a wrong number:
+//
+//   1. ONE MESSAGE, MANY EVENTS. The SDK emits a separate `assistant` event per CONTENT BLOCK
+//      (thinking, text, each tool_use) and repeats the SAME `message.usage` on every one of them,
+//      byte for byte. In `20260728T100257Z` that is 118 events carrying 37 unique `message.id`s,
+//      33 of them repeated 2–5×, every repeat identical. So the usage must be taken ONCE per
+//      `message.id`; summing events triple-counts. (First/last/max per id are all equal — the
+//      repeats never differ — so which one is kept cannot matter, and a test pins that.)
+//
+//   2. SUBAGENTS ARE NOT IN `result.usage`. Events with a `parent_tool_use_id` are a Task
+//      subagent's messages, and the terminal `result.usage` does NOT include them — only
+//      `modelUsage` does. `20260718T050002Z` has 381 main-thread events (170 ids) and 828
+//      subagent events (292 ids) worth 23,116,424 cache-read tokens; counting them overstates the
+//      run against its own `result` by 66%.
+//
+// With both corrections, this probe reproduces `result.usage` EXACTLY — input, cache-read and
+// cache-creation — on 77 of the 81 archived traces that have a `result` event. The 4 that differ
+// are the only ones with MORE THAN ONE top-level `result` (28, 7, 6 and 5 of them): those files
+// are several claude invocations appended together, and `run_metrics` deliberately reports just
+// the largest, while this probe reports their sum. The live filter cannot hit that case at all —
+// it sits in ONE invocation's pipe (`tee "$RUNLOG" | run-timings`), so it sees one invocation's
+// stream by construction.
+//
+// OUTPUT TOKENS ARE NOT RECOVERABLE, and this probe does not pretend otherwise. `output_tokens`
+// on an `assistant` event is a snapshot taken at MESSAGE START, not a streaming delta: it reads
+// 2–5 on messages that went on to emit ~1,100 tokens, which is why every repeat of a message id
+// carries the same value. Across the 60 traces with a terminal total, the deduped sum is
+// 0.2%–20.6% of the truth — never within 5×. The only other output signal in the stream is
+// `system`/`thinking_tokens`, whose `estimated_tokens_delta` is both explicitly an ESTIMATE and
+// thinking-only: over 53 traces it ranges from 9.7% to 76.2% of the true output, so it is not a
+// usable proxy either. An exhaustive scan of every numeric token/usage/cost field over all 97
+// trace files found no third source. A live `tokensOut` would therefore have to be a guess, so
+// there is none — `usage` records carry the three fields that are exact and omit the one that is
+// not. Roughly 65–75% of a run's cost sits on the fields that ARE knowable (cache-read alone is
+// the term that runs away: the $37.02 run in #97 read 26.4M cached tokens), so this is a real
+// spend gauge, just an input-side one.
+// ---------------------------------------------------------------------------------------------
+
+/// How many NEW main-thread messages between live `usage` records.
+///
+/// A record per message would be ~600 lines for a long producer run; one only at the end would not
+/// be watchable while the run is happening, which is the point (#97: "watching it by hand today, I
+/// could see tool counts and timing accumulate but had no signal on spend at all"). 25 puts a
+/// vetter run at 1–2 mid-run records and the longest producer run seen at 24, and a final record is
+/// written when the stream ends however it ends — so a killed run's last numbers are never more
+/// than 24 messages stale, and usually not stale at all.
+const USAGE_RECORD_STRIDE: usize = 25;
+
+/// Running token usage, reconstructed from the LIVE stream — see the section comment above for why
+/// this is neither a sum over events nor a sum over messages.
+#[derive(Default)]
+struct UsageProbe {
+    /// `message.id`s already counted. Membership, not order: the repeats carry identical usage, so
+    /// the first occurrence is taken and every later one ignored.
+    counted: std::collections::HashSet<String>,
+    tokens_in: u64,
+    cache_read: u64,
+    cache_creation: u64,
+    /// Distinct main-thread messages counted — what [`USAGE_RECORD_STRIDE`] paces on, and a
+    /// sanity field on the record (37 messages against 6.1M cache-read tokens is legible; a bare
+    /// token count is not).
+    messages: usize,
+}
+
+impl UsageProbe {
+    /// Feed one trace event. Returns true when this event carried a message NOT seen before, i.e.
+    /// when the totals actually moved.
+    fn observe(&mut self, ev: &Value) -> bool {
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            return false;
+        }
+        // A subagent's messages. `null` and absent both mean main thread; anything else is a
+        // Task's own turn, which `result.usage` does not count and neither may we.
+        if !ev
+            .get("parent_tool_use_id")
+            .map(|p| p.is_null())
+            .unwrap_or(true)
+        {
+            return false;
+        }
+        let Some(msg) = ev.get("message") else {
+            return false;
+        };
+        // No id means the event cannot be deduped against anything, and counting it would
+        // double-count the message it belongs to. Skipping is the only safe read.
+        let Some(id) = msg.get("id").and_then(|i| i.as_str()) else {
+            return false;
+        };
+        if id.is_empty() || !self.counted.insert(id.to_string()) {
+            return false;
+        }
+        let u = msg.get("usage");
+        let g = |k: &str| {
+            u.and_then(|u| u.get(k))
+                .and_then(|n| n.as_u64())
+                .unwrap_or(0)
+        };
+        self.tokens_in += g("input_tokens");
+        self.cache_read += g("cache_read_input_tokens");
+        self.cache_creation += g("cache_creation_input_tokens");
+        self.messages += 1;
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The five-hour rate-limit window (#97).
+//
+// `rate_limit_event`s are in every trace and nothing read them. They name windows the weekly
+// `usage-gate` does not model — above all `five_hour`, which resets ~4.8× a day. A run that trips
+// it mid-flight stalls, and with the events dropped there was no evidence anywhere of why. Across
+// the 97 archived traces there are 187 such events over 84 files, and the failure mode is real:
+// `five_hour` reached `rejected` 5 times and `seven_day_overage_included` 4 times.
+// ---------------------------------------------------------------------------------------------
+
+/// Which limit window an event is about, as a typed discriminant.
+///
+/// Matched on the exact `rateLimitType` word, never by substring: `seven_day` and
+/// `seven_day_overage_included` are DIFFERENT windows with different resets, and a `contains`
+/// test would fold the second into the first. Unrecognised words are kept verbatim under `Other`
+/// rather than dropped — a window this binary has never seen is exactly the one worth seeing.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+enum RateLimitWindow {
+    FiveHour,
+    SevenDay,
+    SevenDayOverageIncluded,
+    Other(String),
+}
+
+impl RateLimitWindow {
+    fn from_wire(s: &str) -> Self {
+        match s {
+            "five_hour" => RateLimitWindow::FiveHour,
+            "seven_day" => RateLimitWindow::SevenDay,
+            "seven_day_overage_included" => RateLimitWindow::SevenDayOverageIncluded,
+            other => RateLimitWindow::Other(other.to_string()),
+        }
+    }
+    fn as_str(&self) -> &str {
+        match self {
+            RateLimitWindow::FiveHour => "five_hour",
+            RateLimitWindow::SevenDay => "seven_day",
+            RateLimitWindow::SevenDayOverageIncluded => "seven_day_overage_included",
+            RateLimitWindow::Other(s) => s,
+        }
+    }
+}
+
+/// How bad a reading is. The DECLARATION ORDER is the severity order — `derive(Ord)` reads it —
+/// and that ordering is the whole behaviour: a window's recorded status is the WORST ever seen,
+/// so a rejection at minute two cannot be erased by an `allowed` at minute twenty. Recording the
+/// last status instead would hide precisely the event the record exists to explain.
+///
+/// `Unknown` sits ABOVE the two allow states and BELOW `Rejected` on purpose. A status word this
+/// binary does not know must not be silently downgraded to "allowed" (it could be worse than
+/// that), and must not outrank a real `rejected` either (that one is certain, and is the finding).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum RateLimitStatus {
+    Allowed,
+    AllowedWarning,
+    Unknown,
+    Rejected,
+}
+
+impl RateLimitStatus {
+    fn from_wire(s: &str) -> Self {
+        match s {
+            "allowed" => RateLimitStatus::Allowed,
+            "allowed_warning" => RateLimitStatus::AllowedWarning,
+            "rejected" => RateLimitStatus::Rejected,
+            _ => RateLimitStatus::Unknown,
+        }
+    }
+    fn as_str(self) -> &'static str {
+        match self {
+            RateLimitStatus::Allowed => "allowed",
+            RateLimitStatus::AllowedWarning => "allowed_warning",
+            RateLimitStatus::Unknown => "unknown",
+            RateLimitStatus::Rejected => "rejected",
+        }
+    }
+}
+
+/// What one window looked like over a whole run.
+#[derive(Clone, Debug, PartialEq)]
+struct RateLimitWindowState {
+    /// WORST status seen — see [`RateLimitStatus`].
+    status: RateLimitStatus,
+    /// LAST `resetsAt` seen, as the epoch SECONDS the wire uses. The window moves while the run
+    /// runs, and the useful question after a stall is when the limit in force will next clear.
+    resets_at: Option<i64>,
+    /// LAST `utilization` seen, when present (only ~half the events carry it).
+    ///
+    /// This is a FRACTION in 0..=1 on the wire (`0.91` means 91%), which is NOT the unit
+    /// `usage-gate` works in — [`UsageReading::used`] is a 0..=100 percent compared against a
+    /// `USAGE_CEILING_PCT` of 90. It is echoed here exactly as the wire spelled it, so the record
+    /// says what the API said; anything that ever wires the two together must convert.
+    utilization: Option<f64>,
+    events: usize,
+}
+
+/// Streaming accumulator for `rate_limit_event`s, one state per window.
+#[derive(Default)]
+struct RateLimitProbe {
+    windows: std::collections::BTreeMap<RateLimitWindow, RateLimitWindowState>,
+}
+
+impl RateLimitProbe {
+    /// Feed one trace event. Returns true when a window's worst status got WORSE on this event —
+    /// including the first event for a window, which moves it from unrecorded to recorded. That is
+    /// the trigger for writing a live record: escalations are rare (at most three per window) and
+    /// are the whole diagnostic, so they go to disk the moment they happen rather than waiting for
+    /// the next [`USAGE_RECORD_STRIDE`].
+    fn observe(&mut self, ev: &Value) -> bool {
+        if ev.get("type").and_then(|t| t.as_str()) != Some("rate_limit_event") {
+            return false;
+        }
+        let Some(info) = ev.get("rate_limit_info") else {
+            return false;
+        };
+        // An event with no `rateLimitType` names no window (2 of the 187 archived events).
+        // Attributing it to one would be inventing data; it is counted under `Other("")`-free
+        // silence instead — i.e. skipped.
+        let Some(window) = info.get("rateLimitType").and_then(|t| t.as_str()) else {
+            return false;
+        };
+        let window = RateLimitWindow::from_wire(window);
+        let status = info
+            .get("status")
+            .and_then(|s| s.as_str())
+            .map(RateLimitStatus::from_wire)
+            .unwrap_or(RateLimitStatus::Unknown);
+        let resets_at = info.get("resetsAt").and_then(|r| r.as_i64());
+        let utilization = info.get("utilization").and_then(|u| u.as_f64());
+        match self.windows.get_mut(&window) {
+            Some(state) => {
+                state.events += 1;
+                if resets_at.is_some() {
+                    state.resets_at = resets_at;
+                }
+                if utilization.is_some() {
+                    state.utilization = utilization;
+                }
+                if status > state.status {
+                    state.status = status;
+                    return true;
+                }
+                false
+            }
+            None => {
+                self.windows.insert(
+                    window,
+                    RateLimitWindowState {
+                        status,
+                        resets_at,
+                        utilization,
+                        events: 1,
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// The `rateLimits` field: one object per window seen, keyed by the wire word.
+    ///
+    /// ALWAYS emitted, `{}` when no event arrived, so a consumer can tell "this run saw no limit
+    /// events" from "this record predates the field" — the same contract `unreadableFiles` has.
+    fn to_value(&self) -> Value {
+        let mut obj = serde_json::Map::new();
+        for (window, s) in &self.windows {
+            obj.insert(
+                window.as_str().to_string(),
+                serde_json::json!({
+                    "status": s.status.as_str(),
+                    "resetsAt": s.resets_at,
+                    "utilization": s.utilization,
+                    "events": s.events,
+                }),
+            );
+        }
+        Value::Object(obj)
+    }
+}
+
 /// Parse a stream-json trace: count tool calls in order, find the first mutation, and take
 /// the usage/duration/cost from the result event with the most turns (the main run — trailing
 /// short result events from continuations are ignored).
 fn run_metrics(content: &str) -> RunMetrics {
     let mut m = RunMetrics::default();
     let mut probe = StartupProbe::default();
+    let mut rate_limits = RateLimitProbe::default();
     let mut best_turns = 0u64;
     for line in content.lines() {
         let v: serde_json::Value = match serde_json::from_str(line) {
@@ -1034,6 +1340,7 @@ fn run_metrics(content: &str) -> RunMetrics {
             Err(_) => continue,
         };
         probe.observe(&v);
+        rate_limits.observe(&v);
         if v.get("type").and_then(|t| t.as_str()) == Some("result") {
             let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
             if turns >= best_turns {
@@ -1058,6 +1365,7 @@ fn run_metrics(content: &str) -> RunMetrics {
         }
     }
     probe.fill(&mut m);
+    m.rate_limits = rate_limits.to_value();
     m
 }
 
@@ -1123,6 +1431,43 @@ fn partial_record(
     doc
 }
 
+/// The `stage` of a LIVE USAGE record: token spend and rate-limit state as of this instant (#97).
+///
+/// Unlike `boot`/`ttl`, which fire once each when a single number becomes knowable, a run emits
+/// MANY of these — every [`USAGE_RECORD_STRIDE`] messages, on every rate-limit escalation, and
+/// once when the stream ends. They are a monotonic series rather than competing versions of one
+/// record, so the reconciliation rule for a `runId` extends rather than changes: `final`
+/// supersedes everything; among `usage` records the LAST is current; `boot`/`ttl` are unaffected
+/// because they carry fields no `usage` record has, and vice versa.
+const STAGE_USAGE: &str = "usage";
+
+/// One live usage record: the token totals that are EXACTLY knowable mid-run, plus rate-limit
+/// state.
+///
+/// There is deliberately no `tokensOut` here. See the "Live token usage" section comment: the
+/// per-event `output_tokens` is a message-start snapshot that runs 0.2%–20.6% of the truth, and
+/// the only other output signal in the stream is an explicitly-estimated, thinking-only counter
+/// that ranges 9.7%–76.2% of it. A field carrying either would read as measurement. The three
+/// fields present are the ones that reproduce `result.usage` exactly.
+fn usage_record(
+    usage: &UsageProbe,
+    rate_limits: &RateLimitProbe,
+    trace: &str,
+    id: &RunIdentity,
+) -> Value {
+    let mut doc = serde_json::json!({
+        "trace": trace,
+        "stage": STAGE_USAGE,
+        "messages": usage.messages,
+        "tokensIn": usage.tokens_in,
+        "cacheRead": usage.cache_read,
+        "cacheCreation": usage.cache_creation,
+        "rateLimits": rate_limits.to_value(),
+    });
+    stamp_identity(&mut doc, id);
+    doc
+}
+
 /// Append one record to the metrics file, creating it (and its directory) if absent.
 ///
 /// Best-effort by contract: this runs INSIDE the runner's live pipe, and a metrics write must
@@ -1163,10 +1508,15 @@ fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let mut probe = StartupProbe::default();
+    let mut usage = UsageProbe::default();
+    let mut rate_limits = RateLimitProbe::default();
+    // Messages counted at the last `usage` record, so the stride paces on NEW messages and the
+    // end-of-stream record is skipped when nothing has moved since.
+    let mut recorded_at = 0usize;
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if writeln!(stdout, "{line}").is_err() {
-            return 0; // downstream closed
+            break; // downstream closed — still write what this run reached
         }
         let _ = stdout.flush();
         let Ok(ev) = serde_json::from_str::<Value>(&line) else {
@@ -1175,6 +1525,20 @@ fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
         for phase in probe.observe(&ev) {
             let _ = append_record(out, &partial_record(&probe, phase, trace, id));
         }
+        // An escalation goes to disk immediately; token totals go on the stride. Both write the
+        // same record, so an escalation also refreshes the numbers and vice versa.
+        let escalated = rate_limits.observe(&ev);
+        let moved = usage.observe(&ev);
+        if escalated || (moved && usage.messages - recorded_at >= USAGE_RECORD_STRIDE) {
+            recorded_at = usage.messages;
+            let _ = append_record(out, &usage_record(&usage, &rate_limits, trace, id));
+        }
+    }
+    // The stream is over — the process was killed, timed out, or finished. Whichever it was, this
+    // is the last chance to record what the run actually spent, and it is the case #97 is about.
+    // Skipped only when a record already carries these exact numbers.
+    if usage.messages > recorded_at {
+        let _ = append_record(out, &usage_record(&usage, &rate_limits, trace, id));
     }
     0
 }
@@ -1248,6 +1612,14 @@ fn final_record(
         "cacheRead": m.cache_read,
         "cacheCreation": m.cache_creation,
         "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
+        // Per-window rate-limit summary (#97). Coerced to an object here rather than trusted from
+        // the caller so the "always an object" contract holds even for a `RunMetrics` built by
+        // hand, whose `Default` for a `Value` is null.
+        "rateLimits": if m.rate_limits.is_object() {
+            m.rate_limits.clone()
+        } else {
+            serde_json::json!({})
+        },
         // Always present, so the dashboard can distinguish "no tooling trouble" from "this record
         // predates the field". `unreadableFiles` is what makes the outcome `tooling-failure`;
         // `commandsNotFound` is reported but never decides the outcome (see trace_tooling_report).
@@ -2514,6 +2886,37 @@ fn oauth_token(creds: &str) -> Option<String> {
 /// The `seven_day` block: `utilization` is the percent used, `resets_at` is authoritative.
 /// Both must be present and well-formed or the whole reading is discarded — pacing against a
 /// usage number with no trustworthy reset date would be guessing.
+///
+/// # Why this gate does NOT also pace on the five-hour window (#97)
+///
+/// The traces carry `rate_limit_event`s naming a `five_hour` window this gate does not model, and
+/// #97 asked for a deliberate decision on whether it should. The decision is **no — record it,
+/// do not gate on it** ([`RateLimitProbe`] is the recording half), for four reasons, in
+/// descending order of how much they would cost to get wrong:
+///
+///  1. **The mechanism does not transfer.** What this gate does is LINEAR PACING: compare usage
+///     against how far through the budget window the clock is ([`linear_pct`], which hardcodes
+///     [`USAGE_WEEK_MS`]). Pacing presumes load can be spread across the window. A five-hour
+///     window resets ~4.8× a day while the crons fire on a fixed schedule roughly every two
+///     hours, so "am I ahead of a linear burn in the CURRENT five-hour window" flips meaning
+///     between consecutive ticks. It would pause ticks on where they happen to land in a window,
+///     which is noise wearing the costume of a budget.
+///  2. **It is not the binding constraint.** Over the 97 archived traces (187 rate-limit events,
+///     84 files) `five_hour` reached `rejected` in 5 events, all inside one run — which still
+///     produced a `result`. The window self-clears well inside the gap between ticks. The
+///     seven-day ceiling is what actually stops work, and this gate already holds it.
+///  3. **A second pause condition contradicts this gate's design commitment.** Every failure path
+///     here is deliberately INERT (see [`usage_gate_decide`]) because the repo has an incident on
+///     record where the gate silently paused both crons for 22 consecutive ticks. Adding a
+///     faster-cycling reason to pause is the same hazard, with 4.8 chances a day to fire.
+///  4. **The units differ and would fail silently.** `utilization` on a `rate_limit_event` is a
+///     FRACTION in 0..=1 (`0.91`); [`UsageReading::used`] here is a PERCENT in 0..=100 compared
+///     against a default ceiling of 90. Wiring them together without converting would compare
+///     0.91 to 90.0 and never fire — a gate that looks installed and is not.
+///
+/// What #97 actually needed from the five-hour window was diagnosis, not pacing: a run that trips
+/// it "presents as an unexplained stall with no evidence of why". `rateLimits` on the run record —
+/// written live, so a killed run keeps it — is that evidence.
 fn parse_seven_day(raw: &str) -> Option<UsageReading> {
     let week = serde_json::from_str::<Value>(raw)
         .ok()?
@@ -12935,6 +13338,551 @@ mod startup_split_tests {
         assert!(doc.get("outcome").is_none());
         assert_eq!(doc["bootMs"], 1125);
         assert_eq!(doc["ttlMs"], 297_016);
+    }
+}
+
+/// Live token usage and the rate-limit windows (#97).
+///
+/// The oracle for the token half is not this code's own output: it is the `result` event that the
+/// SAME trace ends with. Every reconciliation assertion below compares the streaming probe against
+/// that terminal total, so a "plausible" implementation cannot pass by agreeing with itself.
+///
+/// Both fixtures are REAL traces, reduced to the fields the probes read and nothing else — the
+/// event order, the message ids, the duplication pattern and every number are the ones those runs
+/// produced. That matters: the bug this closes is invisible to a hand-written stream, because a
+/// hand-written stream does not repeat a message id across content blocks.
+#[cfg(test)]
+mod usage_probe_tests {
+    use super::*;
+
+    /// `review-runs/20260728T100257Z.jsonl` — the vetter run #97 was measured against. 118
+    /// `assistant` events carrying 37 unique message ids, 33 of them repeated 2–5×, plus the 9
+    /// `rate_limit_event`s and the terminal `result`.
+    const VETTER: &str = include_str!("../tests/fixtures/vetter-20260728T100257Z.usage.jsonl");
+
+    /// `runs/20260718T050002Z.jsonl` — a producer run that used Task subagents. Every main-thread
+    /// event is here; the subagent events are the 60 heaviest, worth 6,827,448 cache-read tokens
+    /// that `result.usage` does not count.
+    const PRODUCER: &str = include_str!("../tests/fixtures/producer-20260718T050002Z.usage.jsonl");
+
+    fn events(fixture: &str) -> Vec<Value> {
+        fixture
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).expect("fixture line parses"))
+            .collect()
+    }
+
+    /// The trace's own terminal totals — the oracle.
+    fn result_usage(evs: &[Value]) -> &Value {
+        evs.iter()
+            .find(|e| e["type"] == "result")
+            .expect("fixture has a result event")
+            .get("usage")
+            .expect("result carries usage")
+    }
+
+    fn run(evs: &[Value]) -> UsageProbe {
+        let mut p = UsageProbe::default();
+        for e in evs {
+            p.observe(e);
+        }
+        p
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The reconciliation itself.
+    // -----------------------------------------------------------------------------------------
+
+    /// THE acceptance test of #97. On the real vetter trace the probe must land on the
+    /// `result` event's own numbers — not on either of the two plausible wrong answers.
+    #[test]
+    fn probe_reproduces_the_terminal_result_usage_exactly() {
+        let evs = events(VETTER);
+        let p = run(&evs);
+        let want = result_usage(&evs);
+        assert_eq!(p.tokens_in, want["input_tokens"].as_u64().unwrap());
+        assert_eq!(
+            p.cache_read,
+            want["cache_read_input_tokens"].as_u64().unwrap()
+        );
+        assert_eq!(
+            p.cache_creation,
+            want["cache_creation_input_tokens"].as_u64().unwrap()
+        );
+        // Pinned literally as well, so a fixture edited to agree with a broken probe still fails.
+        assert_eq!(p.cache_read, 6_099_441, "the authoritative cache-read");
+        assert_eq!(p.tokens_in, 74);
+        assert_eq!(p.cache_creation, 303_723);
+    }
+
+    /// The first wrong answer from #97: summing every event. It over-counts cache-read by ~58%
+    /// because one message is emitted once per content block. Asserting the naive number is
+    /// REACHABLE from this fixture is what proves the fixture can tell the two apart.
+    #[test]
+    fn naive_sum_over_every_event_is_the_wrong_answer_this_fixture_catches() {
+        let evs = events(VETTER);
+        let naive: u64 = evs
+            .iter()
+            .filter(|e| e["type"] == "assistant")
+            .map(|e| {
+                e["message"]["usage"]["cache_read_input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0)
+            })
+            .sum();
+        assert_eq!(naive, 18_771_942, "naive per-event sum");
+        assert_ne!(naive, run(&evs).cache_read);
+    }
+
+    /// The duplication is the reason dedup is needed, so it is asserted directly: a fixture that
+    /// lost this shape would let a per-event sum pass.
+    #[test]
+    fn the_fixture_has_many_events_per_message_id() {
+        let evs = events(VETTER);
+        let assistants: Vec<_> = evs.iter().filter(|e| e["type"] == "assistant").collect();
+        let ids: std::collections::BTreeSet<&str> = assistants
+            .iter()
+            .map(|e| e["message"]["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(assistants.len(), 118, "assistant events");
+        assert_eq!(ids.len(), 37, "unique message ids");
+        let repeated = ids
+            .iter()
+            .filter(|id| {
+                assistants
+                    .iter()
+                    .filter(|e| e["message"]["id"].as_str() == Some(**id))
+                    .count()
+                    > 1
+            })
+            .count();
+        assert_eq!(repeated, 33, "message ids appearing more than once");
+    }
+
+    /// Every repeat of a message id carries byte-identical usage. This is WHY first/last/max per
+    /// id are interchangeable — and if the SDK ever changes that, this test is the tripwire that
+    /// says the "take the first" rule has to be revisited.
+    #[test]
+    fn repeats_of_one_message_id_carry_identical_usage() {
+        let mut by_id: std::collections::BTreeMap<String, Vec<&Value>> = Default::default();
+        let evs = events(VETTER);
+        for e in evs.iter().filter(|e| e["type"] == "assistant") {
+            by_id
+                .entry(e["message"]["id"].as_str().unwrap().to_string())
+                .or_default()
+                .push(&e["message"]["usage"]);
+        }
+        for (id, us) in &by_id {
+            assert!(
+                us.iter().all(|u| *u == us[0]),
+                "usage differs between events of {id}"
+            );
+        }
+    }
+
+    /// The second correction, on a trace that actually has subagents: their messages are NOT in
+    /// `result.usage`, so counting them overstates the run against its own terminal total.
+    #[test]
+    fn subagent_messages_are_excluded_from_the_total() {
+        let evs = events(PRODUCER);
+        let p = run(&evs);
+        let want = result_usage(&evs);
+        assert_eq!(
+            p.cache_read,
+            want["cache_read_input_tokens"].as_u64().unwrap()
+        );
+        assert_eq!(p.cache_read, 35_249_217);
+        assert_eq!(p.tokens_in, want["input_tokens"].as_u64().unwrap());
+        assert_eq!(
+            p.cache_creation,
+            want["cache_creation_input_tokens"].as_u64().unwrap()
+        );
+        assert_eq!(p.messages, 170, "distinct MAIN-THREAD messages");
+    }
+
+    /// …and the subagent events in that fixture are heavy enough that including them could not be
+    /// mistaken for a rounding difference. Guards the fixture, not the code.
+    #[test]
+    fn the_producer_fixture_carries_substantial_subagent_usage() {
+        let evs = events(PRODUCER);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut sub_cache_read = 0u64;
+        for e in evs.iter().filter(|e| e["type"] == "assistant") {
+            if e.get("parent_tool_use_id")
+                .map(|p| p.is_null())
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            if seen.insert(e["message"]["id"].as_str().unwrap().to_string()) {
+                sub_cache_read += e["message"]["usage"]["cache_read_input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
+            }
+        }
+        assert_eq!(sub_cache_read, 6_827_448, "excluded subagent cache-read");
+        assert_eq!(seen.len(), 28, "distinct subagent messages in the fixture");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // UsageProbe unit behaviour.
+    // -----------------------------------------------------------------------------------------
+
+    fn assistant(id: &str, cache_read: u64) -> Value {
+        serde_json::json!({"type":"assistant","message":{"id":id,
+            "usage":{"input_tokens":1,"output_tokens":999,"cache_read_input_tokens":cache_read,
+                     "cache_creation_input_tokens":2}}})
+    }
+
+    #[test]
+    fn a_repeated_message_id_is_counted_once() {
+        let mut p = UsageProbe::default();
+        assert!(p.observe(&assistant("m1", 100)), "first sighting counts");
+        assert!(!p.observe(&assistant("m1", 100)), "repeat does not");
+        assert!(!p.observe(&assistant("m1", 100)));
+        assert_eq!(p.cache_read, 100);
+        assert_eq!(p.messages, 1);
+    }
+
+    #[test]
+    fn distinct_message_ids_accumulate() {
+        let mut p = UsageProbe::default();
+        p.observe(&assistant("m1", 100));
+        p.observe(&assistant("m2", 250));
+        assert_eq!(p.cache_read, 350);
+        assert_eq!(p.messages, 2);
+        assert_eq!(p.tokens_in, 2);
+        assert_eq!(p.cache_creation, 4);
+    }
+
+    /// `output_tokens` is present on every event and must never reach a total — it is a
+    /// message-start snapshot, not a count. 999 per message here; nothing may equal it.
+    #[test]
+    fn output_tokens_are_never_accumulated() {
+        let mut p = UsageProbe::default();
+        p.observe(&assistant("m1", 100));
+        p.observe(&assistant("m2", 100));
+        for (name, v) in [
+            ("tokens_in", p.tokens_in),
+            ("cache_read", p.cache_read),
+            ("cache_creation", p.cache_creation),
+        ] {
+            assert_ne!(v, 999, "{name} picked up output_tokens");
+            assert_ne!(v, 1998, "{name} summed output_tokens");
+        }
+    }
+
+    #[test]
+    fn a_subagent_event_moves_nothing() {
+        let mut p = UsageProbe::default();
+        let mut sub = assistant("m1", 5_000);
+        sub["parent_tool_use_id"] = serde_json::json!("toolu_01abc");
+        assert!(!p.observe(&sub));
+        assert_eq!(p.cache_read, 0);
+        assert_eq!(p.messages, 0);
+    }
+
+    /// An explicit `null` is the main thread, exactly as an absent key is. The real traces spell it
+    /// both ways and they must not diverge.
+    #[test]
+    fn an_explicit_null_parent_is_the_main_thread() {
+        let mut p = UsageProbe::default();
+        let mut ev = assistant("m1", 700);
+        ev["parent_tool_use_id"] = Value::Null;
+        assert!(p.observe(&ev));
+        assert_eq!(p.cache_read, 700);
+    }
+
+    #[test]
+    fn non_assistant_events_are_ignored() {
+        let mut p = UsageProbe::default();
+        for t in ["result", "user", "system", "rate_limit_event"] {
+            let ev = serde_json::json!({"type":t,"message":{"id":"m1",
+                "usage":{"input_tokens":9,"cache_read_input_tokens":9,"cache_creation_input_tokens":9}}});
+            assert!(!p.observe(&ev), "{t} must not count");
+        }
+        assert_eq!(p.cache_read, 0);
+        assert_eq!(p.tokens_in, 0);
+    }
+
+    /// An event with no `message.id` cannot be deduped, so counting it would double-count the
+    /// message it belongs to. It contributes nothing rather than a plausible-looking increment.
+    #[test]
+    fn an_event_without_a_message_id_contributes_nothing() {
+        let mut p = UsageProbe::default();
+        let no_id = serde_json::json!({"type":"assistant","message":{
+            "usage":{"input_tokens":5,"cache_read_input_tokens":5,"cache_creation_input_tokens":5}}});
+        assert!(!p.observe(&no_id));
+        let empty_id = serde_json::json!({"type":"assistant","message":{"id":"",
+            "usage":{"input_tokens":5,"cache_read_input_tokens":5,"cache_creation_input_tokens":5}}});
+        assert!(!p.observe(&empty_id));
+        let no_msg = serde_json::json!({"type":"assistant"});
+        assert!(!p.observe(&no_msg));
+        assert_eq!(p.cache_read, 0);
+        assert_eq!(p.messages, 0);
+    }
+
+    /// Missing usage fields read as zero rather than panicking — the filter runs inside the live
+    /// pipe and may never take the run down.
+    #[test]
+    fn a_message_with_no_usage_counts_as_a_message_worth_zero() {
+        let mut p = UsageProbe::default();
+        assert!(p.observe(&serde_json::json!({"type":"assistant","message":{"id":"m1"}})));
+        assert_eq!(p.messages, 1);
+        assert_eq!(p.cache_read, 0);
+        assert_eq!(p.tokens_in, 0);
+        assert_eq!(p.cache_creation, 0);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Rate-limit windows.
+    // -----------------------------------------------------------------------------------------
+
+    fn rl(window: &str, status: &str, resets_at: i64) -> Value {
+        serde_json::json!({"type":"rate_limit_event",
+            "rate_limit_info":{"rateLimitType":window,"status":status,"resetsAt":resets_at}})
+    }
+
+    fn rate_limits(evs: &[Value]) -> RateLimitProbe {
+        let mut p = RateLimitProbe::default();
+        for e in evs {
+            p.observe(e);
+        }
+        p
+    }
+
+    /// The nine events in the real vetter run, all `five_hour`, land as one window.
+    #[test]
+    fn the_vetter_trace_records_its_five_hour_window() {
+        let p = rate_limits(&events(VETTER));
+        let v = p.to_value();
+        assert_eq!(v["five_hour"]["events"], 9);
+        assert_eq!(v["five_hour"]["status"], "allowed");
+        // LAST resetsAt seen, not the first — the run saw 1785237000 and 1785236400 alternating.
+        assert_eq!(v["five_hour"]["resetsAt"], 1_785_237_000i64);
+        assert_eq!(v.as_object().unwrap().len(), 1, "only one window seen");
+    }
+
+    /// The property the whole field exists for: a run that was REJECTED must still say so after it
+    /// recovers. Recording the last status would report `allowed` and erase the finding.
+    #[test]
+    fn a_rejection_is_not_erased_by_a_later_allowed() {
+        let p = rate_limits(&[
+            rl("five_hour", "allowed", 1),
+            rl("five_hour", "rejected", 2),
+            rl("five_hour", "allowed", 3),
+            rl("five_hour", "allowed", 4),
+        ]);
+        let v = p.to_value();
+        assert_eq!(v["five_hour"]["status"], "rejected");
+        assert_eq!(v["five_hour"]["resetsAt"], 4, "resetsAt is still the LAST");
+        assert_eq!(v["five_hour"]["events"], 4);
+    }
+
+    #[test]
+    fn worst_status_climbs_but_never_falls() {
+        let p = rate_limits(&[
+            rl("five_hour", "allowed", 1),
+            rl("five_hour", "allowed_warning", 2),
+            rl("five_hour", "allowed", 3),
+        ]);
+        assert_eq!(p.to_value()["five_hour"]["status"], "allowed_warning");
+    }
+
+    /// Severity ordering, asserted on the enum itself: `Unknown` outranks the allow states so an
+    /// unrecognised word is never read as "fine", and is outranked by `Rejected` so a certain
+    /// refusal is never masked by an unfamiliar one.
+    #[test]
+    fn status_severity_is_ordered_allowed_warning_unknown_rejected() {
+        assert!(RateLimitStatus::Allowed < RateLimitStatus::AllowedWarning);
+        assert!(RateLimitStatus::AllowedWarning < RateLimitStatus::Unknown);
+        assert!(RateLimitStatus::Unknown < RateLimitStatus::Rejected);
+        assert_eq!(
+            RateLimitStatus::from_wire("something_new"),
+            RateLimitStatus::Unknown
+        );
+        let p = rate_limits(&[
+            rl("five_hour", "rejected", 1),
+            rl("five_hour", "something_new", 2),
+        ]);
+        assert_eq!(
+            p.to_value()["five_hour"]["status"],
+            "rejected",
+            "an unknown word must not mask a real rejection"
+        );
+        let q = rate_limits(&[
+            rl("five_hour", "allowed_warning", 1),
+            rl("five_hour", "something_new", 2),
+        ]);
+        assert_eq!(
+            q.to_value()["five_hour"]["status"],
+            "unknown",
+            "an unknown word must not be read as allowed"
+        );
+    }
+
+    /// `seven_day` and `seven_day_overage_included` are different windows with different resets.
+    /// A substring match would collapse them; exact matching keeps them apart.
+    #[test]
+    fn the_two_seven_day_windows_stay_separate() {
+        let p = rate_limits(&[
+            rl("seven_day", "allowed_warning", 100),
+            rl("seven_day_overage_included", "rejected", 200),
+        ]);
+        let v = p.to_value();
+        assert_eq!(v["seven_day"]["status"], "allowed_warning");
+        assert_eq!(v["seven_day"]["resetsAt"], 100);
+        assert_eq!(v["seven_day_overage_included"]["status"], "rejected");
+        assert_eq!(v["seven_day_overage_included"]["resetsAt"], 200);
+        assert_eq!(v.as_object().unwrap().len(), 2);
+        assert_eq!(
+            RateLimitWindow::from_wire("seven_day_overage_included"),
+            RateLimitWindow::SevenDayOverageIncluded
+        );
+    }
+
+    /// A window word this binary has never seen is kept verbatim rather than dropped.
+    #[test]
+    fn an_unrecognised_window_is_kept_under_its_own_name() {
+        let p = rate_limits(&[rl("one_hour", "rejected", 7)]);
+        let v = p.to_value();
+        assert_eq!(v["one_hour"]["status"], "rejected");
+        assert_eq!(
+            RateLimitWindow::from_wire("one_hour"),
+            RateLimitWindow::Other("one_hour".into())
+        );
+    }
+
+    /// 2 of the 187 archived events carry no `rateLimitType`. They name no window, so they are
+    /// skipped — attributing them to one would invent data.
+    #[test]
+    fn an_event_with_no_window_is_skipped() {
+        let mut p = RateLimitProbe::default();
+        assert!(!p.observe(&serde_json::json!({"type":"rate_limit_event",
+            "rate_limit_info":{"status":"allowed","isUsingOverage":false}})));
+        assert!(!p.observe(&serde_json::json!({"type":"rate_limit_event"})));
+        assert!(!p.observe(&serde_json::json!({"type":"assistant"})));
+        assert_eq!(p.to_value().as_object().unwrap().len(), 0);
+    }
+
+    /// `utilization` is a 0..=1 FRACTION on the wire and is echoed unconverted; absent when no
+    /// event carried it, and the LAST one when several did.
+    #[test]
+    fn utilization_is_the_last_fraction_seen_and_null_when_never_sent() {
+        let mut ev = rl("five_hour", "allowed_warning", 1);
+        ev["rate_limit_info"]["utilization"] = serde_json::json!(0.9);
+        let mut ev2 = rl("five_hour", "allowed_warning", 2);
+        ev2["rate_limit_info"]["utilization"] = serde_json::json!(0.92);
+        let p = rate_limits(&[ev, ev2, rl("five_hour", "allowed_warning", 3)]);
+        let v = p.to_value();
+        assert_eq!(v["five_hour"]["utilization"], 0.92);
+        assert_eq!(v["five_hour"]["resetsAt"], 3);
+        let q = rate_limits(&[rl("seven_day", "allowed", 1)]);
+        assert!(q.to_value()["seven_day"]["utilization"].is_null());
+    }
+
+    /// `observe` returns true ONLY on an escalation — that is what makes a live record rare rather
+    /// than one per event (the vetter run had 9 events and 1 escalation).
+    #[test]
+    fn only_an_escalation_reports_true() {
+        let mut p = RateLimitProbe::default();
+        assert!(p.observe(&rl("five_hour", "allowed", 1)), "first sighting");
+        assert!(!p.observe(&rl("five_hour", "allowed", 2)), "same status");
+        assert!(p.observe(&rl("five_hour", "rejected", 3)), "escalation");
+        assert!(!p.observe(&rl("five_hour", "allowed", 4)), "de-escalation");
+        assert!(p.observe(&rl("seven_day", "allowed", 5)), "new window");
+    }
+
+    /// Absent means "predates the field"; `{}` means "this run saw none". They must not be the
+    /// same value.
+    #[test]
+    fn rate_limits_is_an_empty_object_when_nothing_was_seen() {
+        let v = RateLimitProbe::default().to_value();
+        assert!(v.is_object());
+        assert_eq!(v.as_object().unwrap().len(), 0);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Record shapes.
+    // -----------------------------------------------------------------------------------------
+
+    fn ident() -> RunIdentity<'static> {
+        RunIdentity {
+            run_id: Some("20260728T100257Z"),
+            role: Some("vetter"),
+            model: Some("claude-fable-5"),
+        }
+    }
+
+    #[test]
+    fn a_usage_record_carries_the_exact_fields_and_no_token_guess() {
+        let evs = events(VETTER);
+        let usage = run(&evs);
+        let limits = rate_limits(&evs);
+        let doc = usage_record(&usage, &limits, "/t.jsonl", &ident());
+        assert_eq!(doc["stage"], STAGE_USAGE);
+        assert_eq!(doc["tokensIn"], 74);
+        assert_eq!(doc["cacheRead"], 6_099_441);
+        assert_eq!(doc["cacheCreation"], 303_723);
+        assert_eq!(doc["messages"], 37);
+        assert_eq!(doc["rateLimits"]["five_hour"]["events"], 9);
+        assert_eq!(doc["runId"], "20260728T100257Z");
+        assert_eq!(doc["role"], "vetter");
+        assert!(
+            doc.get("tokensOut").is_none(),
+            "output tokens are not knowable mid-run and must not appear"
+        );
+    }
+
+    /// `run-metrics` over a whole archived trace grows the same field, so history and live records
+    /// answer the rate-limit question the same way.
+    #[test]
+    fn a_final_record_always_carries_a_rate_limits_object() {
+        let m = run_metrics(VETTER);
+        assert_eq!(m.rate_limits["five_hour"]["events"], 9);
+        let doc = final_record(
+            "/t.jsonl",
+            &m,
+            &ident(),
+            None,
+            &ToolingReport::default(),
+            &[],
+        );
+        assert_eq!(doc["rateLimits"]["five_hour"]["status"], "allowed");
+        // The terminal totals stay authoritative — including the output count the probe cannot
+        // reach, which is exactly why `run-metrics` still reads the `result` event.
+        assert_eq!(doc["tokensOut"], 41_026);
+        assert_eq!(doc["cacheRead"], 6_099_441);
+
+        // A record built by hand still gets an object, never null.
+        let bare = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &ident(),
+            None,
+            &ToolingReport::default(),
+            &[],
+        );
+        assert!(
+            bare["rateLimits"].is_object(),
+            "rateLimits must never be null"
+        );
+        assert_eq!(bare["rateLimits"].as_object().unwrap().len(), 0);
+    }
+
+    /// The stride is what bounds how many live records a long run writes, and how stale a killed
+    /// run's last one can be. Both properties are read off this constant, so it is pinned.
+    #[test]
+    fn the_usage_record_stride_is_bounded_and_nonzero() {
+        assert_eq!(USAGE_RECORD_STRIDE, 25);
+        let evs = events(PRODUCER);
+        let p = run(&evs);
+        assert!(
+            p.messages / USAGE_RECORD_STRIDE <= 24,
+            "a long producer run writes at most 24 mid-run usage records, got {}",
+            p.messages / USAGE_RECORD_STRIDE
+        );
     }
 }
 
