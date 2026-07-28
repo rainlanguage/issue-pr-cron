@@ -616,12 +616,12 @@ moment, not of a PR.**
 
 The response is one exit, and nothing else:
 
-| Piece | What it does |
-| --- | --- |
-| `infra-down "<what is unavailable>" [--root-cause <owner/repo#n>]` | The model's mid-run exit. Records the finding once, exits **12**, touches no PR — no label, no comment, no GitHub call at all. |
-| `run-infra [<record>]` | The runner's read-back. Exit **12** when the run recorded an outage, which is how `campaign-run.sh` ends a run on something discovered **mid-flight** — every other exit in that script (82, 90, 96, and the preflight abort) is pre-model. |
-| `run-metrics --infra <record>` | Folds `infraDown` / `infraReason` / `infraRootCause` onto the `runs.jsonl` line, beside #91's `unreadableFiles` / `commandsNotFound` / `missingTools`, and makes the run's `outcome` **`infra-down`** rather than `ok`. |
-| `retire-blocked-infra [--dry-run]` | One-shot: strips the retired label from every open PR still carrying it. |
+| Piece                                                              | What it does                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `infra-down "<what is unavailable>" [--root-cause <owner/repo#n>]` | The model's mid-run exit. Records the finding once, exits **12**, touches no PR — no label, no comment, no GitHub call at all.                                                                                                              |
+| `run-infra [<record>]`                                             | The runner's read-back. Exit **12** when the run recorded an outage, which is how `campaign-run.sh` ends a run on something discovered **mid-flight** — every other exit in that script (82, 90, 96, and the preflight abort) is pre-model. |
+| `run-metrics --infra <record>`                                     | Folds `infraDown` / `infraReason` / `infraRootCause` onto the `runs.jsonl` line, beside #91's `unreadableFiles` / `commandsNotFound` / `missingTools`, and makes the run's `outcome` **`infra-down`** rather than `ok`.                     |
+| `retire-blocked-infra [--dry-run]`                                 | One-shot: strips the retired label from every open PR still carrying it.                                                                                                                                                                    |
 
 **There is deliberately no detector.** No threshold, no failure-signature
 classifier, no "is this a real outage or just a flake". The model declares what
@@ -647,10 +647,10 @@ find it —
 jq -r 'select(.infraDown) | "\(.runId)  \(.infraRootCause)  \(.infraReason)"' metrics/runs.jsonl
 ```
 
-Two things are unchanged. A red that **one PR can green** is still that PR's work
-(the 3b rules are untouched). And anything genuinely permanent that needs a
-**person** — a secret that exists nowhere, a harness that cannot render a stack —
-is a question for the human, so it goes to `flag-design`, not to an exit that
+Two things are unchanged. A red that **one PR can green** is still that PR's
+work (the 3b rules are untouched). And anything genuinely permanent that needs a
+**person** — a secret that exists nowhere, a harness that cannot render a stack
+— is a question for the human, so it goes to `flag-design`, not to an exit that
 would end every run forever.
 
 The three crons are **staggered by 2 h** so work flows downstream within each
