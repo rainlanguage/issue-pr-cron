@@ -97,17 +97,17 @@ this an actual finite state machine rather than a picture of one.
 
 ### The human's transitions
 
-Every actor's hand-off is a labelled transition — including the human's. That was
-not true until #86: `human:reject`, `human:design`, `human:close-candidate` and
-`human:keep-open` appeared in the binary only as strings it **read and refused
-on**, so the one actor whose decisions everything else treats as sacred was also
-the only one improvising raw `gh issue edit --add-label`.
+Every actor's hand-off is a labelled transition — including the human's. That
+was not true until #86: `human:reject`, `human:design`, `human:close-candidate`
+and `human:keep-open` appeared in the binary only as strings it **read and
+refused on**, so the one actor whose decisions everything else treats as sacred
+was also the only one improvising raw `gh issue edit --add-label`.
 
-| Transition                                            | The move it makes                                                                                     |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**                        |
-| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed**  |
-| `record-close-candidate-verdict <owner/repo> <issue>`  | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)              |
+| Transition                                             | The move it makes                                                                                     |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**                       |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed** |
+| `record-close-candidate-verdict <owner/repo> <issue>`  | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)             |
 
 The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
 (PRs) and `HUMAN_RULING_LABELS` (issues), the same constants every AI transition
@@ -116,7 +116,7 @@ than needing one, so the transition surface and the lane classifier cannot name
 different states.
 
 **A ruling is not a label; it is a label plus what it was ruling on.** The
-comment a ruling posts pins to whatever the AI's ruling on the *same subject*
+comment a ruling posts pins to whatever the AI's ruling on the _same subject_
 pins to, so the two records go stale together:
 
 - a PR → its head sha: `👤 human` / `Ruled <sha>: reject — <note>`, the twin of
@@ -199,16 +199,16 @@ and `human_rule_issue` — read the subject, rule on it. The subcommands above a
 for the human at a terminal; the profile is for **an agent acting on the human's
 behalf**, which is the case that actually went wrong in #86. A prompt rule
 cannot take a bypassable Bash away, and a `gh issue edit` that no tool offers is
-exactly what gets improvised; a profile makes the non-FSM operation _unavailable_.
-The vetter's inbox tools are deliberately absent — the human's inbox is
-`human-queue`, which renders whole org-wide sets and does not fit one tool
-result — and so is `record_close_candidate_verdict`, which is the vetter's
+exactly what gets improvised; a profile makes the non-FSM operation
+_unavailable_. The vetter's inbox tools are deliberately absent — the human's
+inbox is `human-queue`, which renders whole org-wide sets and does not fit one
+tool result — and so is `record_close_candidate_verdict`, which is the vetter's
 authority and the very move `human_rule_issue` refuses on the human's behalf.
 
-The last three vetter tools are its **second subject**. A PR asks a human to merge
-code; a close-candidate flag asks a human to **destroy work**, so the flag is
-judged before it reaches the triage queue. The shape is identical to the PR side
-— state-load, read one, record one verdict — including the
+The last three vetter tools are its **second subject**. A PR asks a human to
+merge code; a close-candidate flag asks a human to **destroy work**, so the flag
+is judged before it reaches the triage queue. The shape is identical to the PR
+side — state-load, read one, record one verdict — including the
 vetted-at-the-thing-judged rule: a PR re-vets when its head moves, a flag
 re-vets when the producer posts a new one.
 

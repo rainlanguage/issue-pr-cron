@@ -144,14 +144,38 @@ fn thread_route(threads: Option<u64>) -> ThreadRoute {
     }
 }
 
+/// PURE: what a finished `gh` write yields — whether it succeeded, and the text that must go to
+/// STDERR.
+///
+/// `gh` prints the URL of whatever it just created on its own STDOUT. For the CLI that is harmless
+/// noise. For the MCP server it is a PROTOCOL VIOLATION: stdout *is* the JSON-RPC stream, so a
+/// `gh issue comment` ahead of a response puts an unparseable line into it. `mcp_serve` says
+/// "nothing else may print there" and routes every write through the non-printing `*_apply` cores
+/// for exactly this reason — but that guarantee only ever covered OUR prints, and the child process
+/// inherited the same stdout. Observed live: one `human_rule_issue` call emitted three bare URLs
+/// before its response.
+///
+/// The child's stdout is therefore FOLDED INTO the stderr text rather than discarded — the URLs stay
+/// visible to anyone watching a run, and stdout stays the protocol.
+fn gh_output_report(out: &std::process::Output) -> (bool, String) {
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.success(), text)
+}
+
 /// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
 /// `--record-verdict`'s logic testable without network.
 fn gh_run(args: &[&str]) -> bool {
-    Command::new("gh")
-        .args(args)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    match Command::new("gh").args(args).output() {
+        Ok(out) => {
+            let (ok, text) = gh_output_report(&out);
+            if !text.is_empty() {
+                eprint!("{text}");
+            }
+            ok
+        }
+        Err(_) => false,
+    }
 }
 /// FIX(bug 2): a CheckRun is pending unless status==COMPLETED (WAITING/REQUESTED/QUEUED/IN_PROGRESS
 /// all count as pending); a StatusContext is pending unless its state is terminal (SUCCESS/FAILURE/
@@ -13514,6 +13538,43 @@ mod human_rule_tests {
                 "Human decision: keep open (excluded from the close-candidate queue)"
             )
         );
+    }
+
+    // --- the gh write seam: stdout is the MCP protocol -------------------------------------------
+
+    // `gh issue comment` prints the new comment's URL on ITS stdout, and `gh_run` used to let the
+    // child inherit ours. On the CLI that is noise; on the MCP server stdout IS the JSON-RPC stream,
+    // so a ruling emitted three bare URL lines ahead of its own response — three unparseable
+    // messages in a protocol that says "nothing else may print there".
+    #[test]
+    fn a_gh_write_folds_its_stdout_into_stderr_because_stdout_is_the_protocol() {
+        let ok = std::process::Command::new("sh")
+            .args(["-c", "echo https://example/created; echo warn >&2"])
+            .output()
+            .expect("sh runs");
+        let (success, text) = gh_output_report(&ok);
+        assert!(success);
+        // Both streams survive — the fix is a REDIRECT, not a discard: a URL a human was reading in
+        // a run log must not vanish to buy protocol cleanliness.
+        assert!(text.contains("https://example/created"), "{text:?}");
+        assert!(text.contains("warn"), "{text:?}");
+
+        // A failing write is reported as failing, and its diagnostics still come back.
+        let bad = std::process::Command::new("sh")
+            .args(["-c", "echo boom >&2; exit 1"])
+            .output()
+            .expect("sh runs");
+        let (success, text) = gh_output_report(&bad);
+        assert!(!success);
+        assert!(text.contains("boom"), "{text:?}");
+
+        // Silence stays silent — an empty report must not make `gh_run` print a blank line into a
+        // run log for every label edit.
+        let quiet = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .output()
+            .expect("sh runs");
+        assert_eq!(gh_output_report(&quiet), (true, String::new()));
     }
 
     // --- the reports -------------------------------------------------------------------------
