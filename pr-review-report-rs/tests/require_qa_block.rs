@@ -651,6 +651,9 @@ fn a_pr_create_assembled_through_a_variable_is_refused() {
         format!("gh pr `echo create` --title t --body-file {bare}"),
         format!("gh $SUB create --title t --body-file {bare}"),
         format!("timeout 60 gh pr $C --title t --body-file {bare}"),
+        // A wrapper is not a way out of this either: an interpreter payload is re-checked as a
+        // command in its own right, so the same rule applies at every depth.
+        format!("bash -c 'gh pr $C --title t --body-file {bare}'"),
     ] {
         let (code, err) = f.bash(&cmd);
         assert_blocked(code, &err);
@@ -697,6 +700,9 @@ fn an_eval_wrapped_pr_create_is_still_gated() {
     // otherwise a clean way past every literal word match here, because the whole command is one
     // token. It is followed for the same reason and with the same depth limit.
     let (code, err) = f.bash("eval \"gh pr create --title t --body 'no evidence'\"");
+    assert_blocked(code, &err);
+    // …and nested inside a wrapper, which is the spelling that stacks both hand-offs.
+    let (code, err) = f.bash("bash -c 'eval \"gh pr create --title t --body no-evidence\"'");
     assert_blocked(code, &err);
     let good = f.body_file("good.md", COMPLETE_BLOCK);
     let (code, err) = f.bash(&format!(
