@@ -96,8 +96,10 @@ if ! flock -n 9; then
   exit 0
 fi
 
-# clones live here; per-run traces here
-mkdir -p "$WORK_DIR" "$RUNDIR"
+# clones live here; per-run traces here. The metrics dir must exist BEFORE the run, not just after
+# it: `run-timings` appends this run's boot/ttl records from inside the live pipe, long before the
+# end-of-run `run-metrics` line.
+mkdir -p "$WORK_DIR" "$RUNDIR" "$DIR/metrics"
 cd "$WORK_DIR" || exit 1
 
 # The FSM MCP server reads both clone roots from the environment, never from a tool argument — a
@@ -112,6 +114,25 @@ find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
+
+# --- harness read-time dependencies: resolved BEFORE a token is spent -------------------------
+# Same check, same reason, as review-run.sh. The producer drains the `audit`-labelled backlog
+# first, and those issues cite `audit/protofire/*.pdf` as their source (raindex#2619 names the file
+# outright) — a producer that cannot open the report it is implementing against writes a PR body
+# asserting something it never read. A missing dependency ends the run rather than degrading it.
+_pf="$(pr-review-report preflight)"; _pfrc=$?
+printf '%s\n' "$_pf" | sed 's/^/  /' >> "$LOG"
+if [ "$_pfrc" -ne 0 ]; then
+  _missing="$(printf '%s\n' "$_pf" | sed -n 's/^missing=//p')"
+  echo "$(date -u +%FT%TZ) campaign run ABORT: harness tools missing from PATH: $_missing" >> "$LOG"
+  : > "$RUNLOG"
+  mkdir -p "$DIR/metrics"
+  pr-review-report run-metrics "$RUNLOG" \
+    --run-id "$TS" --role producer --model "$MODEL" --exit-code "$_pfrc" \
+    --preflight-missing "$_missing" \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+  exit "$_pfrc"
+fi
 
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
@@ -158,6 +179,8 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     --add-dir "$DIR" \
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
+    | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
+          --run-id "$TS" --role producer --model "$USED_MODEL" 2>/dev/null || cat ; } \
     | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}
   # Advance to the next model ONLY on a usage/quota limit; any other outcome is final. The verdict
@@ -185,8 +208,9 @@ echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)
 # `run-metrics` emits the whole enriched record itself now, including `outcome` — which it derives
 # with the same typed classifier the fallback loop uses, so the metrics line and the fallback
 # decision can never disagree about whether a run was quota-limited.
+# This is the run's `stage: final` line. Its `stage: boot` / `stage: ttl` lines were already
+# appended mid-run by `run-timings` above — reaching HERE at all is what a killed run cannot do.
 if [ -s "$RUNLOG" ]; then
-  mkdir -p "$DIR/metrics"
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role producer --model "$USED_MODEL" --exit-code "$rc" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true

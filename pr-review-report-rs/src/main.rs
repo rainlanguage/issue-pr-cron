@@ -144,14 +144,38 @@ fn thread_route(threads: Option<u64>) -> ThreadRoute {
     }
 }
 
+/// PURE: what a finished `gh` write yields — whether it succeeded, and the text that must go to
+/// STDERR.
+///
+/// `gh` prints the URL of whatever it just created on its own STDOUT. For the CLI that is harmless
+/// noise. For the MCP server it is a PROTOCOL VIOLATION: stdout *is* the JSON-RPC stream, so a
+/// `gh issue comment` ahead of a response puts an unparseable line into it. `mcp_serve` says
+/// "nothing else may print there" and routes every write through the non-printing `*_apply` cores
+/// for exactly this reason — but that guarantee only ever covered OUR prints, and the child process
+/// inherited the same stdout. Observed live: one `human_rule_issue` call emitted three bare URLs
+/// before its response.
+///
+/// The child's stdout is therefore FOLDED INTO the stderr text rather than discarded — the URLs stay
+/// visible to anyone watching a run, and stdout stays the protocol.
+fn gh_output_report(out: &std::process::Output) -> (bool, String) {
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.success(), text)
+}
+
 /// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
 /// `--record-verdict`'s logic testable without network.
 fn gh_run(args: &[&str]) -> bool {
-    Command::new("gh")
-        .args(args)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    match Command::new("gh").args(args).output() {
+        Ok(out) => {
+            let (ok, text) = gh_output_report(&out);
+            if !text.is_empty() {
+                eprint!("{text}");
+            }
+            ok
+        }
+        Err(_) => false,
+    }
 }
 /// FIX(bug 2): a CheckRun is pending unless status==COMPLETED (WAITING/REQUESTED/QUEUED/IN_PROGRESS
 /// all count as pending); a StatusContext is pending unless its state is terminal (SUCCESS/FAILURE/
@@ -710,11 +734,24 @@ struct RunMetrics {
     // any non-zero value is a regression of the no-park rule (both tools are denied in settings).
     wakeup_calls: usize,
     first_mutation_index: Option<usize>,
-    // Wall-clock ms from the first timestamped trace event to the first org-mutation's result
-    // (the state-recovery window). Only `user` events carry a `timestamp`, so the mutation is
-    // anchored to the result of its tool call, not the assistant event that issued it. None when
-    // the run never mutated, or when the anchor timestamps are absent/unparseable.
+    // Wall-clock ms from the first tool RESULT to the first org-mutation's result. Its anchor is
+    // the first `user` event, which is the result of the run's first tool call — so this window
+    // opens one tool-result LATE and excludes that first call's own latency. That is a flaw, but
+    // it is the meaning every committed record in metrics/runs.jsonl was written under, and
+    // re-anchoring it would put a step in the series that no run ever experienced. `boot_ms` +
+    // `ttl_ms` are the honest decomposition; this stays frozen. None when the run never mutated,
+    // or when the anchor timestamps are absent/unparseable.
     startup_ms: Option<i64>,
+    // LAUNCH overhead: first timestamped trace event → the run's first tool call. Nix resolving
+    // and exec'ing the flake output, the MCP handshake, the prompt load — nothing model-driven.
+    // Regresses when a derivation stops being cached or a store path is GC'd.
+    boot_ms: Option<i64>,
+    // ORIENTATION: the first tool call → the first PRODUCTIVE call (the producer's first mutation,
+    // the vetter's first verdict). State-load, queue read, checkout, skill load. Entirely model-
+    // and tool-surface-driven: it regresses when a tool returns too much, a prompt grows, or a
+    // failed call makes the model improvise. Nothing it and `boot_ms` have in common is why one
+    // fused number could not be acted on (#84).
+    ttl_ms: Option<i64>,
     duration_ms: u64,
     num_turns: u64,
     tokens_in: u64,
@@ -734,10 +771,26 @@ impl RunMetrics {
     }
 }
 
-/// A tool call is an org MUTATION when it is a Bash command that creates/edits/merges/closes
-/// a PR or issue, or commits/pushes — i.e. the run stopped recovering state and started doing
-/// work. Read-only gh/git/grep calls are NOT mutations.
+/// The vetter's GitHub WRITES on the MCP tool surface.
+///
+/// The vetter has no Bash at all (#52): `record_verdict` and `record_close_candidate_verdict` are
+/// its only two org mutations. A Bash-only detector therefore reports "never mutated" for every
+/// modern vetter run — `firstMutationIndex` null, `startupMs` null, `startupPct` a meaningless
+/// 100% — and takes the first-productive-act anchor down with it. These are the same transition
+/// the old Bash `pr-review-report record-verdict` invocation was, just no longer expressible as a
+/// command string.
+const MCP_MUTATION_TOOLS: &[&str] = &[
+    "mcp__fsm__record_verdict",
+    "mcp__fsm__record_close_candidate_verdict",
+];
+
+/// A tool call is an org MUTATION when it is one of the vetter's MCP writes, or a Bash command
+/// that creates/edits/merges/closes a PR or issue, or commits/pushes — i.e. the run stopped
+/// recovering state and started doing work. Read-only gh/git/grep calls are NOT mutations.
 fn is_mutation_tool(name: &str, input: &serde_json::Value) -> bool {
+    if MCP_MUTATION_TOOLS.contains(&name) {
+        return true;
+    }
     if name != "Bash" {
         return false;
     }
@@ -807,98 +860,323 @@ fn iso_to_epoch_ms(s: &str) -> Option<i64> {
     Some((days * 86400 + h * 3600 + mi * 60 + sec) * 1000 + ms)
 }
 
+/// Which of the two startup numbers just became KNOWN.
+///
+/// The split exists because the numbers are emitted the moment their anchor arrives rather than at
+/// run end. `run-metrics` only ever runs after the claude process exits, so a run that is killed,
+/// times out, or dies leaves NO record at all — and that is precisely the run whose timings you
+/// want. Three manual vetter runs on 2026-07-27/28 produced zero records between them (#84).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum StartupPhase {
+    /// `bootMs` is known: the run reached its first tool call.
+    Boot,
+    /// `ttlMs` is known: the run reached its first productive call.
+    Ttl,
+}
+
+impl StartupPhase {
+    /// The wire word written into a partial record's `stage`.
+    fn as_str(self) -> &'static str {
+        match self {
+            StartupPhase::Boot => "boot",
+            StartupPhase::Ttl => "ttl",
+        }
+    }
+}
+
+/// The `stage` of a COMPLETE record — written at run end with the whole usage/cost/outcome tail.
+///
+/// How a consumer tells an old record from a new one: **`stage` absent means pre-#84**. Those
+/// records carry `startupMs` under its original meaning and no `bootMs`/`ttlMs` at all, so a
+/// chart spanning the change reads them as gaps in the new series rather than as zeroes, and the
+/// `startupMs` series itself is continuous because that field's definition did not move.
+const STAGE_FINAL: &str = "final";
+
+/// Streaming detector for a run's startup anchors.
+///
+/// ONE state machine, fed events in order, driving BOTH the end-of-run `run-metrics` (over a whole
+/// trace file) and the live `run-timings` filter (over the runner's pipe) — so the number a killed
+/// run recorded mid-flight and the number a completed run records at the end can never be computed
+/// two different ways.
+#[derive(Default)]
+struct StartupProbe {
+    /// First timestamped event of ANY type: the earliest instant the trace can witness, and what
+    /// `bootMs` measures from. Derived from the trace alone on purpose — a wall-clock anchor handed
+    /// in by the runner could not be re-derived from an archived trace, and re-derivation from
+    /// `runs/*.jsonl` is how this repo backfills history.
+    run_ts: Option<i64>,
+    /// First `user` timestamp — the result of the run's FIRST tool call. This is `startupMs`'s
+    /// anchor and is deliberately left where it is; see the field's comment on [`RunMetrics`].
+    first_result_ts: Option<i64>,
+    /// Timestamp of the assistant event carrying the run's first `tool_use`.
+    first_tool_ts: Option<i64>,
+    /// Set once the first tool call is seen, whether or not its event was timestamped, so an
+    /// untimestamped first call degrades to "no boot/ttl" instead of promoting a LATER call into
+    /// the anchor and reporting a plausible, wrong number.
+    saw_first_tool: bool,
+    /// Timestamp of the assistant event carrying the first PRODUCTIVE `tool_use`. Anchored on the
+    /// call, not on its result: the model has finished orienting when it issues the call, and a run
+    /// killed in the gap before the result would otherwise lose the whole measurement.
+    productive_ts: Option<i64>,
+    tool_calls: usize,
+    startup_tool_calls: usize,
+    wakeup_calls: usize,
+    first_mutation_index: Option<usize>,
+    mutation_pending: bool,
+    mutation_result_ts: Option<i64>,
+}
+
+impl StartupProbe {
+    /// Feed one trace event. Returns the phases whose number became known ON THIS EVENT — at most
+    /// two, and two at once when the run's very first tool call is already the productive one.
+    fn observe(&mut self, ev: &Value) -> Vec<StartupPhase> {
+        let mut phases = Vec::new();
+        let ts = ev
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .and_then(iso_to_epoch_ms);
+        if ts.is_some() && self.run_ts.is_none() {
+            self.run_ts = ts;
+        }
+        match ev.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                let Some(content) = ev
+                    .get("message")
+                    .and_then(|msg| msg.get("content"))
+                    .and_then(|c| c.as_array())
+                else {
+                    return phases;
+                };
+                for block in content {
+                    if block.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                        continue;
+                    }
+                    let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let empty = serde_json::json!({});
+                    let input = block.get("input").unwrap_or(&empty);
+                    if name == "ScheduleWakeup" || name == "CronCreate" {
+                        self.wakeup_calls += 1;
+                    }
+                    if !self.saw_first_tool {
+                        self.saw_first_tool = true;
+                        self.first_tool_ts = ts;
+                        if self.boot_ms().is_some() {
+                            phases.push(StartupPhase::Boot);
+                        }
+                    }
+                    if self.first_mutation_index.is_none() {
+                        if is_mutation_tool(name, input) {
+                            self.first_mutation_index = Some(self.tool_calls);
+                            self.mutation_pending = true;
+                            self.productive_ts = ts;
+                            if self.ttl_ms().is_some() {
+                                phases.push(StartupPhase::Ttl);
+                            }
+                        } else {
+                            self.startup_tool_calls += 1;
+                        }
+                    }
+                    self.tool_calls += 1;
+                }
+            }
+            Some("user") => {
+                // A tool RESULT. The first one anchors `startupMs`; once a mutation is pending,
+                // the next one closes that window.
+                if let Some(ts) = ts {
+                    if self.first_result_ts.is_none() {
+                        self.first_result_ts = Some(ts);
+                    }
+                    if self.mutation_pending {
+                        self.mutation_result_ts = Some(ts);
+                        self.mutation_pending = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+        phases
+    }
+
+    fn boot_ms(&self) -> Option<i64> {
+        Some(self.first_tool_ts? - self.run_ts?)
+    }
+
+    fn ttl_ms(&self) -> Option<i64> {
+        Some(self.productive_ts? - self.first_tool_ts?)
+    }
+
+    fn startup_ms(&self) -> Option<i64> {
+        Some(self.mutation_result_ts? - self.first_result_ts?)
+    }
+
+    /// Copy the counted + timed fields onto a metrics record.
+    fn fill(&self, m: &mut RunMetrics) {
+        m.tool_calls = self.tool_calls;
+        m.startup_tool_calls = self.startup_tool_calls;
+        m.wakeup_calls = self.wakeup_calls;
+        m.first_mutation_index = self.first_mutation_index;
+        m.startup_ms = self.startup_ms();
+        m.boot_ms = self.boot_ms();
+        m.ttl_ms = self.ttl_ms();
+    }
+}
+
 /// Parse a stream-json trace: count tool calls in order, find the first mutation, and take
 /// the usage/duration/cost from the result event with the most turns (the main run — trailing
 /// short result events from continuations are ignored).
 fn run_metrics(content: &str) -> RunMetrics {
     let mut m = RunMetrics::default();
+    let mut probe = StartupProbe::default();
     let mut best_turns = 0u64;
-    // Wall-clock startup: anchor at the first timestamped event, close at the first mutation's
-    // result. Only `user` events carry a `timestamp`, so when the first mutation tool_use is
-    // seen we flag it and capture the NEXT user timestamp as the mutation's wall-clock anchor.
-    let mut first_ts: Option<i64> = None;
-    let mut mutation_ts: Option<i64> = None;
-    let mut mutation_pending = false;
     for line in content.lines() {
         let v: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(_) => continue,
         };
-        match v.get("type").and_then(|t| t.as_str()) {
-            Some("assistant") => {
-                if let Some(content) = v
-                    .get("message")
-                    .and_then(|msg| msg.get("content"))
-                    .and_then(|c| c.as_array())
-                {
-                    for block in content {
-                        if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            let empty = serde_json::json!({});
-                            let input = block.get("input").unwrap_or(&empty);
-                            if name == "ScheduleWakeup" || name == "CronCreate" {
-                                m.wakeup_calls += 1;
-                            }
-                            if m.first_mutation_index.is_none() {
-                                if is_mutation_tool(name, input) {
-                                    m.first_mutation_index = Some(m.tool_calls);
-                                    mutation_pending = true;
-                                } else {
-                                    m.startup_tool_calls += 1;
-                                }
-                            }
-                            m.tool_calls += 1;
-                        }
-                    }
-                }
+        probe.observe(&v);
+        if v.get("type").and_then(|t| t.as_str()) == Some("result") {
+            let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
+            if turns >= best_turns {
+                best_turns = turns;
+                m.num_turns = turns;
+                m.duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
+                m.cost_usd = v
+                    .get("total_cost_usd")
+                    .and_then(|c| c.as_f64())
+                    .unwrap_or(0.0);
+                let u = v.get("usage");
+                let g = |k: &str| {
+                    u.and_then(|u| u.get(k))
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0)
+                };
+                m.tokens_in = g("input_tokens");
+                m.tokens_out = g("output_tokens");
+                m.cache_read = g("cache_read_input_tokens");
+                m.cache_creation = g("cache_creation_input_tokens");
             }
-            Some("user") => {
-                // The only event type carrying a `timestamp`. First one seen anchors run start;
-                // once a mutation is pending, the next one closes the startup window.
-                if let Some(ts) = v
-                    .get("timestamp")
-                    .and_then(|t| t.as_str())
-                    .and_then(iso_to_epoch_ms)
-                {
-                    if first_ts.is_none() {
-                        first_ts = Some(ts);
-                    }
-                    if mutation_pending {
-                        mutation_ts = Some(ts);
-                        mutation_pending = false;
-                    }
-                }
-            }
-            Some("result") => {
-                let turns = v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0);
-                if turns >= best_turns {
-                    best_turns = turns;
-                    m.num_turns = turns;
-                    m.duration_ms = v.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0);
-                    m.cost_usd = v
-                        .get("total_cost_usd")
-                        .and_then(|c| c.as_f64())
-                        .unwrap_or(0.0);
-                    let u = v.get("usage");
-                    let g = |k: &str| {
-                        u.and_then(|u| u.get(k))
-                            .and_then(|n| n.as_u64())
-                            .unwrap_or(0)
-                    };
-                    m.tokens_in = g("input_tokens");
-                    m.tokens_out = g("output_tokens");
-                    m.cache_read = g("cache_read_input_tokens");
-                    m.cache_creation = g("cache_creation_input_tokens");
-                }
-            }
-            _ => {}
         }
     }
-    m.startup_ms = match (first_ts, mutation_ts) {
-        (Some(start), Some(mut_ts)) => Some(mut_ts - start),
-        _ => None,
-    };
+    probe.fill(&mut m);
     m
+}
+
+/// Which run a record belongs to, as the runner knows it. Nothing here is derivable from the
+/// trace, which is why it arrives as flags.
+struct RunIdentity<'a> {
+    run_id: Option<&'a str>,
+    role: Option<&'a str>,
+    model: Option<&'a str>,
+}
+
+/// Stamp a record with the run's identity.
+///
+/// Only the fields the caller actually supplied are added, so a bare `run-metrics <trace>` keeps
+/// emitting exactly the record it always has (the dashboard re-derives history from raw traces).
+fn stamp_identity(doc: &mut Value, id: &RunIdentity) {
+    let Some(obj) = doc.as_object_mut() else {
+        return;
+    };
+    if let Some(run_id) = id.run_id {
+        obj.insert("runId".into(), serde_json::json!(run_id));
+    }
+    if let Some(role) = id.role {
+        obj.insert("role".into(), serde_json::json!(role));
+    }
+    if let Some(model) = id.model {
+        obj.insert("model".into(), serde_json::json!(model));
+    }
+}
+
+/// One PARTIAL record: everything known at the instant `phase` became knowable, and nothing else.
+///
+/// The omissions are the point. A `boot` record has no `ttlMs` because the run has not reached its
+/// first productive call; neither stage has `toolCalls`, `startupPct`, `durationMs` or `outcome`,
+/// because the run is still going and any value for them would be a guess that later reads as
+/// measurement. `startupMs` is absent from both because its end anchor is the mutation's RESULT,
+/// which has not arrived when the `ttl` record is written. A consumer distinguishes these from a
+/// complete record by `stage`, and reconciles the lines one `runId` can produce by keeping the
+/// most complete (`final` > `ttl` > `boot`) and, among equals, the LAST — model fallback re-runs
+/// this filter per attempt, and the last attempt is the one that actually ran.
+fn partial_record(
+    probe: &StartupProbe,
+    phase: StartupPhase,
+    trace: &str,
+    id: &RunIdentity,
+) -> Value {
+    let mut doc = match phase {
+        StartupPhase::Boot => serde_json::json!({
+            "trace": trace,
+            "stage": phase.as_str(),
+            "bootMs": probe.boot_ms(),
+        }),
+        StartupPhase::Ttl => serde_json::json!({
+            "trace": trace,
+            "stage": phase.as_str(),
+            "startupToolCalls": probe.startup_tool_calls,
+            "firstMutationIndex": probe.first_mutation_index,
+            "bootMs": probe.boot_ms(),
+            "ttlMs": probe.ttl_ms(),
+        }),
+    };
+    stamp_identity(&mut doc, id);
+    doc
+}
+
+/// Append one record to the metrics file, creating it (and its directory) if absent.
+///
+/// Best-effort by contract: this runs INSIDE the runner's live pipe, and a metrics write must
+/// never be able to take down the run it is measuring. One `write` of a short line to an O_APPEND
+/// fd is atomic on Linux, so these mid-run appends cannot interleave with the runner's end-of-run
+/// `run-metrics >> …` into the same file.
+fn append_record(path: &str, doc: &Value) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = std::path::Path::new(path).parent();
+    if let Some(dir) = dir {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(f, "{}", serde_json::to_string(doc).unwrap())?;
+    f.flush()
+}
+
+/// `run-timings --out <runs.jsonl> --trace <path> [--run-id --role --model]`: pass a LIVE
+/// stream-json trace through unchanged, appending a record the moment `bootMs` and then `ttlMs`
+/// become known.
+///
+/// This exists because `run-metrics` writes at the END of a run. A run that is killed, times out,
+/// or dies therefore records nothing — and that is exactly the run whose startup timings matter
+/// (#84: three manual vetter runs produced zero records between them, so the 5-minute time-to-
+/// first-verdict had to be measured off the trace by hand). Sitting in the runner's pipe, this
+/// filter has both numbers on disk long before the run's fate is decided.
+///
+/// It is a pass-through FIRST: every line is forwarded before it is parsed, so the downstream
+/// distiller keeps seeing the whole stream even if nothing here works. Every failure — an
+/// unparseable line, an unwritable metrics file — is swallowed for the same reason.
+fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    let mut probe = StartupProbe::default();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if writeln!(stdout, "{line}").is_err() {
+            return 0; // downstream closed
+        }
+        let _ = stdout.flush();
+        let Ok(ev) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        for phase in probe.observe(&ev) {
+            let _ = append_record(out, &partial_record(&probe, phase, trace, id));
+        }
+    }
+    0
 }
 
 /// `run-metrics <trace.jsonl> [--run-id --role --model --exit-code]`: print the run's metrics
@@ -911,10 +1189,9 @@ fn run_metrics(content: &str) -> RunMetrics {
 /// [`classify_trace`] rather than by grepping the trace in bash.
 fn run_metrics_mode(
     path: &str,
-    run_id: Option<&str>,
-    role: Option<&str>,
-    model: Option<&str>,
+    id: &RunIdentity,
     exit_code: Option<i32>,
+    preflight_missing: &[String],
 ) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -924,13 +1201,45 @@ fn run_metrics_mode(
         }
     };
     let m = run_metrics(&content);
+    let tooling = trace_tooling_report(&content);
+    let outcome = exit_code.map(|rc| (rc, classify_outcome(&content, rc, preflight_missing)));
+    println!(
+        "{}",
+        serde_json::to_string(&final_record(
+            path,
+            &m,
+            id,
+            outcome,
+            &tooling,
+            preflight_missing
+        ))
+        .unwrap()
+    );
+    0
+}
+
+/// The COMPLETE end-of-run record: every field in `partial_record` plus the counts, usage, cost and
+/// outcome that only exist once the run has finished. Built here rather than inline in
+/// [`run_metrics_mode`] so the record's shape — `stage` above all — is a tested value, not a
+/// side effect of printing.
+fn final_record(
+    path: &str,
+    m: &RunMetrics,
+    id: &RunIdentity,
+    outcome: Option<(i32, TraceOutcome)>,
+    tooling: &ToolingReport,
+    preflight_missing: &[String],
+) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
+        "stage": STAGE_FINAL,
         "toolCalls": m.tool_calls,
         "startupToolCalls": m.startup_tool_calls,
         "startupPct": (m.startup_pct() * 10.0).round() / 10.0,
         "wakeupCalls": m.wakeup_calls,
         "firstMutationIndex": m.first_mutation_index,
+        "bootMs": m.boot_ms,
+        "ttlMs": m.ttl_ms,
         "startupMs": m.startup_ms,
         "durationMs": m.duration_ms,
         "numTurns": m.num_turns,
@@ -939,29 +1248,862 @@ fn run_metrics_mode(
         "cacheRead": m.cache_read,
         "cacheCreation": m.cache_creation,
         "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
+        // Always present, so the dashboard can distinguish "no tooling trouble" from "this record
+        // predates the field". `unreadableFiles` is what makes the outcome `tooling-failure`;
+        // `commandsNotFound` is reported but never decides the outcome (see trace_tooling_report).
+        "unreadableFiles": tooling.unreadable,
+        "commandsNotFound": tooling.command_not_found,
+        "missingTools": preflight_missing,
     });
-    // Only enrich when the caller supplied run identity, so a bare `run-metrics <trace>` keeps
-    // emitting exactly the record it always has (the dashboard re-derives history from traces).
-    if let Some(obj) = doc.as_object_mut() {
-        if let Some(run_id) = run_id {
-            obj.insert("runId".into(), serde_json::json!(run_id));
+    stamp_identity(&mut doc, id);
+    if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
+        obj.insert("exitCode".into(), serde_json::json!(rc));
+        obj.insert("outcome".into(), serde_json::json!(verdict.as_str()));
+    }
+    doc
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tooling failures (#85).
+//
+// A run whose TOOLS could not do their job is not a successful run. Before this, one could be:
+// the vetter's `Read` of `audit/protofire/*.pdf` came back `isError: pdftoppm is not installed`,
+// the model recorded a verdict on what it could still check, claude exited 0, and the run was
+// classified `ok`. The same PR was vetted `reject` by a run that read more of it and `ready` by
+// the run that could not — the missing dependency did not merely reduce coverage, it moved the
+// verdict.
+//
+// Two mechanisms, because the failure has two shapes:
+//
+//   KNOWN — a dependency we have already discovered. [`HARNESS_TOOLS`] declares it, the runner
+//   resolves it BEFORE spending a token, and a missing one ends the run then and there. No model
+//   runs, so no confident answer is built on evidence it cannot read.
+//
+//   UNKNOWN — a dependency nobody has hit yet, which by definition cannot be pre-declared. Caught
+//   from the trace by [`trace_tooling_report`], on a structural relation rather than on the error
+//   prose: a file the environment ITSELF listed as existing, which the run then could not read.
+//   That is an environment failure whatever the artifact type and whatever the message says, so
+//   the NEXT undeclared reader dependency fails the same way this one does, with no new code.
+// ---------------------------------------------------------------------------------------------
+
+/// An external binary the HARNESS execs on the model's behalf, with the evidence for needing it.
+///
+/// Nothing in this repo — no script, no prompt, no skill — names these. They are reached at READ
+/// time by the harness's own `Read` tool, which is exactly why the #77 closure gate could not see
+/// them: that gate proves every DECLARED tool resolves from the locked nixpkgs, and an undeclared
+/// one is invisible to a walk over declarations. This table is where such a dependency becomes
+/// declared, and `.github/workflows/rust.yml` asserts each entry is in both model runners' closures.
+struct HarnessTool {
+    /// The executable name, as the harness spawns it.
+    bin: &'static str,
+    /// Why the pipeline needs it — a fact that can be checked, not a guess.
+    why: &'static str,
+}
+
+/// The declared set. Deliberately short: a preflight that demands tools the work does not use gets
+/// switched off the first time it blocks a run for nothing.
+///
+/// Derived by enumerating the literal command names the harness's own exec helper can be called
+/// with (`strings claude | grep -o 'an("[a-z…]*"'` — its spawn helper is
+/// `function an(e,t,r={timeout:…,useCwd:…})`), then keeping only those reachable from a tool the
+/// pipeline's models actually hold, on Linux, for an artifact type the audited repos contain.
+/// Everything else in that enumeration is platform glue (`osascript`, `powershell.exe`, `pacman`,
+/// `tmux`, `xclip`, …), plugin-install machinery the crons disable via `--strict-mcp-config`
+/// (`unzip`, which the harness also falls back to a JS implementation for), or already declared
+/// (`gh`, `git`).
+const HARNESS_TOOLS: &[HarnessTool] = &[
+    HarnessTool {
+        bin: "pdftoppm",
+        why: "Read renders PDF pages with `pdftoppm -jpeg -r 100`; the org's external audit \
+              evidence is audit/protofire/*.pdf (110 files across the work clones)",
+    },
+    HarnessTool {
+        bin: "pdfinfo",
+        why: "Read asks pdfinfo for a PDF's page count before rendering a requested page range",
+    },
+];
+
+/// Resolve `bin` against `$PATH`, returning the first executable match.
+///
+/// The structural half of the discriminant: "a dependency is absent" is a fact about the
+/// ENVIRONMENT, decidable with a directory walk and an executable-bit test, with no error text to
+/// interpret. It cannot be confused with "the input was bad" because it never looks at an input.
+/// The PATH string is a PARAMETER so the lookup is testable without mutating the process
+/// environment — a test that sets `PATH` would race every other test in the binary.
+fn resolve_in(path: &std::ffi::OsStr, bin: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    for dir in std::env::split_paths(path) {
+        // An empty PATH element means "the current directory" to some shells. Skipped here: a
+        // runner must not acquire a tool from whatever directory the cron happened to start in.
+        if dir.as_os_str().is_empty() {
+            continue;
         }
-        if let Some(role) = role {
-            obj.insert("role".into(), serde_json::json!(role));
-        }
-        if let Some(model) = model {
-            obj.insert("model".into(), serde_json::json!(model));
-        }
-        if let Some(rc) = exit_code {
-            obj.insert("exitCode".into(), serde_json::json!(rc));
-            obj.insert(
-                "outcome".into(),
-                serde_json::json!(classify_trace(&content, rc).as_str()),
-            );
+        let cand = dir.join(bin);
+        let Ok(md) = std::fs::metadata(&cand) else {
+            continue;
+        };
+        if md.is_file() && md.permissions().mode() & 0o111 != 0 {
+            return Some(cand);
         }
     }
-    println!("{}", serde_json::to_string(&doc).unwrap());
-    0
+    None
+}
+
+/// `preflight`: resolve every [`HARNESS_TOOLS`] entry against the process's own `$PATH`, print
+/// what was found, exit non-zero when any is missing.
+///
+/// Exit [`CLOSURE_UNSATISFIED`] is its own code (like the usage gate's 10) so the runner can tell
+/// "a dependency is missing" from "the binary itself failed".
+///
+/// The environment is a PARAMETER of [`preflight_report`], not a global read, which is what lets
+/// the CI closure gate ask the identical question of a runner's BAKED path — one implementation,
+/// so the declaration and the closure cannot answer differently.
+fn preflight_mode() -> i32 {
+    preflight_report(&std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn preflight_report(path: &std::ffi::OsStr) -> i32 {
+    let mut missing = Vec::new();
+    for t in HARNESS_TOOLS {
+        match resolve_in(path, t.bin) {
+            Some(p) => println!("ok      {:<10} {}", t.bin, p.display()),
+            None => {
+                println!("MISSING {:<10} {}", t.bin, t.why);
+                missing.push(t.bin);
+            }
+        }
+    }
+    if missing.is_empty() {
+        return 0;
+    }
+    // stdout carries the machine-readable list; the runner passes it straight to `run-metrics`.
+    println!("missing={}", missing.join(","));
+    eprintln!(
+        "error: {} harness tool(s) missing from PATH: {}",
+        missing.len(),
+        missing.join(", ")
+    );
+    CLOSURE_UNSATISFIED
+}
+
+// ---------------------------------------------------------------------------------------------
+// The closure gates (#85).
+//
+// [`HARNESS_TOOLS`] is a DECLARATION. These three subcommands are what make it true of the thing
+// a model actually runs inside: the nix closure baked into each model runner. CI calls each in one
+// line and reads the exit code.
+//
+// They share one rule, and it is the whole reason they exist separately from the runners' own
+// `preflight`: a runner's capabilities are resolved from ITS OWN baked PATH and from nothing else.
+// A tool that merely happens to be installed on the CI box must never satisfy a gate, because the
+// cron's environment is bare and the developer's is not.
+//
+// Why three, and not one:
+//
+//   `closure-preflight` — presence. Every declared read-time dependency resolves from each
+//   runner's closure. Catches "nobody added it to runtimeInputs".
+//
+//   `closure-render`    — capability. Presence is not function: a closure can carry `pdftoppm`
+//   and still fail on a missing shared library or data file, and the harness turns BOTH into the
+//   same `isError` with the run still exiting 0. So this one renders a real PDF end to end with
+//   the harness's own argv.
+//
+//   `closure-surface`   — divergence. The producer and the vetter run the same harness over the
+//   same repositories, so a capability one needs is almost always one the other needs. Note this
+//   gate is structurally blind to a capability BOTH runners lack — which is exactly #85's shape.
+//   That is why the two presence gates above are what actually hold the bug, and why a symmetry
+//   check alone would have been a false comfort.
+// ---------------------------------------------------------------------------------------------
+
+/// Exit code for "the closure does not satisfy the gate" — the same code the runners' own
+/// `preflight` exits with, because it is the same fact about the same declaration.
+const CLOSURE_UNSATISFIED: i32 = 12;
+
+/// Exit code for "the gate could not be evaluated": no package was built, or the built wrapper
+/// had no PATH in it. Distinct from [`CLOSURE_UNSATISFIED`] because knowing NOTHING about a
+/// closure is a different problem from knowing it is wrong, and sends the reader somewhere else.
+const CLOSURE_UNEVALUABLE: i32 = 2;
+
+/// The packages whose closure IS a model's environment.
+///
+/// Only these two host a harness. The other flake outputs (`refresh-human-queue`, the human entry
+/// points) run no model, read no PDF, and are deliberately not held to the harness declaration.
+const MODEL_RUNNERS: &[&str] = &["campaign-run", "review-run"];
+
+/// A binary one model runner has and the other does not, ON PURPOSE.
+struct DeclaredAsymmetry {
+    bin: &'static str,
+    /// The model runner that has it. Every other model runner must NOT.
+    only_in: &'static str,
+    /// Why it is one-sided — a fact about the role, not a shrug.
+    why: &'static str,
+}
+
+/// Every sanctioned difference between the model runners' capability surfaces.
+///
+/// #85 is precisely the shape of bug where a tool lands in one closure and not the other. Rather
+/// than trusting that whoever edits `runtimeInputs` remembers both, the asymmetry is declared, and
+/// `closure-surface` fails on any difference that is not in this table — and equally on any entry
+/// here that is no longer true, so the declaration cannot outlive the fact and quietly license a
+/// real divergence later.
+const DECLARED_ASYMMETRY: &[DeclaredAsymmetry] = &[DeclaredAsymmetry {
+    bin: "jq",
+    only_in: "campaign-run",
+    why: "the PRODUCER's model shells out to jq from its Bash tool; the vetter has no Bash and \
+          cannot invoke anything at all (flake.nix)",
+}];
+
+/// Why a closure gate is not satisfied.
+///
+/// A TYPE, so the exit code and the diagnostic are derived from the fact. Nothing downstream
+/// re-reads a rendered message to work out what happened.
+#[derive(Debug, PartialEq, Eq)]
+enum ClosureFault {
+    /// `nix build` produced no store path for the package.
+    Unbuildable { pkg: String, detail: String },
+    /// The built wrapper carries no `export PATH="…"`, or an empty one. `writeShellApplication`'s
+    /// shape changed; a gate that read that as "no tools missing" would be worse than no gate.
+    NoBakedPath { pkg: String, script: String },
+    /// A declared harness tool does not resolve from this runner's own baked PATH.
+    ToolMissing {
+        pkg: String,
+        bin: &'static str,
+        why: &'static str,
+    },
+    /// The render did not happen. What `command -v` cannot see.
+    RenderFailed { pkg: String, how: RenderFault },
+    /// A binary present to one runner and absent from the other, with nothing declaring why.
+    UndeclaredAsymmetry { pkg: String, bin: String },
+    /// A [`DECLARED_ASYMMETRY`] entry that is no longer true.
+    StaleAsymmetry {
+        pkg: &'static str,
+        bin: &'static str,
+    },
+    /// A runner with no store binaries at all. Two empty surfaces compare equal, so without this
+    /// the symmetry gate would pass loudest exactly when a closure was most broken.
+    EmptySurface { pkg: String },
+}
+
+impl ClosureFault {
+    /// Whether the gate learned nothing, as opposed to learning something bad.
+    fn is_unevaluable(&self) -> bool {
+        matches!(
+            self,
+            ClosureFault::Unbuildable { .. } | ClosureFault::NoBakedPath { .. }
+        )
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            ClosureFault::Unbuildable { pkg, detail } => {
+                format!("{pkg}: nix build produced no package ({detail})")
+            }
+            ClosureFault::NoBakedPath { pkg, script } => format!(
+                "{pkg}: no `export PATH=\"…\"` in {script} — writeShellApplication's shape changed, \
+                 so this gate cannot see the closure at all"
+            ),
+            ClosureFault::ToolMissing { pkg, bin, why } => format!(
+                "{pkg}: `{bin}` is not in the closure. Add it to this runner's runtimeInputs — {why}"
+            ),
+            ClosureFault::RenderFailed { pkg, how } => format!(
+                "{pkg}: the PDF read path does not render — {}. The harness turns this into the \
+                 same `isError` a MISSING binary produces, and the run still exits 0.",
+                how.describe()
+            ),
+            ClosureFault::UndeclaredAsymmetry { pkg, bin } => format!(
+                "{pkg}: `{bin}` is in this runner's closure and not the other's. Add it to BOTH \
+                 runners' runtimeInputs, or add it to DECLARED_ASYMMETRY with the reason it is \
+                 one-sided."
+            ),
+            ClosureFault::StaleAsymmetry { pkg, bin } => format!(
+                "DECLARED_ASYMMETRY says `{bin}` is only in {pkg}, and it is not. Drop the \
+                 declaration — a stale one licenses a real divergence later."
+            ),
+            ClosureFault::EmptySurface { pkg } => format!(
+                "{pkg}: not one /nix/store binary on its baked PATH. Two empty surfaces compare \
+                 equal, so this gate must not call that symmetric."
+            ),
+        }
+    }
+}
+
+/// The process exit code for a set of faults.
+///
+/// An un-evaluable gate OUTRANKS a failed one. If `nix build` did not produce a package there is
+/// no closure to have an opinion about, and reporting "this closure is missing a tool" for what is
+/// really a broken build sends whoever reads it to the wrong file.
+fn closure_exit_code(faults: &[ClosureFault]) -> i32 {
+    if faults.is_empty() {
+        return 0;
+    }
+    if faults.iter().any(ClosureFault::is_unevaluable) {
+        return CLOSURE_UNEVALUABLE;
+    }
+    CLOSURE_UNSATISFIED
+}
+
+/// Print every fault as a CI annotation and return the exit code, or print `ok_line` and return 0.
+fn report_closure(faults: &[ClosureFault], ok_line: &str) -> i32 {
+    for f in faults {
+        println!("::error::{}", f.describe());
+    }
+    if faults.is_empty() {
+        println!("{ok_line}");
+    }
+    closure_exit_code(faults)
+}
+
+/// A model runner's environment, exactly as the runner will see it.
+struct RunnerClosure {
+    pkg: String,
+    /// The PATH `writeShellApplication` baked into the script from `runtimeInputs`.
+    path: std::ffi::OsString,
+}
+
+/// Lift `export PATH="…"` out of a built runner script.
+///
+/// Pure, because the interesting failure is the SHAPE of the script rather than the filesystem:
+/// nixpkgs could stop emitting this line, and a gate that then reported an empty environment as
+/// "nothing missing" would be silently vacuous. An empty value is treated as absent for the same
+/// reason.
+fn baked_path(script: &str) -> Option<&str> {
+    let (_, rest) = script.split_once("export PATH=\"")?;
+    let (path, _) = rest.split_once('"')?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Build one model runner and read the PATH out of it.
+fn runner_closure(flake: &str, pkg: &str) -> Result<RunnerClosure, ClosureFault> {
+    let out = Command::new("nix")
+        .arg("build")
+        .arg("--no-link")
+        .arg("--print-out-paths")
+        .arg(format!("{flake}#{pkg}"))
+        .output();
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            return Err(ClosureFault::Unbuildable {
+                pkg: pkg.to_string(),
+                detail: format!("cannot run nix: {e}"),
+            })
+        }
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(ClosureFault::Unbuildable {
+            pkg: pkg.to_string(),
+            detail: err.trim().lines().last().unwrap_or("no output").to_string(),
+        });
+    }
+    let store = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    // The package name IS the script name for every model runner (flake.nix's `runner` builder
+    // takes one `name`), so there is no second place that has to agree about the binary's name.
+    let script = format!("{store}/bin/{pkg}");
+    let text = std::fs::read_to_string(&script).unwrap_or_default();
+    match baked_path(&text) {
+        Some(p) => Ok(RunnerClosure {
+            pkg: pkg.to_string(),
+            path: std::ffi::OsString::from(p),
+        }),
+        None => Err(ClosureFault::NoBakedPath {
+            pkg: pkg.to_string(),
+            script,
+        }),
+    }
+}
+
+/// Every model runner's closure, or the fault that stopped each from being read.
+fn model_runner_closures(flake: &str) -> (Vec<RunnerClosure>, Vec<ClosureFault>) {
+    let mut ok = Vec::new();
+    let mut faults = Vec::new();
+    for pkg in MODEL_RUNNERS {
+        match runner_closure(flake, pkg) {
+            Ok(c) => ok.push(c),
+            Err(f) => faults.push(f),
+        }
+    }
+    (ok, faults)
+}
+
+/// `closure-preflight`: every [`HARNESS_TOOLS`] entry resolves from EACH model runner's own baked
+/// PATH.
+///
+/// The sibling "each runner's closure is self-contained" gate asserts the tools the SCRIPTS name.
+/// It structurally cannot see a tool only the harness reaches for at read time — nothing in this
+/// repo names `pdftoppm`, so no walk over declarations could find it, which is how #85 passed a
+/// gate that was working correctly. This is the other half: the declaration is `HARNESS_TOOLS`,
+/// and it is enforced against the closure by the same `resolve_in` the runner uses at run time.
+fn closure_preflight_mode(flake: &str) -> i32 {
+    let (closures, mut faults) = model_runner_closures(flake);
+    for c in &closures {
+        for t in HARNESS_TOOLS {
+            match resolve_in(&c.path, t.bin) {
+                Some(p) => println!("  {:<13} {:<10} {}", c.pkg, t.bin, p.display()),
+                None => faults.push(ClosureFault::ToolMissing {
+                    pkg: c.pkg.clone(),
+                    bin: t.bin,
+                    why: t.why,
+                }),
+            }
+        }
+    }
+    report_closure(
+        &faults,
+        "every harness read-time dependency is in both model runners' closures",
+    )
+}
+
+/// How a render failed, in the harness's own terms.
+#[derive(Debug, PartialEq, Eq)]
+enum RenderFault {
+    /// `pdftoppm` is not on the closure's PATH at all.
+    NotInClosure,
+    /// The process could not be started: a broken loader, a non-executable file, a dangling
+    /// symlink out of the store.
+    Unspawnable(std::io::ErrorKind),
+    /// It ran and exited non-zero. THIS is the case presence cannot distinguish from absence — a
+    /// missing shared library or data file lands here and reaches the model as the same `isError`.
+    Exited { code: Option<i32>, stderr: String },
+    /// Exit 0 with nothing written. The harness counts the files `pdftoppm` left behind, so zero
+    /// files is its "could not read this document" path.
+    NoPages,
+    /// A page was written that is not a JPEG, so the harness has nothing it can attach.
+    NotJpeg { page: String, magic: Vec<u8> },
+}
+
+impl RenderFault {
+    fn describe(&self) -> String {
+        match self {
+            RenderFault::NotInClosure => "`pdftoppm` is not on the runner's baked PATH".to_string(),
+            RenderFault::Unspawnable(kind) => format!("`pdftoppm` would not start ({kind:?})"),
+            RenderFault::Exited { code, stderr } => format!(
+                "`pdftoppm` exited {}: {}",
+                code.map(|c| c.to_string())
+                    .unwrap_or_else(|| "on a signal".to_string()),
+                if stderr.is_empty() {
+                    "(no stderr)"
+                } else {
+                    stderr
+                }
+            ),
+            RenderFault::NoPages => "`pdftoppm` exited 0 and wrote no pages".to_string(),
+            RenderFault::NotJpeg { page, magic } => {
+                format!("{page} is not a JPEG (magic {magic:02x?})")
+            }
+        }
+    }
+}
+
+/// The three bytes every JPEG starts with (SOI + the first marker). What the harness attaches has
+/// to be a real image, not a zero-length file `pdftoppm` opened and abandoned.
+const JPEG_MAGIC: [u8; 3] = [0xff, 0xd8, 0xff];
+
+/// The one-page PDF the render gate feeds to poppler.
+///
+/// GENERATED, not committed, on purpose: a built fixture cannot rot into a stale blob nobody knows
+/// how to regenerate, and the byte offsets are its self-check — poppler reports a broken xref
+/// loudly, so a generator that computes them wrong fails the gate instead of passing a degenerate
+/// file through it.
+///
+/// It is a real document rather than a header: catalog → pages → page → content stream → font,
+/// with a MediaBox and a text-showing operator, so a render has something to rasterise and the
+/// parse has an object graph to walk.
+fn fixture_pdf() -> Vec<u8> {
+    let stream = "BT /F1 36 Tf 72 700 Td (POPPLER RENDER OK) Tj ET\n";
+    let objects = [
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n".to_string(),
+        format!("4 0 obj\n<< /Length {} >>\nstream\n{stream}endstream\nendobj\n", stream.len()),
+        "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".to_string(),
+    ];
+
+    let mut pdf = Vec::from(&b"%PDF-1.4\n"[..]);
+    let mut offsets = Vec::new();
+    for o in &objects {
+        // Taken BEFORE the object is written: an xref entry is the offset OF the object.
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(o.as_bytes());
+    }
+    let startxref = pdf.len();
+    pdf.extend_from_slice(b"xref\n");
+    // Entry 0 is the head of the free list, and the count includes it.
+    pdf.extend_from_slice(format!("0 {}\n", objects.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for off in &offsets {
+        pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{startxref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    pdf
+}
+
+/// Render `pdf` with a runner's own `pdftoppm`, and return how many pages came out.
+///
+/// The argv is byte-for-byte the harness's: `Read` renders a PDF page range with
+/// `pdftoppm -jpeg -r 100 [-f N] [-l M] <pdf> <prefix>`. Approximating it would test a call the
+/// pipeline never makes.
+///
+/// `env_clear` is the `env -i` of the gate this replaces, and stronger: not one variable of the CI
+/// box's environment reaches the renderer, so nothing installed there can stand in for the
+/// closure's own copy. `HOME` is set into the scratch dir because poppler reads user config.
+fn render_from_closure(
+    closure: &RunnerClosure,
+    pdf: &std::path::Path,
+    dir: &std::path::Path,
+) -> Result<usize, RenderFault> {
+    let Some(bin) = resolve_in(&closure.path, "pdftoppm") else {
+        return Err(RenderFault::NotInClosure);
+    };
+    let out = Command::new(&bin)
+        .args(["-jpeg", "-r", "100", "-f", "1", "-l", "1"])
+        .arg(pdf)
+        .arg(dir.join("page"))
+        .env_clear()
+        .env("PATH", &closure.path)
+        .env("HOME", dir)
+        .output()
+        .map_err(|e| RenderFault::Unspawnable(e.kind()))?;
+    if !out.status.success() {
+        return Err(RenderFault::Exited {
+            code: out.status.code(),
+            stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        });
+    }
+    let mut pages: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| RenderFault::Unspawnable(e.kind()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("jpg"))
+        .collect();
+    pages.sort();
+    let Some(first) = pages.first() else {
+        return Err(RenderFault::NoPages);
+    };
+    let bytes = std::fs::read(first).map_err(|e| RenderFault::Unspawnable(e.kind()))?;
+    if !bytes.starts_with(&JPEG_MAGIC) {
+        return Err(RenderFault::NotJpeg {
+            page: first.display().to_string(),
+            magic: bytes.iter().take(JPEG_MAGIC.len()).copied().collect(),
+        });
+    }
+    Ok(pages.len())
+}
+
+/// `closure-render`: each model runner's closure RENDERS a PDF, not merely resolves the renderer.
+///
+/// `command -v pdftoppm` proves a name resolves. It does not prove the renderer runs, and the
+/// difference is invisible from outside: the harness turns a non-zero `pdftoppm` into the same
+/// `isError` an absent one produces, and the run still exits 0. So this executes the real thing on
+/// a real document, from the runner's own closure.
+fn closure_render_mode(flake: &str) -> i32 {
+    let (closures, mut faults) = model_runner_closures(flake);
+    let root = std::env::temp_dir().join(format!("prr-closure-render-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    if let Err(e) = std::fs::create_dir_all(&root) {
+        eprintln!("error: cannot create {}: {e}", root.display());
+        return CLOSURE_UNEVALUABLE;
+    }
+    let pdf = root.join("fixture.pdf");
+    if let Err(e) = std::fs::write(&pdf, fixture_pdf()) {
+        eprintln!("error: cannot write {}: {e}", pdf.display());
+        let _ = std::fs::remove_dir_all(&root);
+        return CLOSURE_UNEVALUABLE;
+    }
+    for c in &closures {
+        let dir = root.join(&c.pkg);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("error: cannot create {}: {e}", dir.display());
+            let _ = std::fs::remove_dir_all(&root);
+            return CLOSURE_UNEVALUABLE;
+        }
+        match render_from_closure(c, &pdf, &dir) {
+            Ok(n) => println!("  {:<13} rendered {n} page(s), JPEG magic OK", c.pkg),
+            Err(how) => faults.push(ClosureFault::RenderFailed {
+                pkg: c.pkg.clone(),
+                how,
+            }),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    report_closure(
+        &faults,
+        "both model runners can render a PDF from their own closure",
+    )
+}
+
+/// Where nix keeps the closures. Only directories under here count towards a capability surface.
+const NIX_STORE: &str = "/nix/store";
+
+/// Every binary a runner can invoke: the names in every directory on `path` that nix owns.
+///
+/// Store directories ONLY. A non-store entry on a runner's PATH is the ambient-acquisition bug the
+/// sibling "no ambient tool acquisition" gate already forbids, and counting it here would let a
+/// tool the developer happens to have installed silence a real asymmetry.
+///
+/// The store root is a PARAMETER for the same reason `resolve_in`'s PATH is: the rule is what
+/// needs testing, and no test can write into `/nix/store`.
+fn capability_surface_under(
+    path: &std::ffi::OsStr,
+    store: &std::path::Path,
+) -> std::collections::BTreeSet<String> {
+    let mut bins = std::collections::BTreeSet::new();
+    for dir in std::env::split_paths(path) {
+        if !dir.starts_with(store) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            if let Some(n) = e.file_name().to_str() {
+                bins.insert(n.to_string());
+            }
+        }
+    }
+    bins
+}
+
+fn capability_surface(closure: &RunnerClosure) -> std::collections::BTreeSet<String> {
+    capability_surface_under(&closure.path, std::path::Path::new(NIX_STORE))
+}
+
+/// The faults in a set of capability surfaces, given [`DECLARED_ASYMMETRY`].
+///
+/// PURE — the rule is decided on the sets, so it is tested on fabricated surfaces rather than on
+/// whatever nixpkgs happens to ship today. Both directions are faults: an undeclared difference,
+/// and a declaration that is no longer true.
+fn surface_faults(surfaces: &[(String, std::collections::BTreeSet<String>)]) -> Vec<ClosureFault> {
+    let mut faults = Vec::new();
+    // Nothing to compare. The caller already holds the fault that stopped every closure being
+    // read, and adding "every declaration is stale" on top of it would name the wrong file.
+    if surfaces.is_empty() {
+        return faults;
+    }
+    for (pkg, bins) in surfaces {
+        if bins.is_empty() {
+            faults.push(ClosureFault::EmptySurface { pkg: pkg.clone() });
+            continue;
+        }
+        let others: std::collections::BTreeSet<&String> = surfaces
+            .iter()
+            .filter(|(p, _)| p != pkg)
+            .flat_map(|(_, b)| b.iter())
+            .collect();
+        let only: Vec<&String> = bins.iter().filter(|b| !others.contains(*b)).collect();
+        for bin in &only {
+            if !DECLARED_ASYMMETRY
+                .iter()
+                .any(|d| d.only_in == pkg && d.bin == bin.as_str())
+            {
+                faults.push(ClosureFault::UndeclaredAsymmetry {
+                    pkg: pkg.clone(),
+                    bin: (*bin).clone(),
+                });
+            }
+        }
+        for d in DECLARED_ASYMMETRY.iter().filter(|d| d.only_in == pkg) {
+            if !only.iter().any(|b| b.as_str() == d.bin) {
+                faults.push(ClosureFault::StaleAsymmetry {
+                    pkg: d.only_in,
+                    bin: d.bin,
+                });
+            }
+        }
+    }
+    // A declaration naming a runner that is not in the comparison is stale too — otherwise a
+    // typo'd or renamed package would silently exempt nothing while looking like it exempted
+    // something.
+    for d in DECLARED_ASYMMETRY {
+        if !surfaces.iter().any(|(p, _)| p == d.only_in) {
+            faults.push(ClosureFault::StaleAsymmetry {
+                pkg: d.only_in,
+                bin: d.bin,
+            });
+        }
+    }
+    faults
+}
+
+/// `closure-surface`: the model runners' capability surfaces differ only where declared.
+///
+/// This gate cannot see a capability BOTH runners lack — #85's exact shape — which is why it is
+/// the third of three and not the only one. What it does hold is the other half: a dependency
+/// discovered ONCE cannot go missing from the other side silently.
+fn closure_surface_mode(flake: &str) -> i32 {
+    let (closures, mut faults) = model_runner_closures(flake);
+    let surfaces: Vec<(String, std::collections::BTreeSet<String>)> = closures
+        .iter()
+        .map(|c| (c.pkg.clone(), capability_surface(c)))
+        .collect();
+    for (pkg, bins) in &surfaces {
+        println!("  {pkg:<13} {} binaries", bins.len());
+    }
+    for d in DECLARED_ASYMMETRY {
+        println!("  declared: {} only in {} — {}", d.bin, d.only_in, d.why);
+    }
+    faults.extend(surface_faults(&surfaces));
+    report_closure(&faults, "capability surfaces match the declared asymmetry")
+}
+
+/// What a trace says about the run's tools, as distinct from the model's judgement.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ToolingReport {
+    /// Files the environment listed as existing and the run then failed to read. Non-empty means
+    /// the run was blind to evidence that was there — a TOOLING failure, whatever the cause.
+    unreadable: Vec<String>,
+    /// Bash commands that exited 127. Surfaced, never raised to a failed outcome — see below.
+    command_not_found: Vec<String>,
+}
+
+/// Read a `tool_result` block's content as text, whatever shape the harness used for it.
+fn tool_result_text(item: &Value) -> String {
+    match item.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Derive the tooling report from a trace, WITHOUT reading any error message.
+///
+/// The signal for `unreadable` is a relation between two tool results, not the text of either:
+///
+///   1. a SUCCESSFUL `Glob` result is a filesystem enumeration — every line of it is the absolute
+///      path of a file that existed when the run looked;
+///   2. a FAILED `Read` names its target in the typed `file_path` input;
+///   3. if (2)'s path is in (1)'s enumeration, the input was valid — the file was there — so the
+///      failure belongs to the environment, not to the model's choice of argument.
+///
+/// That is the discrimination the message text is usually used for, obtained structurally. It
+/// generalises: a future harness that cannot read some new artifact type for want of some new
+/// binary produces exactly this shape, with no rule about that binary anywhere.
+///
+/// It fails SAFE in both directions. A Read error for a path nothing enumerated (the model guessed
+/// at a filename) stays an input error and is not reported. A path corroborated only by `Grep` is
+/// not counted either — Grep's lines carry `path:line:` prefixes and matching them would mean
+/// parsing output shape rather than reading an enumeration.
+///
+/// Validated against every trace this box has kept: 67 runs, ~5 months, and it fires on exactly
+/// the two Reads of #85's audit PDFs — no other run in the corpus produces a corroborated Read
+/// error.
+///
+/// `command_not_found` is the weaker sibling and is deliberately NOT part of the outcome. The
+/// harness renders a failed Bash with a first line of `Exit code <n>`, so a 127 is POSIX's
+/// "command not found" — typed, not prose. But the producer's Bash is a general-purpose surface
+/// where the model legitimately PROBES for tools it does not need (`which node npm`, `node
+/// --version`): 2 of the 5 historical 127s on this box are probes of that kind. Raising them to a
+/// failed run would spend the outcome's credibility on non-failures, so they are surfaced as a
+/// field for a human to read instead. (The other 3 are real: `node`, `npm` and `fc-list` are
+/// undeclared in the producer's closure to this day.)
+fn trace_tooling_report(content: &str) -> ToolingReport {
+    let mut names: std::collections::HashMap<String, (String, Value)> =
+        std::collections::HashMap::new();
+    let mut listed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut failed_reads: Vec<String> = Vec::new();
+    let mut report = ToolingReport::default();
+
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match ev.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                let blocks = ev
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                for b in blocks.into_iter().flatten() {
+                    if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                        continue;
+                    }
+                    let (Some(id), Some(name)) = (
+                        b.get("id").and_then(|i| i.as_str()),
+                        b.get("name").and_then(|n| n.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    let input = b.get("input").cloned().unwrap_or(Value::Null);
+                    names.insert(id.to_string(), (name.to_string(), input));
+                }
+            }
+            Some("user") => {
+                let blocks = ev
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                for b in blocks.into_iter().flatten() {
+                    if b.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+                        continue;
+                    }
+                    let id = b.get("tool_use_id").and_then(|i| i.as_str()).unwrap_or("");
+                    let Some((tool, input)) = names.get(id) else {
+                        continue;
+                    };
+                    let is_error = b.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+                    match (tool.as_str(), is_error) {
+                        // A successful Glob IS the filesystem's own statement that these files exist.
+                        ("Glob", false) => {
+                            for l in tool_result_text(b).lines() {
+                                let l = l.trim();
+                                if l.starts_with('/') {
+                                    listed.insert(l.to_string());
+                                }
+                            }
+                        }
+                        ("Read", true) => {
+                            if let Some(p) = input.get("file_path").and_then(|p| p.as_str()) {
+                                failed_reads.push(p.to_string());
+                            }
+                        }
+                        ("Bash", true) => {
+                            let text = tool_result_text(b);
+                            let first = text.lines().next().unwrap_or("").trim();
+                            if first
+                                .strip_prefix("Exit code ")
+                                .and_then(|n| n.trim().parse::<i32>().ok())
+                                == Some(127)
+                            {
+                                // The COMMAND comes from the typed tool_use input, so even this
+                                // human-facing detail is not scraped out of an error message.
+                                let cmd = input
+                                    .get("command")
+                                    .and_then(|c| c.as_str())
+                                    .unwrap_or("")
+                                    .chars()
+                                    .take(120)
+                                    .collect::<String>();
+                                report.command_not_found.push(cmd);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Evaluated after the whole trace so corroboration is order-independent.
+    for p in failed_reads {
+        if listed.contains(&p) && !report.unreadable.contains(&p) {
+            report.unreadable.push(p);
+        }
+    }
+    report
 }
 
 /// How a run ended. This is a TYPE, not a grep over the trace bytes.
@@ -980,6 +2122,12 @@ enum TraceOutcome {
     Ok,
     /// The model is quota/usage limited — the ONLY outcome that should advance model fallback.
     QuotaLimited,
+    /// The run's TOOLS could not do their job: a declared dependency was absent before the run
+    /// started, or the run failed to read a file the environment had listed as existing. Not the
+    /// model's mistake, and never `ok` — a blind run that answers anyway is the failure #85
+    /// recorded, where the same PR came out `ready` from the run that could not read its evidence
+    /// and `reject` from the run that could.
+    ToolingFailure,
     Error,
 }
 
@@ -990,6 +2138,7 @@ impl TraceOutcome {
         match self {
             TraceOutcome::Ok => "ok",
             TraceOutcome::QuotaLimited => "session-limit",
+            TraceOutcome::ToolingFailure => "tooling-failure",
             TraceOutcome::Error => "error",
         }
     }
@@ -1046,10 +2195,28 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
     if quota {
         return TraceOutcome::QuotaLimited;
     }
+    // Ordered AFTER quota so the runners' model-fallback loop still sees `session-limit` and
+    // advances: a run the API refused never got far enough for its tools to matter.
+    if !trace_tooling_report(trace).unreadable.is_empty() {
+        return TraceOutcome::ToolingFailure;
+    }
     if exit_code != 0 {
         return TraceOutcome::Error;
     }
     TraceOutcome::Ok
+}
+
+/// The whole run's outcome: what the trace says, plus what `preflight` found before the trace
+/// existed.
+///
+/// A preflight failure has no trace to classify — the model never ran — so the fact arrives as the
+/// list of binaries that would not resolve. It outranks everything else: a run that was stopped
+/// before it started is neither quota-limited nor merely errored.
+fn classify_outcome(trace: &str, exit_code: i32, preflight_missing: &[String]) -> TraceOutcome {
+    if !preflight_missing.is_empty() {
+        return TraceOutcome::ToolingFailure;
+    }
+    classify_trace(trace, exit_code)
 }
 
 /// `trace-outcome <trace> --exit-code <n>`: print the typed outcome word and exit 0.
@@ -1806,10 +2973,24 @@ fn verdict_label(verdict: &str) -> Option<&'static str> {
     }
 }
 
-/// GitHub colour + description for an `ai:*` verdict label (matches the taxonomy already created
-/// across the repos).
+/// GitHub colour + description for a pipeline label (matches the taxonomy already created across the
+/// repos).
+///
+/// Callers pass this to `gh label create --force`, which OVERWRITES an existing label's colour and
+/// description — so every label this binary writes must appear here with the values the org already
+/// uses. The `human:*` rows are the live ones (`gh label list`), not new ones: a human ruling that
+/// re-coloured `human:reject` and re-described it as "AI vetter verdict" (the fallback arm) in every
+/// repo it touched would be a silent, org-wide taxonomy edit performed by a transition that is
+/// supposed to move exactly one label.
 fn label_meta(label: &str) -> (&'static str, &'static str) {
     match label {
+        "human:reject" => ("b60205", "Human reviewer: needs rework"),
+        "human:design" => ("3d1a78", "Human maintainer: design question (sacred)"),
+        "human:close-candidate" => ("555555", "Human maintainer: close candidate (sacred)"),
+        "human:keep-open" => (
+            "0e8a16",
+            "Human decision: keep open (excluded from the close-candidate queue)",
+        ),
         "ai:ready" => (
             "0e8a16",
             "AI vetter: passes review, ready for human decision",
@@ -2153,10 +3334,15 @@ enum CloseFlagPlan {
 /// The human's namespace on an ISSUE. A ruling here is sacred: neither the producer's flag nor the
 /// vetter's verdict may overwrite it.
 ///
-/// `human:keep-open` is retained for compatibility but is NOT a label the org actually uses — the
-/// real set is the same three [`has_human_override`] enforces on PRs. Checking only `keep-open` +
-/// `close-candidate` (as this did) left a `human:reject` / `human:design` ruling on an issue
-/// invisible here, so the producer could flag an issue a human had already parked.
+/// This is a superset of the three [`has_human_override`] enforces on PRs, and the extra one is
+/// live: `human:keep-open` is the issue-only ruling that answers a close-candidate flag with "no",
+/// and the org carries it on real issues today (rain.erc4626.words#18/#86, rain.flare#110,
+/// flow#412). Checking only `keep-open` + `close-candidate` (as this did) left a `human:reject` /
+/// `human:design` ruling on an issue invisible here, so the producer could flag an issue a human had
+/// already parked.
+///
+/// It is also the ISSUE-side ruling vocabulary: `human-rule-issue` derives its verbs from this array
+/// (see [`human_rulings`]), so a state added here gains its transition rather than needing one.
 const HUMAN_RULING_LABELS: [&str; 4] = [
     "human:reject",
     "human:design",
@@ -2952,6 +4138,635 @@ fn reworked_reject_mode(slug: &str, pr: &str, dry_run: bool) -> i32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// human rulings — the transitions the HUMAN makes.
+//
+// Every other actor's hand-off is a labelled transition through this binary. The human's was raw
+// `gh issue edit --add-label`, and #86 records what that cost on rain.erc4626.words#93: the
+// improvised `human:reject` used the wrong NAMESPACE (the machine's move there was a vetter-class
+// `reject` on the flag), it LOCKED the issue out of its own state machine (every AI transition
+// refuses once a human has ruled, so the correct one became unreachable), and it bound to NOTHING —
+// a hand-applied label records no anchor, no reason, and no state it ruled from, so it is simply
+// true for ever.
+//
+// The vocabularies are not invented here: they ARE [`HUMAN_DECISION_LABELS`] (PRs) and
+// [`HUMAN_RULING_LABELS`] (issues), the same constants every other actor already refuses to
+// override. Derived rather than re-typed so the transition surface and the sacred label sets cannot
+// drift — a ruling outside them would write a label [`classify_lane`] buckets nowhere, i.e. a leak.
+//
+// The human is the TOP of the hierarchy, so these are not gates on the human's authority. A tool
+// that makes the sacred decision harder than raw `gh` gets bypassed, which is the failure mode above
+// all others. Every refusal below therefore either has no legal write to make (a terminal subject,
+// no anchor to pin to) or names the one-command move that IS legal.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The trusted marker a human ruling comment carries. Read back through [`trusted_comments`], so it
+/// inherits the same author guard as every `🤖 ai:*` record — the marker selects the ROLE, the
+/// author is the trust. It is a separate marker precisely because the human and the pipeline post
+/// from the same account: without it a human ruling and an AI verdict are indistinguishable.
+const HUMAN_MARKER: &str = "👤 human";
+
+/// The human rulings that DISPOSE of a live producer close-candidate flag — the two that answer the
+/// flag's own question. `close-candidate` agrees with it (the issue is the human's to close);
+/// `keep-open` contradicts it outright. Any OTHER ruling written onto a live flag strands it (see
+/// [`HumanRulePlan::StrandsFlag`]).
+const FLAG_DISPOSING_RULINGS: [&str; 2] = ["close-candidate", "keep-open"];
+
+/// PURE: the ruling VERBS a label set offers — its label names with the `human:` prefix stripped.
+fn human_rulings(set: &[&'static str]) -> Vec<&'static str> {
+    set.iter()
+        .filter_map(|l| l.strip_prefix("human:"))
+        .collect()
+}
+
+/// PURE: the label a ruling verb writes, or `None` when the verb is not in this subject's
+/// vocabulary. The vocabulary check and the label lookup are the SAME operation, so a ruling that
+/// validates always has a label to write.
+fn human_ruling_label(set: &[&'static str], ruling: &str) -> Option<&'static str> {
+    set.iter()
+        .copied()
+        .find(|l| l.strip_prefix("human:") == Some(ruling.trim()))
+}
+
+/// PROVENANCE. A human ruling pins to whatever the AI's ruling on the SAME subject pins to, so the
+/// two records go stale together:
+///
+/// - a PR → its head sha: `Ruled <sha>: …`, the twin of `Reviewed <sha>: …`. A force-push or a
+///   rework moves the head, and the ruling visibly no longer describes the code.
+/// - an issue carrying a LIVE flag → the flag's timestamp: `Ruled close-candidate @<at>: …`, the
+///   twin of `Reviewed close-candidate @<at>: …`. A re-flag invalidates it exactly as it
+///   invalidates the vetter's verdict.
+/// - an issue with no live flag → the issue as FILED: `Ruled issue @<createdAt>: …`. Deliberately
+///   not a moving anchor: with no producer claim there is nothing that CAN go stale, and saying
+///   `issue @…` rather than `close-candidate @…` is what distinguishes a ruling on the ISSUE from a
+///   ruling on a FLAG — the namespace collapse #86 is about.
+fn human_rule_comment(anchor: &str, ruling: &str, note: &str) -> String {
+    format!("{HUMAN_MARKER}\nRuled {anchor}: {ruling} — {}", note.trim())
+}
+
+/// PURE: is this exact ruling already recorded at this exact anchor? The dedup twin of
+/// [`should_skip_comment`] — re-running a ruling must not post it twice.
+fn human_ruling_recorded(subject: &Value, anchor: &str, ruling: &str) -> bool {
+    trusted_comments(subject, Some(HUMAN_MARKER))
+        .iter()
+        .any(|b| b.contains(&format!("Ruled {anchor}: {ruling}")))
+}
+
+/// PURE: the LIVE producer close-candidate flag's timestamp — a trusted flag comment AND the
+/// `ai:close-candidate` label still present. A flag the vetter already REJECTED has its label
+/// stripped, so the comment alone is history, not a pending claim, and must not anchor a ruling.
+fn live_close_candidate_flag(issue_json: &Value, labels: &[String]) -> Option<String> {
+    if !labels.iter().any(|l| l == "ai:close-candidate") {
+        return None;
+    }
+    last_close_candidate_flag(issue_json).map(|(at, _)| at)
+}
+
+/// The human-ruling decision, computed PURELY from the fetched subject JSON — the same
+/// guard-before-write shape as [`VerdictPlan`] and [`CcVerdictPlan`].
+#[derive(Debug, PartialEq)]
+enum HumanRulePlan {
+    /// The subject is already terminal (a closed issue, a merged/closed PR): there is no transition
+    /// left to make, so nothing is written. NOT a refusal of the human's authority — the state the
+    /// ruling would move it out of no longer exists.
+    Moot,
+    /// Nothing to pin the ruling to. Refuse rather than post `Ruled : reject`, which is the
+    /// bound-to-nothing label this whole surface exists to replace.
+    NoAnchor,
+    /// The issue transition was pointed at a PULL REQUEST. `gh issue view <n>` happily answers for
+    /// a PR — GitHub's API treats one as the other — so without this the issue vocabulary reaches a
+    /// PR, and `human:keep-open` on a PR is a label [`classify_lane`] buckets nowhere: the PR falls
+    /// through to whatever `ai:*` it carries and leaves the human-decisions lane entirely. The
+    /// subject's own URL is the discriminator, and it costs no extra round trip.
+    NotAnIssue,
+    /// This write would STRAND a live producer close-candidate flag. `record_close_candidate_verdict`
+    /// refuses once a human has ruled, so any non-disposing `human:*` label makes the flag's own
+    /// verdict transition permanently unreachable — the flag then sits un-judged for ever, and the
+    /// issue leaves both `closeCandidateUnvetted` and `closeCandidateUpheld` without ever being
+    /// resolved. This is precisely what happened on rain.erc4626.words#93.
+    StrandsFlag { flag_at: String },
+    Record {
+        /// The comment's provenance anchor — see [`human_rule_comment`].
+        anchor: String,
+        /// Other `human:*` labels this ruling REPLACES. The human owns this namespace and may change
+        /// their own mind, so a re-ruling is a transition, not a refusal; refusing would leave raw
+        /// `gh` as the only way to correct a mis-click, which is the bypass to avoid. This is the
+        /// SECOND sanctioned removal of a `human:*` label after `reworked-reject`, and it is
+        /// sanctioned because the actor removing it is the actor who wrote it.
+        supersedes: Vec<String>,
+        /// The `ai:*` labels this ruling directly CONTRADICTS, and therefore clears. Exactly one
+        /// pair qualifies: `keep-open` ⟂ `ai:close-candidate`. Every other combination is merely
+        /// stale, not contradictory — a `human:reject` PR deliberately KEEPS its old `ai:ready`
+        /// until `reworked-reject` clears it — and erasing the `ai:*` label would erase the very
+        /// claim the ruling was ruling on.
+        clears: Vec<String>,
+        has_target: bool,
+        skip_comment: bool,
+    },
+}
+
+/// PURE: may the human write `ruling` on this PR, and what does it change?
+fn human_pr_rule_plan(pr_json: &Value, ruling: &str, target: &str) -> HumanRulePlan {
+    if pr_json
+        .get("state")
+        .and_then(|s| s.as_str())
+        .is_some_and(|s| s != "OPEN")
+    {
+        return HumanRulePlan::Moot;
+    }
+    let sha = pr_json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if sha.is_empty() {
+        return HumanRulePlan::NoAnchor;
+    }
+    let labels = label_names(pr_json);
+    HumanRulePlan::Record {
+        supersedes: labels
+            .iter()
+            .filter(|l| l.starts_with("human:") && l.as_str() != target)
+            .cloned()
+            .collect(),
+        clears: Vec::new(),
+        has_target: labels.iter().any(|l| l == target),
+        skip_comment: human_ruling_recorded(pr_json, sha, ruling),
+        anchor: sha.to_string(),
+    }
+}
+
+/// The `gh <noun> view --json` field list each ruling fetches. Named constants because a field the
+/// plan READS but the fetch OMITS is a guard that silently stops firing: the JSON simply lacks the
+/// key, every `unwrap_or("")` returns empty, and the refusal never happens. Pinned by a test that
+/// walks the plan's own inputs.
+const PR_RULE_FIELDS: &str = "state,headRefOid,labels,comments";
+const ISSUE_RULE_FIELDS: &str = "state,labels,comments,createdAt,url";
+
+/// PURE: may the human write `ruling` on this ISSUE, and what does it change?
+fn human_issue_rule_plan(issue_json: &Value, ruling: &str, target: &str) -> HumanRulePlan {
+    if issue_json
+        .get("url")
+        .and_then(|u| u.as_str())
+        .is_some_and(|u| u.contains("/pull/"))
+    {
+        return HumanRulePlan::NotAnIssue;
+    }
+    if issue_json.get("state").and_then(|s| s.as_str()) == Some("CLOSED") {
+        return HumanRulePlan::Moot;
+    }
+    let labels = label_names(issue_json);
+    let live_flag = live_close_candidate_flag(issue_json, &labels);
+    let anchor = match &live_flag {
+        Some(flag_at) => {
+            if !FLAG_DISPOSING_RULINGS.contains(&ruling) {
+                return HumanRulePlan::StrandsFlag {
+                    flag_at: flag_at.clone(),
+                };
+            }
+            format!("close-candidate @{flag_at}")
+        }
+        None => {
+            let filed = issue_json
+                .get("createdAt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if filed.is_empty() {
+                return HumanRulePlan::NoAnchor;
+            }
+            format!("issue @{filed}")
+        }
+    };
+    HumanRulePlan::Record {
+        supersedes: labels
+            .iter()
+            .filter(|l| l.starts_with("human:") && l.as_str() != target)
+            .cloned()
+            .collect(),
+        clears: match (ruling, live_flag.is_some()) {
+            ("keep-open", true) => vec!["ai:close-candidate".to_string()],
+            _ => Vec::new(),
+        },
+        has_target: labels.iter().any(|l| l == target),
+        skip_comment: human_ruling_recorded(issue_json, &anchor, ruling),
+        anchor,
+    }
+}
+
+/// One GitHub write in a human ruling's sequence.
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum RuleStep {
+    /// Post the provenance comment.
+    Comment,
+    /// `gh label create --force`, so the label exists in a repo that has never seen it.
+    EnsureLabel,
+    /// Add the ruling's own label.
+    AddLabel,
+    /// Remove a label this ruling supersedes or contradicts.
+    RemoveLabel(String),
+}
+
+/// PURE: the ORDER a ruling's writes happen in — the fail-safe, and the reverse of the AI verdict
+/// write's. Extracted so the order is a tested property rather than an incidental statement order:
+/// every prefix of this sequence must be a state at least as safe as the one before it.
+///
+/// - `Comment` FIRST, always. A sacred label carrying no recorded reason is failure (3) of #86 and
+///   the one half-state that must be unreachable; if the comment fails, nothing sacred was written.
+/// - `AddLabel` before any `RemoveLabel`. The reverse order has a window in which the subject
+///   carries NO human label, and every AI actor is free to move it — a `gh` failure there would
+///   silently un-rule a decision.
+/// - `RemoveLabel` last, superseded rulings before contradicted `ai:*`: the sacred namespace is
+///   made consistent before the advisory one.
+fn human_rule_steps(
+    supersedes: &[String],
+    clears: &[String],
+    has_target: bool,
+    skip_comment: bool,
+) -> Vec<RuleStep> {
+    let mut steps = Vec::new();
+    if !skip_comment {
+        steps.push(RuleStep::Comment);
+    }
+    steps.push(RuleStep::EnsureLabel);
+    if !has_target {
+        steps.push(RuleStep::AddLabel);
+    }
+    steps.extend(
+        supersedes
+            .iter()
+            .chain(clears)
+            .map(|l| RuleStep::RemoveLabel(l.clone())),
+    );
+    steps
+}
+
+/// The EFFECT half of a human ruling, shared by both subjects — `gh pr …` and `gh issue …` take the
+/// same arguments, so `noun` is the only difference. The order comes from [`human_rule_steps`]; this
+/// function only performs it and names the half-state each failure leaves behind.
+fn human_rule_write(
+    noun: &str,
+    slug: &str,
+    n: &str,
+    target: &str,
+    comment: &str,
+    steps: &[RuleStep],
+) -> Result<(), (i32, String)> {
+    for step in steps {
+        match step {
+            RuleStep::Comment => {
+                if !gh_run(&[noun, "comment", n, "-R", slug, "--body", comment]) {
+                    return Err((
+                        1,
+                        format!(
+                            "error: failed to post the ruling comment on {slug}#{n} — no label was \
+                             written, so the ruling is not half-recorded"
+                        ),
+                    ));
+                }
+            }
+            RuleStep::EnsureLabel => {
+                let (color, desc) = label_meta(target);
+                if !gh_run(&[
+                    "label",
+                    "create",
+                    target,
+                    "-R",
+                    slug,
+                    "--color",
+                    color,
+                    "--description",
+                    desc,
+                    "--force",
+                ]) {
+                    eprintln!("warning: could not ensure label {target} exists in {slug}");
+                }
+            }
+            RuleStep::AddLabel => {
+                if !gh_run(&[noun, "edit", n, "-R", slug, "--add-label", target]) {
+                    return Err((
+                        1,
+                        format!(
+                            "error: posted the ruling on {slug}#{n} but FAILED to add {target}"
+                        ),
+                    ));
+                }
+            }
+            RuleStep::RemoveLabel(l) => {
+                if !gh_run(&[noun, "edit", n, "-R", slug, "--remove-label", l]) {
+                    return Err((
+                        1,
+                        format!(
+                            "error: {slug}#{n} now carries {target} but FAILED to remove {l} — it \
+                             holds two contradictory states"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// PURE: the report a completed (or dry-run) ruling prints.
+fn human_rule_report(
+    slug: &str,
+    n: &str,
+    target: &str,
+    anchor: &str,
+    supersedes: &[String],
+    clears: &[String],
+    skip_comment: bool,
+) -> String {
+    format!(
+        "ruled {target} on {slug}#{n} @ {anchor}{}{}{}",
+        if supersedes.is_empty() {
+            String::new()
+        } else {
+            format!(" [superseded {}]", supersedes.join(","))
+        },
+        if clears.is_empty() {
+            String::new()
+        } else {
+            format!(" [cleared {}]", clears.join(","))
+        },
+        if skip_comment {
+            " [comment deduped]"
+        } else {
+            " [comment posted]"
+        }
+    )
+}
+
+/// PURE: the usage refusal for a ruling verb outside a subject's vocabulary.
+fn human_ruling_vocab_error(set: &[&'static str], ruling: &str, subject: &str) -> (i32, String) {
+    (
+        2,
+        format!(
+            "{ruling:?} is not a human ruling on a {subject} — use one of: {}",
+            human_rulings(set).join(", ")
+        ),
+    )
+}
+
+/// PURE: the stranded-flag refusal — the one state-dependent guard, and the one #86 is about.
+///
+/// It is a REDIRECTION, not an obstruction: it names every move that is legal here, each a single
+/// command, so the human's intent is always expressible. A refusal that only said "no" would send
+/// the caller straight back to raw `gh`, which is the bypass this surface exists to remove.
+fn strands_flag_error(slug: &str, issue: &str, target: &str, flag_at: &str) -> (i32, String) {
+    (
+        4,
+        format!(
+            "refusing: {slug}#{issue} carries a LIVE producer close-candidate flag (@{flag_at}), \
+             and `{target}` would strand it — every AI transition refuses once a human has ruled, \
+             so `record_close_candidate_verdict` could never judge this flag again.\n\
+             The three moves that ARE available here, one command each:\n  \
+             human-rule-issue {slug} {issue} close-candidate \"…\"          — the flag is right; the \
+             issue is yours to close (sacred; the flag stands as the record of what you ruled on)\n  \
+             human-rule-issue {slug} {issue} keep-open \"…\"                 — the flag is wrong AND \
+             this must never be re-flagged (sacred; clears ai:close-candidate)\n  \
+             record-close-candidate-verdict {slug} {issue} reject \"…\"      — the flag is wrong on \
+             THIS evidence; drop it and return the issue to the producer, which may re-flag on better \
+             evidence"
+        ),
+    )
+}
+
+/// PURE: the empty-note refusal. Shared by both subjects because the reason is the same for both:
+/// the recorded reason is the entire difference between a considered ruling and a mis-click.
+fn human_ruling_note_error() -> (i32, String) {
+    (
+        2,
+        "note is required: one line saying what you ruled and on what evidence (a ruling with no \
+         recorded reason is the bare label this transition replaces)"
+            .to_string(),
+    )
+}
+
+/// `human-rule <owner/repo> <pr> <reject|design|close-candidate> "<note>"`: the human's transition
+/// on a PR — exactly [`HUMAN_DECISION_LABELS`], each pinned to the head sha it was ruled at.
+fn human_rule_pr_apply(
+    slug: &str,
+    pr: &str,
+    ruling: &str,
+    note: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    let Some(target) = human_ruling_label(&HUMAN_DECISION_LABELS, ruling) else {
+        return Err(human_ruling_vocab_error(
+            &HUMAN_DECISION_LABELS,
+            ruling,
+            "PR",
+        ));
+    };
+    if note.trim().is_empty() {
+        return Err(human_ruling_note_error());
+    }
+    let Some(prj) = gh_json(&["pr", "view", pr, "-R", slug, "--json", PR_RULE_FIELDS]) else {
+        return Err((
+            1,
+            format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
+        ));
+    };
+    let (anchor, supersedes, clears, has_target, skip) =
+        match human_pr_rule_plan(&prj, ruling.trim(), target) {
+            HumanRulePlan::Moot => {
+                return Ok(format!(
+                    "{slug}#{pr} is not open — the state a ruling would move it out of is already \
+                     terminal; nothing written"
+                ));
+            }
+            HumanRulePlan::NoAnchor => {
+                return Err((
+                    1,
+                    format!(
+                        "error: {slug}#{pr} has no head sha (headRefOid) — a ruling pinned to \
+                         nothing is the bare label this transition replaces"
+                    ),
+                ));
+            }
+            // Neither arm can arise on the PR side (a PR carries no producer close-candidate flag,
+            // and `human_pr_rule_plan` never inspects a URL). Handled rather than `unreachable!` so
+            // a future change to the shared plan cannot turn into a panic mid-transition.
+            HumanRulePlan::StrandsFlag { flag_at } => {
+                return Err((
+                    4,
+                    format!(
+                        "refusing: {slug}#{pr} carries a live close-candidate flag @ {flag_at}"
+                    ),
+                ));
+            }
+            HumanRulePlan::NotAnIssue => {
+                return Err((2, format!("refusing: {slug}#{pr} is not a pull request")));
+            }
+            HumanRulePlan::Record {
+                anchor,
+                supersedes,
+                clears,
+                has_target,
+                skip_comment,
+            } => (anchor, supersedes, clears, has_target, skip_comment),
+        };
+    let comment = human_rule_comment(&anchor, ruling.trim(), note);
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {}\n  comment: {}",
+            human_rule_report(slug, pr, target, &anchor, &supersedes, &clears, skip),
+            if skip {
+                "skip (same ruling at same anchor already posted)".to_string()
+            } else {
+                comment.replace('\n', " / ")
+            }
+        ));
+    }
+    human_rule_write(
+        "pr",
+        slug,
+        pr,
+        target,
+        &comment,
+        &human_rule_steps(&supersedes, &clears, has_target, skip),
+    )?;
+    Ok(human_rule_report(
+        slug,
+        pr,
+        target,
+        &anchor,
+        &supersedes,
+        &clears,
+        skip,
+    ))
+}
+
+/// `human-rule-issue <owner/repo> <issue> <reject|design|close-candidate|keep-open> "<note>"`: the
+/// human's transition on an ISSUE — exactly [`HUMAN_RULING_LABELS`].
+///
+/// The one state-dependent refusal lives here: on an issue carrying a LIVE producer flag, only the
+/// two flag-disposing rulings are legal, because any other one strands the flag (see
+/// [`HumanRulePlan::StrandsFlag`]). The refusal names all three legal moves, so the human's intent
+/// is always one command away.
+fn human_rule_issue_apply(
+    slug: &str,
+    issue: &str,
+    ruling: &str,
+    note: &str,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    let Some(target) = human_ruling_label(&HUMAN_RULING_LABELS, ruling) else {
+        return Err(human_ruling_vocab_error(
+            &HUMAN_RULING_LABELS,
+            ruling,
+            "issue",
+        ));
+    };
+    if note.trim().is_empty() {
+        return Err(human_ruling_note_error());
+    }
+    let Some(j) = gh_json(&[
+        "issue",
+        "view",
+        issue,
+        "-R",
+        slug,
+        "--json",
+        ISSUE_RULE_FIELDS,
+    ]) else {
+        return Err((
+            1,
+            format!(
+                "error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data"
+            ),
+        ));
+    };
+    let (anchor, supersedes, clears, has_target, skip) = match human_issue_rule_plan(
+        &j,
+        ruling.trim(),
+        target,
+    ) {
+        HumanRulePlan::Moot => {
+            return Ok(format!(
+                "{slug}#{issue} is already closed — the state a ruling would move it out of is \
+                     already terminal; nothing written"
+            ));
+        }
+        HumanRulePlan::NoAnchor => {
+            return Err((
+                1,
+                format!(
+                    "error: {slug}#{issue} has no createdAt — not writing a ruling pinned to \
+                         nothing"
+                ),
+            ));
+        }
+        HumanRulePlan::NotAnIssue => {
+            return Err((
+                    2,
+                    format!(
+                        "refusing: {slug}#{issue} is a PULL REQUEST, not an issue — \
+                         `gh issue view` answers for either, so this would have written the ISSUE \
+                         vocabulary onto a PR, and `human:keep-open` on a PR lands in no lane at \
+                         all.\n  \
+                         Use: pr-review-report human-rule {slug} {issue} <reject|design|close-candidate> \"…\""
+                    ),
+                ));
+        }
+        HumanRulePlan::StrandsFlag { flag_at } => {
+            return Err(strands_flag_error(slug, issue, target, &flag_at));
+        }
+        HumanRulePlan::Record {
+            anchor,
+            supersedes,
+            clears,
+            has_target,
+            skip_comment,
+        } => (anchor, supersedes, clears, has_target, skip_comment),
+    };
+    let comment = human_rule_comment(&anchor, ruling.trim(), note);
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {}\n  comment: {}",
+            human_rule_report(slug, issue, target, &anchor, &supersedes, &clears, skip),
+            if skip {
+                "skip (same ruling at same anchor already posted)".to_string()
+            } else {
+                comment.replace('\n', " / ")
+            }
+        ));
+    }
+    human_rule_write(
+        "issue",
+        slug,
+        issue,
+        target,
+        &comment,
+        &human_rule_steps(&supersedes, &clears, has_target, skip),
+    )?;
+    Ok(human_rule_report(
+        slug,
+        issue,
+        target,
+        &anchor,
+        &supersedes,
+        &clears,
+        skip,
+    ))
+}
+
+/// Thin CLI shell over any `*_apply` transition: it OWNS the printing so the cores stay usable by
+/// the MCP server, whose stdout is the JSON-RPC stream. Generalises [`record_verdict_mode`]'s shape
+/// — success on stdout, refusal on stderr, the apply's own exit code.
+fn print_transition_result(result: Result<String, (i32, String)>) -> i32 {
+    match result {
+        Ok(msg) => {
+            println!("{msg}");
+            0
+        }
+        Err((code, msg)) => {
+            eprintln!("{msg}");
+            code
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // lane bucketing — the FSM's full inventory, grouped by lane for the dashboard.
 //
 // `human-queue --json` emits EVERY modeled state's inventory, not just the human-action ones, so the
@@ -2983,7 +4798,9 @@ impl Lane {
     }
 }
 
-/// The `human:*` decisions, in precedence order (a PR should carry at most one).
+/// The `human:*` decisions, in precedence order (a PR should carry at most one). Also the PR-side
+/// ruling vocabulary: `human-rule` derives its verbs from this array (see [`human_rulings`]), so the
+/// transition surface and the lane classifier cannot name different states.
 const HUMAN_DECISION_LABELS: [&str; 3] = ["human:reject", "human:design", "human:close-candidate"];
 /// The vetter's non-`ready` verdict labels (the `ready` split is handled separately by head drift).
 const VETTER_VERDICT_LABELS: [&str; 4] =
@@ -6250,6 +8067,12 @@ const _: () = assert!(DEFAULT_MAX_DIFF_BYTES <= MCP_MAX_RESULT_BYTES);
 enum McpProfile {
     Vetter,
     Producer,
+    /// An agent acting ON THE HUMAN'S BEHALF. Not the human's authority delegated — the human's
+    /// authority is the account, and this profile writes as it — but the human's TRANSITIONS made
+    /// reachable without raw `gh`. #86 is the case for it: the improvised
+    /// `gh issue edit --add-label human:reject` that stranded a live flag was available precisely
+    /// because no tool offered the move, and a prompt rule cannot take a bypassable Bash away.
+    Human,
 }
 
 impl McpProfile {
@@ -6257,7 +8080,10 @@ impl McpProfile {
         match s {
             "vetter" => Ok(McpProfile::Vetter),
             "producer" => Ok(McpProfile::Producer),
-            _ => Err(format!("unknown profile {s:?} — use vetter or producer")),
+            "human" => Ok(McpProfile::Human),
+            _ => Err(format!(
+                "unknown profile {s:?} — use vetter, producer or human"
+            )),
         }
     }
     /// The tool names this profile exposes, in listing order.
@@ -6279,6 +8105,21 @@ impl McpProfile {
                 "record_close_candidate_verdict",
             ],
             McpProfile::Producer => &["clone_create", "clone_release", "clone_list", "clone_gc"],
+            // The human's surface: read the subject, rule on it. The two reads are the vetter's
+            // existing ones re-listed, not new tools — a write-only profile cannot be used, and a
+            // ruling made without reading the subject is the mis-click this whole surface exists to
+            // make distinguishable.
+            //
+            // `unvetted*` is deliberately absent: those are the VETTER's inbox. The human's inbox is
+            // `human-queue`, which renders whole org-wide sets and does not fit one tool result.
+            // `record_close_candidate_verdict` is absent too — it is the vetter's authority, and the
+            // ruling that mistook it for a human one is exactly what `human_rule_issue` refuses.
+            McpProfile::Human => &[
+                "pr_context",
+                "close_candidate_context",
+                "human_rule",
+                "human_rule_issue",
+            ],
         }
     }
 }
@@ -6387,6 +8228,32 @@ fn mcp_all_tools() -> Value {
             }
         },
         {
+            "name": "human_rule",
+            "description": "The human's transition on a PR: apply human:<ruling> (superseding any other human:* ruling) + a HEAD-SHA-PINNED 👤 human comment carrying the reason. Leaves ai:* untouched — reworked-reject clears those once a rework lands.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pr": {"type": "string", "description": "owner/repo#number"},
+                    "ruling": {"type": "string", "enum": ["reject", "design", "close-candidate"]},
+                    "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."}
+                },
+                "required": ["pr", "ruling", "note"]
+            }
+        },
+        {
+            "name": "human_rule_issue",
+            "description": "The human's transition on an ISSUE: apply human:<ruling> + a 👤 human comment pinned to the live close-candidate flag, or to the issue as filed when there is none. On a live flag only close-candidate/keep-open are legal — anything else would strand it, and the refusal names every legal move.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "issue": {"type": "string", "description": "owner/repo#number"},
+                    "ruling": {"type": "string", "enum": ["reject", "design", "close-candidate", "keep-open"]},
+                    "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."}
+                },
+                "required": ["issue", "ruling", "note"]
+            }
+        },
+        {
             "name": "clone_create",
             "description": "Make (or re-sync to current base) the per-issue work clone. Returns its dir. Refuses to re-sync over unpushed commits.",
             "inputSchema": {
@@ -6470,6 +8337,18 @@ enum McpCall {
         slug: String,
         num: u64,
         verdict: String,
+        note: String,
+    },
+    HumanRule {
+        slug: String,
+        num: u64,
+        ruling: String,
+        note: String,
+    },
+    HumanRuleIssue {
+        slug: String,
+        num: u64,
+        ruling: String,
         note: String,
     },
     /// `root`/`name` are the OUTPUT of the path guard, not the model's argument: by the time this
@@ -6580,6 +8459,26 @@ fn oversize_result_error(name: &str, len: usize, budget: usize, narrow: Option<&
              summary."
         ),
     }
+}
+
+/// PURE: the `ruling` + `note` shared by both human transitions, validated against `set`'s
+/// vocabulary. Reuses the apply's OWN error text, so the wording a caller sees is identical whether
+/// the refusal came from the MCP guard or from the CLI — two spellings of one rule is how a caller
+/// learns to treat them as two rules.
+fn human_rule_args(
+    set: &[&'static str],
+    args: &Value,
+    subject: &str,
+) -> Result<(String, String), String> {
+    let ruling = req_str(args, "ruling")?.trim().to_string();
+    if human_ruling_label(set, &ruling).is_none() {
+        return Err(human_ruling_vocab_error(set, &ruling, subject).1);
+    }
+    let note = match req_str(args, "note") {
+        Ok(n) if !n.trim().is_empty() => n.trim().to_string(),
+        _ => return Err(human_ruling_note_error().1),
+    };
+    Ok((ruling, note))
 }
 
 fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -6700,6 +8599,29 @@ fn validate_call(
                 slug,
                 num,
                 verdict,
+                note,
+            })
+        }
+        // --- the human's transitions. The VOCABULARY guard runs here, off the same constants the
+        // rest of the binary enforces sacredness on; every STATE-dependent guard runs in the apply,
+        // which is the only place the subject's live state is known.
+        "human_rule" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            let (ruling, note) = human_rule_args(&HUMAN_DECISION_LABELS, args, "PR")?;
+            Ok(McpCall::HumanRule {
+                slug,
+                num,
+                ruling,
+                note,
+            })
+        }
+        "human_rule_issue" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "issue")?)?;
+            let (ruling, note) = human_rule_args(&HUMAN_RULING_LABELS, args, "issue")?;
+            Ok(McpCall::HumanRuleIssue {
+                slug,
+                num,
+                ruling,
                 note,
             })
         }
@@ -6907,6 +8829,20 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             verdict,
             note,
         } => record_cc_verdict_apply(&slug, &num.to_string(), &verdict, &note, false)
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::HumanRule {
+            slug,
+            num,
+            ruling,
+            note,
+        } => human_rule_pr_apply(&slug, &num.to_string(), &ruling, &note, false)
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::HumanRuleIssue {
+            slug,
+            num,
+            ruling,
+            note,
+        } => human_rule_issue_apply(&slug, &num.to_string(), &ruling, &note, false)
             .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::CloneCreate {
             root,
@@ -8039,6 +9975,61 @@ enum Cmd {
         /// claude's exit code. Also selects `outcome`, classified from the trace.
         #[arg(long)]
         exit_code: Option<i32>,
+        /// Binaries `preflight` could not resolve, comma-separated. Present means the run was
+        /// stopped before the model started, so there is no trace to classify — the outcome is
+        /// `tooling-failure` on this fact alone.
+        #[arg(long, value_delimiter = ',')]
+        preflight_missing: Vec<String>,
+    },
+    /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
+    ///
+    /// Run before the model, by both runners. A dependency that is absent must stop the run, not
+    /// degrade it: the failure that motivated this was a vetter that could not render an audit PDF,
+    /// vetted the PR on what was left, and reported success (#85).
+    Preflight,
+    /// CI gate: every `HARNESS_TOOLS` entry resolves from EACH model runner's own baked PATH.
+    /// Exit 12 if a closure is missing one, 2 if a runner could not be built or read.
+    ClosurePreflight {
+        /// Flake to build the model runners from.
+        #[arg(long, default_value = ".")]
+        flake: String,
+    },
+    /// CI gate: each model runner's closure RENDERS a generated PDF with the harness's own argv —
+    /// presence is not capability, and a broken renderer reaches the model as the same `isError`
+    /// an absent one does.
+    ClosureRender {
+        /// Flake to build the model runners from.
+        #[arg(long, default_value = ".")]
+        flake: String,
+    },
+    /// CI gate: the model runners' capability surfaces differ only where `DECLARED_ASYMMETRY`
+    /// says, in both directions (an undeclared difference AND a declaration that is now false).
+    ClosureSurface {
+        /// Flake to build the model runners from.
+        #[arg(long, default_value = ".")]
+        flake: String,
+    },
+    /// Pass a LIVE stream-json trace through on stdout, appending `bootMs` then `ttlMs` records to
+    /// the metrics file the instant each becomes known — so a killed or timed-out run, the one
+    /// `run-metrics` can never reach, still contributes its startup timings.
+    RunTimings {
+        /// The metrics file to append partial records to — the same runs.jsonl the end-of-run
+        /// `run-metrics` record lands in.
+        #[arg(long)]
+        out: String,
+        /// The trace path the runner is teeing this same stream to, recorded as `trace` so a
+        /// partial record identifies the same run its final record will.
+        #[arg(long)]
+        trace: String,
+        /// Run id (the runner's UTC timestamp). Enriches the record with `runId`.
+        #[arg(long)]
+        run_id: Option<String>,
+        /// producer | vetter.
+        #[arg(long)]
+        role: Option<String>,
+        /// The model that actually ran (after any fallback).
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Print the typed outcome of a run trace: `ok`, `session-limit`, or `error`.
     /// The runners' model-fallback loop branches on this instead of grepping the trace.
@@ -8124,6 +10115,42 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Human transition on a PR: apply human:<ruling> + a sha-pinned 👤 human comment.
+    HumanRule {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        /// reject | design | close-candidate
+        ruling: String,
+        /// One-line ruling + evidence (trailing words are joined).
+        note: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Human transition on an ISSUE: apply human:<ruling> + a flag-/issue-pinned 👤 human comment.
+    HumanRuleIssue {
+        /// owner/repo
+        slug: String,
+        issue: String,
+        /// reject | design | close-candidate | keep-open
+        ruling: String,
+        note: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Vetter transition on a close-candidate FLAG: uphold (queued for the human) or reject (drop
+    /// ai:close-candidate, back to the producer). The CLI twin of the MCP tool — `human-rule-issue`
+    /// names it in the refusal it raises on a flagged issue, and a human at a terminal has no MCP.
+    RecordCloseCandidateVerdict {
+        /// owner/repo
+        slug: String,
+        issue: String,
+        /// uphold | reject
+        verdict: String,
+        note: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// The daily FSM-conformance review: every open item grouped by human-gated state, plus a
     /// loud "NOT IN ANY MODELED STATE" leak bucket. The instrument for the daily status check.
     HumanQueue {
@@ -8150,7 +10177,7 @@ enum Cmd {
     /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
     /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
     Mcp {
-        /// Which role's surface to serve: `vetter` (default) or `producer`.
+        /// Which role's surface to serve: `vetter` (default), `producer` or `human`.
         #[arg(long, default_value = "vetter")]
         profile: String,
     },
@@ -9005,12 +11032,35 @@ fn main() {
             role,
             model,
             exit_code,
+            preflight_missing,
         } => run_metrics_mode(
             &trace,
-            run_id.as_deref(),
-            role.as_deref(),
-            model.as_deref(),
+            &RunIdentity {
+                run_id: run_id.as_deref(),
+                role: role.as_deref(),
+                model: model.as_deref(),
+            },
             exit_code,
+            &preflight_missing,
+        ),
+        Cmd::Preflight => preflight_mode(),
+        Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
+        Cmd::ClosureRender { flake } => closure_render_mode(&flake),
+        Cmd::ClosureSurface { flake } => closure_surface_mode(&flake),
+        Cmd::RunTimings {
+            out,
+            trace,
+            run_id,
+            role,
+            model,
+        } => run_timings_mode(
+            &out,
+            &trace,
+            &RunIdentity {
+                run_id: run_id.as_deref(),
+                role: role.as_deref(),
+                model: model.as_deref(),
+            },
         ),
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
@@ -9043,6 +11093,45 @@ fn main() {
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), dry_run),
         Cmd::ReworkedReject { slug, pr, dry_run } => reworked_reject_mode(&slug, &pr, dry_run),
+        Cmd::HumanRule {
+            slug,
+            pr,
+            ruling,
+            note,
+            dry_run,
+        } => print_transition_result(human_rule_pr_apply(
+            &slug,
+            &pr,
+            &ruling,
+            &note.join(" "),
+            dry_run,
+        )),
+        Cmd::HumanRuleIssue {
+            slug,
+            issue,
+            ruling,
+            note,
+            dry_run,
+        } => print_transition_result(human_rule_issue_apply(
+            &slug,
+            &issue,
+            &ruling,
+            &note.join(" "),
+            dry_run,
+        )),
+        Cmd::RecordCloseCandidateVerdict {
+            slug,
+            issue,
+            verdict,
+            note,
+            dry_run,
+        } => print_transition_result(record_cc_verdict_apply(
+            &slug,
+            &issue,
+            &verdict,
+            &note.join(" "),
+            dry_run,
+        )),
         Cmd::HumanQueue { json } => human_queue_mode(json),
         Cmd::Unvetted {
             json,
@@ -10486,6 +12575,369 @@ mod run_metrics_tests {
     }
 }
 
+/// The boot / ttl split (#84).
+///
+/// `startupMs` fused two costs with nothing in common — nix resolving and exec'ing the flake
+/// output, and the model orienting itself across a tool surface — so a move in it could not be
+/// attributed to either. These pin the two halves apart, and pin `startupMs` in place while they
+/// are added.
+#[cfg(test)]
+mod startup_split_tests {
+    use super::{
+        final_record, is_mutation_tool, partial_record, run_metrics, RunIdentity, RunMetrics,
+        StartupPhase, StartupProbe, ToolingReport, TraceOutcome, STAGE_FINAL,
+    };
+    use serde_json::{json, Value};
+
+    /// An assistant event carrying one `tool_use`, WITH a timestamp. The modern harness stamps
+    /// assistant events; that stamp is the only thing that makes boot and ttl measurable.
+    fn tool_at(ts: &str, name: &str) -> String {
+        json!({"type":"assistant","timestamp":ts,"message":{"content":[
+            {"type":"tool_use","name":name,"input":{"command":""}}]}})
+        .to_string()
+    }
+    /// An assistant event with no `tool_use` — the model's opening text. This is normally a run's
+    /// first timestamped event, so it is what `bootMs` measures FROM.
+    fn text_at(ts: &str) -> String {
+        json!({"type":"assistant","timestamp":ts,"message":{"content":[
+            {"type":"text","text":"starting the run"}]}})
+        .to_string()
+    }
+    /// A `user` event: a tool RESULT.
+    fn result_at(ts: &str) -> String {
+        json!({"type":"user","timestamp":ts,"message":{"content":[]}}).to_string()
+    }
+    /// An assistant `tool_use` with NO timestamp — the shape older harnesses emitted.
+    fn tool_untimed(name: &str, cmd: &str) -> String {
+        json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":name,"input":{"command":cmd}}]}})
+        .to_string()
+    }
+    fn ev(line: &str) -> Value {
+        serde_json::from_str(line).unwrap()
+    }
+    fn id() -> RunIdentity<'static> {
+        RunIdentity {
+            run_id: Some("20260728T053610Z"),
+            role: Some("vetter"),
+            model: Some("claude-fable-5"),
+        }
+    }
+
+    /// The live vetter run `review-runs/20260728T053610Z.jsonl`, reduced to its five load-bearing
+    /// events. Every number asserted below was measured off that real trace.
+    fn vetter_20260728t053610z() -> String {
+        [
+            text_at("2026-07-28T05:36:13.214Z"), // run's first timestamped event
+            tool_at("2026-07-28T05:36:14.339Z", "mcp__fsm__unvetted"), // FIRST tool call
+            result_at("2026-07-28T05:38:30.435Z"), // its result — 136 s later
+            tool_at("2026-07-28T05:41:11.355Z", "mcp__fsm__record_verdict"), // FIRST verdict
+            result_at("2026-07-28T05:41:16.994Z"), // the verdict's result
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn boot_is_the_run_start_to_the_first_tool_call() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        // Hand-measured on the real trace: 1.125 s. Launch overhead is sub-second — whatever the
+        // flake conversion cost, it did not cost boot.
+        assert_eq!(m.boot_ms, Some(1125));
+    }
+
+    #[test]
+    fn ttl_is_the_first_tool_call_to_the_first_productive_call() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        // 297.0 s of orientation before the first verdict, at tool call 17 (index 16).
+        assert_eq!(m.ttl_ms, Some(297_016));
+        assert_eq!(m.first_mutation_index, Some(1));
+    }
+
+    /// The reason the split is worth having: on this run ttl is 264× boot. One number that either
+    /// can wreck is a number you cannot act on.
+    #[test]
+    fn ttl_dominates_boot_on_a_real_vetter_run() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        let (boot, ttl) = (m.boot_ms.unwrap(), m.ttl_ms.unwrap());
+        assert!(
+            ttl > boot * 100,
+            "orientation should dwarf launch on this run: boot {boot}ms vs ttl {ttl}ms"
+        );
+    }
+
+    /// `startupMs` is FROZEN. Its anchor is the first tool RESULT, so it opens 137 s after the run
+    /// actually started and misses the first call's own latency entirely — a real flaw, but the
+    /// one every committed record was written under. Re-anchoring it would put a step in the
+    /// dashboard series that no run ever experienced, so it keeps its old value and boot+ttl are
+    /// added beside it.
+    #[test]
+    fn startup_ms_keeps_its_first_result_anchor_and_is_not_boot_plus_ttl() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        assert_eq!(m.startup_ms, Some(166_559));
+        let fused = m.boot_ms.unwrap() + m.ttl_ms.unwrap();
+        assert_eq!(fused, 298_141);
+        assert_ne!(
+            m.startup_ms,
+            Some(fused),
+            "startupMs must NOT be silently redefined as bootMs + ttlMs"
+        );
+    }
+
+    /// The vetter has no Bash at all (#52): `record_verdict` IS its mutation. A Bash-only detector
+    /// calls every modern vetter run "never mutated" and loses the ttl anchor with it.
+    #[test]
+    fn the_vetters_mcp_writes_are_mutations() {
+        assert!(is_mutation_tool("mcp__fsm__record_verdict", &json!({})));
+        assert!(is_mutation_tool(
+            "mcp__fsm__record_close_candidate_verdict",
+            &json!({})
+        ));
+        // …and its READS are not.
+        assert!(!is_mutation_tool("mcp__fsm__unvetted", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__pr_context", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__pr_checkout", &json!({})));
+        assert!(!is_mutation_tool("mcp__fsm__clone_release", &json!({})));
+    }
+
+    #[test]
+    fn a_bashless_vetter_run_still_finds_its_first_productive_call() {
+        let trace = [
+            text_at("2026-07-28T05:00:00.000Z"),
+            tool_at("2026-07-28T05:00:01.000Z", "mcp__fsm__unvetted"),
+            result_at("2026-07-28T05:00:02.000Z"),
+            tool_at("2026-07-28T05:00:03.000Z", "mcp__fsm__pr_context"),
+            result_at("2026-07-28T05:00:04.000Z"),
+            tool_at("2026-07-28T05:00:09.000Z", "mcp__fsm__record_verdict"),
+            result_at("2026-07-28T05:00:10.000Z"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.first_mutation_index, Some(2));
+        assert_eq!(m.startup_tool_calls, 2);
+        assert_eq!(m.ttl_ms, Some(8000));
+    }
+
+    /// Older harnesses stamped only `user` events. boot and ttl then have no anchor and must be
+    /// null — while `startupMs`, which only ever needed `user` timestamps, still computes. That is
+    /// what keeps a re-derivation of the archived traces honest instead of inventing zeroes.
+    #[test]
+    fn boot_and_ttl_are_null_without_assistant_timestamps() {
+        let trace = [
+            tool_untimed("Bash", "gh search prs"),
+            result_at("2026-07-05T09:00:00.000Z"),
+            tool_untimed("Bash", "gh pr create -R x"),
+            result_at("2026-07-05T09:00:12.500Z"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.boot_ms, None);
+        assert_eq!(m.ttl_ms, None);
+        assert_eq!(m.startup_ms, Some(12_500));
+    }
+
+    /// An untimestamped FIRST call must not hand the anchor to a later, timestamped one: that
+    /// would report a plausible, wrong boot instead of an honest gap.
+    #[test]
+    fn an_untimestamped_first_call_does_not_promote_a_later_call_to_the_anchor() {
+        let trace = [
+            text_at("2026-07-05T09:00:00.000Z"),
+            tool_untimed("Bash", "gh search prs"), // FIRST call, no stamp
+            tool_at("2026-07-05T09:00:10.000Z", "Read"),
+            tool_untimed("Bash", "gh pr create -R x"),
+        ]
+        .join("\n");
+        let m = run_metrics(&trace);
+        assert_eq!(m.boot_ms, None, "10s to the SECOND call is not boot");
+        assert_eq!(m.ttl_ms, None);
+    }
+
+    // ---- when each number becomes KNOWN --------------------------------------------------
+
+    #[test]
+    fn boot_is_known_at_the_first_tool_call_and_ttl_at_the_first_productive_one() {
+        let mut p = StartupProbe::default();
+        assert_eq!(p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z"))), vec![]);
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-28T05:36:14.339Z",
+                "mcp__fsm__unvetted"
+            ))),
+            vec![StartupPhase::Boot],
+            "boot is knowable the instant the first tool call is seen"
+        );
+        assert_eq!(p.boot_ms(), Some(1125));
+        assert_eq!(
+            p.observe(&ev(&result_at("2026-07-28T05:38:30.435Z"))),
+            vec![]
+        );
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-28T05:41:11.355Z",
+                "mcp__fsm__record_verdict"
+            ))),
+            vec![StartupPhase::Ttl],
+            "ttl is knowable at the productive CALL, not at its result"
+        );
+        assert_eq!(p.ttl_ms(), Some(297_016));
+    }
+
+    /// A run whose very first call is already productive knows both numbers on one event.
+    #[test]
+    fn both_phases_fire_when_the_first_call_is_productive() {
+        // A first call that is NOT productive settles boot alone — ttl stays open.
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        assert_eq!(
+            p.observe(&ev(&tool_at("2026-07-05T09:00:00.500Z", "Bash"))),
+            vec![StartupPhase::Boot],
+            "a Bash call with no mutating command settles boot but not ttl"
+        );
+        assert_eq!(p.ttl_ms(), None);
+
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        let productive = json!({"type":"assistant","timestamp":"2026-07-05T09:00:00.500Z",
+            "message":{"content":[{"type":"tool_use","name":"Bash",
+                "input":{"command":"gh pr create -R x"}}]}});
+        assert_eq!(
+            p.observe(&productive),
+            vec![StartupPhase::Boot, StartupPhase::Ttl]
+        );
+        assert_eq!(p.boot_ms(), Some(500));
+        assert_eq!(p.ttl_ms(), Some(0));
+    }
+
+    /// A phase fires ONCE. A second verdict must not append a second `ttl` record.
+    #[test]
+    fn each_phase_fires_exactly_once() {
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-05T09:00:00.000Z")));
+        p.observe(&ev(&tool_at("2026-07-05T09:00:01.000Z", "Read")));
+        p.observe(&ev(&tool_at(
+            "2026-07-05T09:00:02.000Z",
+            "mcp__fsm__record_verdict",
+        )));
+        assert_eq!(
+            p.observe(&ev(&tool_at(
+                "2026-07-05T09:00:03.000Z",
+                "mcp__fsm__record_verdict"
+            ))),
+            vec![],
+            "the SECOND verdict is not a second first-productive-act"
+        );
+        assert_eq!(p.ttl_ms(), Some(1000));
+    }
+
+    // ---- record shapes -------------------------------------------------------------------
+
+    /// A partial carries what is KNOWN and nothing else. The omissions are the contract: a run
+    /// still going has no `toolCalls`, no `startupPct`, no `durationMs`, no `outcome`, and — since
+    /// `startupMs` closes on the mutation's RESULT — no `startupMs` either.
+    #[test]
+    fn the_boot_partial_carries_boot_and_nothing_it_cannot_know() {
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z")));
+        p.observe(&ev(&tool_at(
+            "2026-07-28T05:36:14.339Z",
+            "mcp__fsm__unvetted",
+        )));
+        let doc = partial_record(&p, StartupPhase::Boot, "/t.jsonl", &id());
+        assert_eq!(doc["stage"], "boot");
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["trace"], "/t.jsonl");
+        assert_eq!(doc["runId"], "20260728T053610Z");
+        assert_eq!(doc["role"], "vetter");
+        assert_eq!(doc["model"], "claude-fable-5");
+        for absent in [
+            "ttlMs",
+            "startupMs",
+            "toolCalls",
+            "startupPct",
+            "durationMs",
+            "outcome",
+            "exitCode",
+        ] {
+            assert!(
+                doc.get(absent).is_none(),
+                "a boot partial cannot know {absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ttl_partial_carries_both_timings_and_the_call_counts_it_has() {
+        let mut p = StartupProbe::default();
+        for line in vetter_20260728t053610z().lines().take(4) {
+            p.observe(&ev(line));
+        }
+        let doc = partial_record(&p, StartupPhase::Ttl, "/t.jsonl", &id());
+        assert_eq!(doc["stage"], "ttl");
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
+        assert_eq!(doc["startupToolCalls"], 1);
+        assert_eq!(doc["firstMutationIndex"], 1);
+        for absent in ["startupMs", "toolCalls", "startupPct", "durationMs"] {
+            assert!(
+                doc.get(absent).is_none(),
+                "a ttl partial cannot know {absent}"
+            );
+        }
+    }
+
+    /// How a consumer tells old records from new: every record this build writes carries `stage`,
+    /// so `stage` ABSENT means the record predates the split and has no boot/ttl to read.
+    #[test]
+    fn every_emitted_record_carries_a_stage() {
+        let m = RunMetrics {
+            boot_ms: Some(1125),
+            ttl_ms: Some(297_016),
+            startup_ms: Some(166_559),
+            ..RunMetrics::default()
+        };
+        let doc = final_record(
+            "/t.jsonl",
+            &m,
+            &id(),
+            Some((0, TraceOutcome::Ok)),
+            &ToolingReport::default(),
+            &[],
+        );
+        assert_eq!(doc["stage"], STAGE_FINAL);
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
+        assert_eq!(doc["startupMs"], 166_559);
+        assert_eq!(doc["outcome"], "ok");
+        let mut p = StartupProbe::default();
+        p.observe(&ev(&text_at("2026-07-28T05:36:13.214Z")));
+        p.observe(&ev(&tool_at(
+            "2026-07-28T05:36:14.339Z",
+            "mcp__fsm__unvetted",
+        )));
+        assert_eq!(
+            partial_record(&p, StartupPhase::Boot, "/t.jsonl", &id())["stage"],
+            "boot"
+        );
+    }
+
+    /// A bare `run-metrics <trace>` (no identity flags) must stay re-derivable from an archived
+    /// trace: the dashboard rebuilds history that way, so nothing here may need runner state.
+    #[test]
+    fn a_bare_record_omits_identity_but_keeps_the_split() {
+        let m = run_metrics(&vetter_20260728t053610z());
+        let bare = RunIdentity {
+            run_id: None,
+            role: None,
+            model: None,
+        };
+        let doc = final_record("/t.jsonl", &m, &bare, None, &ToolingReport::default(), &[]);
+        assert!(doc.get("runId").is_none());
+        assert!(doc.get("role").is_none());
+        assert!(doc.get("outcome").is_none());
+        assert_eq!(doc["bootMs"], 1125);
+        assert_eq!(doc["ttlMs"], 297_016);
+    }
+}
+
 #[cfg(test)]
 mod settings_tests {
     use serde_json::Value;
@@ -11567,6 +14019,70 @@ mod cli_tests {
         ));
     }
 
+    // The HUMAN's transitions have subcommands too (#86): a human works interactively, and a rule
+    // that exists only as an MCP tool is unavailable at the terminal where the ruling is made.
+    #[test]
+    fn human_transition_subcommands_present() {
+        assert_eq!(
+            parse(&[
+                "prr",
+                "human-rule",
+                "o/r",
+                "93",
+                "reject",
+                "leg",
+                "1",
+                "stands",
+                "--dry-run"
+            ]),
+            Cmd::HumanRule {
+                slug: "o/r".to_string(),
+                pr: "93".to_string(),
+                ruling: "reject".to_string(),
+                // Variadic + joined, and --dry-run is a flag rather than the last note word.
+                note: s(&["leg", "1", "stands"]),
+                dry_run: true,
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "prr",
+                "human-rule-issue",
+                "o/r",
+                "93",
+                "keep-open",
+                "audit",
+                "finding"
+            ]),
+            Cmd::HumanRuleIssue {
+                slug: "o/r".to_string(),
+                issue: "93".to_string(),
+                ruling: "keep-open".to_string(),
+                note: s(&["audit", "finding"]),
+                dry_run: false,
+            }
+        );
+        // The vetter's flag verdict, which `human-rule-issue`'s stranded-flag refusal names.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "record-close-candidate-verdict",
+                "o/r",
+                "93",
+                "reject",
+                "no",
+                "anchor"
+            ]),
+            Cmd::RecordCloseCandidateVerdict {
+                slug: "o/r".to_string(),
+                issue: "93".to_string(),
+                verdict: "reject".to_string(),
+                note: s(&["no", "anchor"]),
+                dry_run: false,
+            }
+        );
+    }
+
     // The reason is variadic + joined; --dry-run is a flag, not swallowed into the reason.
     #[test]
     fn flag_blocked_reason_is_variadic_and_dry_run_is_a_flag() {
@@ -11910,6 +14426,7 @@ mod cli_tests {
                 role: None,
                 model: None,
                 exit_code: None,
+                preflight_missing: vec![],
             }
         );
         // The form the runners now use in place of the `| jq '. + {…}'` pipe.
@@ -11933,6 +14450,85 @@ mod cli_tests {
                 role: Some("producer".to_string()),
                 model: Some("claude-fable-5".to_string()),
                 exit_code: Some(0),
+                preflight_missing: vec![],
+            }
+        );
+        // The abort form: `preflight` found nothing to render with, so the model never started.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--exit-code",
+                "12",
+                "--preflight-missing",
+                "pdftoppm,pdfinfo"
+            ]),
+            Cmd::RunMetrics {
+                trace: "/t.jsonl".to_string(),
+                run_id: None,
+                role: None,
+                model: None,
+                exit_code: Some(12),
+                preflight_missing: vec!["pdftoppm".to_string(), "pdfinfo".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn run_timings_cli() {
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-timings",
+                "--out",
+                "/m/runs.jsonl",
+                "--trace",
+                "/r/20260728T053610Z.jsonl",
+                "--run-id",
+                "20260728T053610Z",
+                "--role",
+                "vetter",
+                "--model",
+                "claude-fable-5",
+            ]),
+            Cmd::RunTimings {
+                out: "/m/runs.jsonl".to_string(),
+                trace: "/r/20260728T053610Z.jsonl".to_string(),
+                run_id: Some("20260728T053610Z".to_string()),
+                role: Some("vetter".to_string()),
+                model: Some("claude-fable-5".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn closure_gate_cli() {
+        // Three gates, three subcommands, one flake flag each — so `rust.yml` is an invocation and
+        // an exit code rather than 135 lines of bash nothing can test.
+        assert_eq!(
+            parse(&["prr", "closure-preflight"]),
+            Cmd::ClosurePreflight {
+                flake: ".".to_string()
+            },
+            "CI runs in the checkout, so `.` is the default"
+        );
+        assert_eq!(
+            parse(&["prr", "closure-render"]),
+            Cmd::ClosureRender {
+                flake: ".".to_string()
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "closure-surface"]),
+            Cmd::ClosureSurface {
+                flake: ".".to_string()
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "closure-surface", "--flake", "/srv/issue-pr-cron"]),
+            Cmd::ClosureSurface {
+                flake: "/srv/issue-pr-cron".to_string()
             }
         );
     }
@@ -12065,6 +14661,275 @@ mod cli_tests {
         assert_eq!(TraceOutcome::Ok.as_str(), "ok");
         assert_eq!(TraceOutcome::QuotaLimited.as_str(), "session-limit");
         assert_eq!(TraceOutcome::Error.as_str(), "error");
+        assert_eq!(TraceOutcome::ToolingFailure.as_str(), "tooling-failure");
+    }
+
+    // ---- tooling failures (#85) ----------------------------------------------------------
+    //
+    // The fixtures below are cut down from the real trace that produced #85
+    // (review-runs/20260728T055940Z.jsonl): a Glob that enumerated the repo, then two Reads of
+    // audit PDFs that came back `is_error` because the closure had no `pdftoppm`.
+
+    /// One assistant `tool_use` event.
+    fn tu(id: &str, name: &str, input: Value) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "id": id, "name": name, "input": input}]}
+        })
+        .to_string()
+    }
+
+    /// One `tool_result` event for a given tool_use id.
+    fn tr(id: &str, content: &str, is_error: bool) -> String {
+        serde_json::json!({
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id, "content": content, "is_error": is_error}
+            ]}
+        })
+        .to_string()
+    }
+
+    const PDF_A: &str = "/home/gildlab/code/vet-x/audit/protofire/a.pdf";
+    const PDF_B: &str = "/home/gildlab/code/vet-x/audit/protofire/b.pdf";
+    // The harness's own words. Nothing in the classifier reads them; they are here so a future
+    // reader can see the test does not depend on them.
+    const POPPLER_ERR: &str = "pdftoppm is not installed. Install poppler-utils (e.g. `brew install poppler` or `apt-get install poppler-utils`) to enable PDF page rendering.";
+
+    fn blind_pdf_trace() -> String {
+        [
+            tu("g1", "Glob", serde_json::json!({"pattern": "**/*"})),
+            tr(
+                "g1",
+                &format!("{PDF_A}\n{PDF_B}\n/home/gildlab/code/vet-x/README.md"),
+                false,
+            ),
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", POPPLER_ERR, true),
+            tu("r2", "Read", serde_json::json!({"file_path": PDF_B})),
+            tr("r2", POPPLER_ERR, true),
+            r#"{"type":"result","subtype":"success","num_turns":9}"#.to_string(),
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn a_read_that_fails_on_an_enumerated_file_is_a_tooling_failure() {
+        let r = trace_tooling_report(&blind_pdf_trace());
+        assert_eq!(r.unreadable, vec![PDF_A.to_string(), PDF_B.to_string()]);
+        // And it decides the run's outcome, on a trace claude exited 0 on.
+        assert_eq!(
+            classify_trace(&blind_pdf_trace(), 0),
+            TraceOutcome::ToolingFailure,
+            "a run that could not read evidence the filesystem listed is not `ok`"
+        );
+    }
+
+    #[test]
+    fn the_classifier_never_reads_the_error_message() {
+        // Same structure, a message with no hint of a missing tool in it. If the rule were
+        // matching prose ("is not installed", "poppler"), this would come back `ok` — which is
+        // exactly how the NEXT undeclared dependency would slip through.
+        let t = blind_pdf_trace().replace(POPPLER_ERR, "Could not render this file.");
+        assert!(!t.contains("pdftoppm"));
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::ToolingFailure);
+    }
+
+    #[test]
+    fn a_read_of_a_path_nothing_listed_is_an_input_error_not_a_tooling_failure() {
+        // The model guessed at a filename. The environment never said it existed, so this is the
+        // run doing its job — and making it red would spend the outcome's credibility.
+        let t = [
+            tu(
+                "r1",
+                "Read",
+                serde_json::json!({"file_path": "/home/gildlab/code/vet-x/nope.pdf"}),
+            ),
+            tr("r1", "File does not exist.", true),
+        ]
+        .join("\n");
+        assert_eq!(trace_tooling_report(&t), ToolingReport::default());
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn only_a_successful_glob_corroborates() {
+        // A FAILED Glob's output is not an enumeration of anything.
+        let t = [
+            tu("g1", "Glob", serde_json::json!({"pattern": "**/*"})),
+            tr("g1", &format!("Ripgrep search timed out\n{PDF_A}"), true),
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", POPPLER_ERR, true),
+        ]
+        .join("\n");
+        assert!(trace_tooling_report(&t).unreadable.is_empty());
+    }
+
+    #[test]
+    fn grep_hits_do_not_corroborate() {
+        // Grep lines are `path:line:text`, so the path is a prefix of the line rather than the
+        // line. Counting them would mean parsing output shape instead of reading an enumeration.
+        let t = [
+            tu("g1", "Grep", serde_json::json!({"pattern": "pdf"})),
+            tr("g1", &format!("{PDF_A}:5:  \"pdf\": \"a.pdf\","), false),
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", POPPLER_ERR, true),
+        ]
+        .join("\n");
+        assert!(trace_tooling_report(&t).unreadable.is_empty());
+    }
+
+    #[test]
+    fn corroboration_is_order_independent() {
+        // The Glob lands AFTER the failed Read. Still corroborated: the question is whether the
+        // file existed, not when the run learned it did.
+        let t = [
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", POPPLER_ERR, true),
+            tu("g1", "Glob", serde_json::json!({"pattern": "**/*"})),
+            tr("g1", PDF_A, false),
+        ]
+        .join("\n");
+        assert_eq!(trace_tooling_report(&t).unreadable, vec![PDF_A.to_string()]);
+    }
+
+    #[test]
+    fn a_successful_read_of_an_enumerated_file_is_not_a_failure() {
+        let t = [
+            tu("g1", "Glob", serde_json::json!({"pattern": "**/*"})),
+            tr("g1", PDF_A, false),
+            tu("r1", "Read", serde_json::json!({"file_path": PDF_A})),
+            tr("r1", "<pdf pages>", false),
+        ]
+        .join("\n");
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn quota_outranks_a_tooling_failure() {
+        // The fallback loop keys on `session-limit` to advance models. A run the API refused never
+        // got far enough for its tools to be the problem, so quota must still win.
+        let t = format!(
+            "{}\n{}",
+            blind_pdf_trace(),
+            r#"{"type":"result","subtype":"error","api_error_status":429}"#
+        );
+        assert_eq!(classify_trace(&t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    #[test]
+    fn bash_exit_127_is_reported_but_does_not_decide_the_outcome() {
+        let t = [
+            tu(
+                "b1",
+                "Bash",
+                serde_json::json!({"command": "node --version"}),
+            ),
+            tr(
+                "b1",
+                "Exit code 127\n/bin/bash: line 1: node: command not found",
+                true,
+            ),
+        ]
+        .join("\n");
+        let r = trace_tooling_report(&t);
+        assert_eq!(r.command_not_found, vec!["node --version".to_string()]);
+        assert!(r.unreadable.is_empty());
+        // Surfaced, not raised: `which node npm` is a legitimate probe for a tool the run does not
+        // need, and 2 of this box's 5 historical 127s are exactly that.
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn a_bash_failure_that_is_not_127_is_not_a_missing_command() {
+        for first in [
+            "Exit code 1",
+            "Exit code 12",
+            "Exit code 1270",
+            "Permission denied",
+        ] {
+            let t = [
+                tu("b1", "Bash", serde_json::json!({"command": "gh pr list"})),
+                tr("b1", &format!("{first}\nsomething went wrong"), true),
+            ]
+            .join("\n");
+            assert!(
+                trace_tooling_report(&t).command_not_found.is_empty(),
+                "{first:?} must not read as command-not-found"
+            );
+        }
+    }
+
+    #[test]
+    fn preflight_failure_outranks_everything_and_needs_no_trace() {
+        // The model never ran, so there is no trace to classify. The outcome comes from the fact
+        // that a declared binary would not resolve.
+        let missing = vec!["pdftoppm".to_string()];
+        assert_eq!(
+            classify_outcome("", 12, &missing),
+            TraceOutcome::ToolingFailure
+        );
+        // …and an empty list must not change what the trace already said.
+        assert_eq!(classify_outcome("", 0, &[]), TraceOutcome::Ok);
+    }
+
+    #[test]
+    fn the_harness_read_dependencies_stay_declared() {
+        // These are named NOWHERE else in the repo: no script, no prompt, no skill mentions them.
+        // This list and the closure check in .github/workflows/rust.yml are the only two places a
+        // read-time dependency exists at all, so dropping one here must fail a named test.
+        let bins: Vec<&str> = HARNESS_TOOLS.iter().map(|t| t.bin).collect();
+        assert!(bins.contains(&"pdftoppm"), "PDF rendering: {bins:?}");
+        assert!(bins.contains(&"pdfinfo"), "PDF page count: {bins:?}");
+        for t in HARNESS_TOOLS {
+            assert!(
+                !t.why.trim().is_empty(),
+                "{} must carry the evidence for needing it",
+                t.bin
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_in_finds_only_executables_in_named_directories() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("prr-preflight-{}", std::process::id()));
+        let bin = root.join("bin");
+        let other = root.join("other");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(bin.join("real-tool"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(
+            bin.join("real-tool"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        // Present but not executable — a data file of the same name is not the tool.
+        std::fs::write(bin.join("not-exec"), "x").unwrap();
+        // Present, executable, but in a directory PATH does not name.
+        std::fs::write(other.join("unlisted"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(
+            other.join("unlisted"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        assert_eq!(
+            resolve_in(&path, "real-tool"),
+            Some(bin.join("real-tool")),
+            "an executable on PATH resolves"
+        );
+        assert_eq!(resolve_in(&path, "not-exec"), None, "not executable");
+        assert_eq!(resolve_in(&path, "unlisted"), None, "not on PATH");
+        assert_eq!(resolve_in(&path, "absent"), None);
+        // An empty PATH element must not mean "look in the cwd".
+        let with_empty = std::ffi::OsString::from(format!(":{}", bin.to_string_lossy()));
+        assert_eq!(
+            resolve_in(&with_empty, "real-tool"),
+            Some(bin.join("real-tool"))
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ---- queue-history-line: one implementation for the live append and the backfill ----
@@ -12926,6 +15791,724 @@ mod fsm_completeness_tests {
             }
         }
         assert_eq!(total, prs.len());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// human rulings — the human's own FSM transitions (#86).
+//
+// Every guard below is stated as the failure it prevents, because each one is drawn from a real
+// consequence of the improvised `gh issue edit --add-label human:reject` on
+// rainlanguage/rain.erc4626.words#93: the wrong namespace, the stranded flag, and the label bound to
+// nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod human_rule_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    fn labels(names: &[&str]) -> Value {
+        Value::Array(names.iter().map(|n| json!({"name": n})).collect())
+    }
+
+    /// A PR as `gh pr view --json state,headRefOid,labels,comments` returns it.
+    fn pr(sha: &str, ls: &[&str], comments: Vec<Value>) -> Value {
+        json!({"state": "OPEN", "headRefOid": sha, "labels": labels(ls), "comments": comments})
+    }
+
+    /// An issue as `gh issue view --json state,labels,comments,createdAt` returns it, optionally
+    /// carrying one trusted producer close-candidate flag.
+    fn issue(ls: &[&str], filed: &str, flag_at: Option<&str>, extra: Vec<Value>) -> Value {
+        let mut comments: Vec<Value> = flag_at
+            .map(|at| {
+                vec![json!({
+                    "author": {"login": TRUSTED_AUTHOR},
+                    "createdAt": at,
+                    "body": "🤖 ai:producer\nClose-candidate: already-fixed-on-main: PR #181",
+                })]
+            })
+            .unwrap_or_default();
+        comments.extend(extra);
+        json!({"state": "OPEN", "labels": labels(ls), "createdAt": filed, "comments": comments})
+    }
+
+    fn ruling_comment(anchor: &str, ruling: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": human_rule_comment(anchor, ruling, "because"),
+        })
+    }
+
+    fn record(plan: HumanRulePlan) -> (String, Vec<String>, Vec<String>, bool, bool) {
+        match plan {
+            HumanRulePlan::Record {
+                anchor,
+                supersedes,
+                clears,
+                has_target,
+                skip_comment,
+            } => (anchor, supersedes, clears, has_target, skip_comment),
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    // --- G1 vocabulary: the machine's OWN label sets, not a second list --------------------------
+
+    // The verbs are DERIVED from the sacred label constants. Typing them out separately is what
+    // lets the transition surface and the lane classifier name different states.
+    #[test]
+    fn human_ruling_vocabulary_is_derived_from_the_sacred_label_sets() {
+        assert_eq!(
+            human_rulings(&HUMAN_DECISION_LABELS),
+            vec!["reject", "design", "close-candidate"]
+        );
+        assert_eq!(
+            human_rulings(&HUMAN_RULING_LABELS),
+            vec!["reject", "design", "close-candidate", "keep-open"]
+        );
+        // Every verb round-trips to the label it writes …
+        for set in [&HUMAN_DECISION_LABELS[..], &HUMAN_RULING_LABELS[..]] {
+            for label in set {
+                let verb = label.strip_prefix("human:").unwrap();
+                assert_eq!(human_ruling_label(set, verb), Some(*label));
+            }
+        }
+        // … and nothing else does. `keep-open` is ISSUE-only: on a PR there is no close-candidate
+        // flag for it to answer, and writing it would land the PR in no lane at all.
+        assert_eq!(
+            human_ruling_label(&HUMAN_DECISION_LABELS, "keep-open"),
+            None
+        );
+        for bad in ["", "REJECT", "human:reject", "approve", "close", " "] {
+            assert_eq!(human_ruling_label(&HUMAN_RULING_LABELS, bad), None, "{bad}");
+        }
+        // Surrounding whitespace is the caller's, not a different verb.
+        assert_eq!(
+            human_ruling_label(&HUMAN_RULING_LABELS, "  keep-open  "),
+            Some("human:keep-open")
+        );
+    }
+
+    // A ruling outside the vocabulary is a USAGE error (exit 2) that names the vocabulary — the
+    // caller's next move must be a legal verb, not an improvised label.
+    #[test]
+    fn a_ruling_outside_the_vocabulary_is_refused_with_the_vocabulary() {
+        let (code, msg) = human_ruling_vocab_error(&HUMAN_DECISION_LABELS, "keep-open", "PR");
+        assert_eq!(code, 2);
+        assert!(msg.contains("reject, design, close-candidate"), "{msg}");
+        assert!(!msg.contains("keep-open,"), "{msg}");
+        let (code, msg) = human_ruling_vocab_error(&HUMAN_RULING_LABELS, "nope", "issue");
+        assert_eq!(code, 2);
+        assert!(msg.contains("keep-open"), "{msg}");
+    }
+
+    // --- G2 note: the recorded reason IS the difference from a mis-click ------------------------
+
+    #[test]
+    fn a_ruling_with_no_recorded_reason_is_refused() {
+        assert_eq!(human_ruling_note_error().0, 2);
+        // Both surfaces refuse on the same rule, in the same words.
+        for blank in [json!(""), json!("   "), json!(null)] {
+            let args = json!({"pr": "o/r#1", "ruling": "reject", "note": blank});
+            let err = human_rule_args(&HUMAN_DECISION_LABELS, &args, "PR").unwrap_err();
+            assert_eq!(err, human_ruling_note_error().1, "{blank}");
+        }
+        // A missing note key is the same refusal, not a different one.
+        let args = json!({"pr": "o/r#1", "ruling": "reject"});
+        assert_eq!(
+            human_rule_args(&HUMAN_DECISION_LABELS, &args, "PR").unwrap_err(),
+            human_ruling_note_error().1
+        );
+        // The vocabulary is checked BEFORE the note, so an illegal verb is never masked by a
+        // missing note.
+        let args = json!({"pr": "o/r#1", "ruling": "approve"});
+        assert!(human_rule_args(&HUMAN_DECISION_LABELS, &args, "PR")
+            .unwrap_err()
+            .contains("is not a human ruling"));
+    }
+
+    // --- G3 provenance: what a ruling PINS to ---------------------------------------------------
+
+    // A PR ruling pins to the head sha, exactly as the vetter's verdict does — so a force-push or a
+    // rework makes the ruling visibly no longer about the code that is there.
+    #[test]
+    fn a_pr_ruling_pins_to_the_head_sha() {
+        let (anchor, _, _, _, _) = record(human_pr_rule_plan(
+            &pr("deadbeef", &["ai:ready"], vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert_eq!(anchor, "deadbeef");
+        assert_eq!(
+            human_rule_comment(&anchor, "reject", " leg 1 is not fixed "),
+            "👤 human\nRuled deadbeef: reject — leg 1 is not fixed"
+        );
+    }
+
+    // No head sha ⇒ no anchor ⇒ REFUSE. `Ruled : reject` is the bound-to-nothing label this whole
+    // surface exists to replace, so writing one is worse than writing nothing.
+    #[test]
+    fn a_pr_ruling_without_a_head_sha_has_no_anchor_and_is_refused() {
+        assert_eq!(
+            human_pr_rule_plan(&pr("", &[], vec![]), "reject", "human:reject"),
+            HumanRulePlan::NoAnchor
+        );
+        assert_eq!(
+            human_pr_rule_plan(&json!({"state": "OPEN"}), "reject", "human:reject"),
+            HumanRulePlan::NoAnchor
+        );
+    }
+
+    // An issue ruling pins to the LIVE flag when there is one — the same anchor
+    // `record_close_candidate_verdict` uses, so a re-flag invalidates both records together.
+    #[test]
+    fn an_issue_ruling_pins_to_the_live_flag_when_there_is_one() {
+        let j = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        let (anchor, ..) = record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
+        assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
+        // The same anchor string the vetter's own comment carries — one re-flag stales both.
+        assert!(cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x")
+            .contains("close-candidate @2026-07-17T21:23:11Z"));
+    }
+
+    // With no LIVE flag the ruling is on the ISSUE AS FILED, and it says so. That wording is the
+    // namespace distinction #86 lost: `issue @…` is a ruling on the issue, `close-candidate @…` is
+    // a ruling on a producer claim, and a reader can tell which happened.
+    #[test]
+    fn an_unflagged_issue_ruling_pins_to_the_issue_as_filed() {
+        let (anchor, ..) = record(human_issue_rule_plan(
+            &issue(&[], "2026-01-01T00:00:00Z", None, vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
+
+        // A flag COMMENT whose label the vetter already stripped is history, not a pending claim:
+        // it must not anchor a ruling, or the record would claim to judge a flag that is gone.
+        let (anchor, ..) = record(human_issue_rule_plan(
+            &issue(
+                &[],
+                "2026-01-01T00:00:00Z",
+                Some("2026-07-17T21:23:11Z"),
+                vec![],
+            ),
+            "reject",
+            "human:reject",
+        ));
+        assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
+
+        // No createdAt ⇒ nothing to pin to ⇒ refuse, same rule as a PR with no head sha.
+        assert_eq!(
+            human_issue_rule_plan(
+                &json!({"state": "OPEN", "labels": [], "comments": []}),
+                "reject",
+                "human:reject"
+            ),
+            HumanRulePlan::NoAnchor
+        );
+    }
+
+    // The comment carries the trusted MARKER, the anchor, the ruling and the reason — the four
+    // things a hand-applied label carries none of.
+    #[test]
+    fn the_ruling_comment_records_marker_anchor_ruling_and_reason() {
+        let c = human_rule_comment(
+            "close-candidate @2026-07-17T21:23:11Z",
+            "keep-open",
+            "audit finding still live",
+        );
+        assert!(c.starts_with(HUMAN_MARKER), "{c}");
+        assert!(
+            c.contains("Ruled close-candidate @2026-07-17T21:23:11Z: keep-open"),
+            "{c}"
+        );
+        assert!(c.contains("— audit finding still live"), "{c}");
+        // Distinguishable from the AI's records by marker, which is what makes the author-based
+        // trust filter able to separate them — both are posted by the same account.
+        assert_ne!(HUMAN_MARKER, "🤖 ai:vetter");
+        assert!(!c.starts_with("🤖"), "{c}");
+    }
+
+    // --- G4 the stranding guard: the one that catches rain.erc4626.words#93 ----------------------
+
+    // On an issue carrying a LIVE producer flag, only the two flag-disposing rulings are legal.
+    // Any other `human:*` label makes `record_close_candidate_verdict` (which refuses once a human
+    // has ruled) permanently unable to judge the flag — it is stranded, exactly as #93 was.
+    #[test]
+    fn a_ruling_that_would_strand_a_live_flag_is_refused() {
+        let flagged = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        for stranding in ["reject", "design"] {
+            let label = human_ruling_label(&HUMAN_RULING_LABELS, stranding).unwrap();
+            assert_eq!(
+                human_issue_rule_plan(&flagged, stranding, label),
+                HumanRulePlan::StrandsFlag {
+                    flag_at: "2026-07-17T21:23:11Z".to_string()
+                },
+                "{stranding} must not strand the flag"
+            );
+        }
+        // The two that ANSWER the flag are legal — the human is never left without a move.
+        for disposing in FLAG_DISPOSING_RULINGS {
+            let label = human_ruling_label(&HUMAN_RULING_LABELS, disposing).unwrap();
+            record(human_issue_rule_plan(&flagged, disposing, label));
+        }
+        // The guard is about a LIVE flag, not about the label alone: a bare `ai:close-candidate`
+        // with no trusted producer comment is nothing `record_close_candidate_verdict` could judge
+        // anyway (it returns NoFlag), so refusing there would block a human for no benefit.
+        let label_only = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            None,
+            vec![],
+        );
+        let (anchor, ..) = record(human_issue_rule_plan(&label_only, "reject", "human:reject"));
+        assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
+        assert_eq!(
+            cc_verdict_plan(&label_only, "reject"),
+            CcVerdictPlan::NoFlag
+        );
+    }
+
+    // The refusal must name every legal move, or it is an obstruction rather than a redirection —
+    // a tool harder to use than raw `gh` gets bypassed, which is the failure to avoid above all.
+    #[test]
+    fn the_stranding_refusal_names_all_three_legal_moves() {
+        let flagged = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        // Reach the refusal text through the plan the apply matches on (the apply itself needs gh).
+        let HumanRulePlan::StrandsFlag { flag_at } =
+            human_issue_rule_plan(&flagged, "reject", "human:reject")
+        else {
+            panic!("expected StrandsFlag");
+        };
+        assert_eq!(flag_at, "2026-07-17T21:23:11Z");
+
+        let (code, msg) = strands_flag_error("o/r", "93", "human:reject", &flag_at);
+        assert_eq!(
+            code, 4,
+            "a stranded-flag refusal is a gate refusal, not usage"
+        );
+        // It says WHICH flag it is protecting …
+        assert!(msg.contains("@2026-07-17T21:23:11Z"), "{msg}");
+        // … and names all three ways out, each spelled as it is actually invoked.
+        for named in [
+            "human-rule-issue o/r 93 close-candidate",
+            "human-rule-issue o/r 93 keep-open",
+            "record-close-candidate-verdict o/r 93 reject",
+        ] {
+            assert!(msg.contains(named), "refusal omits {named:?}: {msg}");
+        }
+        // Every command it names must PARSE — advice the caller's own surface cannot execute is
+        // exactly the "reach for a tool that does not exist" that produced #93.
+        for argv in [
+            vec![
+                "prr",
+                "human-rule-issue",
+                "o/r",
+                "93",
+                "close-candidate",
+                "x",
+            ],
+            vec!["prr", "human-rule-issue", "o/r", "93", "keep-open", "x"],
+            vec![
+                "prr",
+                "record-close-candidate-verdict",
+                "o/r",
+                "93",
+                "reject",
+                "x",
+            ],
+        ] {
+            assert!(
+                Cli::try_parse_from(&argv).is_ok(),
+                "the refusal names an unrunnable command: {argv:?}"
+            );
+        }
+    }
+
+    // --- G5 label blast radius: one sacred label, and only a CONTRADICTED ai:* ------------------
+
+    // `keep-open` is the one ruling that contradicts an `ai:*` label outright — it says "do not
+    // close" to a flag that says "close" — so it is the one that clears it. Leaving both would put
+    // the issue in the dashboard's close-candidate box under a ruling that says keep it open.
+    #[test]
+    fn keep_open_clears_the_flag_it_contradicts_and_nothing_else_does() {
+        let flagged = issue(
+            &["ai:close-candidate", "audit"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        let (_, _, clears, ..) = record(human_issue_rule_plan(
+            &flagged,
+            "keep-open",
+            "human:keep-open",
+        ));
+        assert_eq!(clears, s(&["ai:close-candidate"]));
+        // `close-candidate` AGREES with the flag: leaving it is consistent, and the flag is the
+        // record of what the ruling ruled on.
+        let (_, _, clears, ..) = record(human_issue_rule_plan(
+            &flagged,
+            "close-candidate",
+            "human:close-candidate",
+        ));
+        assert!(clears.is_empty());
+        // Nothing else is touched: `audit` is not the machine's label to remove.
+        let (_, supersedes, clears, ..) = record(human_issue_rule_plan(
+            &flagged,
+            "keep-open",
+            "human:keep-open",
+        ));
+        assert!(!supersedes.contains(&"audit".to_string()));
+        assert!(!clears.contains(&"audit".to_string()));
+        // With no live flag there is nothing to clear.
+        let (_, _, clears, ..) = record(human_issue_rule_plan(
+            &issue(&[], "2026-01-01T00:00:00Z", None, vec![]),
+            "keep-open",
+            "human:keep-open",
+        ));
+        assert!(clears.is_empty());
+    }
+
+    // A PR ruling clears NO `ai:*` label. `reworked-reject` is the transition that clears them, and
+    // it clears them only once a rework provably followed — a human:reject PR deliberately keeps
+    // its stale `ai:ready` until then, and erasing it here would erase what the human ruled on.
+    #[test]
+    fn a_pr_ruling_leaves_the_ai_label_for_reworked_reject_to_clear() {
+        let (_, supersedes, clears, ..) = record(human_pr_rule_plan(
+            &pr("sha1", &["ai:ready", "bug"], vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert!(clears.is_empty());
+        assert!(supersedes.is_empty());
+        // The lane classifier already gives the human ruling precedence, so the stale label is
+        // inert rather than ambiguous.
+        assert_eq!(
+            classify_lane(&s(&["ai:ready", "human:reject"]), Some(true), false),
+            (Lane::HumanDecisions, "human:reject".to_string())
+        );
+    }
+
+    // --- G6 re-ruling: the human may change their own mind ---------------------------------------
+
+    // A DIFFERENT human ruling already present is superseded, not refused. Refusing would leave raw
+    // `gh` as the only way to correct a mis-click — the bypass this whole surface exists to remove.
+    #[test]
+    fn a_new_human_ruling_supersedes_the_previous_one_rather_than_refusing() {
+        let (_, supersedes, ..) = record(human_pr_rule_plan(
+            &pr("sha1", &["human:design", "ai:ready"], vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert_eq!(supersedes, s(&["human:design"]));
+        // The ruling's OWN label is never in the supersede list — that would remove what it adds.
+        let (_, supersedes, _, has_target, _) = record(human_pr_rule_plan(
+            &pr("sha1", &["human:reject"], vec![]),
+            "reject",
+            "human:reject",
+        ));
+        assert!(supersedes.is_empty());
+        assert!(has_target, "the label is already there — do not re-add it");
+        // Issue side, same rule, and a hand-applied stray is superseded too.
+        let (_, supersedes, ..) = record(human_issue_rule_plan(
+            &issue(
+                &["human:reject", "human:design"],
+                "2026-01-01T00:00:00Z",
+                None,
+                vec![],
+            ),
+            "keep-open",
+            "human:keep-open",
+        ));
+        assert_eq!(supersedes, s(&["human:reject", "human:design"]));
+    }
+
+    // --- G6b the subject-type guard ---------------------------------------------------------------
+
+    // `gh issue view <n>` answers for a PULL REQUEST too — GitHub's API treats one as the other —
+    // so `human-rule-issue` pointed at a PR would write the ISSUE vocabulary onto it. That is not
+    // cosmetic: `human:keep-open` is not in `HUMAN_DECISION_LABELS`, so `classify_lane` buckets the
+    // PR by whatever `ai:*` it still carries and the ruling vanishes from the human lane entirely.
+    #[test]
+    fn an_issue_ruling_pointed_at_a_pull_request_is_refused() {
+        let mut j = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
+        j["url"] = json!("https://github.com/o/r/pull/82");
+        assert_eq!(
+            human_issue_rule_plan(&j, "keep-open", "human:keep-open"),
+            HumanRulePlan::NotAnIssue
+        );
+        // The discriminator is the URL's own path, not a substring anywhere in it.
+        j["url"] = json!("https://github.com/o/r/issues/89");
+        record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
+        // A subject whose URL was not fetched is still ruled on — the guard adds a refusal, it does
+        // not turn a missing optional field into one.
+        let mut k = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
+        k.as_object_mut().unwrap().remove("url");
+        record(human_issue_rule_plan(&k, "keep-open", "human:keep-open"));
+        // The label it would otherwise have written is exactly the one no PR lane models.
+        assert!(!HUMAN_DECISION_LABELS.contains(&"human:keep-open"));
+        assert_eq!(
+            classify_lane(&s(&["human:keep-open", "ai:ready"]), Some(true), false),
+            (Lane::VetterVerdicts, "ai:ready".to_string()),
+            "a keep-open PR is invisible to the human lane — which is why this is refused"
+        );
+    }
+
+    // A guard can only fire on data that was fetched. A field the plan reads but the `gh … --json`
+    // list omits does not error — the key is simply absent, every read falls back to empty, and the
+    // refusal silently stops happening. So the fetch is asserted field by field, each named for the
+    // guard it feeds.
+    #[test]
+    fn the_issue_transition_fetches_what_its_guards_need() {
+        let has = |list: &str, f: &str| list.split(',').any(|x| x == f);
+        for (field, guard) in [
+            ("url", "the subject-type guard"),
+            ("state", "the terminal-subject check"),
+            ("labels", "the live-flag and supersede computation"),
+            ("comments", "the trusted flag + dedup reads"),
+            ("createdAt", "the unflagged-issue anchor"),
+        ] {
+            assert!(
+                has(ISSUE_RULE_FIELDS, field),
+                "the issue fetch drops {field:?}, silently disabling {guard}"
+            );
+        }
+        for (field, guard) in [
+            ("state", "the terminal-subject check"),
+            ("headRefOid", "the anchor"),
+            ("labels", "the supersede computation"),
+            ("comments", "the dedup read"),
+        ] {
+            assert!(
+                has(PR_RULE_FIELDS, field),
+                "the PR fetch drops {field:?}, silently disabling {guard}"
+            );
+        }
+        // A PR has no `url` need and no `createdAt` need — the lists are not interchangeable.
+        assert!(!has(PR_RULE_FIELDS, "createdAt"));
+    }
+
+    // --- G7 terminal subjects are MOOT, not refused ----------------------------------------------
+
+    #[test]
+    fn a_terminal_subject_is_moot_because_there_is_no_transition_left() {
+        for state in ["MERGED", "CLOSED"] {
+            let mut p = pr("sha1", &[], vec![]);
+            p["state"] = json!(state);
+            assert_eq!(
+                human_pr_rule_plan(&p, "reject", "human:reject"),
+                HumanRulePlan::Moot,
+                "{state}"
+            );
+        }
+        let mut j = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
+        j["state"] = json!("CLOSED");
+        assert_eq!(
+            human_issue_rule_plan(&j, "reject", "human:reject"),
+            HumanRulePlan::Moot
+        );
+        // An OPEN subject is never moot — a gate that refuses everything looks as green as one
+        // that works.
+        record(human_pr_rule_plan(
+            &pr("sha1", &[], vec![]),
+            "reject",
+            "human:reject",
+        ));
+    }
+
+    // --- G8 idempotence: a re-run must not re-post -----------------------------------------------
+
+    #[test]
+    fn the_same_ruling_at_the_same_anchor_is_deduped_but_a_moved_anchor_is_not() {
+        let with = |sha: &str, anchor: &str, ruling: &str| {
+            let (.., skip) = record(human_pr_rule_plan(
+                &pr(sha, &[], vec![ruling_comment(anchor, ruling)]),
+                "reject",
+                "human:reject",
+            ));
+            skip
+        };
+        assert!(with("sha1", "sha1", "reject"), "same ruling, same anchor");
+        assert!(!with("sha2", "sha1", "reject"), "head moved -> re-record");
+        assert!(
+            !with("sha1", "sha1", "design"),
+            "ruling changed -> re-record"
+        );
+        // A spoofed marker from another account never dedups a real ruling — the author is the
+        // trust, the marker only selects the role.
+        let spoofed = json!({
+            "author": {"login": "someone-else"},
+            "body": human_rule_comment("sha1", "reject", "not mine"),
+        });
+        let (.., skip) = record(human_pr_rule_plan(
+            &pr("sha1", &[], vec![spoofed]),
+            "reject",
+            "human:reject",
+        ));
+        assert!(!skip, "an untrusted comment must not dedup a ruling");
+    }
+
+    // --- G9 write ORDER is the fail-safe ----------------------------------------------------------
+
+    // Every prefix of the sequence must leave a state at least as safe as the previous one: the
+    // comment lands before anything sacred is written, and the new ruling is added before the old
+    // one is removed, so no window exists in which the subject carries no human decision.
+    #[test]
+    fn the_write_order_never_leaves_an_unrecorded_or_unruled_subject() {
+        let steps = human_rule_steps(
+            &s(&["human:design"]),
+            &s(&["ai:close-candidate"]),
+            false,
+            false,
+        );
+        assert_eq!(
+            steps,
+            vec![
+                RuleStep::Comment,
+                RuleStep::EnsureLabel,
+                RuleStep::AddLabel,
+                RuleStep::RemoveLabel("human:design".to_string()),
+                RuleStep::RemoveLabel("ai:close-candidate".to_string()),
+            ]
+        );
+        let idx = |s: &[RuleStep], want: &RuleStep| s.iter().position(|x| x == want);
+        // Stated as the invariants, not just the literal list, so a re-ordering that keeps the same
+        // members still fails.
+        assert!(idx(&steps, &RuleStep::Comment) < idx(&steps, &RuleStep::AddLabel));
+        assert!(
+            idx(&steps, &RuleStep::AddLabel)
+                < idx(&steps, &RuleStep::RemoveLabel("human:design".to_string()))
+        );
+        // A superseded ruling is cleared before a contradicted advisory label: the sacred namespace
+        // is made consistent first.
+        assert!(
+            idx(&steps, &RuleStep::RemoveLabel("human:design".to_string()))
+                < idx(
+                    &steps,
+                    &RuleStep::RemoveLabel("ai:close-candidate".to_string())
+                )
+        );
+        // Dedup drops the comment; an already-present label drops the add. Nothing else changes.
+        assert_eq!(
+            human_rule_steps(&[], &[], true, true),
+            vec![RuleStep::EnsureLabel]
+        );
+        assert_eq!(
+            human_rule_steps(&[], &[], false, true),
+            vec![RuleStep::EnsureLabel, RuleStep::AddLabel]
+        );
+    }
+
+    // --- G10 the label taxonomy the write --forces ----------------------------------------------
+
+    // `human_rule_write` calls `gh label create --force`, which OVERWRITES colour and description.
+    // Every label this transition can write must therefore carry the org's live values, or one
+    // ruling silently re-describes a sacred label as "AI vetter verdict" in that repo.
+    #[test]
+    fn every_human_label_carries_the_orgs_live_colour_and_description() {
+        let fallback = label_meta("ai:something-unknown");
+        for label in HUMAN_RULING_LABELS {
+            let meta = label_meta(label);
+            assert_ne!(meta, fallback, "{label} falls through to the AI fallback");
+            assert!(
+                meta.1.starts_with("Human"),
+                "{label} is described as {:?}",
+                meta.1
+            );
+        }
+        // The live values, read off `gh label list` across the org.
+        assert_eq!(
+            label_meta("human:reject"),
+            ("b60205", "Human reviewer: needs rework")
+        );
+        assert_eq!(
+            label_meta("human:keep-open"),
+            (
+                "0e8a16",
+                "Human decision: keep open (excluded from the close-candidate queue)"
+            )
+        );
+    }
+
+    // --- the gh write seam: stdout is the MCP protocol -------------------------------------------
+
+    // `gh issue comment` prints the new comment's URL on ITS stdout, and `gh_run` used to let the
+    // child inherit ours. On the CLI that is noise; on the MCP server stdout IS the JSON-RPC stream,
+    // so a ruling emitted three bare URL lines ahead of its own response — three unparseable
+    // messages in a protocol that says "nothing else may print there".
+    #[test]
+    fn a_gh_write_folds_its_stdout_into_stderr_because_stdout_is_the_protocol() {
+        let ok = std::process::Command::new("sh")
+            .args(["-c", "echo https://example/created; echo warn >&2"])
+            .output()
+            .expect("sh runs");
+        let (success, text) = gh_output_report(&ok);
+        assert!(success);
+        // Both streams survive — the fix is a REDIRECT, not a discard: a URL a human was reading in
+        // a run log must not vanish to buy protocol cleanliness.
+        assert!(text.contains("https://example/created"), "{text:?}");
+        assert!(text.contains("warn"), "{text:?}");
+
+        // A failing write is reported as failing, and its diagnostics still come back.
+        let bad = std::process::Command::new("sh")
+            .args(["-c", "echo boom >&2; exit 1"])
+            .output()
+            .expect("sh runs");
+        let (success, text) = gh_output_report(&bad);
+        assert!(!success);
+        assert!(text.contains("boom"), "{text:?}");
+
+        // Silence stays silent — an empty report must not make `gh_run` print a blank line into a
+        // run log for every label edit.
+        let quiet = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .output()
+            .expect("sh runs");
+        assert_eq!(gh_output_report(&quiet), (true, String::new()));
+    }
+
+    // --- the reports -------------------------------------------------------------------------
+
+    #[test]
+    fn the_report_names_the_anchor_and_every_label_moved() {
+        let r = human_rule_report(
+            "o/r",
+            "93",
+            "human:keep-open",
+            "close-candidate @2026-07-17T21:23:11Z",
+            &s(&["human:design"]),
+            &s(&["ai:close-candidate"]),
+            false,
+        );
+        assert!(r.contains("ruled human:keep-open on o/r#93"), "{r}");
+        assert!(r.contains("@ close-candidate @2026-07-17T21:23:11Z"), "{r}");
+        assert!(r.contains("superseded human:design"), "{r}");
+        assert!(r.contains("cleared ai:close-candidate"), "{r}");
+        assert!(r.contains("comment posted"), "{r}");
+        // Nothing moved, nothing claimed.
+        let r = human_rule_report("o/r", "1", "human:reject", "sha1", &[], &[], true);
+        assert!(!r.contains("superseded"), "{r}");
+        assert!(!r.contains("cleared"), "{r}");
+        assert!(r.contains("comment deduped"), "{r}");
     }
 }
 
@@ -14231,11 +17814,201 @@ mod mcp_tests {
         assert!(v.calls().is_empty());
     }
 
+    // --- the human profile (#86) ------------------------------------------------------------------
+
+    // The human's surface is READ the subject + RULE on it, and nothing else. An agent acting on
+    // the human's behalf restricted to this server cannot perform a non-FSM operation — which is
+    // what a prompt rule plus a prefix-matched Bash deny-list could not achieve.
+    #[test]
+    fn the_human_profile_is_exactly_read_the_subject_and_rule_on_it() {
+        let f = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        let resp = f
+            .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+            .unwrap();
+        let names: Vec<&str> = resp["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "pr_context",
+                "close_candidate_context",
+                "human_rule",
+                "human_rule_issue",
+            ]
+        );
+        // The vetter's inbox and its verdict write are NOT the human's authority.
+        for not_ours in [
+            "unvetted",
+            "unvetted_close_candidates",
+            "record_verdict",
+            "record_close_candidate_verdict",
+            "clone_create",
+        ] {
+            let resp = f
+                .handle(&call(not_ours, json!({"pr": "o/r#1", "issue": "o/r#1"})))
+                .unwrap();
+            assert!(is_error(&resp), "{not_ours} must not exist for the human");
+        }
+        assert!(f.calls().is_empty(), "no refused name reached an effect");
+    }
+
+    // …and symmetrically: the human's writes are unreachable from the AI profiles. The vetter
+    // recording a `human:*` label is the namespace collapse in the other direction.
+    #[test]
+    fn human_rule_tools_are_unreachable_from_the_ai_profiles() {
+        for (f, who) in [
+            (FakeExec::ok(), "vetter"),
+            (FakeExec::producer(), "producer"),
+        ] {
+            for tool in ["human_rule", "human_rule_issue"] {
+                let resp = f
+                    .handle(&call(
+                        tool,
+                        json!({"pr": "o/r#1", "issue": "o/r#1", "ruling": "reject", "note": "x"}),
+                    ))
+                    .unwrap();
+                assert!(is_error(&resp), "{who} must not reach {tool}");
+            }
+            assert!(f.calls().is_empty(), "{who} reached a human transition");
+        }
+    }
+
+    // The profile is a role name the runners pass; an unknown one must fail loudly rather than
+    // silently serve someone else's surface.
+    #[test]
+    fn profile_parse_accepts_the_three_roles_and_nothing_else() {
+        assert_eq!(McpProfile::parse("human"), Ok(McpProfile::Human));
+        assert_eq!(McpProfile::parse("vetter"), Ok(McpProfile::Vetter));
+        assert_eq!(McpProfile::parse("producer"), Ok(McpProfile::Producer));
+        for bad in ["", "Human", "human ", "admin"] {
+            let e = McpProfile::parse(bad).unwrap_err();
+            assert!(e.contains("vetter, producer or human"), "{bad}: {e}");
+        }
+    }
+
+    // The SCHEMA is the vocabulary guard's outer wall: a model cannot even propose a ruling outside
+    // the machine's own sacred label sets, and the enums are pinned to those constants so the two
+    // cannot drift.
+    #[test]
+    fn the_human_rule_schemas_pin_the_sacred_label_sets() {
+        let all = mcp_all_tools();
+        let tools = all.as_array().unwrap();
+        let enum_of = |name: &str| -> Vec<String> {
+            tools
+                .iter()
+                .find(|t| t["name"] == json!(name))
+                .unwrap_or_else(|| panic!("{name} is not defined"))["inputSchema"]["properties"]
+                ["ruling"]["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(enum_of("human_rule"), human_rulings(&HUMAN_DECISION_LABELS));
+        assert_eq!(
+            enum_of("human_rule_issue"),
+            human_rulings(&HUMAN_RULING_LABELS)
+        );
+        for name in ["human_rule", "human_rule_issue"] {
+            let t = tools.iter().find(|t| t["name"] == json!(name)).unwrap();
+            let required: Vec<&str> = t["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            // The note is REQUIRED by the schema: an unexplained ruling cannot be proposed.
+            assert!(required.contains(&"note"), "{name} may omit its note");
+            assert!(required.contains(&"ruling"), "{name} may omit its ruling");
+        }
+    }
+
+    // The guard maps a well-formed human ruling to a validated call, and refuses the malformed ones
+    // BEFORE any effect exists — the same before-the-effect property the clone path guard has.
+    #[test]
+    fn a_human_ruling_validates_or_reaches_no_effect() {
+        let f = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        f.handle(&call(
+            "human_rule",
+            json!({"pr": "o/r#93", "ruling": "reject", "note": " leg 1 stands "}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::HumanRule {
+                slug: "o/r".to_string(),
+                num: 93,
+                ruling: "reject".to_string(),
+                // Trimmed at the guard, so the effect never sees the caller's whitespace.
+                note: "leg 1 stands".to_string(),
+            }]
+        );
+
+        let g = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        for (args, why) in [
+            (
+                json!({"pr": "o/r#1", "ruling": "keep-open", "note": "x"}),
+                "keep-open is issue-only",
+            ),
+            (
+                json!({"pr": "o/r#1", "ruling": "approve", "note": "x"}),
+                "not a ruling",
+            ),
+            (
+                json!({"pr": "o/r#1", "ruling": "reject", "note": "  "}),
+                "blank note",
+            ),
+            (json!({"pr": "o/r#1", "ruling": "reject"}), "missing note"),
+            (
+                json!({"pr": "93", "ruling": "reject", "note": "x"}),
+                "bad pr ref",
+            ),
+        ] {
+            let resp = g.handle(&call("human_rule", args)).unwrap();
+            assert!(is_error(&resp), "{why} must be refused");
+        }
+        assert!(g.calls().is_empty(), "a refused ruling reached an effect");
+
+        // The issue tool takes `issue`, not `pr`, and accepts the wider vocabulary.
+        let h = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        h.handle(&call(
+            "human_rule_issue",
+            json!({"issue": "o/r#93", "ruling": "keep-open", "note": "audit finding is live"}),
+        ))
+        .unwrap();
+        assert_eq!(
+            h.calls(),
+            vec![McpCall::HumanRuleIssue {
+                slug: "o/r".to_string(),
+                num: 93,
+                ruling: "keep-open".to_string(),
+                note: "audit finding is live".to_string(),
+            }]
+        );
+    }
+
     // Every tool the profiles LIST must be handled by the guard: a listed-but-unvalidated name would
     // be an advertised tool that always errors.
     #[test]
     fn every_listed_tool_is_handled_by_the_guard() {
-        for profile in [McpProfile::Vetter, McpProfile::Producer] {
+        for profile in [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human] {
             for name in profile.tool_names() {
                 let err = validate_call(profile, &["/work".to_string()], name, &json!({}))
                     .err()
@@ -15227,5 +19000,661 @@ mod pr_checkout_tests {
         assert!(m.contains("does not exist"), "{m}");
         assert!(m.contains("Re-call `pr_checkout` ONCE"), "{m}");
         assert!(m.contains("record NO verdict"), "{m}");
+    }
+}
+
+// The three CI closure gates (#85), as behaviour rather than as YAML.
+//
+// These were inline bash in `.github/workflows/rust.yml` — a PDF written in `printf`, a PATH
+// scraped with `sed`, a set difference computed with `comm` — which meant the gates that decide
+// whether the pipeline can READ ITS EVIDENCE were the one part of the repo `cargo test` could not
+// see and nobody could run locally. Everything below is the same three decisions, made where they
+// can be tested and mutated.
+//
+// The render gate is driven through STUB renderers rather than real poppler: the assertions here
+// are about what the gate concludes from what a renderer did (exit non-zero, write nothing, write
+// something that is not an image, see an environment it should not), and a real pdftoppm can only
+// ever demonstrate the success path. Real poppler parsing the real fixture is what
+// `closure-render` itself does in CI.
+#[cfg(test)]
+mod closure_gate_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A scratch directory that removes itself, named per test so cargo's threads cannot collide.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let p = std::env::temp_dir().join(format!("prr-closure-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).expect("scratch dir");
+            Scratch(p)
+        }
+        fn join(&self, n: &str) -> std::path::PathBuf {
+            self.0.join(n)
+        }
+        /// A directory of executables, standing in for one store path on a runner's PATH.
+        fn bindir(&self, n: &str) -> std::path::PathBuf {
+            let d = self.0.join(n);
+            std::fs::create_dir_all(&d).expect("bin dir");
+            d
+        }
+
+        /// Write an executable stub, and do not return until the kernel will actually exec it.
+        ///
+        /// `cargo test` is multi-threaded and every spawn snapshots the process's open file
+        /// descriptors, so another test's `Command` can be holding this file's write handle at the
+        /// moment this one tries to run it — ETXTBSY, surfacing as `Unspawnable(ExecutableFileBusy)`
+        /// in place of whatever the test was asserting. That is a property of writing an executable
+        /// inside a threaded process, not of the gate under test, so it is waited out here rather
+        /// than left to flake an assertion. Errno, not a message, decides.
+        fn stub(&self, dir: &std::path::Path, name: &str, body: &str) {
+            let p = dir.join(name);
+            std::fs::write(&p, body).expect("stub");
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            // The probe RUNS the stub, so its argv target is a directory nothing reads back — a
+            // page written into the render dir would be counted as output.
+            let probe = self.0.join(".probe");
+            std::fs::create_dir_all(&probe).expect("probe dir");
+            for _ in 0..500 {
+                match Command::new(&p)
+                    .arg(probe.join("probe"))
+                    .env_clear()
+                    .output()
+                {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    _ => return,
+                }
+            }
+            panic!("{} never became executable", p.display());
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn closure_of(dir: &std::path::Path) -> RunnerClosure {
+        RunnerClosure {
+            pkg: "campaign-run".to_string(),
+            path: std::ffi::OsString::from(dir.to_string_lossy().to_string()),
+        }
+    }
+
+    fn surface(pkg: &str, bins: &[&str]) -> (String, BTreeSet<String>) {
+        (
+            pkg.to_string(),
+            bins.iter().map(|b| b.to_string()).collect(),
+        )
+    }
+
+    // ---- the declaration itself ----
+
+    #[test]
+    fn the_model_runners_are_the_two_that_host_a_harness() {
+        // Both, not just the vetter. The producer drains the `audit`-labelled backlog first and
+        // those issues cite the PDF as their source, so a producer that cannot open the report it
+        // implements against writes a PR body asserting something it never read.
+        assert!(MODEL_RUNNERS.contains(&"campaign-run"), "{MODEL_RUNNERS:?}");
+        assert!(MODEL_RUNNERS.contains(&"review-run"), "{MODEL_RUNNERS:?}");
+    }
+
+    #[test]
+    fn every_declared_asymmetry_names_a_model_runner_and_carries_a_reason() {
+        for d in DECLARED_ASYMMETRY {
+            assert!(
+                MODEL_RUNNERS.contains(&d.only_in),
+                "{} is declared only-in {}, which is not a model runner",
+                d.bin,
+                d.only_in
+            );
+            assert!(
+                !d.why.trim().is_empty(),
+                "{} must say why it is one-sided",
+                d.bin
+            );
+        }
+    }
+
+    // ---- baked_path: the gate's only window onto a closure ----
+
+    #[test]
+    fn baked_path_lifts_the_first_export_path_from_a_runner_script() {
+        let script = "#!/nix/store/x/bin/bash\nset -o errexit\nexport PATH=\"/nix/store/a/bin:/nix/store/b/bin\"\nexport PATH=\"/decoy\"\n";
+        assert_eq!(
+            baked_path(script),
+            Some("/nix/store/a/bin:/nix/store/b/bin"),
+            "writeShellApplication bakes the runtimeInputs PATH first; a later line is the script's own"
+        );
+    }
+
+    #[test]
+    fn a_script_with_no_usable_baked_path_is_unevaluable_not_empty() {
+        // Each of these would otherwise resolve to "no tools missing" over an empty environment —
+        // a gate that passes hardest when it can see nothing at all.
+        assert_eq!(baked_path("#!/bin/sh\necho hi\n"), None, "no export at all");
+        assert_eq!(baked_path("export PATH=\"\"\n"), None, "empty PATH");
+        assert_eq!(
+            baked_path("export PATH=\"/nix/store/a\n"),
+            None,
+            "unterminated"
+        );
+    }
+
+    // ---- exit codes: knowing nothing is not the same as knowing it is wrong ----
+
+    #[test]
+    fn an_unevaluable_gate_outranks_an_unsatisfied_one() {
+        let missing = ClosureFault::ToolMissing {
+            pkg: "review-run".to_string(),
+            bin: "pdftoppm",
+            why: "why",
+        };
+        let unbuilt = ClosureFault::Unbuildable {
+            pkg: "review-run".to_string(),
+            detail: "error: flake output not found".to_string(),
+        };
+        assert_eq!(closure_exit_code(&[]), 0);
+        assert_eq!(closure_exit_code(std::slice::from_ref(&missing)), 12);
+        assert_eq!(closure_exit_code(std::slice::from_ref(&unbuilt)), 2);
+        assert_eq!(
+            closure_exit_code(&[missing, unbuilt]),
+            2,
+            "a broken build sends the reader to flake.nix, not to a missing tool"
+        );
+        assert_eq!(
+            closure_exit_code(&[ClosureFault::NoBakedPath {
+                pkg: "review-run".to_string(),
+                script: "/nix/store/x/bin/review-run".to_string(),
+            }]),
+            2
+        );
+    }
+
+    // ---- preflight, over a PATH that is a parameter ----
+
+    #[test]
+    fn preflight_answers_for_the_path_it_is_given_not_the_process_environment() {
+        let s = Scratch::new("preflight");
+        let bin = s.bindir("bin");
+        for t in HARNESS_TOOLS {
+            s.stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        assert_eq!(
+            preflight_report(&path),
+            0,
+            "a PATH carrying every declared tool satisfies preflight"
+        );
+        // Drop one and the same code says so — this is the exact question `closure-preflight`
+        // asks of each runner's baked PATH, so the two cannot answer differently.
+        std::fs::remove_file(bin.join(HARNESS_TOOLS[0].bin)).unwrap();
+        assert_eq!(preflight_report(&path), CLOSURE_UNSATISFIED);
+        assert_eq!(
+            preflight_report(&std::ffi::OsString::new()),
+            CLOSURE_UNSATISFIED,
+            "an empty environment resolves nothing"
+        );
+    }
+
+    // ---- the fixture: generated, and self-checking ----
+
+    #[test]
+    fn the_generated_pdf_is_a_real_document() {
+        let pdf = fixture_pdf();
+        let text = String::from_utf8(pdf.clone()).expect("the fixture is ASCII by construction");
+        assert!(text.starts_with("%PDF-1.4\n"), "a PDF header, first");
+        assert!(text.ends_with("%%EOF\n"), "and an EOF marker, last");
+        // The object graph a renderer has to walk to produce a page.
+        for required in [
+            "/Type /Catalog",
+            "/Type /Pages",
+            "/Type /Page",
+            "/MediaBox [0 0 612 792]",
+            "/Type /Font",
+            "Tj ET",
+        ] {
+            assert!(text.contains(required), "missing {required}");
+        }
+        // The content stream declares its own length, and a wrong one is how a hand-built PDF
+        // usually dies.
+        let stream = text
+            .split_once("stream\n")
+            .and_then(|(_, r)| r.split_once("endstream"))
+            .map(|(s, _)| s)
+            .expect("a content stream");
+        assert!(
+            text.contains(&format!("/Length {}", stream.len())),
+            "declared /Length must equal the {} bytes actually written",
+            stream.len()
+        );
+    }
+
+    #[test]
+    fn every_xref_offset_points_at_the_object_it_claims() {
+        // The self-check the generated fixture is FOR: an xref entry is a byte offset, and a
+        // generator that computes one wrong produces a file poppler rejects. Read the table back
+        // and follow it, exactly as a parser would — an oracle independent of how it was built.
+        let pdf = fixture_pdf();
+        let text = String::from_utf8(pdf.clone()).unwrap();
+
+        let startxref: usize = text
+            .rsplit_once("startxref\n")
+            .and_then(|(_, r)| r.split_once('\n'))
+            .and_then(|(n, _)| n.trim().parse().ok())
+            .expect("a startxref");
+        assert!(
+            text[startxref..].starts_with("xref\n"),
+            "startxref must point AT the xref table"
+        );
+
+        let table = &text[startxref..];
+        let mut lines = table.lines();
+        assert_eq!(lines.next(), Some("xref"));
+        let header = lines.next().expect("a subsection header");
+        let count: usize = header.split_whitespace().nth(1).unwrap().parse().unwrap();
+        assert!(
+            header.starts_with("0 "),
+            "the subsection starts at object 0"
+        );
+
+        let free = lines.next().unwrap();
+        assert_eq!(free, "0000000000 65535 f ", "entry 0 heads the free list");
+
+        let mut objects = 0;
+        for (i, entry) in lines.take(count - 1).enumerate() {
+            let off: usize = entry.split_whitespace().next().unwrap().parse().unwrap();
+            assert!(
+                text[off..].starts_with(&format!("{} 0 obj", i + 1)),
+                "xref entry {} points at {:?}, not at object {}",
+                i + 1,
+                &text[off..off + 12.min(text.len() - off)],
+                i + 1
+            );
+            objects += 1;
+        }
+        assert_eq!(
+            objects,
+            count - 1,
+            "every entry but the free head is an object"
+        );
+        assert!(
+            text.contains(&format!("/Size {count}")),
+            "the trailer's /Size must match the table's entry count"
+        );
+    }
+
+    // ---- the render gate: what it concludes from what a renderer did ----
+
+    #[test]
+    fn a_closure_without_pdftoppm_cannot_render() {
+        let s = Scratch::new("render-absent");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        assert_eq!(
+            render_from_closure(&closure_of(&bin), &pdf, &dir),
+            Err(RenderFault::NotInClosure)
+        );
+    }
+
+    #[test]
+    fn a_renderer_that_exits_nonzero_is_a_render_failure_not_an_absence() {
+        // The case `command -v` structurally cannot see: the binary IS there, and a missing
+        // shared library or data file makes it fail anyway. The harness turns this into the same
+        // `isError` an absent binary produces, and the run still exits 0.
+        let s = Scratch::new("render-exit");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        s.stub(
+            &bin,
+            "pdftoppm",
+            "#!/bin/sh\necho 'error while loading shared libraries' >&2\nexit 127\n",
+        );
+        assert_eq!(
+            render_from_closure(&closure_of(&bin), &pdf, &dir),
+            Err(RenderFault::Exited {
+                code: Some(127),
+                stderr: "error while loading shared libraries".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_renderer_that_writes_no_pages_fails_even_on_exit_zero() {
+        // The harness counts the files pdftoppm left behind, so zero files is its "cannot read
+        // this document" path — and exit 0 is not evidence of anything on its own.
+        let s = Scratch::new("render-nopages");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        s.stub(&bin, "pdftoppm", "#!/bin/sh\nexit 0\n");
+        assert_eq!(
+            render_from_closure(&closure_of(&bin), &pdf, &dir),
+            Err(RenderFault::NoPages)
+        );
+    }
+
+    #[test]
+    fn a_page_that_is_not_a_jpeg_fails_the_render_gate() {
+        let s = Scratch::new("render-notjpeg");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        s.stub(
+            &bin,
+            "pdftoppm",
+            "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf 'not an image' > \"$out-01.jpg\"\n",
+        );
+        match render_from_closure(&closure_of(&bin), &pdf, &dir) {
+            Err(RenderFault::NotJpeg { magic, .. }) => assert_eq!(magic, b"not".to_vec()),
+            other => panic!("expected NotJpeg, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_render_that_produces_a_jpeg_passes_and_counts_its_pages() {
+        let s = Scratch::new("render-ok");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        s.stub(
+            &bin,
+            "pdftoppm",
+            "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf '\\377\\330\\377\\340jpeg' > \"$out-01.jpg\"\nprintf '\\377\\330\\377\\340jpeg' > \"$out-02.jpg\"\n",
+        );
+        assert_eq!(render_from_closure(&closure_of(&bin), &pdf, &dir), Ok(2));
+    }
+
+    #[test]
+    fn the_render_gate_uses_the_harness_argv() {
+        // Byte-for-byte what Claude Code's Read tool spawns. Approximating it would exercise a
+        // call the pipeline never makes, and the flags are where a broken poppler shows up.
+        let s = Scratch::new("render-argv");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        s.stub(
+            &bin,
+            "pdftoppm",
+            "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf '%s\\n' \"$@\" > \"$out.argv\"\nprintf '\\377\\330\\377' > \"$out-01.jpg\"\n",
+        );
+        assert_eq!(render_from_closure(&closure_of(&bin), &pdf, &dir), Ok(1));
+        let argv = std::fs::read_to_string(dir.join("page.argv")).unwrap();
+        assert_eq!(
+            argv.lines().collect::<Vec<_>>(),
+            vec![
+                "-jpeg",
+                "-r",
+                "100",
+                "-f",
+                "1",
+                "-l",
+                "1",
+                pdf.to_str().unwrap(),
+                dir.join("page").to_str().unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_renderer_sees_the_closures_environment_and_nothing_else() {
+        // `env_clear` is the whole point of the gate: a tool installed on the CI box must never be
+        // able to stand in for the closure's own copy, and neither may a variable of the CI box's
+        // environment change how the closure's copy behaves.
+        let leaked = std::env::vars()
+            .find(|(k, v)| k != "PATH" && k != "HOME" && !v.is_empty())
+            .expect("the test process has some environment to leak");
+        let s = Scratch::new("render-env");
+        let bin = s.bindir("bin");
+        let dir = s.bindir("out");
+        let pdf = s.join("f.pdf");
+        std::fs::write(&pdf, fixture_pdf()).unwrap();
+        s.stub(
+            &bin,
+            "pdftoppm",
+            &format!(
+                "#!/bin/sh\nfor a in \"$@\"; do out=\"$a\"; done\nprintf '%s\\n%s\\n%s\\n' \"$PATH\" \"$HOME\" \"${{{}-ABSENT}}\" > \"$out.env\"\nprintf '\\377\\330\\377' > \"$out-01.jpg\"\n",
+                leaked.0
+            ),
+        );
+        assert_eq!(render_from_closure(&closure_of(&bin), &pdf, &dir), Ok(1));
+        let seen = std::fs::read_to_string(dir.join("page.env")).unwrap();
+        let seen: Vec<&str> = seen.lines().collect();
+        assert_eq!(
+            seen[0],
+            bin.to_str().unwrap(),
+            "PATH is the closure's, only"
+        );
+        assert_eq!(seen[1], dir.to_str().unwrap(), "HOME is the scratch dir");
+        assert_eq!(
+            seen[2], "ABSENT",
+            "{} reached the renderer — the gate is not isolated",
+            leaked.0
+        );
+    }
+
+    // ---- the capability surface, and the declared asymmetry ----
+
+    #[test]
+    fn a_capability_surface_counts_only_directories_nix_owns() {
+        // A non-store entry on a runner's PATH is the ambient-acquisition bug a sibling gate
+        // forbids; counting it here would let whatever a developer installed silence a real
+        // asymmetry.
+        let s = Scratch::new("surface");
+        let store = s.bindir("store");
+        let owned = store.join("abc-poppler/bin");
+        std::fs::create_dir_all(&owned).unwrap();
+        s.stub(&owned, "pdftoppm", "#!/bin/sh\n");
+        let ambient = s.bindir("usr-local-bin");
+        s.stub(&ambient, "pdftoppm-ambient", "#!/bin/sh\n");
+
+        let path = std::ffi::OsString::from(format!(
+            "{}:{}",
+            owned.to_string_lossy(),
+            ambient.to_string_lossy()
+        ));
+        let bins = capability_surface_under(&path, &store);
+        assert!(bins.contains("pdftoppm"), "{bins:?}");
+        assert!(!bins.contains("pdftoppm-ambient"), "{bins:?}");
+    }
+
+    #[test]
+    fn matching_surfaces_have_no_faults() {
+        let both = ["gh", "git", "pdftoppm", "jq"];
+        let faults =
+            surface_faults(&[surface("campaign-run", &both), surface("review-run", &both)]);
+        // `jq` is declared campaign-only, so having it on BOTH sides makes that declaration stale.
+        assert_eq!(
+            faults,
+            vec![ClosureFault::StaleAsymmetry {
+                pkg: "campaign-run",
+                bin: "jq"
+            }]
+        );
+    }
+
+    #[test]
+    fn the_declared_asymmetry_is_the_only_difference_allowed() {
+        assert_eq!(
+            surface_faults(&[
+                surface("campaign-run", &["gh", "git", "pdftoppm", "jq"]),
+                surface("review-run", &["gh", "git", "pdftoppm"]),
+            ]),
+            vec![],
+            "jq producer-only is exactly what DECLARED_ASYMMETRY says"
+        );
+    }
+
+    #[test]
+    fn an_undeclared_one_sided_binary_is_a_fault() {
+        // #85's shape from the other side: a tool lands in one closure and not the other.
+        let faults = surface_faults(&[
+            surface("campaign-run", &["gh", "jq", "pdftoppm"]),
+            surface("review-run", &["gh"]),
+        ]);
+        assert_eq!(
+            faults,
+            vec![ClosureFault::UndeclaredAsymmetry {
+                pkg: "campaign-run".to_string(),
+                bin: "pdftoppm".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn an_asymmetry_declared_for_one_runner_does_not_excuse_the_other() {
+        // `jq` present ONLY to the vetter is not what the declaration says, and must not pass by
+        // matching on the binary name alone.
+        let faults = surface_faults(&[
+            surface("campaign-run", &["gh"]),
+            surface("review-run", &["gh", "jq"]),
+        ]);
+        assert!(
+            faults.contains(&ClosureFault::UndeclaredAsymmetry {
+                pkg: "review-run".to_string(),
+                bin: "jq".to_string()
+            }),
+            "{faults:?}"
+        );
+        assert!(
+            faults.contains(&ClosureFault::StaleAsymmetry {
+                pkg: "campaign-run",
+                bin: "jq"
+            }),
+            "{faults:?}"
+        );
+    }
+
+    #[test]
+    fn a_declaration_naming_no_compared_runner_is_stale() {
+        // The producer package gets renamed and the declaration is not updated: the surfaces
+        // themselves are clean, and the entry now exempts nothing while looking like it exempts
+        // something.
+        assert_eq!(
+            surface_faults(&[
+                surface("producer-run", &["gh", "jq"]),
+                surface("review-run", &["gh", "jq"]),
+            ]),
+            vec![ClosureFault::StaleAsymmetry {
+                pkg: "campaign-run",
+                bin: "jq"
+            }]
+        );
+    }
+
+    #[test]
+    fn an_empty_surface_is_never_symmetric() {
+        // Two empty sets compare equal, so without this the gate would pass loudest exactly when
+        // a closure was most broken.
+        let faults = surface_faults(&[surface("campaign-run", &[]), surface("review-run", &[])]);
+        assert!(
+            faults.contains(&ClosureFault::EmptySurface {
+                pkg: "campaign-run".to_string()
+            }),
+            "{faults:?}"
+        );
+        assert!(
+            faults.contains(&ClosureFault::EmptySurface {
+                pkg: "review-run".to_string()
+            }),
+            "{faults:?}"
+        );
+        assert_eq!(closure_exit_code(&faults), CLOSURE_UNSATISFIED);
+    }
+
+    #[test]
+    fn nothing_to_compare_produces_no_asymmetry_faults() {
+        // Every closure failed to build. The caller already holds that fault, and "every
+        // declaration is stale" on top of it would name the wrong file.
+        assert_eq!(surface_faults(&[]), vec![]);
+    }
+
+    // ---- every fault says what to do about it ----
+
+    #[test]
+    fn every_fault_names_its_package_and_what_to_change() {
+        let faults = [
+            ClosureFault::Unbuildable {
+                pkg: "review-run".to_string(),
+                detail: "no such output".to_string(),
+            },
+            ClosureFault::NoBakedPath {
+                pkg: "review-run".to_string(),
+                script: "/nix/store/x/bin/review-run".to_string(),
+            },
+            ClosureFault::ToolMissing {
+                pkg: "review-run".to_string(),
+                bin: "pdftoppm",
+                why: "Read renders PDF pages",
+            },
+            ClosureFault::RenderFailed {
+                pkg: "review-run".to_string(),
+                how: RenderFault::NoPages,
+            },
+            ClosureFault::UndeclaredAsymmetry {
+                pkg: "review-run".to_string(),
+                bin: "jq".to_string(),
+            },
+            ClosureFault::EmptySurface {
+                pkg: "review-run".to_string(),
+            },
+        ];
+        for f in &faults {
+            let m = f.describe();
+            assert!(m.contains("review-run"), "{m}");
+            assert!(m.len() > 40, "a fault must be actionable, not a word: {m}");
+        }
+    }
+
+    #[test]
+    fn a_render_fault_says_which_of_the_five_ways_it_failed() {
+        // The diagnosis is derived from the variant, never from re-reading a rendered string.
+        for (f, expect) in [
+            (RenderFault::NotInClosure, "not on the runner's baked PATH"),
+            (
+                RenderFault::Unspawnable(std::io::ErrorKind::PermissionDenied),
+                "would not start",
+            ),
+            (
+                RenderFault::Exited {
+                    code: Some(127),
+                    stderr: "boom".to_string(),
+                },
+                "exited 127",
+            ),
+            (RenderFault::NoPages, "wrote no pages"),
+            (
+                RenderFault::NotJpeg {
+                    page: "/t/page-01.jpg".to_string(),
+                    magic: vec![0x25, 0x50, 0x44],
+                },
+                "not a JPEG",
+            ),
+        ] {
+            assert!(f.describe().contains(expect), "{}", f.describe());
+        }
+        assert_eq!(
+            RenderFault::Exited {
+                code: None,
+                stderr: String::new()
+            }
+            .describe(),
+            "`pdftoppm` exited on a signal: (no stderr)",
+            "a signal death is not exit 0"
+        );
     }
 }

@@ -30,6 +30,7 @@ stateDiagram-v2
     state "human:reject" as hreject
     state "human:design" as hdesign
     state "human:close-candidate" as hclose
+    state "human:keep-open (issue)" as ikeep
     state "presentable · in queue" as queue
     state "approved · human review" as approved
     state "merged" as merged
@@ -44,8 +45,9 @@ stateDiagram-v2
     icand --> issue : vetter reject · strips the flag → back to uncovered
     icand --> icand : producer re-flags (new evidence) → un-vetted → re-vet
     iupheld --> [*] : human closes
-    icand --> hclose : human close-candidate (sacred)
-    icand --> hreject : human reject (sacred)
+    icand --> hclose : human-rule-issue close-candidate (sacred)
+    icand --> ikeep : human-rule-issue keep-open (sacred · clears the flag)
+    ikeep --> [*] : stays open, never re-flagged
 
     %% vet lifecycle — the vetter is the sole verdict transition fn
     unvetted --> ready : vetter record-verdict
@@ -76,9 +78,9 @@ stateDiagram-v2
     bon --> unvetted : dependency merges → producer re-works
 
     %% human decisions are sacred — the vetter never re-verdicts these
-    ready --> hreject : human reject + Rework note
-    ready --> hdesign : human design ruling
-    ready --> hclose : human close-candidate
+    ready --> hreject : human-rule reject + Rework note
+    ready --> hdesign : human-rule design
+    ready --> hclose : human-rule close-candidate
     hreject --> unvetted : producer reworks → reworked-reject clears labels → re-vet
     hdesign --> [*] : human rules
     hclose --> [*] : human closes
@@ -92,6 +94,85 @@ Every transition above is a `pr-review-report` subcommand. A raw `gh` / `git`
 state change from a prompt is a _loose_ transition — unenforced and untested —
 so the prompts route **all** GitHub I/O through the tool. That is what makes
 this an actual finite state machine rather than a picture of one.
+
+### The human's transitions
+
+Every actor's hand-off is a labelled transition — including the human's. That
+was not true until #86: `human:reject`, `human:design`, `human:close-candidate`
+and `human:keep-open` appeared in the binary only as strings it **read and
+refused on**, so the one actor whose decisions everything else treats as sacred
+was also the only one improvising raw `gh issue edit --add-label`.
+
+| Transition                                             | The move it makes                                                                                     |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**                       |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed** |
+| `record-close-candidate-verdict <owner/repo> <issue>`  | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)             |
+
+The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
+(PRs) and `HUMAN_RULING_LABELS` (issues), the same constants every AI transition
+already refuses to override. A state added there gains its transition rather
+than needing one, so the transition surface and the lane classifier cannot name
+different states.
+
+**A ruling is not a label; it is a label plus what it was ruling on.** The
+comment a ruling posts pins to whatever the AI's ruling on the _same subject_
+pins to, so the two records go stale together:
+
+- a PR → its head sha: `👤 human` / `Ruled <sha>: reject — <note>`, the twin of
+  `Reviewed <sha>: …`. A rework moves the head and the ruling visibly stops
+  describing the code that is there.
+- an issue carrying a **live** producer flag → the flag's timestamp:
+  `Ruled close-candidate @<at>: keep-open — <note>`, the twin of
+  `Reviewed close-candidate @<at>: …`. A re-flag invalidates it exactly as it
+  invalidates the vetter's verdict.
+- an issue with no live flag → the issue as filed: `Ruled issue @<createdAt>:`.
+  Deliberately not a moving anchor — with no producer claim there is nothing
+  that _can_ go stale — and saying `issue @…` rather than `close-candidate @…`
+  is precisely the namespace distinction that was lost.
+
+The guards are the same shape as the vetter's, and each exists for a failure
+that has already happened:
+
+- **the vocabulary**, from the constants above (a ruling outside them writes a
+  label `classify_lane` buckets nowhere — a leak);
+- **a note is required** (an unexplained ruling is indistinguishable from a
+  mis-click, which is the whole complaint);
+- **an anchor must exist** — no head sha, no ruling (`Ruled : reject` is the
+  bound-to-nothing label this replaces);
+- **a terminal subject is moot**, not refused: a merged PR or a closed issue has
+  no state left to move out of, so nothing is written and the exit is 0;
+- **re-ruling supersedes** rather than refuses. The human owns this namespace
+  and may correct a mis-click, so the old `human:*` is removed and the new one
+  added — the second sanctioned removal of a `human:*` label after
+  `reworked-reject`, and sanctioned because the actor removing it wrote it;
+- **a ruling that would strand a live flag is refused** (exit 4). This is the
+  one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
+  `human:reject` sat on an issue whose producer close-candidate flag had not
+  been judged — and because **every** AI transition refuses once a human has
+  ruled, `record_close_candidate_verdict` could never judge it again. The flag
+  was stranded and undoing it took more raw `gh`. So on an issue carrying a live
+  flag only the two rulings that **answer** the flag are legal, and the refusal
+  names all three ways out, each a single command.
+
+That last point is the rule the whole surface is built to respect: the human is
+the top of the hierarchy, and **a tool that makes the sacred decision harder
+than raw `gh` will simply be bypassed**. Every refusal here either has no legal
+write to make or names the one-command move that is legal.
+
+A ruling moves exactly **one** label. It never strips an `ai:*` label, with one
+exception: `keep-open` clears `ai:close-candidate`, the only pair that
+contradicts outright ("keep this open" against "close this"). Everything else is
+merely stale, not contradictory — a `human:reject` PR deliberately keeps its old
+`ai:ready` until `reworked-reject` clears it — and erasing the `ai:*` label
+would erase the very claim the ruling was ruling on.
+
+The writes happen in a fail-safe **order**, which is the reverse of the AI
+verdict write's and is asserted as a property rather than left to statement
+order: the comment lands before anything sacred is written (a sacred label with
+no recorded reason is the failure being fixed), and the new ruling is added
+before the old one is removed (the reverse has a window in which the subject
+carries no human decision at all and every AI actor is free to move it).
 
 ### The vetter's transitions as an MCP surface
 
@@ -111,10 +192,23 @@ server is the vetter's **only** tool surface.
 | `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                     |
 | `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                     |
 
-The last three are the vetter's **second subject**. A PR asks a human to merge
-code; a close-candidate flag asks a human to **destroy work**, so the flag is
-judged before it reaches the triage queue. The shape is identical to the PR side
-— state-load, read one, record one verdict — including the
+There is a **third profile**, and it is the answer to "CLI subcommand or MCP
+tool?" for the human: `pr-review-report mcp --profile human` (wired by
+`human-mcp.json`) serves `pr_context`, `close_candidate_context`, `human_rule`
+and `human_rule_issue` — read the subject, rule on it. The subcommands above are
+for the human at a terminal; the profile is for **an agent acting on the human's
+behalf**, which is the case that actually went wrong in #86. A prompt rule
+cannot take a bypassable Bash away, and a `gh issue edit` that no tool offers is
+exactly what gets improvised; a profile makes the non-FSM operation
+_unavailable_. The vetter's inbox tools are deliberately absent — the human's
+inbox is `human-queue`, which renders whole org-wide sets and does not fit one
+tool result — and so is `record_close_candidate_verdict`, which is the vetter's
+authority and the very move `human_rule_issue` refuses on the human's behalf.
+
+The last three vetter tools are its **second subject**. A PR asks a human to
+merge code; a close-candidate flag asks a human to **destroy work**, so the flag
+is judged before it reaches the triage queue. The shape is identical to the PR
+side — state-load, read one, record one verdict — including the
 vetted-at-the-thing-judged rule: a PR re-vets when its head moves, a flag
 re-vets when the producer posts a new one.
 
@@ -607,6 +701,48 @@ without shell access, and cannot drift from what the PR itself shows. To approve
 a PR, approve it on GitHub. The report self-provisions `gh`+`jq` via nix and
 reads `cron.env` for `ORG` / `ORGS` / `PR_ASSIGNEE`.
 
+## Run metrics — `metrics/runs.jsonl`
+
+One JSON object per line, appended by the runners and consumed by the
+[rain-org-health dashboard](https://github.com/rainlanguage/rain-org-health).
+Startup is **two** costs, not one, and they regress for unrelated reasons:
+
+| field       | window                                                     | what moves it                                                          |
+| ----------- | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `bootMs`    | first trace event → the run's first tool call              | LAUNCH: a derivation that stopped being cached, a GC'd store path      |
+| `ttlMs`     | first tool call → the first **productive** call            | ORIENTATION: a tool returning too much, a longer prompt, a failed call |
+| `startupMs` | first tool **result** → the first productive call's result | frozen — see below                                                     |
+
+"Productive" is the producer's first org mutation and the vetter's first
+`record_verdict` (`firstMutationIndex` marks it in both cases).
+
+`startupMs` is **not** `bootMs + ttlMs` and must not be made so. Its anchor is
+the first tool RESULT, so it opens one tool-result late and excludes the first
+call's own latency — on the vetter's MCP surface that first call is `unvetted`,
+which has measured 137 s. That is a real flaw, but it is the meaning every
+committed record was written under, and re-anchoring it would put a step in the
+dashboard's longest series that no run ever experienced. `bootMs + ttlMs` is the
+honest run-start-to-first-productive-act figure; `startupMs` stays where it is.
+
+Each line carries a typed `stage`:
+
+- **`stage` absent** — a record written before the split. It has `startupMs`
+  under the meaning above and **no** `bootMs`/`ttlMs`. This absence is how a
+  consumer tells old records from new.
+- **`boot`** / **`ttl`** — PARTIAL records, appended by `run-timings` from
+  inside the runner's live pipe the moment each number becomes knowable. They
+  carry only what is known then: no `toolCalls`, `startupPct`, `durationMs`,
+  `outcome`, and no `startupMs` (its end anchor has not arrived).
+- **`final`** — the complete record, written by `run-metrics` after the run.
+
+So one run produces up to three lines with the same `runId` — more when model
+fallback retried it, since each attempt measures itself. A consumer keeps the
+most complete (`final` > `ttl` > `boot`), and the **last** of those, which is
+the attempt that actually ran. The partials exist because `run-metrics` only
+ever runs after the claude process exits: a run that is killed or times out is
+exactly the run whose startup timings you want, and it was precisely the one
+that left no trace of them at all.
+
 ## Runtime state (NOT tracked — see `.gitignore`)
 
 - `campaign.log` — distilled human-readable log (`tail -f` to watch).
@@ -647,6 +783,54 @@ reads `cron.env` for `ORG` / `ORGS` / `PR_ASSIGNEE`.
 - **Pause:** `touch DISABLED` · **Resume:** `rm DISABLED`
 - **Watch:** `tail -f campaign.log` · **Run now:**
   `CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run`
+
+## Tooling failures are run failures, not verdict caveats
+
+A run whose tools could not do their job is not a successful run. Both runners
+resolve every external binary the _harness_ needs at read time
+(`pr-review-report preflight`, declared in `HARNESS_TOOLS`) before spending a
+token; a miss ends the run with exit 12, writes one `metrics/runs.jsonl` record
+with `"outcome": "tooling-failure"`, and never starts the model.
+
+Two fields on that record carry the detail:
+
+- `unreadableFiles` — files a successful `Glob` listed and a later `Read` then
+  failed on. The file was there, so the failure is the environment's, not the
+  model's choice of argument. This is what makes the outcome `tooling-failure`,
+  and it needs no rule about any particular binary: it is a relation between two
+  tool results, not a match on an error message, so a future dependency nobody
+  has declared fails the same way.
+- `commandsNotFound` — Bash commands that exited 127. Reported, never raised to
+  a failed outcome: the producer's Bash legitimately _probes_ for tools it does
+  not need (`which node npm`), and a red for that would spend the outcome's
+  credibility.
+
+Why it is not merely a coverage question: on 2026-07-28 the vetter's `Read` of
+`audit/protofire/*.pdf` returned `pdftoppm is not installed`, the run vetted the
+PR on what was left, recorded `ready`, and exited 0 — for a PR an earlier run
+had `reject`ed at the same head. A missing dependency that produces a confident
+answer is indistinguishable, from outside, from a considered judgement (#85).
+
+`HARNESS_TOOLS` is only a declaration; three CI gates make it true of the
+closure a model actually runs inside. Each is a subcommand, so it runs locally
+against any checkout and is tested like the rest of the tool — `rust.yml`
+invokes it and reads the exit code (0 satisfied, 12 the closure is wrong, 2 the
+gate could not be evaluated at all).
+
+| Gate                                 | Asserts                                                                                                                                                                                                                           |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr-review-report closure-preflight` | every `HARNESS_TOOLS` entry resolves from **each** model runner's own baked PATH — the same `resolve_in` the runner uses at run time, so declaration and closure cannot drift                                                     |
+| `pr-review-report closure-render`    | that closure's `pdftoppm` **renders** a generated one-page PDF with the harness's own argv, under a cleared environment. Presence is not capability: a broken renderer reaches the model as the same `isError` an absent one does |
+| `pr-review-report closure-surface`   | the two runners' binary sets differ only where `DECLARED_ASYMMETRY` says (currently `jq`, producer-only), in **both** directions — an undeclared difference and a declaration that is no longer true                              |
+
+The render fixture is generated rather than committed: a built PDF cannot rot
+into a stale blob nobody can regenerate, and its xref byte offsets are its own
+self-check — a generator that computes one wrong produces a file poppler
+rejects, so the gate fails loudly rather than passing a degenerate document.
+
+The surface gate is deliberately the third and not the only one. A symmetry
+check cannot see a capability **both** runners lack, which is exactly #85's
+shape; the two presence gates are what hold that bug.
 
 ## What a run does
 

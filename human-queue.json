@@ -186,38 +186,6 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
-    "ai:close-candidate": [
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 177,
-        "title": "test(lts): exercise setDefaultFee through governance flow"
-      },
-      {
-        "repo": "rainlanguage/raindex",
-        "number": 2785,
-        "title": "docs(natspec): correct stale calculateClearStateChange cap description"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 204,
-        "title": "fix(run): guard against under-length inputs arrays in convertToAssets/Shares"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 154,
-        "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()"
-      },
-      {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 242,
-        "title": "Fix pow: surface ExponentOverflow instead of Panic(0x11) on negative-exp squaring"
-      },
-      {
-        "repo": "rainlanguage/rain.strategies",
-        "number": 28,
-        "title": "wip on folio"
-      }
-    ],
     "ai:design": [
       {
         "repo": "cyclofinance/cyclo.site",
@@ -251,6 +219,11 @@
       }
     ],
     "ai:ready": [
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 6,
+        "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
+      },
       {
         "repo": "rainlanguage/claude-audit-skills",
         "number": 50,
@@ -427,42 +400,37 @@
         "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
       },
       {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 212,
-        "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
-      },
-      {
-        "repo": "rainlanguage/rain.vats",
-        "number": 324,
-        "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 211,
-        "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 185,
-        "title": "test(readme): assert README documents both ERC4626 word names"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 137,
-        "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 130,
-        "title": "test: assert authoringMetaV2 word names and descriptions"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 372,
-        "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)"
+        "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
       }
     ],
     "ai:reject": [
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 5,
+        "title": "Migrate to the rolling-candidate snapshot model"
+      },
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 4,
+        "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
+      },
+      {
+        "repo": "rainlanguage/rain.deploy",
+        "number": 19,
+        "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found"
+      },
+      {
+        "repo": "cyclofinance/cyclo.sol",
+        "number": 56,
+        "title": "anchor audit PDFs under audit/protofire/ so the org health scan sees them"
+      },
+      {
+        "repo": "rainlanguage/rain.factory",
+        "number": 47,
+        "title": "Slim rain.factory to the interface library (#46)"
+      },
       {
         "repo": "cyclofinance/cyclo.site",
         "number": 436,
@@ -666,7 +634,7 @@
         ]
       },
       "human:reject": {
-        "count": 30,
+        "count": 31,
         "prs": [
           {
             "repo": "rainlanguage/rain.flare",
@@ -763,6 +731,12 @@
             "number": 220,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/220",
             "title": "build(sh): include BuildPointers.sol and forge fmt in build.sh"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 212,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
+            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
           },
           {
             "repo": "rainlanguage/rain.vats",
@@ -1098,20 +1072,37 @@
       }
     },
     "vet-lifecycle": {
-      "un-vetted": {
-        "count": 12,
+      "awaiting-re-vet": {
+        "count": 2,
         "prs": [
           {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 6,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
-            "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
+            "repo": "rainlanguage/rain.vats",
+            "number": 325,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/325",
+            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
           },
           {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
-            "title": "Migrate to the rolling-candidate snapshot model"
+            "repo": "rainlanguage/rain.flare",
+            "number": 137,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/137",
+            "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
+          }
+        ]
+      },
+      "un-vetted": {
+        "count": 8,
+        "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 92,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/92",
+            "title": "feat(fsm): the human's transitions are transitions, not raw gh (#86)"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 87,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/87",
+            "title": "fix(gate): refuse a `gh pr create` whose body lacks the QA-GUIDE §8 evidence block — as a `pr-review-report` subcommand"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1130,30 +1121,6 @@
             "number": 289,
             "url": "https://github.com/rainlanguage/rainix/pull/289",
             "title": "Fail over fork RPC endpoints with an archive-aware preflight"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 4,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4",
-            "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 19,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/19",
-            "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found"
-          },
-          {
-            "repo": "cyclofinance/cyclo.sol",
-            "number": 56,
-            "url": "https://github.com/cyclofinance/cyclo.sol/pull/56",
-            "title": "anchor audit PDFs under audit/protofire/ so the org health scan sees them"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 47,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/47",
-            "title": "Slim rain.factory to the interface library (#46)"
           },
           {
             "repo": "rainlanguage/rain.uniswap",
@@ -1177,47 +1144,6 @@
       }
     },
     "vetter-verdicts": {
-      "ai:close-candidate": {
-        "count": 6,
-        "prs": [
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 177,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/177",
-            "title": "test(lts): exercise setDefaultFee through governance flow"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2785,
-            "url": "https://github.com/rainlanguage/raindex/pull/2785",
-            "title": "docs(natspec): correct stale calculateClearStateChange cap description"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 204,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/204",
-            "title": "fix(run): guard against under-length inputs arrays in convertToAssets/Shares"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 154,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/154",
-            "title": "fix(erc4626): replace unsafe assembly reads with Solidity array indexing in run()"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 242,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/242",
-            "title": "Fix pow: surface ExponentOverflow instead of Panic(0x11) on negative-exp squaring"
-          },
-          {
-            "repo": "rainlanguage/rain.strategies",
-            "number": 28,
-            "url": "https://github.com/rainlanguage/rain.strategies/pull/28",
-            "title": "wip on folio"
-          }
-        ]
-      },
       "ai:design": {
         "count": 6,
         "prs": [
@@ -1260,8 +1186,14 @@
         ]
       },
       "ai:ready": {
-        "count": 42,
+        "count": 35,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 6,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
+            "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
+          },
           {
             "repo": "rainlanguage/claude-audit-skills",
             "number": 50,
@@ -1465,60 +1397,42 @@
             "number": 170,
             "url": "https://github.com/rainlanguage/rain.flare/pull/170",
             "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths"
-          },
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 325,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/325",
-            "title": "test(reentrancy): ERC1155-callback reentrancy regression for both vault types"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 212,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
-            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
-          },
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 324,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/324",
-            "title": "test(erc4626spec): add ERC-4626 spec compliance tests for OffchainAssetReceiptVault"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 211,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/211",
-            "title": "test(integrity): slot-distinctness guard and per-word integrity count assertions"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 185,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/185",
-            "title": "test(readme): assert README documents both ERC4626 word names"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 137,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/137",
-            "title": "fix: add ZeroSFLRRate guard, move DecimalsTooLarge to library, pin OutOfFunds revert"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 130,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/130",
-            "title": "test: assert authoringMetaV2 word names and descriptions"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 372,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/372",
-            "title": "fix: separate cyToken share decimals from underlying decimals (A17-5)"
           }
         ]
       },
       "ai:reject": {
-        "count": 30,
+        "count": 35,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 5,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
+            "title": "Migrate to the rolling-candidate snapshot model"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 4,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4",
+            "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 19,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/19",
+            "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found"
+          },
+          {
+            "repo": "cyclofinance/cyclo.sol",
+            "number": 56,
+            "url": "https://github.com/cyclofinance/cyclo.sol/pull/56",
+            "title": "anchor audit PDFs under audit/protofire/ so the org health scan sees them"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 47,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/47",
+            "title": "Slim rain.factory to the interface library (#46)"
+          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 436,
@@ -1716,150 +1630,75 @@
   },
   "closeCandidateIssues": [
     {
-      "repo": "rainlanguage/rain.dia",
-      "number": 45,
-      "title": "[AUDIT-I06] [info] Audit-fix PR branches are parallel siblings, not stacked"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 42,
-      "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 248,
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/rain.erc4626.words",
-      "number": 93,
-      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2174,
-      "title": "Invalid values shown on stack in the strategy studio."
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 969,
-      "title": "`Words` tab errors for nested scenarios within the front matter."
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 221,
-      "title": "Unreadable error messages on WalletConnect tx reject"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 958,
-      "title": "don't have \"utils\" folder in tauri-app/src/lib/utils"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 843,
-      "title": "need to be able to get logs out of the app somehow"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 243,
-      "title": "Contract deployment for base network failing"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 661,
-      "title": "should select a tab when clicking on \"words\" on add order screen"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 632,
-      "title": "sometimes the QR code for wallet connect doesn't show"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 623,
-      "title": "implement/test context properly for obv4 associated actions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 589,
-      "title": "trading chart should indicate direction somehow"
     }
   ],
   "closeCandidateUnvetted": [
     {
-      "repo": "rainlanguage/rain.dia",
-      "number": 45,
-      "title": "[AUDIT-I06] [info] Audit-fix PR branches are parallel siblings, not stacked"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 42,
-      "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 248,
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/rain.erc4626.words",
-      "number": 93,
-      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2174,
-      "title": "Invalid values shown on stack in the strategy studio."
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 969,
-      "title": "`Words` tab errors for nested scenarios within the front matter."
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 221,
-      "title": "Unreadable error messages on WalletConnect tx reject"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 958,
-      "title": "don't have \"utils\" folder in tauri-app/src/lib/utils"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 843,
-      "title": "need to be able to get logs out of the app somehow"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 243,
-      "title": "Contract deployment for base network failing"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 661,
-      "title": "should select a tab when clicking on \"words\" on add order screen"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 632,
-      "title": "sometimes the QR code for wallet connect doesn't show"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 623,
-      "title": "implement/test context properly for obv4 associated actions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 589,
-      "title": "trading chart should indicate direction somehow"
     }
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 96,
+      "title": "All of it should be Rust in the one pr-review-report bin — 758 lines of shell remain"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 204,
+      "title": "Fee precedence is undocumented: a category fee of 0 shadows the default for all crypto feeds"
+    },
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 61,
+      "title": "Refuse to run Pass 2 before adversarial-mutation-test has covered the repo"
+    },
+    {
+      "repo": "rainlanguage/rain.strategies",
+      "number": 125,
+      "title": "halflife decay may lose precision before the io-ratio is spent"
+    },
+    {
+      "repo": "rainlanguage/rain.strategies",
+      "number": 124,
+      "title": "fixed-spread has no min or max trade amount"
+    },
+    {
+      "repo": "rainlanguage/rain.strategies",
+      "number": 123,
+      "title": "auction-dca halflife exponent is unclamped and bricks the order past 192 epochs"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 95,
+      "title": "Collapse un-vetted and awaiting-re-vet into one needs-vet state"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2824,
+      "title": "Scenario-eval pipeline (charts/metrics + per-scenario words) is maintained but has no consumer"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2823,
+      "title": "packages/ui-components/src/lib/utils is a junk drawer — split into named directories"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 94,
+      "title": "Add slash commands for the human FSM transitions"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2822,
+      "title": "raindex_cli logs have no timestamps (.without_time() in crates/cli/src/main.rs)"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 60,
@@ -2259,6 +2098,11 @@
       "repo": "rainlanguage/rain-org-health",
       "number": 83,
       "title": "roh: flag when a repo depends on an archived repo"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 42,
+      "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
     },
     {
       "repo": "rainlanguage/rain.dia",
@@ -2774,6 +2618,11 @@
       "repo": "rainlanguage/raindex",
       "number": 2788,
       "title": "Allow the order input token to be optional"
+    },
+    {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 93,
+      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
       "repo": "rainlanguage/rain.erc4626.words",
@@ -4928,6 +4777,12 @@
       "reason": "🤖 ai:producer Producer note: PR close-candidate — queued for human close review. Superseded by #22: per the 2026-07-04 rework note on #22 (\"land the parser fix + this suite together\"), this branch was merged into #22 and the two heads are now the identical commit (0e5cfe9); #22 carries the parser fix, the adapted \"1.\" revert pin, and Closes #24. Nothing unique remains here."
     },
     {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 212,
+      "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser",
+      "reason": "🤖 ai:producer Producer note: rework executed — verified each of the nine `Closes` against the actual diff.  - Kept `Closes`, covered by diff: #86, #103 (integrity() `@return` tags), #119, #124 (SubParser `@title`/`@notice` + `authoringMetaV2()` docs), #81 (added in rework: LibERC4626 named returns `assetsFloat`/`sharesFloat` + decimal re-encoding precision in `@return`), #92 (added in rework: ConvertToAssets `run()` round-DOWN direction note, mirroring ConvertToShares). - Downgraded to `Refs`: #95, #109, #111 — their asks (run() `@param operand`/`@return outputs`, ConvertToShares rounding direction) already landed on main via #246, so this diff has nothing honest to add; they are fixed-on-main close-candidates. - Also corrected in rework: this PR had documented the vault address input as Float-encoded; it travels as raw stack bits (org ruling, #242). Fixed in integrity `@return` lines and both authoring meta descriptions. - Merged origin/main into the branch, regenerated meta + pointers (DESCRIBED_BY_META_HASH, BYTECODE_HASH), forge test 123/123 green locally."
+    },
+    {
       "repo": "rainlanguage/raindex",
       "number": 2778,
       "title": "fix: mask signer row operand to low byte",
@@ -5001,23 +4856,23 @@
     }
   ],
   "counts": {
-    "ready": 42,
+    "ready": 37,
     "design": 6,
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 14,
-    "closeCandidateUnvetted": 14,
+    "closeCandidateIssues": 1,
+    "closeCandidateUnvetted": 1,
     "closeCandidateUpheld": 0,
-    "leaks": 17,
-    "totalProducerPrs": 170,
-    "uncoveredIssues": 607,
-    "unvetted": 12,
-    "awaitingReVet": 0,
-    "reject": 30,
+    "leaks": 18,
+    "totalProducerPrs": 161,
+    "uncoveredIssues": 620,
+    "unvetted": 8,
+    "awaitingReVet": 2,
+    "reject": 35,
     "relink": 1,
-    "closeCandidatePrs": 6,
-    "humanReject": 30,
+    "closeCandidatePrs": 0,
+    "humanReject": 31,
     "humanDesign": 6,
     "humanCloseCandidate": 0
   }

@@ -68,8 +68,11 @@ transition functions:
 | `unvetted [--json] [--include-skipped] [--limit n]`        | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals (MCP always pages; the CLI is unbounded unless `--limit`) |
 | `unvetted_close_candidates` (MCP)                          | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                    |
 | `record_close_candidate_verdict` (MCP)                     | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                        |
-| `mcp [--profile vetter\|producer]`                         | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                         |
+| `human-rule <owner/repo> <n> <ruling> "<note>"`            | the HUMAN's PR ruling: `human:<ruling>` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling)                                            |
+| `human-rule-issue <owner/repo> <n> <ruling> "<note>"`      | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed                                                 |
+| `record-close-candidate-verdict <owner/repo> <n> <v> …`    | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                              |
 | `require-qa-block`                                         | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session   |
+| `mcp [--profile vetter\|producer\|human]`                  | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                         |
 
 ## The FSM as a tool surface (MCP)
 
@@ -82,6 +85,7 @@ neither can name the other's transitions.
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `vetter` (default) | PRs: `unvetted`, `pr_context`, `pr_checkout`, `record_verdict`, `clone_release`. Close-candidate flags: `unvetted_close_candidates`, `close_candidate_context`, `record_close_candidate_verdict` |
 | `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`                                                                                                                                        |
+| `human`            | `pr_context`, `close_candidate_context`, `human_rule`, `human_rule_issue` — read the subject, rule on it                                                                                         |
 
 The vetter has **two subjects**, not one. A PR is judged on its diff; a producer
 `ai:close-candidate` flag is judged on its evidence — and the second matters
@@ -198,6 +202,13 @@ it finds is a different PR's code.
 - **Human decisions are sacred.** A `human:*` label OR a native `APPROVED` /
   `CHANGES_REQUESTED` review is never overwritten by the vetter —
   `--record-verdict` refuses (exit 3), closing the TOCTOU race.
+- **A human ruling is a transition too, and it pins to what it ruled on.**
+  `human-rule` / `human-rule-issue` are the only sanctioned way to write a
+  `human:*` label: raw `gh issue edit --add-label` binds to nothing and, on an
+  issue whose close-candidate flag has not been judged, permanently strands it
+  (every AI transition refuses once a human has ruled). A ruling pins to the
+  head sha, the live flag's timestamp, or the issue as filed — whichever anchor
+  the AI's ruling on that same subject uses — so the two stale together.
 - **Comments are trusted by AUTHOR, never by marker text.** Any third party can
   post a `🤖 ai:vetter` / `🤖 ai:producer` / "Rework note" line; a comment
   counts only when the trusted account authored it. Read via

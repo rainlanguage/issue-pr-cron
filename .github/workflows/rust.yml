@@ -196,6 +196,9 @@ jobs:
               esac
             done
           }
+          # This list is what the SCRIPTS name. Tools the HARNESS execs on the model's behalf
+          # (`pdftoppm`, `pdfinfo`) are deliberately NOT repeated here — they are declared once, in
+          # `HARNESS_TOOLS`, and asserted by the preflight step below, so the two cannot drift.
           check campaign-run campaign-run \
             date uname getent id flock timeout find sort cut tail rm mkdir tee sed grep gh jq pr-review-report
           check review-run review-run \
@@ -207,5 +210,27 @@ jobs:
           check pr-review-report-sh pr-review-report-sh pr-review-report
           [ "$fail" -eq 0 ] && echo "every runner closure is self-contained"
           exit "$fail"
+      # The step above asserts the tools the SCRIPTS name. It structurally cannot see a tool only
+      # the HARNESS reaches for at read time — nothing in this repo names `pdftoppm`, so no walk
+      # over declarations could find it, which is how #85 passed a gate that was working correctly.
+      #
+      # The three gates below close that, and they are SUBCOMMANDS, not bash. Each one resolves a
+      # runner's capabilities from that runner's own baked PATH and from nothing else, so neither
+      # the declaration nor the closure can drift, and nothing that merely happens to be installed
+      # on this box can satisfy them. The logic lives in `pr-review-report` because it is real
+      # computation — a PDF generator, a PATH parser, a set difference — and there it is unit
+      # tested, runnable locally, and mutation-checked like the rest of the pipeline.
+      - name: each model runner satisfies its own preflight
+        run: nix run .#pr-review-report -- closure-preflight
+      # Presence is not capability: a closure can carry `pdftoppm` and still fail on a missing
+      # shared library or data file, and the harness turns BOTH into the same `isError` with the
+      # run still exiting 0. This renders a generated PDF end to end with the harness's own argv.
+      - name: the PDF read path renders, not just resolves
+        run: nix run .#pr-review-report -- closure-render
+      # A dependency discovered ONCE must not go missing from the other runner silently. This
+      # cannot see a capability both runners lack — #85's exact shape — which is why the two
+      # presence gates above are what actually hold that bug.
+      - name: the two model runners' capability surfaces match, except where declared
+        run: nix run .#pr-review-report -- closure-surface
       - name: flake check
         run: nix flake check --print-build-logs
