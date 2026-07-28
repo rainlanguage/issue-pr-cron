@@ -482,17 +482,16 @@ user `settings.json` as a PreToolUse `Bash` hook. The two scripts carry their
 own `DEPLOY:` note; the subcommand is invoked directly, with no wrapper script
 around it:
 
-```jsonc
+Claude Code's `settings.json` is strict JSON — **no comments**, so the block
+below is copy-pasteable as-is:
+
+```json
 {
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
-          // The flake-built binary, invoked directly — no bash wrapper.
-          // `nix profile install <install-dir>#pr-review-report` puts it on PATH;
-          // otherwise use the absolute path from
-          // `nix build --no-link --print-out-paths <install-dir>#pr-review-report`.
           { "type": "command", "command": "pr-review-report require-qa-block" },
           {
             "type": "command",
@@ -508,6 +507,11 @@ around it:
   }
 }
 ```
+
+The first entry is the flake-built binary invoked directly, with no bash wrapper
+around it. `nix profile install <install-dir>#pr-review-report` puts it on PATH;
+otherwise substitute the absolute path from
+`nix build --no-link --print-out-paths <install-dir>#pr-review-report`.
 
 Each reads the hook payload on stdin and exits `0` to allow or `2` to block,
 with the refusal on stderr — the stream Claude Code feeds back to the model, so

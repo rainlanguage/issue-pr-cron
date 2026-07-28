@@ -6998,8 +6998,9 @@ fn mcp_serve(profile: McpProfile) -> i32 {
 // what lets a refusal name the specific lines that are absent. Measured against the real corpus
 // (`runs/`): of the 32 bodies the producer wrote, 24 pass untouched and 8 are one-to-three lines
 // short of section 8's own template — each already carrying the heading and at least one line, so
-// the retry is a small edit, not a rewrite. All 6 bodies the vetter rejected for a missing block
-// carry no `## QA` heading at all and fail on the first check.
+// the retry is a small edit, not a rewrite. All FIVE bodies the vetter rejected for a missing
+// block carry no `## QA` heading at all and fail on the first check. (Five, not six: the sixth
+// rejection that day was substantive, not a missing block — see #83.)
 //
 // SCOPE: `gh pr create` only. A rework push carries no body to inspect, so QA-GUIDE's "a rework
 // without it does not get re-pushed" stays the vetter's.
@@ -7617,16 +7618,22 @@ fn invocation_bodies(argv: &[String], base: &str) -> Result<(Vec<BodyArg>, bool)
 /// `gh` `pr` `create` word sequence to find and would sail through — the same wrapper bypass
 /// `hooks/block-nix-wrap-gh.sh` exists for. Each payload is re-checked as a command in its own right.
 ///
-/// Two things are followed, and only two. The argument of a `-…c` flag — `bash -c`, `sh -c`,
-/// `bash -lc`, `zsh -ic`, and the `nix shell … --command bash -c` spelling, whose inner `-c` is what
-/// carries the script. And the argument of `eval`, which is the shell interpreting its own argument
-/// and is otherwise a clean way past every literal word match here.
+/// Two things are followed, and only two. The argument of an INTERPRETER's `-…c` flag — `bash -c`,
+/// `sh -c`, `bash -lc`, `zsh -ic`, and the `nix shell … --command bash -c` spelling, whose inner
+/// `-c` is what carries the script. And the argument of `eval`, which is the shell interpreting its
+/// own argument and is otherwise a clean way past every literal word match here.
 ///
 /// The distinction that matters is whether the token is EXECUTED, not whether it looks like a
 /// command: `eval "gh pr create …"` and `grep "gh pr create" file` are the same shape to a text
-/// scan, and only the first runs. That is why this keys on the executing word rather than on the
-/// payload's contents — a scan of the raw line would have to refuse the grep too, and grepping this
-/// repo's own prompt for `gh pr create` is routine.
+/// scan, and only the first runs. That is why this keys on the executing word — a scan of the raw
+/// line would have to refuse the grep too, and grepping this repo's own prompt for `gh pr create`
+/// is routine.
+///
+/// Matching the FLAG SHAPE alone was not enough for the same reason: `-c` is an ordinary flag on
+/// ordinary commands (`grep -c`, `sort -c`, `wc -c`, `git commit -c <ref>`), and following their
+/// next argument refused a plain `grep -c 'gh pr create' campaign-prompt.txt`. So the flag is
+/// followed only when the command being run is a shell. The lookback skips the flags between them,
+/// because the interpreter is not always adjacent to its own flag (`bash --norc -c '…'`).
 ///
 /// Never a `--body` value, so quoting `gh pr create` inside a PR body cannot trigger it. A
 /// `--command` whose argument is a bare word list needs nothing here: those tokens stay on the line
@@ -7637,18 +7644,29 @@ fn invocation_bodies(argv: &[String], base: &str) -> Result<(Vec<BodyArg>, bool)
 /// and one token can be neither a three-word `gh pr create` nor an interpreter flag with an
 /// argument, so re-checking it always returns `Ok`. Keeping it would be a branch no test could
 /// defend.
-fn nested_commands(tokens: &[String]) -> Vec<&str> {
-    let hands_off_next = |t: &str| {
-        t == "eval"
-            || (t.len() >= 2
-                && t.starts_with('-')
-                && t.ends_with('c')
-                && t[1..].chars().all(|c| c.is_ascii_alphabetic()))
+///
+/// Returns each payload with the index of the word that hands it over, because that index is also
+/// where the child inherits its working directory.
+fn nested_commands(seg: &[String]) -> Vec<(usize, &str)> {
+    /// The shells whose `-c` argument is a script rather than data.
+    const INTERPRETERS: [&str; 5] = ["bash", "sh", "zsh", "dash", "ksh"];
+    let is_dash_c = |t: &str| {
+        t.len() >= 2
+            && t.starts_with('-')
+            && t.ends_with('c')
+            && t[1..].chars().all(|c| c.is_ascii_alphabetic())
     };
-    tokens
-        .windows(2)
-        .filter(|w| hands_off_next(&w[0]))
-        .map(|w| w[1].as_str())
+    let interpreter_runs = |before: &[String]| {
+        before
+            .iter()
+            .rev()
+            .find(|t| !t.starts_with('-'))
+            .is_some_and(|t| INTERPRETERS.contains(&t.rsplit('/').next().unwrap_or(t)))
+    };
+    seg.iter()
+        .enumerate()
+        .filter(|(i, t)| t.as_str() == "eval" || (is_dash_c(t) && interpreter_runs(&seg[..*i])))
+        .filter_map(|(i, _)| seg.get(i + 1).map(|p| (i, p.as_str())))
         .collect()
 }
 
@@ -7793,8 +7811,9 @@ fn block_is_complete(section: Option<&str>) -> bool {
 
 /// Check one command line, and every interpreter payload inside it, against the gate.
 ///
-/// `cwd` is the session's own directory — the base each `check` starts from, including a nested one:
-/// `bash -c '…'` inherits the session's directory, not the walked base of the outer line.
+/// `cwd` is the directory this command runs in. For a nested payload that is NOT the session's own
+/// directory: a child process inherits the parent's at exec time, so `cd sub && bash -c '…'` runs
+/// the script in `sub`, and the payload is checked against the walked base rather than the start.
 fn check_command(command: &str, cwd: &str, depth: usize) -> Result<(), Refusal> {
     let Some(tokens) = shell_split(command) else {
         // Unparseable (unbalanced quote, dangling backslash). Fail CLOSED if it still looks like a
@@ -7816,6 +7835,9 @@ fn check_command(command: &str, cwd: &str, depth: usize) -> Result<(), Refusal> 
         if segment_hides_pr_create(&seg) {
             return Err(Refusal::UnresolvedInvocation);
         }
+        // Where this segment begins, so an interpreter payload inside it can be walked to the
+        // directory it is actually handed over in.
+        let seg_base = base.clone();
         let mut prev = 0;
         for (start, end) in pr_create_spans(&seg) {
             base = apply_cds(&base, &seg[prev..start]);
@@ -7848,11 +7870,14 @@ fn check_command(command: &str, cwd: &str, depth: usize) -> Result<(), Refusal> 
             }
         }
         base = apply_cds(&base, &seg[prev..]);
-    }
 
-    if depth < QA_MAX_NESTED_DEPTH {
-        for nested in nested_commands(&tokens) {
-            check_command(nested, cwd, depth + 1)?;
+        if depth < QA_MAX_NESTED_DEPTH {
+            for (at, payload) in nested_commands(&seg) {
+                // A child process inherits the parent's working directory AT EXEC TIME, so the
+                // payload is checked against the directory the `cd`s BEFORE it have reached — not
+                // the session's own, which is only where the line started.
+                check_command(payload, &apply_cds(&seg_base, &seg[..at]), depth + 1)?;
+            }
         }
     }
     Ok(())

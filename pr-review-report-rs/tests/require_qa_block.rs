@@ -600,11 +600,54 @@ fn an_interpreter_wrapped_pr_create_is_still_gated() {
         // `-lc`/`-ic` are the login/interactive spellings — a `-c` flag is any `-<letters>c`, not
         // the literal two characters, or a login shell is a way out.
         "bash -lc 'gh pr create --title t --body \"no evidence\"'",
+        // The interpreter is not always adjacent to its own flag, so the lookback that finds it
+        // has to skip the flags between them.
+        "bash --norc -c 'gh pr create --title t --body \"no evidence\"'",
+        "/bin/sh -c 'gh pr create --title t --body \"no evidence\"'",
         "nix shell nixpkgs#gh --command bash -c 'gh pr create --title t --body \"no evidence\"'",
     ] {
         let (code, err) = f.bash(cmd);
         assert_blocked(code, &err);
     }
+}
+
+#[test]
+fn a_dash_c_flag_on_a_command_that_is_not_a_shell_is_not_a_script() {
+    let f = Fixture::new("dash-c-not-shell");
+    // `-c` is an ordinary flag on ordinary commands. Following its argument on flag SHAPE alone
+    // refused a plain `grep -c 'gh pr create' campaign-prompt.txt` — searching this repo's own
+    // prompt for the phrase, which is routine — so the flag is followed only when a shell is what
+    // runs it.
+    for cmd in [
+        "grep -c 'gh pr create' campaign-prompt.txt",
+        "sort -c /tmp/list",
+        "wc -c /tmp/body.md",
+        "git commit -c HEAD",
+    ] {
+        let (code, err) = f.bash(cmd);
+        assert_eq!(code, 0, "{cmd} must pass through untouched: {err}");
+    }
+}
+
+#[test]
+fn an_interpreter_payload_runs_where_the_cds_reached_it() {
+    let f = Fixture::new("nested-cwd");
+    // A child process inherits the parent's directory at EXEC TIME, so
+    // `cd sub && bash -c '… --body-file body.md'` opens `sub/body.md`. Checking the session's own
+    // directory instead reads a different file — or none, refusing a compliant open.
+    let sub = f.dir.join("sub");
+    std::fs::create_dir_all(&sub).expect("create sub");
+    std::fs::write(sub.join("body.md"), COMPLETE_BLOCK).expect("write sub body");
+    std::fs::write(f.dir.join("body.md"), "Closes #1\n").expect("write outer body");
+    let (code, err) = f.bash("cd sub && bash -c 'gh pr create --title t --body-file body.md'");
+    assert_allowed(code, &err);
+    // And the mirror: the bare body is the one the shell would open when no `cd` precedes it.
+    let (code, err) = f.bash("bash -c 'gh pr create --title t --body-file body.md'");
+    assert_blocked(code, &err);
+    assert!(
+        err.contains("no `## QA` heading"),
+        "the refusal must be about the body the child would actually open: {err}"
+    );
 }
 
 #[test]
