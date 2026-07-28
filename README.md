@@ -554,11 +554,13 @@ Each line carries a typed `stage`:
   `outcome`, and no `startupMs` (its end anchor has not arrived).
 - **`final`** — the complete record, written by `run-metrics` after the run.
 
-So one run produces up to three lines with the same `runId`; a consumer keeps
-the most complete (`final` > `ttl` > `boot`). The partials exist because
-`run-metrics` only ever runs after the claude process exits: a run that is
-killed or times out is exactly the run whose startup timings you want, and it
-was precisely the one that left no trace of them at all.
+So one run produces up to three lines with the same `runId` — more when model
+fallback retried it, since each attempt measures itself. A consumer keeps the
+most complete (`final` > `ttl` > `boot`), and the **last** of those, which is
+the attempt that actually ran. The partials exist because `run-metrics` only
+ever runs after the claude process exits: a run that is killed or times out is
+exactly the run whose startup timings you want, and it was precisely the one
+that left no trace of them at all.
 
 ## Runtime state (NOT tracked — see `.gitignore`)
 

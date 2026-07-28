@@ -1071,8 +1071,9 @@ fn stamp_identity(doc: &mut Value, id: &RunIdentity) {
 /// because the run is still going and any value for them would be a guess that later reads as
 /// measurement. `startupMs` is absent from both because its end anchor is the mutation's RESULT,
 /// which has not arrived when the `ttl` record is written. A consumer distinguishes these from a
-/// complete record by `stage`, and reconciles the up-to-three lines a run can produce by keeping
-/// the most complete one per `runId`.
+/// complete record by `stage`, and reconciles the lines one `runId` can produce by keeping the
+/// most complete (`final` > `ttl` > `boot`) and, among equals, the LAST — model fallback re-runs
+/// this filter per attempt, and the last attempt is the one that actually ran.
 fn partial_record(
     probe: &StartupProbe,
     phase: StartupPhase,
