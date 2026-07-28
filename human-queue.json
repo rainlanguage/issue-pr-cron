@@ -1129,8 +1129,38 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 6,
+        "count": 11,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 92,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/92",
+            "title": "feat(fsm): the human's transitions are transitions, not raw gh (#86)"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 91,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/91",
+            "title": "fix(closure): poppler-utils, and make a tooling failure fail the run"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 137,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/137",
+            "title": "metrics: chart boot and ttl, and record runs that died before finishing"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 88,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/88",
+            "title": "feat(metrics): split startupMs into bootMs + ttlMs, recorded when known"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 87,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/87",
+            "title": "fix(hooks): refuse a `gh pr create` whose body lacks the QA-GUIDE §8 evidence block"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 101,
@@ -1746,150 +1776,39 @@
   },
   "closeCandidateIssues": [
     {
-      "repo": "rainlanguage/rain.dia",
-      "number": 45,
-      "title": "[AUDIT-I06] [info] Audit-fix PR branches are parallel siblings, not stacked"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 42,
-      "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 248,
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2174,
-      "title": "Invalid values shown on stack in the strategy studio."
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 969,
-      "title": "`Words` tab errors for nested scenarios within the front matter."
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 221,
-      "title": "Unreadable error messages on WalletConnect tx reject"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 958,
-      "title": "don't have \"utils\" folder in tauri-app/src/lib/utils"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 843,
-      "title": "need to be able to get logs out of the app somehow"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 243,
-      "title": "Contract deployment for base network failing"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 661,
-      "title": "should select a tab when clicking on \"words\" on add order screen"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 632,
-      "title": "sometimes the QR code for wallet connect doesn't show"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 623,
-      "title": "implement/test context properly for obv4 associated actions"
     }
   ],
   "closeCandidateUnvetted": [
     {
-      "repo": "rainlanguage/rain.dia",
-      "number": 45,
-      "title": "[AUDIT-I06] [info] Audit-fix PR branches are parallel siblings, not stacked"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 42,
-      "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 248,
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2174,
-      "title": "Invalid values shown on stack in the strategy studio."
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 969,
-      "title": "`Words` tab errors for nested scenarios within the front matter."
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 221,
-      "title": "Unreadable error messages on WalletConnect tx reject"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 958,
-      "title": "don't have \"utils\" folder in tauri-app/src/lib/utils"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 843,
-      "title": "need to be able to get logs out of the app somehow"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 243,
-      "title": "Contract deployment for base network failing"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 661,
-      "title": "should select a tab when clicking on \"words\" on add order screen"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 623,
-      "title": "implement/test context properly for obv4 associated actions"
     }
   ],
-  "closeCandidateUpheld": [
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 632,
-      "title": "sometimes the QR code for wallet connect doesn't show"
-    }
-  ],
+  "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 86,
-      "title": "Human FSM transitions have no tooling — only raw gh, with no guards or provenance"
+      "repo": "rainlanguage/raindex",
+      "number": 2824,
+      "title": "Scenario-eval pipeline (charts/metrics + per-scenario words) is maintained but has no consumer"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2823,
+      "title": "packages/ui-components/src/lib/utils is a junk drawer — split into named directories"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 85,
-      "title": "Vetter cannot read audit PDFs — poppler-utils missing from the closure"
+      "number": 94,
+      "title": "Add slash commands for the human FSM transitions"
     },
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 84,
-      "title": "Split startupMs into boot + ttl, record both, and chart both"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 83,
-      "title": "Producer opens PRs without the QA evidence block QA-GUIDE §8 requires"
+      "repo": "rainlanguage/raindex",
+      "number": 2822,
+      "title": "raindex_cli logs have no timestamps (.without_time() in crates/cli/src/main.rs)"
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
@@ -2290,6 +2209,11 @@
       "repo": "rainlanguage/rain-org-health",
       "number": 83,
       "title": "roh: flag when a repo depends on an archived repo"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 42,
+      "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
     },
     {
       "repo": "rainlanguage/rain.dia",
@@ -5042,13 +4966,13 @@
     "blockedDeploy": 13,
     "blockedInfra": 13,
     "blockedOn": 10,
-    "closeCandidateIssues": 12,
-    "closeCandidateUnvetted": 11,
-    "closeCandidateUpheld": 1,
+    "closeCandidateIssues": 1,
+    "closeCandidateUnvetted": 1,
+    "closeCandidateUpheld": 0,
     "leaks": 17,
-    "totalProducerPrs": 170,
-    "uncoveredIssues": 612,
-    "unvetted": 6,
+    "totalProducerPrs": 175,
+    "uncoveredIssues": 613,
+    "unvetted": 11,
     "awaitingReVet": 0,
     "reject": 35,
     "relink": 1,
