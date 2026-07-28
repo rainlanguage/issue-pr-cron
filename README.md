@@ -44,7 +44,7 @@ stateDiagram-v2
     icand --> iupheld : vetter uphold · evidence holds
     icand --> issue : vetter reject · strips the flag → back to uncovered
     icand --> icand : producer re-flags (new evidence) → un-vetted → re-vet
-    iupheld --> [*] : human closes
+    iupheld --> [*] : human-close · rules, retires the flag, closes
     icand --> hclose : human-rule-issue close-candidate (sacred)
     icand --> ikeep : human-rule-issue keep-open (sacred · clears the flag)
     ikeep --> [*] : stays open, never re-flagged
@@ -86,10 +86,10 @@ stateDiagram-v2
     ready --> hclose : human-rule close-candidate
     hreject --> unvetted : producer reworks → reworked-reject clears labels → re-vet
     hdesign --> [*] : human rules
-    hclose --> [*] : human closes
+    hclose --> [*] : human-close · retires the flag too
 
     design --> [*] : human design ruling
-    close --> [*] : human closes
+    close --> [*] : human-close (a PR) · retires the flag too
     merged --> [*]
 ```
 
@@ -110,6 +110,7 @@ was also the only one improvising raw `gh issue edit --add-label`.
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**                       |
 | `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed** |
+| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition       |
 | `record-close-candidate-verdict <owner/repo> <issue>`  | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)             |
 
 The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
@@ -177,6 +178,124 @@ no recorded reason is the failure being fixed), and the new ruling is added
 before the old one is removed (the reverse has a window in which the subject
 carries no human decision at all and every AI actor is free to move it).
 
+#### The terminal edge — `human-close`
+
+`iupheld --> [*]` and `hclose --> [*]` are edges of the diagram above, and until
+#94 they had no transition function, so the only way to take them was raw
+`gh issue close` — which knows nothing about the machine. The cost was measured:
+when #94 was filed, **74** terminal subjects across the org (55 issues, 19 PRs)
+were CLOSED and still carrying `ai:close-candidate`, a state no modeled
+transition produces. In the same sitting the one ruling that did go through a
+tool — a flag `reject` on `rain.dia#42` — came out clean. That asymmetry is the
+argument: the transition with a tool was consistent, the one without it was
+wrong every time.
+
+`human-close <owner/repo> <n> "<note>"` is that edge as **one** transition: the
+`👤 human` comment, `human:close-candidate`, the retirement of the pending flag,
+then the close.
+
+- **It is one transition, not a command that chains two.** A slash command that
+  called `human-rule-issue` and then `gh issue close` would put the ORDER and
+  the flag clear in a prompt — unenforced, untested, free to drift. Here the
+  order is a tested property, and the close is **last** because a closed subject
+  reads as moot to every ruling plan: closing first would make the labels
+  permanently unreachable and a retry would report "nothing to do" over a
+  half-written transition.
+- **It retires `ai:close-candidate` and no other `ai:*` label.** That one label
+  means "a human still has to ACT on this subject" — on an issue the producer's
+  pending claim, on a PR the vetter's pending `close` verdict — and closing IS
+  that act. Every other `ai:*` label is a judgement about the code and survives,
+  exactly as the rulings leave it.
+- **The ruling alone still leaves the flag standing.** While the subject is open
+  the flag is the live pending claim and `closeCandidateUpheld` still counts it;
+  only the terminal act retires it. The two are deliberately different, and that
+  difference is the edge.
+- **It resolves PR-or-issue by lookup**, from the subject's own `url`, so one
+  `owner/repo#n` reference cannot act on the wrong one of the two populations
+  that share the label name.
+- **On an already-closed subject it clears a stale flag and writes no ruling.**
+  The state had no exit and now has one — the machine has no dead ends — but the
+  human's close is already on the record as GitHub's own close event, and a
+  `👤 human` reason written today would date the decision to today. Manufactured
+  provenance is worse than none.
+
+#### One label, two populations
+
+`ai:close-candidate` names two separately-sized sets: `closeCandidateIssues`
+counts **issues** (a producer CLAIM awaiting judgement) and
+`lanes.vetter-verdicts.ai:close-candidate` counts **PRs** (the vetter's own
+`close` verdict). Every human transition therefore takes a full `owner/repo#n`,
+and where it can act on either subject it READS which one it has rather than
+trusting which command was typed. Where it cannot, it refuses by naming what was
+actually referenced and handing over the command that fits — in **both**
+directions, because a refusal a caller cannot act on sends them straight back to
+raw `gh`:
+
+- `record-close-candidate-verdict` pointed at a PR used to answer "no trusted
+  producer close-candidate flag — nothing to judge", which reads as _this PR has
+  no human path at all_ and was recorded as exactly that misreading. It now says
+  the subject is a pull request, why a flag verdict cannot apply to one, and
+  names the three moves that do.
+- `human-rule` pointed at an issue used to answer "`gh pr view` failed — not
+  writing on incomplete data", which reads as an API outage. It now names the
+  subject and prints the `human-rule-issue` line, carrying the same ruling
+  through.
+
+### The human's slash commands
+
+The transitions above are the layer a tool call reaches. The layer a **human**
+types is a Claude Code plugin, published from this repo's own marketplace:
+
+```
+/plugin marketplace add rainlanguage/issue-pr-cron
+/plugin install human-fsm@issue-pr-cron
+```
+
+| Command                                      | The transition it invokes                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------- |
+| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire the flag, close. Issue **or** PR, by lookup        |
+| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer |
+| `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`                              |
+| `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                              |
+| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this"                |
+
+Ruling on one close-candidate previously took four steps: a hand-written
+JSON-RPC frame, `pr-review-report mcp` fed from a file, a Python filter to read
+`isError` back out, then `gh issue comment` and `gh issue close`. It was done
+seventeen times in one sitting. These collapse that to one invocation.
+
+**Nothing in the plugin writes GitHub state.** Every guard — the ruling
+vocabulary, the mandatory note, the provenance anchor, the stranded-flag
+refusal, the subject-type check, terminal-is-moot, idempotence,
+re-ruling-supersedes — is in the binary, where it is unit- and
+mutation-validated. A command that re-derived a transition, or reached for raw
+`gh` to do what a subcommand already does, would be the loose transition this
+whole line of work exists to remove; the shipped commands are asserted against
+that, by a test that reads their fenced blocks and requires every runnable line
+to be a `pr-review-report` transition.
+
+**Why a plugin rather than files with an install step.** The org already
+distributes Claude Code assets this way — `claude-audit-skills`,
+`adversarial-mutation-test` and `rain-org-health` each publish a
+`.claude-plugin/marketplace.json`, and two of them are installed on the pipeline
+box. `rain-org-health` is the shape followed here: a repo that is primarily
+something else and publishes a plugin from a **subdirectory**
+(`"source": "./plugins/human-fsm"`), so this repo does not have to pretend to be
+a skills repo. And a slash command is the right form rather than a skill: these
+are human-typed, deterministic, argument-taking transitions — "I have decided,
+execute this" — not something a model should match by description and invoke on
+its own.
+
+**The version is stored twice, so agreement is a gate.** A plugin's version
+lives in the marketplace listing installers read AND in the plugin manifest it
+points at, and `/plugin` detects an update by comparing version strings — so a
+listing naming the old version silently serves stale content.
+`pr-review-report plugin-version-lockstep` asserts they agree for every plugin
+the marketplace lists (and that each entry resolves to a manifest of the same
+name), and `.github/workflows/version-hygiene.yaml` runs it plus the
+change-must-bump check. It is a subcommand rather than a CI shell script for the
+reason `require-qa-block` is: everything it does is parsing.
+
 ### The vetter's transitions as an MCP surface
 
 For the producer, routing through the tool is enforced by the **prompt**, and a
@@ -197,16 +316,20 @@ server is the vetter's **only** tool surface.
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
-`human-mcp.json`) serves `pr_context`, `close_candidate_context`, `human_rule`
-and `human_rule_issue` — read the subject, rule on it. The subcommands above are
-for the human at a terminal; the profile is for **an agent acting on the human's
-behalf**, which is the case that actually went wrong in #86. A prompt rule
-cannot take a bypassable Bash away, and a `gh issue edit` that no tool offers is
-exactly what gets improvised; a profile makes the non-FSM operation
-_unavailable_. The vetter's inbox tools are deliberately absent — the human's
-inbox is `human-queue`, which renders whole org-wide sets and does not fit one
-tool result — and so is `record_close_candidate_verdict`, which is the vetter's
-authority and the very move `human_rule_issue` refuses on the human's behalf.
+`human-mcp.json`) serves `pr_context`, `close_candidate_context`, `human_rule`,
+`human_rule_issue` and `human_close` — read the subject, rule on it, close it.
+`human_close` is a tool rather than something the caller composes for the reason
+above: the alternative is a transition half in a tool and half in a prompt, and
+that half was wrong on all 74 closed-and-still-flagged subjects. The subcommands
+above are for the human at a terminal; the profile is for **an agent acting on
+the human's behalf**, which is the case that actually went wrong in #86. A
+prompt rule cannot take a bypassable Bash away, and a `gh issue edit` that no
+tool offers is exactly what gets improvised; a profile makes the non-FSM
+operation _unavailable_. The vetter's inbox tools are deliberately absent — the
+human's inbox is `human-queue`, which renders whole org-wide sets and does not
+fit one tool result — and so is `record_close_candidate_verdict`, which is the
+vetter's authority and the very move `human_rule_issue` refuses on the human's
+behalf.
 
 The last three vetter tools are its **second subject**. A PR asks a human to
 merge code; a close-candidate flag asks a human to **destroy work**, so the flag
@@ -583,6 +706,8 @@ and evidence that answers a narrower question than the issue asked.
 | `cron.env.example`       | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                     |
 | `pr-review-report.sh`    | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / relink / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
 | `hooks/`                 | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                            |
+| `.claude-plugin/`        | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                              |
+| `plugins/human-fsm/`     | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                    |
 
 ## PreToolUse guards — what a prompt cannot hold
 
@@ -768,15 +893,102 @@ Each line carries a typed `stage`:
   inside the runner's live pipe the moment each number becomes knowable. They
   carry only what is known then: no `toolCalls`, `startupPct`, `durationMs`,
   `outcome`, and no `startupMs` (its end anchor has not arrived).
+- **`usage`** — LIVE SPEND, also from `run-timings`. Many per run rather than
+  one: every 25 main-thread messages, on every rate-limit escalation, and once
+  when the stream ends however it ends. See below.
 - **`final`** — the complete record, written by `run-metrics` after the run.
 
-So one run produces up to three lines with the same `runId` — more when model
+So one run produces several lines with the same `runId` — more when model
 fallback retried it, since each attempt measures itself. A consumer keeps the
 most complete (`final` > `ttl` > `boot`), and the **last** of those, which is
-the attempt that actually ran. The partials exist because `run-metrics` only
-ever runs after the claude process exits: a run that is killed or times out is
-exactly the run whose startup timings you want, and it was precisely the one
-that left no trace of them at all.
+the attempt that actually ran; `usage` records are a monotonic series alongside
+those rather than competing versions of them, so the **last** `usage` line is
+the current one and `final` supersedes them all. The partials exist because
+`run-metrics` only ever runs after the claude process exits: a run that is
+killed or times out is exactly the run whose startup timings you want, and it
+was precisely the one that left no trace of them at all.
+
+### Live token spend — and the one number that is not knowable
+
+`run-metrics` reads tokens from the terminal `result` event, so a killed run
+reported zeros. `usage` records fix that for the input side, and are honest
+about the rest:
+
+| field           | live (`usage`) | final | notes                            |
+| --------------- | -------------- | ----- | -------------------------------- |
+| `tokensIn`      | exact          | exact |                                  |
+| `cacheRead`     | exact          | exact | the term that runs away          |
+| `cacheCreation` | exact          | exact |                                  |
+| `messages`      | exact          | —     | distinct main-thread messages    |
+| `tokensOut`     | **absent**     | exact | not knowable mid-run — see below |
+| `costUsd`       | absent         | exact | needs `tokensOut`                |
+
+The trace **cannot be naively summed**, in two independent ways, and both wrong
+answers look plausible. On `review-runs/20260728T100257Z.jsonl`:
+
+```
+naive sum over every assistant event      cacheRead  9,657,649   output    526
+deduped by message id only                cacheRead  8,240,864   output    395
+MAIN-THREAD + deduped by message id       cacheRead  6,099,441   output    395
+authoritative (the `result` event)        cacheRead  6,099,441   output 41,026
+```
+
+1. The SDK emits one `assistant` event **per content block** and repeats the
+   same `message.usage` on each — 118 events carrying 37 message ids here, 33
+   repeated 2–5×, every repeat byte-identical. Usage is taken once per
+   `message.id`.
+2. Events with a `parent_tool_use_id` are a **Task subagent's** messages, and
+   `result.usage` does not include them (only `modelUsage` does). In
+   `runs/20260718T050002Z.jsonl` they are worth 23.1M cache-read tokens — 66% on
+   top of that run's own reported total.
+
+With both corrections the live probe reproduces `result.usage` **exactly** on 77
+of the 81 archived traces that have a `result`. The 4 that differ are the only
+ones with more than one top-level `result` — several claude invocations appended
+to one file, where `run-metrics` deliberately reports just the largest. The live
+filter cannot hit that case: it sits in one invocation's pipe.
+
+**`tokensOut` is deliberately absent from `usage` records.** `output_tokens` on
+an `assistant` event is a snapshot taken at message START, not a streaming delta
+— it reads 2–5 on messages that went on to emit ~1,100 tokens, which is why
+every repeat of a message id carries the same value. Across the 60 traces with a
+terminal total, the deduped sum is 0.2%–20.6% of the truth. The only other
+output signal in the stream is `system`/`thinking_tokens`, which is both
+explicitly an estimate and thinking-only: 9.7%–76.2% of true output across 53
+traces. An exhaustive scan of every numeric token/usage/cost field across all 97
+traces found no third source. So there is no live output count rather than a
+guessed one.
+
+That still leaves a real gauge: solving each model's per-token rates out of its
+own `modelUsage`/`costUSD` (sonnet-4-6 and opus-4-8 both fit to <0.1% error),
+the three exact fields account for a **median 72%** of a run's spend, range
+55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
+the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
+
+### Rate-limit windows — `rateLimits`
+
+Every record (`usage` and `final`) carries a `rateLimits` object, keyed by the
+window word the API uses, always present and `{}` when the run saw no events:
+
+```json
+"rateLimits": {"five_hour": {"status":"rejected","resetsAt":1783879200,"utilization":null,"events":5}}
+```
+
+`status` is the **worst** status seen, not the last — a rejection at minute two
+must not be erased by an `allowed` at minute twenty, since explaining that
+rejection is the entire reason the field exists. `resetsAt` and `utilization`
+are the last seen. `utilization` is a **fraction in 0..=1** as the wire spells
+it, which is _not_ the unit `usage-gate` works in (a 0..=100 percent).
+
+`usage-gate` paces on `seven_day` only and deliberately does **not** gate on
+`five_hour` — the reasoning is on `parse_seven_day` in `src/main.rs`. In short:
+linear pacing does not transfer to a window that resets 4.8× a day against a
+2-hourly schedule; across 97 traces `five_hour` reached `rejected` in 5 events
+in a single run that still completed; a second, faster-cycling pause condition
+is the same hazard as the incident that made every failure path in that gate
+inert; and the two sources disagree on units in a way that would fail silently.
+What the five-hour window was missing was diagnosis, not pacing — which is what
+recording it provides.
 
 ## Runtime state (NOT tracked — see `.gitignore`)
 

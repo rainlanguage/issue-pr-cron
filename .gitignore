@@ -31,6 +31,12 @@
 !/hooks/
 !/hooks/block-nix-wrap-gh.sh
 !/hooks/block-cron-git-bypass.sh
+# The Claude Code marketplace this repo publishes, and the plugin it serves: the human's
+# FSM transitions as slash commands (#94). Installed with `/plugin marketplace add
+# rainlanguage/issue-pr-cron`, so these two must be TRACKED — an installer reads them
+# from the repo, not from this box. `plugin-version-lockstep` gates their two versions.
+!/.claude-plugin/
+!/plugins/
 
 # NEVER track the real deployment env (it holds the account handle / box-specific values):
 /cron.env

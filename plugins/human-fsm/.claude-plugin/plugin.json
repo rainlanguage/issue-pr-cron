@@ -1,0 +1,23 @@
+{
+  "name": "human-fsm",
+  "displayName": "Human FSM transitions",
+  "version": "0.1.0",
+  "description": "Slash commands for the human transitions of the rainlanguage issue→PR pipeline finite state machine. Each command is one invocation of a pr-review-report transition — the guards (vocabulary, mandatory note, provenance anchor, stranded-flag refusal, subject type, terminal-is-moot, idempotence) live in that binary, not here.",
+  "author": {
+    "name": "Rain Open Source Software Ltd",
+    "url": "https://github.com/rainlanguage"
+  },
+  "homepage": "https://github.com/rainlanguage/issue-pr-cron",
+  "repository": "https://github.com/rainlanguage/issue-pr-cron",
+  "license": "LicenseRef-DCL-1.0",
+  "keywords": [
+    "rainlanguage",
+    "pipeline",
+    "state-machine",
+    "triage",
+    "close-candidate",
+    "github",
+    "fsm"
+  ],
+  "commands": "./commands/"
+}
