@@ -843,33 +843,44 @@ mod parallel_queue_tests {
         );
     }
 
-    // The pool is BOUNDED and it SATURATES: never more than the cap in flight, and with four
-    // times the cap of work the cap is actually reached (a pool that quietly ran one at a time
-    // would satisfy the bound and none of the point).
+    // The pool is BOUNDED and it SATURATES: given four times the cap of work, `map_bounded` runs
+    // it on exactly `QUEUE_FETCH_CONCURRENCY` threads — not one per candidate (the burst GitHub
+    // answers with a 403) and not one (the serial queue back again).
     //
-    // Saturation is reached by RENDEZVOUS, not by hoping N sleeps overlap: each worker holds its
-    // item until the pool is full. A fixed sleep would make the second assertion a race against
-    // thread start-up on a loaded box, and a flaky test is one nobody reads.
+    // Measured by DISTINCT THREAD ID, held open by a rendezvous. Neither alone is enough: how
+    // many threads happen to OVERLAP is a race against thread start-up that a loaded box loses,
+    // and counting ids without the rendezvous undercounts, because work this cheap is drained by
+    // the first few threads before the rest are scheduled. So the first cap-many items block
+    // until that many have started — every worker the pool created is then provably holding one,
+    // and any extra thread has cap*3 unclaimed items waiting to give it away.
     #[test]
     fn map_bounded_holds_the_cap_and_reaches_it() {
+        use std::collections::HashSet;
         let items: Vec<usize> = (0..QUEUE_FETCH_CONCURRENCY * 4).collect();
         let in_flight = AtomicUsize::new(0);
         let peak = AtomicUsize::new(0);
+        let started = AtomicUsize::new(0);
+        let threads: Mutex<HashSet<std::thread::ThreadId>> = Mutex::new(HashSet::new());
         map_bounded(&items, |_| {
+            threads.lock().unwrap().insert(std::thread::current().id());
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            await_another_worker(|| peak.load(Ordering::SeqCst) >= QUEUE_FETCH_CONCURRENCY);
+            // Only the first cap-many items hold, so the rendezvous costs one wait for the whole
+            // run rather than one per round.
+            if started.fetch_add(1, Ordering::SeqCst) < QUEUE_FETCH_CONCURRENCY {
+                await_another_worker(|| started.load(Ordering::SeqCst) >= QUEUE_FETCH_CONCURRENCY);
+            }
             in_flight.fetch_sub(1, Ordering::SeqCst);
         });
+        assert_eq!(
+            threads.lock().unwrap().len(),
+            QUEUE_FETCH_CONCURRENCY,
+            "four times the cap of work runs on exactly the cap's worth of threads"
+        );
         assert!(
             peak.load(Ordering::SeqCst) <= QUEUE_FETCH_CONCURRENCY,
             "the pool must never exceed the cap: peak {}",
             peak.load(Ordering::SeqCst)
-        );
-        assert_eq!(
-            peak.load(Ordering::SeqCst),
-            QUEUE_FETCH_CONCURRENCY,
-            "and with four times the cap of work it must reach it"
         );
     }
 
