@@ -21646,6 +21646,29 @@ mod human_rule_tests {
         assert!(msg.contains("keep-open"), "{msg}");
     }
 
+    // The CLI apply path's own vocabulary, asserted THROUGH `human_rule_pr_apply` rather than
+    // through the constant it should be reading. The two surfaces resolve the verb separately —
+    // `human_rule_args` for MCP, `human_rule_pr_apply` for the subcommand `/reject` actually runs —
+    // and a mutation pointing this one back at `HUMAN_DECISION_LABELS` survived the whole suite: the
+    // MCP schema test still passed while `pr-review-report human-rule … reject` refused its own
+    // ruling as "not a human ruling on a PR". The vocabulary check runs BEFORE any `gh` call, so an
+    // illegal verb exercises it with no network, and the refusal LISTS the vocabulary — which is
+    // what makes `reject`'s presence observable from outside.
+    #[test]
+    fn the_subcommand_surface_offers_reject_on_a_pr() {
+        let (code, msg) =
+            human_rule_pr_apply("o/r", "1", "no-such-verb", "note", true).unwrap_err();
+        assert_eq!(code, 2);
+        assert!(
+            msg.contains("reject, design, close-candidate"),
+            "the PR subcommand must still offer `reject`: {msg}"
+        );
+        // `keep-open` is ISSUE-only on this surface too, and the empty note is checked AFTER the
+        // verb, so an illegal verb is never masked by a missing reason.
+        let (_, msg) = human_rule_pr_apply("o/r", "1", "keep-open", "", true).unwrap_err();
+        assert!(msg.contains("is not a human ruling on a PR"), "{msg}");
+    }
+
     // --- G2 note: the recorded reason IS the difference from a mis-click ------------------------
 
     #[test]
