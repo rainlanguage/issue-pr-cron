@@ -498,6 +498,190 @@ struct PresentablePr {
     detail: Value,
 }
 
+/// Where ONE candidate landed once its two per-PR fetches came back. Every arm is a gate the
+/// serial pass used to express as a `continue` plus a counter bump; naming them makes the fetch
+/// phase produce a VALUE, which is what lets the fetches run concurrently while the counting stays
+/// serial and in candidate order (see [`apply_outcome`]).
+enum CandidateOutcome {
+    /// Fully clean and vetted at head with a verified zero unresolved threads.
+    Present(Box<PresentablePr>),
+    /// Otherwise-presentable but unresolved review threads — the producer's work.
+    OpenThreads,
+    /// The `gh pr view` or the thread count could not be read. Fail-closed: counted, never
+    /// laundered into a verdict.
+    FetchError,
+    /// Green + mergeable, but no trusted `ai:vetter` comment at the current head.
+    Unconfirmed,
+    Red,
+    Pending,
+    Conflicting,
+    MergeUnknown,
+    Approved,
+}
+
+/// PURE given its two fetchers: every per-candidate gate, in the order the queue applies them.
+///
+/// `fetch_pr` is the `gh pr view` snapshot both consumers read their fields out of; `fetch_threads`
+/// is the unresolved-review-thread count. They are parameters rather than direct calls so the whole
+/// gate chain is unit-testable against fixtures, the same split [`total_unresolved`] uses for its
+/// pages.
+fn candidate_outcome(
+    slug: &str,
+    num: u64,
+    url: &str,
+    fetch_pr: impl FnOnce(&str, u64) -> Option<Value>,
+    fetch_threads: impl FnOnce(&str, &str, u64) -> Option<u64>,
+) -> CandidateOutcome {
+    let Some(j) = fetch_pr(slug, num) else {
+        return CandidateOutcome::FetchError;
+    };
+    let merge = match j.get("mergeable").and_then(|x| x.as_str()) {
+        Some("MERGEABLE") => Merge::Mergeable,
+        Some("CONFLICTING") => Merge::Conflicting,
+        _ => Merge::Unknown,
+    };
+    let ci = classify_ci(j.get("statusCheckRollup").unwrap_or(&Value::Null));
+    let rev = j
+        .get("reviewDecision")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty());
+    match presentable_state(ci, merge, rev) {
+        PresentState::Presentable => {
+            // Vetted-at-head gate: green + mergeable is not enough — the ai:ready label must be
+            // BACKED by an ai:vetter comment at the current head. A migration-labelled or
+            // pushed-since PR is not presented; it's counted as awaiting (re-)vet.
+            let head = j
+                .get("headRefOid")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            if !vetted_at_head(&j, &head) {
+                return CandidateOutcome::Unconfirmed;
+            }
+            // Open-threads gate: an otherwise-presentable PR with unresolved review threads
+            // (CodeRabbit or human) is the producer's thread-resolution work, not
+            // human-presentable. Only a VERIFIED zero passes (fail-closed): an unknown thread
+            // state counts as a fetch error, never a maybe-dirty row.
+            let Some((owner, repo)) = slug.split_once('/') else {
+                return CandidateOutcome::FetchError;
+            };
+            match thread_route(fetch_threads(owner, repo, num)) {
+                ThreadRoute::Present => {
+                    let (cost, basis) = cost_from_comment(last_vetter_comment(&j).as_deref());
+                    let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
+                    CandidateOutcome::Present(Box::new(PresentablePr {
+                        row: (cost, repo_disp, num, url.to_string(), basis),
+                        slug: slug.to_string(),
+                        num,
+                        head,
+                        unresolved_threads: 0,
+                        detail: j,
+                    }))
+                }
+                ThreadRoute::OpenThreads => CandidateOutcome::OpenThreads,
+                ThreadRoute::FetchError => CandidateOutcome::FetchError,
+            }
+        }
+        PresentState::Red => CandidateOutcome::Red,
+        PresentState::Pending => CandidateOutcome::Pending,
+        PresentState::Conflicting => CandidateOutcome::Conflicting,
+        PresentState::MergeUnknown => CandidateOutcome::MergeUnknown,
+        PresentState::Approved => CandidateOutcome::Approved,
+    }
+}
+
+/// PURE: fold ONE candidate's outcome into the running rows and counts.
+///
+/// Called in candidate order over the whole set, so the row sequence handed to
+/// [`rank_presentable`] is the candidate sequence. That matters because `sort_by` is STABLE and
+/// [`queue_order`]'s key is not unique — `repo_display` is a basename, so `rainlanguage/foo#12`
+/// and `cyclofinance/foo#12` at equal cost tie, and a tie resolves to whichever arrived first.
+/// Folding in completion order would let two runs over identical GitHub state print those two rows
+/// in different orders.
+fn apply_outcome(out: CandidateOutcome, rows: &mut Vec<PresentablePr>, counts: &mut QueueCounts) {
+    match out {
+        CandidateOutcome::Present(p) => rows.push(*p),
+        CandidateOutcome::OpenThreads => counts.open_threads += 1,
+        CandidateOutcome::FetchError => counts.fetch_error += 1,
+        CandidateOutcome::Unconfirmed => counts.unconfirmed += 1,
+        CandidateOutcome::Red => counts.red += 1,
+        CandidateOutcome::Pending => counts.pending += 1,
+        CandidateOutcome::Conflicting => counts.conflict += 1,
+        CandidateOutcome::MergeUnknown => counts.merge_unknown += 1,
+        CandidateOutcome::Approved => counts.approved += 1,
+    }
+}
+
+/// Per-candidate fetches in flight at once.
+///
+/// The bound is GitHub's, not this machine's: a burst of concurrent requests from one token trips
+/// the SECONDARY rate limit, and a rate-limited fetch is indistinguishable from a genuine failure
+/// here (`gh` exits 1 for every error class), so it would silently become a `fetch_error` and
+/// render a queue that looks complete while missing rows. The value therefore does NOT scale with
+/// `available_parallelism` — the work is two blocking `gh` subprocesses per candidate and the
+/// process is idle on the network the whole time. 8 keeps a ~36-candidate queue under ten seconds
+/// while staying far below the burst rates that draw a 403.
+const QUEUE_FETCH_CONCURRENCY: usize = 8;
+
+/// Map `f` over `items` on at most [`QUEUE_FETCH_CONCURRENCY`] threads, returning the results in
+/// INPUT order.
+///
+/// Order is restored structurally: a worker writes its result into the slot at the index it
+/// claimed, so nothing depends on when a fetch finishes. Workers pull the next index from one
+/// atomic counter rather than taking a fixed slice each, so one slow PR (a long thread history
+/// pages several times) does not idle the other threads.
+///
+/// `std::thread::scope` rather than a runtime or a thread-pool crate: `f` is a blocking subprocess
+/// call, and scoped threads borrow `items` and `f` directly instead of forcing everything through
+/// an `Arc`.
+fn map_bounded<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    let slots: Vec<Mutex<Option<R>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    let workers = QUEUE_FETCH_CONCURRENCY.min(items.len());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                let Some(item) = items.get(i) else { break };
+                // The fetch runs OUTSIDE the lock — `f` blocks on a subprocess for the best part
+                // of a second, and a slot held for that long reads as if workers contend for one.
+                // They do not: an index is handed out once, so each slot has exactly one writer.
+                let result = f(item);
+                *slots[i].lock().expect("slot mutex poisoned") = Some(result);
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .expect("slot mutex poisoned")
+                // Every index is handed out exactly once by `fetch_add`, and a panicking worker
+                // re-panics out of `scope` before this runs, so an empty slot is unreachable.
+                .expect("every slot is filled by the worker that claimed its index")
+        })
+        .collect()
+}
+
+/// The `gh pr view` snapshot [`candidate_outcome`] gates on. The field list is what BOTH consumers
+/// need off one call: `--queue` reads five of them; `next_ready` also reads title/body/baseRefName/
+/// labels to answer the base branch and the deploy gate. Asking for them here rather than in a
+/// second fetch is what keeps the decision and the ranking on the same snapshot — and costs one
+/// request either way.
+fn queue_pr_detail(slug: &str, num: u64) -> Option<Value> {
+    gh_json(&[
+        "pr",
+        "view",
+        &num.to_string(),
+        "-R",
+        slug,
+        "--json",
+        "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments,title,body,baseRefName,labels,url,number",
+    ])
+}
+
 /// The `ai:ready` PRs presentable for a human decision RIGHT NOW, ALREADY in the one cheapest-first
 /// order, plus the whole-queue counts.
 ///
@@ -572,79 +756,14 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         open_threads: 0,
         fetch_error: 0,
     };
-    for (slug, num, url) in &candidates {
-        // The field list is what BOTH consumers need off one call. `--queue` reads five of them;
-        // `next_ready` also reads title/body/baseRefName/labels to answer the base branch and the
-        // deploy gate. Asking for them here rather than in a second fetch is what keeps the
-        // decision and the ranking on the same snapshot — and costs one request either way.
-        let Some(j) = gh_json(&[
-            "pr",
-            "view",
-            &num.to_string(),
-            "-R",
-            slug,
-            "--json",
-            "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments,title,body,baseRefName,labels,url,number",
-        ]) else {
-            counts.fetch_error += 1;
-            continue;
-        };
-        let merge = match j.get("mergeable").and_then(|x| x.as_str()) {
-            Some("MERGEABLE") => Merge::Mergeable,
-            Some("CONFLICTING") => Merge::Conflicting,
-            _ => Merge::Unknown,
-        };
-        let ci = classify_ci(j.get("statusCheckRollup").unwrap_or(&Value::Null));
-        let rev = j
-            .get("reviewDecision")
-            .and_then(|x| x.as_str())
-            .filter(|s| !s.is_empty());
-        match presentable_state(ci, merge, rev) {
-            PresentState::Presentable => {
-                // Vetted-at-head gate: green + mergeable is not enough — the ai:ready label must be
-                // BACKED by an ai:vetter comment at the current head. A migration-labelled or
-                // pushed-since PR is not presented; it's counted as awaiting (re-)vet.
-                let head = j
-                    .get("headRefOid")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if vetted_at_head(&j, &head) {
-                    // Open-threads gate: an otherwise-presentable PR with unresolved review
-                    // threads (CodeRabbit or human) is the producer's thread-resolution work,
-                    // not human-presentable. Only a VERIFIED zero passes (fail-closed): an
-                    // unknown thread state counts as a fetch error, never a maybe-dirty row.
-                    let Some((owner, repo)) = slug.split_once('/') else {
-                        counts.fetch_error += 1;
-                        continue;
-                    };
-                    match thread_route(unresolved_threads(owner, repo, *num)) {
-                        ThreadRoute::Present => {
-                            let (cost, basis) =
-                                cost_from_comment(last_vetter_comment(&j).as_deref());
-                            let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
-                            rows.push(PresentablePr {
-                                row: (cost, repo_disp, *num, url.clone(), basis),
-                                slug: slug.clone(),
-                                num: *num,
-                                head,
-                                unresolved_threads: 0,
-                                detail: j,
-                            });
-                        }
-                        ThreadRoute::OpenThreads => counts.open_threads += 1,
-                        ThreadRoute::FetchError => counts.fetch_error += 1,
-                    }
-                } else {
-                    counts.unconfirmed += 1;
-                }
-            }
-            PresentState::Red => counts.red += 1,
-            PresentState::Pending => counts.pending += 1,
-            PresentState::Conflicting => counts.conflict += 1,
-            PresentState::MergeUnknown => counts.merge_unknown += 1,
-            PresentState::Approved => counts.approved += 1,
-        }
+    // The fetches run concurrently; the COUNTING does not. `map_bounded` hands back one outcome
+    // per candidate in candidate order, and `apply_outcome` folds them serially, so the counts and
+    // the row sequence are exactly what the same GitHub state produced one at a time.
+    let outcomes = map_bounded(&candidates, |(slug, num, url)| {
+        candidate_outcome(slug, *num, url, queue_pr_detail, unresolved_threads)
+    });
+    for out in outcomes {
+        apply_outcome(out, &mut rows, &mut counts);
     }
     // The ONE ordering, applied ONCE, here — before either consumer sees the set.
     rank_presentable(&mut rows);
@@ -656,6 +775,528 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
 /// second sort that could hold a different opinion about which PR is next.
 fn rank_presentable(rows: &mut [PresentablePr]) {
     rows.sort_by(|a, b| queue_order(&a.row, &b.row));
+}
+
+#[cfg(test)]
+mod parallel_queue_tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    /// How long a test waits for another worker to make progress before giving up. Generous
+    /// enough that a loaded box does not fail it, bounded so a pool that cannot run two things at
+    /// once FAILS the assertion instead of hanging the suite.
+    const INVERSION_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// Block until `ready` says another worker got there first, or [`INVERSION_TIMEOUT`] elapses.
+    fn await_another_worker(ready: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + INVERSION_TIMEOUT;
+        while !ready() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    // ── the pool ──────────────────────────────────────────────────────────────────────────────
+
+    // A worker writes its result into the slot at the index it CLAIMED, so the returned sequence
+    // is the input sequence however the fetches interleave. Pinned with a deliberate inversion —
+    // item 0 does not finish until some other item has — so completion order provably differs
+    // from input order and the assertion cannot pass by luck.
+    #[test]
+    fn map_bounded_returns_input_order_not_completion_order() {
+        let items: Vec<usize> = (0..16).collect();
+        let completion: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+        let out = map_bounded(&items, |i| {
+            if *i == 0 {
+                await_another_worker(|| !completion.lock().unwrap().is_empty());
+            }
+            completion.lock().unwrap().push(*i);
+            *i * 10
+        });
+        assert_ne!(
+            completion.lock().unwrap().first(),
+            Some(&0),
+            "the inversion did not happen — the ordering assertion below would be vacuous"
+        );
+        assert_eq!(out, items.iter().map(|i| i * 10).collect::<Vec<_>>());
+    }
+
+    // Every candidate is fetched, and fetched ONCE. The count is deliberately not a multiple of
+    // the cap, so an index handed out twice or a tail dropped past the last full round shows up.
+    #[test]
+    fn map_bounded_runs_every_item_exactly_once() {
+        let items: Vec<usize> = (0..QUEUE_FETCH_CONCURRENCY * 4 + 5).collect();
+        let seen: Vec<AtomicUsize> = items.iter().map(|_| AtomicUsize::new(0)).collect();
+        let out = map_bounded(&items, |i| {
+            seen[*i].fetch_add(1, Ordering::SeqCst);
+            *i
+        });
+        assert_eq!(out, items);
+        assert!(
+            seen.iter().all(|c| c.load(Ordering::SeqCst) == 1),
+            "every item runs exactly once: {:?}",
+            seen.iter()
+                .map(|c| c.load(Ordering::SeqCst))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// How long a worker holds its item in the cap probe below. Spawning a handful of threads is
+    /// microseconds, so this is orders of magnitude more than enough for every thread the pool
+    /// created to be in flight at once, and it keeps the probe under a second.
+    const CAP_PROBE_HOLD: Duration = Duration::from_millis(300);
+
+    // The pool is BOUNDED and it SATURATES: given twice the cap of work, `map_bounded` runs it on
+    // exactly `QUEUE_FETCH_CONCURRENCY` threads — not one per candidate (the burst GitHub answers
+    // with a 403) and not one (the serial queue back again).
+    //
+    // Every worker HOLDS its item for a fixed window, which is what makes both facts observable:
+    // with the window open, every thread the pool created is in flight at once, so the peak is
+    // the real ceiling and the distinct-id count is the real worker count. Neither measurement
+    // works alone — how many threads happen to overlap without a hold is a race against start-up
+    // that a loaded box loses, and an id count without a hold undercounts, because work this
+    // cheap is drained by the first few threads before the rest are scheduled (one run of an
+    // earlier version measured 6 of 8). A rendezvous is not an option either: the cap-th worker
+    // satisfies a cap-sized barrier by itself, which releases the pool before a ninth thread
+    // could ever be seen. A worker leaves early the moment the ceiling is breached, so the
+    // failing case does not pay the hold.
+    #[test]
+    fn map_bounded_holds_the_cap_and_reaches_it() {
+        use std::collections::HashSet;
+        let items: Vec<usize> = (0..QUEUE_FETCH_CONCURRENCY * 2).collect();
+        let in_flight = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let threads: Mutex<HashSet<std::thread::ThreadId>> = Mutex::new(HashSet::new());
+        map_bounded(&items, |_| {
+            threads.lock().unwrap().insert(std::thread::current().id());
+            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            let deadline = std::time::Instant::now() + CAP_PROBE_HOLD;
+            while in_flight.load(Ordering::SeqCst) <= QUEUE_FETCH_CONCURRENCY
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+        });
+        assert!(
+            peak.load(Ordering::SeqCst) <= QUEUE_FETCH_CONCURRENCY,
+            "the pool must never exceed the cap: peak {}",
+            peak.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            threads.lock().unwrap().len(),
+            QUEUE_FETCH_CONCURRENCY,
+            "twice the cap of work runs on exactly the cap's worth of threads"
+        );
+    }
+
+    // Fewer candidates than the cap spawns only that many workers and still answers; an empty
+    // queue does no work at all rather than spawning a pool with nothing to claim.
+    #[test]
+    fn map_bounded_handles_fewer_items_than_the_cap() {
+        let empty: Vec<usize> = Vec::new();
+        assert!(map_bounded(&empty, |i: &usize| *i).is_empty());
+        assert_eq!(map_bounded(&[7usize], |i| *i * 2), vec![14]);
+    }
+
+    // The cap is GitHub's tolerance for a burst from one token, not a property of this box, so it
+    // is pinned to a band. 1 is the serial queue back again; a large value is a secondary-rate-limit
+    // 403, which this code cannot tell from a genuine failure and would count as a fetch error.
+    #[test]
+    fn the_concurrency_cap_stays_in_the_safe_band() {
+        assert!(
+            (2..=16).contains(&QUEUE_FETCH_CONCURRENCY),
+            "QUEUE_FETCH_CONCURRENCY is {QUEUE_FETCH_CONCURRENCY}"
+        );
+    }
+
+    // ── the fold ──────────────────────────────────────────────────────────────────────────────
+
+    fn zero_counts() -> QueueCounts {
+        QueueCounts {
+            raw: 0,
+            excluded: 0,
+            conflict: 0,
+            red: 0,
+            pending: 0,
+            merge_unknown: 0,
+            approved: 0,
+            unconfirmed: 0,
+            open_threads: 0,
+            fetch_error: 0,
+        }
+    }
+
+    /// Every per-candidate counter as one vector, so an assertion pins the counter that moved AND
+    /// the seven that did not — a swapped increment is not a passing test.
+    fn counters(c: &QueueCounts) -> [usize; 8] {
+        [
+            c.conflict,
+            c.red,
+            c.pending,
+            c.merge_unknown,
+            c.approved,
+            c.unconfirmed,
+            c.open_threads,
+            c.fetch_error,
+        ]
+    }
+
+    fn present_pr(cost: i64, owner: &str, repo: &str, num: u64) -> PresentablePr {
+        PresentablePr {
+            row: (
+                cost,
+                repo.to_string(),
+                num,
+                format!("https://github.com/{owner}/{repo}/pull/{num}"),
+                "basis".to_string(),
+            ),
+            slug: format!("{owner}/{repo}"),
+            num,
+            head: "a".repeat(40),
+            unresolved_threads: 0,
+            detail: json!({}),
+        }
+    }
+
+    #[test]
+    fn each_outcome_bumps_exactly_one_counter() {
+        let cases = [
+            (CandidateOutcome::Conflicting, [1, 0, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::Red, [0, 1, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::Pending, [0, 0, 1, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::MergeUnknown, [0, 0, 0, 1, 0, 0, 0, 0]),
+            (CandidateOutcome::Approved, [0, 0, 0, 0, 1, 0, 0, 0]),
+            (CandidateOutcome::Unconfirmed, [0, 0, 0, 0, 0, 1, 0, 0]),
+            (CandidateOutcome::OpenThreads, [0, 0, 0, 0, 0, 0, 1, 0]),
+            // A failed fetch is COUNTED, never dropped: a queue short one row must say so.
+            (CandidateOutcome::FetchError, [0, 0, 0, 0, 0, 0, 0, 1]),
+        ];
+        for (out, want) in cases {
+            let mut rows = Vec::new();
+            let mut counts = zero_counts();
+            apply_outcome(out, &mut rows, &mut counts);
+            assert_eq!(counters(&counts), want);
+            assert!(rows.is_empty(), "only a presentable candidate yields a row");
+        }
+    }
+
+    #[test]
+    fn a_presentable_candidate_yields_a_row_and_bumps_no_counter() {
+        let mut rows = Vec::new();
+        let mut counts = zero_counts();
+        apply_outcome(
+            CandidateOutcome::Present(Box::new(present_pr(40, "rainlanguage", "foo", 12))),
+            &mut rows,
+            &mut counts,
+        );
+        assert_eq!(counters(&counts), [0; 8]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].slug, "rainlanguage/foo");
+    }
+
+    // ── the determinism the concurrency must not cost ─────────────────────────────────────────
+
+    // The tie that makes fold order OBSERVABLE. `queue_order`'s key is (cost, repo DISPLAY name,
+    // number) and the display name is a BASENAME, so two same-named repos in different orgs at
+    // equal cost with equal numbers compare Equal; `sort_by` is stable, so the tie resolves to
+    // whichever row was folded first. Fold in completion order and this pair's printed order
+    // becomes a race.
+    #[test]
+    fn queue_order_ties_resolve_in_candidate_order() {
+        let folded = |owners: [&str; 2]| {
+            let mut rows = Vec::new();
+            let mut counts = zero_counts();
+            for owner in owners {
+                apply_outcome(
+                    CandidateOutcome::Present(Box::new(present_pr(40, owner, "erc4626", 12))),
+                    &mut rows,
+                    &mut counts,
+                );
+            }
+            rank_presentable(&mut rows);
+            rows.iter().map(|p| p.slug.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            queue_order(
+                &present_pr(40, "rainlanguage", "erc4626", 12).row,
+                &present_pr(40, "cyclofinance", "erc4626", 12).row
+            ),
+            std::cmp::Ordering::Equal,
+            "the fixture pair must actually tie or this proves nothing"
+        );
+        assert_eq!(
+            folded(["rainlanguage", "cyclofinance"]),
+            ["rainlanguage/erc4626", "cyclofinance/erc4626"]
+        );
+        assert_eq!(
+            folded(["cyclofinance", "rainlanguage"]),
+            ["cyclofinance/erc4626", "rainlanguage/erc4626"]
+        );
+    }
+
+    // The whole fetch → fold chain, with the FIRST candidate's fetch deliberately the last to
+    // finish: concurrency changes when a candidate's outcome is known, never where it lands.
+    #[test]
+    fn a_slow_first_fetch_keeps_its_place_in_the_queue() {
+        let candidates = [
+            ("rainlanguage".to_string(), 12u64),
+            ("cyclofinance".to_string(), 12u64),
+        ];
+        let completion: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let outcomes = map_bounded(&candidates, |(owner, num)| {
+            if owner == "rainlanguage" {
+                await_another_worker(|| !completion.lock().unwrap().is_empty());
+            }
+            completion.lock().unwrap().push(owner.clone());
+            CandidateOutcome::Present(Box::new(present_pr(40, owner, "erc4626", *num)))
+        });
+        assert_eq!(
+            completion.lock().unwrap().first().map(String::as_str),
+            Some("cyclofinance"),
+            "the inversion did not happen — the ordering assertion below would be vacuous"
+        );
+        let mut rows = Vec::new();
+        let mut counts = zero_counts();
+        for out in outcomes {
+            apply_outcome(out, &mut rows, &mut counts);
+        }
+        rank_presentable(&mut rows);
+        assert_eq!(
+            rows.iter().map(|p| p.slug.as_str()).collect::<Vec<_>>(),
+            ["rainlanguage/erc4626", "cyclofinance/erc4626"]
+        );
+    }
+
+    // ── the gates, one candidate at a time ────────────────────────────────────────────────────
+
+    fn vetter_comment(head: &str, cost: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": format!("🤖 ai:vetter\nReviewed {head}: ready — fine\ncost {cost}"),
+        })
+    }
+
+    fn detail(mergeable: &str, conclusion: &str, review: &str, comments: Vec<Value>) -> Value {
+        json!({
+            "mergeable": mergeable,
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": conclusion}],
+            "reviewDecision": review,
+            "headRefOid": "b".repeat(40),
+            "comments": comments,
+        })
+    }
+
+    fn clean_detail() -> Value {
+        detail(
+            "MERGEABLE",
+            "SUCCESS",
+            "",
+            vec![vetter_comment(&"b".repeat(40), "40 — a basis")],
+        )
+    }
+
+    fn outcome(pr: Option<Value>, threads: Option<u64>) -> CandidateOutcome {
+        candidate_outcome(
+            "rainlanguage/foo",
+            12,
+            "https://github.com/rainlanguage/foo/pull/12",
+            |_, _| pr,
+            |_, _, _| threads,
+        )
+    }
+
+    fn folded_one(out: CandidateOutcome) -> (Vec<PresentablePr>, [usize; 8]) {
+        let mut rows = Vec::new();
+        let mut counts = zero_counts();
+        apply_outcome(out, &mut rows, &mut counts);
+        let c = counters(&counts);
+        (rows, c)
+    }
+
+    #[test]
+    fn an_unreadable_pr_view_is_a_counted_fetch_error() {
+        let (rows, c) = folded_one(outcome(None, Some(0)));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    // Fail-closed: a thread count that could not be read is a fetch error, NOT a clean row and
+    // not an open-threads row. Under concurrency this is the arm a rate limit lands in.
+    #[test]
+    fn an_unreadable_thread_count_is_a_counted_fetch_error() {
+        let (rows, c) = folded_one(outcome(Some(clean_detail()), None));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn a_clean_candidate_is_presentable_and_carries_its_cost_and_head() {
+        let (rows, c) = folded_one(outcome(Some(clean_detail()), Some(0)));
+        assert_eq!(c, [0; 8]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].row.0, 40);
+        assert_eq!(rows[0].row.1, "foo");
+        assert_eq!(rows[0].row.4, "a basis");
+        assert_eq!(rows[0].head, "b".repeat(40));
+        assert_eq!(rows[0].unresolved_threads, 0);
+    }
+
+    /// One gate's fixture: what the two fetchers answer, and the single counter that must move.
+    struct GateCase {
+        name: &'static str,
+        pr: Option<Value>,
+        threads: Option<u64>,
+        want: [usize; 8],
+    }
+
+    #[test]
+    fn every_gate_routes_to_its_own_counter() {
+        let head = "b".repeat(40);
+        let vetted = vec![vetter_comment(&head, "40 — a basis")];
+        let cases = vec![
+            GateCase {
+                name: "conflicting",
+                pr: Some(detail("CONFLICTING", "SUCCESS", "", vetted.clone())),
+                threads: Some(0),
+                want: [1, 0, 0, 0, 0, 0, 0, 0],
+            },
+            GateCase {
+                name: "red ci",
+                pr: Some(detail("MERGEABLE", "FAILURE", "", vetted.clone())),
+                threads: Some(0),
+                want: [0, 1, 0, 0, 0, 0, 0, 0],
+            },
+            GateCase {
+                name: "unknown mergeability",
+                pr: Some(detail("UNKNOWN", "SUCCESS", "", vetted.clone())),
+                threads: Some(0),
+                want: [0, 0, 0, 1, 0, 0, 0, 0],
+            },
+            GateCase {
+                name: "human approved",
+                pr: Some(detail("MERGEABLE", "SUCCESS", "APPROVED", vetted.clone())),
+                threads: Some(0),
+                want: [0, 0, 0, 0, 1, 0, 0, 0],
+            },
+            GateCase {
+                // The vetter comment pins a DIFFERENT head, so the ai:ready label is unbacked.
+                name: "vetted at a stale head",
+                pr: Some(detail(
+                    "MERGEABLE",
+                    "SUCCESS",
+                    "",
+                    vec![vetter_comment(&"c".repeat(40), "40")],
+                )),
+                threads: Some(0),
+                want: [0, 0, 0, 0, 0, 1, 0, 0],
+            },
+            GateCase {
+                name: "unresolved review threads",
+                pr: Some(detail("MERGEABLE", "SUCCESS", "", vetted.clone())),
+                threads: Some(3),
+                want: [0, 0, 0, 0, 0, 0, 1, 0],
+            },
+        ];
+        for case in cases {
+            let (rows, c) = folded_one(outcome(case.pr, case.threads));
+            assert!(rows.is_empty(), "{} is not presentable", case.name);
+            assert_eq!(c, case.want, "{}", case.name);
+        }
+    }
+
+    // A pending check is pending even beside a passing one — the queue never shows a PR whose CI
+    // has not concluded.
+    #[test]
+    fn a_pending_check_routes_to_pending() {
+        let head = "b".repeat(40);
+        let pr = json!({
+            "mergeable": "MERGEABLE",
+            "statusCheckRollup": [
+                {"status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"status": "IN_PROGRESS"},
+            ],
+            "reviewDecision": "",
+            "headRefOid": head,
+            "comments": [vetter_comment(&head, "40")],
+        });
+        let (rows, c) = folded_one(outcome(Some(pr), Some(0)));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 1, 0, 0, 0, 0, 0]);
+    }
+
+    // A slug with no `/` can never name an owner and a repo, so its thread state is unknowable —
+    // fail-closed to a fetch error rather than presenting an unverified row.
+    #[test]
+    fn a_malformed_slug_is_a_counted_fetch_error() {
+        let out = candidate_outcome(
+            "no-slash",
+            12,
+            "https://github.com/no-slash/pull/12",
+            |_, _| Some(clean_detail()),
+            |_, _, _| Some(0),
+        );
+        let (rows, c) = folded_one(out);
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    // The fetchers are called with the candidate's OWN coordinates — a pool that fetched the
+    // wrong PR would still produce a well-formed queue.
+    #[test]
+    fn the_fetchers_receive_the_candidates_own_coordinates() {
+        let seen: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let out = candidate_outcome(
+            "cyclofinance/bar",
+            77,
+            "https://github.com/cyclofinance/bar/pull/77",
+            |slug, num| {
+                seen.lock().unwrap().push(format!("pr {slug} {num}"));
+                Some(clean_detail())
+            },
+            |owner, repo, num| {
+                seen.lock()
+                    .unwrap()
+                    .push(format!("threads {owner} {repo} {num}"));
+                Some(0)
+            },
+        );
+        assert!(matches!(out, CandidateOutcome::Present(_)));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["pr cyclofinance/bar 77", "threads cyclofinance bar 77"]
+        );
+    }
+
+    // The thread query is the expensive second call and it is only worth making once the cheap
+    // gates have passed — a red PR must not pay for it.
+    #[test]
+    fn the_thread_query_is_skipped_for_a_candidate_the_cheap_gates_already_rejected() {
+        let asked = AtomicUsize::new(0);
+        let head = "b".repeat(40);
+        let out = candidate_outcome(
+            "rainlanguage/foo",
+            12,
+            "https://github.com/rainlanguage/foo/pull/12",
+            |_, _| {
+                Some(detail(
+                    "MERGEABLE",
+                    "FAILURE",
+                    "",
+                    vec![vetter_comment(&head, "40")],
+                ))
+            },
+            |_, _, _| {
+                asked.fetch_add(1, Ordering::SeqCst);
+                Some(0)
+            },
+        );
+        assert!(matches!(out, CandidateOutcome::Red));
+        assert_eq!(asked.load(Ordering::SeqCst), 0);
+    }
 }
 
 fn queue_mode(top: usize) {
