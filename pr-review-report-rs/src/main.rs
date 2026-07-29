@@ -21506,11 +21506,12 @@ mod marketplace_tests {
             Ok(CommandKind::Subcommand)
         );
         // A name and nothing to run.
-        assert!(
-            command_contract(&command("Bash(pr-review-report human-close:*)", "prose only"))
-                .unwrap_err()
-                .contains("nothing for the caller to run")
-        );
+        assert!(command_contract(&command(
+            "Bash(pr-review-report human-close:*)",
+            "prose only"
+        ))
+        .unwrap_err()
+        .contains("nothing for the caller to run"));
     }
 
     #[test]
@@ -21545,7 +21546,10 @@ mod marketplace_tests {
         assert!(err.contains("no guarantee left"), "{err}");
         // Two MCP tools is the same loss by a different route: the guarantee is ONE typed result.
         let err = command_contract(&command(
-            &format!("{tool}, {}", plugin_mcp_tool_name("human-fsm", "fsm", "pr_context")),
+            &format!(
+                "{tool}, {}",
+                plugin_mcp_tool_name("human-fsm", "fsm", "pr_context")
+            ),
             "prose",
         ))
         .unwrap_err();
@@ -21554,9 +21558,11 @@ mod marketplace_tests {
 
     #[test]
     fn a_command_with_no_grant_can_run_nothing() {
-        assert!(command_contract(&command("", "```\npr-review-report x\n```"))
-            .unwrap_err()
-            .contains("granted nothing"));
+        assert!(
+            command_contract(&command("", "```\npr-review-report x\n```"))
+                .unwrap_err()
+                .contains("granted nothing")
+        );
         assert!(command_contract("description: d\n")
             .unwrap_err()
             .contains("no frontmatter"));
@@ -21599,7 +21605,10 @@ mod marketplace_tests {
         // Renaming the plugin or the server moves the whole set with it, which is the point.
         let mut renamed = human_manifest();
         renamed["name"] = json!("fsm-human");
-        assert!(!grantable_mcp_tools(&renamed).unwrap().iter().any(|t| g.contains(t)));
+        assert!(!grantable_mcp_tools(&renamed)
+            .unwrap()
+            .iter()
+            .any(|t| g.contains(t)));
         // A server pointed at a profile this binary does not serve is a server that serves nothing.
         let mut bogus = human_manifest();
         bogus["mcpServers"]["fsm"]["args"] = json!(["mcp", "--profile", "auditor"]);
@@ -21617,7 +21626,10 @@ mod marketplace_tests {
     #[test]
     fn a_grant_no_server_serves_is_refused_however_plausible_it_looks() {
         let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
-        let good = command(&plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"), "prose");
+        let good = command(
+            &plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
+            "prose",
+        );
         assert_eq!(
             command_check(&good, &grantable),
             Ok(CommandKind::McpTool(
