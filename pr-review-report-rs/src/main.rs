@@ -22442,6 +22442,14 @@ mod marketplace_tests {
             .unwrap_err();
         assert!(err.contains("gh pr view"), "{err}");
         assert!(err.contains("all-MCP grant exists to remove"), "{err}");
+        // What makes a grant MCP is the `mcp__` prefix EXACTLY — a DOUBLE underscore, the
+        // separator the harness uses at every position of the name. Widened to `mcp`, any tool
+        // merely beginning with those letters would buy an MCP command's exemption from the
+        // fenced-transition rule, so a single-underscore spelling must fall through to the
+        // subcommand branch and be refused there.
+        assert!(command_contract(&command("mcp_fsm_next_ready", "prose"))
+            .unwrap_err()
+            .contains("nothing for the caller to run"));
     }
 
     // The relaxation of #132, and the floor it must not fall through. `/nr` cannot check a verdict
