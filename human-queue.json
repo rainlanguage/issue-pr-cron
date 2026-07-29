@@ -237,12 +237,6 @@
       },
       {
         "repo": "rainlanguage/rain.dia",
-        "number": 58,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/58",
-        "title": "fix(ci): conform main to rainix one-contract and Build.sol gates"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
         "number": 55,
         "url": "https://github.com/rainlanguage/rain.dia/pull/55",
         "title": "Consolidate pointer codegen to canonical script/Build.sol"
@@ -292,22 +286,34 @@
     ],
     "ai:ready": [
       {
+        "repo": "rainlanguage/rain.deploy",
+        "number": 21,
+        "url": "https://github.com/rainlanguage/rain.deploy/pull/21",
+        "title": "fix(deploy): check the derived Zoltu address before skipping a network"
+      },
+      {
+        "repo": "rainlanguage/rain.solmem",
+        "number": 104,
+        "url": "https://github.com/rainlanguage/rain.solmem/pull/104",
+        "title": "Derive array differential expectations from pre-call input snapshots"
+      },
+      {
+        "repo": "rainlanguage/rain.solmem",
+        "number": 103,
+        "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
+        "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
+      },
+      {
+        "repo": "rainlanguage/rain.deploy",
+        "number": 20,
+        "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
+        "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
+      },
+      {
         "repo": "rainlanguage/rain.solmem",
         "number": 102,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
         "title": "test: pin truncate's accept/reject boundary in both array libs"
-      },
-      {
-        "repo": "rainlanguage/claude-audit-skills",
-        "number": 50,
-        "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
-        "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
-      },
-      {
-        "repo": "rainlanguage/rainlang.interface",
-        "number": 118,
-        "url": "https://github.com/rainlanguage/rainlang.interface/pull/118",
-        "title": "test: pin sourceCount(hex\"00\") == 0 explicitly"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -352,22 +358,10 @@
         "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
       },
       {
-        "repo": "rainlanguage/rain.dia",
-        "number": 62,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/62",
-        "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 428,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
         "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 260,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/260",
-        "title": "docs(op): document convertToAssets rounding direction in run() NatSpec"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -386,12 +380,6 @@
         "number": 425,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
         "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 424,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/424",
-        "title": "refactor: single zero-address constant source in balancesStore"
       },
       {
         "repo": "rainlanguage/rain.pyth",
@@ -500,6 +488,12 @@
         "number": 230,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/230",
         "title": "test(extern): assert sub-parser honors overridden extern() address"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 125,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/125",
+        "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
       }
     ],
     "ai:reject": [
@@ -954,14 +948,8 @@
     },
     "leak": {
       "leak": {
-        "count": 2,
+        "count": 1,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 125,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/125",
-            "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
-          },
           {
             "repo": "rainlanguage/flow",
             "number": 475,
@@ -1164,49 +1152,14 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 1,
-        "prs": [
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 403,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
-            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 8,
+        "count": 4,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 21,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/21",
-            "title": "fix(deploy): check the derived Zoltu address before skipping a network"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 104,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/104",
-            "title": "Derive array differential expectations from pre-call input snapshots"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 103,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-            "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 20,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
-            "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
-          },
           {
             "repo": "rainlanguage/issue-pr-cron",
-            "number": 122,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/122",
-            "title": "feat(mcp): next_ready — the human's merge decision as one typed result"
+            "number": 126,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/126",
+            "title": "perf(queue): fetch presentable_queue candidates on a bounded thread pool (59s -> 9.5s)"
           },
           {
             "repo": "rainlanguage/rain.uniswap",
@@ -1260,7 +1213,7 @@
         ]
       },
       "ai:design": {
-        "count": 13,
+        "count": 12,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1285,12 +1238,6 @@
             "number": 63,
             "url": "https://github.com/rainlanguage/rain.dia/pull/63",
             "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 58,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/58",
-            "title": "fix(ci): conform main to rainix one-contract and Build.sol gates"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1343,25 +1290,37 @@
         ]
       },
       "ai:ready": {
-        "count": 34,
+        "count": 35,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 21,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/21",
+            "title": "fix(deploy): check the derived Zoltu address before skipping a network"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 104,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/104",
+            "title": "Derive array differential expectations from pre-call input snapshots"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 103,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
+            "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 20,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
+            "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 102,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
             "title": "test: pin truncate's accept/reject boundary in both array libs"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 50,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
-            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 118,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/118",
-            "title": "test: pin sourceCount(hex\"00\") == 0 explicitly"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1406,22 +1365,10 @@
             "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
           },
           {
-            "repo": "rainlanguage/rain.dia",
-            "number": 62,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/62",
-            "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
-          },
-          {
             "repo": "cyclofinance/cyclo.site",
             "number": 428,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
             "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 260,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/260",
-            "title": "docs(op): document convertToAssets rounding direction in run() NatSpec"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1440,12 +1387,6 @@
             "number": 425,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
             "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 424,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/424",
-            "title": "refactor: single zero-address constant source in balancesStore"
           },
           {
             "repo": "rainlanguage/rain.pyth",
@@ -1482,6 +1423,12 @@
             "number": 404,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
             "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 403,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1548,6 +1495,12 @@
             "number": 230,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/230",
             "title": "test(extern): assert sub-parser honors overridden extern() address"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 125,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/125",
+            "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
           }
         ]
       },
@@ -1799,38 +1752,19 @@
       "title": "i was asked to infinite approve quick on deposit"
     }
   ],
-  "closeCandidateUnvetted": [
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/40",
-      "title": "[AUDIT-M12] [medium] LibOpDiaPrice.run does not validate staleAfter is a Float"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 243,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/243",
-      "title": "Order table styling not working on Firefox"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 960,
-      "url": "https://github.com/rainlanguage/raindex/issues/960",
-      "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
-      "title": "i was asked to infinite approve quick on deposit"
-    }
-  ],
+  "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [
     {
       "repo": "rainlanguage/rain.dia",
       "number": 43,
       "url": "https://github.com/rainlanguage/rain.dia/issues/43",
       "title": "[AUDIT-M14] [medium] Dual pointer-codegen entrypoints BuildPointers.sol and Build.sol"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/40",
+      "title": "[AUDIT-M12] [medium] LibOpDiaPrice.run does not validate staleAfter is a Float"
     },
     {
       "repo": "rainlanguage/rain.dia",
@@ -1855,9 +1789,39 @@
       "number": 981,
       "url": "https://github.com/rainlanguage/raindex/issues/981",
       "title": "add back button for desktop app"
+    },
+    {
+      "repo": "rainlanguage/rain.webapp",
+      "number": 243,
+      "url": "https://github.com/rainlanguage/rain.webapp/issues/243",
+      "title": "Order table styling not working on Firefox"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 960,
+      "url": "https://github.com/rainlanguage/raindex/issues/960",
+      "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
+    },
+    {
+      "repo": "rainlanguage/rain.webapp",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
+      "title": "i was asked to infinite approve quick on deposit"
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 125,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/125",
+      "title": "next_ready reads mergeable and calls it clean, so a ruleset-BLOCKED PR is presented as unblocked"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 124,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/124",
+      "title": "next_ready spends 50s re-deriving an ordering the hourly refresh already computes and discards"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 62,
@@ -5656,13 +5620,6 @@
     },
     {
       "repo": "rainlanguage/rain.flare",
-      "number": 125,
-      "url": "https://github.com/rainlanguage/rain.flare/pull/125",
-      "title": "Fix staleness overflow: use subtraction instead of addition in stale check",
-      "reason": "🤖 ai:producer  Producer note: the two prior hand-offs on this PR are now superseded — the conflict IS resolved and the branch is pushed.  - Only `BYTECODE_HASH` actually conflicted; `DESCRIBED_BY_META_HASH` is identical on both sides, so the earlier \"both differ\" reading no longer holds. - The pointer was regenerated from the merged source via the sanctioned prelude (`nix develop -c rain-flare-prelude`, which now runs `script/Build.sol` after main's rename), not hand-picked from either side. - `LibOpFtsoCurrentPriceUsd.t.sol` took the union of both sides: this branch's `testRunTimestampPlusTimeoutOverflow` plus main's negative/fractional timeout revert tests. No test dropped. - Verified locally: 17/18 on the affected suite; the sole failure is the pre-existing `FLARE_RPC_URL` fork test that needs the CI secret."
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
       "number": 112,
       "url": "https://github.com/rainlanguage/rain.flare/pull/112",
       "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry",
@@ -5727,18 +5684,18 @@
   ],
   "counts": {
     "ready": 35,
-    "design": 13,
+    "design": 12,
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
     "closeCandidateIssues": 9,
-    "closeCandidateUnvetted": 4,
-    "closeCandidateUpheld": 5,
-    "leaks": 24,
-    "totalProducerPrs": 164,
-    "uncoveredIssues": 616,
-    "unvetted": 8,
-    "awaitingReVet": 1,
+    "closeCandidateUnvetted": 0,
+    "closeCandidateUpheld": 9,
+    "leaks": 23,
+    "totalProducerPrs": 158,
+    "uncoveredIssues": 618,
+    "unvetted": 4,
+    "awaitingReVet": 0,
     "reject": 29,
     "relink": 1,
     "closeCandidatePrs": 4,
