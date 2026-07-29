@@ -18,7 +18,6 @@ stateDiagram-v2
     state "ai:close-candidate (issue)" as icand
     state "close-candidate · upheld" as iupheld
     state "un-vetted PR" as unvetted
-    state "awaiting re-vet" as revet
     state "ai:ready" as ready
     state "ai:reject" as reject
     state "ai:relink" as relink
@@ -43,7 +42,7 @@ stateDiagram-v2
     issue --> icand : producer flag-close-candidate
     icand --> iupheld : vetter uphold · evidence holds
     icand --> issue : vetter reject · strips the flag → back to uncovered
-    icand --> icand : producer re-flags (new evidence) → un-vetted → re-vet
+    icand --> icand : producer re-flags (new evidence) → un-vetted again
     iupheld --> [*] : human-close · rules, retires the flag, closes
     icand --> hclose : human-rule-issue close-candidate (sacred)
     icand --> ikeep : human-rule-issue keep-open (sacred · clears the flag)
@@ -55,18 +54,16 @@ stateDiagram-v2
     unvetted --> relink : vetter record-verdict
     unvetted --> design : vetter record-verdict
     unvetted --> close : vetter record-verdict
-    ready --> revet : head moves (producer fix)
-    revet --> ready : vetter re-vets
-    revet --> reject : vetter re-vets
+    ready --> unvetted : head moves (producer fix) · verdict no longer current
 
     %% ready → the human merge queue
     ready --> queue : queue · green·mergeable·vetted@head
     queue --> approved : human review = APPROVED
     approved --> merged : gh pr merge --admin · human word
 
-    %% vetter verdicts route back to the producer, then re-vet
-    reject --> unvetted : producer reworks → head moves → re-vet
-    relink --> unvetted : producer relinks Closes→Refs → re-vet
+    %% vetter verdicts route back to the producer, then back to un-vetted
+    reject --> unvetted : producer reworks → head moves
+    relink --> unvetted : producer relinks Closes→Refs
 
     %% producer deploy + blocked hand-offs → human resolves → re-work
     ready --> ready : producer deploy · red prod-pin → green
@@ -84,7 +81,7 @@ stateDiagram-v2
     ready --> hreject : human-rule reject + Rework note
     ready --> hdesign : human-rule design
     ready --> hclose : human-rule close-candidate
-    hreject --> unvetted : producer reworks → reworked-reject clears labels → re-vet
+    hreject --> unvetted : producer reworks → reworked-reject clears labels
     hdesign --> [*] : human rules
     hclose --> [*] : human-close · retires the flag too
 
@@ -308,7 +305,7 @@ server is the vetter's **only** tool surface.
 | `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list |
 | `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                           |
 | `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                              |
-| `record_verdict`                 | the PR write: `ai:<verdict>` label + sha-bound `🤖 ai:vetter` comment + cost                                                                                                                |
+| `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost                                                         |
 | `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                             |
 | `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                               |
 | `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                     |
@@ -346,8 +343,8 @@ set cheapest-first; `next_ready` answers a prefix of that same ranked list, from
 the same enumeration and the same per-PR snapshot, so the head of the queue and
 the PR the tool names cannot be different PRs. A PR whose head moved after its
 verdict is not "next" at all — the queue's vetted-at-head gate withholds it, and
-`counts.awaitingRevet` says so, because returning a verdict that no longer
-describes the code is worse than returning nothing.
+`counts.unvetted` says so, because returning a verdict that no longer describes
+the code is worse than returning nothing.
 
 Three fields are worth their own note:
 
@@ -388,8 +385,8 @@ The last three vetter tools are its **second subject**. A PR asks a human to
 merge code; a close-candidate flag asks a human to **destroy work**, so the flag
 is judged before it reaches the triage queue. The shape is identical to the PR
 side — state-load, read one, record one verdict — including the
-vetted-at-the-thing-judged rule: a PR re-vets when its head moves, a flag
-re-vets when the producer posts a new one.
+vetted-at-the-thing-judged rule: a PR is un-vetted again when its head moves, a
+flag when the producer posts a new one.
 
 `review-run.sh` always launches the model with `--mcp-config review-mcp.json`,
 `--strict-mcp-config` and `--settings review-settings.json`, so the vetter's
@@ -408,6 +405,41 @@ name. `ToolSearch` nonetheless stays in the allow-list as the fail-safe — if a
 harness defers anyway, a vetter that cannot call it sees its own tools as
 nonexistent and records nothing at all (#63). The producer keeps deferral: it
 has Bash and a far larger surface, where the round trip pays for itself.
+
+### Vetting is a pure function, and `vetted_at_head` is its cache key
+
+A verdict is the value of one function — **the PR at its current head** — and
+nothing else. A prior verdict is not an input to it: the same PR at the same
+head earns the same verdict however many times it is asked, so there is no
+"re-vet", no delta pass, and no state called _judged before_. A PR is **vetted**
+or **un-vetted**, and the only reason the pipeline stores a verdict at all is to
+skip recomputing an answer that would come out identical.
+
+That makes `vetted_at_head` a **cache key**, and a cache key over the input
+alone is sound only while the function is fixed. So a `🤖 ai:vetter` comment
+carries both facts, and counts as current only when both hold:
+
+- `Reviewed <sha>:` pins the **input** — the head the verdict was computed at. A
+  push moves it.
+- `vet-protocol <n>` pins the **function** — the version of what vetting means,
+  `VET_PROTOCOL` in `pr-review-report`. Bumping the constant retires every
+  verdict written under the old rules **at once**, wherever they are: no head
+  has to move, no branch is touched, no comment is rewritten, and the next
+  scheduled vetter run recomputes them. Bump it when the audit lens, a mandatory
+  gate or the verdict vocabulary changes — not for a reworded prompt.
+
+An **unstamped** comment is `VetProtocol::Unknown` and is never current. It was
+written under rules that cannot be identified, and unidentified is not "fine" —
+the same posture as `Merge::Unknown` and `CodeRabbitCoverage::Unreadable`. Every
+verdict predating the stamp is in exactly that position, which is what makes the
+stamp's introduction its own first invalidation.
+
+The author filter sits **upstream** of all of this: a stamped, head-matching
+verdict from any account other than the trusted one is not a verdict at all
+(`trusted_comments`). And the write-side dedup carries the protocol too — a
+recomputed verdict at an unchanged head must still be POSTED, or the PR would
+keep the superseded stamp, stay un-vetted, and be re-derived by every run while
+nothing was ever written.
 
 ### Every tool result is bounded, and going over is the tool's error
 
@@ -593,14 +625,15 @@ has to be: a run that dies is exactly the run that leaks, so a `clone_release`
 on the way out can never be the mechanism.
 
 The machine has **no dead-ends**: every state has an exit back into the
-lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle
-(`un-vetted → vetting → awaiting re-vet`) re-runs the vetter whenever a PR's
-head moves, so a reworked PR is always re-judged against its current code. The
-**human reject is TRANSIENT**, not terminal: when a human applies `human:reject`
-and a trusted "Rework note", the producer executes the rework, pushes a fix
-commit, and then calls **`pr-review-report reworked-reject <owner/repo> <n>`**
-as its final step. That subcommand REMOVES `human:reject` **and any stale `ai:*`
-verdict** (the code changed → re-vet from scratch), returning the PR to
+lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle is
+`un-vetted → vetting → a verdict`, and a PR falls back to **`un-vetted`** — the
+same state, not a second one — the moment its verdict stops being current at its
+head, so a reworked PR is always judged against its current code. The **human
+reject is TRANSIENT**, not terminal: when a human applies `human:reject` and a
+trusted "Rework note", the producer executes the rework, pushes a fix commit,
+and then calls **`pr-review-report reworked-reject <owner/repo> <n>`** as its
+final step. That subcommand REMOVES `human:reject` **and any stale `ai:*`
+verdict** (the code changed → vet from scratch), returning the PR to
 ready-to-vet so it re-enters the normal vet → queue → human loop. It is guarded:
 it clears `human:reject` **only** when the PR head commit provably
 **post-dates** the `human:reject` label event (the one sanctioned carve-out from
@@ -610,9 +643,11 @@ refused, so a still-standing human reject is never silently undone.
 `human-queue --json` emits the **full** inventory — every modeled state's PRs,
 grouped into four lanes so the dashboard can show where PRs pile up:
 
-- **vet-lifecycle** — `un-vetted` (open PRs awaiting a first verdict) and
-  `awaiting-re-vet` (an `ai:ready` PR whose head moved past its last vetter
-  verdict).
+- **vet-lifecycle** — `un-vetted`: every open PR the vetter owes a verdict,
+  whether it has never been judged or its `ai:ready` verdict stopped being
+  current at its head. Vetting is a pure function of the PR at its head, so
+  "judged before" is not a state — there is one un-vetted state, handled one
+  way.
 - **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:relink`, `ai:design`,
   `ai:close-candidate`.
 - **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-on`, plus the RETIRED
@@ -623,7 +658,7 @@ Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved
 unchanged; `lanes` and the additive `counts` keys (`reject`, `relink`,
 `closeCandidatePrs`, `humanReject`, `humanDesign`, `humanCloseCandidate`,
-`unvetted`, `awaitingReVet`) are the full-machine view the dashboard renders.
+`unvetted`) are the full-machine view the dashboard renders.
 
 The ISSUE close-candidate lifecycle carries two further additive counts, which
 split the existing `closeCandidateIssues` (unchanged: every issue carrying the
@@ -874,7 +909,7 @@ already does.
 
 One thing it deliberately does **not** do: a body edit moves no commit, so the
 PR is still `vetted-at-head` and the vetter will skip it. The subcommand prints
-a NOTE saying so, and the producer re-arms the re-vet the way it re-arms CI — an
+a NOTE saying so, and the producer re-arms the vet the way it re-arms CI — an
 `--allow-empty` push.
 
 Nothing here is **installed by the flake as a hook**: wire each into the box's

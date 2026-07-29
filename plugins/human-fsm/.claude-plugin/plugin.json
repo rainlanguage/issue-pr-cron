@@ -1,7 +1,7 @@
 {
   "name": "human-fsm",
   "displayName": "Human FSM transitions",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Slash commands for the human's side of the rainlanguage issue→PR pipeline finite state machine: the reads that precede a ruling and the transitions that make it. Each command is one invocation of pr-review-report — the guards (vocabulary, mandatory note, provenance anchor, stranded-flag refusal, subject type, terminal-is-moot, idempotence) live in that binary, not here.",
   "author": {
     "name": "Rain Open Source Software Ltd",

@@ -53,8 +53,9 @@ remember, and being wrong about any one of them changes the ruling:
   carry it.
 
 `queue.more` and `counts` frame the row: a PR you expected and did not get is
-usually in `awaitingRevet`, where a head that moved after the verdict un-pins
-the note from the code.
+usually in `unvetted`, where a verdict that is no longer current at the PR's
+head lands — a moved head un-pins the note from the code, and a `vet-protocol`
+bump un-pins it from the rules it was written under.
 
 ## Present the result, do not summarise it away
 

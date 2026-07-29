@@ -72,7 +72,7 @@ transition functions:
 | Subcommand                                                 | Transition it effects                                                                                                                                            |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--queue`                                                  | surfaces the presentable review queue (`ai:ready` + green + mergeable + vetted-at-head)                                                                          |
-| `--record-verdict <owner/repo> <n> <verdict> …`            | the vetter's write: apply the `ai:*` label + post the sha-bound `🤖 ai:vetter` comment (+ cost)                                                                  |
+| `--record-verdict <owner/repo> <n> <verdict> …`            | the vetter's write: apply the `ai:*` label + post the `🤖 ai:vetter` comment, bound to the head sha and stamped with the vet protocol (+ cost)                   |
 | `--trusted-comments <owner/repo> <n> [--marker] [--issue]` | author-verified comment read — the only trusted way to read a comment                                                                                            |
 | `--commit-closes <owner/repo> <n>`                         | closing-keyword vs. `closingIssuesReferences` drift check                                                                                                        |
 | `--backfill-comments`                                      | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment)                                                          |
@@ -131,8 +131,8 @@ The vetter has **two subjects**, not one. A PR is judged on its diff; a producer
 `ai:close-candidate` flag is judged on its evidence — and the second matters
 because a wrong flag asks a human to destroy work. Both follow the same three
 moves (state-load → read one → record one verdict) and the same
-vetted-at-the-thing-judged rule: a PR re-vets when its head moves, a flag
-re-vets when the producer posts a new one. The vetter never writes a `human:*`
+vetted-at-the-thing-judged rule: a PR is un-vetted again when its head moves, a
+flag when the producer posts a new one. The vetter never writes a `human:*`
 label in either subject; `uphold` leaves the flag for the human, `reject` strips
 `ai:close-candidate` so the issue returns to the producer's queue.
 
@@ -270,9 +270,19 @@ it finds is a different PR's code.
   post a `🤖 ai:vetter` / `🤖 ai:producer` / "Rework note" line; a comment
   counts only when the trusted account authored it. Read via
   `--trusted-comments`.
-- **Vetted-at-head.** An `ai:*` label alone is not a verdict; a PR is vetted
-  only when its trusted `🤖 ai:vetter` comment pins the **current** head. A
-  moved head (code changed) → un-vetted → re-vet.
+- **Vetting is a pure function of the PR at its head, and `vetted_at_head` is
+  its CACHE KEY.** A prior verdict is not an input to vetting, so there is no
+  second kind of pass and no "awaiting re-vet" state — a PR is either vetted or
+  **un-vetted**. A stored verdict may stand in for recomputing one only while
+  both halves of the key hold: the trusted `🤖 ai:vetter` comment pins the
+  **current head** (the input) **and** carries the **current `vet-protocol`
+  stamp** (the function). A push invalidates the first, bumping `VET_PROTOCOL`
+  invalidates the second for every verdict at once, and an unstamped comment is
+  `VetProtocol::Unknown` — never current, because rules that cannot be
+  identified are not the rules in force (`Merge::Unknown`,
+  `CodeRabbitCoverage::Unreadable`). Bump the protocol when what vetting MEANS
+  changes; nothing has to be pushed, relabelled or rewritten for the pipeline to
+  recompute.
 - **Landing is interactive-only** (the merge cron is retired):
   `gh pr merge --merge --admin` on the human's explicit per-PR word, after the
   SHA-bound review gate.

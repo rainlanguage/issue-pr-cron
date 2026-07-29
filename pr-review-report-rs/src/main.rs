@@ -331,7 +331,7 @@ struct QueueCounts {
     pending: usize,
     merge_unknown: usize,
     approved: usize,
-    unconfirmed: usize, // green+mergeable but no ai:vetter comment at head — awaiting (re-)vet, not shown
+    unvetted: usize, // green+mergeable but no current ai:vetter verdict at head — the vetter owes it one
     open_threads: usize, // otherwise-presentable but unresolved review threads — producer thread-resolution work
     fetch_error: usize,
 }
@@ -366,8 +366,8 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} awaiting re-vet{}{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unconfirmed, threads, err, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, excl, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -510,8 +510,10 @@ enum CandidateOutcome {
     /// The `gh pr view` or the thread count could not be read. Fail-closed: counted, never
     /// laundered into a verdict.
     FetchError,
-    /// Green + mergeable, but no trusted `ai:vetter` comment at the current head.
-    Unconfirmed,
+    /// Green + mergeable, but no CURRENT `ai:vetter` verdict at the current head — none at all,
+    /// one pinned to an earlier head, or one stamped with a superseded vet protocol. The vetter
+    /// owes this PR a verdict, which is the same thing being said of a PR it has never seen.
+    Unvetted,
     Red,
     Pending,
     Conflicting,
@@ -548,15 +550,16 @@ fn candidate_outcome(
     match presentable_state(ci, merge, rev) {
         PresentState::Presentable => {
             // Vetted-at-head gate: green + mergeable is not enough — the ai:ready label must be
-            // BACKED by an ai:vetter comment at the current head. A migration-labelled or
-            // pushed-since PR is not presented; it's counted as awaiting (re-)vet.
+            // BACKED by a CURRENT ai:vetter verdict at the current head. A migration-labelled PR,
+            // one pushed since, or one whose verdict was stamped under a superseded vet protocol
+            // is not presented; it is counted as un-vetted.
             let head = j
                 .get("headRefOid")
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
             if !vetted_at_head(&j, &head) {
-                return CandidateOutcome::Unconfirmed;
+                return CandidateOutcome::Unvetted;
             }
             // Open-threads gate: an otherwise-presentable PR with unresolved review threads
             // (CodeRabbit or human) is the producer's thread-resolution work, not
@@ -603,7 +606,7 @@ fn apply_outcome(out: CandidateOutcome, rows: &mut Vec<PresentablePr>, counts: &
         CandidateOutcome::Present(p) => rows.push(*p),
         CandidateOutcome::OpenThreads => counts.open_threads += 1,
         CandidateOutcome::FetchError => counts.fetch_error += 1,
-        CandidateOutcome::Unconfirmed => counts.unconfirmed += 1,
+        CandidateOutcome::Unvetted => counts.unvetted += 1,
         CandidateOutcome::Red => counts.red += 1,
         CandidateOutcome::Pending => counts.pending += 1,
         CandidateOutcome::Conflicting => counts.conflict += 1,
@@ -752,7 +755,7 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         pending: 0,
         merge_unknown: 0,
         approved: 0,
-        unconfirmed: 0,
+        unvetted: 0,
         open_threads: 0,
         fetch_error: 0,
     };
@@ -924,7 +927,7 @@ mod parallel_queue_tests {
             pending: 0,
             merge_unknown: 0,
             approved: 0,
-            unconfirmed: 0,
+            unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
         }
@@ -939,7 +942,7 @@ mod parallel_queue_tests {
             c.pending,
             c.merge_unknown,
             c.approved,
-            c.unconfirmed,
+            c.unvetted,
             c.open_threads,
             c.fetch_error,
         ]
@@ -970,7 +973,7 @@ mod parallel_queue_tests {
             (CandidateOutcome::Pending, [0, 0, 1, 0, 0, 0, 0, 0]),
             (CandidateOutcome::MergeUnknown, [0, 0, 0, 1, 0, 0, 0, 0]),
             (CandidateOutcome::Approved, [0, 0, 0, 0, 1, 0, 0, 0]),
-            (CandidateOutcome::Unconfirmed, [0, 0, 0, 0, 0, 1, 0, 0]),
+            (CandidateOutcome::Unvetted, [0, 0, 0, 0, 0, 1, 0, 0]),
             (CandidateOutcome::OpenThreads, [0, 0, 0, 0, 0, 0, 1, 0]),
             // A failed fetch is COUNTED, never dropped: a queue short one row must say so.
             (CandidateOutcome::FetchError, [0, 0, 0, 0, 0, 0, 0, 1]),
@@ -1073,10 +1076,14 @@ mod parallel_queue_tests {
 
     // ── the gates, one candidate at a time ────────────────────────────────────────────────────
 
+    /// Stamped with the protocol in force, as a live verdict is — an unstamped body is
+    /// `VetProtocol::Unknown` and would make every "vetted" case below read as un-vetted.
     fn vetter_comment(head: &str, cost: &str) -> Value {
         json!({
             "author": {"login": TRUSTED_AUTHOR},
-            "body": format!("🤖 ai:vetter\nReviewed {head}: ready — fine\ncost {cost}"),
+            "body": format!(
+                "🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}\nReviewed {head}: ready — fine\ncost {cost}"
+            ),
         })
     }
 
@@ -1190,6 +1197,41 @@ mod parallel_queue_tests {
                     "SUCCESS",
                     "",
                     vec![vetter_comment(&"c".repeat(40), "40")],
+                )),
+                threads: Some(0),
+                want: [0, 0, 0, 0, 0, 1, 0, 0],
+            },
+            GateCase {
+                // Right head, superseded vet protocol: the verdict answers a question the
+                // pipeline no longer asks, so it routes to the SAME counter a stale head does.
+                name: "vetted under a superseded protocol",
+                pr: Some(detail(
+                    "MERGEABLE",
+                    "SUCCESS",
+                    "",
+                    vec![json!({
+                        "author": {"login": TRUSTED_AUTHOR},
+                        "body": format!(
+                            "🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{}\nReviewed {head}: ready — fine\ncost 40",
+                            VET_PROTOCOL + 1
+                        ),
+                    })],
+                )),
+                threads: Some(0),
+                want: [0, 0, 0, 0, 0, 1, 0, 0],
+            },
+            GateCase {
+                // No stamp at all — the shape every verdict written before the stamp existed has.
+                // An unknown protocol is never current, so this is un-vetted too.
+                name: "vetted under an unknown protocol",
+                pr: Some(detail(
+                    "MERGEABLE",
+                    "SUCCESS",
+                    "",
+                    vec![json!({
+                        "author": {"login": TRUSTED_AUTHOR},
+                        "body": format!("🤖 ai:vetter\nReviewed {head}: ready — fine\ncost 40"),
+                    })],
                 )),
                 threads: Some(0),
                 want: [0, 0, 0, 0, 0, 1, 0, 0],
@@ -4181,9 +4223,65 @@ fn labels_to_remove(current: &[String], target: &str) -> Vec<String> {
         .collect()
 }
 
-/// The SHA-bound vetter comment: `🤖 ai:vetter` marker line, then `Reviewed <sha>: <verdict>` (plus
-/// ` — <note>`), then a `cost <n> — <basis>` line when a cost is given. The cost is on its OWN line so
-/// the `Reviewed <sha>:`/`Reviewed <sha>: <verdict>` matches (vetted-at-head, skip-dedup) are unaffected.
+/// The version of the VET FUNCTION — what vetting means, as a number a verdict can carry.
+///
+/// Vetting is a PURE function of the PR at its head: a prior verdict is not an input to it. So a
+/// stored verdict is a CACHE of that function's value, and [`vetted_at_head`] is its cache key. A
+/// cache key over the input alone is only sound while the function is fixed; bump this and every
+/// verdict written under the old rules stops matching at once, so the pipeline recomputes them where
+/// they are — no head to move, no branch to touch, no comment to rewrite.
+///
+/// Bump it when what vetting MEANS changes (the audit lens, a mandatory gate, the verdict
+/// vocabulary), not when the prompt is merely reworded. `1` is the first protocol to be identified
+/// at all: every verdict written before this constant existed carries no stamp and reads as
+/// [`VetProtocol::Unknown`].
+const VET_PROTOCOL: u32 = 1;
+
+/// The line [`verdict_comment`] stamps the protocol on, and [`verdict_protocol`] reads it back from.
+const VET_PROTOCOL_PREFIX: &str = "vet-protocol ";
+
+/// The vet protocol ONE `🤖 ai:vetter` comment was written under.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum VetProtocol {
+    /// The version its `vet-protocol <n>` line names.
+    Stamped(u32),
+    /// No readable stamp: written before verdicts carried one, or carrying a line that does not
+    /// parse as a version. FAIL-SAFE — never current, for the same reason [`Merge::Unknown`] is
+    /// never mergeable and [`CodeRabbitCoverage::Unreadable`] is never coverage. The rules such a
+    /// verdict was written under cannot be identified, and "cannot be identified" is not "the ones
+    /// in force".
+    Unknown,
+}
+
+impl VetProtocol {
+    /// Is this verdict's protocol the one in force? Exactly one value says yes.
+    fn is_current(self) -> bool {
+        self == VetProtocol::Stamped(VET_PROTOCOL)
+    }
+}
+
+/// PURE: the protocol a vetter comment stamped itself with — the `<n>` of its `vet-protocol <n>`
+/// line, else [`VetProtocol::Unknown`].
+///
+/// The FIRST such line wins, and [`verdict_comment`] writes the stamp ABOVE the verdict line, so the
+/// stamp always precedes the model-authored `note`. A note that happens to contain a
+/// `vet-protocol` line therefore cannot displace the real one.
+fn verdict_protocol(body: &str) -> VetProtocol {
+    body.lines()
+        .find_map(|l| l.trim().strip_prefix(VET_PROTOCOL_PREFIX))
+        .and_then(|rest| rest.trim().parse::<u32>().ok())
+        .map(VetProtocol::Stamped)
+        .unwrap_or(VetProtocol::Unknown)
+}
+
+/// The SHA-bound vetter comment: `🤖 ai:vetter` marker line, the `vet-protocol <n>` stamp, then
+/// `Reviewed <sha>: <verdict>` (plus ` — <note>`), then a `cost <n> — <basis>` line when a cost is
+/// given. Each fact is on its OWN line so the `Reviewed <sha>:`/`Reviewed <sha>: <verdict>` matches
+/// (vetted-at-head, skip-dedup) are unaffected by the others.
+///
+/// The stamp says which version of the vet function produced this value — the two facts a cache
+/// entry needs, the input (`sha`) and the function ([`VET_PROTOCOL`]), stated together. It sits
+/// ABOVE the verdict line because everything below it is model-authored text.
 /// This comment is now the SOLE home of verification cost — there is no cost sidecar.
 fn verdict_comment(sha: &str, verdict: &str, note: &str, cost: Option<i64>, basis: &str) -> String {
     let tail = if note.trim().is_empty() {
@@ -4196,7 +4294,9 @@ fn verdict_comment(sha: &str, verdict: &str, note: &str, cost: Option<i64>, basi
         Some(c) => format!("\ncost {c} — {}", basis.trim()),
         None => String::new(),
     };
-    format!("🤖 ai:vetter\nReviewed {sha}: {verdict}{tail}{cost_line}")
+    format!(
+        "🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}\nReviewed {sha}: {verdict}{tail}{cost_line}"
+    )
 }
 
 /// Verification cost + basis parsed from a vetter comment's `cost <n> — <basis>` line, else
@@ -4257,22 +4357,42 @@ fn last_vetter_comment(pr: &Value) -> Option<String> {
     trusted_comments(pr, Some("🤖 ai:vetter")).pop()
 }
 
-/// A PR is vetted AT HEAD only when its most-recent `🤖 ai:vetter` comment recorded a verdict at the
-/// CURRENT head sha (`Reviewed <head>:`). The `ai:*` label alone can be stale — migration-applied, or
-/// from before the producer pushed a commit — so the queue uses this stricter bar (the vetter's own
-/// definition) to never present a PR whose AI verdict isn't confirmed against the exact commit.
+/// THE CACHE KEY on the vet function. A PR counts as vetted only when its most-recent
+/// `🤖 ai:vetter` comment is a value that function would still produce: recorded at the CURRENT head
+/// sha (`Reviewed <head>:`) AND stamped with the protocol in force ([`VET_PROTOCOL`]).
+///
+/// Both halves are the same requirement. Vetting is a pure function of the PR at its head, so a
+/// stored verdict may stand in for recomputing it only while neither the INPUT nor the FUNCTION has
+/// moved: a pushed commit changes the input, a protocol bump changes the function, and either one
+/// makes the stored value an answer to a question nobody asked. The `ai:*` label alone is weaker
+/// than both — it can be migration-applied, or predate a push — which is why the queue uses this bar
+/// and not the label.
+///
+/// An UNSTAMPED comment is [`VetProtocol::Unknown`] and therefore not vetted: it was written under
+/// rules that cannot be identified, and the pipeline does not launder unidentified state into "fine"
+/// (`Merge::Unknown`, `CodeRabbitCoverage::Unreadable`).
 fn vetted_at_head(pr_json: &Value, head: &str) -> bool {
-    !head.is_empty()
-        && last_vetter_comment(pr_json)
-            .map(|b| b.contains(&format!("Reviewed {head}:")))
-            .unwrap_or(false)
+    if head.is_empty() {
+        return false;
+    }
+    let Some(body) = last_vetter_comment(pr_json) else {
+        return false;
+    };
+    body.contains(&format!("Reviewed {head}:")) && verdict_protocol(&body).is_current()
 }
 
-/// Skip a new vetter comment iff the last one already recorded the SAME verdict at the SAME head sha
-/// (no-op re-review). A moved head or a changed verdict does NOT skip.
+/// Skip a new vetter comment iff the one already posted says everything the new one would: the SAME
+/// verdict at the SAME head sha, under the SAME protocol.
+///
+/// The protocol clause is what keeps a bump from deadlocking. Recomputing a verdict under a new
+/// protocol at an unchanged head reaches the same conclusion most of the time — and without this the
+/// write would be dropped as a no-op, leaving the PR stamped with the old protocol, un-vetted, and
+/// re-derived by every run thereafter. A moved head or a changed verdict does not skip either.
 fn should_skip_comment(last_vetter_body: Option<&str>, sha: &str, verdict: &str) -> bool {
     match last_vetter_body {
-        Some(b) => b.contains(&format!("Reviewed {sha}: {verdict}")),
+        Some(b) => {
+            b.contains(&format!("Reviewed {sha}: {verdict}")) && verdict_protocol(b).is_current()
+        }
         None => false,
     }
 }
@@ -5115,7 +5235,7 @@ fn ai_state_label(labels: &[String]) -> Option<String> {
 //
 // A human reject is not a terminal state: once a rework provably follows it, the PR re-enters the
 // existing vet → queue → human lifecycle. `reworked-reject` clears `human:reject` AND every stale
-// `ai:*` verdict (the code changed → it must be re-vetted from scratch), but ONLY on structural proof
+// `ai:*` verdict (the code changed → it must be vetted from scratch), but ONLY on structural proof
 // that a rework FOLLOWED the reject: the PR head commit's date must be STRICTLY NEWER than the
 // `human:reject` label event. This is the one sanctioned carve-out from "never remove a `human:*`
 // label" — guarded so it can never silently undo a human's still-standing reject.
@@ -5203,10 +5323,10 @@ fn reworked_reject_decision(
 
 /// `reworked-reject <owner/repo> <pr> [--dry-run]`: return a reworked `human:reject` PR to
 /// ready-to-vet by REMOVING `human:reject` AND every stale `ai:*` verdict label (the code changed →
-/// re-vet from scratch). GUARDED (see [`reworked_reject_decision`]): the PR head commit must strictly
+/// vet from scratch). GUARDED (see [`reworked_reject_decision`]): the PR head commit must strictly
 /// post-date the `human:reject` label event, else it REFUSES (non-zero exit) and the reject stands.
 /// The producer calls this as its FINAL step after pushing a rework commit for a `human:reject` PR
-/// carrying a trusted "Rework note"; the now-unlabeled head re-enters the vetter's normal re-vet loop.
+/// carrying a trusted "Rework note"; the now-unlabeled head re-enters the vetter's normal vet loop.
 fn reworked_reject_mode(slug: &str, pr: &str, dry_run: bool) -> i32 {
     let Some(prj) = gh_json(&[
         "pr",
@@ -5293,7 +5413,7 @@ fn reworked_reject_mode(slug: &str, pr: &str, dry_run: bool) -> i32 {
                 );
                 println!("  labels to remove: {}", to_remove.join(", "));
                 println!(
-                    "  result: no human:reject, no ai:* → ready-to-vet (vetter re-vets at head)"
+                    "  result: no human:reject, no ai:* → ready-to-vet (vetter vets it at head)"
                 );
                 return 0;
             }
@@ -6633,8 +6753,8 @@ fn print_transition_result(result: Result<String, (i32, String)>) -> i32 {
 // `human-queue --json` emits EVERY modeled state's inventory, not just the human-action ones, so the
 // dashboard can show where PRs pile up. Each producer PR lands in exactly ONE lane bucket by FSM
 // precedence (a human decision dominates a stale ai:* label; a producer-blocked hand-off next; then
-// an ai:ready PR splits ready↔awaiting-re-vet on head drift; then the other vetter verdicts; a
-// label-less PR is a leak if the producer commented, else un-vetted).
+// an ai:ready PR whose verdict is not current at its head falls back to un-vetted; then the other
+// vetter verdicts; a label-less PR is a leak if the producer commented, else un-vetted).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The four FSM lanes, plus the `Leak` anti-lane (escaped the machine — not a modeled state).
@@ -6668,9 +6788,10 @@ const VETTER_VERDICT_LABELS: [&str; 4] =
     ["ai:reject", "ai:relink", "ai:design", "ai:close-candidate"];
 
 /// PURE: the single (lane, state) a producer PR belongs to, by FSM precedence.
-/// - `ready_vetted_at_head`: for an `ai:ready` PR, `Some(false)` if the head moved past the last
-///   `ai:vetter` verdict (→ `awaiting-re-vet`), else `Some(true)`/`None` keeps it in `ai:ready`.
-///   (Only `ai:ready` is head-drift-split — the established `queue`/`vetted_at_head` notion — because
+/// - `ready_vetted_at_head`: for an `ai:ready` PR, `Some(false)` when no `ai:vetter` verdict is
+///   current at its head (pushed past, or written under a superseded protocol) → `un-vetted`, the
+///   SAME state a PR that was never vetted is in; `Some(true)`/`None` keeps it in `ai:ready`.
+///   (Only `ai:ready` is split this way — the established `queue`/`vetted_at_head` notion — because
 ///   the other verdict labels can be producer-originated and carry no `ai:vetter` comment.)
 /// - `producer_commented`: for a label-less PR, whether a trusted `🤖 ai:producer` comment is present
 ///   (a leak — the producer acted outside the FSM); a label-less PR without one is `un-vetted`.
@@ -6698,7 +6819,7 @@ fn classify_lane(
     }
     if has("ai:ready") {
         return if ready_vetted_at_head == Some(false) {
-            (Lane::VetLifecycle, "awaiting-re-vet".to_string())
+            (Lane::VetLifecycle, "un-vetted".to_string())
         } else {
             (Lane::VetterVerdicts, "ai:ready".to_string())
         };
@@ -7003,7 +7124,6 @@ fn human_queue_doc(
             // Additive lane-based counts (each PR counted once, human-override dominant) — the
             // states previously invisible to the dashboard.
             "unvetted": lane_state_count(lanes, "vet-lifecycle", "un-vetted"),
-            "awaitingReVet": lane_state_count(lanes, "vet-lifecycle", "awaiting-re-vet"),
             "reject": lane_state_count(lanes, "vetter-verdicts", "ai:reject"),
             "relink": lane_state_count(lanes, "vetter-verdicts", "ai:relink"),
             "closeCandidatePrs": lane_state_count(lanes, "vetter-verdicts", "ai:close-candidate"),
@@ -7023,7 +7143,7 @@ fn human_queue_doc(
 /// the producer is restricted to labeled transitions. The legacy `states`/`counts`/`leaks` keys are
 /// kept UNCHANGED for the dashboard's existing reads; the new `lanes` object + additive `counts` keys
 /// are the full-machine view. Runtime is O(unlabeled + ai:ready producer PRs) extra `gh` calls (the
-/// leak/reason check, plus the head-drift check that splits ai:ready ↔ awaiting-re-vet).
+/// leak/reason check, plus the verdict-currency check that returns an ai:ready PR to un-vetted).
 fn human_queue_mode(json_out: bool) -> i32 {
     let assignee = std::env::var("PR_ASSIGNEE").unwrap_or_else(|_| "thedavidmeister".to_string());
     // ONE search: every open producer PR with its labels — the label IS the state.
@@ -7109,8 +7229,8 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
     }
 
-    // Head-drift split for ai:ready PRs: an ai:ready PR whose head moved past its last ai:vetter
-    // verdict is awaiting-re-vet, not ready (the established `queue`/`vetted_at_head` notion). Fetch
+    // Verdict-currency check for ai:ready PRs: an ai:ready PR with no ai:vetter verdict current at
+    // its head is un-vetted, not ready (the established `queue`/`vetted_at_head` notion). Fetch
     // only the ai:ready PRs that would actually reach the ai:ready lane branch (no dominating
     // human:* / ai:blocked-* label) — one `gh pr view` each.
     let leak_keys: std::collections::HashSet<(String, u64)> = leaks
@@ -7265,14 +7385,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
     );
     // vet-lifecycle
     show_lane(
-        "UN-VETTED — awaiting first vet",
+        "UN-VETTED — the vetter owes a verdict",
         "vet-lifecycle",
         "un-vetted",
-    );
-    show_lane(
-        "AWAITING-RE-VET — ai:ready head moved, re-vet needed",
-        "vet-lifecycle",
-        "awaiting-re-vet",
     );
     // vetter-verdicts
     if let Some(v) = buckets.get("ai:ready") {
@@ -8810,7 +8925,7 @@ impl VetAction {
 
 /// PURE vet-lifecycle transition guard. **THE ORDER IS THE GUARD**: the human-sacred check resolves
 /// BEFORE any head/vetted comparison, so a moved head can never reopen a human-decided PR (on
-/// 2026-07-04 a run re-vetted human-rejected rain.erc4626.words#162 after a merge-main commit moved
+/// 2026-07-04 a run re-opened human-rejected rain.erc4626.words#162 for vetting after a merge-main commit moved
 /// its head — that exact sequence is what this ordering forbids). `human_sacred` covers BOTH forms of
 /// human decision: a `human:*` label and a native `APPROVED`/`CHANGES_REQUESTED` review.
 fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAction {
@@ -10439,10 +10554,11 @@ fn next_ready_row(f: &NextReadyFacts) -> Value {
 }
 
 /// PURE: the whole document. `queue.more` is how many presentable PRs this page left behind, and
-/// `counts` is the whole-queue breakdown — including `awaitingRevet`, which is where a PR whose
-/// head moved after its verdict went. That number is the answer to "why is the PR I expected not
-/// here": a moved head un-pins the vetter's note from the code, so the PR is not next, it is
-/// awaiting a re-vet, and saying so beats returning a verdict that no longer describes anything.
+/// `counts` is the whole-queue breakdown — including `unvetted`, which is where a PR whose verdict
+/// is no longer current at its head went. That number is the answer to "why is the PR I expected not
+/// here": a moved head un-pins the vetter's note from the code and a protocol bump un-pins it from
+/// the rules, so the PR is not next, it is un-vetted — and saying so beats returning a verdict that
+/// no longer describes anything.
 fn next_ready_doc(rows: Vec<Value>, counts: &QueueCounts, presentable: usize) -> Value {
     let returned = rows.len();
     serde_json::json!({
@@ -10460,7 +10576,7 @@ fn next_ready_doc(rows: Vec<Value>, counts: &QueueCounts, presentable: usize) ->
             "pending": counts.pending,
             "mergeUnknown": counts.merge_unknown,
             "approved": counts.approved,
-            "awaitingRevet": counts.unconfirmed,
+            "unvetted": counts.unvetted,
             "openThreads": counts.open_threads,
             "fetchError": counts.fetch_error,
         },
@@ -10515,10 +10631,12 @@ mod next_ready_tests {
     use super::*;
     use serde_json::json;
 
+    /// Built by the REAL writer, so a fixture is stamped with the protocol in force exactly as a
+    /// live verdict is — a hand-written body would drift from it at the next bump.
     fn vetter_comment(sha: &str, tail: &str) -> Value {
         json!({
             "author": {"login": TRUSTED_AUTHOR},
-            "body": format!("🤖 ai:vetter\nReviewed {sha}: ready — {tail}\ncost 40 — a basis"),
+            "body": verdict_comment(sha, "ready", tail, Some(40), "a basis"),
         })
     }
 
@@ -10924,7 +11042,7 @@ mod next_ready_tests {
             pending: usize::MAX,
             merge_unknown: usize::MAX,
             approved: usize::MAX,
-            unconfirmed: usize::MAX,
+            unvetted: usize::MAX,
             open_threads: usize::MAX,
             fetch_error: usize::MAX,
         };
@@ -10971,7 +11089,7 @@ mod next_ready_tests {
             pending: 0,
             merge_unknown: 0,
             approved: 0,
-            unconfirmed: 0,
+            unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
         };
@@ -11159,12 +11277,12 @@ mod next_ready_tests {
         assert_eq!(verdict_sha("Reviewed the diff: ready"), None);
     }
 
-    // Decision 2 made visible: a PR whose head moved after its verdict is NOT next. The queue's
-    // vetted-at-head gate already withheld it, and the count says where it went — silently
+    // Decision 2 made visible: a PR whose verdict is not current at its head is NOT next. The
+    // queue's vetted-at-head gate already withheld it, and the count says where it went — silently
     // returning a verdict that no longer describes the code would be the worst outcome, and
     // omitting it with no trace is the second worst.
     #[test]
-    fn a_pr_awaiting_re_vet_is_counted_rather_than_returned_stale() {
+    fn an_unvetted_pr_is_counted_rather_than_returned_stale() {
         let counts = QueueCounts {
             raw: 12,
             excluded: 2,
@@ -11173,12 +11291,12 @@ mod next_ready_tests {
             pending: 0,
             merge_unknown: 0,
             approved: 0,
-            unconfirmed: 4,
+            unvetted: 4,
             open_threads: 1,
             fetch_error: 0,
         };
         let doc = next_ready_doc(vec![json!({"pr": "o/r#1"})], &counts, 3);
-        assert_eq!(doc["counts"]["awaitingRevet"], json!(4));
+        assert_eq!(doc["counts"]["unvetted"], json!(4));
         assert_eq!(doc["counts"]["aiReady"], json!(12));
         assert_eq!(doc["queue"]["presentable"], json!(3));
         assert_eq!(doc["queue"]["returned"], json!(1));
@@ -11357,7 +11475,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "record_verdict",
-            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost. Refuses if a human has decided the PR.",
+            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost and the vet-protocol stamp. Refuses if a human has decided the PR.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -13156,7 +13274,7 @@ fn require_qa_block_mode() -> i32 {
 //
 // THE HEAD DOES NOT MOVE. A body edit changes no commit, so [`vetted_at_head`] still holds and the
 // vetter SKIPS the PR as `skip-vetted-at-head`. The repair is therefore not the whole move — the
-// producer re-arms the re-vet the way it re-arms CI, with an `--allow-empty` push. The subcommand
+// producer re-arms the vet the way it re-arms CI, with an `--allow-empty` push. The subcommand
 // SAYS SO on stdout when it detects that state, rather than leaving a repaired PR silently parked.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -13456,7 +13574,7 @@ fn repair_qa_block_mode(
         println!(
             "NOTE: the vetter already recorded a verdict at {head}, and a body edit does not move \
              the head — it will SKIP this PR as vetted-at-head. Push an `--allow-empty` commit to \
-             re-arm the re-vet."
+             re-arm the vet."
         );
     }
     0
@@ -15962,7 +16080,7 @@ mod queue_tests {
             pending,
             merge_unknown: 0,
             approved,
-            unconfirmed: 0,
+            unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
         }
@@ -15981,7 +16099,7 @@ mod queue_tests {
         let out = render_queue(&rows, &qc(5, 2, 1, 0, 1), 0);
         assert!(
             out.starts_with(
-                "review queue: 5 ai:ready -> 1 presentable, 2 conflicting, 1 red, 0 pending, 0 unknown-merge, 1 approved, 0 awaiting re-vet (cheapest first)\n"
+                "review queue: 5 ai:ready -> 1 presentable, 2 conflicting, 1 red, 0 pending, 0 unknown-merge, 1 approved, 0 un-vetted (cheapest first)\n"
             ),
             "header:\n{out}"
         );
@@ -15994,7 +16112,8 @@ mod queue_tests {
     #[test]
     fn vetted_at_head_requires_a_head_matching_vetter_comment() {
         let at = json!({"comments":[
-            {"author":{"login":TRUSTED_AUTHOR},"body":"🤖 ai:vetter\nReviewed sha1: ready — ok"}
+            {"author":{"login":TRUSTED_AUTHOR},
+             "body": verdict_comment("sha1", "ready", "ok", None, "")}
         ]});
         assert!(vetted_at_head(&at, "sha1"), "matching sha → vetted");
         assert!(!vetted_at_head(&at, "sha2"), "head moved → not vetted");
@@ -16005,6 +16124,112 @@ mod queue_tests {
             "no ai:vetter comment → not vetted"
         );
         assert!(!vetted_at_head(&at, ""), "empty head can never confirm");
+    }
+
+    /// A vetter comment stamped with an ARBITRARY protocol — the only way to write a body the
+    /// current writer cannot produce, which is what a verdict from another era looks like.
+    fn stamped_at(sha: &str, protocol: u32) -> Value {
+        json!({"comments":[{
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": format!("🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{protocol}\nReviewed {sha}: ready — ok"),
+        }]})
+    }
+
+    /// A vetter comment carrying NO protocol stamp — the shape every verdict written before the
+    /// stamp existed has, and the shape the transition has to read as not-current.
+    fn unstamped(sha: &str) -> Value {
+        json!({"comments":[{
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": format!("🤖 ai:vetter\nReviewed {sha}: ready — ok\ncost 40 — a basis"),
+        }]})
+    }
+
+    // The cache key is BOTH halves. A verdict at the current head, written under a protocol that is
+    // no longer the one in force, is an answer produced by a function the pipeline no longer runs.
+    #[test]
+    fn a_stale_protocol_stamp_is_not_vetted_at_a_matching_head() {
+        assert!(
+            vetted_at_head(&stamped_at("sha1", VET_PROTOCOL), "sha1"),
+            "current protocol at head → vetted"
+        );
+        assert!(
+            !vetted_at_head(&stamped_at("sha1", VET_PROTOCOL + 1), "sha1"),
+            "later protocol at head → NOT vetted (currency is equality, not ordering)"
+        );
+        assert!(
+            !vetted_at_head(&stamped_at("sha1", 0), "sha1"),
+            "earlier protocol at head → NOT vetted"
+        );
+    }
+
+    // The transition case: every verdict on the board when the stamp shipped carries none, and an
+    // unidentifiable protocol is not the protocol in force. Fail-safe, like `Merge::Unknown`.
+    #[test]
+    fn an_unstamped_verdict_is_not_vetted_at_a_matching_head() {
+        assert!(
+            !vetted_at_head(&unstamped("sha1"), "sha1"),
+            "no stamp at the current head → NOT vetted"
+        );
+    }
+
+    // The author filter is upstream of the stamp and stays upstream of it: a perfectly stamped
+    // verdict at the exact head, posted by anyone else, is not a verdict at all.
+    #[test]
+    fn a_spoofed_author_is_not_a_verdict_however_well_stamped() {
+        let spoof = json!({"comments":[{
+            "author": {"login": "impostor"},
+            "body": verdict_comment("sha1", "ready", "trust me", None, ""),
+        }]});
+        assert!(!vetted_at_head(&spoof, "sha1"));
+    }
+
+    // What a stamp is READ as, on its own: the version it names, else Unknown. Every non-version is
+    // one bucket because the handling is one — it cannot be shown to be the protocol in force.
+    #[test]
+    fn verdict_protocol_reads_the_stamp_and_fails_safe_on_anything_else() {
+        assert_eq!(
+            verdict_protocol(&verdict_comment("s", "ready", "n", None, "")),
+            VetProtocol::Stamped(VET_PROTOCOL)
+        );
+        assert_eq!(
+            verdict_protocol("🤖 ai:vetter\nvet-protocol 7\nReviewed s: ready"),
+            VetProtocol::Stamped(7)
+        );
+        assert_eq!(
+            verdict_protocol("🤖 ai:vetter\nReviewed s: ready — ok\ncost 40 — b"),
+            VetProtocol::Unknown,
+            "no stamp line"
+        );
+        assert_eq!(
+            verdict_protocol("🤖 ai:vetter\nvet-protocol one\nReviewed s: ready"),
+            VetProtocol::Unknown,
+            "unparseable version"
+        );
+        assert_eq!(
+            verdict_protocol("🤖 ai:vetter\nvet-protocol\nReviewed s: ready"),
+            VetProtocol::Unknown,
+            "prefix with no version"
+        );
+        assert!(!VetProtocol::Unknown.is_current());
+        assert!(VetProtocol::Stamped(VET_PROTOCOL).is_current());
+    }
+
+    // The stamp is written ABOVE the model's own text, so a note that contains a `vet-protocol`
+    // line cannot displace the real one — the first stamp in the body is always the writer's.
+    #[test]
+    fn a_stamp_inside_the_note_cannot_displace_the_real_one() {
+        let body = verdict_comment(
+            "sha1",
+            "ready",
+            &format!("closes #1\n{VET_PROTOCOL_PREFIX}{}", VET_PROTOCOL + 9),
+            None,
+            "",
+        );
+        assert_eq!(
+            verdict_protocol(&body),
+            VetProtocol::Stamped(VET_PROTOCOL),
+            "the writer's stamp precedes the note"
+        );
     }
 
     // trusted_comments is the choke point for every trust-bearing comment read: it keeps only
@@ -16046,7 +16271,7 @@ mod queue_tests {
         c.excluded = 1;
         c.fetch_error = 1;
         c.merge_unknown = 2;
-        c.unconfirmed = 3;
+        c.unvetted = 3;
         c.open_threads = 4;
         let out = render_queue(&rows, &c, 0);
         assert!(out.contains("  unscored  r#2  "), "unscored:\n{out}");
@@ -16057,10 +16282,7 @@ mod queue_tests {
             out.contains("2 unknown-merge"),
             "unknown-merge count:\n{out}"
         );
-        assert!(
-            out.contains("3 awaiting re-vet"),
-            "awaiting-re-vet count:\n{out}"
-        );
+        assert!(out.contains("3 un-vetted"), "un-vetted count:\n{out}");
     }
 
     // `top` caps the printed list and reports "+N more"; the 1000-limit warning fires at raw>=1000.
@@ -17843,7 +18065,7 @@ mod record_verdict_tests {
     use super::{
         cost_from_comment, has_human_override, labels_to_remove, last_vetter_comment,
         should_skip_comment, verdict_comment, verdict_label, verdict_plan, vetted_at_head,
-        VerdictPlan, TRUSTED_AUTHOR,
+        VerdictPlan, TRUSTED_AUTHOR, VET_PROTOCOL, VET_PROTOCOL_PREFIX,
     };
     use serde_json::json;
 
@@ -17956,22 +18178,27 @@ mod record_verdict_tests {
 
     #[test]
     fn verdict_comment_shape_with_and_without_note() {
+        // The stamp is written from the constants, so a BUMP does not have to be re-typed here —
+        // but a comment that stops carrying a stamp at all still fails every case below.
+        let stamp = format!("{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}");
         assert_eq!(
             verdict_comment("abc123", "ready", "looks good", None, ""),
-            "🤖 ai:vetter\nReviewed abc123: ready — looks good"
+            format!("🤖 ai:vetter\n{stamp}\nReviewed abc123: ready — looks good")
         );
         assert_eq!(
             verdict_comment("abc123", "reject", "   ", None, ""),
-            "🤖 ai:vetter\nReviewed abc123: reject"
+            format!("🤖 ai:vetter\n{stamp}\nReviewed abc123: reject")
         );
         // Cost rides on its OWN line so the `Reviewed <sha>:`/`: <verdict>` matches are unaffected.
         assert_eq!(
             verdict_comment("abc123", "ready", "ok", Some(335), "org-wide CI gate"),
-            "🤖 ai:vetter\nReviewed abc123: ready — ok\ncost 335 — org-wide CI gate"
+            format!(
+                "🤖 ai:vetter\n{stamp}\nReviewed abc123: ready — ok\ncost 335 — org-wide CI gate"
+            )
         );
         assert_eq!(
             verdict_comment("abc123", "ready", "", Some(0), ""),
-            "🤖 ai:vetter\nReviewed abc123: ready\ncost 0"
+            format!("🤖 ai:vetter\n{stamp}\nReviewed abc123: ready\ncost 0")
         );
         // The cost line round-trips through cost_from_comment.
         assert_eq!(
@@ -17991,7 +18218,8 @@ mod record_verdict_tests {
     }
     #[test]
     fn should_skip_only_on_same_verdict_and_sha() {
-        let body = "🤖 ai:vetter\nReviewed sha1: ready — ok";
+        let body = verdict_comment("sha1", "ready", "ok", None, "");
+        let body = body.as_str();
         assert!(
             should_skip_comment(Some(body), "sha1", "ready"),
             "same → skip"
@@ -18007,6 +18235,26 @@ mod record_verdict_tests {
         assert!(
             !should_skip_comment(None, "sha1", "ready"),
             "no prior vetter comment → post"
+        );
+    }
+
+    // The dedup must NOT swallow the write that re-stamps a PR. Same sha, same verdict, older or
+    // absent protocol → post: without this the PR keeps the old stamp, stays un-vetted, and is
+    // re-derived by every run forever while nothing is ever written.
+    #[test]
+    fn should_skip_requires_the_current_protocol_too() {
+        let stale = format!(
+            "🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{}\nReviewed sha1: ready — ok",
+            VET_PROTOCOL + 1
+        );
+        assert!(
+            !should_skip_comment(Some(&stale), "sha1", "ready"),
+            "same verdict + sha, superseded protocol → repost"
+        );
+        let unstamped = "🤖 ai:vetter\nReviewed sha1: ready — ok\ncost 40 — b";
+        assert!(
+            !should_skip_comment(Some(unstamped), "sha1", "ready"),
+            "same verdict + sha, no stamp → repost"
         );
     }
 
@@ -20405,14 +20653,14 @@ mod fsm_completeness_tests {
             classify_lane(&s(&["ai:blocked-infra"]), None, false),
             (Lane::ProducerBlocked, "ai:blocked-infra".to_string())
         );
-        // ai:ready splits on head drift: vetted-at-head stays ready, moved head -> awaiting-re-vet.
+        // ai:ready splits on verdict currency: vetted-at-head stays ready, otherwise -> un-vetted.
         assert_eq!(
             classify_lane(&s(&["ai:ready"]), Some(true), false),
             (Lane::VetterVerdicts, "ai:ready".to_string())
         );
         assert_eq!(
             classify_lane(&s(&["ai:ready"]), Some(false), false),
-            (Lane::VetLifecycle, "awaiting-re-vet".to_string())
+            (Lane::VetLifecycle, "un-vetted".to_string())
         );
         // other vetter verdicts (ai:design is a verdict lane, NOT producer-blocked).
         assert_eq!(
@@ -20465,7 +20713,7 @@ mod fsm_completeness_tests {
     fn lanes_doc_emits_every_state_with_the_right_members() {
         let prs = vec![
             qpr(1, &[], None, false),                     // un-vetted
-            qpr(2, &["ai:ready"], Some(false), false),    // awaiting-re-vet
+            qpr(2, &["ai:ready"], Some(false), false),    // un-vetted (verdict not current)
             qpr(3, &["ai:ready"], Some(true), false),     // ai:ready
             qpr(4, &["ai:reject"], None, false),          // ai:reject
             qpr(5, &["ai:relink"], None, false),          // ai:relink
@@ -20484,8 +20732,9 @@ mod fsm_completeness_tests {
 
         // every state present, counts correct, membership disjoint (#15 joins #4 under ai:reject).
         let count = |lane: &str, st: &str| lane_state_count(&doc, lane, st);
-        assert_eq!(count("vet-lifecycle", "un-vetted"), 1);
-        assert_eq!(count("vet-lifecycle", "awaiting-re-vet"), 1);
+        // #1 (never labelled) and #2 (ai:ready, verdict not current at its head) are the SAME
+        // state — the vetter owes each of them a verdict, and nothing downstream distinguishes them.
+        assert_eq!(count("vet-lifecycle", "un-vetted"), 2);
         assert_eq!(count("vetter-verdicts", "ai:ready"), 1);
         assert_eq!(count("vetter-verdicts", "ai:reject"), 2);
         assert_eq!(count("vetter-verdicts", "ai:relink"), 1);
@@ -20499,9 +20748,17 @@ mod fsm_completeness_tests {
         assert_eq!(count("human-decisions", "human:close-candidate"), 1);
         assert_eq!(count("leak", "leak"), 1);
 
-        // the PR list carries {repo, number, url, title}; the awaiting-re-vet member is #2.
-        let arv = doc.pointer("/vet-lifecycle/awaiting-re-vet/prs/0").unwrap();
-        assert_eq!(arv.get("number").and_then(|v| v.as_u64()), Some(2));
+        // the PR list carries {repo, number, url, title}. #1 (never labelled) and #2 (ai:ready with
+        // no current verdict) sit side by side in the ONE un-vetted bucket, indistinguishable.
+        let members: Vec<u64> = doc
+            .pointer("/vet-lifecycle/un-vetted/prs")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.get("number").and_then(|v| v.as_u64()))
+            .collect();
+        assert_eq!(members, vec![1, 2]);
+        let arv = doc.pointer("/vet-lifecycle/un-vetted/prs/1").unwrap();
         assert_eq!(arv.get("repo").and_then(|v| v.as_str()), Some("o/r"));
         assert_eq!(
             arv.get("url").and_then(|v| v.as_str()),
@@ -22307,10 +22564,12 @@ mod vetter_state_load_tests {
     use super::*;
     use serde_json::json;
 
+    /// Built by the REAL writer, so a fixture is stamped with the protocol in force exactly as a
+    /// live verdict is — a hand-written body would drift from it at the next bump.
     fn vetter_comment(sha: &str, verdict: &str) -> Value {
         json!({
             "author": {"login": TRUSTED_AUTHOR},
-            "body": format!("🤖 ai:vetter\nReviewed {sha}: {verdict} — note\ncost 300 — small diff"),
+            "body": verdict_comment(sha, verdict, "note", Some(300), "small diff"),
         })
     }
 
@@ -22334,7 +22593,7 @@ mod vetter_state_load_tests {
     }
 
     // THE ordering invariant: the human-sacred check resolves BEFORE any head/vetted comparison.
-    // rain.erc4626.words#162 (2026-07-04) was re-vetted after a merge-main commit moved the head of a
+    // rain.erc4626.words#162 (2026-07-04) was re-opened for vetting after a merge-main commit moved the head of a
     // human-REJECTED PR. Here that PR is human-sacred AND head-moved (vetted_at_head=false) — the one
     // input combination that produced the violation — and it must still skip.
     #[test]
@@ -22425,7 +22684,7 @@ mod vetter_state_load_tests {
         assert_eq!(action, VetAction::SkipVetted);
         assert_eq!(row["vettedAtHead"], json!(true));
 
-        // same comment, head has MOVED -> un-vetted, re-vet.
+        // same comment, head has MOVED -> un-vetted.
         let d = with(json!([vetter_comment("abc123", "ready")]), "def456");
         let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &d);
         assert_eq!(action, VetAction::Vet);
@@ -22788,9 +23047,10 @@ mod vetter_state_load_tests {
             "files": [{"path": "src/lib.rs", "additions": 12, "deletions": 3}],
             "closingIssuesReferences": [{"number": 88}],
             "comments": [
-                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter\nReviewed cafe1234: ready"},
+                {"author": {"login": TRUSTED_AUTHOR}, "body": verdict_comment("cafe1234", "ready", "", None, "")},
                 {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer\npushed a fix"},
-                {"author": {"login": "impostor"}, "body": "🤖 ai:vetter\nReviewed cafe1234: ready"},
+                // BYTE-IDENTICAL to the trusted verdict above, stamp included, from another account.
+                {"author": {"login": "impostor"}, "body": verdict_comment("cafe1234", "ready", "", None, "")},
                 {"author": {"login": "someone"}, "body": "drive-by chatter"},
             ],
         });
