@@ -846,6 +846,10 @@ mod parallel_queue_tests {
     // The pool is BOUNDED and it SATURATES: never more than the cap in flight, and with four
     // times the cap of work the cap is actually reached (a pool that quietly ran one at a time
     // would satisfy the bound and none of the point).
+    //
+    // Saturation is reached by RENDEZVOUS, not by hoping N sleeps overlap: each worker holds its
+    // item until the pool is full. A fixed sleep would make the second assertion a race against
+    // thread start-up on a loaded box, and a flaky test is one nobody reads.
     #[test]
     fn map_bounded_holds_the_cap_and_reaches_it() {
         let items: Vec<usize> = (0..QUEUE_FETCH_CONCURRENCY * 4).collect();
@@ -854,13 +858,18 @@ mod parallel_queue_tests {
         map_bounded(&items, |_| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            std::thread::sleep(Duration::from_millis(50));
+            await_another_worker(|| peak.load(Ordering::SeqCst) >= QUEUE_FETCH_CONCURRENCY);
             in_flight.fetch_sub(1, Ordering::SeqCst);
         });
+        assert!(
+            peak.load(Ordering::SeqCst) <= QUEUE_FETCH_CONCURRENCY,
+            "the pool must never exceed the cap: peak {}",
+            peak.load(Ordering::SeqCst)
+        );
         assert_eq!(
             peak.load(Ordering::SeqCst),
             QUEUE_FETCH_CONCURRENCY,
-            "in-flight fetches must reach the cap and never exceed it"
+            "and with four times the cap of work it must reach it"
         );
     }
 
