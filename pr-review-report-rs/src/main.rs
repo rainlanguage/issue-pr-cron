@@ -5013,6 +5013,12 @@ const RECORD_VERDICT_FIELDS: &str = "headRefOid,labels,comments,reviewDecision,f
 enum RecordGate {
     RefuseHuman,
     NoSha,
+    /// The PR changes files but the diff carries not one `diff --git` header — it did not arrive.
+    /// The claim is then UNCHECKED, not satisfied: every anchor becomes unverifiable and every file
+    /// looks unanchorable, so a name-only claim would sail through a gate that never ran. An
+    /// unchecked claim is not a verdict, so this is a refusal in its own right rather than a
+    /// vacuous pass.
+    NoDiff,
     /// The claim does not account for the diff (#131).
     Uncovered(CoverageGaps),
     Record {
@@ -5058,12 +5064,16 @@ fn record_gate(
                 .collect()
         })
         .unwrap_or_default();
-    let gaps = coverage_gaps(
-        &changed,
-        &diff_changed_paths(diff_text),
-        covered,
-        &diff_new_lines(diff_text),
-    );
+    // A PR that changes a file always has a `diff --git` header for it. Not one, against a PR that
+    // changes something, means the diff is not here — and a claim checked against a diff that is
+    // not here is not checked. The check lives HERE, in the pure decision, rather than only at the
+    // fetch that reads it: a guard the caller has to remember to arm is a guard that will one day
+    // be called without it.
+    let also_known = diff_changed_paths(diff_text);
+    if !changed.is_empty() && also_known.is_empty() {
+        return RecordGate::NoDiff;
+    }
+    let gaps = coverage_gaps(&changed, &also_known, covered, &diff_new_lines(diff_text));
     if !gaps.is_clean() {
         return RecordGate::Uncovered(gaps);
     }
@@ -5161,6 +5171,16 @@ fn record_verdict_apply(
                     1,
                     format!("error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"),
                 ));
+        }
+        RecordGate::NoDiff => {
+            return Err((
+                1,
+                format!(
+                    "error: `gh pr diff {slug}#{pr}` produced no diff for a PR that changes files \
+                     — the coverage claim cannot be checked against a diff that is not there, and \
+                     an unchecked claim is not a verdict"
+                ),
+            ));
         }
         // Refused BEFORE any write and before the dry-run report, so a claim that does not
         // account for the diff provably changed nothing.
@@ -20004,7 +20024,15 @@ diff --git a/a.md b/a.md
             "src/libraries/Math.sol",  // and "lib" is a COMPONENT, never a prefix
             "src/generator/Emit.sol",  // …as "generated" is, not a substring
             "lib.rs",                  // a root-dir name is a DIRECTORY, not a file
+            // …and its BARE spelling is a file too: a repo-root `target` with nothing under it is
+            // something a person wrote, not cargo's or forge's tree.
+            "target",
+            "lib",
+            "dependencies",
             "docs/generated-report.md", // a component CONTAINING "generated" is not "generated"
+            // an exempt NAME is the whole basename, never a suffix of one
+            "docs/my-package-lock.json",
+            "src/pnpm-lock.yaml.md",
         ] {
             assert!(!anchor_exempt(p), "{p} must need an anchor");
         }
@@ -20298,6 +20326,115 @@ diff --git a/a.md b/a.md
             }
             other => panic!("expected Record, got {other:?}"),
         }
+    }
+
+    // A guard that silently stops firing is the failure mode this whole issue is about, one level
+    // up. With no diff there is no anchorable line ANYWHERE, so every file reads as exempt by
+    // derivation and a claim of bare filenames would sail through a check that never ran. It is
+    // refused instead — and refused as its own thing, not mis-reported as the vetter's fault.
+    #[test]
+    fn a_diff_that_did_not_arrive_cannot_vacuously_satisfy_a_claim() {
+        let names: Vec<Covered> = changed().iter().map(|p| named(p)).collect();
+        assert_eq!(
+            record_gate(&pr_json(json!({})), "", &names, "ai:ready", "ready"),
+            RecordGate::NoDiff
+        );
+        // …and the very same claim against the REAL diff is refused for the right reason: the two
+        // hand-written files are unanchored, the generated / deleted / binary ones are not.
+        match record_gate(&pr_json(json!({})), DIFF, &names, "ai:ready", "ready") {
+            RecordGate::Uncovered(g) => assert_eq!(
+                g.unanchored,
+                vec!["src/Vault.sol".to_string(), WRAPPER.to_string()]
+            ),
+            other => panic!("expected Uncovered, got {other:?}"),
+        }
+        // The human-decided refusal still outranks even this.
+        assert_eq!(
+            record_gate(
+                &pr_json(json!({"reviewDecision": "APPROVED"})),
+                "",
+                &names,
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::RefuseHuman
+        );
+    }
+
+    // An anchor for file A must never be satisfiable by a line of file B. The path is reset at
+    // every `diff --git`, so a stanza whose `+++ b/…` line is absent contributes NOTHING rather
+    // than silently extending the file before it.
+    #[test]
+    fn a_stanza_with_no_new_side_header_does_not_inherit_the_previous_file() {
+        let d = diff_new_lines(
+            "\
+diff --git a/a.md b/a.md
+--- a/a.md
++++ b/a.md
+@@ -1,0 +1,1 @@
++mine
+diff --git a/b.md b/b.md
+@@ -1,0 +1,1 @@
++not mine
+",
+        );
+        assert_eq!(
+            d.get("a.md").and_then(|l| l.get(&1)).map(String::as_str),
+            Some("mine")
+        );
+        assert_eq!(
+            d.get("a.md").map(|l| l.len()),
+            Some(1),
+            "the second stanza's line must not land in a.md"
+        );
+        assert_eq!(d.get("b.md"), None, "and it names no file of its own");
+    }
+
+    // --- the contract the vetter is TAUGHT, and the one the human reads --------------------------
+
+    // The claim is an ARGUMENT the tool checks, so the prompt is the only place the vetter learns
+    // how to satisfy it. A prompt that does not teach it spends a whole run discovering the refusal
+    // one PR at a time — the vetter cannot escalate, so an unteachable gate is a stuck queue.
+    #[test]
+    fn the_vetter_prompt_teaches_the_coverage_claim_it_must_satisfy() {
+        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("`basis`, `covered`"),
+            "`covered` must be listed among record_verdict's arguments"
+        );
+        for taught in [
+            "**`covered` =",             // what it is
+            "\"line\"",                  // the anchor's shape
+            "\"text\"",                  // …both halves of it
+            "never reaches the comment", // and that it is NOT prose
+        ] {
+            assert!(
+                prompt.contains(taught),
+                "the prompt must teach {taught:?} — the vetter has no other way to learn the claim"
+            );
+        }
+    }
+
+    // Bumping VET_PROTOCOL is what retires every verdict formed WITHOUT this gate. Left at 1, the
+    // gate would only ever reach a PR whose head happens to move, and every already-`ai:ready`
+    // #230-shaped verdict would keep reading as current — so the number in force is pinned to the
+    // prose that explains what it means.
+    #[test]
+    fn the_readme_documents_the_protocol_in_force() {
+        let Ok(readme) = std::fs::read_to_string("README.md") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            readme.contains(&format!("`{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}`")),
+            "README must say what `{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}` means"
+        );
+        assert!(
+            VET_PROTOCOL > 1,
+            "scope coverage is a mandatory gate — the protocol it is served under cannot be the \
+             one that predates it"
+        );
     }
 }
 
@@ -25482,6 +25619,23 @@ mod mcp_tests {
             ))
             .unwrap()));
         assert!(f.calls().is_empty(), "no invalid verdict reached the write");
+
+        // A call wrong in MORE than one way is told about the VOCABULARY first: `covered` is what
+        // you assemble once you know which verdict you are recording, so being sent to build a
+        // coverage claim for a word this machine does not have is a wasted retry the vetter cannot
+        // afford — it has no human to escalate to.
+        let both_wrong = f
+            .handle(&call(
+                "record_verdict",
+                json!({"pr": "o/r#1", "verdict": "relink", "note": "n", "cost": 1, "basis": "b"}),
+            ))
+            .unwrap();
+        assert!(is_error(&both_wrong));
+        assert!(
+            text(&both_wrong).contains("not a verdict of this machine"),
+            "vocabulary before coverage: {}",
+            text(&both_wrong)
+        );
 
         // the boundaries themselves are legal.
         for good in [
