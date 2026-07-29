@@ -6512,8 +6512,9 @@ fn plugin_version_check(entry: &Value, manifest: Option<&Value>) -> PluginVersio
 enum CommandKind {
     /// Every grant is a shell tool, so the payload is the fenced `pr-review-report` transition.
     Subcommand,
-    /// The one grant is an MCP tool, named here: the payload IS the tool call.
-    McpTool(String),
+    /// Every grant is an MCP tool, named here: the payload IS those tool calls, and there is no
+    /// shell underneath to fall back to.
+    McpTools(Vec<String>),
 }
 
 /// PURE: what one shipped command invokes, and whether its body keeps that promise.
@@ -6524,14 +6525,23 @@ enum CommandKind {
 ///
 /// - a **subcommand** command must fence the transition it runs, or the caller is handed a name
 ///   and nothing to run;
-/// - an **MCP** command must fence NO shell command at all, because the tool call is the whole
-///   payload and a fenced shell line is precisely the `gh` fallback that a single-tool grant
-///   exists to remove.
+/// - an **MCP** command must fence NO shell command at all, because every input is supposed to
+///   arrive typed and a fenced shell line is precisely the `gh` fallback an all-MCP grant exists
+///   to remove.
 ///
-/// Mixing the two is refused rather than ranked. A command that may both call the tool and shell
-/// out has no guarantee left, and the guarantee is the reason the grant is narrow: either the tool
+/// Mixing the two is refused rather than ranked. A command that may both call a tool and shell out
+/// has no guarantee left, and the guarantee is the reason the grant is narrow: either the tools
 /// answered or the command fails loudly, because the way a merge decision goes wrong is not a
 /// refusal, it is a plausible answer nobody can trace.
+///
+/// A **set** of MCP grants keeps that guarantee, so a set is what is permitted. The rule used to
+/// insist on exactly ONE MCP tool — "the guarantee is ONE typed result" — and that was a PROXY for
+/// no-shell-fallback which broke the moment a command needed two reads: `/nr` cannot check the
+/// vetter's verdict without reading the PR the verdict is about, and one grant made the check
+/// unrepresentable rather than making the shell unreachable (#132). What is enforced is the
+/// principle the proxy stood for — no grant mixes MCP with shell, no fenced shell line under an
+/// MCP grant — and, in [`command_check`], that EVERY tool named is one the manifest's server
+/// actually serves.
 #[cfg(test)]
 fn command_contract(text: &str) -> Result<CommandKind, String> {
     if !text.starts_with("---\n") {
@@ -6567,14 +6577,8 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
             "grants an MCP tool AND a shell tool ({granted:?}) — a command that can do both has \
              no guarantee left, which is the whole reason the grant is narrow"
         ));
-    } else if tools.len() > 1 {
-        return Err(format!(
-            "grants {} MCP tools ({granted:?}) — the guarantee is ONE typed result, so there is \
-             exactly one tool to grant",
-            tools.len()
-        ));
     } else {
-        CommandKind::McpTool(tools[0].to_string())
+        CommandKind::McpTools(tools.iter().map(|t| (*t).to_string()).collect())
     };
     // What a command RUNS is what is inside its fenced blocks. Asserted there rather than over the
     // whole document, because the prose says `gh issue close` in order to FORBID it — a substring
@@ -6605,11 +6609,12 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
                 ));
             }
         }
-        CommandKind::McpTool(tool) => {
+        CommandKind::McpTools(tools) => {
             if let Some(line) = runnable.iter().find(|l| !l.starts_with('/')) {
                 return Err(format!(
-                    "fenced line {line:?} is a shell command, but the only grant is {tool} — a \
-                     fenced fallback is exactly what the single-tool grant exists to remove"
+                    "fenced line {line:?} is a shell command, but every grant here is MCP \
+                     ({tools:?}) — a fenced fallback is exactly what the all-MCP grant exists to \
+                     remove"
                 ));
             }
         }
@@ -6621,8 +6626,8 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
 /// server it declares actually serves.
 ///
 /// Built from the manifest rather than written down beside it, so renaming the plugin, the server,
-/// or a tool moves this set with them. A grant outside it is not a smaller grant; it is a command
-/// whose only permitted tool does not exist.
+/// or a tool moves this set with them. A grant outside it is not a smaller grant; it is a permitted
+/// tool that does not exist, which the loader reports as nothing at all.
 #[cfg(test)]
 fn grantable_mcp_tools(manifest: &Value) -> Result<Vec<String>, String> {
     let plugin = manifest["name"]
@@ -6652,15 +6657,21 @@ fn grantable_mcp_tools(manifest: &Value) -> Result<Vec<String>, String> {
 }
 
 /// PURE: one command's contract, resolved against what the plugin actually serves.
+///
+/// EVERY named tool is resolved, not just the first: a command may grant a set, and a set whose
+/// second member is misspelled is a command that runs half of what it says it does — silently,
+/// because the loader drops the name it cannot resolve rather than refusing the command.
 #[cfg(test)]
 fn command_check(text: &str, grantable: &[String]) -> Result<CommandKind, String> {
     let kind = command_contract(text)?;
-    if let CommandKind::McpTool(tool) = &kind {
-        if !grantable.iter().any(|g| g == tool) {
-            return Err(format!(
-                "grants {tool:?}, which no server in the manifest serves — the grantable set is \
-                 {grantable:?}"
-            ));
+    if let CommandKind::McpTools(tools) = &kind {
+        for tool in tools {
+            if !grantable.iter().any(|g| g == tool) {
+                return Err(format!(
+                    "grants {tool:?}, which no server in the manifest serves — the grantable set \
+                     is {grantable:?}"
+                ));
+            }
         }
     }
     Ok(kind)
@@ -22417,12 +22428,12 @@ mod marketplace_tests {
         let tool = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
         assert_eq!(
             command_contract(&command(&tool, "call it once")),
-            Ok(CommandKind::McpTool(tool.clone()))
+            Ok(CommandKind::McpTools(vec![tool.clone()]))
         );
         // Cross-references to sibling commands stay legal — they are not something to run.
         assert_eq!(
             command_contract(&command(&tool, "see ```\n/reject\n```")),
-            Ok(CommandKind::McpTool(tool.clone()))
+            Ok(CommandKind::McpTools(vec![tool.clone()]))
         );
         // The fallback the narrow grant exists to remove, in the one place a reader would copy it
         // from. It is refused even though the grant could never permit it: the body is what a
@@ -22430,7 +22441,39 @@ mod marketplace_tests {
         let err = command_contract(&command(&tool, "```\ngh pr view 1 --json headRefOid\n```"))
             .unwrap_err();
         assert!(err.contains("gh pr view"), "{err}");
-        assert!(err.contains("single-tool grant exists to remove"), "{err}");
+        assert!(err.contains("all-MCP grant exists to remove"), "{err}");
+    }
+
+    // The relaxation of #132, and the floor it must not fall through. `/nr` cannot check a verdict
+    // it is forbidden to look behind — checking one needs the PR beside the queue row — and the old
+    // "exactly one MCP tool" rule refused that as a lost guarantee. The guarantee was never the
+    // COUNT of calls; it is that no input arrived from a shell. So a set is accepted, and every
+    // rule that actually carries the guarantee still holds over the set.
+    #[test]
+    fn a_set_of_mcp_grants_is_accepted_because_the_guarantee_is_no_shell_not_one_call() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        let ctx = plugin_mcp_tool_name("human-fsm", "fsm", "pr_context");
+        assert_eq!(
+            command_contract(&command(
+                &format!("{next}, {ctx}"),
+                "read one, then the other"
+            )),
+            Ok(CommandKind::McpTools(vec![next.clone(), ctx.clone()]))
+        );
+        // The grant is a SET, not a first-wins name: both members survive in order, because
+        // `command_check` resolves each of them against the manifest.
+        assert_eq!(
+            command_contract(&command(&format!("{ctx},{next}"), "prose")),
+            Ok(CommandKind::McpTools(vec![ctx.clone(), next.clone()]))
+        );
+        // The shell fence is what the count was standing in for, and it still binds over a set.
+        let err = command_contract(&command(
+            &format!("{next}, {ctx}"),
+            "```\ngh pr diff 1 --repo o/r\n```",
+        ))
+        .unwrap_err();
+        assert!(err.contains("gh pr diff"), "{err}");
+        assert!(err.contains("all-MCP grant exists to remove"), "{err}");
     }
 
     #[test]
@@ -22442,16 +22485,22 @@ mod marketplace_tests {
         ))
         .unwrap_err();
         assert!(err.contains("no guarantee left"), "{err}");
-        // Two MCP tools is the same loss by a different route: the guarantee is ONE typed result.
+        // A SECOND MCP tool does not launder the shell grant beside it — permitting a set is not
+        // permitting a mixture, and this is the case the relaxation could most easily widen too
+        // far.
         let err = command_contract(&command(
             &format!(
-                "{tool}, {}",
+                "{tool}, {}, Bash(gh pr view:*)",
                 plugin_mcp_tool_name("human-fsm", "fsm", "pr_context")
             ),
             "prose",
         ))
         .unwrap_err();
-        assert!(err.contains("exactly one tool to grant"), "{err}");
+        assert!(err.contains("no guarantee left"), "{err}");
+        // Nor does the order: a shell grant FIRST is the same mixture.
+        let err = command_contract(&command(&format!("Bash(gh pr view:*), {tool}"), "prose"))
+            .unwrap_err();
+        assert!(err.contains("no guarantee left"), "{err}");
     }
 
     #[test]
@@ -22519,8 +22568,8 @@ mod marketplace_tests {
     }
 
     // The failure this pair exists for: a grant that LOOKS right. Both spellings below are
-    // plausible, neither is served, and without the check each is a command whose only permitted
-    // tool does not exist — which the loader reports as nothing at all.
+    // plausible, neither is served, and without the check each is a command with a permitted tool
+    // that does not exist — which the loader reports as nothing at all.
     #[test]
     fn a_grant_no_server_serves_is_refused_however_plausible_it_looks() {
         let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
@@ -22530,9 +22579,9 @@ mod marketplace_tests {
         );
         assert_eq!(
             command_check(&good, &grantable),
-            Ok(CommandKind::McpTool(
+            Ok(CommandKind::McpTools(vec![
                 "mcp__plugin_human-fsm_fsm__next_ready".to_string()
-            ))
+            ]))
         );
         // A tool the profile does not serve.
         let unserved = command(
@@ -22553,6 +22602,58 @@ mod marketplace_tests {
             "```\npr-review-report human-close a/b 1 n\n```",
         );
         assert_eq!(command_check(&sub, &grantable), Ok(CommandKind::Subcommand));
+    }
+
+    // Permitting a SET is where this check could quietly stop working: resolving only the first
+    // grant would pass every command whose FIRST name is real, and the loader silently drops a name
+    // it cannot resolve rather than refusing the command — so a misspelled second tool ships as a
+    // command that does half of what its own prose says.
+    #[test]
+    fn every_member_of_a_grant_set_is_resolved_not_just_the_first() {
+        let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        let ctx = plugin_mcp_tool_name("human-fsm", "fsm", "pr_context");
+        let bogus = plugin_mcp_tool_name("human-fsm", "fsm", "pr_contexts");
+        assert_eq!(
+            command_check(&command(&format!("{next}, {ctx}"), "prose"), &grantable),
+            Ok(CommandKind::McpTools(vec![next.clone(), ctx.clone()]))
+        );
+        // Real first, unserved second.
+        let err =
+            command_check(&command(&format!("{next}, {bogus}"), "prose"), &grantable).unwrap_err();
+        assert!(err.contains("pr_contexts"), "{err}");
+        assert!(err.contains("no server in the manifest serves"), "{err}");
+        // …and unserved first, real second, so the check is not merely reading the LAST one.
+        let err =
+            command_check(&command(&format!("{bogus}, {next}"), "prose"), &grantable).unwrap_err();
+        assert!(err.contains("pr_contexts"), "{err}");
+    }
+
+    // `/nr` is why the rule was relaxed, so the file that motivated it is pinned here rather than
+    // left to the generic shipped-command sweep: a later edit that drops `pr_context` back out
+    // leaves a command whose prose promises an independent read it has no tool to perform, and the
+    // sweep would still pass because one grant is a legal shape again.
+    #[test]
+    fn nr_grants_both_the_queue_read_and_the_pr_read() {
+        let path = format!(
+            "{}/../plugins/human-fsm/commands/nr.md",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return; // not checked out (nix build sandbox)
+        };
+        let grantable = grantable_mcp_tools(
+            &read_json("plugins/human-fsm/.claude-plugin/plugin.json").expect("the manifest"),
+        )
+        .unwrap();
+        assert_eq!(
+            command_check(&text, &grantable),
+            Ok(CommandKind::McpTools(vec![
+                plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
+                plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+            ])),
+            "/nr reads the queue row AND the PR behind it"
+        );
     }
 }
 

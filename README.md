@@ -271,6 +271,17 @@ whole line of work exists to remove; the shipped commands are asserted against
 that, by a test that reads their fenced blocks and requires every runnable line
 to be a `pr-review-report` transition.
 
+**A command's grant is all shell or all MCP, never a mixture.** What that buys
+is a command with **no shell fallback** — it cannot reach for `gh` and cannot
+assemble a field by hand — so a command may grant a whole SET of MCP tools, and
+`/nr` grants two: the queue row, and the PR the row's verdict is a claim about.
+The rule used to demand exactly one MCP tool as a stand-in for the same
+guarantee, and the stand-in is what broke: it made "check the verdict against
+the diff" unrepresentable rather than making the shell unreachable (#132). Every
+name in the set is still resolved against what the manifest's server actually
+serves, because the loader drops a name it cannot resolve instead of refusing
+the command.
+
 **Why a plugin rather than files with an install step.** The org already
 distributes Claude Code assets this way — `claude-audit-skills`,
 `adversarial-mutation-test` and `rain-org-health` each publish a
