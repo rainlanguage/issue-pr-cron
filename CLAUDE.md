@@ -41,6 +41,17 @@ tracked by #10. A hook is not an excuse to leave a transition loose; it is what
 holds the invariant while it still is. See
 [README.md](README.md#pretooluse-guards--what-a-prompt-cannot-hold).
 
+**A gate on one edge needs a transition on the other.** `require-qa-block` guards
+PR-**open**, so it cannot reach a PR already open — and when the vetter started
+rejecting for a missing QA block, the producer had no move that fixed one: `gh pr
+edit` is denied and no subcommand wrote a body, so 56 of 100 open PRs parked over
+a missing paragraph (#51). The answer is not to widen the deny-list back out to
+the whole of `gh pr edit`; it is `repair-qa-block`, a transition narrow enough to
+say what it does — **append** the section, never rewrite the body — and validated
+with the **gate's own predicate** (`carries_qa_block`), so what one writes is
+what the other accepts. **When a guard names a defect, check that some transition
+can clear it**; a reject with no exit is a deadlock however correct the reject is.
+
 **A PreToolUse guard is a guard against honest omission, not a security
 boundary.** It reads a command line with a lexer that resolves quoting and
 nothing else — it is not bash and never will be — so a determined bypass always
@@ -73,6 +84,7 @@ transition functions:
 | `human-close <owner/repo> <n> "<note>"`                    | the HUMAN's TERMINAL edge on either subject: rule `close-candidate`, retire the pending `ai:close-candidate`, close — ONE transition (#94)                    |
 | `record-close-candidate-verdict <owner/repo> <n> <v> …`    | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                              |
 | `require-qa-block`                                         | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session   |
+| `repair-qa-block <owner/repo> <n> --block-file <path>`     | the RETROFIT of the same rule on an ALREADY-open PR: appends the §8 block to the body, every other byte identical, validated with `require-qa-block`'s predicate |
 | `mcp [--profile vetter\|producer\|human]`                  | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                         |
 | `plugin-version-lockstep [--root <dir>]`                   | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                               |
 
