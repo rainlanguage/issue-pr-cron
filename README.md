@@ -375,7 +375,8 @@ Three fields are worth their own note:
 It cannot be refused for size. Every variable-length field is capped, so a full
 page's worst case is arithmetic the compiler checks
 (`NEXT_READY_MAX_ROWS * NR_ROW_CEILING + NR_ENVELOPE_BYTES <= 36,000`) and a
-test builds that worst case out of the character JSON escapes most. `limit` is a
+test builds that worst case out of the characters JSON escapes worst — `"`, and
+the control characters that would otherwise cost six bytes each. `limit` is a
 real narrowing argument anyway — rows are independent, so lowering it strictly
 removes bytes — which is what keeps it clear of #117, where a refusal names an
 argument the tool does not accept. It caps at 3 rather than 25 because every
