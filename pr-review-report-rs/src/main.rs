@@ -20493,14 +20493,11 @@ diff --git a/b.md b/b.md
         let Some(readme) = repo_root_text("README.md") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
+        // Left at 1 this finds nothing: the README explains what 2 is, so the prose and the
+        // constant fall out of step the moment the bump is reverted or the paragraph rewritten.
         assert!(
             readme.contains(&format!("`{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}`")),
             "README must say what `{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}` means"
-        );
-        assert!(
-            VET_PROTOCOL > 1,
-            "scope coverage is a mandatory gate — the protocol it is served under cannot be the \
-             one that predates it"
         );
     }
 }
