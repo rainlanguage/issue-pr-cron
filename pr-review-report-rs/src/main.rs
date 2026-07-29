@@ -4610,7 +4610,7 @@ fn diff_changed_paths(diff: &str) -> std::collections::BTreeSet<String> {
 /// [`diff_new_lines`] reads.
 fn diff_git_new_path(rest: &str) -> Option<String> {
     let len = rest.len();
-    if rest.starts_with("a/") && len >= 5 && (len - 5) % 2 == 0 {
+    if rest.starts_with("a/") && len >= 5 && (len - 5).is_multiple_of(2) {
         let n = (len - 5) / 2;
         if let (Some(a), Some(" b/"), Some(b)) = (
             rest.get(2..2 + n),
@@ -4622,8 +4622,7 @@ fn diff_git_new_path(rest: &str) -> Option<String> {
             }
         }
     }
-    rest.rfind(" b/")
-        .map(|i| strip_diff_prefix(&rest[i + 1..]))
+    rest.rfind(" b/").map(|i| strip_diff_prefix(&rest[i + 1..]))
 }
 
 /// PURE: the NEW-side lines of a unified diff, per file — what an anchor is checked against.
