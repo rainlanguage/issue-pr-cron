@@ -5741,6 +5741,183 @@ fn plugin_version_check(entry: &Value, manifest: Option<&Value>) -> PluginVersio
     }
 }
 
+/// What a shipped slash command actually INVOKES.
+///
+/// Test-only: the commands are a checked-in artefact, so the gate over them runs where the
+/// artefact is — `cargo test` in CI, against the working tree — rather than being a subcommand
+/// nobody would call outside it.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CommandKind {
+    /// Every grant is a shell tool, so the payload is the fenced `pr-review-report` transition.
+    Subcommand,
+    /// The one grant is an MCP tool, named here: the payload IS the tool call.
+    McpTool(String),
+}
+
+/// PURE: what one shipped command invokes, and whether its body keeps that promise.
+///
+/// A command IS its `allowed-tools` line — the loader grants exactly that and nothing else — so
+/// that line decides what the body is allowed to say. Two shapes ship here, with OPPOSITE
+/// obligations:
+///
+/// - a **subcommand** command must fence the transition it runs, or the caller is handed a name
+///   and nothing to run;
+/// - an **MCP** command must fence NO shell command at all, because the tool call is the whole
+///   payload and a fenced shell line is precisely the `gh` fallback that a single-tool grant
+///   exists to remove.
+///
+/// Mixing the two is refused rather than ranked. A command that may both call the tool and shell
+/// out has no guarantee left, and the guarantee is the reason the grant is narrow: either the tool
+/// answered or the command fails loudly, because the way a merge decision goes wrong is not a
+/// refusal, it is a plausible answer nobody can trace.
+#[cfg(test)]
+fn command_contract(text: &str) -> Result<CommandKind, String> {
+    if !text.starts_with("---\n") {
+        return Err("no frontmatter — the loader shows it with no description".to_string());
+    }
+    let front = text
+        .split("\n---\n")
+        .next()
+        .ok_or("frontmatter is not delimited")?;
+    for key in ["description:", "argument-hint:", "allowed-tools:"] {
+        if !front.contains(key) {
+            return Err(format!("frontmatter has no {key}"));
+        }
+    }
+    let granted = front
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("allowed-tools:"))
+        .map(str::trim)
+        .unwrap_or_default();
+    let tools: Vec<&str> = granted
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tools.is_empty() {
+        return Err("allowed-tools is empty — a command granted nothing can run nothing".into());
+    }
+    let mcp = tools.iter().filter(|t| t.starts_with("mcp__")).count();
+    let kind = if mcp == 0 {
+        CommandKind::Subcommand
+    } else if mcp < tools.len() {
+        return Err(format!(
+            "grants an MCP tool AND a shell tool ({granted:?}) — a command that can do both has \
+             no guarantee left, which is the whole reason the grant is narrow"
+        ));
+    } else if tools.len() > 1 {
+        return Err(format!(
+            "grants {} MCP tools ({granted:?}) — the guarantee is ONE typed result, so there is \
+             exactly one tool to grant",
+            tools.len()
+        ));
+    } else {
+        CommandKind::McpTool(tools[0].to_string())
+    };
+    // What a command RUNS is what is inside its fenced blocks. Asserted there rather than over the
+    // whole document, because the prose says `gh issue close` in order to FORBID it — a substring
+    // scan cannot tell a prohibition from an instruction, and the first version of this check
+    // failed on its own warning.
+    let runnable: Vec<&str> = text
+        .split("```")
+        .skip(1)
+        .step_by(2)
+        .flat_map(|b| b.lines())
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    match &kind {
+        CommandKind::Subcommand => {
+            if !runnable.iter().any(|l| l.starts_with("pr-review-report ")) {
+                return Err(
+                    "names no pr-review-report transition — nothing for the caller to run".into(),
+                );
+            }
+            if let Some(line) = runnable
+                .iter()
+                .find(|l| !(l.starts_with("pr-review-report ") || l.starts_with('/')))
+            {
+                return Err(format!(
+                    "fenced line {line:?} is not a transition of this binary — a raw gh/git state \
+                     change is a transition outside the state machine"
+                ));
+            }
+        }
+        CommandKind::McpTool(tool) => {
+            if let Some(line) = runnable.iter().find(|l| !l.starts_with('/')) {
+                return Err(format!(
+                    "fenced line {line:?} is a shell command, but the only grant is {tool} — a \
+                     fenced fallback is exactly what the single-tool grant exists to remove"
+                ));
+            }
+        }
+    }
+    Ok(kind)
+}
+
+/// PURE: every MCP grant this plugin can honestly make — its own name, crossed with the tools each
+/// server it declares actually serves.
+///
+/// Built from the manifest rather than written down beside it, so renaming the plugin, the server,
+/// or a tool moves this set with them. A grant outside it is not a smaller grant; it is a command
+/// whose only permitted tool does not exist.
+#[cfg(test)]
+fn grantable_mcp_tools(manifest: &Value) -> Result<Vec<String>, String> {
+    let plugin = manifest["name"]
+        .as_str()
+        .ok_or("the manifest does not name the plugin")?;
+    let servers = manifest["mcpServers"]
+        .as_object()
+        .ok_or("the manifest declares no mcpServers")?;
+    let mut out = Vec::new();
+    for (server, spec) in servers {
+        let args: Vec<&str> = spec["args"]
+            .as_array()
+            .ok_or_else(|| format!("server {server:?} names no args"))?
+            .iter()
+            .filter_map(|a| a.as_str())
+            .collect();
+        let named = args
+            .iter()
+            .position(|a| *a == "--profile")
+            .and_then(|at| args.get(at + 1))
+            .ok_or_else(|| format!("server {server:?} names no --profile"))?;
+        for tool in McpProfile::parse(named)?.tool_names() {
+            out.push(plugin_mcp_tool_name(plugin, server, tool));
+        }
+    }
+    Ok(out)
+}
+
+/// PURE: one command's contract, resolved against what the plugin actually serves.
+#[cfg(test)]
+fn command_check(text: &str, grantable: &[String]) -> Result<CommandKind, String> {
+    let kind = command_contract(text)?;
+    if let CommandKind::McpTool(tool) = &kind {
+        if !grantable.iter().any(|g| g == tool) {
+            return Err(format!(
+                "grants {tool:?}, which no server in the manifest serves — the grantable set is \
+                 {grantable:?}"
+            ));
+        }
+    }
+    Ok(kind)
+}
+
+/// PURE: the name Claude Code exposes for `tool` on plugin `plugin`'s MCP server `server`.
+///
+/// MEASURED against Claude Code 2.1.220, from the init event of
+/// `claude -p … --plugin-dir <plugin> --output-format stream-json --verbose`, and again after a
+/// real `plugin marketplace add` + `plugin install`: the shape is
+/// `mcp__plugin_<plugin>_<server>__<tool>`, NOT `mcp__<server>__<tool>`, and hyphens survive. It
+/// matters because the grant in a command's frontmatter is a LITERAL string: a name that is merely
+/// plausible produces a command with no tool at all, which is silent until someone types it.
+#[cfg(test)]
+fn plugin_mcp_tool_name(plugin: &str, server: &str, tool: &str) -> String {
+    format!("mcp__plugin_{plugin}_{server}__{tool}")
+}
+
 /// `plugin-version-lockstep [--root <dir>]`: every plugin the marketplace lists resolves to a real
 /// manifest carrying the same version. Exit 0 satisfied, 2 a listing is wrong, 3 the gate could not
 /// be evaluated at all (no marketplace to read).
@@ -21287,6 +21464,13 @@ mod marketplace_tests {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return; // not checked out (nix build sandbox)
         };
+        // The MCP grants are resolved against what this repo ACTUALLY ships — the plugin's own
+        // name, the servers its manifest declares, and the tools that profile serves — so a rename
+        // on either side fails here rather than becoming a command with no tool to call.
+        let manifest = read_json("plugins/human-fsm/.claude-plugin/plugin.json")
+            .expect("the plugin manifest is checked out beside its commands");
+        let grantable = grantable_mcp_tools(&manifest).expect("the manifest's own MCP surface");
+
         let mut seen = Vec::new();
         for e in entries.flatten() {
             let path = e.path();
@@ -21295,51 +21479,170 @@ mod marketplace_tests {
             }
             let text = std::fs::read_to_string(&path).expect("readable command");
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
-            assert!(
-                text.starts_with("---\n"),
-                "{name}: no frontmatter — the loader shows it with no description"
-            );
-            let front = text
-                .split("\n---\n")
-                .next()
-                .expect("frontmatter is delimited");
-            for key in ["description:", "argument-hint:", "allowed-tools:"] {
-                assert!(front.contains(key), "{name}: frontmatter has no {key}");
-            }
-            // What a command RUNS is what is inside its fenced blocks. Asserted there rather than
-            // over the whole document, because the prose says `gh issue close` in order to FORBID
-            // it — a substring scan cannot tell a prohibition from an instruction, and the first
-            // version of this test failed on its own warning.
-            let fenced: Vec<&str> = text.split("```").skip(1).step_by(2).collect();
-            assert!(
-                !fenced.is_empty(),
-                "{name}: no fenced command — nothing for the caller to run"
-            );
-            let runnable: Vec<&str> = fenced
-                .iter()
-                .flat_map(|b| b.lines())
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .collect();
-            assert!(
-                runnable.iter().any(|l| l.starts_with("pr-review-report ")),
-                "{name}: names no pr-review-report transition"
-            );
-            for line in &runnable {
-                assert!(
-                    line.starts_with("pr-review-report ") || line.starts_with("/"),
-                    "{name}: fenced line {line:?} is not a transition of this binary — a raw \
-                     gh/git state change is a transition outside the state machine"
-                );
+            if let Err(why) = command_check(&text, &grantable) {
+                panic!("{name}: {why}");
             }
             seen.push(name);
         }
         seen.sort();
         assert_eq!(
             seen,
-            vec!["close-candidate", "design", "keep-open", "reject"],
+            vec!["close-candidate", "design", "keep-open", "nr", "reject"],
             "the shipped command set changed"
         );
+    }
+
+    fn command(front: &str, body: &str) -> String {
+        format!("---\ndescription: d\nargument-hint: h\nallowed-tools: {front}\n---\n\n{body}")
+    }
+
+    #[test]
+    fn a_subcommand_command_must_fence_the_transition_it_runs() {
+        assert_eq!(
+            command_contract(&command(
+                "Bash(pr-review-report human-close:*)",
+                "```\npr-review-report human-close a/b 1 note\n```"
+            )),
+            Ok(CommandKind::Subcommand)
+        );
+        // A name and nothing to run.
+        assert!(
+            command_contract(&command("Bash(pr-review-report human-close:*)", "prose only"))
+                .unwrap_err()
+                .contains("nothing for the caller to run")
+        );
+    }
+
+    #[test]
+    fn an_mcp_command_is_its_grant_and_fences_no_shell_at_all() {
+        let tool = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        assert_eq!(
+            command_contract(&command(&tool, "call it once")),
+            Ok(CommandKind::McpTool(tool.clone()))
+        );
+        // Cross-references to sibling commands stay legal — they are not something to run.
+        assert_eq!(
+            command_contract(&command(&tool, "see ```\n/reject\n```")),
+            Ok(CommandKind::McpTool(tool.clone()))
+        );
+        // The fallback the narrow grant exists to remove, in the one place a reader would copy it
+        // from. It is refused even though the grant could never permit it: the body is what a
+        // model reads, and a fenced `gh` is an instruction whatever the frontmatter says.
+        let err = command_contract(&command(&tool, "```\ngh pr view 1 --json headRefOid\n```"))
+            .unwrap_err();
+        assert!(err.contains("gh pr view"), "{err}");
+        assert!(err.contains("single-tool grant exists to remove"), "{err}");
+    }
+
+    #[test]
+    fn a_command_that_can_both_call_the_tool_and_shell_out_is_refused() {
+        let tool = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        let err = command_contract(&command(
+            &format!("{tool}, Bash(gh pr view:*)"),
+            "```\npr-review-report human-close a/b 1 n\n```",
+        ))
+        .unwrap_err();
+        assert!(err.contains("no guarantee left"), "{err}");
+        // Two MCP tools is the same loss by a different route: the guarantee is ONE typed result.
+        let err = command_contract(&command(
+            &format!("{tool}, {}", plugin_mcp_tool_name("human-fsm", "fsm", "pr_context")),
+            "prose",
+        ))
+        .unwrap_err();
+        assert!(err.contains("exactly one tool to grant"), "{err}");
+    }
+
+    #[test]
+    fn a_command_with_no_grant_can_run_nothing() {
+        assert!(command_contract(&command("", "```\npr-review-report x\n```"))
+            .unwrap_err()
+            .contains("granted nothing"));
+        assert!(command_contract("description: d\n")
+            .unwrap_err()
+            .contains("no frontmatter"));
+        assert!(
+            command_contract("---\ndescription: d\nargument-hint: h\n---\n\nbody")
+                .unwrap_err()
+                .contains("allowed-tools:")
+        );
+    }
+
+    // The grant is a LITERAL string in frontmatter, so a plausible-but-wrong name is a command
+    // with no tool — silent until someone types it. Pinned to what Claude Code 2.1.220 actually
+    // reported, not to the `mcp__<server>__<tool>` shape it reads like.
+    #[test]
+    fn the_plugin_mcp_grant_carries_the_plugin_the_server_and_the_tool() {
+        assert_eq!(
+            plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
+            "mcp__plugin_human-fsm_fsm__next_ready"
+        );
+    }
+
+    fn human_manifest() -> Value {
+        json!({
+            "name": "human-fsm",
+            "mcpServers": {"fsm": {"command": "pr-review-report", "args": ["mcp", "--profile", "human"]}}
+        })
+    }
+
+    #[test]
+    fn the_grantable_set_is_derived_from_the_manifest_not_written_beside_it() {
+        let g = grantable_mcp_tools(&human_manifest()).unwrap();
+        assert_eq!(
+            g,
+            McpProfile::Human
+                .tool_names()
+                .iter()
+                .map(|t| format!("mcp__plugin_human-fsm_fsm__{t}"))
+                .collect::<Vec<_>>()
+        );
+        // Renaming the plugin or the server moves the whole set with it, which is the point.
+        let mut renamed = human_manifest();
+        renamed["name"] = json!("fsm-human");
+        assert!(!grantable_mcp_tools(&renamed).unwrap().iter().any(|t| g.contains(t)));
+        // A server pointed at a profile this binary does not serve is a server that serves nothing.
+        let mut bogus = human_manifest();
+        bogus["mcpServers"]["fsm"]["args"] = json!(["mcp", "--profile", "auditor"]);
+        assert!(grantable_mcp_tools(&bogus).unwrap_err().contains("auditor"));
+        let mut profileless = human_manifest();
+        profileless["mcpServers"]["fsm"]["args"] = json!(["mcp"]);
+        assert!(grantable_mcp_tools(&profileless)
+            .unwrap_err()
+            .contains("no --profile"));
+    }
+
+    // The failure this pair exists for: a grant that LOOKS right. Both spellings below are
+    // plausible, neither is served, and without the check each is a command whose only permitted
+    // tool does not exist — which the loader reports as nothing at all.
+    #[test]
+    fn a_grant_no_server_serves_is_refused_however_plausible_it_looks() {
+        let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
+        let good = command(&plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"), "prose");
+        assert_eq!(
+            command_check(&good, &grantable),
+            Ok(CommandKind::McpTool(
+                "mcp__plugin_human-fsm_fsm__next_ready".to_string()
+            ))
+        );
+        // A tool the profile does not serve.
+        let unserved = command(
+            &plugin_mcp_tool_name("human-fsm", "fsm", "next_ready_pr"),
+            "prose",
+        );
+        assert!(command_check(&unserved, &grantable)
+            .unwrap_err()
+            .contains("no server in the manifest serves"));
+        // The right tool under the shape the name reads like — `mcp__<server>__<tool>`.
+        let wrong_shape = command("mcp__fsm__next_ready", "prose");
+        assert!(command_check(&wrong_shape, &grantable)
+            .unwrap_err()
+            .contains("no server in the manifest serves"));
+        // A subcommand command is not resolved against the MCP surface at all.
+        let sub = command(
+            "Bash(pr-review-report human-close:*)",
+            "```\npr-review-report human-close a/b 1 n\n```",
+        );
+        assert_eq!(command_check(&sub, &grantable), Ok(CommandKind::Subcommand));
     }
 }
 
