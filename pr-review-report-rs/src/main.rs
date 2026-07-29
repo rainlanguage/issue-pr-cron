@@ -4532,16 +4532,42 @@ fn hunk_header(line: &str) -> Option<(u64, u64, u64)> {
 fn diff_changed_paths(diff: &str) -> std::collections::BTreeSet<String> {
     let mut out = std::collections::BTreeSet::new();
     for line in diff.lines() {
-        let Some(rest) = line.strip_prefix("diff --git ") else {
-            continue;
-        };
-        // Filenames may contain spaces, so take the LAST " b/" as the split point rather than
-        // whitespace-tokenising; git writes the b-side second.
-        if let Some(i) = rest.rfind(" b/") {
-            out.insert(strip_diff_prefix(&rest[i + 1..]));
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(p) = diff_git_new_path(rest) {
+                out.insert(p);
+            }
         }
     }
     out
+}
+
+/// PURE: the b-side path of a `diff --git a/<p> b/<q>` header's argument half.
+///
+/// A filename may contain a space, and may contain ` b/` — so whitespace-tokenising and "split at
+/// the last ` b/`" are both wrong, in different places. For the overwhelmingly common case `p == q`
+/// the split is decided by LENGTH alone: the half is `2 + n + 3 + n` bytes, so `n = (len - 5) / 2`,
+/// exact whatever the name contains.
+///
+/// A RENAME (`p != q`) has no closed form here and falls back to the last ` b/`. That is a best
+/// effort and it is enough: this set only WIDENS what a coverage claim may legitimately name, and
+/// a renamed file with hunks also carries an authoritative `+++ b/<q>` line, which is the one
+/// [`diff_new_lines`] reads.
+fn diff_git_new_path(rest: &str) -> Option<String> {
+    let len = rest.len();
+    if rest.starts_with("a/") && len >= 5 && (len - 5) % 2 == 0 {
+        let n = (len - 5) / 2;
+        if let (Some(a), Some(" b/"), Some(b)) = (
+            rest.get(2..2 + n),
+            rest.get(2 + n..5 + n),
+            rest.get(5 + n..),
+        ) {
+            if a == b {
+                return Some(norm_path(b));
+            }
+        }
+    }
+    rest.rfind(" b/")
+        .map(|i| strip_diff_prefix(&rest[i + 1..]))
 }
 
 /// PURE: the NEW-side lines of a unified diff, per file — what an anchor is checked against.
@@ -19143,9 +19169,16 @@ diff --git a/a.md b/a.md
         ] {
             assert!(paths.contains(p), "{p} must be a known changed path");
         }
-        // filenames with spaces survive: the b-side is taken at the LAST " b/", not by tokenising
+        // A filename with a space survives, and so does one containing " b/" itself — the split is
+        // decided by the half's LENGTH, which neither tokenising nor find/rfind on " b/" can do.
         let spaced = diff_changed_paths("diff --git a/my file.md b/my file.md\n");
         assert!(spaced.contains("my file.md"), "{spaced:?}");
+        let nasty = diff_changed_paths("diff --git a/x b/y b/x b/y\n");
+        assert!(nasty.contains("x b/y"), "{nasty:?}");
+        // a RENAME has no closed form; the last " b/" is the best available split and the file is
+        // still NAMED, which is all this set is for
+        let renamed = diff_changed_paths("diff --git a/old.md b/new.md\n");
+        assert!(renamed.contains("new.md"), "{renamed:?}");
     }
 
     // --- the floor: every changed file accounted for --------------------------------------------
