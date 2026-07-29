@@ -4920,6 +4920,12 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
     }
 }
 
+/// The `gh pr view --json` field list the verdict write fetches. A named constant for the same
+/// reason [`CC_VERDICT_FIELDS`] is: every one of these is read by [`record_gate`], and a field the
+/// gate READS but the fetch OMITS is a guard that silently stops firing — `files` most of all, since
+/// an absent file list makes the coverage gate vacuously satisfied rather than loud.
+const RECORD_VERDICT_FIELDS: &str = "headRefOid,labels,comments,reviewDecision,files";
+
 /// The WHOLE record decision — every refusal `record_verdict` can make, in the order it makes them,
 /// as one pure function of the fetched PR, its diff and the coverage claim.
 #[derive(PartialEq, Debug)]
@@ -5041,7 +5047,7 @@ fn record_verdict_apply(
         "-R",
         slug,
         "--json",
-        "headRefOid,labels,comments,reviewDecision,files",
+        RECORD_VERDICT_FIELDS,
     ]) else {
         return Err((
             1,
@@ -19036,6 +19042,24 @@ Binary files a/docs/logo.png and b/docs/logo.png differ
 
     // --- the diff reader the whole guard rests on -----------------------------------------------
 
+    // A field the gate READS but the fetch OMITS is a guard that silently stops firing: with `files`
+    // gone the changed set is empty and EVERY claim is vacuously sufficient.
+    #[test]
+    fn the_verdict_fetch_asks_for_every_field_the_gate_reads() {
+        for field in [
+            "headRefOid",
+            "labels",
+            "comments",
+            "reviewDecision",
+            "files",
+        ] {
+            assert!(
+                super::RECORD_VERDICT_FIELDS.split(',').any(|f| f == field),
+                "{field} is read by record_gate but not fetched"
+            );
+        }
+    }
+
     #[test]
     fn hunk_header_reads_both_counts_and_defaults_an_omitted_one() {
         assert_eq!(
@@ -19161,6 +19185,10 @@ diff --git a/a.md b/a.md
             .collect();
         let gaps = gaps_for(&claim);
         assert_eq!(gaps.unanchored, vec![WRAPPER.to_string()]);
+        assert!(
+            !gaps.is_clean(),
+            "an unanchored hand-written file blocks the write"
+        );
         let msg = coverage_refusal("o/r#230", &gaps, &diff_new_lines(DIFF));
         // and it says WHICH lines would satisfy it, so the fix needs no guessing
         assert!(msg.contains("anchorable lines: 1-4"), "{msg}");
@@ -19190,6 +19218,7 @@ diff --git a/a.md b/a.md
                 actual: Some("    address private immutable _ext;".to_string()),
             }]
         );
+        assert!(!gaps.is_clean(), "a mismatched anchor blocks the write");
         let msg = coverage_refusal("o/r#230", &gaps, &diff_new_lines(DIFF));
         assert!(
             msg.contains("the diff has `address private immutable _ext;`"),
@@ -19218,6 +19247,10 @@ diff --git a/a.md b/a.md
                 line: 2,
                 actual: None,
             }]
+        );
+        assert!(
+            !gaps.is_clean(),
+            "an anchor at a line the diff lacks blocks the write"
         );
         let msg = coverage_refusal("o/r#1", &gaps, &diff_new_lines(DIFF));
         assert!(msg.contains("that line is not in this PR's diff"), "{msg}");
@@ -19282,6 +19315,7 @@ diff --git a/a.md b/a.md
             "src/libraries/Math.sol",  // and "lib" is a COMPONENT, never a prefix
             "src/generator/Emit.sol",  // …as "generated" is, not a substring
             "lib.rs",                  // a root-dir name is a DIRECTORY, not a file
+            "docs/generated-report.md", // a component CONTAINING "generated" is not "generated"
         ] {
             assert!(!anchor_exempt(p), "{p} must need an anchor");
         }
@@ -19309,6 +19343,7 @@ diff --git a/a.md b/a.md
         claim.push(named("src/SomeOtherRepo.sol"));
         let gaps = gaps_for(&claim);
         assert_eq!(gaps.not_in_pr, vec!["src/SomeOtherRepo.sol".to_string()]);
+        assert!(!gaps.is_clean(), "a foreign file blocks the write");
         let msg = coverage_refusal("o/r#1", &gaps, &diff_new_lines(DIFF));
         assert!(msg.contains("another PR's checkout"), "{msg}");
     }
@@ -24553,6 +24588,13 @@ mod mcp_tests {
         // cost is REQUIRED by the schema — the prompt could only ask for it.
         assert!(required.contains(&"cost"));
         assert!(required.contains(&"verdict"));
+        // …and the scope-coverage claim (#131): the prompt could only ASK for it, and a claim the
+        // schema treats as optional is a guard the model can decline to arm.
+        assert!(required.contains(&"covered"));
+        assert_eq!(
+            rv["inputSchema"]["properties"]["covered"]["items"]["required"],
+            json!(["path"])
+        );
         let verdicts: Vec<&str> = rv["inputSchema"]["properties"]["verdict"]["enum"]
             .as_array()
             .unwrap()
