@@ -411,9 +411,9 @@ has Bash and a far larger surface, where the round trip pays for itself.
 A verdict is the value of one function — **the PR at its current head** — and
 nothing else. A prior verdict is not an input to it: the same PR at the same
 head earns the same verdict however many times it is asked, so there is no
-"re-vet", no delta pass, and no state called _judged before_. A PR is
-**vetted** or **un-vetted**, and the only reason the pipeline stores a verdict
-at all is to skip recomputing an answer that would come out identical.
+"re-vet", no delta pass, and no state called _judged before_. A PR is **vetted**
+or **un-vetted**, and the only reason the pipeline stores a verdict at all is to
+skip recomputing an answer that would come out identical.
 
 That makes `vetted_at_head` a **cache key**, and a cache key over the input
 alone is sound only while the function is fixed. So a `🤖 ai:vetter` comment
@@ -425,8 +425,8 @@ carries both facts, and counts as current only when both hold:
   `VET_PROTOCOL` in `pr-review-report`. Bumping the constant retires every
   verdict written under the old rules **at once**, wherever they are: no head
   has to move, no branch is touched, no comment is rewritten, and the next
-  scheduled vetter run recomputes them. Bump it when the audit lens, a
-  mandatory gate or the verdict vocabulary changes — not for a reworded prompt.
+  scheduled vetter run recomputes them. Bump it when the audit lens, a mandatory
+  gate or the verdict vocabulary changes — not for a reworded prompt.
 
 An **unstamped** comment is `VetProtocol::Unknown` and is never current. It was
 written under rules that cannot be identified, and unidentified is not "fine" —
@@ -628,11 +628,11 @@ The machine has **no dead-ends**: every state has an exit back into the
 lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle is
 `un-vetted → vetting → a verdict`, and a PR falls back to **`un-vetted`** — the
 same state, not a second one — the moment its verdict stops being current at its
-head, so a reworked PR is always judged against its current code. The
-**human reject is TRANSIENT**, not terminal: when a human applies `human:reject`
-and a trusted "Rework note", the producer executes the rework, pushes a fix
-commit, and then calls **`pr-review-report reworked-reject <owner/repo> <n>`**
-as its final step. That subcommand REMOVES `human:reject` **and any stale `ai:*`
+head, so a reworked PR is always judged against its current code. The **human
+reject is TRANSIENT**, not terminal: when a human applies `human:reject` and a
+trusted "Rework note", the producer executes the rework, pushes a fix commit,
+and then calls **`pr-review-report reworked-reject <owner/repo> <n>`** as its
+final step. That subcommand REMOVES `human:reject` **and any stale `ai:*`
 verdict** (the code changed → vet from scratch), returning the PR to
 ready-to-vet so it re-enters the normal vet → queue → human loop. It is guarded:
 it clears `human:reject` **only** when the PR head commit provably
