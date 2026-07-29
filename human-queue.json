@@ -1164,9 +1164,26 @@
       }
     },
     "vet-lifecycle": {
-      "un-vetted": {
-        "count": 3,
+      "awaiting-re-vet": {
+        "count": 1,
         "prs": [
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 403,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+          }
+        ]
+      },
+      "un-vetted": {
+        "count": 4,
+        "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 122,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/122",
+            "title": "feat(mcp): next_ready — the human's merge decision as one typed result"
+          },
           {
             "repo": "rainlanguage/rain.uniswap",
             "number": 31,
@@ -1302,7 +1319,7 @@
         ]
       },
       "ai:ready": {
-        "count": 35,
+        "count": 34,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1441,12 +1458,6 @@
             "number": 404,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
             "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 403,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
-            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1717,6 +1728,12 @@
     },
     {
       "repo": "rainlanguage/rain.dia",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/40",
+      "title": "[AUDIT-M12] [medium] LibOpDiaPrice.run does not validate staleAfter is a Float"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
       "number": 22,
       "url": "https://github.com/rainlanguage/rain.dia/issues/22",
       "title": "[AUDIT-L06] [low] intOrAStringToString empty and max-31 round-trips untested"
@@ -1738,9 +1755,52 @@
       "number": 981,
       "url": "https://github.com/rainlanguage/raindex/issues/981",
       "title": "add back button for desktop app"
+    },
+    {
+      "repo": "rainlanguage/rain.webapp",
+      "number": 243,
+      "url": "https://github.com/rainlanguage/rain.webapp/issues/243",
+      "title": "Order table styling not working on Firefox"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 960,
+      "url": "https://github.com/rainlanguage/raindex/issues/960",
+      "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
+    },
+    {
+      "repo": "rainlanguage/rain.webapp",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
+      "title": "i was asked to infinite approve quick on deposit"
     }
   ],
-  "closeCandidateUnvetted": [],
+  "closeCandidateUnvetted": [
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/40",
+      "title": "[AUDIT-M12] [medium] LibOpDiaPrice.run does not validate staleAfter is a Float"
+    },
+    {
+      "repo": "rainlanguage/rain.webapp",
+      "number": 243,
+      "url": "https://github.com/rainlanguage/rain.webapp/issues/243",
+      "title": "Order table styling not working on Firefox"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 960,
+      "url": "https://github.com/rainlanguage/raindex/issues/960",
+      "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
+    },
+    {
+      "repo": "rainlanguage/rain.webapp",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
+      "title": "i was asked to infinite approve quick on deposit"
+    }
+  ],
   "closeCandidateUpheld": [
     {
       "repo": "rainlanguage/rain.dia",
@@ -2154,12 +2214,6 @@
     },
     {
       "repo": "rainlanguage/rain.deploy",
-      "number": 17,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/17",
-      "title": "deployZoltu reports the factory's revert data as deployedAddress on the failure path"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
       "number": 16,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/16",
       "title": "deployToNetworks reports success without deploying when expectedAddress is stale relative to creationCode"
@@ -2349,12 +2403,6 @@
       "number": 42,
       "url": "https://github.com/rainlanguage/rain.dia/issues/42",
       "title": "[AUDIT-M13] [medium] BYTECODE_HASH and deploy codehash are duplicate unpinned sources"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/40",
-      "title": "[AUDIT-M12] [medium] LibOpDiaPrice.run does not validate staleAfter is a Float"
     },
     {
       "repo": "rainlanguage/rain-org-health",
@@ -4404,12 +4452,6 @@
     },
     {
       "repo": "rainlanguage/rain.webapp",
-      "number": 243,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/243",
-      "title": "Order table styling not working on Firefox"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
       "number": 222,
       "url": "https://github.com/rainlanguage/rain.webapp/issues/222",
       "title": "Would be good to have a transaction store, similar to the one in SFT site."
@@ -4419,12 +4461,6 @@
       "number": 3,
       "url": "https://github.com/rainlanguage/raindex-tg-bot/issues/3",
       "title": "Ensure raindex tg bot is in typescript"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 960,
-      "url": "https://github.com/rainlanguage/raindex/issues/960",
-      "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
     },
     {
       "repo": "rainlanguage/rain.webapp",
@@ -4485,12 +4521,6 @@
       "number": 929,
       "url": "https://github.com/rainlanguage/raindex/issues/929",
       "title": "connect to wallet connect button does nothing (after disconnecting?)"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
-      "title": "i was asked to infinite approve quick on deposit"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -5689,14 +5719,14 @@
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
-    "closeCandidateIssues": 5,
-    "closeCandidateUnvetted": 0,
+    "closeCandidateIssues": 9,
+    "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 5,
     "leaks": 24,
-    "totalProducerPrs": 159,
-    "uncoveredIssues": 623,
-    "unvetted": 3,
-    "awaitingReVet": 0,
+    "totalProducerPrs": 160,
+    "uncoveredIssues": 618,
+    "unvetted": 4,
+    "awaitingReVet": 1,
     "reject": 29,
     "relink": 1,
     "closeCandidatePrs": 4,
