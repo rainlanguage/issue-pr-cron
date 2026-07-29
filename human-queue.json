@@ -1153,14 +1153,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 4,
+        "count": 3,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 126,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/126",
-            "title": "perf(queue): fetch presentable_queue candidates on a bounded thread pool (59s -> 9.5s)"
-          },
           {
             "repo": "rainlanguage/rain.uniswap",
             "number": 31,
@@ -1810,6 +1804,12 @@
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 129,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/129",
+      "title": "gh_json collapses every failure into None, so a rate limit is indistinguishable from a missing PR"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 125,
@@ -5692,9 +5692,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 9,
     "leaks": 23,
-    "totalProducerPrs": 158,
-    "uncoveredIssues": 618,
-    "unvetted": 4,
+    "totalProducerPrs": 157,
+    "uncoveredIssues": 619,
+    "unvetted": 3,
     "awaitingReVet": 0,
     "reject": 29,
     "relink": 1,
