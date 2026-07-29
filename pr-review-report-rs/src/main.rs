@@ -843,44 +843,53 @@ mod parallel_queue_tests {
         );
     }
 
-    // The pool is BOUNDED and it SATURATES: given four times the cap of work, `map_bounded` runs
-    // it on exactly `QUEUE_FETCH_CONCURRENCY` threads — not one per candidate (the burst GitHub
-    // answers with a 403) and not one (the serial queue back again).
+    /// How long a worker holds its item in the cap probe below. Spawning a handful of threads is
+    /// microseconds, so this is orders of magnitude more than enough for every thread the pool
+    /// created to be in flight at once, and it keeps the probe under a second.
+    const CAP_PROBE_HOLD: Duration = Duration::from_millis(300);
+
+    // The pool is BOUNDED and it SATURATES: given twice the cap of work, `map_bounded` runs it on
+    // exactly `QUEUE_FETCH_CONCURRENCY` threads — not one per candidate (the burst GitHub answers
+    // with a 403) and not one (the serial queue back again).
     //
-    // Measured by DISTINCT THREAD ID, held open by a rendezvous. Neither alone is enough: how
-    // many threads happen to OVERLAP is a race against thread start-up that a loaded box loses,
-    // and counting ids without the rendezvous undercounts, because work this cheap is drained by
-    // the first few threads before the rest are scheduled. So the first cap-many items block
-    // until that many have started — every worker the pool created is then provably holding one,
-    // and any extra thread has cap*3 unclaimed items waiting to give it away.
+    // Every worker HOLDS its item for a fixed window, which is what makes both facts observable:
+    // with the window open, every thread the pool created is in flight at once, so the peak is
+    // the real ceiling and the distinct-id count is the real worker count. Neither measurement
+    // works alone — how many threads happen to overlap without a hold is a race against start-up
+    // that a loaded box loses, and an id count without a hold undercounts, because work this
+    // cheap is drained by the first few threads before the rest are scheduled (one run of an
+    // earlier version measured 6 of 8). A rendezvous is not an option either: the cap-th worker
+    // satisfies a cap-sized barrier by itself, which releases the pool before a ninth thread
+    // could ever be seen. A worker leaves early the moment the ceiling is breached, so the
+    // failing case does not pay the hold.
     #[test]
     fn map_bounded_holds_the_cap_and_reaches_it() {
         use std::collections::HashSet;
-        let items: Vec<usize> = (0..QUEUE_FETCH_CONCURRENCY * 4).collect();
+        let items: Vec<usize> = (0..QUEUE_FETCH_CONCURRENCY * 2).collect();
         let in_flight = AtomicUsize::new(0);
         let peak = AtomicUsize::new(0);
-        let started = AtomicUsize::new(0);
         let threads: Mutex<HashSet<std::thread::ThreadId>> = Mutex::new(HashSet::new());
         map_bounded(&items, |_| {
             threads.lock().unwrap().insert(std::thread::current().id());
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            // Only the first cap-many items hold, so the rendezvous costs one wait for the whole
-            // run rather than one per round.
-            if started.fetch_add(1, Ordering::SeqCst) < QUEUE_FETCH_CONCURRENCY {
-                await_another_worker(|| started.load(Ordering::SeqCst) >= QUEUE_FETCH_CONCURRENCY);
+            let deadline = std::time::Instant::now() + CAP_PROBE_HOLD;
+            while in_flight.load(Ordering::SeqCst) <= QUEUE_FETCH_CONCURRENCY
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(1));
             }
             in_flight.fetch_sub(1, Ordering::SeqCst);
         });
-        assert_eq!(
-            threads.lock().unwrap().len(),
-            QUEUE_FETCH_CONCURRENCY,
-            "four times the cap of work runs on exactly the cap's worth of threads"
-        );
         assert!(
             peak.load(Ordering::SeqCst) <= QUEUE_FETCH_CONCURRENCY,
             "the pool must never exceed the cap: peak {}",
             peak.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            threads.lock().unwrap().len(),
+            QUEUE_FETCH_CONCURRENCY,
+            "twice the cap of work runs on exactly the cap's worth of threads"
         );
     }
 
