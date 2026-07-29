@@ -316,8 +316,9 @@ server is the vetter's **only** tool surface.
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
-`human-mcp.json`) serves `pr_context`, `close_candidate_context`, `human_rule`,
-`human_rule_issue` and `human_close` — read the subject, rule on it, close it.
+`human-mcp.json`) serves `next_ready`, `pr_context`, `close_candidate_context`,
+`human_rule`, `human_rule_issue` and `human_close` — find the subject, read it,
+rule on it, close it.
 `human_close` is a tool rather than something the caller composes for the reason
 above: the alternative is a transition half in a tool and half in a prompt, and
 that half was wrong on all 74 closed-and-still-flagged subjects. The subcommands
@@ -330,6 +331,58 @@ human's inbox is `human-queue`, which renders whole org-wide sets and does not
 fit one tool result — and so is `record_close_candidate_verdict`, which is the
 vetter's authority and the very move `human_rule_issue` refuses on the human's
 behalf.
+
+#### `next_ready` — the merge decision as one typed result
+
+Ruling on an `ai:ready` PR used to take six `gh` reads assembled by hand, in an
+order the reader had to remember, and being wrong about any one of them changes
+the decision. `next_ready` returns them together: the vetter's own sha-bound
+verdict **note** (the reasoning, not the label), `headRefOid` and `baseRefName`,
+the CI rollup with failing checks **named**, whether CodeRabbit actually
+reviewed, the unresolved-thread count **qualified by that**, and any
+deploy-before-merge gate.
+
+**Which** PR is not a second question. `--queue` already ranks the presentable
+set cheapest-first; `next_ready` answers a prefix of that same ranked list, from
+the same enumeration and the same per-PR snapshot, so the head of the queue and
+the PR the tool names cannot be different PRs. A PR whose head moved after its
+verdict is not "next" at all — the queue's vetted-at-head gate withholds it, and
+`counts.awaitingRevet` says so, because returning a verdict that no longer
+describes the code is worse than returning nothing.
+
+Three fields are worth their own note:
+
+- **CodeRabbit coverage is a typed verdict, not a check state.** Only a commit
+  status whose _description_ is exactly `Review completed` is coverage.
+  `Review rate limited` and `Review queued` are `success` states carrying a
+  green check with nothing behind them, and while the org's plan quota is
+  exhausted that is most PRs. Matching is exact on the coverage side and lenient
+  on the others, so a description CodeRabbit invents tomorrow is under-claimed
+  rather than over-claimed. The raw state and description are returned beside
+  the verdict, so the misleading green stays visible next to the truth about it.
+  The description comes from `GET /commits/{sha}/status` because
+  `statusCheckRollup` does not carry the field the whole distinction turns on.
+- **`reviewThreads.meaning` qualifies the count.** Zero unresolved threads under
+  a rate-limited review means no thread was _opened_, which is what an absent
+  review looks like — `vacuous-no-review-behind-it`, not `clean`.
+- **The deploy gate is read from the body and the trusted comments, never the
+  title.** Of the six open PRs carrying `REQUIRES redeploy at land` on
+  2026-07-29, all six had it in the body and one also had it in the title, so
+  title-matching would have found one of six. It is the same predicate the
+  producer's own deploy routing reads, shared rather than re-derived, so "the
+  producer must deploy this" and "the human must not plain-merge this" cannot be
+  answered differently — and a retitle cannot move the gate.
+
+It cannot be refused for size. Every variable-length field is capped, so a full
+page's worst case is arithmetic the compiler checks
+(`NEXT_READY_MAX_ROWS * NR_ROW_CEILING + NR_ENVELOPE_BYTES <= 36,000`) and a
+test builds that worst case out of the character JSON escapes most. `limit` is a
+real narrowing argument anyway — rows are independent, so lowering it strictly
+removes bytes — which is what keeps it clear of #117, where a refusal names an
+argument the tool does not accept. It caps at 3 rather than 25 because every
+human ruling changes this queue, so a long page is stale past its head, and
+because a page long enough to matter would have to clip the reasoning the tool
+exists to carry.
 
 The last three vetter tools are its **second subject**. A PR asks a human to
 merge code; a close-candidate flag asks a human to **destroy work**, so the flag

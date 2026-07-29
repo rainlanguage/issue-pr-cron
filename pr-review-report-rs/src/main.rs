@@ -228,6 +228,18 @@ fn classify_ci(rollup: &Value) -> Ci {
 /// rows carry cost 1001 so they sort last.
 type QueueRow = (i64, String, u64, String, String);
 
+/// PURE: THE cheapest-first order, and the only one. Cost leads (the whole point of the queue —
+/// the human verifies the cheapest outstanding PR next); ties break on repo display name then PR
+/// number, so the order is total and stable rather than dependent on the search's return order.
+///
+/// It is a named function because TWO consumers rank this set: `--queue` prints it, and the
+/// human's `next_ready` tool answers "which one is next" off the head of it. A second ordering
+/// that could disagree with the first is precisely the drift the tool exists to remove — so there
+/// is one comparator, and [`presentable_queue`] applies it once for both.
+fn queue_order(a: &QueueRow, b: &QueueRow) -> std::cmp::Ordering {
+    (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2))
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum PresentState {
     Presentable,
@@ -471,7 +483,32 @@ mod org_tests {
     }
 }
 
-fn queue_mode(top: usize) {
+/// One PR that is presentable for a human decision, as [`presentable_queue`] produces it: its
+/// ordering key plus the per-PR `gh` JSON every consumer reads its own fields out of. Carrying the
+/// JSON rather than a pre-flattened row is what lets `next_ready` answer six questions off the
+/// SAME snapshot the queue ranked — a second fetch could disagree with the ranking it is
+/// explaining.
+struct PresentablePr {
+    row: QueueRow,
+    slug: String,
+    num: u64,
+    head: String,
+    /// A VERIFIED zero (see [`thread_route`]) — nothing else reaches this list.
+    unresolved_threads: u64,
+    detail: Value,
+}
+
+/// The `ai:ready` PRs presentable for a human decision RIGHT NOW, ALREADY in the one cheapest-first
+/// order, plus the whole-queue counts.
+///
+/// This is the shared enumeration behind both `--queue` and the human's `next_ready` tool. It
+/// applies every gate in one place — draft, human override, CI, mergeability, vetted-at-head,
+/// unresolved threads — and sorts with [`queue_order`] BEFORE returning, so neither consumer sorts
+/// and neither can hold a different opinion about which PR is next.
+///
+/// `Err` rather than `exit`: an MCP tool must answer a failed enumeration with a refusal the caller
+/// reads, not by killing the server.
+fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     // Candidates come from the `ai:ready` LABEL, NOT `gh search --checks success`. That qualifier is
     // unreliable — the identical query returned 93 then 203 open PRs minutes apart, which collapsed a
     // 75-deep review queue to "1". Label search is reliable; CI/mergeability is then verified per-PR
@@ -496,12 +533,10 @@ fn queue_mode(top: usize) {
     );
     let search_ref: Vec<&str> = search_args.iter().map(String::as_str).collect();
     let Some(val) = gh_json(&search_ref) else {
-        eprintln!("error: `gh search prs --label ai:ready` failed (transient API error / auth?) — aborting rather than print a falsely-empty queue");
-        std::process::exit(1);
+        return Err("error: `gh search prs --label ai:ready` failed (transient API error / auth?) — aborting rather than report a falsely-empty queue".to_string());
     };
     let Some(arr) = val.as_array() else {
-        eprintln!("error: `gh search prs` returned non-array JSON — aborting");
-        std::process::exit(1);
+        return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
     };
 
     // Candidate filter (from the search JSON, no extra call): drop drafts and any PR whose ai:ready
@@ -524,7 +559,7 @@ fn queue_mode(top: usize) {
 
     // Full per-PR pass over every candidate — after the 1-vs-75 failure, an ACCURATE queue is the
     // whole point, so each candidate's real CI rollup + mergeable + reviewDecision is fetched.
-    let mut rows: Vec<QueueRow> = Vec::new();
+    let mut rows: Vec<PresentablePr> = Vec::new();
     let mut counts = QueueCounts {
         raw: arr.len(),
         excluded: arr.len() - candidates.len(),
@@ -538,6 +573,10 @@ fn queue_mode(top: usize) {
         fetch_error: 0,
     };
     for (slug, num, url) in &candidates {
+        // The field list is what BOTH consumers need off one call. `--queue` reads five of them;
+        // `next_ready` also reads title/body/baseRefName/labels to answer the base branch and the
+        // deploy gate. Asking for them here rather than in a second fetch is what keeps the
+        // decision and the ranking on the same snapshot — and costs one request either way.
         let Some(j) = gh_json(&[
             "pr",
             "view",
@@ -545,7 +584,7 @@ fn queue_mode(top: usize) {
             "-R",
             slug,
             "--json",
-            "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments",
+            "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments,title,body,baseRefName,labels,url,number",
         ]) else {
             counts.fetch_error += 1;
             continue;
@@ -565,8 +604,12 @@ fn queue_mode(top: usize) {
                 // Vetted-at-head gate: green + mergeable is not enough — the ai:ready label must be
                 // BACKED by an ai:vetter comment at the current head. A migration-labelled or
                 // pushed-since PR is not presented; it's counted as awaiting (re-)vet.
-                let head = j.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("");
-                if vetted_at_head(&j, head) {
+                let head = j
+                    .get("headRefOid")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if vetted_at_head(&j, &head) {
                     // Open-threads gate: an otherwise-presentable PR with unresolved review
                     // threads (CodeRabbit or human) is the producer's thread-resolution work,
                     // not human-presentable. Only a VERIFIED zero passes (fail-closed): an
@@ -580,7 +623,14 @@ fn queue_mode(top: usize) {
                             let (cost, basis) =
                                 cost_from_comment(last_vetter_comment(&j).as_deref());
                             let repo_disp = slug.rsplit('/').next().unwrap_or(slug).to_string();
-                            rows.push((cost, repo_disp, *num, url.clone(), basis));
+                            rows.push(PresentablePr {
+                                row: (cost, repo_disp, *num, url.clone(), basis),
+                                slug: slug.clone(),
+                                num: *num,
+                                head,
+                                unresolved_threads: 0,
+                                detail: j,
+                            });
                         }
                         ThreadRoute::OpenThreads => counts.open_threads += 1,
                         ThreadRoute::FetchError => counts.fetch_error += 1,
@@ -596,7 +646,27 @@ fn queue_mode(top: usize) {
             PresentState::Approved => counts.approved += 1,
         }
     }
-    rows.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    // The ONE ordering, applied ONCE, here — before either consumer sees the set.
+    rank_presentable(&mut rows);
+    Ok((rows, counts))
+}
+
+/// PURE: apply [`queue_order`] to the presentable set. The ONLY place either consumer's order comes
+/// from — `--queue` renders this sequence and `next_ready` answers a prefix of it, so there is no
+/// second sort that could hold a different opinion about which PR is next.
+fn rank_presentable(rows: &mut [PresentablePr]) {
+    rows.sort_by(|a, b| queue_order(&a.row, &b.row));
+}
+
+fn queue_mode(top: usize) {
+    let (prs, counts) = match presentable_queue() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+    let rows: Vec<QueueRow> = prs.into_iter().map(|p| p.row).collect();
     println!("{}", render_queue(&rows, &counts, top));
 }
 /// Parse the closing-keyword issue numbers from arbitrary text (a commit message or a
@@ -9208,6 +9278,1126 @@ const _: () = assert!(MCP_MAX_RESULT_BYTES * 4 <= MEASURED_HARNESS_GATE_BYTES * 
 const _: () = assert!(MAX_MAX_DIFF_BYTES as usize <= MCP_MAX_RESULT_BYTES);
 const _: () = assert!(DEFAULT_MAX_DIFF_BYTES <= MCP_MAX_RESULT_BYTES);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// next_ready — the human's MERGE DECISION, as one typed result (#121).
+//
+// Ruling on an `ai:ready` PR took six reads assembled by hand, in an order the
+// reader had to remember: the vetter's own verdict note, the head sha, the base
+// branch, the CI rollup, whether CodeRabbit actually reviewed, and whether the
+// PR is deploy-gated. Being wrong about any one of them changes the decision,
+// and a decision assembled by hand from `gh` is a decision nobody can audit.
+//
+// This is the READ that precedes the human's writes. WHICH PR is not a second
+// question: `presentable_queue` already ranks the set cheapest-first and this
+// takes the head of it, so the queue and the tool cannot name different PRs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The commit-status DESCRIPTION that means CodeRabbit actually reviewed this head. It is the ONLY
+/// one that is coverage, and the discriminator is EXACT EQUALITY against it — every other
+/// description, known or not, is treated as no coverage.
+///
+/// That asymmetry is the point. `Review rate limited` and `Review queued` are `success` states
+/// carrying a green check with nothing behind them, and while the org's plan quota is exhausted
+/// most PRs are in one of them. A tool that reported the check's CONCLUSION would say "CodeRabbit
+/// passed" on a PR CodeRabbit never looked at — and then "0 unresolved threads" reads as clean when
+/// it is merely vacuous. Fail-closed on the coverage side means a description CodeRabbit invents
+/// tomorrow is under-claimed rather than over-claimed, and the raw string is returned beside the
+/// verdict so a human can see exactly what was said.
+const CODERABBIT_REVIEWED_DESCRIPTION: &str = "Review completed";
+
+/// The commit-status CONTEXT CodeRabbit posts under. Matched case-insensitively: the context is
+/// CodeRabbit's to spell, and the description is where the meaning lives.
+const CODERABBIT_CONTEXT: &str = "coderabbit";
+
+/// Whether CodeRabbit actually reviewed a PR's current head — a typed verdict, because the raw
+/// check state cannot answer it and a caller left to interpret a description will interpret it
+/// differently each time.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CodeRabbitCoverage {
+    /// `Review completed` — the ONE state that is coverage.
+    Reviewed,
+    /// The org's plan quota is exhausted. A green check, no review.
+    RateLimited,
+    /// Accepted, not yet done. A green check, no review YET.
+    Queued,
+    /// A CodeRabbit status whose description is none of the above. Not claimed as coverage.
+    OtherDescription,
+    /// No CodeRabbit status on this commit at all — the app is not installed here, or never ran.
+    NoStatus,
+    /// The status could not be read. FAIL-CLOSED: an unreadable status is never coverage, for the
+    /// same reason [`ThreadRoute::FetchError`] is never a verified-clean thread count.
+    Unreadable,
+}
+
+impl CodeRabbitCoverage {
+    fn as_str(self) -> &'static str {
+        match self {
+            CodeRabbitCoverage::Reviewed => "reviewed",
+            CodeRabbitCoverage::RateLimited => "rate-limited",
+            CodeRabbitCoverage::Queued => "queued",
+            CodeRabbitCoverage::OtherDescription => "other-description",
+            CodeRabbitCoverage::NoStatus => "no-status",
+            CodeRabbitCoverage::Unreadable => "unreadable",
+        }
+    }
+    /// Is there a review BEHIND the check? Exactly one variant says yes.
+    fn is_coverage(self) -> bool {
+        matches!(self, CodeRabbitCoverage::Reviewed)
+    }
+}
+
+/// PURE: the CodeRabbit verdict, its raw check state and its raw description, read out of a
+/// combined-status response (`GET /repos/{o}/{r}/commits/{sha}/status`).
+///
+/// That endpoint rather than `statusCheckRollup`, because the rollup does not carry `description`
+/// at all — the field the whole discriminator turns on. It reports the LATEST status per context,
+/// and it is queried at the PR's head sha, so the verdict describes the code being ruled on.
+///
+/// `None` means the fetch failed; that is [`CodeRabbitCoverage::Unreadable`], never a clean answer.
+fn coderabbit_coverage(
+    combined: Option<&Value>,
+) -> (CodeRabbitCoverage, Option<String>, Option<String>) {
+    let Some(combined) = combined else {
+        return (CodeRabbitCoverage::Unreadable, None, None);
+    };
+    let Some(statuses) = combined.get("statuses").and_then(|s| s.as_array()) else {
+        // A response without a `statuses` array is malformed, not empty. Malformed is unreadable.
+        return (CodeRabbitCoverage::Unreadable, None, None);
+    };
+    let Some(st) = statuses.iter().find(|s| {
+        s.get("context")
+            .and_then(|c| c.as_str())
+            .is_some_and(|c| c.trim().eq_ignore_ascii_case(CODERABBIT_CONTEXT))
+    }) else {
+        return (CodeRabbitCoverage::NoStatus, None, None);
+    };
+    let state = st
+        .get("state")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let desc = st
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let verdict = match desc.as_deref().map(str::trim) {
+        // EXACT, and only here. Everything below is a lenient match on a NON-coverage state, which
+        // is safe in a way a lenient coverage match is not.
+        Some(d) if d == CODERABBIT_REVIEWED_DESCRIPTION => CodeRabbitCoverage::Reviewed,
+        Some(d) if d.to_ascii_lowercase().contains("rate limit") => CodeRabbitCoverage::RateLimited,
+        Some(d) if d.to_ascii_lowercase().contains("queued") => CodeRabbitCoverage::Queued,
+        _ => CodeRabbitCoverage::OtherDescription,
+    };
+    (verdict, state, desc)
+}
+
+/// Live CodeRabbit coverage for one head sha.
+fn coderabbit_fetch(
+    slug: &str,
+    head: &str,
+) -> (CodeRabbitCoverage, Option<String>, Option<String>) {
+    let path = format!("repos/{slug}/commits/{head}/status");
+    coderabbit_coverage(gh_json(&["api", &path]).as_ref())
+}
+
+/// What an unresolved-thread count MEANS, which depends on whether anything reviewed the PR.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ThreadMeaning {
+    /// Zero unresolved AND a real review behind it.
+    Clean,
+    /// Zero unresolved, but nothing reviewed this head. The zero is VACUOUS: it says no thread was
+    /// opened, which is what you would expect when no review ran. Reading it as "CodeRabbit found
+    /// nothing" is the misreading this whole field exists to prevent.
+    Vacuous,
+    /// At least one thread is still open.
+    Unresolved,
+}
+
+impl ThreadMeaning {
+    fn as_str(self) -> &'static str {
+        match self {
+            ThreadMeaning::Clean => "clean",
+            ThreadMeaning::Vacuous => "vacuous-no-review-behind-it",
+            ThreadMeaning::Unresolved => "unresolved",
+        }
+    }
+}
+
+/// PURE: qualify a thread count by the coverage behind it.
+fn thread_meaning(unresolved: u64, cr: CodeRabbitCoverage) -> ThreadMeaning {
+    if unresolved > 0 {
+        ThreadMeaning::Unresolved
+    } else if cr.is_coverage() {
+        ThreadMeaning::Clean
+    } else {
+        ThreadMeaning::Vacuous
+    }
+}
+
+/// PURE: the sha a `🤖 ai:vetter` note pinned its verdict to — the `<sha>` of `Reviewed <sha>:`.
+/// Returned beside the head sha so the sha-binding is VISIBLE in the result rather than asserted by
+/// the tool: a reader can see for itself that the reasoning describes this code.
+fn verdict_sha(body: &str) -> Option<&str> {
+    body.lines()
+        .find_map(|l| l.trim().strip_prefix("Reviewed "))
+        .and_then(|rest| rest.split_once(':'))
+        .map(|(sha, _)| sha.trim())
+        .filter(|sha| !sha.is_empty() && sha.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
+/// PURE: clip `s` to at most `max` BYTES on a char boundary, and neutralise the control characters
+/// that JSON must escape as six bytes each (``).
+///
+/// The second half is what makes the row ceiling below ARITHMETIC rather than a hope. After it, one
+/// clipped byte serialises to at most TWO (`"` → `\"`, `\` → `\\`, `\n` → `\n`; every other ASCII
+/// byte and every UTF-8 continuation byte serialises to itself), so a field capped at N raw bytes
+/// can occupy at most 2N in the document. Control characters carry no information in a PR title, a
+/// branch name or a vetter's note; `\n` is kept because a note's paragraphs do.
+fn clip_field(s: &str, max: usize) -> String {
+    let (clipped, _) = truncate_utf8(s, max);
+    clipped
+        .chars()
+        .map(|c| {
+            if c != '\n' && (c as u32) < 0x20 {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// Worst-case JSON expansion of one byte that survived [`clip_field`]. See its doc comment.
+const JSON_ESCAPE_WORST_CASE: usize = 2;
+
+/// Rows one call may return. The tool answers "which PR is NEXT", so ONE is the default and the
+/// question; a small page exists because a human triaging a sitting wants to see what is behind the
+/// head, and because `limit` is then a narrowing argument that genuinely shrinks the result.
+///
+/// The cap is 3 rather than 25 for two reasons, and neither is the budget. Every human ruling
+/// CHANGES this queue — a `human_rule` removes its PR from it — so a long page is stale from the
+/// second row onward. And the field this tool exists to carry is the vetter's REASONING; a page
+/// long enough to matter would have to clip that reasoning to fit, which trades the one field the
+/// caller cannot reconstruct for rows it can get from `--queue`.
+const NEXT_READY_MAX_ROWS: usize = 3;
+const NEXT_READY_DEFAULT_ROWS: usize = 1;
+
+// Per-field RAW byte caps. Every variable-length field in a row has one, which is what makes the
+// result structurally unable to exceed the budget rather than merely unlikely to.
+const NR_NOTE_BYTES: usize = 2_600;
+const NR_TITLE_BYTES: usize = 200;
+const NR_URL_BYTES: usize = 200;
+const NR_PR_BYTES: usize = 160;
+const NR_BRANCH_BYTES: usize = 160;
+const NR_SHA_BYTES: usize = 64;
+const NR_BASIS_BYTES: usize = 200;
+const NR_CR_TEXT_BYTES: usize = 200;
+const NR_CHECK_NAME_BYTES: usize = 120;
+const NR_MAX_FAILING_CHECKS: usize = 8;
+
+/// Every capped field in one row, summed. Two shas (head + verdict) and two CodeRabbit strings
+/// (state + description) are counted at their own caps.
+const NR_ROW_FIELD_BYTES: usize = NR_NOTE_BYTES
+    + NR_TITLE_BYTES
+    + NR_URL_BYTES
+    + NR_PR_BYTES
+    + NR_BRANCH_BYTES
+    + 2 * NR_SHA_BYTES
+    + NR_BASIS_BYTES
+    + 2 * NR_CR_TEXT_BYTES
+    + NR_MAX_FAILING_CHECKS * NR_CHECK_NAME_BYTES;
+
+/// The row's FIXED cost: its keys, its punctuation, its typed enum strings, and its numbers. Held
+/// honest by `an_empty_row_fits_the_fixed_allowance`, which measures a real one — a hand-guessed
+/// constant can drift the moment a field is added, and the assertion below is only as sound as it.
+const NR_ROW_FIXED_BYTES: usize = 1_200;
+
+/// The most one row can occupy in the serialised document.
+const NR_ROW_CEILING: usize = NR_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NR_ROW_FIXED_BYTES;
+
+/// The document minus its rows: `counts`, `queue`, the keys around them. Also measured by test.
+const NR_ENVELOPE_BYTES: usize = 1_500;
+
+/// THE GUARANTEE, as arithmetic the compiler checks: a full page of maximal rows cannot reach
+/// [`MCP_MAX_RESULT_BYTES`]. Raise a cap or the row count past what fits and this crate does not
+/// build — which is the difference between a budget the tool respects and one it hopes for.
+const _: () =
+    assert!(NEXT_READY_MAX_ROWS * NR_ROW_CEILING + NR_ENVELOPE_BYTES <= MCP_MAX_RESULT_BYTES);
+
+/// PURE: a state-load's page size for `next_ready`. Out of range is REFUSED rather than clamped,
+/// for the same reason [`state_load_limit`]'s is.
+fn next_ready_limit(args: &Value) -> Result<usize, String> {
+    match args.get("limit") {
+        None | Some(Value::Null) => Ok(NEXT_READY_DEFAULT_ROWS),
+        Some(v) => match v.as_u64() {
+            Some(n) if n >= 1 && n <= NEXT_READY_MAX_ROWS as u64 => Ok(n as usize),
+            _ => Err(format!(
+                "limit must be an integer in 1..={NEXT_READY_MAX_ROWS}"
+            )),
+        },
+    }
+}
+
+/// Everything ONE row is built from — grouped so the row builder is PURE and testable without a
+/// network, and so adding a fact does not change a call signature at three sites.
+struct NextReadyFacts<'a> {
+    slug: &'a str,
+    num: u64,
+    /// The per-PR `gh pr view` JSON the queue ranked this PR from.
+    detail: &'a Value,
+    /// The verification cost + its basis, as the vetter's own note recorded them.
+    cost: i64,
+    basis: &'a str,
+    /// A VERIFIED count (see [`thread_route`]) — never a "could not tell" laundered into a zero.
+    unresolved_threads: u64,
+    coverage: CodeRabbitCoverage,
+    coverage_state: Option<String>,
+    coverage_description: Option<String>,
+}
+
+/// PURE: the merge decision for ONE PR. Every string is clipped, so the row's size is bounded by
+/// [`NR_ROW_CEILING`] whatever GitHub returns.
+fn next_ready_row(f: &NextReadyFacts) -> Value {
+    let head = f
+        .detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let rollup = f.detail.get("statusCheckRollup").unwrap_or(&Value::Null);
+    let ci = classify_ci(rollup);
+    let failing_all = failing_check_names(rollup);
+    let failing: Vec<String> = failing_all
+        .iter()
+        .take(NR_MAX_FAILING_CHECKS)
+        .map(|n| clip_field(n, NR_CHECK_NAME_BYTES))
+        .collect();
+    let check_count = rollup.as_array().map(|a| a.len()).unwrap_or(0);
+    let note_full = last_vetter_comment(f.detail).unwrap_or_default();
+    let note = clip_field(&note_full, NR_NOTE_BYTES);
+    let gate = deploy_gate(f.detail, head, ci, &failing_all);
+    let meaning = thread_meaning(f.unresolved_threads, f.coverage);
+    serde_json::json!({
+        "pr": clip_field(&format!("{}#{}", f.slug, f.num), NR_PR_BYTES),
+        "url": clip_field(f.detail.get("url").and_then(|v| v.as_str()).unwrap_or(""), NR_URL_BYTES),
+        "title": clip_field(f.detail.get("title").and_then(|v| v.as_str()).unwrap_or(""), NR_TITLE_BYTES),
+        // Not decoration: `rain-org-health` is on `master`, and assuming `main` has cost real
+        // failures. The base branch is the PR's own, never guessed.
+        "baseRefName": clip_field(f.detail.get("baseRefName").and_then(|v| v.as_str()).unwrap_or(""), NR_BRANCH_BYTES),
+        "headRefOid": clip_field(head, NR_SHA_BYTES),
+        "cost": f.cost,
+        "costBasis": clip_field(f.basis, NR_BASIS_BYTES),
+        "verdict": {
+            // The sha the vetter PINNED its verdict to. Equal to headRefOid for every row this
+            // tool returns — the queue admits no other kind — and stated anyway so the reader can
+            // check the reasoning describes this code instead of taking the tool's word for it.
+            "sha": verdict_sha(&note_full).map(|s| clip_field(s, NR_SHA_BYTES)),
+            "atHead": vetted_at_head(f.detail, head),
+            "note": note,
+            "noteBytes": note_full.len(),
+            "noteTruncated": note_full.len() > NR_NOTE_BYTES,
+        },
+        "ci": {
+            "rollup": ci_str(ci),
+            // NAMED, not counted. Empty for every row here (the queue presents no red PR), and the
+            // emptiness is the assertion — `"rollup": "nochecks"` beside it is the case a reader
+            // must not mistake for "all checks passed".
+            "failingChecks": failing,
+            "failingChecksTruncated": failing_all.len() > NR_MAX_FAILING_CHECKS,
+            "checkCount": check_count,
+        },
+        "mergeable": merge_str(parse_merge(f.detail.get("mergeable").and_then(|v| v.as_str()))),
+        "codeRabbit": {
+            "coverage": f.coverage.as_str(),
+            "reviewed": f.coverage.is_coverage(),
+            // The raw pair, so the misleading green is VISIBLE next to the truth about it.
+            "checkState": f.coverage_state.as_deref().map(|s| clip_field(s, NR_CR_TEXT_BYTES)),
+            "description": f.coverage_description.as_deref().map(|s| clip_field(s, NR_CR_TEXT_BYTES)),
+        },
+        "reviewThreads": {
+            "unresolved": f.unresolved_threads,
+            "meaning": meaning.as_str(),
+        },
+        "deployGate": gate.as_str(),
+    })
+}
+
+/// PURE: the whole document. `queue.more` is how many presentable PRs this page left behind, and
+/// `counts` is the whole-queue breakdown — including `awaitingRevet`, which is where a PR whose
+/// head moved after its verdict went. That number is the answer to "why is the PR I expected not
+/// here": a moved head un-pins the vetter's note from the code, so the PR is not next, it is
+/// awaiting a re-vet, and saying so beats returning a verdict that no longer describes anything.
+fn next_ready_doc(rows: Vec<Value>, counts: &QueueCounts, presentable: usize) -> Value {
+    let returned = rows.len();
+    serde_json::json!({
+        "queue": {
+            "presentable": presentable,
+            "returned": returned,
+            "more": presentable.saturating_sub(returned),
+        },
+        "counts": {
+            "aiReady": counts.raw,
+            "excluded": counts.excluded,
+            "presentable": presentable,
+            "conflicting": counts.conflict,
+            "red": counts.red,
+            "pending": counts.pending,
+            "mergeUnknown": counts.merge_unknown,
+            "approved": counts.approved,
+            "awaitingRevet": counts.unconfirmed,
+            "openThreads": counts.open_threads,
+            "fetchError": counts.fetch_error,
+        },
+        "next": rows,
+    })
+}
+
+/// PURE: the PRs this call answers with — a PREFIX of the already-ranked set, and nothing else.
+///
+/// It deliberately does NOT sort. [`rank_presentable`] applied [`queue_order`] to the whole set
+/// before this tool saw it, so taking a prefix is what makes "the next ready PR" mean the same
+/// thing here as at the head of `--queue`. A sort here — even one that agrees today — is the second
+/// ordering #121 exists to prevent, which is why this seam is a named function with its own test
+/// rather than an inline `.take()`.
+fn next_ready_page(ordered: &[PresentablePr], limit: usize) -> Vec<&PresentablePr> {
+    ordered.iter().take(limit).collect()
+}
+
+/// Live `next_ready`: rank the whole `ai:ready` set once, then pay for the CodeRabbit read only on
+/// the rows actually returned.
+fn next_ready_fetch(limit: usize) -> Result<Value, String> {
+    let (prs, counts) = presentable_queue()?;
+    let presentable = prs.len();
+    let rows: Vec<Value> = next_ready_page(&prs, limit)
+        .into_iter()
+        .map(|p| {
+            let (coverage, coverage_state, coverage_description) =
+                coderabbit_fetch(&p.slug, &p.head);
+            next_ready_row(&NextReadyFacts {
+                slug: &p.slug,
+                num: p.num,
+                detail: &p.detail,
+                cost: p.row.0,
+                basis: &p.row.4,
+                unresolved_threads: p.unresolved_threads,
+                coverage,
+                coverage_state,
+                coverage_description,
+            })
+        })
+        .collect();
+    Ok(next_ready_doc(rows, &counts, presentable))
+}
+
+/// Digits reserved, per numeric field, in the fixed allowances above. `usize`/`i64` never render
+/// wider than this, so a measured all-empty row plus this reserve bounds the real thing.
+#[cfg(test)]
+const NR_MAX_DIGITS: usize = 20;
+
+#[cfg(test)]
+mod next_ready_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn vetter_comment(sha: &str, tail: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": format!("🤖 ai:vetter\nReviewed {sha}: ready — {tail}\ncost 40 — a basis"),
+        })
+    }
+
+    fn combined(context: &str, state: &str, description: &str) -> Value {
+        json!({"statuses": [
+            {"context": "ci/other", "state": "success", "description": "fine"},
+            {"context": context, "state": state, "description": description},
+        ]})
+    }
+
+    // ── the CodeRabbit discriminator ──────────────────────────────────────────────────────────
+    //
+    // THE load-bearing field. While the org's plan quota is exhausted most PRs carry a CodeRabbit
+    // status whose STATE is `success` and behind which nothing was reviewed. A tool that reported
+    // the state would say "CodeRabbit passed" on a PR CodeRabbit never opened — and then the
+    // 0-unresolved-threads beside it reads as a clean review instead of an empty one.
+    #[test]
+    fn rate_limited_and_queued_are_green_checks_with_no_review_behind_them() {
+        // The ONE state that is coverage — and note the STATE is identical in all three cases.
+        let (v, state, desc) =
+            coderabbit_coverage(Some(&combined("CodeRabbit", "success", "Review completed")));
+        assert_eq!(v, CodeRabbitCoverage::Reviewed);
+        assert!(v.is_coverage());
+        assert_eq!(state.as_deref(), Some("success"));
+        assert_eq!(desc.as_deref(), Some("Review completed"));
+
+        for (description, want) in [
+            ("Review rate limited", CodeRabbitCoverage::RateLimited),
+            ("Review queued", CodeRabbitCoverage::Queued),
+        ] {
+            let (v, state, desc) =
+                coderabbit_coverage(Some(&combined("CodeRabbit", "success", description)));
+            assert_eq!(v, want, "{description}");
+            assert!(
+                !v.is_coverage(),
+                "{description} is a GREEN check with no review behind it — reporting it as \
+                 coverage is the misread this discriminator exists to prevent"
+            );
+            // The green is still reported, beside the truth about it: a reader must be able to see
+            // that the check passed AND that nothing reviewed the code.
+            assert_eq!(state.as_deref(), Some("success"));
+            assert_eq!(desc.as_deref(), Some(description));
+        }
+    }
+
+    // FAIL-CLOSED on the coverage side. `Review completed` is matched by EQUALITY; every other
+    // description — including ones CodeRabbit has not invented yet — is under-claimed rather than
+    // over-claimed, because the cost of a false "reviewed" is a merge nobody reviewed.
+    #[test]
+    fn only_an_exact_review_completed_is_claimed_as_coverage() {
+        for description in [
+            "Review completed successfully",
+            "Review completed with 3 comments",
+            "review completed",
+            "Completed",
+            "Review skipped",
+            "",
+        ] {
+            let (v, _, _) =
+                coderabbit_coverage(Some(&combined("CodeRabbit", "success", description)));
+            assert!(
+                !v.is_coverage(),
+                "{description:?} was claimed as coverage; only an exact \
+                 {CODERABBIT_REVIEWED_DESCRIPTION:?} is"
+            );
+        }
+        // Whitespace around the exact string is CodeRabbit's formatting, not a different meaning.
+        let (v, _, _) = coderabbit_coverage(Some(&combined(
+            "  coderabbit  ",
+            "success",
+            "  Review completed  ",
+        )));
+        assert_eq!(v, CodeRabbitCoverage::Reviewed);
+    }
+
+    // The two ways there is no CodeRabbit answer at all are DISTINCT, and neither is coverage —
+    // the same three-way distinction `thread_route` makes, for the same reason.
+    #[test]
+    fn a_missing_or_unreadable_coderabbit_status_is_never_coverage() {
+        let none = json!({"statuses": [{"context": "ci/other", "state": "success", "description": "fine"}]});
+        assert_eq!(
+            coderabbit_coverage(Some(&none)).0,
+            CodeRabbitCoverage::NoStatus
+        );
+        // A failed fetch. Fail-closed: an unknown answer is never laundered into a clean one.
+        assert_eq!(coderabbit_coverage(None).0, CodeRabbitCoverage::Unreadable);
+        // …and neither is a malformed response.
+        assert_eq!(
+            coderabbit_coverage(Some(&json!({"message": "Ref not found"}))).0,
+            CodeRabbitCoverage::Unreadable
+        );
+        for v in [
+            CodeRabbitCoverage::NoStatus,
+            CodeRabbitCoverage::Unreadable,
+            CodeRabbitCoverage::OtherDescription,
+        ] {
+            assert!(!v.is_coverage(), "{v:?}");
+        }
+    }
+
+    // "0 unresolved threads" is two different facts depending on what ran. Under a rate-limited
+    // review it means no thread was OPENED, which is what an absent review looks like — not a
+    // review that found nothing.
+    #[test]
+    fn a_vacuous_zero_is_not_a_clean_one() {
+        assert_eq!(
+            thread_meaning(0, CodeRabbitCoverage::Reviewed),
+            ThreadMeaning::Clean
+        );
+        for empty in [
+            CodeRabbitCoverage::RateLimited,
+            CodeRabbitCoverage::Queued,
+            CodeRabbitCoverage::NoStatus,
+            CodeRabbitCoverage::OtherDescription,
+            CodeRabbitCoverage::Unreadable,
+        ] {
+            assert_eq!(
+                thread_meaning(0, empty),
+                ThreadMeaning::Vacuous,
+                "a zero under {empty:?} is vacuous, not clean"
+            );
+        }
+        // An open thread is an open thread whatever reviewed it.
+        assert_eq!(
+            thread_meaning(1, CodeRabbitCoverage::Reviewed),
+            ThreadMeaning::Unresolved
+        );
+        assert_eq!(
+            thread_meaning(1, CodeRabbitCoverage::RateLimited),
+            ThreadMeaning::Unresolved
+        );
+    }
+
+    // ── the deploy gate ───────────────────────────────────────────────────────────────────────
+    //
+    // Detected from the BODY and the trusted comments — the SAME predicate the producer's own
+    // `next_action` routes its deploy case from — and deliberately NOT from the title.
+    //
+    // Measured on the 200 open PRs in the pipeline's orgs on 2026-07-29: SIX carry the flag, all
+    // six in the body, exactly one of them also in the title. Title-matching would have found one
+    // of six. The title on that one is a redundant echo for a human scanning a list; the body is
+    // where the producer writes the flag and where the producer reads it back, so a human gate
+    // that read the title instead could tell a human "deploy first" about a PR the producer will
+    // never route to a deploy.
+    #[test]
+    fn the_deploy_gate_is_read_from_the_body_not_the_title() {
+        let head = "a".repeat(40);
+        let titled_only = json!({
+            "title": format!("feat: bump — {REDEPLOY_MARKER}"),
+            "body": "Closes #1\n\nA plain change.",
+            "comments": [],
+        });
+        assert_eq!(
+            deploy_gate(&titled_only, &head, Ci::Green, &[]),
+            DeployGate::None,
+            "the title is not the signal — retitling must not be able to move this gate"
+        );
+
+        let in_body = json!({
+            "title": "feat: bump",
+            "body": format!("Closes #1\n\n**{REDEPLOY_MARKER}**: the pointers moved."),
+            "comments": [],
+        });
+        assert_eq!(
+            deploy_gate(&in_body, &head, Ci::Green, &[]),
+            DeployGate::DeployBeforeMerge
+        );
+
+        // …and a trusted comment counts too: the need is often discovered after the PR is opened.
+        let in_comment = json!({
+            "title": "feat: bump",
+            "body": "Closes #1",
+            "comments": [{"author": {"login": TRUSTED_AUTHOR},
+                          "body": format!("🤖 ai:producer note — {REDEPLOY_MARKER}")}],
+        });
+        assert_eq!(
+            deploy_gate(&in_comment, &head, Ci::Green, &[]),
+            DeployGate::DeployBeforeMerge
+        );
+
+        // An UNTRUSTED author cannot raise the gate on comment text alone — same provenance rule
+        // every other trust-bearing comment read goes through.
+        let spoofed = json!({
+            "title": "feat: bump",
+            "body": "Closes #1",
+            "comments": [{"author": {"login": "someone-else"},
+                          "body": format!("🤖 ai:producer note — {REDEPLOY_MARKER}")}],
+        });
+        assert_eq!(
+            deploy_gate(&spoofed, &head, Ci::Green, &[]),
+            DeployGate::None
+        );
+    }
+
+    // The gate CLEARS only on a deploy confirmed at THIS head. A confirmation from a prior head is
+    // the case that would ship undeployed bytecode: deploy-confirmed at A, push new bytecode to B,
+    // and a head-blind match reads B as already deployed.
+    #[test]
+    fn a_prior_heads_deploy_confirmation_does_not_clear_the_gate() {
+        let head = "b".repeat(40);
+        let older = "c".repeat(40);
+        let flagged = |note: &str| {
+            json!({
+                "body": format!("{REDEPLOY_MARKER}"),
+                "comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": note}],
+            })
+        };
+        assert_eq!(
+            deploy_gate(
+                &flagged(&format!("🤖 ai:producer deploy-confirmed at {older}")),
+                &head,
+                Ci::Green,
+                &[]
+            ),
+            DeployGate::DeployBeforeMerge
+        );
+        assert_eq!(
+            deploy_gate(
+                &flagged(&format!("🤖 ai:producer deploy-confirmed at {head}")),
+                &head,
+                Ci::Green,
+                &[]
+            ),
+            DeployGate::DeployedAtHead
+        );
+        // A SHORT sha in the note still names this head.
+        assert_eq!(
+            deploy_gate(
+                &flagged(&format!(
+                    "🤖 ai:producer deploy-confirmed at {}",
+                    &head[..12]
+                )),
+                &head,
+                Ci::Green,
+                &[]
+            ),
+            DeployGate::DeployedAtHead
+        );
+        // An empty head can never read as deployed.
+        assert_eq!(
+            deploy_gate(
+                &flagged(&format!("🤖 ai:producer deploy-confirmed at {head}")),
+                "",
+                Ci::Green,
+                &[]
+            ),
+            DeployGate::DeployBeforeMerge
+        );
+    }
+
+    // ── the ordering, and its reuse ───────────────────────────────────────────────────────────
+
+    // The order itself, pinned CONCRETELY rather than against its own comparator: cost first (the
+    // point of a cheapest-first queue), then repo display name, then number.
+    #[test]
+    fn the_queue_order_is_cheapest_then_repo_then_number() {
+        let r = |cost: i64, repo: &str, num: u64| -> QueueRow {
+            (cost, repo.to_string(), num, String::new(), String::new())
+        };
+        let mut rows = [
+            r(500, "aaa", 1),
+            r(40, "zzz", 9),
+            r(40, "aaa", 7),
+            r(40, "aaa", 2),
+            r(1001, "aaa", 1),
+        ];
+        rows.sort_by(queue_order);
+        assert_eq!(
+            rows.iter()
+                .map(|(c, repo, n, _, _)| (*c, repo.as_str(), *n))
+                .collect::<Vec<_>>(),
+            vec![
+                (40, "aaa", 2),
+                (40, "aaa", 7),
+                (40, "zzz", 9),
+                (500, "aaa", 1),
+                // Unscored rows carry 1001 and therefore sort LAST, not first.
+                (1001, "aaa", 1),
+            ]
+        );
+    }
+
+    fn presentable(cost: i64, repo: &str, num: u64) -> PresentablePr {
+        PresentablePr {
+            row: (
+                cost,
+                repo.to_string(),
+                num,
+                format!("https://github.com/o/{repo}/pull/{num}"),
+                "basis".to_string(),
+            ),
+            slug: format!("o/{repo}"),
+            num,
+            head: "d".repeat(40),
+            unresolved_threads: 0,
+            detail: json!({}),
+        }
+    }
+
+    // The anti-drift property, as an assertion. `--queue` renders this sequence and `next_ready`
+    // answers a PREFIX of it — so the head of the printed queue and the PR the tool names are the
+    // same PR by construction, not by two implementations agreeing.
+    #[test]
+    fn next_ready_answers_a_prefix_of_the_queues_own_order() {
+        let mut set = vec![
+            presentable(500, "aaa", 1),
+            presentable(40, "zzz", 9),
+            presentable(40, "aaa", 7),
+            presentable(40, "aaa", 2),
+        ];
+        rank_presentable(&mut set);
+        // What `--queue` prints, top-down.
+        let printed: Vec<QueueRow> = set.iter().map(|p| p.row.clone()).collect();
+
+        // limit = 1 is the question the tool answers: the head, and the head is the cheapest.
+        let page = next_ready_page(&set, 1);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].row, printed[0]);
+        assert_eq!(
+            (page[0].row.0, page[0].row.1.as_str(), page[0].num),
+            (40, "aaa", 2)
+        );
+
+        // …and a page is the queue's own next rows, in the queue's own order — never a re-ranking.
+        let page = next_ready_page(&set, NEXT_READY_MAX_ROWS);
+        assert_eq!(
+            page.iter().map(|p| p.row.clone()).collect::<Vec<_>>(),
+            printed[..NEXT_READY_MAX_ROWS].to_vec()
+        );
+        // Asking for more than exists yields what exists, not an error.
+        assert_eq!(next_ready_page(&set, 99).len(), set.len());
+    }
+
+    // ── the budget ────────────────────────────────────────────────────────────────────────────
+
+    /// The most expensive text GitHub could hand us: `"` (which JSON escapes to two bytes) and
+    /// control characters (which JSON escapes to SIX, and which `clip_field` is what neutralises).
+    /// Both, because either one alone leaves half the ceiling's reasoning unexercised.
+    fn hostile_text(bytes: usize) -> String {
+        "\"\u{1}\\\u{1f}".chars().cycle().take(bytes).collect()
+    }
+
+    /// A PR detail engineered to be as expensive to serialise as GitHub could ever make it: every
+    /// free-text field is far past its cap and made entirely of characters JSON must escape, so
+    /// each surviving byte costs the full [`JSON_ESCAPE_WORST_CASE`].
+    fn adversarial_detail(head: &str) -> Value {
+        let hostile = hostile_text(20_000);
+        let checks: Vec<Value> = (0..60)
+            .map(|_| json!({"name": hostile, "conclusion": "FAILURE"}))
+            .collect();
+        json!({
+            "url": hostile,
+            "title": hostile,
+            "baseRefName": hostile,
+            "headRefOid": head,
+            "mergeable": "CONFLICTING",
+            "body": REDEPLOY_MARKER,
+            "statusCheckRollup": checks,
+            "comments": [vetter_comment(head, &hostile)],
+        })
+    }
+
+    // THE GUARANTEE, exercised rather than asserted. A full page of rows built from the worst
+    // input GitHub can hand us must fit the ONE budget — so `next_ready` can never be the tool
+    // that hands back an over-budget result and leaves the caller improvising (#78, #117).
+    //
+    // The compile-time assertion beside the constants is the arithmetic half; this is the half
+    // that covers what a REAL document built from them costs. Remove any `clip_field` in
+    // `next_ready_row` and this fails.
+    #[test]
+    fn a_maximal_page_of_adversarial_rows_still_fits_the_budget() {
+        let head = "e".repeat(40);
+        let detail = adversarial_detail(&head);
+        let hostile = hostile_text(20_000);
+        let rows: Vec<Value> = (0..NEXT_READY_MAX_ROWS)
+            .map(|i| {
+                next_ready_row(&NextReadyFacts {
+                    slug: &hostile,
+                    num: u64::MAX - i as u64,
+                    detail: &detail,
+                    cost: i64::MIN,
+                    basis: &hostile,
+                    unresolved_threads: u64::MAX,
+                    coverage: CodeRabbitCoverage::OtherDescription,
+                    coverage_state: Some(hostile.clone()),
+                    coverage_description: Some(hostile.clone()),
+                })
+            })
+            .collect();
+        for (i, row) in rows.iter().enumerate() {
+            let len = row.to_string().len();
+            assert!(
+                len <= NR_ROW_CEILING,
+                "row {i} is {len} bytes, over the {NR_ROW_CEILING}-byte row ceiling the \
+                 compile-time budget assertion is computed from"
+            );
+        }
+        let counts = QueueCounts {
+            raw: usize::MAX,
+            excluded: usize::MAX,
+            conflict: usize::MAX,
+            red: usize::MAX,
+            pending: usize::MAX,
+            merge_unknown: usize::MAX,
+            approved: usize::MAX,
+            unconfirmed: usize::MAX,
+            open_threads: usize::MAX,
+            fetch_error: usize::MAX,
+        };
+        let len = next_ready_doc(rows, &counts, usize::MAX).to_string().len();
+        assert!(
+            len <= MCP_MAX_RESULT_BYTES,
+            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+        );
+    }
+
+    // The two allowances the compile-time assertion is built on are MEASURED, not guessed. A field
+    // added to a row without room for it lands here rather than at a caller's over-budget refusal.
+    #[test]
+    fn the_fixed_allowances_cover_a_row_and_an_envelope_with_no_free_text_in_them() {
+        // Every enum at its longest spelling, every string empty.
+        let row = next_ready_row(&NextReadyFacts {
+            slug: "",
+            num: 0,
+            // No rollup at all -> `nochecks`, the longest `ci_str`; CONFLICTING is the longest
+            // `merge_str`; the marker in the body makes the gate `deploy-before-merge`.
+            detail: &json!({"mergeable": "CONFLICTING", "body": REDEPLOY_MARKER}),
+            cost: 0,
+            basis: "",
+            unresolved_threads: 0,
+            // `other-description` is the longest coverage spelling, and a zero under it is
+            // `vacuous-no-review-behind-it`, the longest thread meaning.
+            coverage: CodeRabbitCoverage::OtherDescription,
+            coverage_state: Some(String::new()),
+            coverage_description: Some(String::new()),
+        });
+        // Four numeric fields per row: cost, noteBytes, checkCount, unresolved.
+        let row_len = row.to_string().len() + 4 * NR_MAX_DIGITS;
+        assert!(
+            row_len <= NR_ROW_FIXED_BYTES,
+            "a row's fixed cost is {row_len} bytes, over the {NR_ROW_FIXED_BYTES} the budget \
+             assertion allows it"
+        );
+
+        let counts = QueueCounts {
+            raw: 0,
+            excluded: 0,
+            conflict: 0,
+            red: 0,
+            pending: 0,
+            merge_unknown: 0,
+            approved: 0,
+            unconfirmed: 0,
+            open_threads: 0,
+            fetch_error: 0,
+        };
+        // Fourteen numeric fields in the envelope: eleven counts plus the three queue figures.
+        let env_len = next_ready_doc(vec![], &counts, 0).to_string().len() + 14 * NR_MAX_DIGITS;
+        assert!(
+            env_len <= NR_ENVELOPE_BYTES,
+            "the envelope's fixed cost is {env_len} bytes, over the {NR_ENVELOPE_BYTES} allowed"
+        );
+    }
+
+    // `clip_field` is what makes one raw byte cost at most two serialised ones. Control characters
+    // would otherwise escape to six each, which is the difference between the arithmetic above
+    // holding and being out by a factor of three.
+    #[test]
+    fn clipping_bounds_the_serialised_cost_of_any_field() {
+        for raw in [
+            "\u{1}\u{2}\u{1f}".repeat(500),
+            "\"\\\n".repeat(500),
+            "é".repeat(500),
+            "🙂".repeat(500),
+        ] {
+            let clipped = clip_field(&raw, 100);
+            assert!(clipped.len() <= 100, "{} bytes", clipped.len());
+            let serialised = Value::String(clipped).to_string();
+            assert!(
+                serialised.len() <= 100 * JSON_ESCAPE_WORST_CASE + 2,
+                "{} serialised bytes from 100 clipped ones",
+                serialised.len()
+            );
+        }
+        // A multi-byte char is never split (the clip would otherwise panic or emit invalid UTF-8).
+        assert_eq!(clip_field("🙂🙂", 5), "🙂");
+        // \n survives, because a note's paragraphs are information; the rest does not.
+        assert_eq!(clip_field("a\nb\u{7}c", 100), "a\nb c");
+    }
+
+    // ── the shape a caller reads ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_row_carries_every_fact_the_merge_decision_needs() {
+        let head = "f".repeat(40);
+        let detail = json!({
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/128",
+            "title": "fix: the thing",
+            // The base branch is the PR's own. `rain-org-health` is on `master`, and assuming
+            // `main` is what cost two failures in one day.
+            "baseRefName": "master",
+            "headRefOid": head,
+            "mergeable": "MERGEABLE",
+            "body": "Closes #1",
+            "statusCheckRollup": [{"name": "rainix / test", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+            "comments": [vetter_comment(&head, "the reasoning a human is actually reviewing")],
+        });
+        let row = next_ready_row(&NextReadyFacts {
+            slug: "rainlanguage/rain-org-health",
+            num: 128,
+            detail: &detail,
+            cost: 40,
+            basis: "one-line pin",
+            unresolved_threads: 0,
+            coverage: CodeRabbitCoverage::RateLimited,
+            coverage_state: Some("success".into()),
+            coverage_description: Some("Review rate limited".into()),
+        });
+        assert_eq!(row["pr"], json!("rainlanguage/rain-org-health#128"));
+        assert_eq!(row["baseRefName"], json!("master"));
+        assert_eq!(row["headRefOid"], json!(head));
+        assert_eq!(row["mergeable"], json!("MERGEABLE"));
+        assert_eq!(row["ci"]["rollup"], json!("green"));
+        assert_eq!(row["ci"]["failingChecks"], json!([]));
+        assert_eq!(row["ci"]["checkCount"], json!(1));
+        assert_eq!(row["cost"], json!(40));
+        assert_eq!(row["costBasis"], json!("one-line pin"));
+        assert_eq!(row["deployGate"], json!("none"));
+        // The verdict is the vetter's OWN note — the reasoning, not the label — and the sha it was
+        // pinned to is stated so the reader can see it describes THIS code.
+        assert_eq!(row["verdict"]["sha"], json!(head));
+        assert_eq!(row["verdict"]["atHead"], json!(true));
+        assert!(row["verdict"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("the reasoning a human is actually reviewing"));
+        assert_eq!(row["verdict"]["noteTruncated"], json!(false));
+        // The green check AND the fact that nothing is behind it, side by side.
+        assert_eq!(row["codeRabbit"]["checkState"], json!("success"));
+        assert_eq!(row["codeRabbit"]["coverage"], json!("rate-limited"));
+        assert_eq!(row["codeRabbit"]["reviewed"], json!(false));
+        assert_eq!(row["reviewThreads"]["unresolved"], json!(0));
+        assert_eq!(
+            row["reviewThreads"]["meaning"],
+            json!("vacuous-no-review-behind-it")
+        );
+    }
+
+    // Failing checks are NAMED, not counted — "1 failing" does not tell a human whether it is the
+    // known fork-test red or the thing the PR just broke.
+    #[test]
+    fn failing_checks_are_named_and_capped() {
+        let checks: Vec<Value> = (0..NR_MAX_FAILING_CHECKS + 5)
+            .map(|i| json!({"name": format!("check-{i}"), "conclusion": "FAILURE"}))
+            .collect();
+        let row = next_ready_row(&NextReadyFacts {
+            slug: "o/r",
+            num: 1,
+            detail: &json!({"statusCheckRollup": checks}),
+            cost: 1,
+            basis: "",
+            unresolved_threads: 0,
+            coverage: CodeRabbitCoverage::Reviewed,
+            coverage_state: None,
+            coverage_description: None,
+        });
+        assert_eq!(row["ci"]["rollup"], json!("red"));
+        let named = row["ci"]["failingChecks"].as_array().unwrap();
+        assert_eq!(named.len(), NR_MAX_FAILING_CHECKS);
+        assert_eq!(named[0], json!("check-0"));
+        // …and the cap is DECLARED rather than silently applied.
+        assert_eq!(row["ci"]["failingChecksTruncated"], json!(true));
+        assert_eq!(row["ci"]["checkCount"], json!(NR_MAX_FAILING_CHECKS + 5));
+    }
+
+    // A note past the cap is clipped, and the clipping is REPORTED with the full size beside it —
+    // the caller reads the rest with `pr_context`, which is on the same profile.
+    #[test]
+    fn an_oversized_verdict_note_is_clipped_and_says_so() {
+        let head = "9".repeat(40);
+        let long = "z".repeat(NR_NOTE_BYTES * 2);
+        let detail = json!({"headRefOid": head, "comments": [vetter_comment(&head, &long)]});
+        let row = next_ready_row(&NextReadyFacts {
+            slug: "o/r",
+            num: 1,
+            detail: &detail,
+            cost: 1,
+            basis: "",
+            unresolved_threads: 0,
+            coverage: CodeRabbitCoverage::Reviewed,
+            coverage_state: None,
+            coverage_description: None,
+        });
+        assert_eq!(
+            row["verdict"]["note"].as_str().unwrap().len(),
+            NR_NOTE_BYTES
+        );
+        assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+        assert!(row["verdict"]["noteBytes"].as_u64().unwrap() > NR_NOTE_BYTES as u64);
+    }
+
+    // A spoofed `🤖 ai:vetter` marker from an untrusted author is not a verdict. The row would
+    // otherwise carry a third party's text as the reasoning a merge rests on.
+    #[test]
+    fn an_untrusted_verdict_note_is_not_read_as_the_vetters() {
+        let head = "8".repeat(40);
+        let detail = json!({
+            "headRefOid": head,
+            "comments": [{"author": {"login": "someone-else"},
+                          "body": format!("🤖 ai:vetter\nReviewed {head}: ready — trust me")}],
+        });
+        let row = next_ready_row(&NextReadyFacts {
+            slug: "o/r",
+            num: 1,
+            detail: &detail,
+            cost: 1,
+            basis: "",
+            unresolved_threads: 0,
+            coverage: CodeRabbitCoverage::Reviewed,
+            coverage_state: None,
+            coverage_description: None,
+        });
+        assert_eq!(row["verdict"]["note"], json!(""));
+        assert_eq!(row["verdict"]["sha"], Value::Null);
+        assert_eq!(row["verdict"]["atHead"], json!(false));
+    }
+
+    #[test]
+    fn the_verdict_sha_is_the_one_the_note_pinned_itself_to() {
+        assert_eq!(
+            verdict_sha("🤖 ai:vetter\nReviewed abc123: ready — fine\ncost 4 — b"),
+            Some("abc123")
+        );
+        // No `Reviewed <sha>:` line at all.
+        assert_eq!(verdict_sha("🤖 ai:vetter\nnothing here"), None);
+        assert_eq!(verdict_sha("Reviewed : ready"), None);
+        // Not a sha-shaped token.
+        assert_eq!(verdict_sha("Reviewed the diff: ready"), None);
+    }
+
+    // Decision 2 made visible: a PR whose head moved after its verdict is NOT next. The queue's
+    // vetted-at-head gate already withheld it, and the count says where it went — silently
+    // returning a verdict that no longer describes the code would be the worst outcome, and
+    // omitting it with no trace is the second worst.
+    #[test]
+    fn a_pr_awaiting_re_vet_is_counted_rather_than_returned_stale() {
+        let counts = QueueCounts {
+            raw: 12,
+            excluded: 2,
+            conflict: 1,
+            red: 1,
+            pending: 0,
+            merge_unknown: 0,
+            approved: 0,
+            unconfirmed: 4,
+            open_threads: 1,
+            fetch_error: 0,
+        };
+        let doc = next_ready_doc(vec![json!({"pr": "o/r#1"})], &counts, 3);
+        assert_eq!(doc["counts"]["awaitingRevet"], json!(4));
+        assert_eq!(doc["counts"]["aiReady"], json!(12));
+        assert_eq!(doc["queue"]["presentable"], json!(3));
+        assert_eq!(doc["queue"]["returned"], json!(1));
+        assert_eq!(doc["queue"]["more"], json!(2));
+        assert_eq!(doc["next"].as_array().unwrap().len(), 1);
+    }
+
+    // The page size is a REAL argument with a REAL range, refused rather than clamped — a silently
+    // clamped argument leaves the caller believing it asked for something it did not get.
+    #[test]
+    fn the_page_size_defaults_to_one_and_is_refused_outside_its_range() {
+        assert_eq!(
+            next_ready_limit(&json!({})).unwrap(),
+            NEXT_READY_DEFAULT_ROWS
+        );
+        assert_eq!(next_ready_limit(&json!({"limit": null})).unwrap(), 1);
+        assert_eq!(next_ready_limit(&json!({"limit": 1})).unwrap(), 1);
+        assert_eq!(
+            next_ready_limit(&json!({"limit": NEXT_READY_MAX_ROWS})).unwrap(),
+            NEXT_READY_MAX_ROWS
+        );
+        for bad in [
+            json!(0),
+            json!(NEXT_READY_MAX_ROWS + 1),
+            json!(-1),
+            json!("2"),
+            json!(1.5),
+        ] {
+            let e = next_ready_limit(&json!({"limit": bad})).unwrap_err();
+            assert!(
+                e.contains(&format!("1..={NEXT_READY_MAX_ROWS}")),
+                "{bad}: {e}"
+            );
+        }
+    }
+}
+
 /// WHICH ROLE this server is serving. The two roles are different state machines that happen to
 /// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
 /// not a permission — `tools/list` returns only the profile's tools, so the producer never sees
@@ -9270,6 +10460,10 @@ impl McpProfile {
             // with a Bash `gh` — is a transition half in a tool and half in a prompt, and that half
             // is the one that was wrong on all 74 closed subjects carrying a live flag.
             McpProfile::Human => &[
+                // The READ that precedes the writes (#121). It leads because it answers WHICH
+                // subject, which the other two reads take as given — and because the six-read
+                // hand assembly it replaces is what the ruling below used to rest on.
+                "next_ready",
                 "pr_context",
                 "close_candidate_context",
                 "human_rule",
@@ -9309,6 +10503,16 @@ fn mcp_all_tools() -> Value {
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why (digest rows: pr, action, unresolvedThreads)."},
                     "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
+                }
+            }
+        },
+        {
+            "name": "next_ready",
+            "description": "The next ai:ready PR to rule on, cheapest-first off the same queue: the vetter's sha-bound verdict note, headRefOid, baseRefName, CI rollup with failing checks named, whether CodeRabbit actually reviewed (only `reviewed` is coverage — rate-limited/queued are green checks with no review, making 0 unresolved threads vacuous), unresolved threads, and any deploy-before-merge gate.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "PRs to return, 1-3 (default 1). Each ruling changes the queue, so a page is stale past its head."}
                 }
             }
         },
@@ -9470,6 +10674,12 @@ fn mcp_all_tools() -> Value {
 /// transition cannot be represented — the point of #52.
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum McpCall {
+    /// The human's merge-decision read: the next N presentable `ai:ready` PRs, cheapest-first.
+    NextReady {
+        /// Rows this call may return, always in `1..=NEXT_READY_MAX_ROWS`. A REAL narrowing
+        /// argument: rows are independent, so dropping one strictly removes its bytes.
+        limit: usize,
+    },
     Unvetted {
         include_skipped: bool,
         /// Page size. Always `Some` from the MCP guard — the token-budgeted caller never gets an
@@ -9606,9 +10816,17 @@ fn call_result_budget(_call: &McpCall) -> usize {
 /// converges. While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument
 /// was advice that could not work — budget and content fell together and the caller could loop for
 /// ever — which is why the fix is the budget, not the wording.
+/// `next_ready` gets an arm of its own rather than falling through the catch-all. The catch-all
+/// would answer `limit` — which happens to be true here — but a tool whose refusal is correct only
+/// because a default guessed right is a tool that inherits #117 the day the default changes. The
+/// catch-all itself is #117's to fix (it advises `limit` to `clone_list`, which has none, making
+/// [`oversize_result_error`]'s truthful `None` branch unreachable); this arm keeps `next_ready` out
+/// of that blast radius. For this tool the refusal is doubly sound: `limit` is real AND lowering it
+/// strictly removes whole rows, against a budget the row caps already keep it under.
 fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
     match call {
         McpCall::PrContext { .. } => Some("max_diff_bytes"),
+        McpCall::NextReady { .. } => Some("limit"),
         _ => Some("limit"),
     }
 }
@@ -9682,6 +10900,9 @@ fn validate_call(
         ));
     }
     match name {
+        "next_ready" => Ok(McpCall::NextReady {
+            limit: next_ready_limit(args)?,
+        }),
         "unvetted" => Ok(McpCall::Unvetted {
             include_skipped: args
                 .get("include_skipped")
@@ -9975,6 +11196,7 @@ fn mcp_handle(
 fn mcp_exec(call: McpCall) -> Result<String, String> {
     let roots = clone_roots();
     match call {
+        McpCall::NextReady { limit } => next_ready_fetch(limit).map(|d| d.to_string()),
         McpCall::Unvetted {
             include_skipped,
             limit,
@@ -11917,6 +13139,100 @@ fn next_action(s: &PrSignals) -> NextAction {
     }
 }
 
+/// The flag a producer puts on a PR whose bytecode changed, so its new deterministic Zoltu address
+/// is undeployed until someone redeploys it (campaign-prompt step 3b (iv)).
+///
+/// It lives in the PR BODY (or a trusted `🤖 ai:*` comment), NOT the title. That is the whole
+/// reason [`requires_redeploy`] reads those two and never `title`: a title is renamed by any
+/// rebase, retitle or squash-message edit, and a gate that a rename can drop is a gate that fails
+/// silently on the one PR class where failing silently means shipping undeployed bytecode. The
+/// title on such a PR usually echoes the flag — `rain.erc4626.words#254` is titled
+/// "… — REQUIRES redeploy at land" — but the echo is a convenience for a human scanning a list,
+/// not the signal.
+const REDEPLOY_MARKER: &str = "REQUIRES redeploy at land";
+
+/// PURE: does this PR carry the redeploy flag at all? Body OR a trusted comment — the producer
+/// writes it into the body when it opens the PR, and into a comment when the need is discovered
+/// after. Untrusted authors are filtered by [`trusted_comments`], so a third party cannot flag
+/// (or, more importantly, cannot be the only reason a PR looks flagged).
+fn requires_redeploy(detail: &Value) -> bool {
+    detail
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .contains(REDEPLOY_MARKER)
+        || trusted_comments(detail, None)
+            .iter()
+            .any(|c| c.contains(REDEPLOY_MARKER))
+}
+
+/// PURE: a red prod-pin / `testProdDeploy*` check — the OTHER way a PR declares that its deployed
+/// bytecode is stale. Unlike the flag this one is derived from CI, so it can only fire while the PR
+/// is red.
+fn deploy_pin_red(ci: Ci, failing: &[String]) -> bool {
+    ci == Ci::Red
+        && failing.iter().any(|n| {
+            let n = n.to_ascii_lowercase();
+            n.contains("prod") && n.contains("deploy") || n.contains("testproddeploy")
+        })
+}
+
+/// PURE: has the outstanding redeploy actually been done AT THIS HEAD?
+///
+/// HEAD-SCOPED on purpose. A bare `deploy-confirmed` from a PRIOR head must NOT count: a PR
+/// deploy-confirmed at head A, then pushed new bytecode (head B, flagged for redeploy), would read
+/// done, skip the redeploy, and reach a human as ready with UNDEPLOYED bytecode — which defeats
+/// deploy-before-merge. The producer's note embeds the head SHA precisely so this match works; a
+/// note that embedded the SHORT sha still counts, and an empty head can never read as deployed.
+fn deploy_confirmed_at_head(detail: &Value, head: &str) -> bool {
+    if head.is_empty() {
+        return false;
+    }
+    let head_short = if head.len() >= 12 { &head[..12] } else { head };
+    trusted_comments(detail, None).iter().any(|c| {
+        (c.contains("deploy") && (c.contains("SUCCESS") || c.contains("deploy-confirmed")))
+            && (c.contains(head) || c.contains(head_short))
+    })
+}
+
+/// Whether a PR is DEPLOY-GATED, as one typed fact rather than three booleans a caller has to
+/// combine. Merging a `DeployBeforeMerge` PR as if it were ordinary is a production error — its
+/// new deterministic address is undeployed and no on-chain test goes red, so it READS green-ready
+/// when it is not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DeployGate {
+    /// Nothing about this PR changes deployed bytecode.
+    None,
+    /// Flagged (or red on a prod pin) and NOT yet deployed at this head. Deploy first, then merge.
+    DeployBeforeMerge,
+    /// Flagged AND a trusted note records the deploy at THIS head. An ordinary merge from here.
+    DeployedAtHead,
+}
+
+impl DeployGate {
+    fn as_str(self) -> &'static str {
+        match self {
+            DeployGate::None => "none",
+            DeployGate::DeployBeforeMerge => "deploy-before-merge",
+            DeployGate::DeployedAtHead => "deployed-at-head",
+        }
+    }
+}
+
+/// PURE: the deploy gate, composed from the three signals above. The producer's `next_action` reads
+/// the same three, so "the producer must deploy this" and "the human must not plain-merge this" can
+/// never be answered differently.
+fn deploy_gate(detail: &Value, head: &str, ci: Ci, failing: &[String]) -> DeployGate {
+    if !(requires_redeploy(detail) || deploy_pin_red(ci, failing)) {
+        return DeployGate::None;
+    }
+    if deploy_confirmed_at_head(detail, head) {
+        DeployGate::DeployedAtHead
+    } else {
+        DeployGate::DeployBeforeMerge
+    }
+}
+
 /// Display names of the FAILING checks in a statusCheckRollup — so the producer knows which check to
 /// fix without a second `gh pr checks` call. Same fail-set as `classify_ci`.
 fn failing_check_names(rollup: &Value) -> Vec<String> {
@@ -12189,36 +13505,14 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    // markers — best-effort triage signals (the producer re-confirms from the log when it acts):
-    let body = detail.get("body").and_then(|v| v.as_str()).unwrap_or("");
-    let requires_redeploy = body.contains("REQUIRES redeploy at land")
-        || trusted_comments(detail, None)
-            .iter()
-            .any(|c| c.contains("REQUIRES redeploy at land"));
+    // markers — best-effort triage signals (the producer re-confirms from the log when it acts).
+    // The three deploy signals are the SHARED ones the human's `next_ready` gate is composed from,
+    // so the producer's "must deploy" and the human's "must not plain-merge" cannot disagree.
+    let requires_redeploy = requires_redeploy(detail);
     // a green PR flagged for redeploy, OR a red prod-pin check, is the deploy case
-    let deploy_pin_red = ci == Ci::Red
-        && failing.iter().any(|n| {
-            let n = n.to_ascii_lowercase();
-            n.contains("prod") && n.contains("deploy") || n.contains("testproddeploy")
-        });
-    let has_deploy_trigger = requires_redeploy || deploy_pin_red;
+    let has_deploy_trigger = requires_redeploy || deploy_pin_red(ci, &failing);
     let trusted = trusted_comments(detail, None);
-    // HEAD-SCOPED: a deploy counts as done ONLY when a trusted note records a deploy SUCCESS /
-    // deploy-confirmed AND names the CURRENT head SHA. A bare `deploy-confirmed` from a PRIOR head
-    // must NOT count — else a PR deploy-confirmed at head A, then pushed new bytecode (head B, flagged
-    // REQUIRES redeploy), would read done, skip the redeploy, and surface ready with UNDEPLOYED
-    // bytecode (defeats deploy-before-merge). The producer's deploy-confirmed note embeds the head SHA
-    // (campaign-prompt 3b (iv)) precisely so this head-scoped match works.
-    // Match the note's SHA against the current head — the full oid OR its >=12-char prefix, so a
-    // deploy-confirmed note that embedded a SHORT sha still counts as head-scoped. Guard on a
-    // non-empty head so a missing headRefOid can never read as "deployed" (which would skip a
-    // real redeploy and surface undeployed bytecode as ready).
-    let head_short = if head.len() >= 12 { &head[..12] } else { head };
-    let deploy_done_at_head = !head.is_empty()
-        && trusted.iter().any(|c| {
-            (c.contains("deploy") && (c.contains("SUCCESS") || c.contains("deploy-confirmed")))
-                && (c.contains(head) || c.contains(head_short))
-        });
+    let deploy_done_at_head = deploy_confirmed_at_head(detail, head);
     // parked: a design-clarification note, or a hand-off note, from the trusted producer account
     let design_flicked = trusted.iter().any(|c| {
         c.contains("design-clarification")
@@ -21190,6 +22484,32 @@ mod mcp_tests {
             ctx.contains("Re-call NARROWER: lower `max_diff_bytes`."),
             "{ctx}"
         );
+        // `next_ready` accepts a REAL `limit`, so the advice is one the caller can follow — and it
+        // is followable to a fix rather than to another refusal, because rows are independent and
+        // dropping one strictly removes its bytes. (It cannot reach this refusal in practice: the
+        // per-field caps put a full page under the budget by construction. Both halves matter —
+        // #117 is what a tool whose refusal names an argument it does not accept looks like.)
+        let human = FakeExec {
+            profile: McpProfile::Human,
+            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
+            ..FakeExec::ok()
+        };
+        let nr = text(
+            &human
+                .handle(&call("next_ready", json!({"limit": 3})))
+                .unwrap(),
+        );
+        assert!(nr.contains("Re-call NARROWER: lower `limit`."), "{nr}");
+        assert!(
+            mcp_all_tools()
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == json!("next_ready"))
+                .unwrap()["inputSchema"]["properties"]["limit"]
+                .is_object(),
+            "the argument the refusal names must be one the schema advertises"
+        );
     }
 
     /// A `pr_context` input whose metadata is `meta_bytes`-ish and whose diff is `diff` bytes long.
@@ -21374,6 +22694,9 @@ mod mcp_tests {
         assert_eq!(
             names,
             vec![
+                // The READ that precedes the writes (#121): which PR is next, and everything the
+                // ruling below rests on, in one typed result rather than six hand `gh` reads.
+                "next_ready",
                 "pr_context",
                 "close_candidate_context",
                 "human_rule",
