@@ -19071,7 +19071,52 @@ mod usage_probe_tests {
 /// build filters these files out), never the wrong directory.
 #[cfg(test)]
 fn repo_root_text(rel: &str) -> Option<String> {
-    std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel)).ok()
+    std::fs::read_to_string(repo_root_path(rel)).ok()
+}
+
+/// TEST HELPER: where [`repo_root_text`] looks. Split out so the RESOLUTION is assertable without
+/// the file having to be there — in the flake build sandbox it is not, which is the whole reason
+/// the read is allowed to come back empty.
+#[cfg(test)]
+fn repo_root_path(rel: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the crate directory always has a parent")
+        .join(rel)
+}
+
+#[cfg(test)]
+mod repo_root_tests {
+    use super::{repo_root_path, repo_root_text};
+
+    /// The guard on the guard. Every conformance test over a repo-root file is written to bail
+    /// gracefully when the file is absent, so if the LOOKUP goes wrong they all pass by not
+    /// running — which is how a `covered` bullet, a protocol number and a whole prompt clause went
+    /// unpinned until a mutation pass measured it.
+    #[test]
+    fn a_repo_root_file_is_looked_for_above_the_crate_and_not_inside_it() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let p = repo_root_path("README.md");
+        assert_eq!(
+            p.file_name().map(|n| n.to_string_lossy().to_string()),
+            Some("README.md".to_string())
+        );
+        assert_eq!(
+            p.parent(),
+            manifest.parent(),
+            "{p:?} must sit in the REPO ROOT"
+        );
+        assert_ne!(
+            p.parent(),
+            Some(manifest),
+            "the crate directory is where a BARE relative read lands, and where the file never is"
+        );
+        // …and the reader actually goes there: same answer, or the same nothing.
+        assert_eq!(
+            repo_root_text("README.md"),
+            std::fs::read_to_string(repo_root_path("README.md")).ok()
+        );
+    }
 }
 
 #[cfg(test)]
