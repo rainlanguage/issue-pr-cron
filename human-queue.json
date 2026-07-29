@@ -186,6 +186,12 @@
     ],
     "ai:close-candidate": [
       {
+        "repo": "rainlanguage/rain.dia",
+        "number": 60,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/60",
+        "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
+      },
+      {
         "repo": "cyclofinance/cyclo.site",
         "number": 410,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
@@ -228,12 +234,6 @@
         "number": 63,
         "url": "https://github.com/rainlanguage/rain.dia/pull/63",
         "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 60,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/60",
-        "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
       },
       {
         "repo": "rainlanguage/rain.dia",
@@ -292,10 +292,10 @@
     ],
     "ai:ready": [
       {
-        "repo": "rainlanguage/rain-org-health",
-        "number": 142,
-        "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
-        "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty"
+        "repo": "rainlanguage/rain.solmem",
+        "number": 102,
+        "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
+        "title": "test: pin truncate's accept/reject boundary in both array libs"
       },
       {
         "repo": "rainlanguage/claude-audit-skills",
@@ -350,6 +350,12 @@
         "number": 429,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
         "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+      },
+      {
+        "repo": "rainlanguage/rain.dia",
+        "number": 62,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/62",
+        "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -508,12 +514,6 @@
         "number": 436,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
         "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 62,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/62",
-        "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
       },
       {
         "repo": "rainlanguage/rain.sol.codegen",
@@ -1164,26 +1164,9 @@
       }
     },
     "vet-lifecycle": {
-      "awaiting-re-vet": {
-        "count": 1,
-        "prs": [
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2793,
-            "url": "https://github.com/rainlanguage/raindex/pull/2793",
-            "title": "perf: eliminate redundant read_dispair calls in try_into_call"
-          }
-        ]
-      },
       "un-vetted": {
-        "count": 4,
+        "count": 3,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 102,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
-            "title": "test: pin truncate's accept/reject boundary in both array libs"
-          },
           {
             "repo": "rainlanguage/rain.uniswap",
             "number": 31,
@@ -1207,8 +1190,14 @@
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 60,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/60",
+            "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
+          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 410,
@@ -1230,7 +1219,7 @@
         ]
       },
       "ai:design": {
-        "count": 14,
+        "count": 13,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1255,12 +1244,6 @@
             "number": 63,
             "url": "https://github.com/rainlanguage/rain.dia/pull/63",
             "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/60",
-            "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1319,13 +1302,13 @@
         ]
       },
       "ai:ready": {
-        "count": 33,
+        "count": 35,
         "prs": [
           {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 142,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
-            "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty"
+            "repo": "rainlanguage/rain.solmem",
+            "number": 102,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
+            "title": "test: pin truncate's accept/reject boundary in both array libs"
           },
           {
             "repo": "rainlanguage/claude-audit-skills",
@@ -1380,6 +1363,12 @@
             "number": 429,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
             "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 62,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/62",
+            "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1514,6 +1503,12 @@
             "title": "fix(parser): comment before next binding bleeds into previous content_position"
           },
           {
+            "repo": "rainlanguage/raindex",
+            "number": 2793,
+            "url": "https://github.com/rainlanguage/raindex/pull/2793",
+            "title": "perf: eliminate redundant read_dispair calls in try_into_call"
+          },
+          {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 230,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/230",
@@ -1522,7 +1517,7 @@
         ]
       },
       "ai:reject": {
-        "count": 30,
+        "count": 29,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
@@ -1535,12 +1530,6 @@
             "number": 436,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
             "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 62,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/62",
-            "title": "docs(op): document run() inputs and returns in LibOpDiaPrice NatSpec"
           },
           {
             "repo": "rainlanguage/rain.sol.codegen",
@@ -1751,7 +1740,8 @@
       "title": "add back button for desktop app"
     }
   ],
-  "closeCandidateUnvetted": [
+  "closeCandidateUnvetted": [],
+  "closeCandidateUpheld": [
     {
       "repo": "rainlanguage/rain.dia",
       "number": 43,
@@ -1771,18 +1761,16 @@
       "title": "[AUDIT-M01] [medium] LibOpDiaPrice.run does not fail-closed on input arity"
     },
     {
-      "repo": "rainlanguage/raindex",
-      "number": 981,
-      "url": "https://github.com/rainlanguage/raindex/issues/981",
-      "title": "add back button for desktop app"
-    }
-  ],
-  "closeCandidateUpheld": [
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 248,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 981,
+      "url": "https://github.com/rainlanguage/raindex/issues/981",
+      "title": "add back button for desktop app"
     }
   ],
   "uncoveredIssues": [
@@ -5696,22 +5684,22 @@
     }
   ],
   "counts": {
-    "ready": 34,
-    "design": 14,
+    "ready": 35,
+    "design": 13,
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
     "closeCandidateIssues": 5,
-    "closeCandidateUnvetted": 4,
-    "closeCandidateUpheld": 1,
+    "closeCandidateUnvetted": 0,
+    "closeCandidateUpheld": 5,
     "leaks": 24,
-    "totalProducerPrs": 160,
+    "totalProducerPrs": 159,
     "uncoveredIssues": 623,
-    "unvetted": 4,
-    "awaitingReVet": 1,
-    "reject": 30,
+    "unvetted": 3,
+    "awaitingReVet": 0,
+    "reject": 29,
     "relink": 1,
-    "closeCandidatePrs": 3,
+    "closeCandidatePrs": 4,
     "humanReject": 36,
     "humanDesign": 6,
     "humanCloseCandidate": 0
