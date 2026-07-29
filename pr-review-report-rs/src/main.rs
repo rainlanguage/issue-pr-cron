@@ -18816,6 +18816,12 @@ mod settings_tests {
         );
     }
 
+    // Both tests below read through `read_text`, NOT a bare `std::fs::read_to_string("…")`: cargo
+    // runs a test binary with its cwd at the CRATE root, so a bare relative path never finds a
+    // repo-root file, the `else { return }` swallows the error, and the assertions pin nothing.
+    // Their neighbours above still read that way and are silently vacuous — #143 tracks it, kept
+    // out of here because fixing it turns two of them red on assertions broader than their intent.
+    //
     /// #140: the screenshot waiver was being used to skip the render with the CLAIM the render
     /// would have made — cyclo.site#431 waived on "rendered output is pixel-identical", #408 rode
     /// a pending marker through three vetter passes while a render would have shown four expired
@@ -18823,7 +18829,7 @@ mod settings_tests {
     /// `<reason>` re-licenses exactly that, so the narrowing is pinned here.
     #[test]
     fn the_vetter_prompt_narrows_the_screenshot_waiver_to_a_failed_render() {
-        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+        let Some(prompt) = read_text("review-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
@@ -18863,7 +18869,7 @@ mod settings_tests {
     /// an automatic reject — a full round trip through the queue per PR.
     #[test]
     fn the_producer_prompt_narrows_the_screenshot_waiver_to_a_failed_render() {
-        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
+        let Some(prompt) = read_text("campaign-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
