@@ -11084,10 +11084,11 @@ fn require_qa_block_mode() -> i32 {
 // growing. It does nothing for a PR already open: the gate is on `create`, and there was no
 // sanctioned way to touch a PR body at all — `campaign-settings.json` denies `Bash(gh pr edit:*)`
 // and no subcommand wrote one. A vetter reject for a missing block therefore named a defect the
-// producer's rework loop had NO MOVE for. That is a deadlock with a number on it: 56 of 100 open
-// PRs carried no `## QA` block, over diffs the vetter's own notes certified sound ("Code itself
-// audits sound", "all 11 named tests present and verified discriminating"). PRs parked over a
-// missing paragraph.
+// producer's rework loop had NO MOVE for. That is a deadlock with a number on it: running
+// `require-qa-block` over every open producer PR body scores 122 of 160 REFUSED — 114 with no
+// `## QA` heading at all, 8 with an incomplete one — over diffs the vetter's own notes certified
+// sound ("Code itself audits sound", "all 11 named tests present and verified discriminating").
+// PRs parked over a missing paragraph.
 //
 // WHY A SUBCOMMAND RATHER THAN LIFTING THE DENY. `gh pr edit` retitles, rebases, relabels and
 // rewrites a body wholesale — the whole surface, to fix one absent paragraph. Two properties are
