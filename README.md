@@ -300,16 +300,16 @@ Bash deny-list is prefix-matched and bypassable. For the vetter that gap is
 closed: `pr-review-report mcp` serves its transitions over MCP (stdio), and that
 server is the vetter's **only** tool surface.
 
-| Tool                             | The move it makes                                                                                                                                                                           |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list |
-| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                           |
-| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                              |
-| `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost                                                         |
-| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                             |
-| `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                               |
-| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                     |
-| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                     |
+| Tool                             | The move it makes                                                                                                                                                                              |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list    |
+| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                              |
+| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                                 |
+| `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost — refused unless `covered` accounts for every changed file |
+| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                                |
+| `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                                  |
+| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                        |
+| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                        |
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
@@ -427,6 +427,10 @@ carries both facts, and counts as current only when both hold:
   has to move, no branch is touched, no comment is rewritten, and the next
   scheduled vetter run recomputes them. Bump it when the audit lens, a mandatory
   gate or the verdict vocabulary changes — not for a reworded prompt.
+  `vet-protocol 2` is scope coverage (#131): a verdict now carries a claim,
+  checked in the binary, that every file the PR changes was in view when it was
+  formed. That is a mandatory gate by the definition above, so a protocol-1
+  verdict is not a value of the current function and is recomputed.
 
 An **unstamped** comment is `VetProtocol::Unknown` and is never current. It was
 written under rules that cannot be identified, and unidentified is not "fine" —

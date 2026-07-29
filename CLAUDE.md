@@ -69,25 +69,25 @@ deliberate.
 The state diagram lives in [README.md](README.md#pipeline-state-machine). The
 transition functions:
 
-| Subcommand                                                 | Transition it effects                                                                                                                                            |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--queue`                                                  | surfaces the presentable review queue (`ai:ready` + green + mergeable + vetted-at-head)                                                                          |
-| `--record-verdict <owner/repo> <n> <verdict> …`            | the vetter's write: apply the `ai:*` label + post the `🤖 ai:vetter` comment, bound to the head sha and stamped with the vet protocol (+ cost)                   |
-| `--trusted-comments <owner/repo> <n> [--marker] [--issue]` | author-verified comment read — the only trusted way to read a comment                                                                                            |
-| `--commit-closes <owner/repo> <n>`                         | closing-keyword vs. `closingIssuesReferences` drift check                                                                                                        |
-| `--backfill-comments`                                      | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment)                                                          |
-| `gc-clones <work-dir>...`                                  | reclaim merged/closed work-clones across one or more clone roots (state cleanup)                                                                                 |
-| `unvetted [--json] [--include-skipped] [--limit n]`        | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals (MCP always pages; the CLI is unbounded unless `--limit`)    |
-| `unvetted_close_candidates` (MCP)                          | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                       |
-| `record_close_candidate_verdict` (MCP)                     | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                           |
-| `human-rule <owner/repo> <n> <ruling> "<note>"`            | the HUMAN's PR ruling: `human:<ruling>` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling)                                               |
-| `human-rule-issue <owner/repo> <n> <ruling> "<note>"`      | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed                                                    |
-| `human-close <owner/repo> <n> "<note>"`                    | the HUMAN's TERMINAL edge on either subject: rule `close-candidate`, retire the pending `ai:close-candidate`, close — ONE transition (#94)                       |
-| `record-close-candidate-verdict <owner/repo> <n> <v> …`    | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                                 |
-| `require-qa-block`                                         | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session      |
-| `repair-qa-block <owner/repo> <n> --block-file <path>`     | the RETROFIT of the same rule on an ALREADY-open PR: appends the §8 block to the body, every other byte identical, validated with `require-qa-block`'s predicate |
-| `mcp [--profile vetter\|producer\|human]`                  | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                            |
-| `plugin-version-lockstep [--root <dir>]`                   | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                                  |
+| Subcommand                                                         | Transition it effects                                                                                                                                                                                             |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--queue`                                                          | surfaces the presentable review queue (`ai:ready` + green + mergeable + vetted-at-head)                                                                                                                           |
+| `--record-verdict <owner/repo> <n> <verdict> … --covered-file <p>` | the vetter's write: apply the `ai:*` label + post the `🤖 ai:vetter` comment, bound to the head sha and stamped with the vet protocol (+ cost). Refused unless the coverage claim accounts for every changed file |
+| `--trusted-comments <owner/repo> <n> [--marker] [--issue]`         | author-verified comment read — the only trusted way to read a comment                                                                                                                                             |
+| `--commit-closes <owner/repo> <n>`                                 | closing-keyword vs. `closingIssuesReferences` drift check                                                                                                                                                         |
+| `--backfill-comments`                                              | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment)                                                                                                           |
+| `gc-clones <work-dir>...`                                          | reclaim merged/closed work-clones across one or more clone roots (state cleanup)                                                                                                                                  |
+| `unvetted [--json] [--include-skipped] [--limit n]`                | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals (MCP always pages; the CLI is unbounded unless `--limit`)                                                     |
+| `unvetted_close_candidates` (MCP)                                  | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                                                                        |
+| `record_close_candidate_verdict` (MCP)                             | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                                                                            |
+| `human-rule <owner/repo> <n> <ruling> "<note>"`                    | the HUMAN's PR ruling: `human:<ruling>` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling)                                                                                                |
+| `human-rule-issue <owner/repo> <n> <ruling> "<note>"`              | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed                                                                                                     |
+| `human-close <owner/repo> <n> "<note>"`                            | the HUMAN's TERMINAL edge on either subject: rule `close-candidate`, retire the pending `ai:close-candidate`, close — ONE transition (#94)                                                                        |
+| `record-close-candidate-verdict <owner/repo> <n> <v> …`            | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                                                                                  |
+| `require-qa-block`                                                 | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session                                                       |
+| `repair-qa-block <owner/repo> <n> --block-file <path>`             | the RETROFIT of the same rule on an ALREADY-open PR: appends the §8 block to the body, every other byte identical, validated with `require-qa-block`'s predicate                                                  |
+| `mcp [--profile vetter\|producer\|human]`                          | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                                                                             |
+| `plugin-version-lockstep [--root <dir>]`                           | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                                                                                   |
 
 ## The layer a human types: slash commands as a plugin
 
@@ -242,6 +242,22 @@ it finds is a different PR's code.
 - **Human decisions are sacred.** A `human:*` label OR a native `APPROVED` /
   `CHANGES_REQUESTED` review is never overwritten by the vetter —
   `--record-verdict` refuses (exit 3), closing the TOCTOU race.
+- **A verdict accounts for every file the PR changes.** Scope coverage was the
+  one thing `record_verdict` took on trust, and a verdict formed without a
+  changed file in view is indistinguishable from a diligent one:
+  `rain.erc4626.words#230` recorded `ready` while the PR was in the act of
+  ADDING a file whose `address private immutable _ext;` breaks the audit skill's
+  Solidity naming rule twice. So the claim is an ARGUMENT the tool checks, not a
+  rule the prompt states. `covered` (MCP) / `--covered-file` (CLI) names each
+  changed file; each **hand-written** one also carries an ANCHOR — a new-side
+  diff line number plus its content — verified against the PR's own diff, which
+  is the same move `Reviewed <sha>:` makes for the head one level up. Generated,
+  vendored, lockfile and binary paths need the name alone, and so does any file
+  the diff shows **no new-side line** for, because an anchor that cannot exist
+  is a gate nothing can pass. The refusal (exit 4) reports **every** unmet entry
+  at once and prints the line ranges that would satisfy it: the vetter cannot
+  escalate to a human the way a producer can, so a correct verdict must never be
+  more than ONE corrected call from being recorded.
 - **The human's TERMINAL edge is a transition too.** `gh issue close` knows
   nothing about the FSM, so a hand-close left `ai:close-candidate` attached: 74
   closed subjects org-wide (55 issues, 19 PRs) carried it when #94 was filed, a
