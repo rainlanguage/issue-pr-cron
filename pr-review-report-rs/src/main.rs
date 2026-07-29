@@ -1402,56 +1402,72 @@ fn queue_mode(top: usize) {
     let rows: Vec<QueueRow> = prs.into_iter().map(|p| p.row).collect();
     println!("{}", render_queue(&rows, &counts, top));
 }
-/// Parse the closing-keyword issue numbers from arbitrary text (a commit message or a
-/// PR body). Matches GitHub's own set — close/closes/closed, fix/fixes/fixed,
-/// resolve/resolves/resolved — followed by optional whitespace and `#N`, case-insensitively.
-/// GitHub requires the keyword IMMEDIATELY before the `#N` (a keyword and a bare `#N`
-/// elsewhere in the same text do NOT link), so this matches `<keyword>[ :]#N` adjacency,
-/// not a keyword anywhere plus a `#N` anywhere. Returns the numbers in first-seen order,
-/// de-duplicated.
-fn closing_keywords(text: &str) -> Vec<u64> {
+/// ONE closing-keyword reference: the byte span of the KEYWORD ITSELF in the text it was found in,
+/// and the issue number it links.
+///
+/// The span is what makes this more than a number. `weaken-closes` (#136) rewrites exactly that
+/// range and nothing else, so the thing that DECIDES a reference closes an issue and the thing that
+/// WEAKENS it are one scan — a second notion of "a closing reference" is what would let the
+/// direction lock below check something other than what the tool edits.
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct ClosingRef {
+    /// Byte range of the keyword token in the ORIGINAL text.
+    keyword: std::ops::Range<usize>,
+    number: u64,
+}
+
+/// Every closing-keyword reference in arbitrary text (a commit message or a PR body), in
+/// first-seen order, NOT de-duplicated — a body may say `Closes #5` twice and both spans are real.
+///
+/// Matches GitHub's own set — close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved —
+/// followed by an optional separator run of spaces/colons/tabs and `#N`, case-insensitively.
+/// GitHub requires the keyword IMMEDIATELY before the `#N` (a keyword and a bare `#N` elsewhere in
+/// the same text do NOT link), so this matches `<keyword>[ :]#N` adjacency, not a keyword anywhere
+/// plus a `#N` anywhere.
+///
+/// Case folding is ASCII-only and done on the ORIGINAL bytes rather than on a `to_lowercase` copy.
+/// Every keyword, separator, `#` and digit is ASCII, so the two agree on what matches — but
+/// `to_lowercase` can change a string's LENGTH, which would make every span it reported an offset
+/// into a string the caller does not have.
+fn closing_refs(text: &str) -> Vec<ClosingRef> {
     const KEYWORDS: &[&str] = &[
         "closes", "closed", "close", "fixes", "fixed", "fix", "resolves", "resolved", "resolve",
     ];
-    let lower = text.to_lowercase();
-    let bytes = lower.as_bytes();
-    let mut out: Vec<u64> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut out: Vec<ClosingRef> = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        // `lower[i..]` below is a str slice that PANICS if `i` falls inside a multi-byte char (e.g.
-        // an em-dash in the commit message). Keywords are ASCII, so a keyword can only start at a
-        // char boundary — skip any non-boundary byte position.
-        if !lower.is_char_boundary(i) {
-            i += 1;
-            continue;
-        }
-        // find the next keyword whose start is at a word boundary
+        // find the next keyword whose start is at a word boundary. A UTF-8 continuation byte is not
+        // ascii-alphanumeric, so a multi-byte char reads as a boundary and never as a letter — and
+        // nothing here slices the str by an index that is not already known to be ASCII.
         let at_boundary = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
         if at_boundary {
-            if let Some(kw) = KEYWORDS.iter().find(|kw| lower[i..].starts_with(**kw)) {
-                let mut j = i + kw.len();
+            if let Some(kw) = KEYWORDS.iter().find(|kw| {
+                bytes
+                    .get(i..i + kw.len())
+                    .is_some_and(|w| w.eq_ignore_ascii_case(kw.as_bytes()))
+            }) {
+                let kw_end = i + kw.len();
+                let mut j = kw_end;
                 // No separate "keyword is a word-prefix" guard is needed: a keyword that only
                 // prefixes a longer word (`closest`) is followed by a letter, which is not a
                 // separator, so the `#`-adjacency check below rejects it anyway.
                 // skip a single optional separator run of spaces/colon between keyword and #
-                while bytes
-                    .get(j)
-                    .map(|c| *c == b' ' || *c == b':' || *c == b'\t')
-                    .unwrap_or(false)
-                {
+                while matches!(bytes.get(j), Some(b' ' | b':' | b'\t')) {
                     j += 1;
                 }
                 if bytes.get(j) == Some(&b'#') {
                     j += 1;
                     let start = j;
-                    while bytes.get(j).map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    while bytes.get(j).is_some_and(u8::is_ascii_digit) {
                         j += 1;
                     }
                     if j > start {
-                        if let Ok(n) = lower[start..j].parse::<u64>() {
-                            if !out.contains(&n) {
-                                out.push(n);
-                            }
+                        if let Ok(n) = text[start..j].parse::<u64>() {
+                            out.push(ClosingRef {
+                                keyword: i..kw_end,
+                                number: n,
+                            });
                         }
                         i = j;
                         continue;
@@ -1462,6 +1478,41 @@ fn closing_keywords(text: &str) -> Vec<u64> {
         i += 1;
     }
     out
+}
+
+/// The closing-keyword issue NUMBERS in arbitrary text, in first-seen order, de-duplicated.
+///
+/// A projection of [`closing_refs`], never a second scan: `commit-closes` compares this set against
+/// GitHub's `closingIssuesReferences`, and `weaken-closes` compares it BEFORE and AFTER its own
+/// edit to prove the edit only ever shrank it. Two scanners would make that proof self-referential
+/// against the wrong definition.
+fn closing_keywords(text: &str) -> Vec<u64> {
+    let mut out: Vec<u64> = Vec::new();
+    for r in closing_refs(text) {
+        if !out.contains(&r.number) {
+            out.push(r.number);
+        }
+    }
+    out
+}
+
+/// Is `#issue` referenced ANYWHERE in the text, with or without a closing keyword?
+///
+/// This is what separates the two "nothing to weaken" outcomes for `weaken-closes`: a body that
+/// already says `Refs #N` is a clean NO-OP, and a body that never names `#N` at all is a REFUSAL.
+/// Collapsing them would make the tool answer "done" to a call that named the wrong issue.
+///
+/// The whole digit run is parsed, so `#1234` is not a reference to `#12`.
+fn mentions_issue(text: &str, issue: u64) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices('#').any(|(at, _)| {
+        let start = at + 1;
+        let mut j = start;
+        while bytes.get(j).is_some_and(u8::is_ascii_digit) {
+            j += 1;
+        }
+        j > start && text[start..j].parse::<u64>() == Ok(issue)
+    })
 }
 
 /// `--commit-closes <owner/repo> <pr>`: fail (exit 1) if any closing keyword in a branch
@@ -4210,13 +4261,19 @@ mod usage_gate_tests {
 }
 
 /// verdict word -> the `ai:*` label it records. None for anything else.
+///
+/// `relink` is NOT here (#135). It named a reject with one specific note — "the linkage is wrong,
+/// `Closes` should be `Refs`" — and it demanded the same move from the same owner: the producer
+/// fixes the PR and it returns to un-vetted. A vocabulary value carrying one item is a state the
+/// machine sheds without losing anything it models, so a linkage error is now a `reject` whose note
+/// says which reference is wrong and what it should be, and the producer executes it with
+/// `weaken-closes` (#136) — the transition that verdict never had.
 fn verdict_label(verdict: &str) -> Option<&'static str> {
     match verdict {
         "ready" => Some("ai:ready"),
         "reject" => Some("ai:reject"),
         "design" => Some("ai:design"),
         "close" => Some("ai:close-candidate"),
-        "relink" => Some("ai:relink"),
         _ => None,
     }
 }
@@ -4258,10 +4315,9 @@ fn label_meta(label: &str) -> (&'static str, &'static str) {
         ),
         "ai:design" => ("5319e7", "AI vetter: raises a design question"),
         "ai:close-candidate" => ("c5def5", "AI vetter: candidate to close"),
-        "ai:relink" => (
-            "fbca04",
-            "AI vetter: sound code, needs Closes→Refs linkage fix",
-        ),
+        // `ai:relink` is deliberately ABSENT (#135): this table is consulted only for a label a
+        // transition is about to WRITE, and no transition writes that label any more. The one PR
+        // still carrying it is cleared by re-recording the verdict as `reject`, which strips it.
         "ai:blocked-deploy" => (
             "d93f0b",
             "AI producer: blocked on a deploy it can't complete (human)",
@@ -4552,7 +4608,7 @@ fn record_verdict_apply(
     dry_run: bool,
 ) -> Result<String, (i32, String)> {
     let Some(target) = verdict_label(verdict) else {
-        return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close|relink> [note...] [--cost <n>] [--basis <s>] [--dry-run]".to_string()));
+        return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--cost <n>] [--basis <s>] [--dry-run]".to_string()));
     };
     let Some(pr_json) = gh_json(&[
         "pr",
@@ -6700,6 +6756,13 @@ impl Lane {
 /// [`HUMAN_PR_RULING_LABELS`] — no longer the same array, and no longer required to be.
 const HUMAN_DECISION_LABELS: [&str; 2] = ["human:design", "human:close-candidate"];
 /// The vetter's non-`ready` verdict labels (the `ready` split is handled separately by head drift).
+///
+/// `ai:relink` is RETIRED (#135) — [`VETTER_VERDICTS`] no longer accepts the word, so no transition
+/// can WRITE this label again. It stays in the classifier for exactly the reason `ai:blocked-infra`
+/// did after #108: the PR a pre-#135 run parked still carries it, and dropping it here would
+/// reclassify that PR as `un-vetted` and hide the very thing that needs unpicking. It leaves the
+/// moment the human re-records the verdict as a `reject` naming the linkage — `labels_to_remove`
+/// strips every other `ai:*` — after which this entry is dead and can go.
 const VETTER_VERDICT_LABELS: [&str; 4] =
     ["ai:reject", "ai:relink", "ai:design", "ai:close-candidate"];
 
@@ -7050,6 +7113,9 @@ fn human_queue_doc(
             // states previously invisible to the dashboard.
             "unvetted": lane_state_count(lanes, "vet-lifecycle", "un-vetted"),
             "reject": lane_state_count(lanes, "vetter-verdicts", "ai:reject"),
+            // RETIRED (#135): no verdict writes `ai:relink` any more, so this counts down to 0 and
+            // stays there. The key is kept while it can be non-zero — a dashboard that stopped
+            // rendering the state would hide the PR that still needs re-recording as a `reject`.
             "relink": lane_state_count(lanes, "vetter-verdicts", "ai:relink"),
             "closeCandidatePrs": lane_state_count(lanes, "vetter-verdicts", "ai:close-candidate"),
             // RETIRED (#133). Kept — the dashboard reads it — and it now means "still to migrate".
@@ -7324,8 +7390,10 @@ fn human_queue_mode(json_out: bool) -> i32 {
         "vetter-verdicts",
         "ai:reject",
     );
+    // RETIRED (#135) — no verdict writes this label any more. Shown while any PR still carries it,
+    // so the one that needs re-recording as a `reject` is visible rather than silently un-vetted.
     show_lane(
-        "RELINK — ai:relink (Closes→Refs)",
+        "RELINK (RETIRED #135) — ai:relink · re-record as `reject` naming the linkage",
         "vetter-verdicts",
         "ai:relink",
     );
@@ -10074,8 +10142,11 @@ fn mcp_protocol_version(requested: Option<&str>) -> &'static str {
 }
 
 /// The vetter's verdicts — the ONLY values `record_verdict` accepts. Anything else (`approve`,
-/// `merge`, `close-issue`, …) is not a transition of this machine and is refused.
-const VETTER_VERDICTS: [&str; 5] = ["ready", "reject", "relink", "design", "close"];
+/// `merge`, `close-issue`, `relink`, …) is not a transition of this machine and is refused.
+///
+/// FOUR, not five (#135). `relink` was a `reject` with one specific note, naming the same owner and
+/// the same move; see [`verdict_label`].
+const VETTER_VERDICTS: [&str; 4] = ["ready", "reject", "design", "close"];
 /// Cost is a 0-1000 vibes score; a value outside it is a mis-scaled score, not a cost.
 const COST_RANGE: std::ops::RangeInclusive<i64> = 0..=1000;
 /// `basis` is a 3-8 word phrase naming the cost driver; a paragraph there is a note in the wrong slot.
@@ -11320,7 +11391,20 @@ impl McpProfile {
                 "close_candidate_context",
                 "record_close_candidate_verdict",
             ],
-            McpProfile::Producer => &["clone_create", "clone_release", "clone_list", "clone_gc"],
+            // The clone lifecycle, plus the two BODY REPAIRS (#136). Both are on the profile, and
+            // that is the settled answer to a split #136 names: `repair_qa_block` was reachable
+            // only as a CLI subcommand under the `Bash(pr-review-report:*)` allow rule, so the
+            // producer's ability to write a PR body was a prefix-matched permission rather than an
+            // enumerable transition. Two body repairs with two call shapes is what makes a future
+            // reader guess; both being tools means `tools/list` states what the producer may write.
+            McpProfile::Producer => &[
+                "clone_create",
+                "clone_release",
+                "clone_list",
+                "clone_gc",
+                "repair_qa_block",
+                "weaken_closes",
+            ],
             // The human's surface: read the subject, rule on it. The two reads are the vetter's
             // existing ones re-listed, not new tools — a write-only profile cannot be used, and a
             // ruling made without reading the subject is the mis-click this whole surface exists to
@@ -11420,7 +11504,7 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "pr": {"type": "string", "description": "owner/repo#number"},
-                    "verdict": {"type": "string", "enum": ["ready", "reject", "relink", "design", "close"]},
+                    "verdict": {"type": "string", "enum": ["ready", "reject", "design", "close"]},
                     "note": {"type": "string", "description": "One line naming the issue number(s) and the specific reason."},
                     "cost": {"type": "integer", "description": "Human verification cost, 0-1000."},
                     "basis": {"type": "string", "description": "3-8 words naming the cost driver."}
@@ -11542,6 +11626,33 @@ fn mcp_all_tools() -> Value {
                     "max_age_days": {"type": "integer", "description": "Idle cap for PR-less clones, 1-365 (default 30)."}
                 }
             }
+        },
+        {
+            "name": "repair_qa_block",
+            "description": "Retrofit QA-GUIDE section 8's evidence block onto an ALREADY-OPEN PR of ours: APPENDS the block, every byte outside the `## QA` section identical, validated with the PR-open gate's own predicate. Refuses a present-but-different block unless replace.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pr": {"type": "string", "description": "owner/repo#number"},
+                    "block_file": {"type": "string", "description": "Absolute path to the file holding the section-8 block. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "replace": {"type": "boolean", "description": "Replace an existing `## QA` section — only once the evidence has actually been re-run."},
+                    "dry_run": {"type": "boolean", "description": "Report the plan without writing."}
+                },
+                "required": ["pr", "block_file"]
+            }
+        },
+        {
+            "name": "weaken_closes",
+            "description": "The LINKAGE repair: rewrite every `Closes #issue` in an OPEN PR of ours to `Refs #issue`, every other byte identical, `## QA` untouched. DIRECTION-LOCKED — it can only ever REMOVE a closing reference, never add one. Idempotent; refuses a body that does not reference the issue.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pr": {"type": "string", "description": "owner/repo#number"},
+                    "issue": {"type": "integer", "description": "The issue number the vetter's reject says this PR must not close."},
+                    "dry_run": {"type": "boolean", "description": "Report the plan without writing."}
+                },
+                "required": ["pr", "issue"]
+            }
         }
     ])
 }
@@ -11629,6 +11740,22 @@ enum McpCall {
     CloneList,
     CloneGc {
         max_age_days: u64,
+        dry_run: bool,
+    },
+    /// The producer's two BODY REPAIRS (#136). `issue` is a NUMBER, not a `#N` string: the tool
+    /// weakens the linkage to exactly one issue, and a free-text argument there is the "edit
+    /// whatever looked close enough" the refusal path exists to prevent.
+    RepairQaBlock {
+        slug: String,
+        num: u64,
+        block_file: String,
+        replace: bool,
+        dry_run: bool,
+    },
+    WeakenCloses {
+        slug: String,
+        num: u64,
+        issue: u64,
         dry_run: bool,
     },
 }
@@ -11975,6 +12102,47 @@ fn validate_call(
                     .unwrap_or(false),
             })
         }
+        // --- the producer's body repairs. Both guards are ARGUMENT guards only: what may be
+        // written is decided by the pure planners (`qa_repair`, `weaken_closes`), which is where
+        // the surgical span, the idempotent no-op and the direction lock all live.
+        "repair_qa_block" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            Ok(McpCall::RepairQaBlock {
+                slug,
+                num,
+                block_file: req_str(args, "block_file")?.trim().to_string(),
+                replace: args
+                    .get("replace")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                dry_run: args
+                    .get("dry_run")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        }
+        "weaken_closes" => {
+            let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
+            // An issue number, not a `#N` string and not a keyword: the ONLY thing a caller gets to
+            // choose is WHICH issue. There is no argument that selects a direction, so `Closes`
+            // is not something this transition can be asked for.
+            let issue = match args.get("issue") {
+                Some(v) => v.as_u64().filter(|n| *n > 0).ok_or_else(|| {
+                    "issue must be a positive integer — the issue number the reject names"
+                        .to_string()
+                })?,
+                None => return Err("missing required integer argument \"issue\"".to_string()),
+            };
+            Ok(McpCall::WeakenCloses {
+                slug,
+                num,
+                issue,
+                dry_run: args
+                    .get("dry_run")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        }
         // Unreachable while `tool_names()` and this match agree (pinned by a test). An Err rather
         // than a panic: a listed-but-unhandled tool must not take the whole server down.
         _ => Err(format!("tool {name:?} is listed but not implemented")),
@@ -12151,6 +12319,21 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             max_age_days,
             dry_run,
         } => clone_gc_exec(&roots, max_age_days, dry_run).map(|d| d.to_string()),
+        McpCall::RepairQaBlock {
+            slug,
+            num,
+            block_file,
+            replace,
+            dry_run,
+        } => repair_qa_block_apply(&slug, &num.to_string(), &block_file, replace, dry_run)
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::WeakenCloses {
+            slug,
+            num,
+            issue,
+            dry_run,
+        } => weaken_closes_apply(&slug, &num.to_string(), issue, dry_run)
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
     }
 }
 
@@ -13396,33 +13579,247 @@ fn append_separator(body: &str) -> &'static str {
     }
 }
 
-/// `repair-qa-block <owner/repo> <pr> --block-file <path> [--replace] [--dry-run]`: append
-/// QA-GUIDE section 8's evidence block to an ALREADY-OPEN PR's body, leaving every byte outside the
-/// `## QA` section as it was.
+// ─────────────────────────────────────────────────────────────────────────────
+// weaken-closes — the LINKAGE repair (#136), and the transition `ai:relink` never had (#135).
+//
+// `ai:relink` was a verdict that told the producer to change a `Closes #N` in a PR body to
+// `Refs #N`. The producer could not do it: `campaign-settings.json` denies `Bash(gh pr edit:*)`,
+// its MCP profile was four clone-lifecycle tools, and the only body writer anywhere was
+// `repair-qa-block`, which appends a `## QA` section and nothing else. So the verdict named a move
+// with no transition behind it, which is consistent with the population it accumulated: one PR,
+// sitting. #135 retires the verdict; this is the capability, so retiring it does not just move an
+// unexecutable instruction into a bigger bucket.
+//
+// THE INVARIANT — DIRECTION-LOCKED. This tool may only ever WEAKEN `Closes` to `Refs`. It must
+// never write a `Closes` the body did not already have, and that is not a default, it is the whole
+// safety argument:
+//
+//   `Closes` is what GitHub resolves into `closingIssuesReferences`. `uncovered-issues` computes
+//   the producer's own backlog from that set — an issue with a covering `Closes` is OUT of the
+//   producer's inbox. A producer that could ADD a `Closes` could therefore mark an issue covered
+//   without fixing it, and it would be marking its own homework. WEAKENING can only ever grow that
+//   inbox; STRENGTHENING silently shrinks it.
+//
+// It is enforced three ways, deepest first: the only text an edit can carry is the [`REFS_KEYWORD`]
+// constant, which is not a closing keyword; the spans come from [`closing_refs`], so an edit exists
+// only where a closing reference already did; and [`weaken_closes`] re-runs [`closing_keywords`]
+// over the result and REFUSES any plan whose closing set gained a number — the same function
+// `commit-closes` uses, so the check and the thing it checks share one definition.
+//
+// SURGICAL, the discipline `repair-qa-block` already holds. The plan is a list of [`BodyEdit`]s,
+// each spanning exactly one keyword token, applied through [`BodyEdit::apply`] — which copies
+// everything outside its span through verbatim and has no other way to produce a result. So "every
+// byte outside the linkage keyword is identical afterwards" is a property of the representation.
+//
+// IDEMPOTENT, and a no-op is not an error. Running it twice is running it once, because the second
+// call finds no closing reference to weaken. But "nothing to weaken" splits in two: a body that
+// already says `Refs #N` is DONE, and a body that never mentions `#N` is a call that named the
+// wrong issue. The first is `AlreadyWeak` (exit 0), the second is a refusal — collapsing them would
+// let a typo report success.
+//
+// THE `## QA` BLOCK IS NOT TOUCHED. Its span is excluded from the plan, and the result is checked
+// with `require-qa-block`'s OWN predicate ([`carries_qa_block`]), the same reuse `repair-qa-block`
+// does — so what one repair leaves behind, the other gate still accepts. A closing reference that
+// exists ONLY inside the evidence block is refused rather than rewritten: QA-GUIDE section 8's
+// category line legitimately writes about `Closes` and `Refs`, and editing evidence to change a
+// linkage is the laundering `repair-qa-block`'s `--replace` refusal already exists to prevent.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The ONLY text a linkage edit can ever write.
 ///
-/// Guards, in order: the block must be well-formed, the PR must be OPEN, and it must be OURS
-/// (`--author $PR_ASSIGNEE` is how every other subcommand defines the fleet). Then the plan, then
-/// the write, then a trusted `🤖 ai:producer` marker so the body edit is visible on the PR itself —
-/// GitHub hides body edit history, so without it the only record of the repair is the body.
-///
-/// Exit: 0 written (or already present), 1 a `gh` call failed, 2 unusable block, 3 not our PR,
-/// 4 a `## QA` section is already there and `--replace` was not passed, 5 the PR is not open,
-/// 6 the edited body would not pass the gate.
-fn repair_qa_block_mode(
-    slug: &str,
-    pr: &str,
-    block_file: &str,
-    replace: bool,
-    dry_run: bool,
-) -> i32 {
-    let subject = format!("{slug}#{pr}");
-    let block = match std::fs::read_to_string(block_file) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("error: could not read --block-file {block_file}: {e}");
-            return 2;
+/// A constant, not a parameter and not a lookup: `Refs` is not one of [`closing_refs`]'s keywords,
+/// so "this tool cannot emit a closing keyword" is true of the code before any check runs.
+const REFS_KEYWORD: &str = "Refs";
+
+/// What `weaken-closes` will do.
+#[derive(Debug, PartialEq, Eq)]
+enum RelinkPlan {
+    /// Rewrite each span — every one a closing keyword for the named issue, outside the `## QA`
+    /// section — to [`REFS_KEYWORD`]. Ascending and disjoint, because [`closing_refs`] scans left
+    /// to right and never returns overlapping keyword tokens.
+    Weaken(Vec<BodyEdit>),
+    /// The body references the issue without CLOSING it. Nothing to write and nothing wrong, which
+    /// is what makes a retried call idempotent rather than a refusal.
+    AlreadyWeak,
+}
+
+/// WHY a linkage repair was refused — a TYPED discriminant, like [`RepairRefusal`], so the exit
+/// code and the message both derive from the variant and no caller re-classifies by matching prose.
+#[derive(Debug, PartialEq, Eq)]
+enum RelinkRefusal {
+    /// The body does not reference the issue AT ALL. Refusing beats weakening the nearest thing
+    /// that looked close enough — the call named an issue this PR does not link.
+    NoSuchReference(u64),
+    /// Every closing reference to the issue sits INSIDE the `## QA` evidence block.
+    OnlyInQaBlock(u64),
+    /// The rewrite would change whether the body passes [`carries_qa_block`].
+    ///
+    /// UNREACHABLE while the `## QA` span exclusion holds: every edited span is outside that
+    /// section, so the section comes through byte-identical and the predicate cannot change value.
+    /// Mutating this check alone therefore changes no observable behaviour — a MEASURED survivor,
+    /// like [`RepairRefusal::ResultRejected`]. It stays because the proof rests on the exclusion,
+    /// which is itself pinned: delete the exclusion and three tests fail. Break the exclusion and
+    /// this is what turns a body the PR-open gate would refuse into a REFUSAL instead of a write.
+    QaBlockChanged,
+    /// THE DIRECTION LOCK. The rewrite would leave the body closing an issue it did not close
+    /// before. Carries the numbers that appeared, so a refusal names the damage it prevented.
+    ///
+    /// Unreachable while [`REFS_KEYWORD`] is not a closing keyword, so disabling this arm ALONE is
+    /// another measured survivor — which is exactly why the check is here rather than assumed: it
+    /// is the assertion that survives someone "fixing" the constant, and disabling BOTH is caught
+    /// at once. Its non-vacuity is pinned on [`closes_added`] directly, in both directions, rather
+    /// than only through plans that cannot violate it. Evaluated with the same [`closing_keywords`]
+    /// GitHub's behaviour is modelled by everywhere else in this binary.
+    WouldStrengthen(Vec<u64>),
+}
+
+impl RelinkRefusal {
+    /// Exit code, distinct per variant because they are four different things to do next: check the
+    /// issue number, re-run the evidence instead of editing it, or report a tool bug (twice over —
+    /// the last one is a caught attempt to violate the invariant, not a user error).
+    fn exit(&self) -> i32 {
+        match self {
+            RelinkRefusal::NoSuchReference(_) => 4,
+            RelinkRefusal::OnlyInQaBlock(_) => 6,
+            RelinkRefusal::QaBlockChanged => 7,
+            RelinkRefusal::WouldStrengthen(_) => 8,
         }
-    };
+    }
+
+    /// The whole stderr text. Every variant NAMES the reason — the requirement is that a refusal
+    /// says why, not that something failed.
+    fn render(&self, subject: &str) -> String {
+        let mut lines = vec![format!("REFUSED - weaken-closes {subject}"), String::new()];
+        match self {
+            RelinkRefusal::NoSuchReference(n) => lines.extend([
+                format!("  the body of {subject} does not reference #{n} at all, so there is no"),
+                "  linkage to weaken. Nothing was written: a repair that edited the nearest"
+                    .to_string(),
+                "  reference that looked close enough is the failure this refusal exists for."
+                    .to_string(),
+                String::new(),
+                "  Check the issue number in the vetter's note, then re-run for the #N it names."
+                    .to_string(),
+            ]),
+            RelinkRefusal::OnlyInQaBlock(n) => lines.extend([
+                format!(
+                    "  the only closing reference to #{n} is inside the `## QA` evidence block,"
+                ),
+                "  and this repair does not edit that section. QA-GUIDE section 8's category line"
+                    .to_string(),
+                "  legitimately writes about `Closes` and `Refs`, so a rewrite there would be"
+                    .to_string(),
+                "  changing the EVIDENCE to change the linkage.".to_string(),
+                String::new(),
+                "  Re-run the adversarial-mutation pass and transcribe what it produced with"
+                    .to_string(),
+                "  `repair-qa-block --replace`.".to_string(),
+            ]),
+            RelinkRefusal::QaBlockChanged => lines.extend([
+                "  the rewrite would change whether the body passes `require-qa-block`, so nothing"
+                    .to_string(),
+                "  was written. That is a bug in weaken-closes, not in your call - report it."
+                    .to_string(),
+            ]),
+            RelinkRefusal::WouldStrengthen(added) => {
+                let names: Vec<String> = added.iter().map(|n| format!("#{n}")).collect();
+                lines.extend([
+                    format!(
+                        "  the rewrite would make the body CLOSE {} — a reference it does not close",
+                        names.join(", ")
+                    ),
+                    "  today. This tool may only ever weaken `Closes` to `Refs`: `closingIssuesReferences`".to_string(),
+                    "  is what `uncovered-issues` computes the producer's backlog from, so a producer".to_string(),
+                    "  that could ADD one would be marking its own homework.".to_string(),
+                    String::new(),
+                    "  Nothing was written. That is a bug in weaken-closes - report it.".to_string(),
+                ]);
+            }
+        }
+        lines.join("\n") + "\n"
+    }
+}
+
+/// Apply a set of edits with the SAME [`BodyEdit::apply`] `repair-qa-block` uses, right-to-left so
+/// every span still indexes the body it was measured against.
+///
+/// "Surgical" is inherited rather than re-argued: `apply` copies `body[..start]` and `body[end..]`
+/// through verbatim, so by induction every byte outside the union of the spans is unchanged.
+fn apply_body_edits(body: &str, edits: &[BodyEdit]) -> String {
+    edits
+        .iter()
+        .rev()
+        .fold(body.to_string(), |b, e| e.apply(&b))
+}
+
+/// PURE: the whole linkage-repair decision — find the closing references, exclude the evidence
+/// block, plan the rewrite, then prove the rewrite only ever REMOVED closing references.
+///
+/// ORDER IS THE GUARD. "References the issue at all" is asked BEFORE anything is planned, so a call
+/// naming the wrong number refuses instead of editing something adjacent. The `## QA` exclusion
+/// runs before the plan exists, so an evidence-only reference is refused rather than rewritten. And
+/// the direction lock runs LAST, over the body that would actually be written — the one place where
+/// what GitHub will resolve is fully determined.
+fn weaken_closes(body: &str, issue: u64) -> Result<RelinkPlan, RelinkRefusal> {
+    let refs: Vec<ClosingRef> = closing_refs(body)
+        .into_iter()
+        .filter(|r| r.number == issue)
+        .collect();
+    if refs.is_empty() {
+        return if mentions_issue(body, issue) {
+            Ok(RelinkPlan::AlreadyWeak)
+        } else {
+            Err(RelinkRefusal::NoSuchReference(issue))
+        };
+    }
+    let qa = qa_section_span(body);
+    let edits: Vec<BodyEdit> = refs
+        .into_iter()
+        .filter(|r| qa.as_ref().is_none_or(|q| !q.contains(&r.keyword.start)))
+        .map(|r| BodyEdit {
+            span: r.keyword,
+            text: REFS_KEYWORD.to_string(),
+        })
+        .collect();
+    if edits.is_empty() {
+        return Err(RelinkRefusal::OnlyInQaBlock(issue));
+    }
+    let new_body = apply_body_edits(body, &edits);
+    if carries_qa_block(&new_body) != carries_qa_block(body) {
+        return Err(RelinkRefusal::QaBlockChanged);
+    }
+    let added = closes_added(body, &new_body);
+    if !added.is_empty() {
+        return Err(RelinkRefusal::WouldStrengthen(added));
+    }
+    Ok(RelinkPlan::Weaken(edits))
+}
+
+/// THE DIRECTION LOCK, as a predicate: which issues `new_body` CLOSES that `body` did not.
+///
+/// A function of its own so the invariant can be driven STRAIGHT, in both directions, instead of
+/// only through the plans that happen to exist — a check whose sole exercise is code that cannot
+/// violate it is a check nothing would notice the loss of. Its oracle is [`closing_keywords`], the
+/// same set `commit-closes` compares against GitHub's live `closingIssuesReferences` and the same
+/// set `uncovered-issues` computes the producer's backlog from.
+///
+/// Empty is the only acceptable answer for anything this binary writes to a PR body.
+fn closes_added(body: &str, new_body: &str) -> Vec<u64> {
+    let before = closing_keywords(body);
+    closing_keywords(new_body)
+        .into_iter()
+        .filter(|n| !before.contains(n))
+        .collect()
+}
+
+/// The preflight BOTH body repairs run: fetch the PR, refuse one that is not OPEN, refuse one that
+/// is not OURS (`$PR_ASSIGNEE` is how every other subcommand defines the fleet).
+///
+/// ONE definition, two callers, for the same reason [`carries_qa_block`] has one: a second body
+/// repair carrying its own idea of "a PR this pipeline may edit" is how the two come to disagree
+/// about whose bodies are ours — and the disagreement only shows up on somebody else's PR.
+fn body_repair_preflight(slug: &str, pr: &str, tool: &str) -> Result<Value, (i32, String)> {
+    let subject = format!("{slug}#{pr}");
     let Some(prj) = gh_json(&[
         "pr",
         "view",
@@ -13432,13 +13829,17 @@ fn repair_qa_block_mode(
         "--json",
         "body,state,author,headRefOid,comments",
     ]) else {
-        eprintln!("error: `gh pr view {subject}` failed — not writing on incomplete data");
-        return 1;
+        return Err((
+            1,
+            format!("error: `gh pr view {subject}` failed — not writing on incomplete data"),
+        ));
     };
     let state = prj.get("state").and_then(Value::as_str).unwrap_or("");
     if state != "OPEN" {
-        eprintln!("refusing: {subject} is {state}, not OPEN — a closed PR's body is a record");
-        return 5;
+        return Err((
+            5,
+            format!("refusing: {subject} is {state}, not OPEN — a closed PR's body is a record"),
+        ));
     }
     let author = prj
         .pointer("/author/login")
@@ -13446,23 +13847,102 @@ fn repair_qa_block_mode(
         .unwrap_or("");
     let me = pr_assignee();
     if author != me {
-        eprintln!(
-            "refusing: {subject} was opened by {author:?}, not {me:?} — repair-qa-block edits the \
-             pipeline's OWN PR bodies and nobody else's"
-        );
-        return 3;
+        return Err((
+            3,
+            format!(
+                "refusing: {subject} was opened by {author:?}, not {me:?} — {tool} edits the \
+                 pipeline's OWN PR bodies and nobody else's"
+            ),
+        ));
     }
+    Ok(prj)
+}
+
+/// A body edit does not move the head, so [`vetted_at_head`] still holds and the vetter SKIPS the
+/// PR as already vetted. Both repairs SAY SO rather than leaving a repaired PR silently parked.
+fn body_edit_vet_note(prj: &Value) -> Option<String> {
+    let head = prj.get("headRefOid").and_then(Value::as_str).unwrap_or("");
+    vetted_at_head(prj, head).then(|| {
+        format!(
+            "NOTE: the vetter already recorded a verdict at {head}, and a body edit does not move \
+             the head — it will SKIP this PR as vetted-at-head. Push an `--allow-empty` commit to \
+             re-arm the vet."
+        )
+    })
+}
+
+/// Write a repaired body and leave the trusted `🤖 ai:producer` marker that says so. GitHub hides
+/// body edit history, so without the comment the only record of a repair is the body it produced.
+/// An identical marker already present is not re-posted, which is what keeps a retried repair from
+/// accumulating notes.
+fn write_repaired_body(
+    slug: &str,
+    pr: &str,
+    prj: &Value,
+    new_body: &str,
+    comment: &str,
+) -> Result<(), (i32, String)> {
+    let subject = format!("{slug}#{pr}");
+    if !gh_run(&["pr", "edit", pr, "-R", slug, "--body", new_body]) {
+        return Err((
+            1,
+            format!("error: `gh pr edit {subject}` failed — the body is unchanged"),
+        ));
+    }
+    let already = trusted_comments(prj, Some("🤖 ai:producer"))
+        .iter()
+        .any(|b| b == comment);
+    if !already && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", comment]) {
+        return Err((
+            1,
+            format!("error: {subject} body repaired but FAILED to post the marker comment"),
+        ));
+    }
+    Ok(())
+}
+
+/// `repair-qa-block <owner/repo> <pr> --block-file <path> [--replace] [--dry-run]`, and the
+/// `repair_qa_block` producer MCP tool: append QA-GUIDE section 8's evidence block to an
+/// ALREADY-OPEN PR's body, leaving every byte outside the `## QA` section as it was.
+///
+/// Guards, in order: the block must be well-formed, the PR must be OPEN, and it must be OURS. Then
+/// the plan, then the write, then the trusted marker comment.
+///
+/// Returns the report text rather than printing it: on the MCP server STDOUT IS THE PROTOCOL, so a
+/// transition that printed could not be a tool.
+///
+/// Exit: 0 written (or already present), 1 a `gh` call failed, 2 unusable block, 3 not our PR,
+/// 4 a `## QA` section is already there and `--replace` was not passed, 5 the PR is not open,
+/// 6 the edited body would not pass the gate.
+fn repair_qa_block_apply(
+    slug: &str,
+    pr: &str,
+    block_file: &str,
+    replace: bool,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    let subject = format!("{slug}#{pr}");
+    let block = std::fs::read_to_string(block_file).map_err(|e| {
+        (
+            2,
+            format!("error: could not read --block-file {block_file}: {e}"),
+        )
+    })?;
+    let prj = body_repair_preflight(slug, pr, "repair-qa-block")?;
     let body = prj.get("body").and_then(Value::as_str).unwrap_or("");
 
     let edit = match qa_repair(body, &block, replace) {
         Ok(RepairPlan::AlreadyPresent) => {
-            println!("{subject}: body already carries this exact QA block — nothing to write");
-            return 0;
+            return Ok(format!(
+                "{subject}: body already carries this exact QA block — nothing to write"
+            ));
         }
         Ok(RepairPlan::Edit(e)) => e,
         Err(r) => {
-            eprint!("{}", r.render(&subject, block_file));
-            return r.exit();
+            return Err((
+                r.exit(),
+                r.render(&subject, block_file).trim_end().to_string(),
+            ))
         }
     };
     let new_body = edit.apply(body);
@@ -13481,43 +13961,121 @@ fn repair_qa_block_mode(
         .any(|b| b == &comment);
 
     if dry_run {
-        println!("[dry-run] {subject}: {verb} the QA block");
-        println!(
-            "  body bytes: {} -> {} (rewriting {}..{} of the current body)",
+        return Ok(format!(
+            "[dry-run] {subject}: {verb} the QA block\n  body bytes: {} -> {} (rewriting {}..{} of \
+             the current body)\n  comment: {}",
             body.len(),
             new_body.len(),
             edit.span.start,
-            edit.span.end
-        );
-        println!(
-            "  comment: {}",
+            edit.span.end,
             if skip_comment {
-                "skip (identical note already posted)".to_string()
+                "skip (identical note already posted)"
             } else {
-                "post -> QA-block repair".to_string()
+                "post -> QA-block repair"
             }
-        );
-        return 0;
+        ));
     }
 
-    if !gh_run(&["pr", "edit", pr, "-R", slug, "--body", &new_body]) {
-        eprintln!("error: `gh pr edit {subject}` failed — the body is unchanged");
-        return 1;
+    write_repaired_body(slug, pr, &prj, &new_body, &comment)?;
+    let mut out = format!("{subject}: {verb} the QA block ({} bytes)", new_body.len());
+    if let Some(note) = body_edit_vet_note(&prj) {
+        out.push('\n');
+        out.push_str(&note);
     }
-    if !skip_comment && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
-        eprintln!("error: {subject} body repaired but FAILED to post the marker comment");
-        return 1;
+    Ok(out)
+}
+
+/// `weaken-closes <owner/repo> <pr> <issue> [--dry-run]`, and the `weaken_closes` producer MCP
+/// tool: rewrite every `Closes #issue` in an OPEN PR's body to `Refs #issue`, leaving every other
+/// byte identical.
+///
+/// The decision is [`weaken_closes`] and lives there, pure; this half is the PR fetch, the write,
+/// and the marker comment. The invariant — it can only ever weaken — is enforced in the pure half,
+/// so no `gh` call is reachable from a plan that would strengthen a linkage.
+///
+/// Exit: 0 written (or already weak), 1 a `gh` call failed, 3 not our PR, 4 the body does not
+/// reference the issue, 5 the PR is not open, 6 the only reference is inside the `## QA` block,
+/// 7 the `## QA` block would change, 8 the rewrite would ADD a closing reference.
+fn weaken_closes_apply(
+    slug: &str,
+    pr: &str,
+    issue: u64,
+    dry_run: bool,
+) -> Result<String, (i32, String)> {
+    let subject = format!("{slug}#{pr}");
+    let prj = body_repair_preflight(slug, pr, "weaken-closes")?;
+    let body = prj.get("body").and_then(Value::as_str).unwrap_or("");
+
+    let edits = match weaken_closes(body, issue) {
+        Ok(RelinkPlan::AlreadyWeak) => {
+            return Ok(format!(
+                "{subject}: body already references #{issue} without closing it — nothing to write"
+            ));
+        }
+        Ok(RelinkPlan::Weaken(e)) => e,
+        Err(r) => return Err((r.exit(), r.render(&subject).trim_end().to_string())),
+    };
+    let new_body = apply_body_edits(body, &edits);
+    let comment = format!(
+        "🤖 ai:producer\nLinkage repair: weakened `Closes #{issue}` to `Refs #{issue}` in the PR \
+         body via `pr-review-report weaken-closes`. Every byte outside that keyword is unchanged, \
+         and the `## QA` section was not touched."
+    );
+
+    if dry_run {
+        let spans: Vec<String> = edits
+            .iter()
+            .map(|e| format!("{}..{}", e.span.start, e.span.end))
+            .collect();
+        return Ok(format!(
+            "[dry-run] {subject}: weaken {} reference(s) to #{issue}\n  body bytes: {} -> {} \
+             (rewriting {} of the current body)\n  closing set: {:?} -> {:?}",
+            edits.len(),
+            body.len(),
+            new_body.len(),
+            spans.join(", "),
+            closing_keywords(body),
+            closing_keywords(&new_body)
+        ));
     }
-    println!("{subject}: {verb} the QA block ({} bytes)", new_body.len());
-    let head = prj.get("headRefOid").and_then(Value::as_str).unwrap_or("");
-    if vetted_at_head(&prj, head) {
-        println!(
-            "NOTE: the vetter already recorded a verdict at {head}, and a body edit does not move \
-             the head — it will SKIP this PR as vetted-at-head. Push an `--allow-empty` commit to \
-             re-arm the vet."
-        );
+
+    write_repaired_body(slug, pr, &prj, &new_body, &comment)?;
+    let still = closing_keywords(&new_body);
+    let mut out = format!(
+        "{subject}: weakened {} `Closes #{issue}` reference(s) to `Refs` — closing set is now {:?}",
+        edits.len(),
+        still
+    );
+    // Every reference OUTSIDE the evidence block was weakened, so an issue still in the closing set
+    // is closed by the `## QA` section — which this repair does not edit. Saying so beats reporting
+    // a success the PR's own linkage contradicts.
+    if still.contains(&issue) {
+        out.push_str(&format!(
+            "\nWARNING: {subject} still closes #{issue} — the remaining reference is inside the \
+             `## QA` evidence block, which this repair does not touch. Re-run the evidence pass and \
+             transcribe it with `repair-qa-block --replace`."
+        ));
     }
-    0
+    if let Some(note) = body_edit_vet_note(&prj) {
+        out.push('\n');
+        out.push_str(&note);
+    }
+    Ok(out)
+}
+
+/// Print what an apply returned and hand back its exit code. The `*_apply` halves are silent so
+/// they can be MCP transitions; this is the CLI's half of that split.
+fn report_apply(r: Result<String, (i32, String)>) -> i32 {
+    match r {
+        Ok(msg) => {
+            println!("{msg}");
+            0
+        }
+        Err((code, msg)) => {
+            eprintln!("{msg}");
+            code
+        }
+    }
 }
 
 /// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
@@ -13545,7 +14103,7 @@ enum Cmd {
         /// owner/repo
         slug: String,
         pr: String,
-        /// ready | reject | design | close | relink
+        /// ready | reject | design | close
         verdict: String,
         /// One-line reason (trailing words are joined).
         note: Vec<String>,
@@ -13887,6 +14445,20 @@ enum Cmd {
         /// names: the block is present but its claims are stale, and the evidence has been re-run.
         #[arg(long)]
         replace: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Producer LINKAGE repair (#136): weaken every `Closes #issue` in an OPEN PR's body to
+    /// `Refs #issue`, leaving every other byte identical. DIRECTION-LOCKED — it can only ever
+    /// remove a closing reference, never add one, because `closingIssuesReferences` is what the
+    /// producer's own backlog is computed from. Idempotent; refuses a PR that does not reference
+    /// the issue; never touches the `## QA` block.
+    WeakenCloses {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        /// The issue number whose closing keyword to weaken — the one the vetter's reject names.
+        issue: u64,
         #[arg(long)]
         dry_run: bool,
     },
@@ -15485,7 +16057,19 @@ fn main() {
             block_file,
             replace,
             dry_run,
-        } => repair_qa_block_mode(&slug, &pr, &block_file, replace, dry_run),
+        } => report_apply(repair_qa_block_apply(
+            &slug,
+            &pr,
+            &block_file,
+            replace,
+            dry_run,
+        )),
+        Cmd::WeakenCloses {
+            slug,
+            pr,
+            issue,
+            dry_run,
+        } => report_apply(weaken_closes_apply(&slug, &pr, issue, dry_run)),
         Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
             Ok(p) => mcp_serve(p),
             Err(e) => {
@@ -18179,6 +18763,59 @@ mod settings_tests {
         assert!(!prompt.contains("git -C <dir> fetch origin &&"));
     }
 
+    /// #135/#136: retiring `ai:relink` only works if the work it named became something the
+    /// producer can DO. The verdict is gone from the vetter's vocabulary, so the producer's prompt
+    /// has to teach the reject-handling that replaces it — and name the tool, not a `gh pr edit`.
+    #[test]
+    fn the_producer_prompt_teaches_the_linkage_repair_as_a_tool() {
+        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        for tool in ["mcp__fsm__weaken_closes", "mcp__fsm__repair_qa_block"] {
+            assert!(
+                prompt.contains(tool),
+                "the prompt must name {tool}: it is the producer's whole ability to write a body"
+            );
+        }
+        assert!(
+            prompt.contains("LINKAGE REJECT"),
+            "a linkage error is now a `reject` ground, so the prompt must say how to clear one"
+        );
+        assert!(
+            prompt.contains("DIRECTION-LOCKED"),
+            "the prompt must state the invariant, not just the call"
+        );
+        // The retired verdict must not be taught as a state the producer waits in.
+        assert!(
+            !prompt.contains("ai:relink"),
+            "`ai:relink` is retired (#135) — the prompt must not name it as a state"
+        );
+    }
+
+    /// The vetter's prompt is where the verdict vocabulary is TAUGHT, and a prompt still offering
+    /// `relink` would spend a whole run's tool calls discovering the guard refuses it.
+    #[test]
+    fn the_vetter_prompt_teaches_four_verdicts_and_routes_linkage_to_reject() {
+        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains(&format!("`{}`", super::VETTER_VERDICTS.join("|"))),
+            "the prompt must state the vocabulary as the guard enforces it: {:?}",
+            super::VETTER_VERDICTS
+        );
+        // It may explain that `relink` is gone; it may not offer it as a verdict.
+        assert!(
+            !prompt.contains("`relink` ="),
+            "`relink` is no longer a verdict of this machine (#135)"
+        );
+        assert!(
+            prompt.contains("weaken_closes"),
+            "the vetter must know the producer CAN execute a linkage reject — a reject with no \
+             exit is the deadlock #135 was filed about"
+        );
+    }
+
     // MCP mode's whole claim is that a non-FSM operation is UNREPRESENTABLE: no Bash at all, so no
     // raw `gh`/`git`, and no prefix-matched deny-list to route around.
     #[test]
@@ -18224,9 +18861,15 @@ mod record_verdict_tests {
     };
     use serde_json::json;
 
+    /// #135: `relink` is not a verdict of this machine any more. It is asserted HERE, on the
+    /// mapping, as well as on `VETTER_VERDICTS` — the MCP guard checks the vocabulary but the CLI
+    /// reaches `record_verdict_apply` through `verdict_label` alone, so leaving the arm in place
+    /// would keep the retired label writable from a command line.
     #[test]
-    fn verdict_label_includes_relink() {
-        assert_eq!(verdict_label("relink"), Some("ai:relink"));
+    fn relink_is_not_a_verdict() {
+        assert_eq!(verdict_label("relink"), None);
+        assert!(!super::VETTER_VERDICTS.contains(&"relink"));
+        assert_eq!(super::VETTER_VERDICTS.len(), 4);
     }
 
     // GAP-CLOSER: pins that the recording decision REFUSES when a human verdict is present. Removing
@@ -21040,6 +21683,9 @@ mod fsm_completeness_tests {
             classify_lane(&s(&["ai:reject"]), None, false),
             (Lane::VetterVerdicts, "ai:reject".to_string())
         );
+        // RETIRED (#135) but still classified: the label is unwritable now, and the PR a pre-#135
+        // run parked must stay VISIBLE in its own state until the human re-records it, not
+        // silently reappear as `un-vetted` (the `ai:blocked-infra` lesson from #108).
         assert_eq!(
             classify_lane(&s(&["ai:relink"]), None, false),
             (Lane::VetterVerdicts, "ai:relink".to_string())
@@ -23900,7 +24546,18 @@ mod mcp_tests {
     #[test]
     fn a_verdict_outside_the_vocabulary_is_refused_and_never_reaches_the_effect() {
         let f = FakeExec::ok();
-        for bogus in ["approve", "merge", "close-candidate", "READY", "ready!", ""] {
+        // `relink` sits in this list, not the vocabulary, from #135 onward: a linkage error is a
+        // `reject` whose note names the reference, and the producer executes it with
+        // `weaken_closes`. A vetter that still tries the retired word is refused at the guard.
+        for bogus in [
+            "approve",
+            "merge",
+            "close-candidate",
+            "READY",
+            "ready!",
+            "",
+            "relink",
+        ] {
             let resp = f
                 .handle(&call(
                     "record_verdict",
@@ -24423,7 +25080,7 @@ mod mcp_tests {
     // --- profiles -------------------------------------------------------------------------------
 
     #[test]
-    fn the_producer_surface_is_clone_lifecycle_and_nothing_else() {
+    fn the_producer_surface_is_clone_lifecycle_and_the_two_body_repairs() {
         let f = FakeExec::producer();
         let resp = f
             .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
@@ -24432,7 +25089,17 @@ mod mcp_tests {
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
-            vec!["clone_create", "clone_release", "clone_list", "clone_gc"]
+            vec![
+                "clone_create",
+                "clone_release",
+                "clone_list",
+                "clone_gc",
+                // #136: BOTH body repairs are tools, so what the producer may write to a PR body is
+                // something `tools/list` states rather than something a prefix-matched
+                // `Bash(pr-review-report:*)` allow rule happens to permit.
+                "repair_qa_block",
+                "weaken_closes",
+            ]
         );
         for t in &tools {
             assert!(!t["description"].as_str().unwrap().is_empty());
@@ -24456,11 +25123,19 @@ mod mcp_tests {
         );
 
         let v = FakeExec::ok();
-        for producer_only in ["clone_create", "clone_gc", "clone_list"] {
+        // The BODY REPAIRS are in this list on purpose (#136): the vetter judges a PR, it never
+        // edits one. A verdict that rewrote the body it was judging would be marking its own input.
+        for producer_only in [
+            "clone_create",
+            "clone_gc",
+            "clone_list",
+            "repair_qa_block",
+            "weaken_closes",
+        ] {
             let resp = v
                 .handle(&call(
                     producer_only,
-                    json!({"repo": "o/r", "name": "x", "branch": "b"}),
+                    json!({"repo": "o/r", "name": "x", "branch": "b", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
                 ))
                 .unwrap();
             assert!(is_error(&resp), "{producer_only} must not exist for vetter");
@@ -27119,5 +27794,384 @@ mod repair_qa_block_tests {
             Cli::try_parse_from(["prr", "repair-qa-block", "o/r", "1"]).is_err(),
             "--block-file is not optional"
         );
+    }
+}
+
+#[cfg(test)]
+mod weaken_closes_tests {
+    use super::*;
+
+    /// A section-8-complete evidence block whose CATEGORY line legitimately writes about the very
+    /// keywords this tool rewrites — the shape that makes "leave the `## QA` block alone" load
+    /// bearing rather than decorative.
+    const QA: &str = "## QA\n\
+         - Discriminating tests: t_split - fails on base (ran on the base checkout)\n\
+         - Mutations applied: vault.sol:12 flip -> t_split\n\
+         - Oracle: the issue's worked example, not the implementation\n\
+         - Category check: issue asks A,B,C; covered A only, so Refs #412 not Closes #412\n";
+
+    /// A real-shaped producer body: a linkage line, prose, a later section, and the evidence block.
+    fn body_with_qa() -> String {
+        format!(
+            "Closes #412\nRefs #99\n\n\
+             Adds the missing decimals split so a 6/18 vault stops rounding to zero.\n\n\
+             ## Notes\n\
+             The fixture is 6/18 on purpose.\n\n\
+             {QA}"
+        )
+    }
+
+    fn edits(body: &str, issue: u64) -> Vec<BodyEdit> {
+        match weaken_closes(body, issue) {
+            Ok(RelinkPlan::Weaken(e)) => e,
+            other => panic!("expected a weaken plan, got {other:?}"),
+        }
+    }
+
+    fn weakened(body: &str, issue: u64) -> String {
+        apply_body_edits(body, &edits(body, issue))
+    }
+
+    // ---- the scanner the whole thing rests on ----------------------------------------------
+
+    /// The span a plan rewrites must be the KEYWORD and nothing else — not the `#N`, not the
+    /// separator, not the line. `closing_keywords` is asserted as a PROJECTION of the same scan, so
+    /// the set the direction lock compares and the spans the edit writes cannot come apart.
+    #[test]
+    fn closing_refs_span_the_keyword_and_project_to_the_number_set() {
+        let text = "Closes #99 and fixes: #12, see #7 and closest #5";
+        let refs = closing_refs(text);
+        let spans: Vec<&str> = refs.iter().map(|r| &text[r.keyword.clone()]).collect();
+        assert_eq!(spans, vec!["Closes", "fixes"]);
+        assert_eq!(
+            refs.iter().map(|r| r.number).collect::<Vec<_>>(),
+            vec![99, 12]
+        );
+        assert_eq!(closing_keywords(text), vec![99, 12]);
+        // A repeated reference keeps BOTH spans while the number set de-duplicates — the edit has
+        // to reach every occurrence, the backlog computation only cares that the issue is closed.
+        let twice = "Closes #5 ... closes #5";
+        assert_eq!(closing_refs(twice).len(), 2);
+        assert_eq!(closing_keywords(twice), vec![5]);
+        // Multi-byte text does not shift a span (the `to_lowercase` hazard: it can change LENGTH).
+        let em = "chore — Closes #8";
+        let r = &closing_refs(em)[0];
+        assert_eq!(&em[r.keyword.clone()], "Closes");
+    }
+
+    /// `mentions_issue` is what separates the clean no-op from the refusal, so its digit handling
+    /// is asserted directly: `#1234` is not a reference to `#12`.
+    #[test]
+    fn mentions_issue_reads_the_whole_digit_run() {
+        assert!(mentions_issue("see #12 for context", 12));
+        assert!(mentions_issue("Refs #12", 12));
+        assert!(!mentions_issue("Refs #1234", 12), "#1234 is not #12");
+        assert!(!mentions_issue("Refs #123", 12), "#123 is not #12");
+        // the digit run STOPS at a non-digit, so `#12a` really is a reference to #12
+        assert!(mentions_issue("Refs #12a", 12));
+        assert!(!mentions_issue("no references here", 12));
+        assert!(!mentions_issue("#", 12));
+    }
+
+    // ---- surgical ---------------------------------------------------------------------------
+
+    /// THE SURGICAL BOUNDARY. Every byte outside the keyword spans is identical afterwards,
+    /// asserted as a string equality on the remainder rather than eyeballed: the body minus the
+    /// spans, before and after, must be the same string.
+    #[test]
+    fn weakening_leaves_every_byte_outside_the_keyword_identical() {
+        let body = body_with_qa();
+        let plan = edits(&body, 412);
+        assert_eq!(plan.len(), 1, "one Closes #412 outside the evidence block");
+        let span = plan[0].span.clone();
+        assert_eq!(&body[span.clone()], "Closes");
+        let new_body = apply_body_edits(&body, &plan);
+        assert_eq!(&new_body[span.start..span.start + 4], "Refs");
+        // the remainder, both sides
+        assert_eq!(
+            format!("{}{}", &body[..span.start], &body[span.end..]),
+            format!("{}{}", &new_body[..span.start], &new_body[span.start + 4..]),
+            "a byte outside the keyword moved"
+        );
+        // …and the length changed by exactly `Closes` -> `Refs`.
+        assert_eq!(new_body.len(), body.len() - "Closes".len() + "Refs".len());
+        assert!(new_body.starts_with("Refs #412\nRefs #99\n"));
+    }
+
+    /// EVERY occurrence outside the evidence block is weakened, not just the first — a body that
+    /// says `Closes #5` twice still closes #5 if only one is rewritten.
+    #[test]
+    fn every_occurrence_outside_the_block_is_weakened() {
+        let body = "Closes #5\n\nand also fixes #5 in the second commit\n";
+        assert_eq!(edits(body, 5).len(), 2);
+        let new_body = weakened(body, 5);
+        assert_eq!(
+            new_body,
+            "Refs #5\n\nand also Refs #5 in the second commit\n"
+        );
+        assert!(closing_keywords(&new_body).is_empty());
+    }
+
+    /// One issue at a time: weakening #412 must not disturb a sibling `Closes #500`.
+    #[test]
+    fn a_sibling_closing_reference_is_not_touched() {
+        let body = "Closes #412\nCloses #500\n";
+        let new_body = weakened(body, 412);
+        assert_eq!(new_body, "Refs #412\nCloses #500\n");
+        assert_eq!(closing_keywords(&new_body), vec![500]);
+    }
+
+    // ---- idempotent -------------------------------------------------------------------------
+
+    /// Running it twice is running it once, and the second run is a clean NO-OP rather than an
+    /// error — a rework loop that repeats a step must not be told its own work is a conflict.
+    #[test]
+    fn weakening_is_idempotent() {
+        let body = "Closes #412\nRefs #99\n\nprose about the split\n";
+        let once = weakened(body, 412);
+        assert_eq!(once, "Refs #412\nRefs #99\n\nprose about the split\n");
+        for run in 2..=4 {
+            assert_eq!(
+                weaken_closes(&once, 412),
+                Ok(RelinkPlan::AlreadyWeak),
+                "run {run} must be a clean no-op"
+            );
+        }
+        // …and an issue the body links but never CLOSED is the same clean no-op, not a refusal:
+        // there is a matching reference, it just already says what the repair would make it say.
+        assert_eq!(weaken_closes(body, 99), Ok(RelinkPlan::AlreadyWeak));
+    }
+
+    // ---- refuses, with the reason ------------------------------------------------------------
+
+    /// A call naming an issue the body does not reference REFUSES rather than weakening the
+    /// nearest thing that looked close enough, and the refusal NAMES the issue and the reason.
+    #[test]
+    fn an_unreferenced_issue_is_refused_by_name_not_approximated() {
+        let body = "Closes #412\nRefs #99\n";
+        assert_eq!(
+            weaken_closes(body, 413),
+            Err(RelinkRefusal::NoSuchReference(413))
+        );
+        assert_eq!(RelinkRefusal::NoSuchReference(413).exit(), 4);
+        let rendered = RelinkRefusal::NoSuchReference(413).render("o/r#1");
+        assert!(rendered.contains("#413"), "{rendered}");
+        assert!(rendered.contains("does not reference"), "{rendered}");
+        assert!(rendered.contains("Nothing was written"), "{rendered}");
+        // and the adjacent reference really is untouched by the refusal
+        assert_eq!(closing_keywords(body), vec![412]);
+    }
+
+    /// A closing reference that exists ONLY inside the `## QA` evidence block is refused, not
+    /// rewritten. Editing the evidence to change the linkage is the laundering `repair-qa-block`'s
+    /// `--replace` refusal already names; the fix is to re-run the pass, and the refusal says so.
+    #[test]
+    fn an_evidence_only_reference_is_refused_rather_than_rewritten() {
+        let body = format!("Refs #412\n\nprose\n\n{QA}");
+        assert!(
+            closing_keywords(&body).contains(&412),
+            "the fixture's ONLY Closes #412 is the one inside the block"
+        );
+        assert_eq!(
+            weaken_closes(&body, 412),
+            Err(RelinkRefusal::OnlyInQaBlock(412))
+        );
+        assert_eq!(RelinkRefusal::OnlyInQaBlock(412).exit(), 6);
+        let rendered = RelinkRefusal::OnlyInQaBlock(412).render("o/r#1");
+        assert!(rendered.contains("## QA"), "{rendered}");
+        assert!(rendered.contains("repair-qa-block --replace"), "{rendered}");
+        // This is also what a SECOND run lands in when the first left an evidence-block reference
+        // behind, and reporting it as a refusal rather than a no-op is the honest answer: the PR
+        // still closes the issue, and this tool is not allowed to be the thing that changes that.
+        let after_first = weakened(&body_with_qa(), 412);
+        assert!(closing_keywords(&after_first).contains(&412));
+        assert_eq!(
+            weaken_closes(&after_first, 412),
+            Err(RelinkRefusal::OnlyInQaBlock(412))
+        );
+    }
+
+    // ---- the QA block survives, and still passes the gate --------------------------------------
+
+    /// The evidence block comes back BYTE-IDENTICAL, and the repaired body still satisfies
+    /// `require-qa-block`'s own predicate — the same reuse `repair-qa-block` does, so what one
+    /// repair leaves behind the other gate still accepts.
+    #[test]
+    fn the_qa_block_survives_the_repair_and_still_passes_the_gate() {
+        let body = body_with_qa();
+        assert!(carries_qa_block(&body), "the fixture starts compliant");
+        let new_body = weakened(&body, 412);
+        assert!(
+            carries_qa_block(&new_body),
+            "the repaired body must still pass the PR-open gate's predicate"
+        );
+        let span = qa_section_span(&new_body).expect("the block is still there");
+        assert_eq!(
+            &new_body[span], QA,
+            "the evidence block is not byte-identical after the repair"
+        );
+        // The category line still says what the evidence pass produced, `Closes #412` and all.
+        assert!(new_body.contains("so Refs #412 not Closes #412"));
+    }
+
+    // ---- THE DIRECTION LOCK -------------------------------------------------------------------
+
+    /// The only text a linkage edit can carry is [`REFS_KEYWORD`], and that word is not a closing
+    /// keyword. This is the invariant at its deepest level: before any check runs, there is no
+    /// value the tool could write that GitHub would resolve into `closingIssuesReferences`.
+    #[test]
+    fn the_only_text_a_linkage_edit_writes_is_refs() {
+        assert_eq!(REFS_KEYWORD, "Refs");
+        assert!(
+            closing_keywords(&format!("{REFS_KEYWORD} #1")).is_empty(),
+            "the replacement keyword must not itself close an issue"
+        );
+        for (body, issue) in [
+            ("Closes #1", 1u64),
+            ("fixes: #2 and resolved #2", 2),
+            ("close#3", 3),
+        ] {
+            for e in edits(body, issue) {
+                assert_eq!(e.text, REFS_KEYWORD, "an edit wrote something else");
+            }
+        }
+    }
+
+    /// THE INVARIANT, pinned end to end: over a corpus of adversarial bodies and every issue number
+    /// they could name, NO input makes `weaken_closes` produce a body that closes an issue the
+    /// input did not already close.
+    ///
+    /// The oracle is `closing_keywords` — the same function `commit-closes` compares against
+    /// GitHub's live `closingIssuesReferences`, i.e. the set `uncovered-issues` computes the
+    /// producer's backlog from. So this asserts the thing that actually matters: a producer running
+    /// this tool can only ever GROW its own inbox.
+    #[test]
+    fn no_input_makes_weaken_closes_write_a_closes_the_body_did_not_have() {
+        let corpus = [
+            "",
+            "Closes #1",
+            "closes #1 closes #1",
+            "Closes #1\nCloses #2\nRefs #3\n",
+            "fix#4 fixes: #4\tresolved #4",
+            "see #5, part of #5, closest #5, prefixes #5",
+            "CLOSES #6 Fixes #6 rEsOlVeS #6",
+            "closes the door, see #7",
+            "chore — closes #8 (em dash before it)",
+            "Closes #9 closes#9 close: #9",
+            "## QA\n- Discriminating tests: t - fails on base\n- Mutations applied: a:1 -> t\n\
+             - Oracle: the issue\n- Category check: Refs #10 not Closes #10\n",
+            &body_with_qa(),
+            "resolve #11 resolves #12 resolved #13",
+            "Closes #14\n\n## QA\n- Discriminating tests: t - fails on base\n\
+             - Mutations applied: a:1 -> t\n- Oracle: the issue\n- Category check: Closes #14\n",
+            "no references at all",
+            "#15 alone",
+            "Closes #16 Closes #160 Closes #1600",
+        ];
+        let mut planned = 0usize;
+        for body in corpus {
+            let before = closing_keywords(body);
+            for issue in 1..=1600u64 {
+                let Ok(RelinkPlan::Weaken(plan)) = weaken_closes(body, issue) else {
+                    continue;
+                };
+                planned += 1;
+                let new_body = apply_body_edits(body, &plan);
+                let after = closing_keywords(&new_body);
+                for n in &after {
+                    assert!(
+                        before.contains(n),
+                        "weaken_closes({body:?}, {issue}) ADDED a closing reference to #{n}: \
+                         {before:?} -> {after:?}"
+                    );
+                }
+                for e in &plan {
+                    assert_eq!(
+                        e.text, REFS_KEYWORD,
+                        "{body:?} #{issue} wrote something else"
+                    );
+                }
+                assert_ne!(
+                    new_body, body,
+                    "a weaken plan that changed nothing: {body:?} #{issue}"
+                );
+            }
+        }
+        assert!(
+            planned >= 15,
+            "the corpus produced only {planned} plans — it stopped exercising the lock"
+        );
+    }
+
+    /// …and the lock's PREDICATE, driven straight in BOTH directions, so it is proven to see a
+    /// strengthening rather than proven vacuous by a corpus that cannot produce one. Inverting the
+    /// comparison flips both halves of this at once.
+    #[test]
+    fn closes_added_sees_a_strengthening_and_only_a_strengthening() {
+        // WEAKENING — the only thing this tool does. Nothing added.
+        assert!(closes_added("Closes #5", "Refs #5").is_empty());
+        assert!(closes_added("Closes #5 Closes #6", "Refs #5 Closes #6").is_empty());
+        assert!(closes_added("Closes #5", "Closes #5").is_empty());
+        assert!(closes_added("", "").is_empty());
+        // STRENGTHENING — the thing it may never do, in every spelling GitHub honours.
+        assert_eq!(closes_added("Refs #5", "Closes #5"), vec![5]);
+        assert_eq!(closes_added("see #5", "fixes #5"), vec![5]);
+        assert_eq!(closes_added("", "resolved #5"), vec![5]);
+        assert_eq!(closes_added("Closes #5", "Closes #5 Closes #6"), vec![6]);
+        assert_eq!(
+            closes_added("Refs #5 Refs #6", "Closes #5 Closes #6"),
+            vec![5, 6]
+        );
+    }
+
+    /// …and the lock is a REFUSAL, not an assumption. Driven directly, so the guard that catches a
+    /// strengthening plan is proven to exist rather than proven vacuous by the corpus above.
+    #[test]
+    fn a_plan_that_would_strengthen_a_linkage_is_refused_and_names_the_damage() {
+        assert_eq!(RelinkRefusal::WouldStrengthen(vec![7]).exit(), 8);
+        let rendered = RelinkRefusal::WouldStrengthen(vec![7, 9]).render("o/r#1");
+        assert!(rendered.contains("#7, #9"), "{rendered}");
+        assert!(rendered.contains("closingIssuesReferences"), "{rendered}");
+        assert!(rendered.contains("Nothing was written"), "{rendered}");
+        // The QA-result guard is the same shape and carries the same posture.
+        assert_eq!(RelinkRefusal::QaBlockChanged.exit(), 7);
+        assert!(RelinkRefusal::QaBlockChanged
+            .render("o/r#1")
+            .contains("bug in weaken-closes"));
+    }
+
+    // ---- the CLI surface ----------------------------------------------------------------------
+
+    #[test]
+    fn weaken_closes_cli() {
+        let parse = |a: &[&str]| Cli::parse_from(a.iter().copied()).command;
+        assert_eq!(
+            parse(&[
+                "prr",
+                "weaken-closes",
+                "rainlanguage/rain.flare",
+                "130",
+                "88"
+            ]),
+            Cmd::WeakenCloses {
+                slug: "rainlanguage/rain.flare".to_string(),
+                pr: "130".to_string(),
+                issue: 88,
+                dry_run: false,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "weaken-closes", "o/r", "1", "2", "--dry-run"]),
+            Cmd::WeakenCloses {
+                slug: "o/r".to_string(),
+                pr: "1".to_string(),
+                issue: 2,
+                dry_run: true,
+            }
+        );
+        // The issue is a NUMBER: `#88` is not a spelling this transition accepts, and there is no
+        // flag that selects a keyword — the direction is not something a caller can ask about.
+        assert!(Cli::try_parse_from(["prr", "weaken-closes", "o/r", "1", "#88"]).is_err());
+        assert!(Cli::try_parse_from(["prr", "weaken-closes", "o/r", "1"]).is_err());
     }
 }
