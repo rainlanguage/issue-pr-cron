@@ -645,7 +645,11 @@ fn map_bounded<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec
             scope.spawn(|| loop {
                 let i = next.fetch_add(1, Ordering::Relaxed);
                 let Some(item) = items.get(i) else { break };
-                *slots[i].lock().expect("slot mutex poisoned") = Some(f(item));
+                // The fetch runs OUTSIDE the lock — `f` blocks on a subprocess for the best part
+                // of a second, and a slot held for that long reads as if workers contend for one.
+                // They do not: an index is handed out once, so each slot has exactly one writer.
+                let result = f(item);
+                *slots[i].lock().expect("slot mutex poisoned") = Some(result);
             });
         }
     });
