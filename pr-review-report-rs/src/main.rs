@@ -19062,8 +19062,21 @@ mod usage_probe_tests {
     }
 }
 
+/// TEST HELPER: read a file that lives at the REPO ROOT, one directory up from the crate.
+///
+/// `cargo test` runs with the CRATE directory as its cwd, so a bare `read_to_string("README.md")`
+/// resolves to nothing and the graceful "not checked out" bail fires ALWAYS — a conformance test
+/// that passes by never running, which is exactly the shape #131 is about one level up. Resolving
+/// from `CARGO_MANIFEST_DIR` makes the bail mean what it says: absent SOURCE (the flake package
+/// build filters these files out), never the wrong directory.
+#[cfg(test)]
+fn repo_root_text(rel: &str) -> Option<String> {
+    std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel)).ok()
+}
+
 #[cfg(test)]
 mod settings_tests {
+    use super::repo_root_text;
     use serde_json::Value;
 
     // The producer AND vetter are one-shot crons that must never park themselves — ScheduleWakeup and
@@ -19094,10 +19107,6 @@ mod settings_tests {
         perm_list(rel, "deny")
     }
 
-    fn read_text(rel: &str) -> Option<String> {
-        std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel)).ok()
-    }
-
     // The wiring above only means something if the RUNNER launches it. `review-run.sh` is the only
     // thing that starts the vetter, so this pins the last side: it names the prompt/settings that
     // exist, passes the MCP server config with `--strict-mcp-config`, and offers NO second surface —
@@ -19105,7 +19114,7 @@ mod settings_tests {
     // vetter configurations where one is unreachable is drift a reader cannot resolve.
     #[test]
     fn the_vetter_runner_launches_the_mcp_surface_and_only_that() {
-        let Some(sh) = read_text("review-run.sh") else {
+        let Some(sh) = repo_root_text("review-run.sh") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
 
@@ -19139,14 +19148,16 @@ mod settings_tests {
             "review-mcp.json",
         ] {
             assert!(
-                read_text(f).is_some(),
+                repo_root_text(f).is_some(),
                 "review-run.sh names {f}, which must exist"
             );
         }
 
         // No opt-in flag survives in the runner or the deployment-config template.
         for f in ["review-run.sh", "cron.env.example"] {
-            let Some(text) = read_text(f) else { continue };
+            let Some(text) = repo_root_text(f) else {
+                continue;
+            };
             assert!(
                 !text.contains("VETTER_MCP"),
                 "{f}: the vetter's surface is not selectable — no VETTER_MCP"
@@ -19232,8 +19243,8 @@ mod settings_tests {
     // records nothing (#63). Allowed-and-unused costs one schema; disallowed-and-needed costs a run.
     #[test]
     fn the_vetter_presents_its_surface_instead_of_deferring_it() {
-        let Ok(runner) = std::fs::read_to_string("review-run.sh") else {
-            return;
+        let Some(runner) = repo_root_text("review-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
             runner.contains("export ENABLE_TOOL_SEARCH=false"),
@@ -19254,8 +19265,8 @@ mod settings_tests {
     // the deny-list prefix-matches into unusability (#56).
     #[test]
     fn the_producer_prompt_releases_clones_through_the_tool_not_rm_rf() {
-        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
-            return;
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
             !prompt.contains("rm -rf <clonedir>"),
@@ -19274,9 +19285,14 @@ mod settings_tests {
         ] {
             assert!(prompt.contains(tool), "the prompt must name {tool}");
         }
-        // …and the old shell recipes for those moves are gone.
+        // …and the old shell recipes for those moves are gone. "Those moves" is CREATE, RELEASE
+        // and COLLECT — a PR-BRANCH re-sync (`git -C <dir> fetch origin && …`, the reject rework of
+        // step 2z) is a different operation on a checkout that already exists, and is still shell.
         assert!(!prompt.contains("pr-review-report gc-clones"));
-        assert!(!prompt.contains("git -C <dir> fetch origin &&"));
+        assert!(
+            prompt.contains("Do NOT hand-roll this with `git clone`"),
+            "clone CREATION must be the tool's, said as a prohibition and not merely omitted"
+        );
     }
 
     /// #135/#136: retiring `ai:relink` only works if the work it named became something the
@@ -19284,7 +19300,7 @@ mod settings_tests {
     /// has to teach the reject-handling that replaces it — and name the tool, not a `gh pr edit`.
     #[test]
     fn the_producer_prompt_teaches_the_linkage_repair_as_a_tool() {
-        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         for tool in ["mcp__fsm__weaken_closes", "mcp__fsm__repair_qa_block"] {
@@ -19301,10 +19317,16 @@ mod settings_tests {
             prompt.contains("DIRECTION-LOCKED"),
             "the prompt must state the invariant, not just the call"
         );
-        // The retired verdict must not be taught as a state the producer waits in.
+        // The retired verdict must not be taught as a state the producer waits in. As with the
+        // vetter's own prompt, EXPLAINING that it is gone is exactly what a prompt should do —
+        // what it may not do is send the producer looking for the label.
         assert!(
-            !prompt.contains("ai:relink"),
+            !prompt.contains("--label ai:relink") && !prompt.contains("`ai:relink` PR"),
             "`ai:relink` is retired (#135) — the prompt must not name it as a state"
+        );
+        assert!(
+            prompt.contains("There is no `ai:relink` verdict any more"),
+            "…and it must say so, so a producer that saw the old label knows it is dead"
         );
     }
 
@@ -19312,7 +19334,7 @@ mod settings_tests {
     /// `relink` would spend a whole run's tool calls discovering the guard refuses it.
     #[test]
     fn the_vetter_prompt_teaches_four_verdicts_and_routes_linkage_to_reject() {
-        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
@@ -19632,8 +19654,8 @@ mod scope_coverage_tests {
     use super::{
         anchor_exempt, anchorable_ranges, coverage_gaps, coverage_refusal, covered_from_document,
         diff_changed_paths, diff_new_lines, hunk_header, parse_covered, ranges_hint,
-        read_covered_file, record_gate, BadAnchor, CoverageAnchor, CoverageGaps, Covered,
-        RecordGate, TRUSTED_AUTHOR, VET_PROTOCOL, VET_PROTOCOL_PREFIX,
+        read_covered_file, record_gate, repo_root_text, BadAnchor, CoverageAnchor, CoverageGaps,
+        Covered, RecordGate, TRUSTED_AUTHOR, VET_PROTOCOL, VET_PROTOCOL_PREFIX,
     };
     use serde_json::json;
 
@@ -20397,7 +20419,7 @@ diff --git a/b.md b/b.md
     // one PR at a time — the vetter cannot escalate, so an unteachable gate is a stuck queue.
     #[test]
     fn the_vetter_prompt_teaches_the_coverage_claim_it_must_satisfy() {
-        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
@@ -20423,7 +20445,7 @@ diff --git a/b.md b/b.md
     // prose that explains what it means.
     #[test]
     fn the_readme_documents_the_protocol_in_force() {
-        let Ok(readme) = std::fs::read_to_string("README.md") else {
+        let Some(readme) = repo_root_text("README.md") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(

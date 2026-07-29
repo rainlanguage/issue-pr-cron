@@ -288,7 +288,11 @@ it finds is a different PR's code.
   is a gate nothing can pass. The refusal (exit 4) reports **every** unmet entry
   at once and prints the line ranges that would satisfy it: the vetter cannot
   escalate to a human the way a producer can, so a correct verdict must never be
-  more than ONE corrected call from being recorded.
+  more than ONE corrected call from being recorded. A PR that changes files
+  whose diff carries not one `diff --git` header is refused outright: a claim
+  checked against a diff that is not there is not checked, and a guard that
+  silently stops firing is this very failure one level up, inside the thing
+  built to prevent it.
 - **The human's TERMINAL edge is a transition too.** `gh issue close` knows
   nothing about the FSM, so a hand-close left `ai:close-candidate` attached: 74
   closed subjects org-wide (55 issues, 19 PRs) carried it when #94 was filed, a
