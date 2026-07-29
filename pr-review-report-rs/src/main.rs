@@ -18816,6 +18816,89 @@ mod settings_tests {
         );
     }
 
+    /// #140: the screenshot waiver was being used to skip the render with the CLAIM the render
+    /// would have made — cyclo.site#431 waived on "rendered output is pixel-identical", #408 rode
+    /// a pending marker through three vetter passes while a render would have shown four expired
+    /// epochs at a glance. Both were human-rejected. A gate that still accepts a free-text
+    /// `<reason>` re-licenses exactly that, so the narrowing is pinned here.
+    #[test]
+    fn the_vetter_prompt_narrows_the_screenshot_waiver_to_a_failed_render() {
+        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("screenshot pending (manual)"),
+            "the marker must stay taught — a genuinely unrenderable change is a real category"
+        );
+        assert!(
+            prompt.contains("ATTEMPTED AND FAILED"),
+            "the waiver's bar is a render that was attempted and failed, not a stated opinion"
+        );
+        assert!(
+            prompt.contains("A JUDGEMENT ABOUT THE RENDERED OUTPUT IS NEVER A WHY-NOT"),
+            "the ban must be stated as a RULE — examples alone leave the next phrasing open"
+        );
+        for conclusion in ["pixel-identical", "no visible effect", "cosmetic only"] {
+            assert!(
+                prompt.contains(conclusion),
+                "the prompt must name `{conclusion}` as a conclusion a render supports or \
+                 refutes: these are the sentences the evidence was actually skipped with"
+            );
+        }
+        assert!(
+            prompt.contains("cyclo.site#431"),
+            "the rule carries its incident — a bare prohibition is the kind a vetter argues around"
+        );
+        // The old open-ended bar is what let a claim pass as a why-not. It must be GONE, not
+        // merely qualified earlier in the bullet: the tail sentence is what a skimming vetter reads.
+        assert!(
+            !prompt.contains("a screenshot or a stated why-not"),
+            "`a stated why-not` is the loose bar #140 closed — it must not survive anywhere"
+        );
+    }
+
+    /// #140, producer side. The two prompts are deliberately symmetric: step 5 governs the PR the
+    /// producer OPENS and 7a the close-candidate flag it FILES, and both offered a free-text
+    /// why-not. Narrowing only the vetter would leave the producer writing waivers that are now
+    /// an automatic reject — a full round trip through the queue per PR.
+    #[test]
+    fn the_producer_prompt_narrows_the_screenshot_waiver_to_a_failed_render() {
+        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("screenshot pending (manual)"),
+            "step 5 must SPELL the marker the vetter's gate and `worklist`'s screenshot-3c routing \
+             both read — this is the only place the producer is told what it is"
+        );
+        assert!(
+            prompt.contains("THE ONLY WAIVER IS A RENDER YOU ATTEMPTED"),
+            "step 5's waiver must be anchored to an attempt, or `missing` reads as `pending`"
+        );
+        assert!(
+            prompt.contains("YOUR OPINION OF WHAT THE RENDER WOULD HAVE SHOWN IS NEVER THE REASON"),
+            "the producer needs the rule that convicted cyclo.site#431, not just the vetter's"
+        );
+        assert!(
+            prompt.contains("cyclo.site#431"),
+            "the rule carries its incident, like every other rule in this prompt"
+        );
+        // 7a is the OTHER waiver: a GUI close-candidate asks a human to destroy work on the
+        // strength of a rendered claim, so its why-not takes the same bar.
+        assert!(
+            prompt.contains("screenshot-not-possible"),
+            "7a keeps its own marker spelling — the flag tool's reason is parsed by a human"
+        );
+        assert!(
+            prompt.contains("FAILED-ATTEMPT why-not"),
+            "7a must demand the attempt too, or the narrowing only covers PRs"
+        );
+        assert!(
+            !prompt.contains("NEITHER a screenshot NOR a stated why-not"),
+            "7a's old open-ended bar must be gone, not shadowed by a stricter sentence above it"
+        );
+    }
+
     // MCP mode's whole claim is that a non-FSM operation is UNREPRESENTABLE: no Bash at all, so no
     // raw `gh`/`git`, and no prefix-matched deny-list to route around.
     #[test]
