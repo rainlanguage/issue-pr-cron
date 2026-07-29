@@ -1763,12 +1763,6 @@
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 112,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/112",
-      "title": "The producer cannot edit a PR body, so a missing QA block is unrecoverable"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
       "number": 111,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/111",
       "title": "human-rule can park a PR but cannot delegate it — the rework note has no tool"
@@ -5717,7 +5711,7 @@
     "closeCandidateUpheld": 1,
     "leaks": 30,
     "totalProducerPrs": 160,
-    "uncoveredIssues": 625,
+    "uncoveredIssues": 624,
     "unvetted": 4,
     "awaitingReVet": 23,
     "reject": 30,
