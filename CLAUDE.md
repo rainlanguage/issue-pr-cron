@@ -119,6 +119,7 @@ transition functions:
 | `weaken-closes <owner/repo> <n> <issue>`                   | the LINKAGE repair a linkage `reject` names: `Closes #issue` → `Refs #issue`, every other byte identical, `## QA` untouched, DIRECTION-LOCKED so it can only ever remove a closing reference |
 | `mcp [--profile vetter\|producer\|human]`                  | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                                                        |
 | `plugin-version-lockstep [--root <dir>]`                   | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                                                              |
+| `migrate-reject [--apply]`                                 | the #133 one-shot: every open PR still carrying the RETIRED `human:reject` → `ai:reject`. A REPORT unless `--apply` — an org-wide relabel is not one forgotten flag away                     |
 
 ## The layer a human types: slash commands as a plugin
 
@@ -270,9 +271,27 @@ it finds is a different PR's code.
 
 ## Invariants
 
-- **Human decisions are sacred.** A `human:*` label OR a native `APPROVED` /
-  `CHANGES_REQUESTED` review is never overwritten by the vetter —
-  `--record-verdict` refuses (exit 3), closing the TOCTOU race.
+- **Human decisions are sacred.** A `human:*` label, a native `APPROVED` /
+  `CHANGES_REQUESTED` review, OR a `👤 human` ruling comment pinned to the
+  CURRENT head is never overwritten by the vetter — `--record-verdict` refuses
+  (exit 3), closing the TOCTOU race.
+- **A reject is ONE state, and the ruler rides on the comment (#133).**
+  `ai:reject` and `human:reject` demanded the same move from the same actor, so
+  they are one state: `ai:reject`, whoever ruled. The label says what the work
+  is; the **sha-pinned `👤 human` comment** says who said so, and that is where
+  the authority lives. The vetter cannot forge one: `trusted_comments`
+  authenticates by AUTHOR and matches the marker with `starts_with`, and every
+  comment the vetter can post begins `🤖 ai:vetter` — a marker in the middle of
+  a vetter note is body text. **The anchor is also the release.** A rework moves
+  the head, the ruling stops describing the code, and the PR re-enters vetting
+  through the ordinary un-vetted path with the ruling in
+  `pr_context.humanComments`. `reworked-reject` is retired: its timestamp
+  comparison proved only that SOME commit post-dated the label event, and what
+  actually protects the objection is a stateless re-vet that can read it. So
+  `human:*` now means one thing absolutely — sacred, never written or cleared by
+  an AI actor — with no carve-out. `human:reject` survives only as a RETIRED
+  label on PRs the migration has not moved; it stays sacred and stays bucketed
+  until `migrate-reject` does.
 - **The human's TERMINAL edge is a transition too.** `gh issue close` knows
   nothing about the FSM, so a hand-close left `ai:close-candidate` attached: 74
   closed subjects org-wide (55 issues, 19 PRs) carried it when #94 was filed, a
