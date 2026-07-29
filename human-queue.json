@@ -187,6 +187,12 @@
     "ai:close-candidate": [
       {
         "repo": "rainlanguage/rain.dia",
+        "number": 63,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/63",
+        "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
+      },
+      {
+        "repo": "rainlanguage/rain.dia",
         "number": 60,
         "url": "https://github.com/rainlanguage/rain.dia/pull/60",
         "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
@@ -231,12 +237,6 @@
       },
       {
         "repo": "rainlanguage/rain.dia",
-        "number": 63,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/63",
-        "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
         "number": 55,
         "url": "https://github.com/rainlanguage/rain.dia/pull/55",
         "title": "Consolidate pointer codegen to canonical script/Build.sol"
@@ -246,6 +246,18 @@
         "number": 426,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
         "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 399,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
+        "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2777,
+        "url": "https://github.com/rainlanguage/raindex/pull/2777",
+        "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -347,12 +359,6 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 430,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/430",
-        "title": "refactor(component): drop misleading optional chain on required stats prop"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
         "number": 429,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
         "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
@@ -446,12 +452,6 @@
         "number": 394,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
         "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 393,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/393",
-        "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -565,12 +565,6 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 399,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
-        "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
         "number": 386,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
         "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
@@ -616,12 +610,6 @@
         "number": 194,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/194",
         "title": "chore: pin pragma, rename word-count constant, use relative test imports"
-      },
-      {
-        "repo": "rainlanguage/raindex",
-        "number": 2777,
-        "url": "https://github.com/rainlanguage/raindex/pull/2777",
-        "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -725,8 +713,20 @@
         ]
       },
       "human:reject": {
-        "count": 36,
+        "count": 39,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 20,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
+            "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 431,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/431",
+            "title": "fix(component): remove inert min/step attributes from the amount text input"
+          },
           {
             "repo": "rainlanguage/rain.flare",
             "number": 199,
@@ -762,6 +762,12 @@
             "number": 25,
             "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
             "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 408,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
+            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1153,25 +1159,19 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 33,
+        "count": 17,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 106,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/106",
+            "title": "[A02] refuse sentinel scans over word unaligned stack bounds"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 105,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/105",
             "title": "test(uint256): bring the uint256 suite to parity with the bytes32 one"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 134,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/134",
-            "title": "/nr independently checks the vetter's verdict instead of relaying it"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 21,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/21",
-            "title": "fix(deploy): check the derived Zoltu address before skipping a network"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1186,28 +1186,10 @@
             "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
           },
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 20,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
-            "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
-          },
-          {
             "repo": "rainlanguage/rain.solmem",
             "number": 102,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
             "title": "test: pin truncate's accept/reject boundary in both array libs"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 435,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
-            "title": "fix(receipts): preserve display precision by truncating the decimal string"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 434,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
-            "title": "fix(prices): make DataFetcher provider reactive to network switch"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1222,46 +1204,10 @@
             "title": "fix(components): render generic error copy instead of raw error messages"
           },
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 431,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/431",
-            "title": "fix(component): remove inert min/step attributes from the amount text input"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 430,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/430",
-            "title": "refactor(component): drop misleading optional chain on required stats prop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 429,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
-            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 428,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
-            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 427,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
-            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-          },
-          {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 259,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
             "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 425,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
-            "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
           },
           {
             "repo": "rainlanguage/rain.pyth",
@@ -1276,46 +1222,10 @@
             "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
           },
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 408,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
-            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 407,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
-            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 405,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
-            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 404,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
-            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 403,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
-            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 196,
             "url": "https://github.com/rainlanguage/rain.flare/pull/196",
             "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
-          },
-          {
-            "repo": "rainlanguage/dotrain",
-            "number": 143,
-            "url": "https://github.com/rainlanguage/dotrain/pull/143",
-            "title": "fix(parser): comment before next binding bleeds into previous content_position"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1358,8 +1268,14 @@
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 4,
+        "count": 5,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 63,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/63",
+            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
+          },
           {
             "repo": "rainlanguage/rain.dia",
             "number": 60,
@@ -1387,7 +1303,7 @@
         ]
       },
       "ai:design": {
-        "count": 12,
+        "count": 13,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1409,12 +1325,6 @@
           },
           {
             "repo": "rainlanguage/rain.dia",
-            "number": 63,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/63",
-            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
             "number": 55,
             "url": "https://github.com/rainlanguage/rain.dia/pull/55",
             "title": "Consolidate pointer codegen to canonical script/Build.sol"
@@ -1424,6 +1334,18 @@
             "number": 426,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
             "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 399,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
+            "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2777,
+            "url": "https://github.com/rainlanguage/raindex/pull/2777",
+            "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1464,8 +1386,74 @@
         ]
       },
       "ai:ready": {
-        "count": 7,
+        "count": 18,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 21,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/21",
+            "title": "fix(deploy): check the derived Zoltu address before skipping a network"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 435,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
+            "title": "fix(receipts): preserve display precision by truncating the decimal string"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 434,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
+            "title": "fix(prices): make DataFetcher provider reactive to network switch"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 429,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
+            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 428,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 427,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
+            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 425,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
+            "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 407,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
+            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 405,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
+            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 404,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
+            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 403,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 398,
@@ -1492,12 +1480,6 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 393,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/393",
-            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
             "number": 389,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
             "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
@@ -1507,11 +1489,17 @@
             "number": 387,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/387",
             "title": "fix(store): reject zero and null block.number from RPC"
+          },
+          {
+            "repo": "rainlanguage/dotrain",
+            "number": 143,
+            "url": "https://github.com/rainlanguage/dotrain/pull/143",
+            "title": "fix(parser): comment before next binding bleeds into previous content_position"
           }
         ]
       },
       "ai:reject": {
-        "count": 29,
+        "count": 27,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
@@ -1581,12 +1569,6 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 399,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
-            "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
             "number": 386,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
             "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
@@ -1632,12 +1614,6 @@
             "number": 194,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/194",
             "title": "chore: pin pragma, rename word-count constant, use relative test imports"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2777,
-            "url": "https://github.com/rainlanguage/raindex/pull/2777",
-            "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1782,26 +1758,7 @@
       "title": "i was asked to infinite approve quick on deposit"
     }
   ],
-  "closeCandidateUnvetted": [
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1060,
-      "url": "https://github.com/rainlanguage/raindex/issues/1060",
-      "title": "withdraw2 task not being executed when withdrawAmount is <= 0"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1042,
-      "url": "https://github.com/rainlanguage/raindex/issues/1042",
-      "title": "GStreamer and the Embedded video in the homepage causes local build to freeze"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1039,
-      "url": "https://github.com/rainlanguage/raindex/issues/1039",
-      "title": "Unable to install linux release on ubunut24"
-    }
-  ],
+  "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [
     {
       "repo": "rainlanguage/rain.dia",
@@ -1841,6 +1798,24 @@
     },
     {
       "repo": "rainlanguage/raindex",
+      "number": 1060,
+      "url": "https://github.com/rainlanguage/raindex/issues/1060",
+      "title": "withdraw2 task not being executed when withdrawAmount is <= 0"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1042,
+      "url": "https://github.com/rainlanguage/raindex/issues/1042",
+      "title": "GStreamer and the Embedded video in the homepage causes local build to freeze"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1039,
+      "url": "https://github.com/rainlanguage/raindex/issues/1039",
+      "title": "Unable to install linux release on ubunut24"
+    },
+    {
+      "repo": "rainlanguage/raindex",
       "number": 981,
       "url": "https://github.com/rainlanguage/raindex/issues/981",
       "title": "add back button for desktop app"
@@ -1867,27 +1842,33 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/issue-pr-cron",
+      "number": 141,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/141",
+      "title": "The vetter asserts it ran the audit skill; nothing checks what came back — a ready can contradict its own lens"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 140,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/140",
+      "title": "The screenshot waiver lets a GUI claim be its own evidence: two PRs today waived the render that would have refuted them"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 438,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/438",
+      "title": "Remove the rewards section: it is stale by default and every repair produces a differently-stale card"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 437,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/437",
+      "title": "[A16-1 follow-up] fetchTopRewards still has no account shape guard — the boundary half of #329"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
       "number": 137,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/137",
       "title": "The vetter's state-load is still serial: 116 sequential fetches on its first call of every run"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 136,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/136",
-      "title": "Producer has no sanctioned way to repair a PR's issue linkage — give it an MCP tool, direction-locked to Closes to Refs"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 135,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/135",
-      "title": "ai:relink is a reject with a specific note — and the producer has no tool to execute it"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 133,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/133",
-      "title": "ai:reject and human:reject are one state: same owner, same action, split only by who ruled"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -2260,12 +2241,6 @@
       "number": 65,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/65",
       "title": "[A03] [LOW] unsafeExtend inline branch can write Solidity's reserved zero slot at 0x60"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/64",
-      "title": "[A02] [MEDIUM] consumeSentinelTuples never checks that lower and upper are word-aligned with each other, returning tuples of straddled words"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -5762,22 +5737,22 @@
     }
   ],
   "counts": {
-    "ready": 35,
-    "design": 12,
+    "ready": 33,
+    "design": 13,
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
     "closeCandidateIssues": 13,
-    "closeCandidateUnvetted": 3,
-    "closeCandidateUpheld": 10,
+    "closeCandidateUnvetted": 0,
+    "closeCandidateUpheld": 13,
     "leaks": 23,
-    "totalProducerPrs": 159,
+    "totalProducerPrs": 157,
     "uncoveredIssues": 622,
-    "unvetted": 33,
-    "reject": 29,
+    "unvetted": 17,
+    "reject": 27,
     "relink": 1,
-    "closeCandidatePrs": 4,
-    "humanReject": 36,
+    "closeCandidatePrs": 5,
+    "humanReject": 39,
     "humanDesign": 6,
     "humanCloseCandidate": 0
   }
