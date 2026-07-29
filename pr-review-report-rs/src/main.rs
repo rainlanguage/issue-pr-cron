@@ -4611,8 +4611,10 @@ fn record_verdict_apply(
     let Some(target) = verdict_label(verdict) else {
         return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--cost <n>] [--basis <s>] [--dry-run]".to_string()));
     };
-    // `files` rides along on the call that was already being made — the mechanical-convention gate
-    // (#141) needs the PR's changed-file list and must not cost a second round trip to get it.
+    // `files` + `changedFiles` ride along on the call that was already being made — the
+    // mechanical-convention gate (#141) needs the PR's changed-file list and must not cost a second
+    // round trip to get it. `changedFiles` is not redundant: `files` is a capped PAGE, and the count
+    // is the only thing in the document that says so (see [`changed_files_from_view`]).
     let Some(pr_json) = gh_json(&[
         "pr",
         "view",
@@ -4620,7 +4622,7 @@ fn record_verdict_apply(
         "-R",
         slug,
         "--json",
-        "headRefOid,labels,comments,reviewDecision,files",
+        "headRefOid,labels,comments,reviewDecision,files,changedFiles",
     ]) else {
         return Err((
             1,
@@ -11513,7 +11515,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "record_verdict",
-            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost and the vet-protocol stamp. Refuses if a human has decided the PR.",
+            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost and the vet-protocol stamp. Refuses if a human has decided the PR. Also refuses a `ready` whose changed .sol files break the rainlanguage pragma convention (^ for library/abstract, = for concrete INCLUDING concrete test mocks) — the refusal names each file and IS the reject note. It reads the pr_checkout tree, so record the verdict BEFORE clone_release.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -14501,27 +14503,98 @@ fn sol_scan_pr(work_dir: &str, slug: &str, num: u64, sha: &str, files: &[String]
     SolScan::Scanned(findings)
 }
 
-/// The verdict path's adapter onto [`sol_scan_pr`]: pull the changed-file list out of the `gh pr
-/// view` document `record_verdict` already fetched, and resolve the work root from the environment.
+/// What a `gh pr view` document says about a PR's change set — and, decisively, whether that is the
+/// WHOLE change set.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum ChangedFiles {
+    /// The list, complete.
+    Whole(Vec<String>),
+    /// A PAGE of the list. `gh pr view --json files` reads GitHub's file connection, which is capped
+    /// at 100 entries, while `changedFiles` reports the real total — measured on raindex#2796: 143
+    /// against 100. A gate reading the page would skip every `.sol` past the cap and call the PR
+    /// clean, which is the one way a fail-closed gate silently fails open.
+    Truncated { seen: usize, total: u64 },
+    /// The document does not say. Both fields are requested explicitly on the call that produced it,
+    /// so either being absent means the answer is unknown, not that the answer is "nothing".
+    Unknown(&'static str),
+}
+
+/// PURE: read the change set off a `gh pr view` document.
+fn changed_files_from_view(pr_json: &Value) -> ChangedFiles {
+    let Some(arr) = pr_json.get("files").and_then(|f| f.as_array()) else {
+        return ChangedFiles::Unknown("the document carries no `files` array");
+    };
+    let files: Vec<String> = arr
+        .iter()
+        .filter_map(|f| f.get("path").and_then(|p| p.as_str()).map(String::from))
+        .collect();
+    let Some(total) = pr_json.get("changedFiles").and_then(|v| v.as_u64()) else {
+        return ChangedFiles::Unknown(
+            "the document carries no `changedFiles` count, so a truncated file list cannot be told \
+             from a complete one",
+        );
+    };
+    if total > files.len() as u64 {
+        return ChangedFiles::Truncated {
+            seen: files.len(),
+            total,
+        };
+    }
+    ChangedFiles::Whole(files)
+}
+
+/// The whole changed-file list, re-fetching from the paginating REST endpoint when `gh pr view`
+/// handed back a page. Only a PR over the cap pays the extra calls.
+fn pr_changed_files(slug: &str, pr: &str, pr_json: &Value) -> Result<Vec<String>, String> {
+    match changed_files_from_view(pr_json) {
+        ChangedFiles::Whole(files) => Ok(files),
+        ChangedFiles::Unknown(why) => Err(format!("`gh pr view {slug}#{pr}` is unreadable: {why}")),
+        ChangedFiles::Truncated { seen, total } => {
+            let Some(text) = gh_text(&[
+                "api",
+                &format!("repos/{slug}/pulls/{pr}/files"),
+                "--paginate",
+                "--jq",
+                ".[].filename",
+            ]) else {
+                return Err(format!(
+                    "`gh pr view {slug}#{pr}` listed {seen} of {total} changed files and the \
+                     paginated re-fetch failed"
+                ));
+            };
+            let all: Vec<String> = text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect();
+            if (all.len() as u64) < total {
+                return Err(format!(
+                    "the paginated re-fetch returned {} of {slug}#{pr}'s {total} changed files",
+                    all.len()
+                ));
+            }
+            Ok(all)
+        }
+    }
+}
+
+/// The verdict path's adapter onto [`sol_scan_pr`]: resolve the changed-file list from the `gh pr
+/// view` document `record_verdict` already fetched, and the work root from the environment.
 ///
-/// A PR number that will not parse is `NoSource`, not `NotApplicable`. It cannot happen through the
-/// MCP surface (the tool parses the number before it gets here) but the CLI takes a string, and a
-/// gate that answers "nothing to check" to an input it could not understand is a gate with a
-/// spelling that turns it off.
+/// Every failure here is `NoSource`, never `NotApplicable`. A PR number that will not parse names no
+/// checkout; an unreadable file list is not an empty one. Both cannot happen through the MCP surface
+/// (the tool parses the number, and the fields are requested on the call itself) — which is exactly
+/// why they must not be spellings that quietly switch the gate off.
 fn verdict_sol_scan(slug: &str, pr: &str, sha: &str, pr_json: &Value) -> SolScan {
-    let files: Vec<String> = pr_json
-        .get("files")
-        .and_then(|f| f.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|f| f.get("path").and_then(|p| p.as_str()).map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
     let Ok(num) = pr.parse::<u64>() else {
         return SolScan::NoSource(format!(
             "`{pr}` is not a PR number, so no checkout can be named"
         ));
+    };
+    let files = match pr_changed_files(slug, pr, pr_json) {
+        Ok(f) => f,
+        Err(why) => return SolScan::NoSource(why),
     };
     sol_scan_pr(&vet_work_dir(), slug, num, sha, &files)
 }
@@ -14649,9 +14722,9 @@ fn sol_conventions_mode(paths: &[String]) -> i32 {
 #[cfg(test)]
 mod sol_conventions_tests {
     use super::{
-        checkout_dir, sol_convention_gate, sol_decls, sol_pragma, sol_pragma_finding,
-        sol_pragma_op, sol_scan_pr, sol_scan_skip, sol_strip_noncode, verdict_sol_scan,
-        SolFileKind, SolPragmaOp, SolScan,
+        changed_files_from_view, checkout_dir, sol_convention_gate, sol_decls, sol_pragma,
+        sol_pragma_finding, sol_pragma_op, sol_scan_pr, sol_scan_skip, sol_strip_noncode,
+        verdict_sol_scan, ChangedFiles, SolFileKind, SolPragmaOp, SolScan,
     };
     use serde_json::json;
 
@@ -14897,12 +14970,20 @@ mod sol_conventions_tests {
         assert!(sol_pragma("pragma solidity ^0.8.25\ncontract C {}\n").is_none());
     }
 
-    /// The word boundary on the LEFT of `pragma`, which nothing else in the suite reaches.
+    /// The word boundary on the LEFT of `pragma`. The scanner is fed BYTES a PR author wrote, not a
+    /// tree solc has already accepted, so the decoy below is the input that matters: without the
+    /// boundary the match lands inside `notapragma`, `=0.8.25` is read as this file's pragma, and a
+    /// concrete contract floated with `^` passes the gate clean.
     #[test]
     fn a_word_ending_in_pragma_is_not_a_pragma() {
-        let src = "uint256 constant subpragma = 1;\npragma solidity ^0.8.25;\ncontract C {}\n";
+        let src = "notapragma solidity =0.8.25;\npragma solidity ^0.8.25;\ncontract C {}\n";
         let p = sol_pragma(src).expect("pragma");
         assert_eq!(p.line, 2);
+        assert_eq!(p.spec, "^0.8.25");
+        assert_eq!(
+            sol_pragma_finding("src/C.sol", src).expect("finding").found,
+            "^0.8.25"
+        );
     }
 
     // ── the whole rain.deploy tree, as the oracle ───────────────────────────
@@ -15175,21 +15256,74 @@ mod sol_conventions_tests {
     /// NoSource — `NotApplicable` there would be a spelling that switches the gate off.
     #[test]
     fn verdict_scan_reads_the_file_list_and_fails_closed_on_a_bad_number() {
-        let doc = json!({"files":[{"path":"src/L.sol"},{"path":"README.md"}]});
+        let doc = json!({"changedFiles":2,"files":[{"path":"src/L.sol"},{"path":"README.md"}]});
         assert!(matches!(
             verdict_sol_scan("o/r", "not-a-number", "abc", &doc),
             SolScan::NoSource(_)
         ));
-        // No `files` key at all (an older gh, a fetch that lost it) is NOT "no solidity changed".
-        assert!(matches!(
-            verdict_sol_scan("o/r", "not-a-number", "abc", &json!({})),
-            SolScan::NoSource(_)
-        ));
         // A file list with no `.sol` in it is vacuous whatever the number.
         assert_eq!(
-            verdict_sol_scan("o/r", "1", "abc", &json!({"files":[{"path":"README.md"}]})),
+            verdict_sol_scan(
+                "o/r",
+                "1",
+                "abc",
+                &json!({"changedFiles":1,"files":[{"path":"README.md"}]})
+            ),
             SolScan::NotApplicable
         );
+    }
+
+    /// FOUND BY THE MUTATION PASS, and it was a live hole rather than a weak test.
+    ///
+    /// `gh pr view --json files` reads GitHub's file connection, which is CAPPED at 100 — measured
+    /// on `rainlanguage/raindex#2796`, `changedFiles` says 143 and the array holds 100. Reading the
+    /// array as the change set makes every `.sol` past the cap invisible and reports the PR clean:
+    /// a fail-closed gate failing open, on exactly the large PRs where a missed file costs most.
+    /// So the document is only trusted when the count AGREES with the array.
+    #[test]
+    fn a_capped_file_page_is_never_read_as_the_whole_change_set() {
+        let page: Vec<serde_json::Value> = (0..100)
+            .map(|i| json!({"path": format!("src/F{i}.sol")}))
+            .collect();
+        assert_eq!(
+            changed_files_from_view(&json!({"changedFiles": 143, "files": page})),
+            ChangedFiles::Truncated {
+                seen: 100,
+                total: 143
+            }
+        );
+        // Agreement is the whole list.
+        let ChangedFiles::Whole(files) = changed_files_from_view(
+            &json!({"changedFiles":2,"files":[{"path":"a.sol"},{"path":"b.md"}]}),
+        ) else {
+            panic!("a count that agrees with the array is the whole list");
+        };
+        assert_eq!(files, vec!["a.sol".to_string(), "b.md".to_string()]);
+    }
+
+    /// Neither field is optional: both are requested on the call that builds the document, so an
+    /// absent one means the answer is UNKNOWN. "No `files` key" must never read as "no files".
+    #[test]
+    fn a_document_missing_either_field_is_unknown_not_empty() {
+        assert!(matches!(
+            changed_files_from_view(&json!({})),
+            ChangedFiles::Unknown(_)
+        ));
+        assert!(matches!(
+            changed_files_from_view(&json!({"changedFiles": 0})),
+            ChangedFiles::Unknown(_)
+        ));
+        // `files` present, count absent — the shape that cannot be told from a truncated page.
+        assert!(matches!(
+            changed_files_from_view(&json!({"files":[{"path":"a.sol"}]})),
+            ChangedFiles::Unknown(_)
+        ));
+        // …and each of those refuses a `ready` rather than passing it.
+        for doc in [json!({}), json!({"files":[{"path":"a.sol"}]})] {
+            let scan = verdict_sol_scan("o/r", "1", "abc", &doc);
+            assert!(matches!(scan, SolScan::NoSource(_)), "got {scan:?}");
+            assert!(sol_convention_gate("o/r", "1", "ready", &scan).is_some());
+        }
     }
 
     // ── the CLI's tree walk ─────────────────────────────────────────────────

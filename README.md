@@ -639,7 +639,7 @@ Four things that decision is careful about:
   "inconsistent pragma" finding is answered **per file kind** and never by
   mass-pinning a repo to one pragma.
 
-Three things it deliberately does **not** do:
+Four things it deliberately does **not** do:
 
 - **Only `ready` is gated.** `reject`, `design` and `close` pass untouched —
   gating them would leave a convention-breaking PR with no verdict it could be
@@ -650,6 +650,15 @@ Three things it deliberately does **not** do:
   **refuses** the `ready`: a `ready` on a Solidity PR nobody checked out is the
   verdict this gate exists to stop. The one ergonomic consequence is an ordering
   — **record the verdict before `clone_release`** — and the refusal says so.
+- **It never reads a PAGE as the change set.** `gh pr view --json files` reads
+  GitHub's file connection, which is **capped at 100** — on
+  `rainlanguage/raindex#2796`, `changedFiles` says 143 and the array holds 100.
+  Trusting the array would make every `.sol` past the cap invisible and report
+  the PR clean, which is the one way a fail-closed gate silently fails open. So
+  the count and the array must AGREE; when they do not, the whole list is
+  re-fetched from the paginating REST endpoint, and only a PR over the cap pays
+  those calls. Either field missing is "unknown", never "empty". This hole was
+  found by the mutation pass, not by review.
 - **It closes the mechanical class only.** Correctness, security and design are
   not decidable from source text and remain entirely the vetter's; nothing here
   checks them. `i`/`s` storage-class naming and bare `src/`/`test/` imports are
