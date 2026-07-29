@@ -1159,8 +1159,32 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 17,
+        "count": 21,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 146,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/146",
+            "title": "The mechanical audit conventions are checked by the binary, not asked of the vetter"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 23,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
+            "title": "chore(pragma): pin the three concrete .sol files to =0.8.25"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 145,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/145",
+            "title": "record_verdict refuses a verdict that does not account for the PR's changed files"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 144,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/144",
+            "title": "prompts: a claim about the render is never a screenshot why-not"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 106,
@@ -1841,16 +1865,22 @@
   ],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/141",
-      "title": "The vetter asserts it ran the audit skill; nothing checks what came back — a ready can contradict its own lens"
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 63,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/63",
+      "title": "Audit does not check file placement by kind: a concrete contract in lib/ passes clean"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 140,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/140",
-      "title": "The screenshot waiver lets a GUI claim be its own evidence: two PRs today waived the render that would have refuted them"
+      "number": 143,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/143",
+      "title": "Four prompt-pinning tests assert nothing: a bare relative read resolves against the crate root under `cargo test`, so the file is never found"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/142",
+      "title": "Decide the screenshot gate at PR-OPEN: the evidence channel does not exist before `gh pr create`, and the visual-PR classifier misses the cases that caused #140"
     },
     {
       "repo": "cyclofinance/cyclo.site",
@@ -1869,12 +1899,6 @@
       "number": 137,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/137",
       "title": "The vetter's state-load is still serial: 116 sequential fetches on its first call of every run"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 131,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/131",
-      "title": "record_verdict takes scope coverage on trust: a verdict on a file never read is indistinguishable from a diligent one"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -5746,9 +5770,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 23,
-    "totalProducerPrs": 157,
+    "totalProducerPrs": 161,
     "uncoveredIssues": 622,
-    "unvetted": 17,
+    "unvetted": 21,
     "reject": 27,
     "relink": 1,
     "closeCandidatePrs": 5,
