@@ -53,6 +53,36 @@ rewrite the body — and validated with the **gate's own predicate**
 guard names a defect, check that some transition can clear it**; a reject with
 no exit is a deadlock however correct the reject is.
 
+`ai:relink` was the same shape and went unnoticed for longer, because it was a
+whole VERDICT rather than a rejection ground: it told the producer to change a
+body `Closes #N` to `Refs #N`, and the producer's every body write was denied
+(`Bash(gh pr edit:*)`) or absent (its MCP profile was four clone tools). One PR
+sat in it. #135 retires the verdict — a linkage error is a `reject` whose note
+names the reference, because it always named the same owner and the same move —
+and #136 is the transition it never had, `weaken-closes`. The two had to land
+together: consolidating alone would have moved an unexecutable instruction into
+a bigger bucket, where it is harder to notice, which is the failure mode this
+whole section is about.
+
+**A tool that can only WEAKEN.** `weaken-closes` may rewrite `Closes` to `Refs`
+and never the reverse, and that direction is the invariant rather than a
+default: `Closes` is what GitHub resolves into `closingIssuesReferences`, and
+`uncovered-issues` computes the producer's own backlog from that set. A producer
+able to ADD one could mark an issue covered without fixing it — marking its own
+homework, on its own inbox. Weakening can only ever GROW that inbox. It is held
+three ways: the only text an edit carries is the `Refs` constant, the spans come
+from the same scanner `commit-closes` uses, and the planner re-runs
+`closing_keywords` over the result and refuses any plan whose closing set gained
+a number.
+
+**Both body repairs are producer TOOLS** (#136). `repair-qa-block` was reachable
+only as a subcommand under the `Bash(pr-review-report:*)` allow rule, so the
+producer's ability to write a PR body was a prefix-matched permission rather
+than an enumerable transition — and two body repairs with two call shapes is
+exactly the split a future reader has to guess at. Both are on the profile now,
+and both keep their subcommand: a session opened outside the cron has no MCP
+surface, and those are the sessions the QA retrofit exists for (#83).
+
 **A PreToolUse guard is a guard against honest omission, not a security
 boundary.** It reads a command line with a lexer that resolves quoting and
 nothing else — it is not bash and never will be — so a determined bypass always
@@ -69,25 +99,26 @@ deliberate.
 The state diagram lives in [README.md](README.md#pipeline-state-machine). The
 transition functions:
 
-| Subcommand                                                         | Transition it effects                                                                                                                                                                                             |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--queue`                                                          | surfaces the presentable review queue (`ai:ready` + green + mergeable + vetted-at-head)                                                                                                                           |
+| Subcommand                                                 | Transition it effects                                                                                                                                                                        |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--queue`                                                  | surfaces the presentable review queue (`ai:ready` + green + mergeable + vetted-at-head)                                                                                                      |
 | `--record-verdict <owner/repo> <n> <verdict> … --covered-file <p>` | the vetter's write: apply the `ai:*` label + post the `🤖 ai:vetter` comment, bound to the head sha and stamped with the vet protocol (+ cost). Refused unless the coverage claim accounts for every changed file |
-| `--trusted-comments <owner/repo> <n> [--marker] [--issue]`         | author-verified comment read — the only trusted way to read a comment                                                                                                                                             |
-| `--commit-closes <owner/repo> <n>`                                 | closing-keyword vs. `closingIssuesReferences` drift check                                                                                                                                                         |
-| `--backfill-comments`                                              | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment)                                                                                                           |
-| `gc-clones <work-dir>...`                                          | reclaim merged/closed work-clones across one or more clone roots (state cleanup)                                                                                                                                  |
-| `unvetted [--json] [--include-skipped] [--limit n]`                | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals (MCP always pages; the CLI is unbounded unless `--limit`)                                                     |
-| `unvetted_close_candidates` (MCP)                                  | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                                                                        |
-| `record_close_candidate_verdict` (MCP)                             | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                                                                            |
-| `human-rule <owner/repo> <n> <ruling> "<note>"`                    | the HUMAN's PR ruling: `human:<ruling>` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling)                                                                                                |
-| `human-rule-issue <owner/repo> <n> <ruling> "<note>"`              | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed                                                                                                     |
-| `human-close <owner/repo> <n> "<note>"`                            | the HUMAN's TERMINAL edge on either subject: rule `close-candidate`, retire the pending `ai:close-candidate`, close — ONE transition (#94)                                                                        |
-| `record-close-candidate-verdict <owner/repo> <n> <v> …`            | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                                                                                  |
-| `require-qa-block`                                                 | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session                                                       |
-| `repair-qa-block <owner/repo> <n> --block-file <path>`             | the RETROFIT of the same rule on an ALREADY-open PR: appends the §8 block to the body, every other byte identical, validated with `require-qa-block`'s predicate                                                  |
-| `mcp [--profile vetter\|producer\|human]`                          | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                                                                             |
-| `plugin-version-lockstep [--root <dir>]`                           | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                                                                                   |
+| `--trusted-comments <owner/repo> <n> [--marker] [--issue]` | author-verified comment read — the only trusted way to read a comment                                                                                                                        |
+| `--commit-closes <owner/repo> <n>`                         | closing-keyword vs. `closingIssuesReferences` drift check                                                                                                                                    |
+| `--backfill-comments`                                      | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment)                                                                                      |
+| `gc-clones <work-dir>...`                                  | reclaim merged/closed work-clones across one or more clone roots (state cleanup)                                                                                                             |
+| `unvetted [--json] [--include-skipped] [--limit n]`        | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals (MCP always pages; the CLI is unbounded unless `--limit`)                                |
+| `unvetted_close_candidates` (MCP)                          | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                                                   |
+| `record_close_candidate_verdict` (MCP)                     | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                                                       |
+| `human-rule <owner/repo> <n> <ruling> "<note>"`            | the HUMAN's PR ruling: `human:<ruling>` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling)                                                                           |
+| `human-rule-issue <owner/repo> <n> <ruling> "<note>"`      | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed                                                                                |
+| `human-close <owner/repo> <n> "<note>"`                    | the HUMAN's TERMINAL edge on either subject: rule `close-candidate`, retire the pending `ai:close-candidate`, close — ONE transition (#94)                                                   |
+| `record-close-candidate-verdict <owner/repo> <n> <v> …`    | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                                                             |
+| `require-qa-block`                                         | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session                                  |
+| `repair-qa-block <owner/repo> <n> --block-file <path>`     | the RETROFIT of the same rule on an ALREADY-open PR: appends the §8 block to the body, every other byte identical, validated with `require-qa-block`'s predicate                             |
+| `weaken-closes <owner/repo> <n> <issue>`                   | the LINKAGE repair a linkage `reject` names: `Closes #issue` → `Refs #issue`, every other byte identical, `## QA` untouched, DIRECTION-LOCKED so it can only ever remove a closing reference |
+| `mcp [--profile vetter\|producer\|human]`                  | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                                                        |
+| `plugin-version-lockstep [--root <dir>]`                   | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                                                              |
 
 ## The layer a human types: slash commands as a plugin
 
@@ -124,7 +155,7 @@ neither can name the other's transitions.
 | Profile            | Tools                                                                                                                                                                                            |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `vetter` (default) | PRs: `unvetted`, `pr_context`, `pr_checkout`, `record_verdict`, `clone_release`. Close-candidate flags: `unvetted_close_candidates`, `close_candidate_context`, `record_close_candidate_verdict` |
-| `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`                                                                                                                                        |
+| `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`, `repair_qa_block`, `weaken_closes` — the clone lifecycle plus the two body repairs                                                    |
 | `human`            | `next_ready`, `pr_context`, `close_candidate_context`, `human_rule`, `human_rule_issue`, `human_close` — find the subject, read it, rule on it, close it                                         |
 
 The vetter has **two subjects**, not one. A PR is judged on its diff; a producer

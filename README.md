@@ -20,7 +20,6 @@ stateDiagram-v2
     state "un-vetted PR" as unvetted
     state "ai:ready" as ready
     state "ai:reject" as reject
-    state "ai:relink" as relink
     state "ai:design" as design
     state "ai:close-candidate (PR)" as close
     state "ai:blocked-deploy" as bdeploy
@@ -51,7 +50,6 @@ stateDiagram-v2
     %% vet lifecycle — the vetter is the sole verdict transition fn
     unvetted --> ready : vetter record-verdict
     unvetted --> reject : vetter record-verdict
-    unvetted --> relink : vetter record-verdict
     unvetted --> design : vetter record-verdict
     unvetted --> close : vetter record-verdict
     ready --> unvetted : head moves (producer fix) · verdict no longer current
@@ -63,7 +61,7 @@ stateDiagram-v2
 
     %% vetter verdicts route back to the producer, then back to un-vetted
     reject --> unvetted : producer reworks → head moves
-    relink --> unvetted : producer relinks Closes→Refs
+    reject --> unvetted : linkage reject · producer weaken-closes Closes→Refs
 
     %% producer deploy + blocked hand-offs → human resolves → re-work
     ready --> ready : producer deploy · red prod-pin → green
@@ -270,6 +268,17 @@ mutation-validated. A command that re-derived a transition, or reached for raw
 whole line of work exists to remove; the shipped commands are asserted against
 that, by a test that reads their fenced blocks and requires every runnable line
 to be a `pr-review-report` transition.
+
+**A command's grant is all shell or all MCP, never a mixture.** What that buys
+is a command with **no shell fallback** — it cannot reach for `gh` and cannot
+assemble a field by hand — so a command may grant a whole SET of MCP tools, and
+`/nr` grants two: the queue row, and the PR the row's verdict is a claim about.
+The rule used to demand exactly one MCP tool as a stand-in for the same
+guarantee, and the stand-in is what broke: it made "check the verdict against
+the diff" unrepresentable rather than making the shell unreachable (#132). Every
+name in the set is still resolved against what the manifest's server actually
+serves, because the loader drops a name it cannot resolve instead of refusing
+the command.
 
 **Why a plugin rather than files with an install step.** The org already
 distributes Claude Code assets this way — `claude-audit-skills`,
@@ -580,11 +589,12 @@ does not ask for either:
 ### Work-clone lifecycle as an MCP surface (always on)
 
 `pr-review-report mcp --profile producer` serves the **producer's** clone
-lifecycle: `clone_create`, `clone_release`, `clone_list`, `clone_gc`. Unlike the
-vetter's surface this one is **additive** — the producer keeps its Bash, and is
-wired unconditionally (`--mcp-config campaign-mcp.json`, no
-`--strict-mcp-config`), because what it gains is an operation it could not
-previously perform at all:
+lifecycle — `clone_create`, `clone_release`, `clone_list`, `clone_gc` — plus the
+two **body repairs**, `repair_qa_block` and `weaken_closes` (see
+[the linkage repair](#the-linkage-repair-weaken-closes)). Unlike the vetter's
+surface this one is **additive** — the producer keeps its Bash, and is wired
+unconditionally (`--mcp-config campaign-mcp.json`, no `--strict-mcp-config`),
+because what it gains is an operation it could not previously perform at all:
 
 `campaign-settings.json` denies `Bash(rm -rf /:*)`. Deny rules are
 **prefix-matched**, so that also denied `rm -rf /home/gildlab/code/<clone>` —
@@ -652,17 +662,19 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   current at its head. Vetting is a pure function of the PR at its head, so
   "judged before" is not a state — there is one un-vetted state, handled one
   way.
-- **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:relink`, `ai:design`,
-  `ai:close-candidate`.
+- **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:design`,
+  `ai:close-candidate`, plus the RETIRED `ai:relink` for as long as any PR still
+  carries it (#135).
 - **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-on`, plus the RETIRED
   `ai:blocked-infra` for as long as any PR still carries it (#108).
 - **human-decisions** — `human:reject`, `human:design`, `human:close-candidate`.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved
-unchanged; `lanes` and the additive `counts` keys (`reject`, `relink`,
-`closeCandidatePrs`, `humanReject`, `humanDesign`, `humanCloseCandidate`,
-`unvetted`) are the full-machine view the dashboard renders.
+unchanged; `lanes` and the additive `counts` keys (`reject`, `relink` (retired,
+counting down to zero), `closeCandidatePrs`, `humanReject`, `humanDesign`,
+`humanCloseCandidate`, `unvetted`) are the full-machine view the dashboard
+renders.
 
 The ISSUE close-candidate lifecycle carries two further additive counts, which
 split the existing `closeCandidateIssues` (unchanged: every issue carrying the
@@ -830,21 +842,21 @@ and evidence that answers a narrower question than the issue asked.
 
 ## Files (tracked here)
 
-| File                     | Purpose                                                                                                                                                                                                                                                                                                          |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `campaign-run.sh`        | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                               |
-| `campaign-prompt.txt`    | The campaign instructions fed to the model.                                                                                                                                                                                                                                                                      |
-| `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                        |
-| `review-run.sh`          | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                    |
-| `review-prompt.txt`      | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                             |
-| `review-settings.json`   | Tool allow/deny for the vetter: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                                                                                              |
-| `review-mcp.json`        | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                 |
-| `campaign-mcp.json`      | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                         |
-| `cron.env.example`       | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                     |
-| `pr-review-report.sh`    | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / relink / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
-| `hooks/`                 | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                            |
-| `.claude-plugin/`        | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                              |
-| `plugins/human-fsm/`     | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                    |
+| File                     | Purpose                                                                                                                                                                                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `campaign-run.sh`        | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                      |
+| `campaign-prompt.txt`    | The campaign instructions fed to the model.                                                                                                                                                                                                                                                             |
+| `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                               |
+| `review-run.sh`          | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                           |
+| `review-prompt.txt`      | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                    |
+| `review-settings.json`   | Tool allow/deny for the vetter: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                                                                                     |
+| `review-mcp.json`        | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                        |
+| `campaign-mcp.json`      | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                |
+| `cron.env.example`       | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                            |
+| `pr-review-report.sh`    | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
+| `hooks/`                 | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                   |
+| `.claude-plugin/`        | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                     |
+| `plugins/human-fsm/`     | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                           |
 
 ## PreToolUse guards — what a prompt cannot hold
 
@@ -915,6 +927,52 @@ One thing it deliberately does **not** do: a body edit moves no commit, so the
 PR is still `vetted-at-head` and the vetter will skip it. The subcommand prints
 a NOTE saying so, and the producer re-arms the vet the way it re-arms CI — an
 `--allow-empty` push.
+
+### The linkage repair: `weaken-closes`
+
+`ai:relink` was the same deadlock, one level up: a whole VERDICT telling the
+producer to change a body `Closes #N` to `Refs #N`, on a producer whose every
+body write was denied (`Bash(gh pr edit:*)`) or absent. Its population was one
+PR, sitting. [#135](https://github.com/rainlanguage/issue-pr-cron/issues/135)
+retires the verdict — a linkage error is a `reject` whose note names the
+reference, because it always named the same owner and the same move — and
+[#136](https://github.com/rainlanguage/issue-pr-cron/issues/136) is the
+transition it never had.
+
+```
+pr-review-report weaken-closes <owner/repo> <n> <issue> [--dry-run]
+```
+
+- **Direction-locked.** It may rewrite `Closes` to `Refs` and never the reverse.
+  `Closes` is what GitHub resolves into `closingIssuesReferences`, and that is
+  what `uncovered-issues` computes the producer's backlog from — so a producer
+  able to ADD one could mark an issue covered without fixing it, on its own
+  inbox. Weakening can only ever GROW that inbox. Held three ways: the only text
+  an edit carries is the `Refs` constant, the spans come from the same scanner
+  `commit-closes` uses, and the planner re-runs `closing_keywords` over the
+  result and refuses any plan whose closing set gained a number.
+- **Surgical**, the same way the QA retrofit is: the plan is a list of spans of
+  the current body, each one a keyword token, applied through the same
+  `BodyEdit::apply` — which copies everything outside its span through verbatim
+  and has no other way to produce a result.
+- **Idempotent**, and a no-op is not an error. A body that already says
+  `Refs #N` is done; a body that never mentions `#N` is a call that named the
+  wrong issue, and that one **refuses** (exit 4) rather than weakening the
+  nearest reference that looked close enough.
+- **The `## QA` block is not touched.** Its span is excluded from the plan and
+  the result is checked with `require-qa-block`'s own predicate. A closing
+  reference that exists ONLY inside the evidence block is refused (exit 6):
+  section 8's category line legitimately writes about `Closes` and `Refs`, and
+  editing evidence to change a linkage is the laundering `--replace` already
+  exists to prevent. When one survives an otherwise-successful repair, the tool
+  says so rather than reporting a success the PR's linkage contradicts.
+
+Both body repairs are on the **producer MCP profile** as well as being
+subcommands. That is deliberate symmetry: the producer's ability to write a PR
+body is something `tools/list` states, rather than something a prefix-matched
+`Bash(pr-review-report:*)` allow rule happens to permit — and the subcommand
+form stays because a session opened outside the cron has no MCP surface, and
+those are exactly the sessions the QA retrofit exists for (#83).
 
 Nothing here is **installed by the flake as a hook**: wire each into the box's
 user `settings.json` as a PreToolUse `Bash` hook. The two scripts carry their
@@ -1058,11 +1116,10 @@ A PR moves through two distinct gates before it merges:
 `./pr-review-report.sh` prints every open PR bucketed by where it sits in that
 pipeline, all as clickable URLs: **✅ approved by you** (ready to merge) · **🤖
 AI-vetted — awaiting your approval** · **🔴 needs a producer fix** (CI red — the
-producer drives it green) · **🔧 AI-flagged: relink** · **❌ reject /
-changes-requested** · **🗑️ close (dup/superseded)** · **🟦 not yet reviewed** ·
-**⚠️ conflicting** (needs rebase) · **🟡 pending** · **📝 drafts** · plus the
-issues the cron flagged `ai:close-candidate`. `--ready` prints only the
-approved-by-you set.
+producer drives it green) · **❌ reject / changes-requested** · **🗑️ close
+(dup/superseded)** · **🟦 not yet reviewed** · **⚠️ conflicting** (needs rebase)
+· **🟡 pending** · **📝 drafts** · plus the issues the cron flagged
+`ai:close-candidate`. `--ready` prints only the approved-by-you set.
 
 ### The open-threads gate
 
