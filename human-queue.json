@@ -184,6 +184,26 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
+    "ai:close-candidate": [
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 410,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
+        "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 402,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/402",
+        "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 401,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/401",
+        "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
+      }
+    ],
     "ai:design": [
       {
         "repo": "rainlanguage/rain.solmem",
@@ -272,6 +292,12 @@
     ],
     "ai:ready": [
       {
+        "repo": "rainlanguage/rain-org-health",
+        "number": 142,
+        "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
+        "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty"
+      },
+      {
         "repo": "rainlanguage/claude-audit-skills",
         "number": 50,
         "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
@@ -300,6 +326,12 @@
         "number": 433,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
         "title": "fix(component): leaderboard heading reflects the actual row count"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 432,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
+        "title": "fix(components): render generic error copy instead of raw error messages"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -393,6 +425,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 403,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+        "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 398,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
         "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
@@ -472,12 +510,6 @@
         "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 432,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
-        "title": "fix(components): render generic error copy instead of raw error messages"
-      },
-      {
         "repo": "rainlanguage/rain.dia",
         "number": 62,
         "url": "https://github.com/rainlanguage/rain.dia/pull/62",
@@ -527,21 +559,15 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 403,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
-        "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+        "number": 409,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
+        "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 402,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/402",
-        "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 401,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/401",
-        "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
+        "number": 406,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
+        "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -554,6 +580,12 @@
         "number": 386,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
         "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 385,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/385",
+        "title": "docs(setup): fix README setup steps and add missing env var"
       },
       {
         "repo": "rainlanguage/rainix",
@@ -632,6 +664,12 @@
         "number": 133,
         "url": "https://github.com/rainlanguage/rain.flare/pull/133",
         "title": "test: assert function pointer array length against OPCODE_FUNCTION_POINTERS_LENGTH"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 294,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
+        "title": "feat: show re-up opportunity per receipt on unlock page"
       },
       {
         "repo": "rainlanguage/rain.strategies",
@@ -916,38 +954,8 @@
     },
     "leak": {
       "leak": {
-        "count": 8,
+        "count": 2,
         "prs": [
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 142,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
-            "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 410,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
-            "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 409,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
-            "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 406,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
-            "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 385,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/385",
-            "title": "docs(setup): fix README setup steps and add missing env var"
-          },
           {
             "repo": "rainlanguage/rain.flare",
             "number": 125,
@@ -959,12 +967,6 @@
             "number": 475,
             "url": "https://github.com/rainlanguage/flow/pull/475",
             "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 294,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
-            "title": "feat: show re-up opportunity per receipt on unlock page"
           }
         ]
       }
@@ -1163,140 +1165,8 @@
     },
     "vet-lifecycle": {
       "awaiting-re-vet": {
-        "count": 23,
+        "count": 1,
         "prs": [
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 50,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
-            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 435,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
-            "title": "fix(receipts): preserve display precision by truncating the decimal string"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 434,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
-            "title": "fix(prices): make DataFetcher provider reactive to network switch"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 433,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
-            "title": "fix(component): leaderboard heading reflects the actual row count"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 431,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/431",
-            "title": "fix(component): remove inert min/step attributes from the amount text input"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 430,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/430",
-            "title": "refactor(component): drop misleading optional chain on required stats prop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 429,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
-            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 428,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
-            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 427,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
-            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 425,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
-            "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 424,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/424",
-            "title": "refactor: single zero-address constant source in balancesStore"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 408,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
-            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 407,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
-            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 405,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
-            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 404,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
-            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 398,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
-            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 397,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/397",
-            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 395,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
-            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 394,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
-            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 393,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/393",
-            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 389,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
-            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 387,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/387",
-            "title": "fix(store): reject zero and null block.number from RPC"
-          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2793,
@@ -1336,6 +1206,29 @@
       }
     },
     "vetter-verdicts": {
+      "ai:close-candidate": {
+        "count": 3,
+        "prs": [
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 410,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
+            "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 402,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/402",
+            "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 401,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/401",
+            "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
+          }
+        ]
+      },
       "ai:design": {
         "count": 14,
         "prs": [
@@ -1426,13 +1319,73 @@
         ]
       },
       "ai:ready": {
-        "count": 8,
+        "count": 33,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 142,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
+            "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 50,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
+            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
+          },
           {
             "repo": "rainlanguage/rainlang.interface",
             "number": 118,
             "url": "https://github.com/rainlanguage/rainlang.interface/pull/118",
             "title": "test: pin sourceCount(hex\"00\") == 0 explicitly"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 435,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
+            "title": "fix(receipts): preserve display precision by truncating the decimal string"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 434,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
+            "title": "fix(prices): make DataFetcher provider reactive to network switch"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 433,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
+            "title": "fix(component): leaderboard heading reflects the actual row count"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 432,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
+            "title": "fix(components): render generic error copy instead of raw error messages"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 431,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/431",
+            "title": "fix(component): remove inert min/step attributes from the amount text input"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 430,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/430",
+            "title": "refactor(component): drop misleading optional chain on required stats prop"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 429,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
+            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 428,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -1441,10 +1394,28 @@
             "title": "docs(op): document convertToAssets rounding direction in run() NatSpec"
           },
           {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 427,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
+            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
+          },
+          {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 259,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
             "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 425,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
+            "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 424,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/424",
+            "title": "refactor: single zero-address constant source in balancesStore"
           },
           {
             "repo": "rainlanguage/rain.pyth",
@@ -1457,6 +1428,78 @@
             "number": 254,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254",
             "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 408,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
+            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 407,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
+            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 405,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
+            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 404,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
+            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 403,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 398,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
+            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 397,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/397",
+            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 395,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
+            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 394,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
+            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 393,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/393",
+            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 389,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
+            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 387,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/387",
+            "title": "fix(store): reject zero and null block.number from RPC"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1492,12 +1535,6 @@
             "number": 436,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
             "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 432,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
-            "title": "fix(components): render generic error copy instead of raw error messages"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1549,21 +1586,15 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 403,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
-            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+            "number": 409,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
+            "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 402,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/402",
-            "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 401,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/401",
-            "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
+            "number": 406,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
+            "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1576,6 +1607,12 @@
             "number": 386,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
             "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 385,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/385",
+            "title": "docs(setup): fix README setup steps and add missing env var"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1654,6 +1691,12 @@
             "number": 133,
             "url": "https://github.com/rainlanguage/rain.flare/pull/133",
             "title": "test: assert function pointer array length against OPCODE_FUNCTION_POINTERS_LENGTH"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 294,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
+            "title": "feat: show re-up opportunity per receipt on unlock page"
           },
           {
             "repo": "rainlanguage/rain.strategies",
@@ -2276,12 +2319,6 @@
       "number": 53,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/53",
       "title": "Reference: adopt ideas from Bun's \"Bun in Rust\" for our pipeline processes"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 51,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/51",
-      "title": "pr-review-report: sanctioned PR-body edit subcommand — producer deadlocks on body-only vetter rejects (QA §8 block)"
     },
     {
       "repo": "rainlanguage/rain-org-health",
@@ -5490,13 +5527,6 @@
   ],
   "leaks": [
     {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rain-org-health/pull/142",
-      "title": "Wire every fromCounts state's item list, and make an empty list say why it is empty",
-      "reason": "🤖 ai:producer  Producer note: the 16 renders this PR produced were only linked as a `pr-screenshots` tree, so they did not render inline for review. Embedding the two states the PR actually changes, light theme, so the before/after is visible without clicking through.  **`ai:close-candidate (upheld)`** — the live symptom. Box reads `1`, expansion reads `0 items / no items in this state`; after, the row is there.  | before | after | | --- | --- | | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/upheld-before-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/upheld-after-light.png) |  **`ai:close-candidate (unvetted)`** — broken the same way, invisible while it is zero.  | before | after | | --- | --- | | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/unvetted-before-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/unvetted-after-light.png) |  **`missing`** (empty-list reason copy) and **`uncoveredIssues`** (the control — byte-identical before/after, which is the PR's evidence that the issue over-states the blast radius):  | missing before | missing after | uncovered before | uncovered after | | --- | --- | --- | --- | | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/missing-before-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/missing-after-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/uncovered-before-light.png) | ![](https://raw.githubusercontent.com/rainlanguage/rain-org-health/ba184e0d2171d88830217de58d3a32b8c1f208a8/141/uncovered-after-light.png) |  Dark-theme counterparts are in the same tree (`141/*-dark.png`). I read the upheld pair before posting: the `before` box shows `1` over `no items in this state`, the `after` shows `1 item` over the `S01-Issuer/st0x.deploy#248` row. "
-    },
-    {
       "repo": "cyclofinance/cyclo.site",
       "number": 418,
       "url": "https://github.com/cyclofinance/cyclo.site/pull/418",
@@ -5533,27 +5563,6 @@
     },
     {
       "repo": "cyclofinance/cyclo.site",
-      "number": 410,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
-      "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)",
-      "reason": "🤖 ai:producer Blocked-infra: rework asks for the QA-GUIDE section-8 evidence block in the PR BODY ('body still lacks QA-GUIDE section-8 block'); the producer protocol forbids gh pr edit and pr-review-report has no body-edit subcommand, so no sanctioned path exists to satisfy this rework. CI at head 60fb8ca is fully green (the earlier red lint was fixed by the prettier commit). Needs a sanctioned body-edit subcommand, or the vetter accepting the QA block as a trusted producer comment, or a human paste."
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 409,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
-      "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)",
-      "reason": "🤖 ai:producer Blocked-infra: rework asks for the QA-GUIDE section-8 evidence block in the PR BODY ('body lacks QA-GUIDE section-8 block'); the producer protocol forbids gh pr edit and pr-review-report has no body-edit subcommand, so no sanctioned path exists to satisfy this rework. CI at head 02aad0e is fully green. Needs a sanctioned body-edit subcommand, or the vetter accepting the QA block as a trusted producer comment, or a human paste."
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 406,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
-      "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)",
-      "reason": "🤖 ai:producer  Producer note at head b4eb56f3dc395bb103b6ca966795dbad4fce5399: reworked per the vetter's reject (QA evidence as trusted producer comment at head, per the sanctioned path from the PR #403 review note). One new commit since the last review, which also changes the fix's shape:  `b4eb56f` replaces the hardcoded `FRONTEND_PYTH_MAX_AGE_SECONDS = 300n` with an on-chain read of the oracle's own bound. The deployed Arbitrum `PythOracle` contracts expose `I_STALE_AFTER()` (deployed at `PROD_ORACLE_DEFAULT_STALE_AFTER = 30 minutes` per cyclo.sol `script/Deploy.sol`), and `PythOracle.price()` itself calls `getPriceNoOlderThan` with exactly that bound. The frontend already reads `I_PYTH_CONTRACT` and `I_PRICE_FEED_ID` from the same oracle, so forwarding `I_STALE_AFTER` makes the display accept exactly the prices the vault's oracle would accept — no second source of truth, no drift, instead of a 300s guess that is 6x tighter than prod (display would fall back to `previewDeposit` while the vault still happily priced off Pyth). The now-dead `STALE_PERIOD` (30 days — the defect #318 names, unused after this change) and `FRONTEND_PYTH_MAX_AGE_SECONDS` constants are removed; grep confirms no other references.  If the extra read fails, the existing try/catch falls back to `simulateErc20PriceOracleReceiptVaultPreviewDeposit`, unchanged failure envelope.  ## QA  - Discriminating tests: `balancesStore > passes the oracle's own I_STALE_AFTER as the max age for the Pyth display price` — fails on base (`git checkout origin/main -- src/lib/balancesStore.ts src/lib/constants.ts` under the new test: `getPriceNoOlderThan` received `[feedId, 2592000n]` (the 30-day STALE_PERIOD) instead of `[feedId, 1234n]`; 1 failed | 5 passed; restored branch src → 6/6 green). It also fails on this PR's own previous head (which forwarded the hardcoded `300n`). - Mutations applied: `args: [iPythFeedId, staleAfter]` → `args: [iPythFeedId, 1800n]` (hardcoding even the \"right\" production value) → killed by the same test (the mocked oracle returns `1234n`, so only genuinely forwarding the `I_STALE_AFTER` read result passes); restored after the run. - Oracle: the deployed contract configuration — `PythOracleConfig.staleAfter = PROD_ORACLE_DEFAULT_STALE_AFTER` in cyclo.sol `script/Deploy.sol` and the `I_STALE_AFTER()` getter in the deployed `PythOracle` ABI; the test's mocked bound (`1234n`) is deliberately a value that appears nowhere in the codebase, so the assertion can only pass by derivation. The Pyth 18-decimal normalization assertion (`5e8` at expo `-8` → `5e18`) follows PythUtils' documented parse rule, computed independently. - Category check: issue asks that the frontend display call stop passing the 30-day `STALE_PERIOD` as `getPriceNoOlderThan` max age. Covered: the only `getPriceNoOlderThan` call site (grep) now forwards the oracle's own bound; the stale-window constants are removed entirely so the defect class cannot recur by reuse.  No screenshot: the change alters which value is considered fresh (stale Pyth observations now revert into the previewDeposit fallback), not how anything renders — there is no visual state to diff.  Local gates: vitest full suite 293/293, `svelte-check` 0 errors, eslint clean, prettier 3.6.2 clean on all touched files. "
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
       "number": 400,
       "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
       "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)",
@@ -5565,13 +5574,6 @@
       "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
       "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector",
       "reason": "🤖 ai:producer Blocked-infra: test red survives the one permitted [3b-attempt] ('fix(ci): test [3b-attempt]'): run 28726193216 fails NetworkSelector.test.ts 'switches wallet network after updating the store (order check)' — the calls spy records only ['switchNetwork'], 'set:test' is never captured (line 219), and the test is internally inconsistent (name says switch AFTER store update, line 218 asserts switchNetwork FIRST). One-attempt back-off exhausted; the PR's own ordering test needs a human decision on the intended order + a mock that actually observes the store set. Base is green."
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 385,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/385",
-      "title": "docs(setup): fix README setup steps and add missing env var",
-      "reason": "🤖 ai:producer Blocked-infra: body-edit tooling gap: vetter rejects solely for the missing QA-GUIDE §8 evidence block in the PR BODY ('coverage itself now looks complete incl. the root npm ci from the rework note — add the block and re-push'); the producer has no sanctioned PR-body mutation path (gh pr edit forbidden, no pr-review-report subcommand) — tracked in https://github.com/rainlanguage/issue-pr-cron/issues/51; a human paste of the §8 block into the body unblocks re-vet"
     },
     {
       "repo": "rainlanguage/rain.flare",
@@ -5691,17 +5693,10 @@
       "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
       "title": "fix(lock): gate LOCK on price freshness, send 1% slippage as minSharesOut (A17-4)",
       "reason": "🤖 ai:producer screenshot pending (manual): the LOCK button's freshness-gated disabled state is user-visible, but Lock is wallet/price-feed-gated; cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same ruling as the earlier 14-component batch)."
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 294,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
-      "title": "feat: show re-up opportunity per receipt on unlock page",
-      "reason": "🤖 ai:producer Blocked-infra: vetter reject on f3ac55d is unreadable: record-verdict truncated the reason mid-directive ('adds re-up columns to ReceiptsTable: addlPerUnderlying=max(0,c') and the 2026-07-07 review-run trace was rotated (oldest retained run is 2026-07-09), so the rework ask is unrecoverable from the PR or the local ledgers. CI at head f3ac55d is fully green. Tooling fix needed: record-verdict must persist the full verdict reason (and/or review-run traces must outlive the 4h x ~30 rotation window); a re-vet after that fix can restate the directive."
     }
   ],
   "counts": {
-    "ready": 31,
+    "ready": 34,
     "design": 14,
     "blockedDeploy": 13,
     "blockedInfra": 0,
@@ -5709,14 +5704,14 @@
     "closeCandidateIssues": 5,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 1,
-    "leaks": 30,
+    "leaks": 24,
     "totalProducerPrs": 160,
-    "uncoveredIssues": 624,
+    "uncoveredIssues": 623,
     "unvetted": 4,
-    "awaitingReVet": 23,
+    "awaitingReVet": 1,
     "reject": 30,
     "relink": 1,
-    "closeCandidatePrs": 0,
+    "closeCandidatePrs": 3,
     "humanReject": 36,
     "humanDesign": 6,
     "humanCloseCandidate": 0
