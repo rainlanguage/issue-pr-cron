@@ -1176,8 +1176,32 @@
         ]
       },
       "un-vetted": {
-        "count": 4,
+        "count": 8,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 21,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/21",
+            "title": "fix(deploy): check the derived Zoltu address before skipping a network"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 104,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/104",
+            "title": "Derive array differential expectations from pre-call input snapshots"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 103,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
+            "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 20,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
+            "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 122,
@@ -2130,12 +2154,6 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 75,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/75",
-      "title": "[A13] [MEDIUM] The differential oracle reads the shared input AFTER the fast path, so arrayFrom/unsafeExtend corrupting their input cancels out of every comparison"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 73,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/73",
       "title": "[A11] [MEDIUM] The uint256 test suite is strictly weaker than the bytes32 one: no LibUint256Array/Matrix allocation tests and three missing free-memory-pointer assertions"
@@ -2169,12 +2187,6 @@
       "number": 68,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/68",
       "title": "[A06] [MEDIUM] No deterministic flatten test places an empty inner array anywhere but last, so a write-cursor bug at an empty-array boundary is caught only by a 100-run fuzz"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/67",
-      "title": "[A05] [MEDIUM] The only test for the documented underflow-reverts-via-gas guarantee uses a bare vm.expectRevert and provably passes on inputs that never underflow"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -5723,9 +5735,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 5,
     "leaks": 24,
-    "totalProducerPrs": 160,
-    "uncoveredIssues": 618,
-    "unvetted": 4,
+    "totalProducerPrs": 164,
+    "uncoveredIssues": 616,
+    "unvetted": 8,
     "awaitingReVet": 1,
     "reject": 29,
     "relink": 1,
