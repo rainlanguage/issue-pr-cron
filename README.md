@@ -591,6 +591,80 @@ does not ask for either:
   reads. It does not re-run the named tests against base; CI runs them, and a
   red CI is the producer's to green, never a vetter `reject` ground.
 
+### The mechanical half of the audit lens is the binary's, not the model's
+
+`review-prompt.txt` tells the vetter to **invoke the actual `audit` skill** and
+map its findings to a verdict. Nothing checked that it did, or what came back —
+so a `ready` could contradict its own lens and read exactly like one that ran
+clean. `rainlanguage/rain.deploy#20` is the instance: it **added**
+`test/src/lib/MockAddressRevertingFactory.sol` carrying
+`pragma solidity ^0.8.25;` — a concrete contract floated with `^`, which the
+skill flags verbatim — and the recorded verdict was `ready`. The file was new in
+the diff, so scope was not the problem, and unlike
+[#131](https://github.com/rainlanguage/issue-pr-cron/issues/131)'s file
+accounting the fix is not "prove the file was in view": it **was** in view. A
+prose rule applied by a model is what failed.
+
+So the rules that need no model do not go through one. **`record_verdict`
+classifies every changed `.sol` file at the PR's head and refuses a `ready` that
+breaks one** (exit 4). The first rule is the rainlanguage pragma convention: `^`
+(floating) for **library and abstract** files — downstream soldeer consumers
+compile them, and a hard pin breaks them on a different `0.8.x` — and `=` (exact
+pin) for **concrete** contracts, **including concrete test mocks**.
+
+The classifier is file-level, because `pragma` is:
+
+| The file declares                                           | Kind              | Pragma |
+| ----------------------------------------------------------- | ----------------- | ------ |
+| a `contract` that is not `abstract` (test mocks, `*.t.sol`) | `Concrete`        | `=`    |
+| only `library` / `abstract contract` / `interface`          | `Shared`          | `^`    |
+| nothing at top level (`*.pointers.sol`, free functions)     | `Declarationless` | —      |
+
+Four things that decision is careful about:
+
+- **Concrete dominates a mixed file.** One deployable artifact in the file makes
+  the whole file's pragma a thing that is pinned.
+- **Comments and string literals are erased first**, length- and
+  line-preserving. Every `.sol` in the org opens with NatSpec that talks about
+  contracts and libraries in prose, and a scanner that reads it classifies
+  documentation. Word boundaries matter for the same reason: rain.deploy's own
+  test file has a `contractPath` token.
+- **A bare `pragma solidity 0.8.25;` is an exact pin** (solc reads it as `=`),
+  while a range (`>=0.8.0 <0.9.0`, `~0.8.25`) is **not flagged in either
+  direction** — the convention is written over `^` and `=` only. A
+  declarationless file is likewise not flagged: the rule is stated over
+  "library/abstract" and "concrete", and this under-flags rather than inventing
+  an expectation that would refuse verdicts on a rule nobody wrote down.
+- **The finding names the file kind and its deciding declaration**, because an
+  "inconsistent pragma" finding is answered **per file kind** and never by
+  mass-pinning a repo to one pragma.
+
+Three things it deliberately does **not** do:
+
+- **Only `ready` is gated.** `reject`, `design` and `close` pass untouched —
+  gating them would leave a convention-breaking PR with no verdict it could be
+  given at all, which is a deadlock, not a fix.
+- **It fails closed.** The source is the `pr_checkout` tree, cross-checked
+  against the PR's head sha, so a tree holding another commit yields "no source"
+  rather than confident findings about code the PR never touched. No source
+  **refuses** the `ready`: a `ready` on a Solidity PR nobody checked out is the
+  verdict this gate exists to stop. The one ergonomic consequence is an ordering
+  — **record the verdict before `clone_release`** — and the refusal says so.
+- **It closes the mechanical class only.** Correctness, security and design are
+  not decidable from source text and remain entirely the vetter's; nothing here
+  checks them. `i`/`s` storage-class naming and bare `src/`/`test/` imports are
+  the next two rules that _are_ mechanical, and both reduce to the same shape:
+  classify, then compare.
+
+`pr-review-report sol-conventions <path>…` runs the same rules over a tree on
+disk — the producer's copy of the check (it has a shell; the vetter does not),
+and how the rules are validated against real repos. On rain.deploy at `c0d48cf8`
+it flags four of the five first-party `.sol` files and leaves
+`src/lib/LibRainDeploy.sol` (a library, correctly `^`) alone. Across
+rain.math.float, rain.erc4626.words and rain.factory it reads 170 files and
+raises four findings, every one of them real: three concrete test mocks floated
+with `^`, and one `abstract contract` pinned with `=`.
+
 ### Work-clone lifecycle as an MCP surface (always on)
 
 `pr-review-report mcp --profile producer` serves the **producer's** clone

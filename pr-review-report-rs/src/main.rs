@@ -4572,7 +4572,8 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
 ///
 /// Thin CLI shell over [`record_verdict_apply`]: it OWNS the printing so the core can be reused by a
 /// caller that must not write to stdout (the MCP server — a stray stdout line corrupts its JSON-RPC
-/// stream). Exit codes are unchanged: 0 ok, 1 error, 2 usage, 3 human-decision refusal.
+/// stream). Exit codes: 0 ok, 1 error, 2 usage, 3 human-decision refusal, 4 mechanical-convention
+/// refusal (#141).
 #[allow(clippy::too_many_arguments)]
 fn record_verdict_mode(
     slug: &str,
@@ -4610,6 +4611,8 @@ fn record_verdict_apply(
     let Some(target) = verdict_label(verdict) else {
         return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--cost <n>] [--basis <s>] [--dry-run]".to_string()));
     };
+    // `files` rides along on the call that was already being made — the mechanical-convention gate
+    // (#141) needs the PR's changed-file list and must not cost a second round trip to get it.
     let Some(pr_json) = gh_json(&[
         "pr",
         "view",
@@ -4617,7 +4620,7 @@ fn record_verdict_apply(
         "-R",
         slug,
         "--json",
-        "headRefOid,labels,comments,reviewDecision",
+        "headRefOid,labels,comments,reviewDecision,files",
     ]) else {
         return Err((
             1,
@@ -4644,6 +4647,17 @@ fn record_verdict_apply(
             skip_comment,
         } => (to_remove, has_target, sha, skip_comment),
     };
+    // #141: the mechanical half of the audit lens, decided by the binary. It runs BEFORE the
+    // dry-run return so `--dry-run` shows the refusal a real call would hit, and after the human
+    // guard so a human's ruling still wins outright.
+    if let Some(refusal) = sol_convention_gate(
+        slug,
+        pr,
+        verdict,
+        &verdict_sol_scan(slug, pr, &sha, &pr_json),
+    ) {
+        return Err((4, refusal));
+    }
     let comment = verdict_comment(&sha, verdict, note, cost, basis);
 
     if dry_run {
@@ -14078,6 +14092,1148 @@ fn report_apply(r: Result<String, (i32, String)>) -> i32 {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// sol-conventions — the MECHANICAL half of the audit lens, evaluated by the BINARY.
+//
+// #141. `review-prompt.txt` tells the vetter to invoke the `audit` skill and nothing checks what
+// came back, so a `ready` can contradict its own lens. rain.deploy#20 is the instance: it ADDED
+// `test/src/lib/MockAddressRevertingFactory.sol` carrying `pragma solidity ^0.8.25;` — a concrete
+// contract floated with `^`, which the audit skill flags verbatim — and the vetter recorded `ready`.
+// The file was new in the diff, so scope was not the problem; a prose rule was simply not applied.
+//
+// The rules in this section are the ones that need NO model: they are decidable from the source
+// text. Deciding them here rather than asking for them in the prompt is the whole point — a rule a
+// model is asked to remember is a rule that is sometimes forgotten, and prose asserting it was
+// remembered is not evidence. What lands here is checkable by the binary; the judgement-shaped
+// dimensions (correctness, security, design) remain the vetter's and are NOT closed by this.
+//
+// Deliberately ONE rule to start: the pragma convention, which has a live failing instance. The
+// classifier and the finding type are the extension point — `i`/`s` storage-class naming and bare
+// `src/`/`test/` imports are the next two, and both reduce to "classify, then compare".
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The bytes Solidity allows inside an identifier. Used as the WORD BOUNDARY test everywhere in this
+/// section: without it `contractPath` reads as a `contract` declaration (rain.deploy's own test file
+/// has exactly that token) and `pragmatic` reads as a pragma.
+fn sol_ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+}
+
+/// PURE: blank out every Solidity comment and string literal, byte-for-byte, so the scanners below
+/// only ever see CODE.
+///
+/// Length- and line-preserving on purpose. Each erased byte becomes a space and each erased newline
+/// stays a newline, so a byte offset into the result is the same byte offset into the source and the
+/// reported line number is the real one. That matters because the thing being classified is a
+/// declaration keyword, and every `.sol` file in the org carries a NatSpec header that talks about
+/// contracts and libraries in prose — a scanner that reads comments classifies documentation.
+///
+/// Multi-byte UTF-8 survives: bytes outside a literal are copied verbatim (a continuation byte is
+/// `>= 0x80` and so is never one of the ASCII delimiters this switches on), and bytes inside one
+/// are replaced individually, which can only ever produce ASCII spaces.
+fn sol_strip_noncode(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0usize;
+    while i < b.len() {
+        // `//` to end of line. The newline itself is left for the next iteration to copy.
+        if b[i] == b'/' && b.get(i + 1) == Some(&b'/') {
+            while i < b.len() && b[i] != b'\n' {
+                out.push(b' ');
+                i += 1;
+            }
+            continue;
+        }
+        // `/* … */`. Solidity block comments do not nest; an unterminated one runs to EOF, which is
+        // what an unterminated one does to the compiler too.
+        if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+            out.push(b' ');
+            out.push(b' ');
+            i += 2;
+            while i < b.len() {
+                if b[i] == b'*' && b.get(i + 1) == Some(&b'/') {
+                    out.push(b' ');
+                    out.push(b' ');
+                    i += 2;
+                    break;
+                }
+                out.push(if b[i] == b'\n' { b'\n' } else { b' ' });
+                i += 1;
+            }
+            continue;
+        }
+        // `"…"` and `'…'`, both with backslash escapes. `hex"…"` / `unicode"…"` are covered by the
+        // quote itself; only the literal body needs erasing.
+        if b[i] == b'"' || b[i] == b'\'' {
+            let quote = b[i];
+            out.push(b' ');
+            i += 1;
+            while i < b.len() {
+                if b[i] == b'\\' && i + 1 < b.len() {
+                    out.push(b' ');
+                    out.push(b' ');
+                    i += 2;
+                    continue;
+                }
+                let c = b[i];
+                out.push(if c == b'\n' { b'\n' } else { b' ' });
+                i += 1;
+                if c == quote {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// PURE: the identifier-ish word tokens of already-stripped Solidity source, in source order.
+/// Everything that is not an identifier byte is a separator, so `abstract contract Foo is Bar` is
+/// `[abstract, contract, Foo, is, Bar]` and `contractPath,` is `[contractPath]`.
+fn sol_words(code: &str) -> Vec<&str> {
+    let b = code.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        if sol_ident_byte(b[i]) {
+            let start = i;
+            while i < b.len() && sol_ident_byte(b[i]) {
+                i += 1;
+            }
+            out.push(&code[start..i]);
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The top-level declarations a `.sol` file makes, split by whether they are DEPLOYABLE.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+struct SolDecls {
+    /// `contract X` WITHOUT `abstract` — a concrete artifact that gets deployed, so the bytecode it
+    /// compiles to is a thing someone pins. Test mocks and forge `*.t.sol` suites are in here: forge
+    /// deploys them into the test VM, and the org pins them exactly like any other concrete (every
+    /// `.t.sol` in rain.math.float, rain.erc4626.words and rain.factory is `=0.8.25`).
+    concrete: Vec<String>,
+    /// `library X`, `abstract contract X`, `interface X` — compiled BY consumers, never deployed as
+    /// written, which is why a hard pin on one breaks a downstream soldeer consumer on a different
+    /// `0.8.x`.
+    shared: Vec<String>,
+}
+
+/// What one `.sol` FILE is, for the pragma convention. FILE-level because `pragma` is file-level: a
+/// file has one pragma however many things it declares.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SolFileKind {
+    /// At least one concrete `contract`. Concrete DOMINATES a mixed file: the file contains a
+    /// deployable artifact, and the reason a concrete is pinned (its bytecode is deployed at a known
+    /// version) applies to the whole file the moment one is in it.
+    Concrete,
+    /// Only `library` / `abstract contract` / `interface` declarations.
+    Shared,
+    /// No top-level declaration at all — a `*.pointers.sol`, a file of free functions, a bag of
+    /// `error` selectors, a constants file.
+    Declarationless,
+}
+
+impl SolDecls {
+    fn kind(&self) -> SolFileKind {
+        if !self.concrete.is_empty() {
+            SolFileKind::Concrete
+        } else if !self.shared.is_empty() {
+            SolFileKind::Shared
+        } else {
+            SolFileKind::Declarationless
+        }
+    }
+
+    /// The declaration the kind was decided by, for the finding message. A finding that names the
+    /// declaration is one a reader can check; a finding that only names the file is one they have to
+    /// go and re-derive.
+    fn decided_by(&self) -> Option<&str> {
+        self.concrete
+            .first()
+            .or_else(|| self.shared.first())
+            .map(String::as_str)
+    }
+}
+
+/// PURE: classify a `.sol` file's top-level declarations.
+fn sol_decls(src: &str) -> SolDecls {
+    let code = sol_strip_noncode(src);
+    let words = sol_words(&code);
+    let mut decls = SolDecls::default();
+    for (i, w) in words.iter().enumerate() {
+        let name = words
+            .get(i + 1)
+            .copied()
+            .unwrap_or("<anonymous>")
+            .to_string();
+        match *w {
+            // `contract` is a reserved word, so it can only ever BE the declaration keyword; what
+            // decides the kind is whether `abstract` is the token immediately before it.
+            "contract" => {
+                if i > 0 && words[i - 1] == "abstract" {
+                    decls.shared.push(name);
+                } else {
+                    decls.concrete.push(name);
+                }
+            }
+            "library" | "interface" => decls.shared.push(name),
+            _ => {}
+        }
+    }
+    decls
+}
+
+/// Which of the two operators a `pragma solidity` version spec uses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SolPragmaOp {
+    /// Contains `^` — floating within the minor.
+    Caret,
+    /// A single exact version, with or without the leading `=`. Solidity treats a bare `0.8.25` as
+    /// `=0.8.25`, so the two spellings are ONE state here.
+    Exact,
+    /// Anything else: `~`, a `>=` / `<` range, several comparators. The convention this section
+    /// enforces is stated over `^` and `=` only, so a range is left alone rather than guessed at.
+    Other,
+}
+
+/// PURE: classify a version spec (the text between `pragma solidity` and its `;`).
+fn sol_pragma_op(spec: &str) -> SolPragmaOp {
+    let s = spec.trim();
+    if s.contains('^') {
+        return SolPragmaOp::Caret;
+    }
+    // Only a LEADING `=` is an exact pin. `>=0.8.0` also contains an `=` and is a range, which is
+    // why this strips a prefix rather than testing for the character anywhere.
+    let v = s.strip_prefix('=').unwrap_or(s).trim_start();
+    if !v.is_empty() && v.bytes().all(|c| c.is_ascii_digit() || c == b'.') {
+        return SolPragmaOp::Exact;
+    }
+    SolPragmaOp::Other
+}
+
+/// A file's `pragma solidity` directive: where it is, what it says, and which operator it uses.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct SolPragma {
+    line: usize,
+    spec: String,
+    op: SolPragmaOp,
+}
+
+/// PURE: the FIRST `pragma solidity` directive in a file, or `None` when it has none.
+///
+/// First, not last: the compiler takes them all, but a file with two is already malformed and the
+/// first is the one a reader sees. `pragma abicoder v2` and friends are skipped by the `solidity`
+/// check rather than mistaken for a version.
+fn sol_pragma(src: &str) -> Option<SolPragma> {
+    let code = sol_strip_noncode(src);
+    let bytes = code.as_bytes();
+    let mut from = 0usize;
+    while let Some(rel) = code[from..].find("pragma") {
+        let at = from + rel;
+        from = at + "pragma".len();
+        // Word boundaries on both sides, or `subpragma` / `pragmatic` would match.
+        if at > 0 && sol_ident_byte(bytes[at - 1]) {
+            continue;
+        }
+        let rest = &code[from..];
+        if rest.as_bytes().first().copied().is_some_and(sol_ident_byte) {
+            continue;
+        }
+        let Some(after) = rest.trim_start().strip_prefix("solidity") else {
+            continue;
+        };
+        if after
+            .as_bytes()
+            .first()
+            .copied()
+            .is_some_and(sol_ident_byte)
+        {
+            continue;
+        }
+        // No `;` means the directive is unterminated — there is no spec to classify, and scanning on
+        // would only find text inside it.
+        let semi = after.find(';')?;
+        let spec = after[..semi].trim().to_string();
+        return Some(SolPragma {
+            line: code[..at].bytes().filter(|c| *c == b'\n').count() + 1,
+            op: sol_pragma_op(&spec),
+            spec,
+        });
+    }
+    None
+}
+
+/// One mechanical-convention violation in one file.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct SolFinding {
+    path: String,
+    line: usize,
+    kind: SolFileKind,
+    /// The declaration that decided `kind`.
+    decided_by: String,
+    /// The spec exactly as the file spells it.
+    found: String,
+    /// The operator the convention requires for this file kind.
+    expected: &'static str,
+}
+
+impl SolFinding {
+    /// One line, naming the file, the declaration that classified it, what it says and what the
+    /// convention makes it. The fix is stated PER FILE KIND because the failure mode of an
+    /// "inconsistent pragma" finding is someone mass-pinning the repo to one pragma.
+    fn render(&self) -> String {
+        let (what, why) = match self.kind {
+            SolFileKind::Concrete => (
+                "concrete contract",
+                "a concrete contract is deployed, so its pragma is pinned exactly",
+            ),
+            SolFileKind::Shared => (
+                "library/abstract/interface",
+                "downstream soldeer consumers compile it, and a hard pin breaks them on a different 0.8.x",
+            ),
+            // Unreachable from `sol_pragma_finding`, which never flags a declarationless file.
+            SolFileKind::Declarationless => ("file", "no declaration decides this file's kind"),
+        };
+        format!(
+            "{}:{} — {what} `{}` carries `pragma solidity {};`, and the rainlanguage convention \
+             makes this file `{}` ({why})",
+            self.path, self.line, self.decided_by, self.found, self.expected
+        )
+    }
+}
+
+/// PURE: the pragma-convention finding for one file, if it has one.
+///
+/// The rule, from the audit skill verbatim: `^` (floating) for LIBRARY and ABSTRACT files, `=`
+/// (exact pin) for CONCRETE contracts, INCLUDING concrete test mocks.
+///
+/// A DECLARATIONLESS file is deliberately not flagged in either direction. The skill's rule is
+/// stated over "library/abstract" and "concrete", and a file that is neither is not covered by
+/// anything written down — so this under-flags rather than inventing an expectation that would
+/// refuse verdicts on a rule nobody agreed to. That gap is the first thing to close if the skill
+/// ever states it.
+fn sol_pragma_finding(path: &str, src: &str) -> Option<SolFinding> {
+    let decls = sol_decls(src);
+    let kind = decls.kind();
+    let pragma = sol_pragma(src)?;
+    let expected = match (kind, pragma.op) {
+        (SolFileKind::Concrete, SolPragmaOp::Caret) => "=",
+        (SolFileKind::Shared, SolPragmaOp::Exact) => "^",
+        _ => return None,
+    };
+    Some(SolFinding {
+        path: path.to_string(),
+        line: pragma.line,
+        kind,
+        decided_by: decls.decided_by().unwrap_or("<anonymous>").to_string(),
+        found: pragma.spec,
+        expected,
+    })
+}
+
+/// What the mechanical scan of a PR's changed `.sol` files learned. Three states, not two: "the
+/// source could not be read" is NOT "there was nothing to find", and collapsing them is how a gate
+/// silently stops gating.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum SolScan {
+    /// The PR changes no `.sol` file. The gate has nothing to say about it.
+    NotApplicable,
+    /// Every changed `.sol` file was read at this PR's head. The vector is the whole finding set,
+    /// and an EMPTY vector is a positive result: the rules were applied and none fired.
+    Scanned(Vec<SolFinding>),
+    /// The PR changes `.sol` files and their source could not be read. Carries why.
+    NoSource(String),
+}
+
+/// Scan a PR's changed `.sol` files against the mechanical conventions, reading them from the audit
+/// lens `pr_checkout` already made.
+///
+/// The clone is the ONLY source. It is the tree the vetter was told to read, `checkout_dir` derives
+/// its path from `(work_dir, slug, num)` with no search, and the head check below is the same
+/// cross-check `review-prompt.txt` demands before the vetter reads a line — so a tree holding some
+/// other commit produces `NoSource`, never a confident finding about code this PR never touched.
+/// Reading it also costs no API call, which matters at verdict time: the alternative (a `contents`
+/// fetch per changed file) puts N requests per Solidity PR into a pipeline whose known failure mode
+/// is a 429.
+///
+/// A changed path ABSENT from the tree was deleted by this PR. That is not a finding and not an
+/// unreadable — there is no file at head to have a pragma.
+fn sol_scan_pr(work_dir: &str, slug: &str, num: u64, sha: &str, files: &[String]) -> SolScan {
+    let sols: Vec<&String> = files.iter().filter(|p| p.ends_with(".sol")).collect();
+    if sols.is_empty() {
+        return SolScan::NotApplicable;
+    }
+    let dir = checkout_dir(work_dir, slug, num);
+    let root = std::path::Path::new(&dir);
+    if !root.join(".git").is_dir() {
+        return SolScan::NoSource(format!("there is no audit-lens checkout at {dir}"));
+    }
+    let Some(head) = git_out(root, &["rev-parse", "HEAD"]) else {
+        return SolScan::NoSource(format!("{dir} has no resolvable HEAD"));
+    };
+    if head != sha {
+        return SolScan::NoSource(format!(
+            "{dir} holds {head}, which is not this PR's head {sha}"
+        ));
+    }
+    let mut findings = Vec::new();
+    for path in sols {
+        let file = root.join(path);
+        if !file.is_file() {
+            continue; // deleted by this PR — nothing at head to classify.
+        }
+        let Ok(src) = std::fs::read_to_string(&file) else {
+            return SolScan::NoSource(format!(
+                "{path} is present in {dir} but could not be read as text"
+            ));
+        };
+        if let Some(f) = sol_pragma_finding(path, &src) {
+            findings.push(f);
+        }
+    }
+    SolScan::Scanned(findings)
+}
+
+/// The verdict path's adapter onto [`sol_scan_pr`]: pull the changed-file list out of the `gh pr
+/// view` document `record_verdict` already fetched, and resolve the work root from the environment.
+///
+/// A PR number that will not parse is `NoSource`, not `NotApplicable`. It cannot happen through the
+/// MCP surface (the tool parses the number before it gets here) but the CLI takes a string, and a
+/// gate that answers "nothing to check" to an input it could not understand is a gate with a
+/// spelling that turns it off.
+fn verdict_sol_scan(slug: &str, pr: &str, sha: &str, pr_json: &Value) -> SolScan {
+    let files: Vec<String> = pr_json
+        .get("files")
+        .and_then(|f| f.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| f.get("path").and_then(|p| p.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let Ok(num) = pr.parse::<u64>() else {
+        return SolScan::NoSource(format!(
+            "`{pr}` is not a PR number, so no checkout can be named"
+        ));
+    };
+    sol_scan_pr(&vet_work_dir(), slug, num, sha, &files)
+}
+
+/// PURE: does this scan refuse this verdict, and with what message?
+///
+/// `ready` ONLY. A `ready` is the claim that the human's next move is to MERGE, and merging a diff
+/// that breaks a stated convention is the failure #141 is about. Every other verdict is how the PR
+/// gets ROUTED — gating `reject`, `design` or `close` on the same findings would leave a
+/// convention-breaking PR with no verdict it could be given at all.
+///
+/// `NoSource` refuses too, and that is deliberate rather than an accident of fail-closed reflex: a
+/// `ready` on a Solidity PR whose source was never checked out is exactly the verdict this gate
+/// exists to stop, and `review-prompt.txt` already makes `pr_checkout` mandatory before any verdict.
+/// The cost of being wrong is one re-checkout; the cost of failing open is a `ready` nobody checked.
+fn sol_convention_gate(slug: &str, pr: &str, verdict: &str, scan: &SolScan) -> Option<String> {
+    if verdict != "ready" {
+        return None;
+    }
+    match scan {
+        SolScan::NotApplicable => None,
+        SolScan::Scanned(f) if f.is_empty() => None,
+        SolScan::Scanned(findings) => Some(format!(
+            "refusing `ready` on {slug}#{pr}: {} changed Solidity file(s) break the rainlanguage \
+             pragma convention, which the `audit` skill states and which is checked HERE rather \
+             than asked of you:\n{}\nThe convention is `^` (floating) for library and abstract \
+             files, `=` (exact pin) for concrete contracts INCLUDING concrete test mocks. Fix each \
+             file PER ITS OWN KIND — never mass-pin a repo to one pragma. This is a defect in the \
+             diff's own code, so the verdict is `reject` with these lines as the note.",
+            findings.len(),
+            findings
+                .iter()
+                .map(|f| format!("  - {}", f.render()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )),
+        SolScan::NoSource(why) => Some(format!(
+            "refusing `ready` on {slug}#{pr}: it changes Solidity files and the mechanical \
+             convention check has no source to read — {why}. Call `pr_checkout` for this PR and \
+             record the verdict BEFORE `clone_release`; a `ready` on Solidity nobody checked out \
+             is the verdict this gate exists to stop."
+        )),
+    }
+}
+
+/// Directory names never first-party, wherever they appear.
+const SOL_SCAN_SKIP_ALWAYS: [&str; 2] = [".git", "node_modules"];
+
+/// Directory names that are vendored/generated ONLY at a foundry project root. `lib` is the one
+/// that matters and it is why this is not a flat name list: foundry vendors its submodules in
+/// `<root>/lib`, and every rain repo ALSO keeps first-party sources in `src/lib/` and
+/// `test/src/lib/`. Skipping the name outright hid `src/lib/LibRainDeploy.sol` — i.e. it hid the
+/// files this check exists to read.
+const SOL_SCAN_SKIP_AT_PROJECT_ROOT: [&str; 4] = ["lib", "dependencies", "out", "cache"];
+
+/// Is `dir` a vendored/generated tree rather than first-party source? True only when its name is one
+/// of the four AND its parent is a foundry project root (has a `foundry.toml`) — which is exactly
+/// where foundry and soldeer put them.
+fn sol_scan_skip(dir: &std::path::Path) -> bool {
+    let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if SOL_SCAN_SKIP_ALWAYS.contains(&name) {
+        return true;
+    }
+    SOL_SCAN_SKIP_AT_PROJECT_ROOT.contains(&name)
+        && dir
+            .parent()
+            .is_some_and(|p| p.join("foundry.toml").is_file())
+}
+
+/// Collect `.sol` files under a path (a file is itself; a directory is walked).
+fn sol_collect(path: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
+    if path.is_file() {
+        if path.extension().is_some_and(|e| e == "sol") {
+            into.push(path.to_path_buf());
+        }
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    let mut kids: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    kids.sort();
+    for kid in kids {
+        if kid.is_dir() && sol_scan_skip(&kid) {
+            continue;
+        }
+        sol_collect(&kid, into);
+    }
+}
+
+/// `sol-conventions <path>…`: the same rules the verdict gate applies, over a tree on disk. This is
+/// the PRODUCER's copy of the check (it has a shell; the vetter does not) and the way the rules are
+/// verified against a real repo. Exit 0 clean, 2 when anything is flagged.
+fn sol_conventions_mode(paths: &[String]) -> i32 {
+    let mut files = Vec::new();
+    for p in paths {
+        sol_collect(std::path::Path::new(p), &mut files);
+    }
+    let mut findings = 0usize;
+    let mut unreadable = 0usize;
+    for f in &files {
+        let Ok(src) = std::fs::read_to_string(f) else {
+            eprintln!("warning: could not read {}", f.display());
+            unreadable += 1;
+            continue;
+        };
+        if let Some(x) = sol_pragma_finding(&f.to_string_lossy(), &src) {
+            println!("{}", x.render());
+            findings += 1;
+        }
+    }
+    println!(
+        "scanned {} .sol file(s): {findings} finding(s), {unreadable} unreadable",
+        files.len()
+    );
+    if findings > 0 {
+        2
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod sol_conventions_tests {
+    use super::{
+        checkout_dir, sol_convention_gate, sol_decls, sol_pragma, sol_pragma_finding,
+        sol_pragma_op, sol_scan_pr, sol_scan_skip, sol_strip_noncode, verdict_sol_scan,
+        SolFileKind, SolPragmaOp, SolScan,
+    };
+    use serde_json::json;
+
+    /// The rain.deploy header shape, so a fixture reads like the real files rather than like a
+    /// minimal case the classifier was written against. Every `.sol` in the org opens with a SPDX
+    /// line and a NatSpec block, and that block is where the words `contract` and `library` occur
+    /// most often — which is the reason the stripper exists.
+    fn sol(decl: &str, pragma: &str) -> String {
+        format!(
+            "// SPDX-License-Identifier: LicenseRef-DCL-1.0\n\
+             // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd\n\
+             pragma solidity {pragma};\n\
+             \n\
+             import {{Test}} from \"forge-std/Test.sol\";\n\
+             \n\
+             /// @title Example\n\
+             /// @notice A library of helpers for the contract under test.\n\
+             {decl} {{}}\n"
+        )
+    }
+
+    fn kind(src: &str) -> SolFileKind {
+        sol_decls(src).kind()
+    }
+
+    // ── the file-kind classifier ────────────────────────────────────────────
+
+    #[test]
+    fn a_library_file_is_shared_and_wants_a_floating_pragma() {
+        assert_eq!(
+            kind(&sol("library LibRainDeploy", "^0.8.25")),
+            SolFileKind::Shared
+        );
+        assert!(
+            sol_pragma_finding("src/lib/L.sol", &sol("library LibRainDeploy", "^0.8.25")).is_none()
+        );
+        let f = sol_pragma_finding("src/lib/L.sol", &sol("library LibRainDeploy", "=0.8.25"))
+            .expect("a library pinned with `=` is a finding");
+        assert_eq!(f.expected, "^");
+        assert_eq!(f.decided_by, "LibRainDeploy");
+    }
+
+    #[test]
+    fn an_abstract_contract_is_shared_not_concrete() {
+        let src = sol("abstract contract LogTest is Test", "=0.8.25");
+        assert_eq!(kind(&src), SolFileKind::Shared);
+        // rain.math.float's `test/abstract/LogTest.sol` is exactly this, and it is a real finding:
+        // the rule is stated over file kind, not over which directory the file lives in.
+        let f = sol_pragma_finding("test/abstract/LogTest.sol", &src).expect("finding");
+        assert_eq!(f.expected, "^");
+        assert_eq!(f.decided_by, "LogTest");
+        assert!(sol_pragma_finding(
+            "t.sol",
+            &sol("abstract contract LogTest is Test", "^0.8.25")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn an_interface_is_shared() {
+        assert_eq!(
+            kind(&sol("interface ICloneableV2", "^0.8.18")),
+            SolFileKind::Shared
+        );
+        assert!(
+            sol_pragma_finding("src/I.sol", &sol("interface ICloneableV2", "^0.8.18")).is_none()
+        );
+        assert_eq!(
+            sol_pragma_finding("src/I.sol", &sol("interface ICloneableV2", "=0.8.18"))
+                .expect("finding")
+                .expected,
+            "^"
+        );
+    }
+
+    /// The live instance: rain.deploy#20's `MockAddressRevertingFactory.sol`, a concrete test mock
+    /// added by the diff with `^0.8.25`, on which the vetter recorded `ready`.
+    #[test]
+    fn a_concrete_contract_including_a_test_mock_wants_an_exact_pin() {
+        let src = sol("contract MockAddressRevertingFactory", "^0.8.25");
+        assert_eq!(kind(&src), SolFileKind::Concrete);
+        let f = sol_pragma_finding("test/src/lib/MockAddressRevertingFactory.sol", &src)
+            .expect("a concrete contract floated with `^` is a finding");
+        assert_eq!(f.expected, "=");
+        assert_eq!(f.kind, SolFileKind::Concrete);
+        assert_eq!(f.decided_by, "MockAddressRevertingFactory");
+        assert_eq!(f.found, "^0.8.25");
+        assert!(sol_pragma_finding(
+            "m.sol",
+            &sol("contract MockAddressRevertingFactory", "=0.8.25")
+        )
+        .is_none());
+    }
+
+    /// `abstract` decides the kind, so dropping the look-behind turns every abstract into a
+    /// concrete and every abstract file into a finding.
+    #[test]
+    fn abstract_is_read_from_the_token_before_contract() {
+        assert_eq!(
+            kind(&sol("abstract contract A", "^0.8.25")),
+            SolFileKind::Shared
+        );
+        assert_eq!(kind(&sol("contract A", "^0.8.25")), SolFileKind::Concrete);
+    }
+
+    #[test]
+    fn a_mixed_file_is_classified_by_its_concrete_contract() {
+        let src = "pragma solidity ^0.8.25;\nlibrary LibHelper {}\ninterface IThing {}\ncontract Deployed is IThing {}\n";
+        let decls = sol_decls(src);
+        assert_eq!(decls.concrete, vec!["Deployed".to_string()]);
+        assert_eq!(
+            decls.shared,
+            vec!["LibHelper".to_string(), "IThing".to_string()]
+        );
+        assert_eq!(decls.kind(), SolFileKind::Concrete);
+        let f = sol_pragma_finding("src/Mixed.sol", src).expect("finding");
+        assert_eq!(f.expected, "=");
+        assert_eq!(f.decided_by, "Deployed");
+    }
+
+    /// A `*.pointers.sol` / errors file. Not covered by the written rule in EITHER direction, and
+    /// deliberately not guessed at — a gate that refuses verdicts on an unwritten expectation is
+    /// worse than one with a stated gap.
+    #[test]
+    fn a_declarationless_file_is_not_flagged_in_either_direction() {
+        for pragma in ["^0.8.25", "=0.8.25"] {
+            let src = format!(
+                "pragma solidity {pragma};\n\nerror BadThing();\n\nfunction freeHelper() pure returns (uint256) {{ return 1; }}\n"
+            );
+            assert_eq!(kind(&src), SolFileKind::Declarationless);
+            assert!(
+                sol_pragma_finding("src/Err.sol", &src).is_none(),
+                "{pragma}: a declarationless file must not be flagged"
+            );
+        }
+    }
+
+    // ── the stripper: comments and strings are not declarations ─────────────
+
+    #[test]
+    fn a_declaration_keyword_in_a_comment_does_not_classify() {
+        // A LIBRARY file whose NatSpec talks about "the contract under test". Reading the comment
+        // makes it Concrete, and `^` then becomes a false finding on a correct file.
+        let src = "// contract Fake {}\npragma solidity ^0.8.25;\n/* contract AlsoFake {} */\n/// @notice see contract Foo\nlibrary Real {}\n";
+        assert_eq!(kind(src), SolFileKind::Shared);
+        assert_eq!(sol_decls(src).concrete, Vec::<String>::new());
+        assert!(sol_pragma_finding("src/Real.sol", src).is_none());
+    }
+
+    #[test]
+    fn a_declaration_keyword_in_a_string_literal_does_not_classify() {
+        let src = "pragma solidity ^0.8.25;\nlibrary Real {\n  string constant S = \"contract Fake\";\n  string constant T = 'library Other';\n  string constant U = \"a \\\" contract Escaped\";\n}\n";
+        assert_eq!(sol_decls(src).concrete, Vec::<String>::new());
+        assert_eq!(kind(src), SolFileKind::Shared);
+    }
+
+    /// rain.deploy's own `LibRainDeploy.t.sol` has a `contractPath,` token. Without the word
+    /// boundary it declares a contract named `,`.
+    #[test]
+    fn an_identifier_beginning_with_a_keyword_is_not_a_declaration() {
+        let src = "pragma solidity ^0.8.25;\nlibrary L {\n  function f() internal { string memory contractPath = interfaceName; libraryish(); }\n}\n";
+        assert_eq!(sol_decls(src).concrete, Vec::<String>::new());
+        assert_eq!(kind(src), SolFileKind::Shared);
+    }
+
+    #[test]
+    fn the_stripper_preserves_length_and_lines() {
+        let src = "a // xx\nb /* y\nz */ c\nd \"str\" e\n";
+        let out = sol_strip_noncode(src);
+        assert_eq!(out.len(), src.len(), "byte offsets must survive stripping");
+        assert_eq!(
+            out.matches('\n').count(),
+            src.matches('\n').count(),
+            "line numbers must survive stripping"
+        );
+        assert!(!out.contains("xx") && !out.contains('y') && !out.contains("str"));
+        assert!(out.contains('a') && out.contains('b') && out.contains('c') && out.contains('d'));
+    }
+
+    // ── the pragma matcher ──────────────────────────────────────────────────
+
+    #[test]
+    fn pragma_op_separates_caret_exact_and_everything_else() {
+        for spec in ["^0.8.25", "^0.8.0", " ^0.8.25 "] {
+            assert_eq!(sol_pragma_op(spec), SolPragmaOp::Caret, "{spec}");
+        }
+        // A BARE version is an exact pin — solc reads `0.8.25` as `=0.8.25`.
+        for spec in ["=0.8.25", "0.8.25", "= 0.8.25"] {
+            assert_eq!(sol_pragma_op(spec), SolPragmaOp::Exact, "{spec}");
+        }
+        // Ranges are outside the written convention and are left alone. `>=0.8.0` contains an `=`,
+        // which is why only a LEADING one counts.
+        for spec in [">=0.8.0 <0.9.0", ">=0.8.25", "~0.8.25", "<0.9.0", ""] {
+            assert_eq!(sol_pragma_op(spec), SolPragmaOp::Other, "{spec}");
+        }
+    }
+
+    #[test]
+    fn a_range_pragma_is_never_a_finding_on_any_file_kind() {
+        for decl in [
+            "library L",
+            "abstract contract A",
+            "interface I",
+            "contract C",
+        ] {
+            let src = sol(decl, ">=0.8.25 <0.9.0");
+            assert!(sol_pragma_finding("x.sol", &src).is_none(), "{decl}");
+        }
+    }
+
+    #[test]
+    fn the_pragma_carries_its_real_line_number() {
+        let p = sol_pragma(&sol("contract C", "^0.8.25")).expect("pragma");
+        assert_eq!(p.line, 3, "the two SPDX comment lines come first");
+        assert_eq!(p.spec, "^0.8.25");
+        assert_eq!(p.op, SolPragmaOp::Caret);
+        assert_eq!(
+            sol_pragma_finding("t.sol", &sol("contract C", "^0.8.25"))
+                .expect("finding")
+                .line,
+            3
+        );
+    }
+
+    #[test]
+    fn only_the_solidity_pragma_is_read() {
+        let src = "pragma abicoder v2;\npragma solidity ^0.8.25;\ncontract C {}\n";
+        let p = sol_pragma(src).expect("pragma");
+        assert_eq!(p.spec, "^0.8.25");
+        assert_eq!(p.line, 2);
+        assert_eq!(
+            sol_pragma_finding("t.sol", src).expect("finding").expected,
+            "="
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_solidity_pragma_has_no_finding() {
+        let src = "// SPDX-License-Identifier: X\ncontract C {}\n";
+        assert!(sol_pragma(src).is_none());
+        assert!(sol_pragma_finding("t.sol", src).is_none());
+        // …and an unterminated directive is not a spec either.
+        assert!(sol_pragma("pragma solidity ^0.8.25\ncontract C {}\n").is_none());
+    }
+
+    /// The word boundary on the LEFT of `pragma`, which nothing else in the suite reaches.
+    #[test]
+    fn a_word_ending_in_pragma_is_not_a_pragma() {
+        let src = "uint256 constant subpragma = 1;\npragma solidity ^0.8.25;\ncontract C {}\n";
+        let p = sol_pragma(src).expect("pragma");
+        assert_eq!(p.line, 2);
+    }
+
+    // ── the whole rain.deploy tree, as the oracle ───────────────────────────
+
+    /// The verification the issue names: rain.deploy at `c0d48cf8` has one library (`^`, correct)
+    /// and four concrete files carrying `^` — the three mocks the issue lists AND the `.t.sol`
+    /// suite, which is a concrete contract by the same rule and which the issue's own enumeration
+    /// left out. The oracle is the org's practice, not this code: every `.t.sol` in
+    /// rain.math.float, rain.erc4626.words and rain.factory is `=0.8.25`, none is `^`.
+    #[test]
+    fn the_rain_deploy_tree_flags_its_four_concrete_files_and_not_its_library() {
+        let tree: [(&str, &str, bool); 5] = [
+            ("src/lib/LibRainDeploy.sol", "library LibRainDeploy", false),
+            (
+                "test/src/lib/LibRainDeploy.t.sol",
+                "contract LibRainDeployTest is Test",
+                true,
+            ),
+            (
+                "test/src/lib/MockAddressRevertingFactory.sol",
+                "contract MockAddressRevertingFactory",
+                true,
+            ),
+            (
+                "test/src/lib/MockDeployable.sol",
+                "contract MockDeployable",
+                true,
+            ),
+            (
+                "test/src/lib/MockReverter.sol",
+                "contract MockReverter",
+                true,
+            ),
+        ];
+        let flagged: Vec<&str> = tree
+            .iter()
+            .filter(|(path, decl, _)| sol_pragma_finding(path, &sol(decl, "^0.8.25")).is_some())
+            .map(|(path, _, _)| *path)
+            .collect();
+        let expected: Vec<&str> = tree
+            .iter()
+            .filter(|(_, _, want)| *want)
+            .map(|(path, _, _)| *path)
+            .collect();
+        assert_eq!(flagged, expected);
+    }
+
+    // ── the gate ────────────────────────────────────────────────────────────
+
+    fn finding_scan() -> SolScan {
+        SolScan::Scanned(vec![sol_pragma_finding(
+            "test/src/lib/MockDeployable.sol",
+            &sol("contract MockDeployable", "^0.8.25"),
+        )
+        .expect("finding")])
+    }
+
+    #[test]
+    fn the_gate_refuses_a_ready_and_names_the_file_and_the_per_kind_fix() {
+        let msg = sol_convention_gate("rainlanguage/rain.deploy", "20", "ready", &finding_scan())
+            .expect("a ready over a finding must be refused");
+        assert!(msg.contains("rainlanguage/rain.deploy#20"));
+        assert!(msg.contains("test/src/lib/MockDeployable.sol"));
+        assert!(msg.contains("^0.8.25"));
+        assert!(
+            msg.contains("never mass-pin"),
+            "an inconsistent-pragma finding is answered per file kind: {msg}"
+        );
+        assert!(
+            msg.contains("`reject`"),
+            "the refusal must name the verdict that IS available: {msg}"
+        );
+    }
+
+    /// Only `ready` is gated. Gating the routing verdicts would leave a convention-breaking PR with
+    /// no verdict it could be given at all — the deadlock, not the fix.
+    #[test]
+    fn the_gate_never_blocks_a_routing_verdict() {
+        for verdict in ["reject", "design", "close"] {
+            assert!(
+                sol_convention_gate("o/r", "1", verdict, &finding_scan()).is_none(),
+                "{verdict} must pass"
+            );
+            assert!(
+                sol_convention_gate("o/r", "1", verdict, &SolScan::NoSource("x".into())).is_none(),
+                "{verdict} must pass with no source"
+            );
+        }
+    }
+
+    /// An EMPTY finding set is a positive result — the rules ran and none fired — and it is what
+    /// makes a `ready` on a clean Solidity PR possible at all.
+    #[test]
+    fn an_empty_finding_set_passes_a_ready() {
+        assert!(sol_convention_gate("o/r", "1", "ready", &SolScan::Scanned(vec![])).is_none());
+    }
+
+    #[test]
+    fn a_pr_that_changes_no_solidity_is_not_gated() {
+        assert!(sol_convention_gate("o/r", "1", "ready", &SolScan::NotApplicable).is_none());
+    }
+
+    /// FAIL CLOSED. "The source could not be read" is not "nothing was found": a `ready` on a
+    /// Solidity PR nobody checked out is the verdict this gate exists to stop.
+    #[test]
+    fn an_unreadable_source_refuses_a_ready_and_says_what_to_do() {
+        let msg = sol_convention_gate(
+            "o/r",
+            "1",
+            "ready",
+            &SolScan::NoSource("there is no audit-lens checkout at /w/vet-r-1".into()),
+        )
+        .expect("no source must refuse a ready");
+        assert!(msg.contains("/w/vet-r-1"));
+        assert!(
+            msg.contains("pr_checkout"),
+            "the refusal must name the call that fixes it: {msg}"
+        );
+        assert!(
+            msg.contains("clone_release"),
+            "…and the ORDER, which is the whole ergonomic hazard: {msg}"
+        );
+    }
+
+    // ── the scan, against a real checkout ───────────────────────────────────
+
+    fn tmp_root(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("prr-solconv-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// Build the tree `pr_checkout` would have left: a git clone at `checkout_dir`, holding the
+    /// files at a real commit. Returns (work root, head sha).
+    fn checkout_with(tag: &str, slug: &str, num: u64, files: &[(&str, &str)]) -> (String, String) {
+        let root = tmp_root(tag);
+        let dir = checkout_dir(root.to_str().unwrap(), slug, num);
+        let path = std::path::Path::new(&dir);
+        std::fs::create_dir_all(path).unwrap();
+        super::git_run(path, &["init", "-q", "-b", "main"]).expect("git is required");
+        for (rel, body) in files {
+            let f = path.join(rel);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, body).unwrap();
+        }
+        super::git_run(path, &["add", "-A"]).unwrap();
+        super::git_run(
+            path,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "head",
+            ],
+        )
+        .unwrap();
+        let head = super::git_out(path, &["rev-parse", "HEAD"]).unwrap();
+        (root.to_string_lossy().into_owned(), head)
+    }
+
+    #[test]
+    fn the_scan_reads_the_changed_sol_files_out_of_the_checkout() {
+        let mock = sol("contract MockDeployable", "^0.8.25");
+        let lib = sol("library LibRainDeploy", "^0.8.25");
+        let (work, head) = checkout_with(
+            "reads",
+            "rainlanguage/rain.deploy",
+            20,
+            &[
+                ("test/src/lib/MockDeployable.sol", mock.as_str()),
+                ("src/lib/LibRainDeploy.sol", lib.as_str()),
+                ("README.md", "not solidity"),
+            ],
+        );
+        let scan = sol_scan_pr(
+            &work,
+            "rainlanguage/rain.deploy",
+            20,
+            &head,
+            &[
+                "test/src/lib/MockDeployable.sol".into(),
+                "src/lib/LibRainDeploy.sol".into(),
+                "README.md".into(),
+            ],
+        );
+        let SolScan::Scanned(findings) = scan else {
+            panic!("expected a scan, got {scan:?}");
+        };
+        assert_eq!(findings.len(), 1, "only the mock breaks the convention");
+        assert_eq!(findings[0].path, "test/src/lib/MockDeployable.sol");
+    }
+
+    /// The head cross-check `review-prompt.txt` demands of the vetter, enforced here: a tree holding
+    /// a DIFFERENT commit produces no findings rather than confident findings about other code.
+    #[test]
+    fn a_checkout_at_another_head_is_no_source() {
+        let mock = sol("contract MockDeployable", "^0.8.25");
+        let (work, head) = checkout_with("wronghead", "o/r", 1, &[("m.sol", mock.as_str())]);
+        let scan = sol_scan_pr(
+            &work,
+            "o/r",
+            1,
+            "0000000000000000000000000000000000000000",
+            &["m.sol".into()],
+        );
+        let SolScan::NoSource(why) = scan else {
+            panic!("a mismatched head must be NoSource, got {scan:?}");
+        };
+        assert!(
+            why.contains(&head),
+            "the refusal must name what it found: {why}"
+        );
+        // …and the SAME tree at the right head scans.
+        assert!(matches!(
+            sol_scan_pr(&work, "o/r", 1, &head, &["m.sol".into()]),
+            SolScan::Scanned(_)
+        ));
+    }
+
+    #[test]
+    fn a_missing_checkout_is_no_source_not_a_clean_scan() {
+        let root = tmp_root("missing");
+        let scan = sol_scan_pr(root.to_str().unwrap(), "o/r", 7, "abc", &["m.sol".into()]);
+        assert!(
+            matches!(scan, SolScan::NoSource(ref w) if w.contains("vet-r-7")),
+            "got {scan:?}"
+        );
+    }
+
+    /// A path the PR DELETES is absent from the head tree. That is not an unreadable source and not
+    /// a finding — treating it as either turns every deletion into a refused `ready`.
+    #[test]
+    fn a_file_the_pr_deletes_is_neither_a_finding_nor_unreadable() {
+        let lib = sol("library L", "^0.8.25");
+        let (work, head) = checkout_with("deleted", "o/r", 2, &[("src/L.sol", lib.as_str())]);
+        let scan = sol_scan_pr(
+            &work,
+            "o/r",
+            2,
+            &head,
+            &["src/L.sol".into(), "src/Gone.sol".into()],
+        );
+        assert_eq!(scan, SolScan::Scanned(vec![]), "got {scan:?}");
+    }
+
+    /// No `.sol` in the change set means the gate is vacuous — and it must be vacuous WITHOUT
+    /// needing a checkout, or every docs-only PR would demand one.
+    #[test]
+    fn a_change_set_with_no_solidity_needs_no_checkout_at_all() {
+        let root = tmp_root("nosol");
+        assert_eq!(
+            sol_scan_pr(
+                root.to_str().unwrap(),
+                "o/r",
+                3,
+                "abc",
+                &["README.md".into(), "src/main.rs".into()]
+            ),
+            SolScan::NotApplicable
+        );
+    }
+
+    /// The verdict path's adapter. A PR number it cannot parse names no checkout, so it must be
+    /// NoSource — `NotApplicable` there would be a spelling that switches the gate off.
+    #[test]
+    fn verdict_scan_reads_the_file_list_and_fails_closed_on_a_bad_number() {
+        let doc = json!({"files":[{"path":"src/L.sol"},{"path":"README.md"}]});
+        assert!(matches!(
+            verdict_sol_scan("o/r", "not-a-number", "abc", &doc),
+            SolScan::NoSource(_)
+        ));
+        // No `files` key at all (an older gh, a fetch that lost it) is NOT "no solidity changed".
+        assert!(matches!(
+            verdict_sol_scan("o/r", "not-a-number", "abc", &json!({})),
+            SolScan::NoSource(_)
+        ));
+        // A file list with no `.sol` in it is vacuous whatever the number.
+        assert_eq!(
+            verdict_sol_scan("o/r", "1", "abc", &json!({"files":[{"path":"README.md"}]})),
+            SolScan::NotApplicable
+        );
+    }
+
+    // ── the CLI's tree walk ─────────────────────────────────────────────────
+
+    /// `src/lib/` is FIRST-PARTY in every rain repo; foundry's vendored tree is `<root>/lib` next to
+    /// `foundry.toml`. A flat name skip hid `src/lib/LibRainDeploy.sol` — the file this check exists
+    /// to read — so the skip is anchored on the project root.
+    #[test]
+    fn the_walk_skips_the_vendored_lib_and_keeps_src_lib() {
+        let root = tmp_root("walk");
+        std::fs::write(root.join("foundry.toml"), "[profile.default]\n").unwrap();
+        for d in [
+            "lib",
+            "dependencies",
+            "out",
+            "src/lib",
+            "test/src/lib",
+            "node_modules",
+        ] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        for (d, skip) in [
+            ("lib", true),
+            ("dependencies", true),
+            ("out", true),
+            ("node_modules", true),
+            ("src", false),
+            ("src/lib", false),
+            ("test/src/lib", false),
+        ] {
+            assert_eq!(sol_scan_skip(&root.join(d)), skip, "{d}");
+        }
+        // Without a sibling `foundry.toml` a directory named `lib` is just a directory.
+        let plain = tmp_root("walk-plain");
+        std::fs::create_dir_all(plain.join("lib")).unwrap();
+        assert!(!sol_scan_skip(&plain.join("lib")));
+        // `.git` and `node_modules` are never first-party, project root or not.
+        std::fs::create_dir_all(plain.join(".git")).unwrap();
+        std::fs::create_dir_all(plain.join("node_modules")).unwrap();
+        assert!(sol_scan_skip(&plain.join(".git")));
+        assert!(sol_scan_skip(&plain.join("node_modules")));
+    }
+}
+
 /// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
 /// parsing, validation, and `--help`/usage (replacing the former hand-rolled `args.get(n)` dispatch).
 #[derive(Parser)]
@@ -14461,6 +15617,15 @@ enum Cmd {
         issue: u64,
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Lint `.sol` files against the MECHANICAL rainlanguage conventions the `audit` skill states in
+    /// prose — currently the pragma-by-file-kind rule. Exit 0 clean, 2 when anything is flagged.
+    /// The same rules gate a vetter's `ready` in `record-verdict` (#141); this is the shell-side
+    /// copy, for a producer checking its own diff before it opens a PR.
+    SolConventions {
+        /// Files or directories. A directory is walked for `*.sol`, skipping vendored trees.
+        #[arg(required = true, num_args = 1..)]
+        paths: Vec<String>,
     },
     /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
     /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
@@ -16070,6 +17235,7 @@ fn main() {
             issue,
             dry_run,
         } => report_apply(weaken_closes_apply(&slug, &pr, issue, dry_run)),
+        Cmd::SolConventions { paths } => sol_conventions_mode(&paths),
         Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
             Ok(p) => mcp_serve(p),
             Err(e) => {
@@ -18813,6 +19979,37 @@ mod settings_tests {
             prompt.contains("weaken_closes"),
             "the vetter must know the producer CAN execute a linkage reject — a reject with no \
              exit is the deadlock #135 was filed about"
+        );
+    }
+
+    /// #141: `record_verdict` now REFUSES a `ready` whose changed `.sol` files break the pragma
+    /// convention, and a guard the prompt does not teach costs a whole run's tool calls to
+    /// discover. Two halves have to be in the prompt for the refusal to be actionable: what the
+    /// rule IS (so a `reject` note can state it correctly, per file kind) and the ORDER the check
+    /// imposes — it reads the `pr_checkout` tree, so a verdict recorded after `clone_release` has
+    /// no source to be checked against.
+    #[test]
+    fn the_vetter_prompt_teaches_the_mechanical_convention_gate() {
+        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("MECHANICAL CONVENTION GATE"),
+            "the vetter must be told the gate exists, not discover it as a refusal"
+        );
+        assert!(
+            prompt.contains("including concrete test mocks"),
+            "the rule the gate enforces must be stated as the skill states it — the miss it was \
+             filed for (rain.deploy#20) was on a test mock"
+        );
+        assert!(
+            prompt.contains("BEFORE `clone_release`"),
+            "the check reads the `pr_checkout` tree, so the prompt must state the ordering"
+        );
+        assert!(
+            prompt.contains("mass-pinning"),
+            "an inconsistent-pragma finding is answered per file kind; the prompt must forbid the \
+             mass pin, which is the wrong fix the finding invites"
         );
     }
 
