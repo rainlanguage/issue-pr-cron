@@ -1153,8 +1153,20 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 38,
+        "count": 33,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 105,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/105",
+            "title": "test(uint256): bring the uint256 suite to parity with the bytes32 one"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 134,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/134",
+            "title": "/nr independently checks the vetter's verdict instead of relaying it"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 21,
@@ -1292,48 +1304,6 @@
             "number": 403,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
             "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 398,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
-            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 397,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/397",
-            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 395,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
-            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 394,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
-            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 393,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/393",
-            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 389,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
-            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 387,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/387",
-            "title": "fix(store): reject zero and null block.number from RPC"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1490,6 +1460,53 @@
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
             "title": "2023 12 23 anvil"
+          }
+        ]
+      },
+      "ai:ready": {
+        "count": 7,
+        "prs": [
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 398,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
+            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 397,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/397",
+            "title": "fix(component): guard entry.shares?.totalRewards in Leaderboard"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 395,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
+            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 394,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
+            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 393,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/393",
+            "title": "fix(component): encodeURIComponent account href in Leaderboard; add rel to blank link"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 389,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
+            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 387,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/387",
+            "title": "fix(store): reject zero and null block.number from RPC"
           }
         ]
       },
@@ -1717,6 +1734,30 @@
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 93,
+      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/93",
+      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1060,
+      "url": "https://github.com/rainlanguage/raindex/issues/1060",
+      "title": "withdraw2 task not being executed when withdrawAmount is <= 0"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1042,
+      "url": "https://github.com/rainlanguage/raindex/issues/1042",
+      "title": "GStreamer and the Embedded video in the homepage causes local build to freeze"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1039,
+      "url": "https://github.com/rainlanguage/raindex/issues/1039",
+      "title": "Unable to install linux release on ubunut24"
+    },
+    {
       "repo": "rainlanguage/raindex",
       "number": 981,
       "url": "https://github.com/rainlanguage/raindex/issues/981",
@@ -1741,7 +1782,26 @@
       "title": "i was asked to infinite approve quick on deposit"
     }
   ],
-  "closeCandidateUnvetted": [],
+  "closeCandidateUnvetted": [
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1060,
+      "url": "https://github.com/rainlanguage/raindex/issues/1060",
+      "title": "withdraw2 task not being executed when withdrawAmount is <= 0"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1042,
+      "url": "https://github.com/rainlanguage/raindex/issues/1042",
+      "title": "GStreamer and the Embedded video in the homepage causes local build to freeze"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1039,
+      "url": "https://github.com/rainlanguage/raindex/issues/1039",
+      "title": "Unable to install linux release on ubunut24"
+    }
+  ],
   "closeCandidateUpheld": [
     {
       "repo": "rainlanguage/rain.dia",
@@ -1774,6 +1834,12 @@
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 93,
+      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/93",
+      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
+    },
+    {
       "repo": "rainlanguage/raindex",
       "number": 981,
       "url": "https://github.com/rainlanguage/raindex/issues/981",
@@ -1801,21 +1867,33 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 132,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/132",
-      "title": "/nr relays the vetter's verdict instead of independently checking it"
+      "number": 137,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/137",
+      "title": "The vetter's state-load is still serial: 116 sequential fetches on its first call of every run"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 136,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/136",
+      "title": "Producer has no sanctioned way to repair a PR's issue linkage — give it an MCP tool, direction-locked to Closes to Refs"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 135,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/135",
+      "title": "ai:relink is a reject with a specific note — and the producer has no tool to execute it"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 133,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/133",
+      "title": "ai:reject and human:reject are one state: same owner, same action, split only by who ruled"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 131,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/131",
       "title": "record_verdict takes scope coverage on trust: a verdict on a file never read is indistinguishable from a diligent one"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 145,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/145",
-      "title": "Dashboard still renders awaiting-re-vet; the state was deleted by issue-pr-cron#128"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -3010,12 +3088,6 @@
       "number": 2788,
       "url": "https://github.com/rainlanguage/raindex/issues/2788",
       "title": "Allow the order input token to be optional"
-    },
-    {
-      "repo": "rainlanguage/rain.erc4626.words",
-      "number": 93,
-      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/93",
-      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
       "repo": "rainlanguage/rain.erc4626.words",
@@ -4386,22 +4458,10 @@
       "title": "arbitrage strats case"
     },
     {
-      "repo": "rainlanguage/raindex",
-      "number": 1042,
-      "url": "https://github.com/rainlanguage/raindex/issues/1042",
-      "title": "GStreamer and the Embedded video in the homepage causes local build to freeze"
-    },
-    {
       "repo": "rainlanguage/rain.solver",
       "number": 277,
       "url": "https://github.com/rainlanguage/rain.solver/issues/277",
       "title": "research the possibility to include arb3 tx gas usage and gasPrice in the arb3 task context from solidity"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1039,
-      "url": "https://github.com/rainlanguage/raindex/issues/1039",
-      "title": "Unable to install linux release on ubunut24"
     },
     {
       "repo": "rainlanguage/rain.solver",
@@ -5707,13 +5767,13 @@
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
-    "closeCandidateIssues": 9,
-    "closeCandidateUnvetted": 0,
-    "closeCandidateUpheld": 9,
+    "closeCandidateIssues": 13,
+    "closeCandidateUnvetted": 3,
+    "closeCandidateUpheld": 10,
     "leaks": 23,
-    "totalProducerPrs": 157,
-    "uncoveredIssues": 623,
-    "unvetted": 38,
+    "totalProducerPrs": 159,
+    "uncoveredIssues": 622,
+    "unvetted": 33,
     "reject": 29,
     "relink": 1,
     "closeCandidatePrs": 4,
