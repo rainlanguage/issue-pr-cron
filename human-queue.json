@@ -1163,8 +1163,14 @@
     },
     "vet-lifecycle": {
       "awaiting-re-vet": {
-        "count": 21,
+        "count": 23,
         "prs": [
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 50,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
+            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
+          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 435,
@@ -1194,6 +1200,12 @@
             "number": 430,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/430",
             "title": "refactor(component): drop misleading optional chain on required stats prop"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 429,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
+            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1294,8 +1306,14 @@
         ]
       },
       "un-vetted": {
-        "count": 3,
+        "count": 4,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 102,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
+            "title": "test: pin truncate's accept/reject boundary in both array libs"
+          },
           {
             "repo": "rainlanguage/rain.uniswap",
             "number": 31,
@@ -1408,25 +1426,13 @@
         ]
       },
       "ai:ready": {
-        "count": 10,
+        "count": 8,
         "prs": [
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 50,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/50",
-            "title": "audit: LicenseRef-DCL-1.0 is the DecentraLicense — flag mis-naming"
-          },
           {
             "repo": "rainlanguage/rainlang.interface",
             "number": 118,
             "url": "https://github.com/rainlanguage/rainlang.interface/pull/118",
             "title": "test: pin sourceCount(hex\"00\") == 0 explicitly"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 429,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
-            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -1694,6 +1700,12 @@
       "number": 248,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 981,
+      "url": "https://github.com/rainlanguage/raindex/issues/981",
+      "title": "add back button for desktop app"
     }
   ],
   "closeCandidateUnvetted": [
@@ -1714,6 +1726,12 @@
       "number": 6,
       "url": "https://github.com/rainlanguage/rain.dia/issues/6",
       "title": "[AUDIT-M01] [medium] LibOpDiaPrice.run does not fail-closed on input arity"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 981,
+      "url": "https://github.com/rainlanguage/raindex/issues/981",
+      "title": "add back button for desktop app"
     }
   ],
   "closeCandidateUpheld": [
@@ -1725,6 +1743,12 @@
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 62,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/62",
+      "title": "Stamp section says \"default branch\" but never resolves it, so `main` gets assumed — 22 active repos are not on main"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 117,
@@ -2024,12 +2048,6 @@
       "number": 75,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/75",
       "title": "[A13] [MEDIUM] The differential oracle reads the shared input AFTER the fast path, so arrayFrom/unsafeExtend corrupting their input cancels out of every comparison"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 74,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/74",
-      "title": "[A12] [MEDIUM] truncate's accept/reject boundary is never pinned: loosening the guard to array.length + 1 leaves the entire suite green"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -4360,12 +4378,6 @@
       "title": "get vault balances for an order in cli"
     },
     {
-      "repo": "rainlanguage/raindex",
-      "number": 981,
-      "url": "https://github.com/rainlanguage/raindex/issues/981",
-      "title": "add back button for desktop app"
-    },
-    {
       "repo": "rainlanguage/org-process",
       "number": 2,
       "url": "https://github.com/rainlanguage/org-process/issues/2",
@@ -5621,7 +5633,7 @@
       "number": 125,
       "url": "https://github.com/rainlanguage/rain.flare/pull/125",
       "title": "Fix staleness overflow: use subtraction instead of addition in stale check",
-      "reason": "🤖 ai:producer Blocked-infra: 3d merge conflict is in src/generated/FlareFtsoWords.pointers.sol (BYTECODE_HASH + DESCRIBED_BY_META_HASH differ on both sides — this PR intentionally regenerates pointers and main has since regenerated them too); correct merged constants require re-running the build prelude, and rain.flare's meta build is currently divergent local-vs-CI (see rain.flare#186 ai:blocked-infra: regenerated meta binaries differ deterministically from CI's), so a locally-regenerated resolution risks pushing wrong pins. Blocked on resolving that meta-toolchain divergence; merge was aborted, branch untouched (prior 3d note)."
+      "reason": "🤖 ai:producer  Producer note: the two prior hand-offs on this PR are now superseded — the conflict IS resolved and the branch is pushed.  - Only `BYTECODE_HASH` actually conflicted; `DESCRIBED_BY_META_HASH` is identical on both sides, so the earlier \"both differ\" reading no longer holds. - The pointer was regenerated from the merged source via the sanctioned prelude (`nix develop -c rain-flare-prelude`, which now runs `script/Build.sol` after main's rename), not hand-picked from either side. - `LibOpFtsoCurrentPriceUsd.t.sol` took the union of both sides: this branch's `testRunTimestampPlusTimeoutOverflow` plus main's negative/fractional timeout revert tests. No test dropped. - Verified locally: 17/18 on the affected suite; the sole failure is the pre-existing `FLARE_RPC_URL` fork test that needs the CI secret."
     },
     {
       "repo": "rainlanguage/rain.flare",
@@ -5700,14 +5712,14 @@
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
-    "closeCandidateIssues": 4,
-    "closeCandidateUnvetted": 3,
+    "closeCandidateIssues": 5,
+    "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 1,
     "leaks": 30,
-    "totalProducerPrs": 159,
-    "uncoveredIssues": 626,
-    "unvetted": 3,
-    "awaitingReVet": 21,
+    "totalProducerPrs": 160,
+    "uncoveredIssues": 625,
+    "unvetted": 4,
+    "awaitingReVet": 23,
     "reject": 30,
     "relink": 1,
     "closeCandidatePrs": 0,
