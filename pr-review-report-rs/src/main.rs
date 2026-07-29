@@ -13716,16 +13716,20 @@ enum RelinkRefusal {
     ///
     /// UNREACHABLE while the `## QA` span exclusion holds: every edited span is outside that
     /// section, so the section comes through byte-identical and the predicate cannot change value.
-    /// It stays because the proof rests on the exclusion — break that and this is what turns a
-    /// body the PR-open gate would refuse into a REFUSAL instead of a write.
+    /// Mutating this check alone therefore changes no observable behaviour — a MEASURED survivor,
+    /// like [`RepairRefusal::ResultRejected`]. It stays because the proof rests on the exclusion,
+    /// which is itself pinned: delete the exclusion and three tests fail. Break the exclusion and
+    /// this is what turns a body the PR-open gate would refuse into a REFUSAL instead of a write.
     QaBlockChanged,
     /// THE DIRECTION LOCK. The rewrite would leave the body closing an issue it did not close
     /// before. Carries the numbers that appeared, so a refusal names the damage it prevented.
     ///
-    /// Unreachable while [`REFS_KEYWORD`] is not a closing keyword — which is exactly why the
-    /// check is here rather than assumed: it is the assertion that survives someone "fixing" the
-    /// constant, and it is evaluated with the same [`closing_keywords`] GitHub's behaviour is
-    /// modelled by everywhere else in this binary.
+    /// Unreachable while [`REFS_KEYWORD`] is not a closing keyword, so disabling this arm ALONE is
+    /// another measured survivor — which is exactly why the check is here rather than assumed: it
+    /// is the assertion that survives someone "fixing" the constant, and disabling BOTH is caught
+    /// at once. Its non-vacuity is pinned on [`closes_added`] directly, in both directions, rather
+    /// than only through plans that cannot violate it. Evaluated with the same [`closing_keywords`]
+    /// GitHub's behaviour is modelled by everywhere else in this binary.
     WouldStrengthen(Vec<u64>),
 }
 
@@ -13749,18 +13753,26 @@ impl RelinkRefusal {
         match self {
             RelinkRefusal::NoSuchReference(n) => lines.extend([
                 format!("  the body of {subject} does not reference #{n} at all, so there is no"),
-                "  linkage to weaken. Nothing was written: a repair that edited the nearest".to_string(),
-                "  reference that looked close enough is the failure this refusal exists for.".to_string(),
+                "  linkage to weaken. Nothing was written: a repair that edited the nearest"
+                    .to_string(),
+                "  reference that looked close enough is the failure this refusal exists for."
+                    .to_string(),
                 String::new(),
-                format!("  Check the issue number in the vetter's note, then re-run for the #N it names."),
+                "  Check the issue number in the vetter's note, then re-run for the #N it names."
+                    .to_string(),
             ]),
             RelinkRefusal::OnlyInQaBlock(n) => lines.extend([
-                format!("  the only closing reference to #{n} is inside the `## QA` evidence block,"),
-                "  and this repair does not edit that section. QA-GUIDE section 8's category line".to_string(),
-                "  legitimately writes about `Closes` and `Refs`, so a rewrite there would be".to_string(),
+                format!(
+                    "  the only closing reference to #{n} is inside the `## QA` evidence block,"
+                ),
+                "  and this repair does not edit that section. QA-GUIDE section 8's category line"
+                    .to_string(),
+                "  legitimately writes about `Closes` and `Refs`, so a rewrite there would be"
+                    .to_string(),
                 "  changing the EVIDENCE to change the linkage.".to_string(),
                 String::new(),
-                "  Re-run the adversarial-mutation pass and transcribe what it produced with".to_string(),
+                "  Re-run the adversarial-mutation pass and transcribe what it produced with"
+                    .to_string(),
                 "  `repair-qa-block --replace`.".to_string(),
             ]),
             RelinkRefusal::QaBlockChanged => lines.extend([
