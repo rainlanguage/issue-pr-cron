@@ -10802,12 +10802,25 @@ fn nested_commands(seg: &[String]) -> Vec<(usize, &str)> {
 /// `## QA` stays inside the block instead of truncating it — while a later `## Notes` ends it, and
 /// evidence written under that later heading does not count.
 fn qa_section(body: &str) -> Option<&str> {
-    let (level, end) = qa_heading(body)?;
+    let (_, level, end) = qa_heading(body)?;
     let rest = &body[end..];
     match section_closer(rest, level) {
         Some(at) => Some(&rest[..at]),
         None => Some(rest),
     }
+}
+
+/// The byte range of the WHOLE `## QA` section — from the FIRST COLUMN of its heading line to
+/// wherever [`section_closer`] ends it (or the end of the body).
+///
+/// [`qa_section`] deliberately starts just past the `QA` token because that is the text the gate
+/// READS; this is the span `repair-qa-block` REWRITES, so it has to include the heading line itself.
+/// Both derive from the same [`qa_heading`]/[`section_closer`] pair, so the section the gate judges
+/// and the section the repair replaces can never be two different regions of one body.
+fn qa_section_span(body: &str) -> Option<std::ops::Range<usize>> {
+    let (start, level, end) = qa_heading(body)?;
+    let stop = section_closer(&body[end..], level).map_or(body.len(), |at| end + at);
+    Some(start..stop)
 }
 
 /// Byte offsets in `s` at which a line begins — every position a `^` would match under
@@ -10816,12 +10829,13 @@ fn line_starts(s: &str) -> impl Iterator<Item = usize> + '_ {
     std::iter::once(0).chain(s.match_indices('\n').map(|(i, _)| i + 1))
 }
 
-/// The `## QA` heading: its level (how many `#`) and the byte offset just past the `QA`.
+/// The `## QA` heading: the byte offset its LINE starts at, its level (how many `#`), and the byte
+/// offset just past the `QA`.
 ///
 /// Accepts up to three leading spaces (markdown's own tolerance), any heading level, and a bolded
 /// `## **QA**`, because the corpus writes all of them. `QA` must end on a word boundary so a
 /// `## QARANTINE` is not the block.
-fn qa_heading(body: &str) -> Option<(usize, usize)> {
+fn qa_heading(body: &str) -> Option<(usize, usize, usize)> {
     for start in line_starts(body) {
         let line = &body[start..];
         let mut rest = line;
@@ -10855,7 +10869,7 @@ fn qa_heading(body: &str) -> Option<(usize, usize)> {
         {
             continue;
         }
-        return Some((level, body.len() - tail.len()));
+        return Some((start, level, body.len() - tail.len()));
     }
     None
 }
@@ -10935,6 +10949,17 @@ fn block_is_complete(section: Option<&str>) -> bool {
     missing_lines(section).is_empty() && assignable(&line_candidates(section), &mut Vec::new())
 }
 
+/// THE predicate: does this text carry a well-formed QA-GUIDE section-8 evidence block?
+///
+/// ONE definition, TWO callers. [`check_command`] asks it of a `gh pr create` body — that is the
+/// PR-open gate. [`qa_repair`] asks it of the block a producer hands `repair-qa-block` AND of the
+/// body that repair would write — that is the retrofit (#51). A repair validated against a SECOND
+/// notion of "well-formed" could emit a body the gate refuses, a bug discoverable only at the next
+/// PR open; sharing the function is what makes that unrepresentable rather than merely unlikely.
+fn carries_qa_block(text: &str) -> bool {
+    block_is_complete(qa_section(text))
+}
+
 /// Check one command line, and every interpreter payload inside it, against the gate.
 ///
 /// `cwd` is the directory this command runs in. For a nested payload that is NOT the session's own
@@ -10979,13 +11004,15 @@ fn check_command(command: &str, cwd: &str, depth: usize) -> Result<(), Refusal> 
             // gh takes ONE body; if several are named, a complete one anywhere passes.
             let mut worst: Option<(String, Option<String>)> = None;
             for body in &found {
-                let section = qa_section(&body.text).map(str::to_string);
-                if block_is_complete(section.as_deref()) {
+                if carries_qa_block(&body.text) {
                     worst = None;
                     break;
                 }
                 if worst.is_none() {
-                    worst = Some((body.source.clone(), section));
+                    worst = Some((
+                        body.source.clone(),
+                        qa_section(&body.text).map(str::to_string),
+                    ));
                 }
             }
             if let Some((source, section)) = worst {
@@ -11048,6 +11075,351 @@ fn require_qa_block_mode() -> i32 {
             QA_BLOCK_EXIT
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// repair-qa-block — the RETROFIT half of the QA-GUIDE section-8 gate (#51).
+//
+// `require-qa-block` above holds the CREATE side, so the population of block-less PRs stopped
+// growing. It does nothing for a PR already open: the gate is on `create`, and there was no
+// sanctioned way to touch a PR body at all — `campaign-settings.json` denies `Bash(gh pr edit:*)`
+// and no subcommand wrote one. A vetter reject for a missing block therefore named a defect the
+// producer's rework loop had NO MOVE for. That is a deadlock with a number on it: running
+// `require-qa-block` over every open producer PR body scores 122 of 160 REFUSED — 114 with no
+// `## QA` heading at all, 8 with an incomplete one — over diffs the vetter's own notes certified
+// sound ("Code itself audits sound", "all 11 named tests present and verified discriminating").
+// PRs parked over a missing paragraph.
+//
+// WHY A SUBCOMMAND RATHER THAN LIFTING THE DENY. `gh pr edit` retitles, rebases, relabels and
+// rewrites a body wholesale — the whole surface, to fix one absent paragraph. Two properties are
+// what the narrow move buys, and both are STRUCTURAL here rather than a matter of care taken:
+//
+//   1. It APPENDS; it does not rewrite. The failure is a MISSING SECTION, not a wrong body, so the
+//      edit is expressed as a SPAN of the current body plus the text that replaces it
+//      ([`BodyEdit`]). For an append that span is EMPTY and sits at the end, which makes "every
+//      byte outside the `## QA` section comes back identical" a property of the representation:
+//      [`BodyEdit::apply`] copies `body[..start]` and `body[end..]` through verbatim and has no
+//      other way to produce a result.
+//   2. It VALIDATES what it writes, with the GATE'S OWN predicate. [`carries_qa_block`] is the one
+//      definition of a well-formed block, and [`qa_repair`] runs it over the block it is handed AND
+//      over the body it would write. That second check is not ceremony: append a block to a body
+//      that does not end in a newline and the heading no longer starts a line, so the gate would
+//      not see it at all — the failure this refuses rather than discovers at the next PR open.
+//
+// A PRESENT-BUT-WRONG BLOCK IS A DIFFERENT DEFECT, so the default REFUSES it. The vetter rejects a
+// present block when its CLAIMS do not hold, and a tool that silently overwrote the claim would
+// sanction fixing the prose instead of the code — laundering exactly the reject the QA guide
+// exists to raise. `--replace` is the deliberate, visible opt-in for the case where a rework note
+// says the body's claims are stale (raindex#2777) and the evidence has actually been re-produced.
+// Re-running the SAME block is neither: the plan is a no-op, so a retried call is idempotent
+// instead of refused.
+//
+// THE HEAD DOES NOT MOVE. A body edit changes no commit, so [`vetted_at_head`] still holds and the
+// vetter SKIPS the PR as `skip-vetted-at-head`. The repair is therefore not the whole move — the
+// producer re-arms the re-vet the way it re-arms CI, with an `--allow-empty` push. The subcommand
+// SAYS SO on stdout when it detects that state, rather than leaving a repaired PR silently parked.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A PR-body repair as a SPAN of the current body plus the text that replaces it.
+///
+/// The representation IS the guarantee: an append is an EMPTY span at `body.len()`, a replace is
+/// the `## QA` section's own span, and nothing else in the body is expressible.
+#[derive(Debug, PartialEq, Eq)]
+struct BodyEdit {
+    /// Byte range of the CURRENT body this rewrites.
+    span: std::ops::Range<usize>,
+    /// What goes in its place.
+    text: String,
+}
+
+impl BodyEdit {
+    /// The edited body: `body[..span.start]` and `body[span.end..]` copied through VERBATIM, with
+    /// `text` between them. There is no other path to a result, which is what makes the untouched
+    /// remainder byte-identical by construction.
+    fn apply(&self, body: &str) -> String {
+        let mut out = String::with_capacity(body.len() - self.span.len() + self.text.len());
+        out.push_str(&body[..self.span.start]);
+        out.push_str(&self.text);
+        out.push_str(&body[self.span.end..]);
+        out
+    }
+
+    /// An append leaves the whole existing body as a PREFIX of the result.
+    fn is_append(&self) -> bool {
+        self.span.is_empty()
+    }
+}
+
+/// What `repair-qa-block` will do.
+#[derive(Debug, PartialEq, Eq)]
+enum RepairPlan {
+    /// Write the edited body.
+    Edit(BodyEdit),
+    /// The body already carries EXACTLY this block — nothing to write, and nothing wrong. Makes a
+    /// retried call idempotent rather than a refusal.
+    AlreadyPresent,
+}
+
+/// WHY a repair was refused — a TYPED discriminant, like [`Refusal`], so the exit code and the
+/// message both derive from the variant and no caller re-classifies by matching on prose.
+#[derive(Debug, PartialEq, Eq)]
+enum RepairRefusal {
+    /// The block handed in is not a section-8 block. Carries the lines it does not name; EMPTY
+    /// means all four are named but not on four distinct lines — the gate's own distinction.
+    BlockIncomplete(Vec<QaLine>),
+    /// The body already has a `## QA` section that DIFFERS, and `--replace` was not passed.
+    SectionPresent,
+    /// The edited body would not pass [`carries_qa_block`].
+    ///
+    /// UNREACHABLE while the two checks before it hold, and provably so: the block is validated
+    /// first, it is inserted VERBATIM at a line start, and text can only ever be added AFTER its
+    /// section — so the result's `## QA` section is a superset of the block's, and both
+    /// `missing_lines` and `assignable` only improve as lines are added. Mutating this check alone
+    /// therefore changes no observable behaviour. It stays because the proof rests on the other two:
+    /// break the append separator and this is what turns a body the PR-open gate would refuse into
+    /// a REFUSAL instead of a write.
+    ResultRejected,
+}
+
+impl RepairRefusal {
+    /// Exit code. Distinct per variant because they are three different things to do next: fix the
+    /// block file, decide whether a rewrite is really what you want, or report a tool bug.
+    fn exit(&self) -> i32 {
+        match self {
+            RepairRefusal::BlockIncomplete(_) => 2,
+            RepairRefusal::SectionPresent => 4,
+            RepairRefusal::ResultRejected => 6,
+        }
+    }
+
+    /// The whole stderr text. Reuses [`QA_TEMPLATE`] and [`QaLine::name`], so a refusal here reads
+    /// like the PR-open gate's refusal and names the same lines.
+    fn render(&self, subject: &str, block_file: &str) -> String {
+        let mut lines = vec![
+            format!("REFUSED - repair-qa-block {subject}"),
+            String::new(),
+        ];
+        match self {
+            RepairRefusal::BlockIncomplete(missing) => {
+                lines.push(format!(
+                    "  {block_file} is not a QA-GUIDE section-8 block, so writing it would leave a"
+                ));
+                lines.push(
+                    "  body that `require-qa-block` refuses at the next `gh pr create`."
+                        .to_string(),
+                );
+                lines.push(String::new());
+                if missing.is_empty() {
+                    lines.push(
+                        "  all four named, but not on four distinct lines - write one entry per line"
+                            .to_string(),
+                    );
+                } else {
+                    let names: Vec<&'static str> = missing.iter().map(|l| l.name()).collect();
+                    lines.push(format!("  still missing: {}", names.join(", ")));
+                }
+                lines.extend([String::new(), QA_TEMPLATE.to_string()]);
+            }
+            RepairRefusal::SectionPresent => {
+                lines.extend([
+                    format!("  the body already has a `## QA` section, and it differs from {block_file}."),
+                    String::new(),
+                    "  A present-but-wrong block is a DIFFERENT defect from a missing one: the vetter".to_string(),
+                    "  rejects it because its CLAIMS do not hold, and rewriting the claim is not fixing".to_string(),
+                    "  the code. Re-run the adversarial-mutation-test pass on this change, then pass".to_string(),
+                    "  --replace to transcribe what it actually produced.".to_string(),
+                ]);
+            }
+            RepairRefusal::ResultRejected => {
+                lines.extend([
+                    "  the edited body would NOT pass `require-qa-block`, so nothing was written."
+                        .to_string(),
+                    "  That is a bug in repair-qa-block, not in your block file - report it."
+                        .to_string(),
+                ]);
+            }
+        }
+        lines.join("\n") + "\n"
+    }
+}
+
+/// PURE: the whole repair decision — validate the block, plan the edit, validate the result.
+///
+/// ORDER IS THE GUARD, in both directions. The block is checked BEFORE anything is planned, so an
+/// ill-formed block never reaches a body. `AlreadyPresent` resolves BEFORE the `--replace` refusal,
+/// so re-running the identical call is idempotent rather than blocked. And the result is checked
+/// LAST, against the gate's own predicate, so a plan whose output the PR-open gate would refuse is
+/// never returned as a plan at all.
+fn qa_repair(body: &str, block: &str, replace: bool) -> Result<RepairPlan, RepairRefusal> {
+    if !carries_qa_block(block) {
+        return Err(RepairRefusal::BlockIncomplete(missing_lines(qa_section(
+            block,
+        ))));
+    }
+    // One trailing newline, always: the section either runs to the end of the body or butts up
+    // against the heading that closes it, and that heading has to start a line.
+    let text = format!("{}\n", block.trim());
+    let edit = match qa_section_span(body) {
+        Some(span) => BodyEdit { span, text },
+        None => {
+            let at = body.len();
+            BodyEdit {
+                span: at..at,
+                text: format!("{}{text}", append_separator(body)),
+            }
+        }
+    };
+    let new_body = edit.apply(body);
+    if new_body == body {
+        return Ok(RepairPlan::AlreadyPresent);
+    }
+    if !edit.is_append() && !replace {
+        return Err(RepairRefusal::SectionPresent);
+    }
+    if !carries_qa_block(&new_body) {
+        return Err(RepairRefusal::ResultRejected);
+    }
+    Ok(RepairPlan::Edit(edit))
+}
+
+/// What must sit between an existing body and an appended block.
+///
+/// A `## QA` heading is only a heading at the START OF A LINE — [`qa_heading`] scans line starts —
+/// so appending straight onto a body with no trailing newline produces a body whose block the gate
+/// cannot see. Enough newlines to reach a blank line, and no more: the existing bytes are never
+/// rewritten, only followed, which is what keeps the old body an exact PREFIX of the new one.
+fn append_separator(body: &str) -> &'static str {
+    if body.is_empty() || body.ends_with("\n\n") {
+        ""
+    } else if body.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    }
+}
+
+/// `repair-qa-block <owner/repo> <pr> --block-file <path> [--replace] [--dry-run]`: append
+/// QA-GUIDE section 8's evidence block to an ALREADY-OPEN PR's body, leaving every byte outside the
+/// `## QA` section as it was.
+///
+/// Guards, in order: the block must be well-formed, the PR must be OPEN, and it must be OURS
+/// (`--author $PR_ASSIGNEE` is how every other subcommand defines the fleet). Then the plan, then
+/// the write, then a trusted `🤖 ai:producer` marker so the body edit is visible on the PR itself —
+/// GitHub hides body edit history, so without it the only record of the repair is the body.
+///
+/// Exit: 0 written (or already present), 1 a `gh` call failed, 2 unusable block, 3 not our PR,
+/// 4 a `## QA` section is already there and `--replace` was not passed, 5 the PR is not open,
+/// 6 the edited body would not pass the gate.
+fn repair_qa_block_mode(
+    slug: &str,
+    pr: &str,
+    block_file: &str,
+    replace: bool,
+    dry_run: bool,
+) -> i32 {
+    let subject = format!("{slug}#{pr}");
+    let block = match std::fs::read_to_string(block_file) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("error: could not read --block-file {block_file}: {e}");
+            return 2;
+        }
+    };
+    let Some(prj) = gh_json(&[
+        "pr",
+        "view",
+        pr,
+        "-R",
+        slug,
+        "--json",
+        "body,state,author,headRefOid,comments",
+    ]) else {
+        eprintln!("error: `gh pr view {subject}` failed — not writing on incomplete data");
+        return 1;
+    };
+    let state = prj.get("state").and_then(Value::as_str).unwrap_or("");
+    if state != "OPEN" {
+        eprintln!("refusing: {subject} is {state}, not OPEN — a closed PR's body is a record");
+        return 5;
+    }
+    let author = prj
+        .pointer("/author/login")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let me = pr_assignee();
+    if author != me {
+        eprintln!(
+            "refusing: {subject} was opened by {author:?}, not {me:?} — repair-qa-block edits the \
+             pipeline's OWN PR bodies and nobody else's"
+        );
+        return 3;
+    }
+    let body = prj.get("body").and_then(Value::as_str).unwrap_or("");
+
+    let edit = match qa_repair(body, &block, replace) {
+        Ok(RepairPlan::AlreadyPresent) => {
+            println!("{subject}: body already carries this exact QA block — nothing to write");
+            return 0;
+        }
+        Ok(RepairPlan::Edit(e)) => e,
+        Err(r) => {
+            eprint!("{}", r.render(&subject, block_file));
+            return r.exit();
+        }
+    };
+    let new_body = edit.apply(body);
+    let verb = if edit.is_append() {
+        "appended"
+    } else {
+        "replaced"
+    };
+    let comment = format!(
+        "🤖 ai:producer\nQA-block repair: {verb} QA-GUIDE section 8's evidence block in the PR \
+         body via `pr-review-report repair-qa-block`. Every byte outside the `## QA` section is \
+         unchanged."
+    );
+    let skip_comment = trusted_comments(&prj, Some("🤖 ai:producer"))
+        .iter()
+        .any(|b| b == &comment);
+
+    if dry_run {
+        println!("[dry-run] {subject}: {verb} the QA block");
+        println!(
+            "  body bytes: {} -> {} (rewriting {}..{} of the current body)",
+            body.len(),
+            new_body.len(),
+            edit.span.start,
+            edit.span.end
+        );
+        println!(
+            "  comment: {}",
+            if skip_comment {
+                "skip (identical note already posted)".to_string()
+            } else {
+                "post -> QA-block repair".to_string()
+            }
+        );
+        return 0;
+    }
+
+    if !gh_run(&["pr", "edit", pr, "-R", slug, "--body", &new_body]) {
+        eprintln!("error: `gh pr edit {subject}` failed — the body is unchanged");
+        return 1;
+    }
+    if !skip_comment && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
+        eprintln!("error: {subject} body repaired but FAILED to post the marker comment");
+        return 1;
+    }
+    println!("{subject}: {verb} the QA block ({} bytes)", new_body.len());
+    let head = prj.get("headRefOid").and_then(Value::as_str).unwrap_or("");
+    if vetted_at_head(&prj, head) {
+        println!(
+            "NOTE: the vetter already recorded a verdict at {head}, and a body edit does not move \
+             the head — it will SKIP this PR as vetted-at-head. Push an `--allow-empty` commit to \
+             re-arm the re-vet."
+        );
+    }
+    0
 }
 
 /// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
@@ -11401,6 +11773,27 @@ enum Cmd {
     /// no `## QA` evidence block, naming the lines that are missing. Hook payload on stdin; exit 0
     /// allows the call, 2 blocks it with the refusal on stderr. Wiring: the user `settings.json`.
     RequireQaBlock,
+    /// Producer RETROFIT of QA-GUIDE section 8 on an ALREADY-OPEN PR: APPEND the evidence block to
+    /// the PR body, leaving every byte outside the `## QA` section exactly as it was. Validated with
+    /// `require-qa-block`'s own predicate, so what it writes is what the PR-open gate accepts.
+    RepairQaBlock {
+        /// owner/repo
+        slug: String,
+        pr: String,
+        /// File holding the section-8 block. A FILE, not flags: the producer already writes its
+        /// evidence into the run's scratch dir with the Write tool, and that is also the shape the
+        /// PR-open gate forces (`gh pr create --body-file <absolute path>`), so the block reaches
+        /// both gates the same way and the exact bytes stay on disk for the run trace. A `#`-heavy
+        /// block through a shell heredoc is the spelling that keeps tripping the guards.
+        #[arg(long)]
+        block_file: String,
+        /// Replace an EXISTING `## QA` section instead of refusing. For the case a rework note
+        /// names: the block is present but its claims are stale, and the evidence has been re-run.
+        #[arg(long)]
+        replace: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
     /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
     Mcp {
@@ -12701,6 +13094,13 @@ fn main() {
         } => unvetted_mode(json, include_skipped, limit),
         Cmd::PluginVersionLockstep { root } => plugin_version_lockstep_mode(&root),
         Cmd::RequireQaBlock => require_qa_block_mode(),
+        Cmd::RepairQaBlock {
+            slug,
+            pr,
+            block_file,
+            replace,
+            dry_run,
+        } => repair_qa_block_mode(&slug, &pr, &block_file, replace, dry_run),
         Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
             Ok(p) => mcp_serve(p),
             Err(e) => {
@@ -23221,5 +23621,380 @@ mod infra_down_tests {
         );
         assert!(retire_targets(&serde_json::json!([])).is_empty());
         assert!(retire_targets(&serde_json::Value::Null).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod repair_qa_block_tests {
+    use super::*;
+
+    /// A section-8-complete block, as a producer transcribes it out of an adversarial-mutation pass.
+    const BLOCK: &str = "## QA\n\
+         - Discriminating tests: t_guard_negated - fails on base (ran on the base checkout)\n\
+         - Mutations applied: guard.rs:12 negate -> t_guard_negated\n\
+         - Oracle: the issue's worked example, not the implementation\n\
+         - Category check: issue asks A,B; covered A,B";
+
+    /// A real-shaped PR body of the kind this retrofit exists for: prose, a Closes line, and a
+    /// section BELOW it — none of which the repair may touch.
+    const BODY: &str = "Closes #412\n\n\
+         Adds the missing decimals split so a 6/18 vault stops rounding to zero.\n\n\
+         ## Notes\n\
+         The fixture is 6/18 on purpose: an 18/18 pair makes every wrong usage an\n\
+         equivalent mutant.\n";
+
+    /// The bytes an edit does NOT touch, in order: everything before its span and everything after.
+    /// The repair's whole promise is that this string survives the edit unchanged, so it is asserted
+    /// as a STRING EQUALITY rather than eyeballed in a diff.
+    fn remainder(text: &str, span: &std::ops::Range<usize>) -> String {
+        format!("{}{}", &text[..span.start], &text[span.end..])
+    }
+
+    /// Where the inserted text lands in the RESULT — the span the edit wrote, re-expressed against
+    /// the new body, so `remainder` can be taken on both sides of the edit.
+    fn written_span(edit: &BodyEdit) -> std::ops::Range<usize> {
+        edit.span.start..edit.span.start + edit.text.len()
+    }
+
+    fn plan(body: &str, block: &str, replace: bool) -> BodyEdit {
+        match qa_repair(body, block, replace) {
+            Ok(RepairPlan::Edit(e)) => e,
+            other => panic!("expected an edit, got {other:?}"),
+        }
+    }
+
+    /// Would the REAL PR-open gate accept this body? Drives `qa_gate_verdict` with an actual
+    /// PreToolUse payload — the same function the hook runs — rather than re-asserting the predicate
+    /// the planner already used.
+    ///
+    /// Through `--body-file`, not `--body`: that is the spelling the gate FORCES on the producer
+    /// (`Refusal::StdinBody`/`GeneratedBody` both point at it) and the spelling `repair-qa-block`
+    /// takes its block in, so the repaired body is checked the way it will actually be presented —
+    /// and a body carrying an apostrophe or a `#` needs no shell quoting to get there.
+    fn pr_open_gate_allows(body: &str) -> bool {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NTH: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "prr-repair-{}-{}.md",
+            std::process::id(),
+            NTH.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, body).expect("write the body fixture");
+        let payload = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": format!("gh pr {} --title t --body-file {}", "create", path.display()),
+            },
+            "cwd": "/tmp",
+        });
+        let allowed = qa_gate_verdict(&payload.to_string()).is_ok();
+        let _ = std::fs::remove_file(&path);
+        allowed
+    }
+
+    // ---- property 1: APPEND, never rewrite -------------------------------------------------
+
+    /// THE invariant the whole design is shaped around. A repair adds a section; it does not get to
+    /// touch anything else, and "byte-identical" is asserted as an equality on the untouched bytes
+    /// of both sides — not as a diff someone reads. Clobber the body (`apply` returning `text`, a
+    /// span that reaches past the insertion point) and the two remainders stop matching.
+    #[test]
+    fn append_leaves_every_byte_of_the_existing_body_identical() {
+        let edit = plan(BODY, BLOCK, false);
+        let new_body = edit.apply(BODY);
+
+        assert!(
+            edit.is_append(),
+            "a body with no `## QA` section is APPENDED to"
+        );
+        assert_eq!(
+            remainder(BODY, &edit.span),
+            remainder(&new_body, &written_span(&edit)),
+            "the bytes outside the edit must survive it unchanged"
+        );
+        // An append is the strongest form of that: the ENTIRE old body is a prefix of the new one.
+        assert_eq!(
+            &new_body[..BODY.len()],
+            BODY,
+            "the old body must be a prefix"
+        );
+        assert!(
+            new_body.len() > BODY.len(),
+            "something has to have been written"
+        );
+        // And what was added is the block and only the block.
+        assert_eq!(&new_body[BODY.len()..], format!("\n{BLOCK}\n"));
+    }
+
+    /// The other half: a `## QA` section that IS replaced still leaves the prose above it and the
+    /// section below it byte-for-byte. The old block here shares no text with the new one, so a
+    /// whole-body rewrite cannot pass by coincidence.
+    #[test]
+    fn replace_rewrites_the_qa_section_and_nothing_around_it() {
+        let body = "Closes #412\n\nProse above.\n\n## QA\n- Discriminating tests: stale\n\
+                    - Mutations applied: stale\n- Oracle: stale\n- Category check: stale\n\n\
+                    ## Notes\nProse below.\n";
+        let edit = plan(body, BLOCK, true);
+        let new_body = edit.apply(body);
+
+        assert!(
+            !edit.is_append(),
+            "an existing section is REPLACED, not appended"
+        );
+        assert_eq!(
+            remainder(body, &edit.span),
+            remainder(&new_body, &written_span(&edit)),
+            "prose above and the section below must survive unchanged"
+        );
+        assert!(
+            new_body.starts_with("Closes #412\n\nProse above.\n\n"),
+            "everything above the heading is untouched: {new_body:?}"
+        );
+        assert!(
+            new_body.ends_with("## Notes\nProse below.\n"),
+            "the section below is untouched: {new_body:?}"
+        );
+        assert!(
+            !new_body.contains("stale"),
+            "the old block is gone: {new_body:?}"
+        );
+        assert!(new_body.contains("t_guard_negated"), "the new block is in");
+    }
+
+    /// The span the repair rewrites is the section INCLUDING its heading line, ending where
+    /// `section_closer` says — a deeper heading stays inside it, a same-level one closes it. Get
+    /// this wrong by one line and `--replace` either orphans a `## QA` heading or eats `## Notes`.
+    #[test]
+    fn the_replaced_span_is_the_whole_section_from_its_heading_line() {
+        let body = "intro\n\n## QA\n- a\n\n### Mutations applied\n- b\n\n## Notes\ntail\n";
+        let span = qa_section_span(body).expect("a `## QA` heading is there");
+        assert_eq!(
+            &body[span.clone()],
+            "## QA\n- a\n\n### Mutations applied\n- b\n\n"
+        );
+        assert_eq!(&body[..span.start], "intro\n\n");
+        assert_eq!(&body[span.end..], "## Notes\ntail\n");
+        assert_eq!(qa_section_span("no heading at all\n"), None);
+    }
+
+    // ---- property 2: validate what it writes, with the GATE's predicate --------------------
+
+    /// The separator is load-bearing, not cosmetic: `qa_heading` only ever looks at LINE STARTS, so
+    /// a block appended straight onto a body with no trailing newline is a block the PR-open gate
+    /// cannot see at all. Asserted against the REAL gate, not against the planner's own opinion.
+    #[test]
+    fn a_body_with_no_trailing_newline_still_gets_a_block_the_gate_can_see() {
+        for body in [
+            "Closes #412",     // no trailing newline at all
+            "Closes #412\n",   // exactly one
+            "Closes #412\n\n", // already blank-line terminated
+            "",                // empty body
+        ] {
+            let new_body = plan(body, BLOCK, false).apply(body);
+            assert!(
+                carries_qa_block(&new_body),
+                "repaired body must carry a block: {new_body:?}"
+            );
+            assert!(
+                pr_open_gate_allows(&new_body),
+                "the real PR-open gate must accept it: {new_body:?}"
+            );
+            assert_eq!(
+                &new_body[..body.len()],
+                body,
+                "the old body is still a prefix"
+            );
+        }
+    }
+
+    /// End-to-end on the realistic body: what the repair writes is what `require-qa-block` accepts.
+    /// This is the shared-predicate proof — re-implement the validation inside `qa_repair` and this
+    /// fails on the first block the two notions disagree about.
+    #[test]
+    fn the_repaired_body_passes_the_real_pr_open_gate() {
+        assert!(!pr_open_gate_allows(BODY), "the fixture starts out BLOCKED");
+        let repaired = plan(BODY, BLOCK, false).apply(BODY);
+        assert!(
+            pr_open_gate_allows(&repaired),
+            "after the repair the same gate must allow it: {repaired:?}"
+        );
+    }
+
+    /// A block the PR-open gate would refuse is refused HERE, before it can reach a PR body — and
+    /// the refusal names the same lines the gate's does. Each case is one the gate rejects too,
+    /// asserted on `carries_qa_block` so the two can never diverge silently.
+    #[test]
+    fn a_block_the_pr_open_gate_would_refuse_is_refused_before_it_is_written() {
+        let cases: [(&str, Vec<QaLine>); 4] = [
+            // No heading at all — the shape all 56 stuck PRs are in.
+            ("just some prose about the fix\n", QaLine::ALL.to_vec()),
+            // Heading, but two of the four lines absent.
+            (
+                "## QA\n- Discriminating tests: t_a - fails on base\n- Oracle: the issue\n",
+                vec![QaLine::MutationsApplied, QaLine::CategoryCheck],
+            ),
+            // All four SUBJECTS named, but on one line: a keyword search passes, the block does not.
+            (
+                "## QA\n- discriminating mutation oracle category all in one breath\n",
+                vec![],
+            ),
+            // A later heading closes the section, so evidence under it does not count.
+            (
+                "## QA\n- Discriminating tests: t_a\n## Other\n- Mutations applied: x\n\
+                 - Oracle: y\n- Category check: z\n",
+                vec![
+                    QaLine::MutationsApplied,
+                    QaLine::Oracle,
+                    QaLine::CategoryCheck,
+                ],
+            ),
+        ];
+        for (block, missing) in cases {
+            assert!(
+                !carries_qa_block(block),
+                "the gate itself must reject this block: {block:?}"
+            );
+            assert_eq!(
+                qa_repair(BODY, block, false),
+                Err(RepairRefusal::BlockIncomplete(missing)),
+                "and the repair must refuse it, naming the same lines: {block:?}"
+            );
+        }
+        // The refusal text is the gate's vocabulary, so a producer reading it needs no lookup.
+        let rendered =
+            RepairRefusal::BlockIncomplete(vec![QaLine::Oracle]).render("o/r#1", "/scratch/qa.md");
+        assert!(rendered.contains("still missing: Oracle"), "{rendered}");
+        assert!(
+            rendered.contains(QA_TEMPLATE),
+            "the template rides along: {rendered}"
+        );
+        assert_eq!(RepairRefusal::BlockIncomplete(vec![]).exit(), 2);
+    }
+
+    // ---- the present-block decision --------------------------------------------------------
+
+    /// A present-but-different block is REFUSED by default. This is the decision that keeps the
+    /// subcommand from laundering the OTHER kind of vetter reject: "your block's claims do not
+    /// hold" is fixed by re-running the evidence, not by overwriting the sentence.
+    #[test]
+    fn a_present_qa_section_is_refused_unless_replace_is_asked_for() {
+        let body = "Closes #1\n\n## QA\n- Discriminating tests: t_a - fails on base\n\
+                    - Mutations applied: a.rs:1 negate -> t_a\n- Oracle: the issue\n\
+                    - Category check: A\n";
+        assert!(
+            carries_qa_block(body),
+            "the fixture body is already complete"
+        );
+        assert_eq!(
+            qa_repair(body, BLOCK, false),
+            Err(RepairRefusal::SectionPresent)
+        );
+        assert_eq!(RepairRefusal::SectionPresent.exit(), 4);
+        // …and with --replace it goes through.
+        assert!(matches!(
+            qa_repair(body, BLOCK, true),
+            Ok(RepairPlan::Edit(_))
+        ));
+        // The refusal says what to do instead of rewriting the claim.
+        let rendered = RepairRefusal::SectionPresent.render("o/r#1", "/scratch/qa.md");
+        assert!(rendered.contains("--replace"), "{rendered}");
+        assert!(rendered.contains("claim"), "{rendered}");
+    }
+
+    /// A retried call is a NO-OP, not a refusal — with or without `--replace`. A run that repeats a
+    /// step must not be told its own work is a conflict; and because "already present" is decided by
+    /// comparing the RESULTING body, it can only fire when the body genuinely already says what the
+    /// call would write.
+    #[test]
+    fn re_running_the_identical_repair_is_a_no_op_not_a_refusal() {
+        let once = plan(BODY, BLOCK, false).apply(BODY);
+        for replace in [false, true] {
+            assert_eq!(
+                qa_repair(&once, BLOCK, replace),
+                Ok(RepairPlan::AlreadyPresent),
+                "replace={replace}"
+            );
+        }
+        // Whitespace around the block is not a difference: the block is trimmed to one shape.
+        let padded = format!("\n\n{BLOCK}\n\n\n");
+        assert_eq!(
+            qa_repair(&once, &padded, false),
+            Ok(RepairPlan::AlreadyPresent)
+        );
+    }
+
+    /// The result check is a REFUSAL, not a warning: nothing is written when the edited body would
+    /// not pass the gate. Whatever a plan is returned for, its body passes — asserted over every
+    /// shape in this module, so none reaches a PR without clearing the gate first.
+    #[test]
+    fn a_result_the_gate_would_reject_is_refused_rather_than_written() {
+        assert_eq!(RepairRefusal::ResultRejected.exit(), 6);
+        let rendered = RepairRefusal::ResultRejected.render("o/r#1", "/scratch/qa.md");
+        assert!(rendered.contains("bug in repair-qa-block"), "{rendered}");
+        for body in [
+            BODY,
+            "",
+            "no newline",
+            "a\n\n",
+            "## Notes\nx\n",
+            "   ## qa\n- x\n",
+        ] {
+            if let Ok(RepairPlan::Edit(e)) = qa_repair(body, BLOCK, true) {
+                assert!(
+                    carries_qa_block(&e.apply(body)),
+                    "planned body must pass the gate: {body:?}"
+                );
+            }
+        }
+    }
+
+    // ---- the CLI surface -------------------------------------------------------------------
+
+    /// The spelling `campaign-prompt.txt` tells the producer to type. `--block-file` is REQUIRED:
+    /// there is no inline-body spelling to reach for, so the block always exists as a file the run
+    /// trace can point at.
+    #[test]
+    fn repair_qa_block_cli() {
+        let parse = |a: &[&str]| Cli::parse_from(a.iter().copied()).command;
+        assert_eq!(
+            parse(&[
+                "prr",
+                "repair-qa-block",
+                "rainlanguage/rain.flare",
+                "130",
+                "--block-file",
+                "/scratch/qa.md"
+            ]),
+            Cmd::RepairQaBlock {
+                slug: "rainlanguage/rain.flare".to_string(),
+                pr: "130".to_string(),
+                block_file: "/scratch/qa.md".to_string(),
+                replace: false,
+                dry_run: false,
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "prr",
+                "repair-qa-block",
+                "o/r",
+                "1",
+                "--block-file",
+                "/b.md",
+                "--replace",
+                "--dry-run"
+            ]),
+            Cmd::RepairQaBlock {
+                slug: "o/r".to_string(),
+                pr: "1".to_string(),
+                block_file: "/b.md".to_string(),
+                replace: true,
+                dry_run: true,
+            }
+        );
+        assert!(
+            Cli::try_parse_from(["prr", "repair-qa-block", "o/r", "1"]).is_err(),
+            "--block-file is not optional"
+        );
     }
 }

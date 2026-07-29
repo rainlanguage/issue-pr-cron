@@ -111,3 +111,12 @@ without its QA evidence does not get opened" is literal: it costs one retry
 inside the run instead of a round trip through the vetter's queue. The gate
 checks that the block is PRESENT; whether its claims hold is still the vetter's
 call.
+
+That gate is on PR-OPEN, so it cannot reach a PR already open without the block.
+`pr-review-report repair-qa-block <owner/repo> <n> --block-file <path>` is the
+retrofit: it APPENDS the block to the body and leaves every other byte
+identical, validated with the same predicate the open gate uses. It REFUSES a
+body that already has a `## QA` section unless you pass `--replace` — a present
+block whose claims don't hold is fixed by re-running the evidence, never by
+rewriting the sentence. A body edit moves no commit, so push an `--allow-empty`
+commit afterwards or the vetter will skip the PR as already vetted at that head.

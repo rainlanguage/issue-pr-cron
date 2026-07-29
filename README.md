@@ -776,6 +776,54 @@ driving one skipped. The other two are still bash and still untested —
 [#10](https://github.com/rainlanguage/issue-pr-cron/issues/10) tracks giving
 them the same treatment.
 
+### The retrofit: `repair-qa-block`
+
+The QA gate is on **open**, so it stopped the population of block-less PRs
+growing and did nothing for the ones already there. That half was a deadlock
+with a number on it: the vetter rejects a PR whose body lacks the block, the
+producer's only way to write a body was `gh pr edit` — denied by
+`campaign-settings.json` — and, measured by running the gate itself over the
+whole fleet, **122 of 160 open PRs carried a body it would refuse** (114 with no
+`## QA` heading at all, 8 with an incomplete one), over diffs the vetter's own
+notes certified sound. The reject named a defect the rework loop had no move for
+([#51](https://github.com/rainlanguage/issue-pr-cron/issues/51)).
+
+```
+pr-review-report repair-qa-block <owner/repo> <n> --block-file <path> [--replace] [--dry-run]
+```
+
+Three things make it a narrow transition rather than a re-opened `gh pr edit`:
+
+- **It appends; it does not rewrite.** The edit is a **span** of the current
+  body plus the text replacing it. An append is an _empty_ span at the end, so
+  the old body is a byte-exact prefix of the new one; a `--replace` is the
+  `## QA` section's own span, so the prose above and the sections below come
+  back identical. Nothing else in the body is expressible.
+- **It validates what it writes with the gate's own predicate.**
+  `carries_qa_block` has exactly two callers: the PR-open gate, and this. It is
+  applied to the block handed in _and_ to the body that would be written — the
+  second is not ceremony, because a block appended to a body with no trailing
+  newline is a heading that does not start a line, which the gate cannot see.
+- **A present-but-different block is refused** (exit 4), not overwritten. That
+  is the _other_ reject — "the block's claims don't hold" — and silently
+  rewriting the claim would sanction fixing the prose instead of the code.
+  `--replace` is the deliberate opt-in for a body whose evidence has actually
+  been re-produced. Re-running the identical call is a no-op, so a retry is
+  never a conflict.
+
+The block comes from a **file**, not flags: that is where the producer already
+writes its evidence (`{{SCRATCH_DIR}}/qa-block-<n>.md`) and the shape the
+PR-open gate already forces, so one artefact satisfies both and the exact bytes
+stay in the run trace. It needs **no deny-list change** —
+`Bash(pr-review-report:*)` is already allowed, and `Bash(gh pr edit:*)` stays
+denied; the binary shells out to `gh` itself, exactly as every label transition
+already does.
+
+One thing it deliberately does **not** do: a body edit moves no commit, so the
+PR is still `vetted-at-head` and the vetter will skip it. The subcommand prints
+a NOTE saying so, and the producer re-arms the re-vet the way it re-arms CI — an
+`--allow-empty` push.
+
 Nothing here is **installed by the flake as a hook**: wire each into the box's
 user `settings.json` as a PreToolUse `Bash` hook. The two scripts carry their
 own `DEPLOY:` note; the subcommand is invoked directly, with no wrapper script
