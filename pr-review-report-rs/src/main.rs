@@ -11168,8 +11168,15 @@ enum RepairRefusal {
     BlockIncomplete(Vec<QaLine>),
     /// The body already has a `## QA` section that DIFFERS, and `--replace` was not passed.
     SectionPresent,
-    /// The edited body would not pass [`carries_qa_block`]. Unreachable by construction; this is
-    /// the guard that keeps it unreachable rather than an assumption that it is.
+    /// The edited body would not pass [`carries_qa_block`].
+    ///
+    /// UNREACHABLE while the two checks before it hold, and provably so: the block is validated
+    /// first, it is inserted VERBATIM at a line start, and text can only ever be added AFTER its
+    /// section — so the result's `## QA` section is a superset of the block's, and both
+    /// `missing_lines` and `assignable` only improve as lines are added. Mutating this check alone
+    /// therefore changes no observable behaviour. It stays because the proof rests on the other two:
+    /// break the append separator and this is what turns a body the PR-open gate would refuse into
+    /// a REFUSAL instead of a write.
     ResultRejected,
 }
 
