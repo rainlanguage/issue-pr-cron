@@ -318,19 +318,18 @@ There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
 `human-mcp.json`) serves `next_ready`, `pr_context`, `close_candidate_context`,
 `human_rule`, `human_rule_issue` and `human_close` — find the subject, read it,
-rule on it, close it.
-`human_close` is a tool rather than something the caller composes for the reason
-above: the alternative is a transition half in a tool and half in a prompt, and
-that half was wrong on all 74 closed-and-still-flagged subjects. The subcommands
-above are for the human at a terminal; the profile is for **an agent acting on
-the human's behalf**, which is the case that actually went wrong in #86. A
-prompt rule cannot take a bypassable Bash away, and a `gh issue edit` that no
-tool offers is exactly what gets improvised; a profile makes the non-FSM
-operation _unavailable_. The vetter's inbox tools are deliberately absent — the
-human's inbox is `human-queue`, which renders whole org-wide sets and does not
-fit one tool result — and so is `record_close_candidate_verdict`, which is the
-vetter's authority and the very move `human_rule_issue` refuses on the human's
-behalf.
+rule on it, close it. `human_close` is a tool rather than something the caller
+composes for the reason above: the alternative is a transition half in a tool
+and half in a prompt, and that half was wrong on all 74 closed-and-still-flagged
+subjects. The subcommands above are for the human at a terminal; the profile is
+for **an agent acting on the human's behalf**, which is the case that actually
+went wrong in #86. A prompt rule cannot take a bypassable Bash away, and a
+`gh issue edit` that no tool offers is exactly what gets improvised; a profile
+makes the non-FSM operation _unavailable_. The vetter's inbox tools are
+deliberately absent — the human's inbox is `human-queue`, which renders whole
+org-wide sets and does not fit one tool result — and so is
+`record_close_candidate_verdict`, which is the vetter's authority and the very
+move `human_rule_issue` refuses on the human's behalf.
 
 #### `next_ready` — the merge decision as one typed result
 
