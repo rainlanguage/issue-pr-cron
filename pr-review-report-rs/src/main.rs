@@ -21646,25 +21646,34 @@ mod human_rule_tests {
         assert!(msg.contains("keep-open"), "{msg}");
     }
 
-    // The CLI apply path's own vocabulary, asserted THROUGH `human_rule_pr_apply` rather than
-    // through the constant it should be reading. The two surfaces resolve the verb separately —
-    // `human_rule_args` for MCP, `human_rule_pr_apply` for the subcommand `/reject` actually runs —
-    // and a mutation pointing this one back at `HUMAN_DECISION_LABELS` survived the whole suite: the
-    // MCP schema test still passed while `pr-review-report human-rule … reject` refused its own
-    // ruling as "not a human ruling on a PR". The vocabulary check runs BEFORE any `gh` call, so an
-    // illegal verb exercises it with no network, and the refusal LISTS the vocabulary — which is
-    // what makes `reject`'s presence observable from outside.
+    // The CLI apply path's own vocabulary LOOKUP, asserted THROUGH `human_rule_pr_apply`.
+    //
+    // The two surfaces resolve the verb at separate sites — `human_rule_args` for MCP,
+    // `human_rule_pr_apply` for the subcommand `/reject` actually runs — and pointing this one back
+    // at `HUMAN_DECISION_LABELS` survived the whole 485-test suite: the MCP schema test still
+    // passed while `pr-review-report human-rule … reject` refused its own ruling.
+    //
+    // Asserting on the refusal's TEXT does not catch that, because the message is built from a
+    // SECOND reference to the constant which the same edit need not touch — the first attempt at
+    // this test survived for exactly that reason. What discriminates is the ORDER: the verb
+    // resolves before the note is checked, so `reject` with an EMPTY note must come back as the
+    // NOTE refusal. A vocabulary that has lost `reject` returns the vocabulary refusal instead, and
+    // neither path reaches a `gh` call.
     #[test]
-    fn the_subcommand_surface_offers_reject_on_a_pr() {
+    fn the_subcommand_surface_resolves_reject_on_a_pr() {
+        let (code, msg) = human_rule_pr_apply("o/r", "1", "reject", "", true).unwrap_err();
+        assert_eq!(code, 2);
+        assert_eq!(
+            msg,
+            human_ruling_note_error().1,
+            "`reject` must RESOLVE on the PR subcommand — it got as far as the note check"
+        );
+        // A verb genuinely outside the vocabulary is refused, with the vocabulary named …
         let (code, msg) =
             human_rule_pr_apply("o/r", "1", "no-such-verb", "note", true).unwrap_err();
         assert_eq!(code, 2);
-        assert!(
-            msg.contains("reject, design, close-candidate"),
-            "the PR subcommand must still offer `reject`: {msg}"
-        );
-        // `keep-open` is ISSUE-only on this surface too, and the empty note is checked AFTER the
-        // verb, so an illegal verb is never masked by a missing reason.
+        assert!(msg.contains("reject, design, close-candidate"), "{msg}");
+        // … and `keep-open` is ISSUE-only here too, checked before the missing note masks it.
         let (_, msg) = human_rule_pr_apply("o/r", "1", "keep-open", "", true).unwrap_err();
         assert!(msg.contains("is not a human ruling on a PR"), "{msg}");
     }
