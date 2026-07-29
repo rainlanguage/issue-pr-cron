@@ -19,13 +19,12 @@ stateDiagram-v2
     state "close-candidate · upheld" as iupheld
     state "un-vetted PR" as unvetted
     state "ai:ready" as ready
-    state "ai:reject" as reject
+    state "ai:reject — needs rework" as reject
     state "ai:design" as design
     state "ai:close-candidate (PR)" as close
     state "ai:blocked-deploy" as bdeploy
     state "ai:blocked-on" as bon
     state "run ended · infra down" as infradown
-    state "human:reject" as hreject
     state "human:design" as hdesign
     state "human:close-candidate" as hclose
     state "human:keep-open (issue)" as ikeep
@@ -59,8 +58,11 @@ stateDiagram-v2
     queue --> approved : human review = APPROVED
     approved --> merged : gh pr merge --admin · human word
 
-    %% vetter verdicts route back to the producer, then back to un-vetted
+    %% the reject state routes back to the producer, then back to un-vetted. ONE state, whoever
+    %% ruled (#133) and whatever the ground: a code rework, a linkage repair (#135 retired
+    %% ai:relink — a linkage error is a reject whose note names the reference), or a close.
     reject --> unvetted : producer reworks → head moves
+    reject --> close : producer judges it not worth doing
     reject --> unvetted : linkage reject · producer weaken-closes Closes→Refs
 
     %% producer deploy + blocked hand-offs → human resolves → re-work
@@ -76,10 +78,11 @@ stateDiagram-v2
     infradown --> unvetted : next tick · 4h later, from scratch
 
     %% human decisions are sacred — the vetter never re-verdicts these
-    ready --> hreject : human-rule reject + Rework note
+    %% a human REJECT is not one of them: it writes the same ai:reject the vetter writes, and the
+    %% sha-pinned 👤 human comment is what records that a human ruled (#133).
+    ready --> reject : human-rule reject + Rework note
     ready --> hdesign : human-rule design
     ready --> hclose : human-rule close-candidate
-    hreject --> unvetted : producer reworks → reworked-reject clears labels
     hdesign --> [*] : human rules
     hclose --> [*] : human-close · retires the flag too
 
@@ -143,8 +146,8 @@ that has already happened:
   no state left to move out of, so nothing is written and the exit is 0;
 - **re-ruling supersedes** rather than refuses. The human owns this namespace
   and may correct a mis-click, so the old `human:*` is removed and the new one
-  added — the second sanctioned removal of a `human:*` label after
-  `reworked-reject`, and sanctioned because the actor removing it wrote it;
+  added — since #133 the **only** sanctioned removal of a `human:*` label, and
+  sanctioned because the actor removing it wrote it;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:reject` sat on an issue whose producer close-candidate flag had not
@@ -159,12 +162,18 @@ the top of the hierarchy, and **a tool that makes the sacred decision harder
 than raw `gh` will simply be bypassed**. Every refusal here either has no legal
 write to make or names the one-command move that is legal.
 
-A ruling moves exactly **one** label. It never strips an `ai:*` label, with one
-exception: `keep-open` clears `ai:close-candidate`, the only pair that
-contradicts outright ("keep this open" against "close this"). Everything else is
-merely stale, not contradictory — a `human:reject` PR deliberately keeps its old
-`ai:ready` until `reworked-reject` clears it — and erasing the `ai:*` label
-would erase the very claim the ruling was ruling on.
+A ruling whose target is a sacred `human:*` label moves exactly **one** label,
+and strips an `ai:*` only where it contradicts outright: `keep-open` clears
+`ai:close-candidate` ("keep this open" against "close this"). Everything else is
+merely stale, not contradictory, and erasing the `ai:*` label would erase the
+very claim the ruling was ruling on.
+
+A `reject` ruling is different, and #133 is why: its target **is** a pipeline
+state (`ai:reject`), so it obeys the same one-state rule the vetter's write
+obeys and strips every other `ai:*`. That is not the human reaching into the
+machine's namespace — it is the reject state no longer being in anyone's. A
+`human:reject` PR used to carry its stale `ai:ready` for ever, because only
+`reworked-reject` was allowed to touch it.
 
 The writes happen in a fail-safe **order**, which is the reverse of the AI
 verdict write's and is asserted as a property rather than left to statement
@@ -250,7 +259,7 @@ types is a Claude Code plugin, published from this repo's own marketplace:
 | -------------------------------------------- | ------------------------------------------------------------------------------- |
 | `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire the flag, close. Issue **or** PR, by lookup        |
 | `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer |
-| `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`                              |
+| `/reject <owner/repo#n> "…"`                 | `human-rule` — `ai:reject` (PR) / `human-rule-issue` — `human:reject` (issue)   |
 | `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                              |
 | `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this"                |
 
@@ -642,17 +651,28 @@ The machine has **no dead-ends**: every state has an exit back into the
 lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle is
 `un-vetted → vetting → a verdict`, and a PR falls back to **`un-vetted`** — the
 same state, not a second one — the moment its verdict stops being current at its
-head, so a reworked PR is always judged against its current code. The **human
-reject is TRANSIENT**, not terminal: when a human applies `human:reject` and a
-trusted "Rework note", the producer executes the rework, pushes a fix commit,
-and then calls **`pr-review-report reworked-reject <owner/repo> <n>`** as its
-final step. That subcommand REMOVES `human:reject` **and any stale `ai:*`
-verdict** (the code changed → vet from scratch), returning the PR to
-ready-to-vet so it re-enters the normal vet → queue → human loop. It is guarded:
-it clears `human:reject` **only** when the PR head commit provably
-**post-dates** the `human:reject` label event (the one sanctioned carve-out from
-"never remove a `human:*` label"); a head that does not post-date the reject is
-refused, so a still-standing human reject is never silently undone.
+head, so a reworked PR is always judged against its current code. A **reject is
+TRANSIENT**, not terminal, and since #133 there is exactly one of them:
+`ai:reject`, whoever ruled. Both labels always demanded the same move from the
+same actor — the producer reads the note and reworks — so they were one state
+split by an attribute, and filing that attribute as a state is what put 36 items
+of producer work in a lane named `human-decisions`.
+
+The attribute did not go away; it moved to where provenance already lives. A
+human ruling posts a `👤 human` comment **pinned to the head sha**, and that
+comment is the authority: `trusted_comments` authenticates it by AUTHOR, and the
+marker match is `starts_with`, so the vetter — whose every comment begins
+`🤖 ai:vetter` — cannot produce one however hostile the note it controls. While
+that ruling names the current head the PR is sacred to every AI actor.
+
+That also **replaces** `reworked-reject`, which is gone. A rework pushes a
+commit, the head moves, the ruling stops describing the code that is there, and
+the PR is un-vetted by the ordinary cache key — the same one that returns any
+pushed-past `ai:ready` PR to vetting. Nothing has to be called, and no AI actor
+ever removes a human's record. The old guard compared the head commit's date
+against the label event's, which proved only that _some_ commit was newer; what
+actually protects the human's objection is that the re-vet is stateless and the
+vetter is handed the ruling itself in `pr_context.humanComments`.
 
 `human-queue --json` emits the **full** inventory — every modeled state's PRs,
 grouped into four lanes so the dashboard can show where PRs pile up:
@@ -667,7 +687,10 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   carries it (#135).
 - **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-on`, plus the RETIRED
   `ai:blocked-infra` for as long as any PR still carries it (#108).
-- **human-decisions** — `human:reject`, `human:design`, `human:close-candidate`.
+- **human-decisions** — `human:design`, `human:close-candidate`, plus the
+  RETIRED `human:reject` for as long as any PR still carries it (#133). That
+  last count is the migration's progress meter: `migrate-reject` moves those PRs
+  to `ai:reject` and it only ever shrinks.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved
