@@ -5,6 +5,8 @@
       "mcp__fsm__clone_release",
       "mcp__fsm__clone_list",
       "mcp__fsm__clone_gc",
+      "mcp__fsm__repair_qa_block",
+      "mcp__fsm__weaken_closes",
       "ToolSearch",
       "Bash(nix:*)",
       "Bash(git:*)",
