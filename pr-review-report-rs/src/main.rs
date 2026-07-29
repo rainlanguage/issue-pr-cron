@@ -19175,10 +19175,13 @@ diff --git a/a.md b/a.md
         assert!(spaced.contains("my file.md"), "{spaced:?}");
         let nasty = diff_changed_paths("diff --git a/x b/y b/x b/y\n");
         assert!(nasty.contains("x b/y"), "{nasty:?}");
-        // a RENAME has no closed form; the last " b/" is the best available split and the file is
-        // still NAMED, which is all this set is for
+        // a RENAME has no closed form; the LAST " b/" is the best available split and the file is
+        // still NAMED, which is all this set is for — and "last" is what makes a rename FROM a name
+        // that itself contains " b/" still resolve to the new path
         let renamed = diff_changed_paths("diff --git a/old.md b/new.md\n");
         assert!(renamed.contains("new.md"), "{renamed:?}");
+        let renamed_nasty = diff_changed_paths("diff --git a/x b/y.md b/new.md\n");
+        assert!(renamed_nasty.contains("new.md"), "{renamed_nasty:?}");
     }
 
     // --- the floor: every changed file accounted for --------------------------------------------
