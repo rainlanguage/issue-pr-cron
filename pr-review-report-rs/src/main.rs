@@ -3917,8 +3917,8 @@ fn distill_trace_mode() -> i32 {
 //   1. The bearer token never reaches the process table. The shell version went to real lengths
 //      for this (`curl --config -`, reading the header from stdin so the token stays out of argv);
 //      here there is no argv to leak into, so the property holds by construction.
-//   2. The pace arithmetic is a pure function of (used, reset, now, slack, ceiling) instead of a
-//      heredoc, so every branch and boundary is directly testable.
+//   2. The pace arithmetic is a pure function of (used, reset, now, headroom, ceiling) instead of
+//      a heredoc, so every branch and boundary is directly testable.
 // ---------------------------------------------------------------------------------------------
 
 /// One week, in milliseconds — the budget period the gate paces against.
@@ -3931,6 +3931,11 @@ enum UsageVerdict {
     Run(String),
     /// Exit 10 — skip this tick. The caller logs the reason and exits 0 itself.
     Pause(String),
+    /// Exit 2 — config the gate must not act on (the binary-wide config-error code: bad args and
+    /// an unreadable `--covered-file` exit 2 too). The runner logs the reason and aborts the tick
+    /// with a non-zero exit of its own: a refusal is neither a run (0) nor a pause (10), and must
+    /// never be readable as either.
+    Refuse(String),
 }
 
 impl UsageVerdict {
@@ -3938,11 +3943,12 @@ impl UsageVerdict {
         match self {
             UsageVerdict::Run(_) => 0,
             UsageVerdict::Pause(_) => 10,
+            UsageVerdict::Refuse(_) => 2,
         }
     }
     fn reason(&self) -> &str {
         match self {
-            UsageVerdict::Run(r) | UsageVerdict::Pause(r) => r,
+            UsageVerdict::Run(r) | UsageVerdict::Pause(r) | UsageVerdict::Refuse(r) => r,
         }
     }
 }
@@ -3987,7 +3993,7 @@ fn linear_pct(now_ms: i64, reset_ms: i64) -> f64 {
 fn usage_gate_decide(
     reading: Option<&UsageReading>,
     now_ms: i64,
-    slack: f64,
+    headroom: f64,
     ceiling: f64,
 ) -> UsageVerdict {
     let Some(r) = reading else {
@@ -4017,20 +4023,47 @@ fn usage_gate_decide(
         ));
     }
 
-    // 2. PACE — pause only when usage is MORE than `slack` ahead of the linear burn. Exactly at
-    //    the slack boundary still runs; `slack` is an allowance, not a limit to trip on.
+    // 2. PACE — the crons hold BEHIND the linear burn: pause when usage is inside the last
+    //    `headroom` points UNDER the pace line (`used > linear - headroom`), so interactive/BAU
+    //    work always has that band of the budget standing — the pipeline is the deferrable
+    //    consumer (#158). Exactly at `linear - headroom` still runs; the boundary is an
+    //    allowance, not a trip point. At week start `linear < headroom`, so the crons
+    //    legitimately idle until the pace line clears the headroom.
     let linear = linear_pct(now_ms, reset_ms);
-    if used - linear > slack {
+    if used - linear > -headroom {
         return UsageVerdict::Pause(format!(
             "PAUSE: {used:.0}% used vs {linear:.0}% linear-by-now toward reset \
-             {reset_display} ({source}) — >{slack:.0}% ahead of pace"
+             {reset_display} ({source}) — inside the {headroom:.0}% BAU headroom"
         ));
     }
 
     UsageVerdict::Run(format!(
         "OK: {used:.0}% used vs {linear:.0}% linear-by-now toward reset \
-         {reset_display} ({source}) — within {slack:.0}% slack"
+         {reset_display} ({source}) — at least {headroom:.0}% behind pace"
     ))
+}
+
+/// The #158 knob-rename guard. The pace comparison points the OTHER WAY from the gate
+/// `USAGE_SLACK_PCT` configured (the crons now hold behind the linear burn; that knob tolerated
+/// running ahead of it), so a value written for the old name cannot be read by this gate:
+/// honouring it would invert the operator's limit, and ignoring it would silently drop a limit
+/// the operator believes is set. Fail closed instead — refuse to gate at all, naming the
+/// replacement, until cron.env says what it means.
+///
+/// The environment is a PARAMETER, not a global read — the [`run_record_path_from`] shape, for
+/// the same reason: `cargo test` is multi-threaded and a process-global `set_var` would race
+/// every other test in the binary. A trimmed-empty value counts as unset, per that same
+/// convention: an empty assignment carries no limit to misread.
+fn stale_slack_refusal(slack_var: Option<&str>) -> Option<UsageVerdict> {
+    slack_var.filter(|v| !v.trim().is_empty()).map(|v| {
+        UsageVerdict::Refuse(format!(
+            "REFUSED: USAGE_SLACK_PCT={v} is set, but that knob is retired (#158) and its \
+             meaning inverted with the pace flip: the crons now pause INSIDE the headroom band \
+             under the linear burn, where USAGE_SLACK_PCT tolerated running ahead of it. Set \
+             USAGE_HEADROOM_PCT (default 5, positive = points the crons stay behind pace) and \
+             delete USAGE_SLACK_PCT from cron.env."
+        ))
+    })
 }
 
 /// Pull the OAuth bearer token out of the credentials file (`.claudeAiOauth.accessToken`).
@@ -4140,13 +4173,24 @@ fn env_f64(name: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
-/// `usage-gate`: prints one line and exits 0 (run) or 10 (pause).
+/// `usage-gate`: prints one line and exits 0 (run), 10 (pause) or 2 (config refused).
 ///
 /// Config is env-only, exported by the runners from cron.env — the same way ORGS/PR_ASSIGNEE
 /// already reach this binary.
 fn usage_gate_mode() -> i32 {
+    // The retired knob refuses FIRST — before the endpoint is even fetched — because ambiguous
+    // config must not run, pause, or spend anything. Refusal goes to stderr with a non-zero,
+    // non-10 exit (the binary-wide shape: success on stdout, refusal on stderr); the runners
+    // capture stderr into the log and abort the tick on any exit that is neither 0 nor 10.
+    // Read via `var_os` + lossy so even a non-UTF8 value still refuses.
+    let slack_var = std::env::var_os("USAGE_SLACK_PCT").map(|v| v.to_string_lossy().into_owned());
+    if let Some(refusal) = stale_slack_refusal(slack_var.as_deref()) {
+        eprintln!("{}", refusal.reason());
+        return refusal.code();
+    }
+
     let ceiling = env_f64("USAGE_CEILING_PCT", 90.0);
-    let slack = env_f64("USAGE_SLACK_PCT", 5.0);
+    let headroom = env_f64("USAGE_HEADROOM_PCT", 5.0);
 
     let creds = std::env::var("CLAUDE_CREDENTIALS").unwrap_or_else(|_| {
         format!(
@@ -4172,7 +4216,7 @@ fn usage_gate_mode() -> i32 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
-    let verdict = usage_gate_decide(reading.as_ref(), now_ms, slack, ceiling);
+    let verdict = usage_gate_decide(reading.as_ref(), now_ms, headroom, ceiling);
     println!("{}", verdict.reason());
     verdict.code()
 }
@@ -4267,18 +4311,35 @@ mod usage_gate_tests {
     }
 
     // The ceiling is checked BEFORE the pace and applies whatever the pace says. Here usage is
-    // comfortably BEHIND a linear burn (95 used vs ~99 linear), so a pace-first ordering would
-    // return Run. Kills any reordering of the two checks.
+    // comfortably clear of the headroom band (92 used vs 98.4375 linear => 6.4 points behind
+    // pace), so a pace-first ordering would return Run. Kills any reordering of the two checks.
     #[test]
     fn ceiling_is_checked_before_pace_and_wins() {
-        // One hour before reset => linear ~99.4%, so used-linear is negative: pace alone says run.
-        let now = ms(RESET) - 3_600_000;
-        let pace_only = usage_gate_decide(Some(&reading(95.0, RESET)), now, 5.0, 100.0);
+        // 1/64 of the week before reset => linear = 98.4375: pace alone says run at 92% used.
+        let now = ms(RESET) - USAGE_WEEK_MS / 64;
+        let pace_only = usage_gate_decide(Some(&reading(92.0, RESET)), now, 5.0, 100.0);
         assert_eq!(pace_only.code(), 0, "precondition: pace alone would RUN");
 
-        let v = usage_gate_decide(Some(&reading(95.0, RESET)), now, 5.0, 90.0);
+        let v = usage_gate_decide(Some(&reading(92.0, RESET)), now, 5.0, 90.0);
         assert_eq!(v.code(), 10, "ceiling must win over a healthy pace");
         assert!(v.reason().contains("ceiling"), "{}", v.reason());
+
+        // When BOTH checks would pause (95 used: over the 90 ceiling AND inside the headroom at
+        // 50 linear), the reason is the CEILING's — the ordering is visible in the log line even
+        // on an input in both trigger states, so swapping the two `if`s cannot hide behind
+        // disjoint inputs.
+        let both = usage_gate_decide(
+            Some(&reading(95.0, RESET)),
+            ms(RESET) - USAGE_WEEK_MS / 2,
+            5.0,
+            90.0,
+        );
+        assert_eq!(both.code(), 10);
+        assert!(
+            both.reason().contains("ceiling") && !both.reason().contains("headroom"),
+            "both-fire must report the ceiling: {}",
+            both.reason()
+        );
 
         // The ceiling is checked before EVERY later branch, not just the pace one — the two
         // branches that return Run early would otherwise swallow it. Without these, moving the
@@ -4312,30 +4373,46 @@ mod usage_gate_tests {
 
     // ---- pace ---------------------------------------------------------------------------------
 
-    // Exactly `slack` ahead still RUNS — slack is an allowance, not a limit to trip on.
-    // Kills `used - linear > slack` -> `>= slack`.
+    // Exactly `headroom` BEHIND the linear burn still RUNS — the boundary is an allowance, not a
+    // trip point — and one point past it (toward the pace line) PAUSES. Kills
+    // `used - linear > -headroom` -> `>=` (the boundary would pause), the sign flip back to
+    // `> headroom` (45.1 would run), the operand swap `linear - used` (45.0 would pause), and a
+    // swap of the pause/run arms.
     #[test]
-    fn pace_boundary_runs_at_exactly_slack_and_pauses_just_past_it() {
+    fn pace_boundary_runs_at_exactly_headroom_behind_and_pauses_one_point_past() {
         let now = ms(RESET) - USAGE_WEEK_MS / 2; // half the week elapsed => linear = 50%
         assert_eq!(linear_pct(now, ms(RESET)), 50.0, "precondition");
 
-        let at = usage_gate_decide(Some(&reading(55.0, RESET)), now, 5.0, 90.0);
+        let at = usage_gate_decide(Some(&reading(45.0, RESET)), now, 5.0, 90.0);
         assert_eq!(
             at.code(),
             0,
-            "exactly 5 ahead is within slack: {}",
+            "exactly 5 behind pace still runs: {}",
             at.reason()
         );
-        assert!(at.reason().contains("within 5% slack"), "{}", at.reason());
-
-        let over = usage_gate_decide(Some(&reading(55.1, RESET)), now, 5.0, 90.0);
-        assert_eq!(
-            over.code(),
-            10,
-            "5.1 ahead exceeds slack: {}",
-            over.reason()
+        assert!(
+            at.reason().contains("at least 5% behind pace"),
+            "{}",
+            at.reason()
         );
-        assert!(over.reason().contains("ahead of pace"), "{}", over.reason());
+
+        let inside = usage_gate_decide(Some(&reading(45.1, RESET)), now, 5.0, 90.0);
+        assert_eq!(
+            inside.code(),
+            10,
+            "4.9 behind pace is inside the headroom: {}",
+            inside.reason()
+        );
+        assert!(
+            inside.reason().contains("inside the 5% BAU headroom"),
+            "{}",
+            inside.reason()
+        );
+
+        // AT the pace line is deep inside the band: usage on the line leaves interactive work
+        // nothing, so it pauses.
+        let at_pace = usage_gate_decide(Some(&reading(50.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(at_pace.code(), 10, "{}", at_pace.reason());
     }
 
     // Behind pace runs, and the reason names both numbers and the source.
@@ -4347,6 +4424,73 @@ mod usage_gate_tests {
         assert!(v.reason().contains("10% used"), "{}", v.reason());
         assert!(v.reason().contains("50% linear-by-now"), "{}", v.reason());
         assert!(v.reason().contains("(endpoint)"), "{}", v.reason());
+    }
+
+    // At week start `linear < headroom`, so there is no room under the pace line yet and even an
+    // untouched budget pauses — the crons legitimately IDLE until the pace line clears the
+    // headroom. That is the intended shape of holding behind pace, not an underflow to
+    // special-case away: the first points of every week belong to interactive work.
+    #[test]
+    fn early_week_idles_until_linear_clears_headroom() {
+        let reset = ms(RESET);
+
+        // The instant the week opens: linear = 0, and 0% used is already "inside" a band whose
+        // floor is below zero.
+        let start =
+            usage_gate_decide(Some(&reading(0.0, RESET)), reset - USAGE_WEEK_MS, 5.0, 90.0);
+        assert_eq!(start.code(), 10, "week start idles: {}", start.reason());
+        assert!(
+            start.reason().contains("inside the 5% BAU headroom"),
+            "{}",
+            start.reason()
+        );
+
+        // 1/32 of the week in: linear = 3.125, still under the 5-point headroom — still idle.
+        let now = reset - USAGE_WEEK_MS + USAGE_WEEK_MS / 32;
+        assert_eq!(linear_pct(now, reset), 3.125, "precondition");
+        let under = usage_gate_decide(Some(&reading(0.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(
+            under.code(),
+            10,
+            "linear under the headroom still idles: {}",
+            under.reason()
+        );
+
+        // 1/16 of the week in: linear = 6.25 has cleared the headroom, so an idle cron may spend
+        // up to linear - headroom = 1.25 — the ordinary boundary semantics take over.
+        let now = reset - USAGE_WEEK_MS + USAGE_WEEK_MS / 16;
+        assert_eq!(linear_pct(now, reset), 6.25, "precondition");
+        let cleared = usage_gate_decide(Some(&reading(0.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(cleared.code(), 0, "{}", cleared.reason());
+        let at_allowance = usage_gate_decide(Some(&reading(1.25, RESET)), now, 5.0, 90.0);
+        assert_eq!(at_allowance.code(), 0, "{}", at_allowance.reason());
+        let past = usage_gate_decide(Some(&reading(1.3, RESET)), now, 5.0, 90.0);
+        assert_eq!(past.code(), 10, "{}", past.reason());
+    }
+
+    // Near the reset the pace line approaches 100, so the pace bound `linear - headroom`
+    // approaches 95: with the ceiling parked out of the way the crons run right up to it and no
+    // further — the gate holds ~5 points in hand even at week's end. With the DEFAULT 90%
+    // ceiling that bound is academic: 90 < 95, so it is the ceiling that binds near the reset.
+    #[test]
+    fn near_reset_pace_bound_approaches_100_minus_headroom() {
+        let reset = ms(RESET);
+        // 1/1024 of the week (~10 minutes) before the reset: linear = 99.90234375 exactly.
+        let now = reset - USAGE_WEEK_MS / 1024;
+        assert_eq!(linear_pct(now, reset), 99.90234375, "precondition");
+
+        // Pace alone (ceiling 100): exactly at linear - headroom runs...
+        let at = usage_gate_decide(Some(&reading(94.90234375, RESET)), now, 5.0, 100.0);
+        assert_eq!(at.code(), 0, "{}", at.reason());
+        // ...and 95% used is past the bound.
+        let past = usage_gate_decide(Some(&reading(95.0, RESET)), now, 5.0, 100.0);
+        assert_eq!(past.code(), 10, "{}", past.reason());
+        assert!(past.reason().contains("BAU headroom"), "{}", past.reason());
+
+        // Same instant, default ceiling: the 90% ceiling fires before the ~95% pace bound.
+        let ceiling = usage_gate_decide(Some(&reading(94.0, RESET)), now, 5.0, 90.0);
+        assert_eq!(ceiling.code(), 10, "{}", ceiling.reason());
+        assert!(ceiling.reason().contains("ceiling"), "{}", ceiling.reason());
     }
 
     // ---- the linear-pace clamp -----------------------------------------------------------------
@@ -4381,9 +4525,9 @@ mod usage_gate_tests {
         );
 
         // EXACTLY at the reset instant is already the new week. Pinned because `>=` -> `>` here
-        // still returns code 0 (linear clamps to 100, so nothing reads as "ahead of pace") — only
-        // the REASON distinguishes them, and a run logged as a pace result at the roll boundary
-        // would misreport why it ran.
+        // still returns code 0 (linear reaches 100, so 88 used reads as comfortably behind pace)
+        // — only the REASON distinguishes them, and a run logged as a pace result at the roll
+        // boundary would misreport why it ran.
         let at = usage_gate_decide(Some(&reading(88.0, RESET)), ms(RESET), 5.0, 90.0);
         assert_eq!(at.code(), 0, "{}", at.reason());
         assert!(
@@ -4520,6 +4664,39 @@ mod usage_gate_tests {
     fn exit_codes_are_the_interface() {
         assert_eq!(UsageVerdict::Run(String::new()).code(), 0);
         assert_eq!(UsageVerdict::Pause(String::new()).code(), 10);
+        assert_eq!(UsageVerdict::Refuse(String::new()).code(), 2);
+    }
+
+    // ---- the #158 knob rename: USAGE_SLACK_PCT is refused, never read -------------------------
+
+    // The retired var's meaning inverted with the pace flip, so a set value must refuse LOUDLY —
+    // silently honouring it would invert the operator's limit, silently ignoring it would drop
+    // one — and the refusal's exit code must be readable as neither "run" (0, what the runners
+    // fall through to) nor "pause" (10, what they log-and-skip on).
+    #[test]
+    fn stale_slack_var_refuses_loudly_naming_the_new_knob() {
+        let v = stale_slack_refusal(Some("5")).expect("a set USAGE_SLACK_PCT must refuse");
+        assert_eq!(v.code(), 2, "refusal is the config-error exit: {}", v.reason());
+        assert_ne!(v.code(), 0, "a refusal must never read as RUN");
+        assert_ne!(v.code(), 10, "a refusal must never read as PAUSE");
+        assert!(v.reason().starts_with("REFUSED:"), "{}", v.reason());
+        assert!(v.reason().contains("USAGE_SLACK_PCT"), "{}", v.reason());
+        assert!(
+            v.reason().contains("USAGE_HEADROOM_PCT"),
+            "the refusal names the replacement knob: {}",
+            v.reason()
+        );
+        assert!(
+            v.reason().contains("=5"),
+            "the refusal echoes the value it refused: {}",
+            v.reason()
+        );
+
+        // Unset is not a refusal, and neither is a trimmed-empty value (the env-as-parameter
+        // convention: an empty assignment carries no limit to misread).
+        assert!(stale_slack_refusal(None).is_none());
+        assert!(stale_slack_refusal(Some("")).is_none());
+        assert!(stale_slack_refusal(Some("  ")).is_none());
     }
 }
 
@@ -17770,9 +17947,11 @@ enum Cmd {
     },
     /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
     DistillTrace,
-    /// Weekly-budget pace gate. Prints one line; exits 0 to RUN this tick, 10 to PAUSE it.
-    /// Config is env-only (USAGE_CEILING_PCT, USAGE_SLACK_PCT, USAGE_USED_PCT, USAGE_RESET_AT,
-    /// CLAUDE_CREDENTIALS, USAGE_URL), exported by the runners from cron.env.
+    /// Weekly-budget pace gate. Prints one line; exits 0 to RUN this tick, 10 to PAUSE it, and
+    /// 2 to REFUSE retired config (USAGE_SLACK_PCT, whose meaning inverted with the #158 pace
+    /// flip — replace it with USAGE_HEADROOM_PCT). Config is env-only (USAGE_CEILING_PCT,
+    /// USAGE_HEADROOM_PCT, USAGE_USED_PCT, USAGE_RESET_AT, CLAUDE_CREDENTIALS, USAGE_URL),
+    /// exported by the runners from cron.env.
     UsageGate,
     /// The producer's whole in-flight worklist in ONE call: own open PRs with CI/failing-checks/
     /// mergeState/threads/closes/markers and a computed next_action. Replaces the hand-rolled startup.

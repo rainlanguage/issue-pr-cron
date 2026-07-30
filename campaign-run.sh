@@ -57,8 +57,10 @@ KEEP_RUNS=2000                 # retained per-run traces (~1.8MB each → ~4GB/~
 # The gate runs in-process in pr-review-report, so its config must reach the binary as ENV.
 # cron.env is sourced above, which makes these shell-local; export them explicitly. Exporting a
 # name that cron.env never set is a no-op — bash does not put unset names in the child's env — so
-# an unset var stays absent rather than arriving as an empty string.
-export USAGE_CEILING_PCT USAGE_SLACK_PCT USAGE_USED_PCT USAGE_RESET_AT USAGE_URL CLAUDE_CREDENTIALS
+# an unset var stays absent rather than arriving as an empty string. USAGE_SLACK_PCT is RETIRED
+# (#158) but still exported: the gate REFUSES it when set, and dropping it from this list would
+# hide a stale cron.env from that guard instead of surfacing it.
+export USAGE_CEILING_PCT USAGE_HEADROOM_PCT USAGE_SLACK_PCT USAGE_USED_PCT USAGE_RESET_AT USAGE_URL CLAUDE_CREDENTIALS
 
 
 # --- org scope: single source = cron.env ORGS; derive owner-flags + prose, export for pr-review-report ---
@@ -82,12 +84,21 @@ if [ -f "$DIR/DISABLED" ]; then
   exit 0
 fi
 
-# --- weekly-budget pace gate: skip this tick when usage is over the ceiling or running ahead of a
-# linear burn toward the reset. `usage-gate` reads /api/oauth/usage itself; exit 10 means PAUSE.
-# It is INERT when it cannot read usage and no fallback is set — it prints OK and we run. ---
-_ug="$(pr-review-report usage-gate)"; _ugrc=$?
+# --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
+# headroom band under the linear burn toward the reset — the crons hold ~USAGE_HEADROOM_PCT points
+# BEHIND pace so interactive work keeps standing budget (#158). `usage-gate` reads
+# /api/oauth/usage itself; exit 10 means PAUSE (log it, exit 0). It is INERT when it cannot read
+# usage and no fallback is set — it prints OK and we run. Any OTHER non-zero exit is a config
+# REFUSAL (the retired USAGE_SLACK_PCT still set: exit 2, reason on stderr, captured into the
+# log): the tick must not run on config the gate refused to read, so propagate the failure — a
+# refusal is neither a run nor a pause. ---
+_ug="$(pr-review-report usage-gate 2>&1)"; _ugrc=$?
 echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
 [ "$_ugrc" -eq 10 ] && exit 0
+if [ "$_ugrc" -ne 0 ]; then
+  echo "$(date -u +%FT%TZ) campaign run ABORTED: usage-gate refused its config (exit $_ugrc) — fix cron.env" >> "$LOG"
+  exit "$_ugrc"
+fi
 
 # --- single-run lock (non-blocking: skip this tick if a prior run is still going) ---
 exec 9>"$LOCK"
