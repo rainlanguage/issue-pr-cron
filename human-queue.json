@@ -298,12 +298,6 @@
     ],
     "ai:ready": [
       {
-        "repo": "rainlanguage/rain.deploy",
-        "number": 21,
-        "url": "https://github.com/rainlanguage/rain.deploy/pull/21",
-        "title": "fix(deploy): check the derived Zoltu address before skipping a network"
-      },
-      {
         "repo": "rainlanguage/rain.solmem",
         "number": 104,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/104",
@@ -1130,14 +1124,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 31,
+        "count": 29,
         "prs": [
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 68,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/68",
-            "title": "audit: Solidity file placement by kind — own kind in src/ and the suite tree, subject path in the test/src mirror"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 106,
@@ -1149,12 +1137,6 @@
             "number": 105,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/105",
             "title": "test(uint256): bring the uint256 suite to parity with the bytes32 one"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 21,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/21",
-            "title": "fix(deploy): check the derived Zoltu address before skipping a network"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -5811,7 +5793,7 @@
     }
   ],
   "counts": {
-    "ready": 25,
+    "ready": 24,
     "design": 13,
     "blockedDeploy": 13,
     "blockedInfra": 0,
@@ -5820,9 +5802,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 157,
+    "totalProducerPrs": 155,
     "uncoveredIssues": 622,
-    "unvetted": 31,
+    "unvetted": 29,
     "reject": 70,
     "relink": 1,
     "closeCandidatePrs": 5,
