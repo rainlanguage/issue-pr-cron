@@ -460,12 +460,6 @@
         "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 387,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/387",
-        "title": "fix(store): reject zero and null block.number from RPC"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 196,
         "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -713,7 +707,7 @@
         ]
       },
       "human:reject": {
-        "count": 39,
+        "count": 41,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -771,6 +765,12 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
+            "number": 407,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
+            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
             "number": 400,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
             "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
@@ -780,6 +780,12 @@
             "number": 396,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
             "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 395,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
+            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1163,6 +1169,12 @@
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
+            "number": 148,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/148",
+            "title": "One reader for the changed-file list, and it says whether the list is whole"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
             "number": 146,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/146",
             "title": "The mechanical audit conventions are checked by the binary, not asked of the vetter"
@@ -1172,12 +1184,6 @@
             "number": 23,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
             "title": "chore(pragma): pin the three concrete .sol files to =0.8.25"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 145,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/145",
-            "title": "record_verdict refuses a verdict that does not account for the PR's changed files"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1410,7 +1416,7 @@
         ]
       },
       "ai:ready": {
-        "count": 18,
+        "count": 15,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1456,12 +1462,6 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 407,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
-            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
             "number": 405,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
             "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
@@ -1492,12 +1492,6 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 395,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
-            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
             "number": 394,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
             "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
@@ -1507,12 +1501,6 @@
             "number": 389,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
             "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 387,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/387",
-            "title": "fix(store): reject zero and null block.number from RPC"
           },
           {
             "repo": "rainlanguage/dotrain",
@@ -1864,12 +1852,6 @@
     }
   ],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 147,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/147",
-      "title": "gh pr view --json files silently caps at 100: the vetter judges a truncated file list and cannot tell"
-    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 63,
@@ -5767,7 +5749,7 @@
     }
   ],
   "counts": {
-    "ready": 33,
+    "ready": 32,
     "design": 13,
     "blockedDeploy": 13,
     "blockedInfra": 0,
@@ -5776,13 +5758,13 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 23,
-    "totalProducerPrs": 161,
-    "uncoveredIssues": 623,
+    "totalProducerPrs": 160,
+    "uncoveredIssues": 622,
     "unvetted": 21,
     "reject": 27,
     "relink": 1,
     "closeCandidatePrs": 5,
-    "humanReject": 39,
+    "humanReject": 41,
     "humanDesign": 6,
     "humanCloseCandidate": 0
   }
