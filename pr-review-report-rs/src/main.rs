@@ -6537,6 +6537,26 @@ fn record_gate(
     }
 }
 
+/// PURE: the process exit code each decision carries. ONE table, so what a caller branches on is a
+/// tested property of the decision rather than eight literals scattered through the write's arms.
+///
+/// It is a function of the GATE and not of the message, because the codes group by the FIX: 4 covers
+/// scope coverage (#131) and the mechanical convention (#141) together, since both are defects in the
+/// same diff that the same actor reworks in one pass; 5 (#151) and 6 (#155) are each their own,
+/// because "the code was not read" and "the wrong code was read" have different repairs and neither is
+/// a rework of the diff. A gate added without a deliberate choice here fails this table's test rather
+/// than silently inheriting a neighbour's code.
+fn record_gate_exit_code(gate: &RecordGate) -> i32 {
+    match gate {
+        RecordGate::Record { .. } => 0,
+        RecordGate::NoSha | RecordGate::FilesUnknown(_) | RecordGate::NoDiff => 1,
+        RecordGate::RefuseHuman => 3,
+        RecordGate::Uncovered(_) | RecordGate::SolConvention { .. } => 4,
+        RecordGate::NoLens(_) => 5,
+        RecordGate::WrongLensScope(_) => 6,
+    }
+}
+
 /// `--record-verdict <owner/repo> <pr> <verdict> [note...]`: record an AI verdict as the
 /// `ai:<verdict>` label (exactly one AI verdict at a time) + a SHA-bound `🤖 ai:vetter` comment.
 /// The ONE writer of AI verdicts (shared by the vetter); never overrides a human verdict.
@@ -6642,24 +6662,29 @@ fn record_verdict_apply(
     let lens = verdict_lens_evidence(slug, pr, head_sha);
     let sol_scan = verdict_sol_scan(slug, pr, head_sha, &files);
     let pr_ref = format!("{slug}#{pr}");
-    let (to_remove, has_target, sha, skip) = match record_gate(
+    let decision = record_gate(
         &pr_json, &files, &diff_text, covered, &lens, &sol_scan, target, verdict,
-    ) {
+    );
+    // The code comes off ONE tested table (`record_gate_exit_code`), read from the decision before it
+    // is destructured, so what a caller branches on is a property of the gate rather than a literal
+    // per arm. Each arm below owns only its MESSAGE.
+    let code = record_gate_exit_code(&decision);
+    let (to_remove, has_target, sha, skip) = match decision {
         RecordGate::RefuseHuman => {
             return Err((
-                3,
+                code,
                 format!("human verdict present on {slug}#{pr}; not overriding"),
             ));
         }
         RecordGate::NoSha => {
             return Err((
-                    1,
+                    code,
                     format!("error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"),
                 ));
         }
         RecordGate::FilesUnknown(why) => {
             return Err((
-                1,
+                code,
                 format!(
                     "error: {slug}#{pr}'s changed-file list could not be read WHOLE — {why}. The \
                      coverage claim cannot be checked against a list that may be missing files, and \
@@ -6669,7 +6694,7 @@ fn record_verdict_apply(
         }
         RecordGate::NoDiff => {
             return Err((
-                1,
+                code,
                 format!(
                     "error: `gh pr diff {slug}#{pr}` produced no diff for a PR that changes files \
                      — the coverage claim cannot be checked against a diff that is not there, and \
@@ -6680,7 +6705,7 @@ fn record_verdict_apply(
         // Refused BEFORE any write and before the dry-run report, like every other refusal here, so
         // a verdict whose lens was never pointed at the PR provably changed nothing.
         RecordGate::NoLens(refusal) => {
-            return Err((5, lens_refusal_message(&pr_ref, &refusal)));
+            return Err((code, lens_refusal_message(&pr_ref, &refusal)));
         }
         // #155, and refused before any write for the same reason: a verdict formed from a lens that
         // read the wrong code provably changed nothing.
@@ -6688,13 +6713,13 @@ fn record_verdict_apply(
             // The number the legal `pr:<n>` scope names. Unparseable is unreachable from here —
             // `verdict_lens_evidence` makes such a PR `NoSource`, which the gate above owns.
             let num = pr.parse::<u64>().unwrap_or_default();
-            return Err((6, lens_scope_refusal_message(&pr_ref, num, &refusal)));
+            return Err((code, lens_scope_refusal_message(&pr_ref, num, &refusal)));
         }
         // Refused BEFORE any write and before the dry-run report, so a claim that does not
         // account for the diff provably changed nothing.
         RecordGate::Uncovered(gaps) => {
             return Err((
-                4,
+                code,
                 coverage_refusal(&pr_ref, &gaps, &diff_new_lines(&diff_text)),
             ));
         }
@@ -6714,7 +6739,7 @@ fn record_verdict_apply(
                     &diff_new_lines(&diff_text),
                 ));
             }
-            return Err((4, msg));
+            return Err((code, msg));
         }
         RecordGate::Record {
             to_remove,
@@ -25508,6 +25533,64 @@ index 1111111..2222222 100644
             ),
             RecordGate::NoDiff,
             "a diff that did not arrive is refused as such, not as a missing lens"
+        );
+    }
+
+    /// The exit codes, as ONE table. The write's arms read this rather than carrying literals, so a
+    /// caller branching on the code is branching on a tested property of the decision.
+    ///
+    /// The grouping is by the FIX, which is what a code is for: 4 covers both diff refusals because
+    /// the same actor reworks the same diff for either, and 5 and 6 are each their own because "the
+    /// code was not read" and "the WRONG code was read" have different repairs. A future gate that
+    /// silently inherits a neighbour's code fails here.
+    #[test]
+    fn each_refusal_carries_its_own_exit_code_and_the_two_lens_codes_differ() {
+        use super::record_gate_exit_code as code;
+        assert_eq!(
+            code(&RecordGate::Record {
+                to_remove: vec![],
+                has_target: false,
+                sha: SHA.to_string(),
+                skip_comment: false
+            }),
+            0
+        );
+        assert_eq!(code(&RecordGate::RefuseHuman), 3);
+        assert_eq!(code(&RecordGate::NoSha), 1);
+        assert_eq!(code(&RecordGate::FilesUnknown("why".into())), 1);
+        assert_eq!(code(&RecordGate::NoDiff), 1);
+        assert_eq!(
+            code(&RecordGate::NoLens(LensRefusal::NoSource("x".into()))),
+            5
+        );
+        assert_eq!(
+            code(&RecordGate::WrongLensScope(LensScopeRefusal::Wrong(vec![
+                "whole-repo".into()
+            ]))),
+            6,
+            "the scope refusal is its OWN code — a caller must not have to match prose to tell it \
+             from a missing lens"
+        );
+        assert_eq!(
+            code(&RecordGate::WrongLensScope(LensScopeRefusal::Undeclared(
+                "/l".into()
+            ))),
+            6,
+            "both scope states share a code, because they share a fix"
+        );
+        // …and the two lens codes are distinct from each other and from the diff code, which is the
+        // whole reason each exists.
+        assert_ne!(
+            code(&RecordGate::NoLens(LensRefusal::NoSource("x".into()))),
+            code(&RecordGate::WrongLensScope(LensScopeRefusal::Undeclared(
+                "/l".into()
+            )))
+        );
+        assert_ne!(
+            code(&RecordGate::WrongLensScope(LensScopeRefusal::Undeclared(
+                "/l".into()
+            ))),
+            code(&RecordGate::Uncovered(super::CoverageGaps::default()))
         );
     }
 
