@@ -2364,6 +2364,126 @@ const STAGE_LENS: &str = "lens";
 /// state, while no other skill in the surface can be credited as the lens.
 const AUDIT_SKILL_LEAF: &str = "audit";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The SCOPE the lens ran at (#155).
+//
+// #151 recorded THAT the skill ran. A lens pointed at the wrong scope is not a weaker review, it is
+// a review of DIFFERENT CODE — and both wrong scopes produce a confident verdict from a real
+// invocation, so both satisfy #151's gate:
+//
+// - DIFF-ONLY structurally cannot see ramifications. The canonical miss is `raindex#2778`, whose
+//   claim that a `signer<256>` silently resolves to row 0 was falsified only by reading the callee,
+//   which reverts.
+// - WHOLE-REPO on a PR returns findings mostly about code the PR never touches. Measured on
+//   `rainlanguage/rain.deploy#21`: twelve findings, five bearing on the PR, seven pre-existing — and
+//   the merge-relevant one (a new public API shipped without a `[package] version` bump, against an
+//   already-published version, in a repo that autopublishes on push to `main`) was one line in a
+//   list of twelve.
+//
+// The vocabulary is the audit skill's own (`claude-audit-skills#66`): three values and no fourth.
+// The scope is read off the `Skill` call's `input.args` HERE, in the runner's live pipe, for exactly
+// the reason #151 read the invocation here — the harness writes that event before the tool runs, the
+// model cannot write or amend the ledger, and a scope read out of VERDICT text would be the model's
+// claim about itself, which is what #146 was right to reject.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scope value: every first-party file, regardless of when it last changed.
+const LENS_SCOPE_WHOLE_REPO: &str = "whole-repo";
+
+/// Scope value prefix: one PR — the diff PLUS its ramifications.
+const LENS_SCOPE_PR_PREFIX: &str = "pr:";
+
+/// Scope value prefix: the files a comma-separated glob list names, and nothing else.
+const LENS_SCOPE_PATHS_PREFIX: &str = "paths:";
+
+/// The scope ONE audit-skill invocation declared — exactly the three values the skill accepts
+/// (`claude-audit-skills#66`), and no fourth. Modelled as a type rather than kept as the raw string
+/// so every consumer branches on a DISCRIMINANT: the gate below has to answer "whole-repo, or
+/// diff-only, or a different PR's" and matching substrings out of a scope string would make each of
+/// those answers a fresh parser.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum LensScope {
+    /// `whole-repo`.
+    WholeRepo,
+    /// `pr:<number>`.
+    Pr(u64),
+    /// `paths:<comma-separated globs>`, carrying the globs.
+    Paths(String),
+}
+
+impl LensScope {
+    /// PURE: the scope ONE token declares, or `None` when it is not one of the three values.
+    ///
+    /// STRICT, the same discipline [`pr_refs_in`] applies to a PR ref: the token IS the value or it
+    /// is nothing. `pr:0` is not a PR (neither is `#0` — see [`parse_pr_ref`]) and `paths:` with no
+    /// globs names no files, so both are refused rather than read as an empty scope.
+    fn parse(token: &str) -> Option<LensScope> {
+        if token == LENS_SCOPE_WHOLE_REPO {
+            return Some(LensScope::WholeRepo);
+        }
+        if let Some(num) = token.strip_prefix(LENS_SCOPE_PR_PREFIX) {
+            return num
+                .parse::<u64>()
+                .ok()
+                .filter(|n| *n > 0)
+                .map(LensScope::Pr);
+        }
+        if let Some(globs) = token.strip_prefix(LENS_SCOPE_PATHS_PREFIX) {
+            return (!globs.is_empty()).then(|| LensScope::Paths(globs.to_string()));
+        }
+        None
+    }
+
+    /// The canonical text of this scope: what a ledger row stores, and what [`LensScope::parse`]
+    /// reads back. A round trip, so the row carries the skill's own vocabulary rather than a second
+    /// spelling of it that a reader would have to learn.
+    fn text(&self) -> String {
+        match self {
+            LensScope::WholeRepo => LENS_SCOPE_WHOLE_REPO.to_string(),
+            LensScope::Pr(n) => format!("{LENS_SCOPE_PR_PREFIX}{n}"),
+            LensScope::Paths(globs) => format!("{LENS_SCOPE_PATHS_PREFIX}{globs}"),
+        }
+    }
+}
+
+/// PURE: the scope an invocation's `args` DECLARES — `Some` only when the string names exactly one,
+/// unambiguously.
+///
+/// Several DISTINCT scopes are none, which is the same ruling [`lens_invocation`] makes for several
+/// PRs and rests on the same fact: `args` is prose, so `"scope pr:21, not whole-repo"` states two
+/// values a reader would have to rank, and a gate that ranked them would be choosing the declaration
+/// on the model's behalf. The refusal therefore reports an undeclared scope for both, and says so.
+///
+/// The tokeniser splits on whitespace and on the punctuation prose puts AROUND a token, but NOT on
+/// `,` — a `paths:` scope's globs are comma-separated by the skill's own vocabulary, and splitting
+/// there would shred the one value that carries a list.
+fn lens_scope_in(text: &str) -> Option<LensScope> {
+    let mut found: Vec<LensScope> = Vec::new();
+    for raw in text.split(|c: char| {
+        c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '<' | '>' | '"' | '\'' | '`')
+    }) {
+        let token = raw.trim_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?'));
+        if let Some(scope) = LensScope::parse(token) {
+            if !found.contains(&scope) {
+                found.push(scope);
+            }
+        }
+    }
+    match found.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
+}
+
+/// ONE audit-skill invocation as the harness announced it: the PR it named, the skill id it named,
+/// and the scope it DECLARED — `None` when its `args` name no scope, or more than one.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct LensInvocation {
+    pr: String,
+    skill: String,
+    scope: Option<LensScope>,
+}
+
 /// PURE: every `owner/repo#number` in a blob of prose, validated through [`parse_pr_ref`] — the one
 /// parser — and de-duplicated in first-seen order.
 ///
@@ -2401,7 +2521,12 @@ fn pr_refs_in(text: &str) -> Vec<String> {
 /// - `input.args` names EXACTLY ONE PR. `review-prompt.txt` says "SCOPED TO THIS PR", singular, and
 ///   one invocation listing thirty-five refs would otherwise buy thirty-five verdicts for one call.
 ///   Naming none is likewise uncreditable: the ledger's whole content is which PR was examined.
-fn lens_invocation(ev: &Value) -> Option<(String, String)> {
+///
+/// The declared SCOPE (#155) rides along from the same `args`, and it is deliberately NOT a fourth
+/// condition here: an invocation that declares no scope, or the wrong one, still HAPPENED, and the
+/// two facts are refused by two different gates with two different repairs. Folding the scope into
+/// this predicate would report "the skill was never invoked" to a vetter that invoked it.
+fn lens_invocation(ev: &Value) -> Option<LensInvocation> {
     let content = ev.get("message")?.get("content")?.as_array()?;
     for block in content {
         if block.get("type").and_then(|t| t.as_str()) != Some("tool_use")
@@ -2420,20 +2545,35 @@ fn lens_invocation(ev: &Value) -> Option<(String, String)> {
             .unwrap_or_default();
         let refs = pr_refs_in(args);
         if let [only] = refs.as_slice() {
-            return Some((only.clone(), skill.to_string()));
+            return Some(LensInvocation {
+                pr: only.clone(),
+                skill: skill.to_string(),
+                scope: lens_scope_in(args),
+            });
         }
     }
     None
 }
 
-/// One ledger row: the audit skill was invoked, and this is the PR it was scoped to.
-fn lens_record(pr: &str, skill: &str, trace: &str, id: &RunIdentity) -> Value {
+/// One ledger row: the audit skill was invoked, this is the PR it was scoped to, and this is the
+/// scope it declared (#155).
+///
+/// The `scope` key is ABSENT, never `null`, when the invocation declared none. That asymmetry is the
+/// same one #151 established between an absent ledger and an empty one, one level in: a row with no
+/// scope is an invocation that declared nothing, which is a different fact from a row declaring the
+/// wrong one, and the refusals for the two name different repairs. A `null` would read as a value.
+fn lens_record(inv: &LensInvocation, trace: &str, id: &RunIdentity) -> Value {
     let mut doc = serde_json::json!({
         "trace": trace,
         "stage": STAGE_LENS,
-        "pr": pr,
-        "skill": skill,
+        "pr": inv.pr,
+        "skill": inv.skill,
     });
+    if let Some(scope) = &inv.scope {
+        doc.as_object_mut()
+            .unwrap()
+            .insert("scope".to_string(), Value::String(scope.text()));
+    }
     stamp_identity(&mut doc, id);
     doc
 }
@@ -2503,8 +2643,8 @@ fn run_timings_mode(out: &str, trace: &str, lens: Option<&str>, id: &RunIdentity
         // #151. Best-effort like every other write here — but note what "best effort" means for THIS
         // one: an unwritable ledger loses an invocation, and the verdict gate then REFUSES rather
         // than records. The failure direction is a verdict withheld, never a verdict waved through.
-        if let (Some(lens), Some((pr, skill))) = (lens, lens_invocation(&ev)) {
-            let _ = append_record(lens, &lens_record(&pr, &skill, trace, id));
+        if let (Some(lens), Some(inv)) = (lens, lens_invocation(&ev)) {
+            let _ = append_record(lens, &lens_record(&inv, trace, id));
         }
         // An escalation goes to disk immediately; token totals go on the stride. Both write the
         // same record, so an escalation also refreshes the numbers and vice versa.
@@ -4483,7 +4623,11 @@ fn labels_to_remove(current: &[String], target: &str) -> Vec<String> {
 /// is a mandatory gate AND a change to what vetting means, and the bump is the mechanism that undoes
 /// the damage rather than merely stopping more of it — the 34 verdicts the 2026-07-29T17:17:35Z run
 /// recorded with the lens never run all stop being current at once and come back to be re-vetted.
-const VET_PROTOCOL: u32 = 3;
+/// `4` is the audit lens's SCOPE (#155): the ledger row now carries the scope the invocation declared,
+/// and a verdict is refused unless that scope is this PR's — `whole-repo` and a path list are both
+/// real invocations that read the wrong code, so every protocol-3 verdict is a verdict formed under a
+/// scope-blind ledger and is not a value of the current function.
+const VET_PROTOCOL: u32 = 4;
 
 /// The line [`verdict_comment`] stamps the protocol on, and [`verdict_protocol`] reads it back from.
 const VET_PROTOCOL_PREFIX: &str = "vet-protocol ";
@@ -4540,7 +4684,9 @@ const VET_LENS_PREFIX: &str = "lens ";
 /// a preamble is the model's account of its own diligence, and this is the binary's account of two
 /// facts it checked. It also makes an ABSENT stamp meaningful — a verdict with no `lens` line is one
 /// written before the lens was checkable at all, which is exactly the 34-in-35 population #151
-/// measured, and no longer indistinguishable from a vet that read the source.
+/// measured, and no longer indistinguishable from a vet that read the source. Since #155 it also names
+/// the SCOPE off the ledger row, so a PR-scoped review is distinguishable from a whole-repo sweep in
+/// the record rather than inferrable from the findings.
 ///
 /// Both stamps sit ABOVE the verdict line because everything below it is model-authored text.
 /// This comment is now the SOLE home of verification cost — there is no cost sidecar.
@@ -5794,14 +5940,20 @@ const RECORD_VERDICT_FIELDS: &str = "headRefOid,labels,comments,reviewDecision,f
 //   this same binary implements, `checkout_dir` derives the path from `(work_dir, slug, num)` with no
 //   search, and the vetter has no `Bash`/`Write`/`Edit` with which to make a tree of its own.
 // - INVOCATION — an audit-skill `Skill` call scoped to this PR, as recorded in the run's lens ledger
-//   by [`run_timings_mode`] from the harness's own live stream. The model authors the `args` and so
-//   authors the SCOPE; it does not author the fact that a skill ran, and it cannot write the ledger.
+//   by [`run_timings_mode`] from the harness's own live stream. The model authors the `args`; it does
+//   not author the fact that a skill ran, and it cannot write the ledger.
+// - SCOPE (#155) — the scope that invocation DECLARED, taken off the same announced `Skill` event by
+//   the same filter. The scope is the answer to "which code did the lens read", and both wrong
+//   answers pass the invocation check: `whole-repo` reviews the repository instead of the PR, and a
+//   path list reviews the diff without the code that decides whether the diff is right.
 //
 // The invocation half is therefore stronger than a checkout — which is a precondition of the skill,
 // not the skill — and weaker than proof, because the ref inside `args` is model text. What it does
-// buy is that the credit cannot be had without paying for a real invocation, and that a single
-// invocation buys exactly one PR (see [`lens_invocation`]). It is not, and does not pretend to be, a
-// check on what the skill CONCLUDED; correctness, security and design stay entirely the vetter's.
+// buy is that the credit cannot be had without paying for a real invocation, that a single
+// invocation buys exactly one PR (see [`lens_invocation`]), and that the scope on the record is the
+// one the harness announced rather than one a verdict claims for itself. It is not, and does not
+// pretend to be, a check on what the skill CONCLUDED; correctness, security and design stay entirely
+// the vetter's.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The env var naming the run's lens ledger. Exported by `review-run.sh` beside the trace it is
@@ -5809,38 +5961,105 @@ const RECORD_VERDICT_FIELDS: &str = "headRefOid,labels,comments,reviewDecision,f
 /// cannot carry a per-run path — the same split `RUN_INFRA_FILE` already uses.
 const LENS_LEDGER_ENV: &str = "RUN_LENS_LEDGER";
 
-/// What the run can say about the audit lens for ONE PR. FOUR states, and the two in the middle are
-/// the whole point of the type: "the run does not record invocations" is NOT "the skill was not
-/// invoked", and collapsing them either refuses every verdict on a run that keeps no ledger or lets a
-/// lensless one through in silence.
+/// What the run can say about the audit lens for ONE PR. SIX states, and every one of the four in
+/// the middle exists because collapsing it into a neighbour changes an answer:
+///
+/// - "the run does not record invocations" is NOT "the skill was not invoked", and collapsing those
+///   either refuses every verdict on a run that keeps no ledger or lets a lensless one through in
+///   silence (#151);
+/// - "the invocation declared no scope" is NOT "it declared the wrong one" (#155), and it is not "no
+///   invocation" either: all three name different repairs, and a refusal that names the wrong one
+///   sends the vetter to do work it has already done.
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum LensEvidence {
-    /// Source at this PR's head AND an audit-skill invocation scoped to it. The lens was pointed at
-    /// this PR.
-    Full { sha: String },
+    /// Source at this PR's head, an audit-skill invocation scoped to it, AND that invocation
+    /// declaring this PR's scope. Carries the scope text off the row, so the stamp reports what was
+    /// observed rather than re-deriving what it should have been.
+    Full { sha: String, scope: String },
     /// Source at this PR's head; this run keeps no ledger, so the invocation is UNOBSERVED. Recorded,
     /// and the record SAYS so — the distinction #146 correctly called unverifiable when a model
     /// asserts it is verifiable when the binary is the one asserting it.
     SourceOnly { sha: String, why: String },
+    /// Source at this PR's head, an invocation for it, and NOT ONE of its invocations declared a
+    /// scope. Carries the ledger read.
+    ScopeUndeclared { ledger: String },
+    /// Source at this PR's head, an invocation for it, and every scope declared is the wrong one.
+    /// Carries them in row order, so the refusal can name what was actually run.
+    WrongScope { declared: Vec<String> },
     /// Source at this PR's head; the run keeps a ledger and it holds no invocation for this PR.
     NotInvoked { ledger: String },
     /// No `pr_checkout` tree for this PR at its head. Carries why.
     NoSource(String),
 }
 
-/// PURE: the PR refs an already-read lens ledger credits, newest last. Unparseable lines are skipped
-/// — this file is appended to from inside a live pipe, so a truncated final line is a normal state and
-/// not a reason to discard the rows before it.
-fn lens_ledger_prs(text: &str) -> Vec<String> {
+/// PURE: the rows an already-read lens ledger credits, in file order — each the PR one invocation
+/// named and the scope it declared, `None` when the row carries none.
+///
+/// Unparseable lines are skipped: this file is appended to from inside a live pipe, so a truncated
+/// final line is a normal state and not a reason to discard the rows before it.
+///
+/// The scope comes back as the RAW string rather than a parsed [`LensScope`]. A value this filter did
+/// not write must not vanish into "declared nothing" — an unrecognised scope is a declaration the
+/// gate cannot honour, and the fail-closed reading of that is a wrong scope it can name.
+fn lens_ledger_rows(text: &str) -> Vec<(String, Option<String>)> {
     text.lines()
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .filter(|d| d.get("stage").and_then(|s| s.as_str()) == Some(STAGE_LENS))
         .filter_map(|d| {
-            d.get("pr")
-                .and_then(|p| p.as_str())
+            let pr = d.get("pr").and_then(|p| p.as_str())?.trim().to_string();
+            let scope = d
+                .get("scope")
+                .and_then(|s| s.as_str())
                 .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            Some((pr, scope))
         })
         .collect()
+}
+
+/// What this run's invocations for ONE PR say about the SCOPE the lens ran at (#155).
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum LensScopeState {
+    /// Some invocation declared THIS PR's scope. Carries the row's own text.
+    Correct(String),
+    /// Invocations exist and not one of them declares a scope at all.
+    Undeclared,
+    /// Invocations exist, they declare scopes, and none is this PR's. Carries them in row order.
+    Wrong(Vec<String>),
+}
+
+/// PURE: rank the scopes this run's invocations for one PR declared against the ONE that is legal.
+///
+/// For a PR verdict that is `pr:<this PR's number>`, and there is no second legal answer:
+///
+/// - `whole-repo` reviews the repository. On `rainlanguage/rain.deploy#21` that was twelve findings,
+///   five bearing on the PR — a verdict formed from that set is reasoning about the repo.
+/// - `paths:<globs>` reviews the files the list names and nothing that decides whether they are
+///   right. On a PR the only file list to hand is the diff's, so a path-scoped invocation here is the
+///   DIFF-ONLY lens under another name — and even where the globs reach wider they are a list the
+///   caller assembled, not the ramification set the "would understanding it change the ruling on THIS
+///   diff?" test derives.
+/// - `pr:<other>` is a scope pointed at a different PR, inside an invocation credited to this one.
+///
+/// A row whose scope does not parse at all is WRONG, not absent: this filter only ever writes the
+/// three canonical values, so an unrecognised one came from somewhere else and cannot be honoured.
+///
+/// The FIRST correct declaration wins and short-circuits, so a later wider invocation does not
+/// retract it. An invocation at `pr:<n>` is a real reading of the diff plus its ramifications, and
+/// running the skill again over the whole repo afterwards does not unread it.
+fn lens_scope_state(declared: &[Option<String>], num: u64) -> LensScopeState {
+    let mut wrong: Vec<String> = Vec::new();
+    for text in declared.iter().flatten() {
+        if LensScope::parse(text) == Some(LensScope::Pr(num)) {
+            return LensScopeState::Correct(text.clone());
+        }
+        wrong.push(text.clone());
+    }
+    if wrong.is_empty() {
+        LensScopeState::Undeclared
+    } else {
+        LensScopeState::Wrong(wrong)
+    }
 }
 
 /// PURE: resolve the lens evidence from the two things already read — whether the checkout holds this
@@ -5854,6 +6073,15 @@ fn lens_evidence(
     ledger: Option<(&str, &str)>,
     pr_ref: &str,
 ) -> LensEvidence {
+    // The number the legal scope names. A ref that will not parse names no checkout either, so it is
+    // `NoSource` — the fail-closed spelling, for the same reason `verdict_lens_evidence` makes an
+    // unparseable PR number one: the unreachable arm must never be the permissive one.
+    let Ok((_, num)) = parse_pr_ref(pr_ref) else {
+        return LensEvidence::NoSource(format!(
+            "`{pr_ref}` is not an `owner/repo#number` reference, so no audit-lens checkout can be \
+             named"
+        ));
+    };
     let head = match head {
         Ok(h) => h,
         Err(why) => return LensEvidence::NoSource(why),
@@ -5872,12 +6100,22 @@ fn lens_evidence(
             why: format!("this run names no lens ledger (${LENS_LEDGER_ENV} is unset)"),
         },
         Some((path, text)) => {
-            if lens_ledger_prs(text).iter().any(|p| p == pr_ref) {
-                LensEvidence::Full { sha: head }
-            } else {
-                LensEvidence::NotInvoked {
+            let declared: Vec<Option<String>> = lens_ledger_rows(text)
+                .into_iter()
+                .filter(|(pr, _)| pr == pr_ref)
+                .map(|(_, scope)| scope)
+                .collect();
+            if declared.is_empty() {
+                return LensEvidence::NotInvoked {
                     ledger: path.to_string(),
-                }
+                };
+            }
+            match lens_scope_state(&declared, num) {
+                LensScopeState::Correct(scope) => LensEvidence::Full { sha: head, scope },
+                LensScopeState::Undeclared => LensEvidence::ScopeUndeclared {
+                    ledger: path.to_string(),
+                },
+                LensScopeState::Wrong(declared) => LensEvidence::WrongScope { declared },
             }
         }
     }
@@ -5954,8 +6192,44 @@ enum LensRefusal {
 fn lens_refusal(evidence: &LensEvidence) -> Option<LensRefusal> {
     match evidence {
         LensEvidence::Full { .. } | LensEvidence::SourceOnly { .. } => None,
+        // #155's states, and they are NOT this gate's. An invocation that declared no scope, or the
+        // wrong one, still happened — reporting "the skill was never invoked" to the vetter that
+        // invoked it would send it to do work it has already done, and the gate immediately below
+        // this one is the one that names the repair.
+        LensEvidence::ScopeUndeclared { .. } | LensEvidence::WrongScope { .. } => None,
         LensEvidence::NoSource(why) => Some(LensRefusal::NoSource(why.clone())),
         LensEvidence::NotInvoked { ledger } => Some(LensRefusal::NotInvoked(ledger.clone())),
+    }
+}
+
+/// Why the lens SCOPE gate refuses (#155). Data, not prose, the same split [`LensRefusal`] uses.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum LensScopeRefusal {
+    /// The skill was invoked on this PR and not one of those invocations declared a scope. Carries
+    /// the ledger read, so the refusal names what it looked in.
+    Undeclared(String),
+    /// The skill was invoked on this PR and every scope declared is the wrong one. Carries them.
+    Wrong(Vec<String>),
+}
+
+/// PURE: does this evidence refuse a verdict for the SCOPE its lens ran at (#155)?
+///
+/// EVERY verdict, for the same reason [`lens_refusal`] refuses every verdict: the scope the lens ran
+/// at is not a property of the PR that a different verdict routes around, it is which code was read,
+/// and re-invoking the skill at `pr:<n>` is a repair available whatever the verdict was going to be.
+///
+/// The two states this gate does NOT own are the two the gate ABOVE it owns, and that split is the
+/// reason it is below: "what scope did the invocation run at" is not a question about a PR whose
+/// source was never checked out or whose skill was never invoked, and answering it there would report
+/// a scope defect to a vetter whose actual next move is `pr_checkout`.
+fn lens_scope_refusal(evidence: &LensEvidence) -> Option<LensScopeRefusal> {
+    match evidence {
+        LensEvidence::Full { .. } | LensEvidence::SourceOnly { .. } => None,
+        LensEvidence::ScopeUndeclared { ledger } => {
+            Some(LensScopeRefusal::Undeclared(ledger.clone()))
+        }
+        LensEvidence::WrongScope { declared } => Some(LensScopeRefusal::Wrong(declared.clone())),
+        LensEvidence::NoSource(_) | LensEvidence::NotInvoked { .. } => None,
     }
 }
 
@@ -5963,15 +6237,23 @@ fn lens_refusal(evidence: &LensEvidence) -> Option<LensRefusal> {
 ///
 /// This is the answer to "the verdict should say which it was" (#151) and to #146's objection in one
 /// stroke: the stamp is not the model's account of its own diligence, it is the binary's account of
-/// two facts it established. `None` is unreachable from the write path — the gate above refuses both
-/// refusing states — and exists so the stamp can never be synthesised for a state that has none.
+/// facts it established. `None` is unreachable from the write path — the two gates above refuse every
+/// refusing state — and exists so the stamp can never be synthesised for a state that has none.
+///
+/// The SCOPE rides on the full stamp (#155) and comes off the ledger row, so a reader can tell a
+/// PR-scoped review from a whole-repo sweep without inferring it from the findings.
 fn lens_stamp(evidence: &LensEvidence) -> Option<String> {
     match evidence {
-        LensEvidence::Full { sha } => Some(format!("source@{sha} + audit skill invoked")),
+        LensEvidence::Full { sha, scope } => {
+            Some(format!("source@{sha} + audit skill invoked at {scope}"))
+        }
         LensEvidence::SourceOnly { sha, why } => {
             Some(format!("source@{sha}, invocation UNOBSERVED ({why})"))
         }
-        LensEvidence::NoSource(_) | LensEvidence::NotInvoked { .. } => None,
+        LensEvidence::NoSource(_)
+        | LensEvidence::NotInvoked { .. }
+        | LensEvidence::ScopeUndeclared { .. }
+        | LensEvidence::WrongScope { .. } => None,
     }
 }
 
@@ -5995,6 +6277,74 @@ fn lens_refusal_message(pr: &str, refusal: &LensRefusal) -> String {
              Skill tool, scoped to THIS PR and naming it as `{pr}`, on the `dir` `pr_checkout` \
              returned — never hand-copy its checks, since invoking it is how you inherit every \
              skill upgrade. One invocation names ONE PR; a call listing several is credited to none."
+        ),
+    }
+}
+
+/// PURE: what is wrong with ONE declared scope, said in terms of the code it read.
+///
+/// Branches on the parsed [`LensScope`], never on the string — the three faults are three different
+/// reviews of three different code sets, and telling them apart by substring would be a second parser
+/// of a vocabulary that already has one.
+fn lens_scope_fault(declared: &str) -> String {
+    match LensScope::parse(declared) {
+        Some(LensScope::WholeRepo) => format!(
+            "`{declared}` reviewed the REPOSITORY, not this PR — findings mostly about code the diff \
+             never touches, with the merge-relevant one buried among them (measured on \
+             rainlanguage/rain.deploy#21: twelve findings, five bearing on the PR, seven \
+             pre-existing)"
+        ),
+        Some(LensScope::Paths(_)) => format!(
+            "`{declared}` is a path-scoped review — it reads the files you listed and nothing that \
+             decides whether they are correct, which is the DIFF-ONLY lens: raindex#2778's \
+             `signer<256> silently resolves to row 0` was falsified only by reading the callee, which \
+             reverts"
+        ),
+        Some(LensScope::Pr(other)) => format!(
+            "`{declared}` is a different PR's scope — this invocation was credited to this PR and \
+             declared it was reviewing #{other}"
+        ),
+        None => format!(
+            "`{declared}` is not one of the three scope values (`{LENS_SCOPE_WHOLE_REPO}`, \
+             `{LENS_SCOPE_PR_PREFIX}<number>`, `{LENS_SCOPE_PATHS_PREFIX}<globs>`)"
+        ),
+    }
+}
+
+/// The scope refusal a vetter reads (#155). Two states, two DIFFERENT next moves, and that is why
+/// they are two states: one says the invocation said nothing about what it read, the other says it
+/// said it read the wrong thing. Both end in the same repair, and the difference is what the vetter
+/// must not have to guess at — a refusal that told a vetter it declared `whole-repo` when it declared
+/// nothing would be a refusal about a call it never made.
+fn lens_scope_refusal_message(pr: &str, num: u64, refusal: &LensScopeRefusal) -> String {
+    let required = LensScope::Pr(num).text();
+    let tail = format!(
+        "A PR verdict is formed at `{required}` and at nothing else: the changed lines PLUS the code \
+         whose behaviour decides whether they are correct — the callees the changed lines invoke, the \
+         callers relying on the changed behaviour, siblings sharing the changed invariant, and every \
+         claim the PR body or the linked issue makes about how the code CURRENTLY behaves, verified \
+         against real source. Re-invoke the `audit` skill via the Skill tool on the `dir` \
+         `pr_checkout` returned, with `{required}` as a bare token in its `args`, appearing EXACTLY \
+         ONCE — the three scope values are `{LENS_SCOPE_WHOLE_REPO}`, \
+         `{LENS_SCOPE_PR_PREFIX}<number>` and `{LENS_SCOPE_PATHS_PREFIX}<globs>`, and args naming \
+         more than one declare none of them, so do not write the other two even to say you are not \
+         using them."
+    );
+    match refusal {
+        LensScopeRefusal::Undeclared(ledger) => format!(
+            "refusing every verdict on {pr}: its source is checked out and the `audit` skill WAS \
+             invoked on it, and that invocation declared NO SCOPE at all ({ledger}). Undeclared is \
+             not a narrower review — the skill's own standing rule is a whole-repo snapshot, so an \
+             invocation that declares nothing is a whole-repo audit by default. {tail}"
+        ),
+        LensScopeRefusal::Wrong(declared) => format!(
+            "refusing every verdict on {pr}: its source is checked out and the `audit` skill WAS \
+             invoked on it, at the WRONG SCOPE — {}. {tail}",
+            declared
+                .iter()
+                .map(|d| lens_scope_fault(d))
+                .collect::<Vec<_>>()
+                .join("; and ")
         ),
     }
 }
@@ -6024,6 +6374,17 @@ enum RecordGate {
     /// [`RecordGate::SolConvention`] because that gate's findings are a statement about source THIS
     /// one guarantees is there — see `record_gate`.
     NoLens(LensRefusal),
+    /// The audit lens WAS pointed at this PR and ran at the WRONG SCOPE (#155) — `whole-repo`, a path
+    /// list (the diff-only lens), a different PR's number, or no declared scope at all. REFUSAL on
+    /// every verdict, for the same reason [`RecordGate::NoLens`] is one: this is not a property of the
+    /// PR that a different verdict routes around, it is which code was read.
+    ///
+    /// Immediately BELOW `NoLens` and ABOVE [`RecordGate::SolConvention`]. Below, because "at what
+    /// scope" is not a question about a PR whose skill was never invoked at all. Above, for exactly
+    /// #151's own reason one level in: there is no point reporting a pragma or a coverage finding to a
+    /// vetter whose lens read the wrong code, and both of those refusals would be answered by a
+    /// re-read at the right scope anyway.
+    WrongLensScope(LensScopeRefusal),
     /// The Solidity this diff changes breaks a MECHANICAL convention the `audit` skill states (#141),
     /// on a `ready`. It carries the coverage gaps ALONGSIDE when the claim also fails, because both
     /// are defects in the same diff that the same actor fixes in one pass — reporting one and holding
@@ -6060,6 +6421,15 @@ enum RecordGate {
 /// the anchor line ranges the coverage refusal would print are readable straight out of the checkout
 /// it is being sent to make. Reporting the lens first therefore costs nothing and orders the repairs
 /// correctly.
+///
+/// The lens SCOPE gate (#155) sits immediately under the lens gate and over everything else, and the
+/// pair is one thought in two steps: was the lens pointed at this PR, and did it read this PR's code.
+/// Under, because "at what scope" is not a question about a PR whose source was never checked out or
+/// whose skill was never invoked — asking it there would report a scope defect to a vetter whose next
+/// move is `pr_checkout`. Over the two below, for #151's own reason one level in: a `whole-repo` lens
+/// returns findings mostly about code the PR never touches and a path-scoped one cannot see
+/// ramifications at all, so a pragma finding or an anchor range handed to that vetter is an
+/// instruction to fix the wrong thing, and both are answered by re-reading at `pr:<n>` anyway.
 ///
 /// It also sits over the mechanical-convention gate, and that pairing is worth stating because the two
 /// look adjacent and are not. The lens gate asks whether the lens was POINTED at this PR; the
@@ -6136,6 +6506,15 @@ fn record_gate(
     if let Some(refusal) = lens_refusal(lens) {
         return RecordGate::NoLens(refusal);
     }
+    // #155, immediately after the gate above and before everything below. A lens pointed at the wrong
+    // SCOPE is not a weaker review, it is a review of different code — and both wrong scopes pass the
+    // gate above, because both are real invocations. It sits after that gate because "at what scope"
+    // is unanswerable for a PR whose skill was never invoked, and before the two below for #151's own
+    // reason applied one level in: a pragma finding or an anchor range reported to a vetter whose lens
+    // read the wrong code is an instruction to fix the wrong thing.
+    if let Some(refusal) = lens_scope_refusal(lens) {
+        return RecordGate::WrongLensScope(refusal);
+    }
     let gaps = coverage_gaps(&changed, &also_known, covered, &diff_new_lines(diff_text));
     // #141, and it comes BEFORE the coverage refusal so that a `ready` failing BOTH is told both at
     // once. `sol_convention_gate` decides `ready`-only; every other verdict falls straight through to
@@ -6166,10 +6545,13 @@ fn record_gate(
 /// caller that must not write to stdout (the MCP server — a stray stdout line corrupts its JSON-RPC
 /// stream). Exit codes: 0 ok, 1 error, 2 usage, 3 human-decision refusal, 4 a DIFF refusal —
 /// scope-coverage (#131) and/or mechanical-convention (#141), one code because they share a fix (the
-/// same actor reworks the same diff) — and 5 an audit-lens refusal (#151). Five is its OWN code and
-/// not a sixth spelling of four for the mirror-image reason: it does NOT share that fix. Four says
-/// the claim about the diff is wrong; five says the code was not read, and a caller branching on the
-/// code must be able to tell those apart without matching prose.
+/// same actor reworks the same diff) — 5 an audit-lens refusal (#151), and 6 an audit-lens SCOPE
+/// refusal (#155). Five is its OWN code and not a sixth spelling of four for the mirror-image reason:
+/// it does NOT share that fix. Four says the claim about the diff is wrong; five says the code was not
+/// read, and a caller branching on the code must be able to tell those apart without matching prose.
+/// Six is its own for the same test applied to five: five says nothing was read, six says the wrong
+/// code was read — one is repaired by checking the PR out and invoking the skill, the other by
+/// re-invoking a skill that already ran, at `pr:<n>`.
 #[allow(clippy::too_many_arguments)]
 fn record_verdict_mode(
     slug: &str,
@@ -6299,6 +6681,14 @@ fn record_verdict_apply(
         // a verdict whose lens was never pointed at the PR provably changed nothing.
         RecordGate::NoLens(refusal) => {
             return Err((5, lens_refusal_message(&pr_ref, &refusal)));
+        }
+        // #155, and refused before any write for the same reason: a verdict formed from a lens that
+        // read the wrong code provably changed nothing.
+        RecordGate::WrongLensScope(refusal) => {
+            // The number the legal `pr:<n>` scope names. Unparseable is unreachable from here —
+            // `verdict_lens_evidence` makes such a PR `NoSource`, which the gate above owns.
+            let num = pr.parse::<u64>().unwrap_or_default();
+            return Err((6, lens_scope_refusal_message(&pr_ref, num, &refusal)));
         }
         // Refused BEFORE any write and before the dry-run report, so a claim that does not
         // account for the diff provably changed nothing.
@@ -22710,13 +23100,14 @@ mod scope_coverage_tests {
     };
     use serde_json::json;
 
-    /// Lens evidence that SATISFIES the #151 gate, at the fixture document's own head. Every
-    /// coverage test below is about a claim, not about the lens, and passing anything else would make
-    /// them all pass by hitting the lens refusal first — the same trap the `gate` assertion below
-    /// guards for the file list.
+    /// Lens evidence that SATISFIES the #151 gate AND the #155 scope gate, at the fixture document's
+    /// own head. Every coverage test below is about a claim, not about the lens, and passing anything
+    /// else would make them all pass by hitting one of the two lens refusals first — the same trap the
+    /// `gate` assertion below guards for the file list.
     fn full_lens() -> LensEvidence {
         LensEvidence::Full {
             sha: "deadbeef".to_string(),
+            scope: "pr:1".to_string(),
         }
     }
 
@@ -23521,6 +23912,46 @@ diff --git a/a.md b/a.md
         ));
     }
 
+    /// The SCOPE gate (#155) outranks the convention gate too, and this is the input that shows it: a
+    /// `ready` on a Solidity PR whose source is checked out, whose pragma breaks the convention, and
+    /// whose audit-skill invocation ran over the WHOLE REPOSITORY.
+    ///
+    /// Both gates fire, and it must report the SCOPE. The pragma finding is true — but it is a rule the
+    /// audit skill states, handed to a vetter whose audit was of the repo rather than of this diff, so
+    /// reporting it first sends that vetter to fix a pragma and says nothing about the lens. The lens
+    /// fact is then learned a whole cron tick later, once the pragma is fixed and the scan comes back
+    /// clean. That is the round trip #141's own doc argues a gate should not cost, one level up.
+    ///
+    /// Below the convention gate this test fails and NOTHING else in the suite does — every other test
+    /// here holds one of the two clean, so the order between them is observable only here.
+    #[test]
+    fn the_scope_refusal_outranks_the_convention_gate() {
+        let whole_repo = LensEvidence::WrongScope {
+            declared: vec!["whole-repo".to_string()],
+        };
+        assert!(
+            matches!(
+                gate_with_lens(json!({}), DIFF, &good_claim(), &whole_repo, &dirty_sol()),
+                RecordGate::WrongLensScope(_)
+            ),
+            "with a whole-repo lens AND a convention violation, the scope is what is reported"
+        );
+        // The same for an invocation that declared no scope at all.
+        let undeclared = LensEvidence::ScopeUndeclared {
+            ledger: "/r/run.lens".to_string(),
+        };
+        assert!(matches!(
+            gate_with_lens(json!({}), DIFF, &good_claim(), &undeclared, &dirty_sol()),
+            RecordGate::WrongLensScope(_)
+        ));
+        // …and with the lens at `pr:<n>` the convention refusal IS reached, so the order is observable
+        // in both directions.
+        assert!(matches!(
+            gate_with(json!({}), DIFF, &good_claim(), &dirty_sol()),
+            RecordGate::SolConvention { .. }
+        ));
+    }
+
     /// Every refusal ABOVE the convention gate still outranks it, with a dirty scan in hand. The
     /// human ruling and the missing sha were pinned in #138 and again in #145; a third gate must not
     /// quietly reorder them, and the file-list refusal must come first for its own reason — a capped
@@ -23939,16 +24370,20 @@ diff --git a/b.md b/b.md
 #[cfg(test)]
 mod lens_gate_tests {
     use super::{
-        changed_files_from_view, lens_evidence, lens_invocation, lens_ledger_prs, lens_ledger_read,
-        lens_record, lens_refusal, lens_refusal_message, lens_stamp, pr_refs_in, record_gate,
-        repo_root_text, verdict_comment, verdict_protocol, vetted_at_head, ChangedFile,
-        ChangedFileSet, Covered, LensEvidence, LensRefusal, RecordGate, RunIdentity, SolScan,
-        VetProtocol, STAGE_LENS, VET_LENS_PREFIX, VET_PROTOCOL,
+        changed_files_from_view, lens_evidence, lens_invocation, lens_ledger_read,
+        lens_ledger_rows, lens_record, lens_refusal, lens_refusal_message, lens_scope_in,
+        lens_scope_refusal, lens_scope_refusal_message, lens_scope_state, lens_stamp, pr_refs_in,
+        record_gate, repo_root_text, verdict_comment, verdict_protocol, vetted_at_head,
+        ChangedFile, ChangedFileSet, Covered, LensEvidence, LensInvocation, LensRefusal, LensScope,
+        LensScopeRefusal, LensScopeState, RecordGate, RunIdentity, SolScan, VetProtocol,
+        STAGE_LENS, VET_LENS_PREFIX, VET_PROTOCOL,
     };
     use serde_json::json;
 
     const PR: &str = "cyclofinance/cyclo.site#386";
     const SHA: &str = "6a370a5d1111111111111111111111111111aaaa";
+    /// The ONE scope legal for a verdict on [`PR`] — `pr:` plus its own number.
+    const PR_SCOPE: &str = "pr:386";
 
     /// The VERBATIM `args` of the ONE audit-skill invocation in the 2026-07-29T17:17:35Z vetter run
     /// (`review-runs/20260729T171735Z.jsonl`, line 57). The extractor is written against the real
@@ -23974,23 +24409,232 @@ mod lens_gate_tests {
         tool_use("Skill", json!({"skill": id, "args": args}))
     }
 
+    /// A run with no identity flags — the row's `pr`/`skill`/`scope` are what these tests are about.
+    fn no_identity() -> RunIdentity<'static> {
+        RunIdentity {
+            run_id: None,
+            role: None,
+            model: None,
+        }
+    }
+
+    /// The invocation a credited `Skill` event yields, spelled out so the tests below read as the
+    /// three facts a row carries rather than as a tuple shape.
+    fn inv(pr: &str, id: &str, scope: Option<LensScope>) -> Option<LensInvocation> {
+        Some(LensInvocation {
+            pr: pr.to_string(),
+            skill: id.to_string(),
+            scope,
+        })
+    }
+
     // --- what counts as an invocation --------------------------------------------------------------
 
     #[test]
     fn the_real_runs_only_audit_invocation_is_credited_to_the_pr_it_named() {
         assert_eq!(
             lens_invocation(&skill("audit:audit", REAL_ARGS)),
-            Some((PR.to_string(), "audit:audit".to_string())),
+            inv(PR, "audit:audit", None),
             "the one real invocation in the trace must credit its own PR"
         );
+    }
+
+    /// The same real invocation, on the #155 half: it declared **no scope**.
+    ///
+    /// Its `args` do describe a scope in prose — _"Scope: the changed lines plus callers of
+    /// blockNumberStore.refresh/reset"_ — and that is exactly the thing nothing can check. The one
+    /// real audit-skill invocation in existence would therefore be REFUSED by this gate, which is the
+    /// measurement the issue rests on rather than a hypothetical.
+    #[test]
+    fn the_real_runs_invocation_declared_its_scope_in_prose_and_therefore_declared_none() {
+        assert!(
+            REAL_ARGS.contains("Scope: the changed lines"),
+            "{REAL_ARGS}"
+        );
+        assert_eq!(
+            lens_invocation(&skill("audit:audit", REAL_ARGS))
+                .expect("still a real invocation")
+                .scope,
+            None,
+            "a scope described in prose is not a declared scope"
+        );
+    }
+
+    // --- the SCOPE the invocation declared (#155) ---------------------------------------------------
+
+    #[test]
+    fn only_the_three_scope_values_parse_and_only_in_strict_form() {
+        assert_eq!(LensScope::parse("whole-repo"), Some(LensScope::WholeRepo));
+        assert_eq!(LensScope::parse("pr:386"), Some(LensScope::Pr(386)));
+        assert_eq!(
+            LensScope::parse("paths:src/**/*.sol,test/**/*.sol"),
+            Some(LensScope::Paths("src/**/*.sol,test/**/*.sol".to_string())),
+            "the globs are comma-separated by the skill's own vocabulary and must survive whole"
+        );
+        // Every value round-trips through the text the ledger row stores, so the row carries the
+        // skill's vocabulary rather than a second spelling of it.
+        for s in [
+            LensScope::WholeRepo,
+            LensScope::Pr(386),
+            LensScope::Paths("src/a.rs,src/b.rs".to_string()),
+        ] {
+            assert_eq!(LensScope::parse(&s.text()), Some(s.clone()), "{s:?}");
+        }
+        // NOT scopes: a near-miss spelling, an empty or non-numeric PR, PR zero (`parse_pr_ref`
+        // refuses `#0` too), an empty glob list, and the bare prose words.
+        for token in [
+            "wholerepo",
+            "whole_repo",
+            "whole-repo-audit",
+            "pr:",
+            "pr:abc",
+            "pr:0",
+            "pr:-1",
+            "paths:",
+            "diff",
+            "diff-only",
+            "repo",
+            "",
+        ] {
+            assert_eq!(LensScope::parse(token), None, "`{token}` is not a scope");
+        }
+    }
+
+    #[test]
+    fn a_scope_is_read_out_of_args_only_when_the_string_declares_exactly_one() {
+        assert_eq!(
+            lens_scope_in(&format!("audit of {PR} scope {PR_SCOPE}")),
+            Some(LensScope::Pr(386))
+        );
+        // Punctuation prose puts around a token does not stop it being one — and a `paths:` list is
+        // NOT split on its own commas.
+        assert_eq!(
+            lens_scope_in("(scope: `whole-repo`)."),
+            Some(LensScope::WholeRepo)
+        );
+        assert_eq!(
+            lens_scope_in("run at paths:src/**/*.sol,test/Foo.t.sol, then report."),
+            Some(LensScope::Paths("src/**/*.sol,test/Foo.t.sol".to_string())),
+            "a trailing prose comma is trimmed; the list's own commas are not"
+        );
+        // The SAME scope twice is one scope — mentioning it in a sentence and again as the argument
+        // must not read as two.
+        assert_eq!(
+            lens_scope_in(&format!("{PR_SCOPE} — reviewing {PR_SCOPE}")),
+            Some(LensScope::Pr(386))
+        );
+        // TWO DISTINCT scopes declare NONE, the same ruling `lens_invocation` makes for two PRs and
+        // for the same reason: `args` is prose, so ranking them would be the gate choosing the
+        // declaration on the model's behalf. This is the exact string the prompt's own prohibition
+        // invites, which is why the prompt tells the vetter not to write it.
+        assert_eq!(
+            lens_scope_in(&format!("{PR_SCOPE}, not whole-repo and not paths:src/**")),
+            None
+        );
+        assert_eq!(lens_scope_in("pr:386 pr:387"), None);
+        // And a string that declares nothing declares nothing.
+        assert_eq!(lens_scope_in("audit this PR properly"), None);
+        assert_eq!(lens_scope_in(""), None);
+    }
+
+    #[test]
+    fn a_lens_row_carries_the_declared_scope_and_omits_the_key_when_there_is_none() {
+        let row = lens_record(
+            &LensInvocation {
+                pr: PR.to_string(),
+                skill: "audit:audit".to_string(),
+                scope: Some(LensScope::Pr(386)),
+            },
+            "/r/run.jsonl",
+            &no_identity(),
+        );
+        assert_eq!(row["scope"], PR_SCOPE);
+        // ABSENT, never `null`: the reader has to tell "declared nothing" from "declared the wrong
+        // thing", and a null would be a value.
+        let none = lens_record(
+            &LensInvocation {
+                pr: PR.to_string(),
+                skill: "audit:audit".to_string(),
+                scope: None,
+            },
+            "/r/run.jsonl",
+            &no_identity(),
+        );
+        assert!(
+            none.get("scope").is_none(),
+            "an undeclared scope must leave the key off entirely: {none}"
+        );
+        assert_eq!(none["pr"], PR, "the invocation is still credited: {none}");
+    }
+
+    #[test]
+    fn only_this_prs_scope_is_correct_and_an_absent_one_is_not_a_wrong_one() {
+        let d = |s: &str| Some(s.to_string());
+        assert_eq!(
+            lens_scope_state(&[d(PR_SCOPE)], 386),
+            LensScopeState::Correct(PR_SCOPE.to_string())
+        );
+        // The two wrong scopes the issue is about, plus a different PR's, plus a value this filter
+        // never writes — all WRONG, and each named so the refusal can say which.
+        for wrong in ["whole-repo", "paths:src/lib/**", "pr:387", "sort-of-narrow"] {
+            assert_eq!(
+                lens_scope_state(&[d(wrong)], 386),
+                LensScopeState::Wrong(vec![wrong.to_string()]),
+                "{wrong} is not a scope for #386"
+            );
+        }
+        // ABSENT is its own state — an invocation that declared nothing is not one that declared the
+        // wrong thing, and #153 established that this distinction is the record's job.
+        assert_eq!(lens_scope_state(&[None], 386), LensScopeState::Undeclared);
+        assert_eq!(
+            lens_scope_state(&[None, None], 386),
+            LensScopeState::Undeclared,
+            "two invocations that each declared nothing still declared nothing"
+        );
+        // MIXED: one row declares nothing and another declares whole-repo. That is WRONG, not
+        // undeclared — something WAS declared, and the refusal must be able to name it.
+        assert_eq!(
+            lens_scope_state(&[None, d("whole-repo")], 386),
+            LensScopeState::Wrong(vec!["whole-repo".to_string()])
+        );
+        // A correct declaration is not retracted by a later wider one: an invocation at pr:386 read
+        // the diff plus its ramifications, and running the skill again over the repo does not unread
+        // it. In both orders.
+        assert_eq!(
+            lens_scope_state(&[d("whole-repo"), d(PR_SCOPE)], 386),
+            LensScopeState::Correct(PR_SCOPE.to_string())
+        );
+        assert_eq!(
+            lens_scope_state(&[d(PR_SCOPE), d("whole-repo")], 386),
+            LensScopeState::Correct(PR_SCOPE.to_string())
+        );
+        // Every wrong scope is reported, in row order, so a vetter is not told about one of two.
+        assert_eq!(
+            lens_scope_state(&[d("whole-repo"), d("paths:src/**")], 386),
+            LensScopeState::Wrong(vec!["whole-repo".to_string(), "paths:src/**".to_string()])
+        );
+        // No rows at all is not this function's state to hold an opinion about — `lens_evidence`
+        // routes that to `NotInvoked` before asking.
+        assert_eq!(lens_scope_state(&[], 386), LensScopeState::Undeclared);
     }
 
     #[test]
     fn only_a_skill_tool_use_naming_the_audit_skill_and_exactly_one_pr_is_an_invocation() {
         // A bare `audit` and the plugin-qualified `audit:audit` are ONE state.
         assert_eq!(
-            lens_invocation(&skill("audit", &format!("scoped to {PR}"))),
-            Some((PR.to_string(), "audit".to_string()))
+            lens_invocation(&skill("audit", &format!("scoped to {PR} at {PR_SCOPE}"))),
+            inv(PR, "audit", Some(LensScope::Pr(386)))
+        );
+        // An invocation that declared NO scope, or the WRONG one, still HAPPENED. It is credited here
+        // and refused one gate lower (#155) — folding the scope into this predicate would tell a
+        // vetter that invoked the skill that it never invoked it.
+        assert_eq!(
+            lens_invocation(&skill("audit", &format!("whole-repo audit of {PR}"))),
+            inv(PR, "audit", Some(LensScope::WholeRepo))
+        );
+        assert_eq!(
+            lens_invocation(&skill("audit", &format!("audit of {PR}"))),
+            inv(PR, "audit", None)
         );
         // A claim ABOUT the audit is not the audit. This is the #151 substitution itself.
         assert_eq!(
@@ -24071,8 +24715,11 @@ mod lens_gate_tests {
     #[test]
     fn a_lens_row_names_the_pr_the_run_and_the_skill() {
         let row = lens_record(
-            PR,
-            "audit:audit",
+            &LensInvocation {
+                pr: PR.to_string(),
+                skill: "audit:audit".to_string(),
+                scope: Some(LensScope::Pr(386)),
+            },
             "/r/20260729T171735Z.jsonl",
             &RunIdentity {
                 run_id: Some("20260729T171735Z"),
@@ -24083,6 +24730,7 @@ mod lens_gate_tests {
         assert_eq!(row["stage"], STAGE_LENS);
         assert_eq!(row["pr"], PR);
         assert_eq!(row["skill"], "audit:audit");
+        assert_eq!(row["scope"], PR_SCOPE);
         assert_eq!(row["runId"], "20260729T171735Z");
         assert_eq!(row["role"], "vetter");
         // The stage is NOT one of the metrics stages: the ledger is its own file and the reader
@@ -24096,31 +24744,42 @@ mod lens_gate_tests {
         let text = format!(
             "{}\n{}\n{}\n{{\"stage\":\"lens\",\"pr\"",
             json!({"stage": "usage", "messages": 3}),
-            json!({"stage": STAGE_LENS, "pr": PR}),
+            json!({"stage": STAGE_LENS, "pr": PR, "scope": PR_SCOPE}),
             json!({"stage": STAGE_LENS, "pr": "rainlanguage/rain.deploy#20"}),
         );
         assert_eq!(
-            lens_ledger_prs(&text),
-            vec![PR.to_string(), "rainlanguage/rain.deploy#20".to_string()],
+            lens_ledger_rows(&text),
+            vec![
+                (PR.to_string(), Some(PR_SCOPE.to_string())),
+                ("rainlanguage/rain.deploy#20".to_string(), None)
+            ],
             "a truncated final line is normal in a file appended to from a live pipe, and must not \
-             discard the rows before it"
+             discard the rows before it — and a row with no `scope` reads as one that declared none"
         );
         // A lens row with no `pr` credits nothing.
-        assert!(lens_ledger_prs(&json!({"stage": STAGE_LENS}).to_string()).is_empty());
+        assert!(lens_ledger_rows(&json!({"stage": STAGE_LENS}).to_string()).is_empty());
+        // An EMPTY or whitespace `scope` is not a declaration. It reads as absent rather than as a
+        // value nothing can parse, because "" is what a truncated write leaves, not what a caller
+        // chose — and `LensScope::parse("")` would refuse it as wrong either way.
+        assert_eq!(
+            lens_ledger_rows(&json!({"stage": STAGE_LENS, "pr": PR, "scope": "  "}).to_string()),
+            vec![(PR.to_string(), None)]
+        );
         // The STAGE filter is load-bearing, and this is the input that shows it: a row that carries a
         // `pr` but is not a lens row must not be credited. The pipeline is full of per-run jsonl files
         // whose rows are keyed by `pr` — `review-verdicts.jsonl` most of all — so a misconfigured
         // `RUN_LENS_LEDGER` pointed at one would otherwise let every already-recorded verdict credit
         // ITSELF as the invocation that licensed it.
         assert!(
-            lens_ledger_prs(
+            lens_ledger_rows(
                 &json!({"pr": PR, "verdict": "ready", "ts": "2026-07-29T17:30:00Z"}).to_string()
             )
             .is_empty(),
             "a row this filter did not write is not evidence, however it is keyed"
         );
         assert!(
-            lens_ledger_prs(&json!({"stage": "usage", "pr": PR}).to_string()).is_empty(),
+            lens_ledger_rows(&json!({"stage": "usage", "pr": PR, "scope": PR_SCOPE}).to_string())
+                .is_empty(),
             "and neither is another stage of the same run"
         );
     }
@@ -24151,8 +24810,18 @@ mod lens_gate_tests {
 
     // --- the evidence, and which states refuse ----------------------------------------------------
 
+    /// A ledger holding one invocation for `pr`, at the scope that PR's verdict requires.
     fn ledger_with(pr: &str) -> String {
-        json!({"stage": STAGE_LENS, "pr": pr}).to_string()
+        ledger_at(pr, Some(&format!("pr:{}", pr.rsplit('#').next().unwrap())))
+    }
+
+    /// A ledger holding one invocation for `pr` at the scope given, or with no `scope` key at all.
+    fn ledger_at(pr: &str, scope: Option<&str>) -> String {
+        let mut row = json!({"stage": STAGE_LENS, "pr": pr});
+        if let Some(s) = scope {
+            row["scope"] = json!(s);
+        }
+        row.to_string()
     }
 
     fn evidence(head: Result<String, String>, ledger: Option<&str>) -> LensEvidence {
@@ -24165,10 +24834,32 @@ mod lens_gate_tests {
         assert_eq!(
             e,
             LensEvidence::Full {
-                sha: SHA.to_string()
+                sha: SHA.to_string(),
+                scope: PR_SCOPE.to_string()
             }
         );
         assert_eq!(lens_refusal(&e), None);
+        assert_eq!(lens_scope_refusal(&e), None);
+    }
+
+    /// A PR ref that is not an `owner/repo#number` names no checkout, so it is `NoSource` — the
+    /// fail-closed spelling. `lens_evidence` needs the NUMBER to know which `pr:<n>` is legal, and the
+    /// unreachable arm of that lookup must never be the permissive one.
+    #[test]
+    fn a_ref_that_names_no_pr_is_no_source_even_with_a_tree_and_a_ledger() {
+        for bad in ["", "386", "cyclo.site#386", "a/b/c#1", "o/r#0"] {
+            let e = lens_evidence(
+                Ok(SHA.to_string()),
+                SHA,
+                Some(("/r/run.lens", &ledger_at(bad, Some("pr:386")))),
+                bad,
+            );
+            assert!(
+                matches!(lens_refusal(&e), Some(LensRefusal::NoSource(_))),
+                "`{bad}` must be NoSource, got {e:?}"
+            );
+            assert_eq!(lens_scope_refusal(&e), None, "`{bad}`");
+        }
     }
 
     #[test]
@@ -24228,6 +24919,106 @@ mod lens_gate_tests {
         ));
     }
 
+    /// #155's two states, and the ONE thing that must not happen to them: they are NOT `NotInvoked`.
+    ///
+    /// An invocation at the wrong scope, or at none, HAPPENED — telling that vetter "this run recorded
+    /// no `audit` skill invocation scoped to it" would send it to make a call it has already made, and
+    /// the refusal it needs (re-invoke at `pr:<n>`) would never be printed. So the gate above must stay
+    /// silent for both, and the gate below must speak for both.
+    #[test]
+    fn an_invocation_at_the_wrong_scope_is_not_a_missing_invocation() {
+        for (scope, expected) in [
+            ("whole-repo", vec!["whole-repo".to_string()]),
+            ("paths:src/lib/**", vec!["paths:src/lib/**".to_string()]),
+            ("pr:387", vec!["pr:387".to_string()]),
+        ] {
+            let e = evidence(Ok(SHA.to_string()), Some(&ledger_at(PR, Some(scope))));
+            assert_eq!(
+                e,
+                LensEvidence::WrongScope {
+                    declared: expected.clone()
+                },
+                "{scope}"
+            );
+            assert_eq!(
+                lens_refusal(&e),
+                None,
+                "{scope} is a real invocation — the #151 gate must not claim otherwise"
+            );
+            assert_eq!(
+                lens_scope_refusal(&e),
+                Some(LensScopeRefusal::Wrong(expected)),
+                "{scope}"
+            );
+        }
+        // And an invocation that declared NOTHING is a third state, not either of the other two.
+        let none = evidence(Ok(SHA.to_string()), Some(&ledger_at(PR, None)));
+        assert_eq!(
+            none,
+            LensEvidence::ScopeUndeclared {
+                ledger: "/r/run.lens".to_string()
+            }
+        );
+        assert_eq!(lens_refusal(&none), None);
+        assert_eq!(
+            lens_scope_refusal(&none),
+            Some(LensScopeRefusal::Undeclared("/r/run.lens".to_string()))
+        );
+    }
+
+    /// The two lens gates PARTITION the evidence, and that is what makes the order between them inert
+    /// while the order of everything else is load-bearing.
+    ///
+    /// Every state is refused by exactly one of them, or by neither. A mutant that routes `NoSource`
+    /// or `NotInvoked` into the scope gate, or either #155 state into the #151 gate, changes which
+    /// refusal a vetter reads — and since the two gates sit next to each other in the chain, nothing
+    /// else in the suite would notice.
+    #[test]
+    fn the_lens_gate_and_the_scope_gate_partition_the_evidence() {
+        let states = [
+            LensEvidence::Full {
+                sha: SHA.to_string(),
+                scope: PR_SCOPE.to_string(),
+            },
+            LensEvidence::SourceOnly {
+                sha: SHA.to_string(),
+                why: "no ledger".to_string(),
+            },
+            LensEvidence::ScopeUndeclared {
+                ledger: "/r/run.lens".to_string(),
+            },
+            LensEvidence::WrongScope {
+                declared: vec!["whole-repo".to_string()],
+            },
+            LensEvidence::NotInvoked {
+                ledger: "/r/run.lens".to_string(),
+            },
+            LensEvidence::NoSource("no checkout".to_string()),
+        ];
+        for e in &states {
+            let lens = lens_refusal(e).is_some();
+            let scope = lens_scope_refusal(e).is_some();
+            assert!(
+                !(lens && scope),
+                "{e:?} must be refused by ONE gate, not both"
+            );
+            let recorded = matches!(
+                e,
+                LensEvidence::Full { .. } | LensEvidence::SourceOnly { .. }
+            );
+            assert_eq!(
+                lens || scope,
+                !recorded,
+                "{e:?}: exactly the two recordable states go unrefused"
+            );
+            assert_eq!(
+                lens_stamp(e).is_some(),
+                recorded,
+                "{e:?}: only a recordable state has a stamp to write"
+            );
+        }
+    }
+
     #[test]
     fn an_absent_ledger_records_the_verdict_and_stamps_the_invocation_unobserved() {
         // ABSENT is not EMPTY, and this is the distinction #146 was right to call unverifiable when
@@ -24253,23 +25044,53 @@ mod lens_gate_tests {
         );
         // …and it is NOT the same stamp a full lens gets, or the two would be indistinguishable in
         // the record, which is the whole point of writing one.
-        assert_ne!(
-            stamp,
-            lens_stamp(&LensEvidence::Full {
-                sha: SHA.to_string()
-            })
-            .unwrap()
+        assert_ne!(stamp, lens_stamp(&full()).unwrap());
+    }
+
+    /// The full stamp NAMES THE SCOPE, off the ledger row (#155) — so a reader can tell a PR-scoped
+    /// review from a whole-repo sweep in the record instead of inferring it from the findings.
+    #[test]
+    fn the_full_stamp_names_the_scope_the_row_recorded() {
+        let stamp = lens_stamp(&full()).expect("a full lens has a stamp");
+        assert!(stamp.contains(SHA), "{stamp}");
+        assert!(stamp.contains("audit skill invoked"), "{stamp}");
+        assert!(
+            stamp.contains(PR_SCOPE),
+            "the stamp names the scope: {stamp}"
         );
+        // It reports the ROW's value rather than re-deriving what the value should have been, so a
+        // stamp can never say `pr:386` about a row that said something else.
+        let other = lens_stamp(&LensEvidence::Full {
+            sha: SHA.to_string(),
+            scope: "pr:999".to_string(),
+        })
+        .unwrap();
+        assert!(other.contains("pr:999"), "{other}");
+        assert_ne!(stamp, other);
     }
 
     #[test]
     fn a_refusing_state_has_no_stamp_to_write() {
-        // Unreachable from the write path — the gate refuses first — and asserted so the stamp can
+        // Unreachable from the write path — the gates refuse first — and asserted so the stamp can
         // never be synthesised for a state that established nothing.
         assert_eq!(lens_stamp(&LensEvidence::NoSource("x".into())), None);
         assert_eq!(
             lens_stamp(&LensEvidence::NotInvoked {
                 ledger: "/r/run.lens".into()
+            }),
+            None
+        );
+        // #155's two, and the direction that matters: a verdict refused for its SCOPE must not leave a
+        // stamp behind claiming the lens was pointed at the PR.
+        assert_eq!(
+            lens_stamp(&LensEvidence::ScopeUndeclared {
+                ledger: "/r/run.lens".into()
+            }),
+            None
+        );
+        assert_eq!(
+            lens_stamp(&LensEvidence::WrongScope {
+                declared: vec!["whole-repo".into()]
             }),
             None
         );
@@ -24296,6 +25117,90 @@ mod lens_gate_tests {
         for m in [&no_source, &not_invoked] {
             assert!(m.contains(PR), "every refusal names the PR: {m}");
         }
+    }
+
+    /// The SCOPE refusals (#155) say WHICH it was, and both name the one scope that is legal.
+    ///
+    /// "A row with no scope is not a row declaring the wrong one" is a distinction the vetter has to be
+    /// able to READ, or the record keeps it and the refusal throws it away.
+    #[test]
+    fn the_scope_refusals_say_whether_a_scope_was_declared_and_name_the_legal_one() {
+        let undeclared = lens_scope_refusal_message(
+            PR,
+            386,
+            &LensScopeRefusal::Undeclared("/r/run.lens".into()),
+        );
+        let whole = lens_scope_refusal_message(
+            PR,
+            386,
+            &LensScopeRefusal::Wrong(vec!["whole-repo".into()]),
+        );
+        let paths = lens_scope_refusal_message(
+            PR,
+            386,
+            &LensScopeRefusal::Wrong(vec!["paths:src/lib/**".into()]),
+        );
+        let other =
+            lens_scope_refusal_message(PR, 386, &LensScopeRefusal::Wrong(vec!["pr:387".into()]));
+        let junk = lens_scope_refusal_message(
+            PR,
+            386,
+            &LensScopeRefusal::Wrong(vec!["narrow-ish".into()]),
+        );
+        // ABSENT vs WRONG: each says which, and neither says the other's thing.
+        assert!(undeclared.contains("NO SCOPE"), "{undeclared}");
+        assert!(
+            undeclared.contains("/r/run.lens"),
+            "it names the ledger it read: {undeclared}"
+        );
+        assert!(
+            !undeclared.contains("WRONG SCOPE"),
+            "an undeclared scope is not a wrong one: {undeclared}"
+        );
+        for m in [&whole, &paths, &other, &junk] {
+            assert!(m.contains("WRONG SCOPE"), "{m}");
+            assert!(
+                !m.contains("NO SCOPE"),
+                "a declared scope is not an absent one: {m}"
+            );
+        }
+        // Each wrong scope is named, and named for the CODE it read rather than as a bad string.
+        assert!(whole.contains("`whole-repo`"), "{whole}");
+        assert!(whole.contains("REPOSITORY"), "{whole}");
+        assert!(paths.contains("`paths:src/lib/**`"), "{paths}");
+        assert!(
+            paths.contains("DIFF-ONLY") && paths.contains("raindex#2778"),
+            "the path-scoped fault is the diff-only lens, named: {paths}"
+        );
+        assert!(other.contains("#387"), "{other}");
+        assert!(junk.contains("not one of the three scope values"), "{junk}");
+        // …and every one of them names the PR, the ONE legal scope, and the move.
+        for m in [&undeclared, &whole, &paths, &other, &junk] {
+            assert!(m.contains(PR), "{m}");
+            assert!(m.contains(PR_SCOPE), "the legal scope is named: {m}");
+            assert!(m.contains("Skill tool"), "the move is named: {m}");
+            assert!(
+                m.contains("EXACTLY ONCE"),
+                "two scopes declare none, said where it bites: {m}"
+            );
+        }
+        // Several wrong scopes are ALL reported, so a vetter is not told about one of two.
+        let both = lens_scope_refusal_message(
+            PR,
+            386,
+            &LensScopeRefusal::Wrong(vec!["whole-repo".into(), "paths:src/**".into()]),
+        );
+        assert!(
+            both.contains("`whole-repo`") && both.contains("`paths:src/**`"),
+            "{both}"
+        );
+        // The legal scope is derived from the NUMBER, not hardcoded.
+        assert!(lens_scope_refusal_message(
+            "o/r#42",
+            42,
+            &LensScopeRefusal::Undeclared("/l".into())
+        )
+        .contains("pr:42"));
     }
 
     // --- the gate, and its place in the chain -----------------------------------------------------
@@ -24357,6 +25262,14 @@ index 1111111..2222222 100644
     fn full() -> LensEvidence {
         LensEvidence::Full {
             sha: SHA.to_string(),
+            scope: PR_SCOPE.to_string(),
+        }
+    }
+
+    /// The lens ran, and it ran at the WRONG scope (#155) — a real invocation, over the wrong code.
+    fn wrong_scope(declared: &str) -> LensEvidence {
+        LensEvidence::WrongScope {
+            declared: vec![declared.to_string()],
         }
     }
 
@@ -24424,6 +25337,56 @@ index 1111111..2222222 100644
         }
     }
 
+    /// #155 at the gate: a `whole-repo` or path-scoped lens is REFUSED, with its own variant, and an
+    /// undeclared scope with it. The PR-scoped one records.
+    #[test]
+    fn a_verdict_whose_lens_ran_at_the_wrong_scope_is_refused_and_a_pr_scoped_one_records() {
+        for scope in ["whole-repo", "paths:src/lib/blockNumberStore.ts", "pr:387"] {
+            assert!(
+                matches!(
+                    gate(json!({}), &wrong_scope(scope), &claim(), "ready"),
+                    RecordGate::WrongLensScope(LensScopeRefusal::Wrong(_))
+                ),
+                "a lens at {scope} must be refused"
+            );
+        }
+        assert!(matches!(
+            gate(
+                json!({}),
+                &evidence(Ok(SHA.to_string()), Some(&ledger_at(PR, None))),
+                &claim(),
+                "ready"
+            ),
+            RecordGate::WrongLensScope(LensScopeRefusal::Undeclared(_))
+        ));
+        // …and the correct scope, resolved through the REAL ledger reader rather than a hand-built
+        // evidence value, records. If the row's scope stopped round-tripping, this is what fails.
+        assert!(matches!(
+            gate(
+                json!({}),
+                &evidence(Ok(SHA.to_string()), Some(&ledger_at(PR, Some(PR_SCOPE)))),
+                &claim(),
+                "ready"
+            ),
+            RecordGate::Record { .. }
+        ));
+    }
+
+    /// EVERY verdict, like the gate above it and for the same reason: the scope the lens ran at is not
+    /// a property of the PR that `reject` routes around, it is which code was read.
+    #[test]
+    fn the_scope_gate_refuses_every_verdict_not_only_ready() {
+        for verdict in ["ready", "reject", "design", "close"] {
+            assert!(
+                matches!(
+                    gate(json!({}), &wrong_scope("whole-repo"), &claim(), verdict),
+                    RecordGate::WrongLensScope(_)
+                ),
+                "{verdict} must be refused when the lens read the whole repo"
+            );
+        }
+    }
+
     // ORDER, downward. The lens refusal sits OVER the coverage refusal: a coverage claim is a claim
     // formed under a lens, so "your anchors do not account for the diff" is the wrong instruction
     // for a vetter that has not opened the source — and the anchor ranges it would print are
@@ -24449,6 +25412,31 @@ index 1111111..2222222 100644
         );
         // …and with the lens in hand the coverage refusal is reached, so the order is observable in
         // both directions rather than one arm shadowing the other permanently.
+        assert!(matches!(
+            gate(json!({}), &full(), &empty, "ready"),
+            RecordGate::Uncovered(_)
+        ));
+    }
+
+    /// ORDER, downward, for #155's gate. A lens that read the WRONG CODE outranks the coverage
+    /// refusal, and it is the same argument one level in: "your anchors do not account for the diff"
+    /// is the wrong instruction for a vetter whose audit was of the whole repository, and the anchors
+    /// it would be told to fix are anchors into a diff its lens never looked at.
+    ///
+    /// Both directions, so neither arm shadows the other permanently.
+    #[test]
+    fn the_scope_refusal_outranks_the_coverage_refusal() {
+        let empty: Vec<Covered> = vec![Covered {
+            path: "src/lib/blockNumberStore.ts".to_string(),
+            anchor: None,
+        }];
+        assert!(
+            matches!(
+                gate(json!({}), &wrong_scope("whole-repo"), &empty, "ready"),
+                RecordGate::WrongLensScope(_)
+            ),
+            "with a whole-repo lens AND a bad claim, the scope is what the vetter is sent to fix"
+        );
         assert!(matches!(
             gate(json!({}), &full(), &empty, "ready"),
             RecordGate::Uncovered(_)
@@ -24520,6 +25508,73 @@ index 1111111..2222222 100644
             ),
             RecordGate::NoDiff,
             "a diff that did not arrive is refused as such, not as a missing lens"
+        );
+    }
+
+    /// ORDER, upward, for #155's gate. The same four refusals outrank it, for the same reason: each
+    /// says there is no verdict to write at all, and re-invoking the skill at `pr:<n>` on a PR a human
+    /// has already decided is work about to be discarded.
+    #[test]
+    fn the_human_no_sha_and_file_list_refusals_all_outrank_the_scope_gate() {
+        let wrong = wrong_scope("whole-repo");
+        for sacred in [
+            json!({"labels": [{"name": "human:reject"}]}),
+            json!({"reviewDecision": "APPROVED"}),
+            json!({"reviewDecision": "CHANGES_REQUESTED"}),
+        ] {
+            assert_eq!(
+                gate(sacred.clone(), &wrong, &claim(), "ready"),
+                RecordGate::RefuseHuman,
+                "{sacred} must refuse as human-decided, not as wrongly-scoped"
+            );
+        }
+        assert_eq!(
+            gate(json!({"headRefOid": ""}), &wrong, &claim(), "ready"),
+            RecordGate::NoSha
+        );
+        let d = doc(json!({"changedFiles": 143}));
+        assert!(matches!(
+            record_gate(
+                &d,
+                &ChangedFileSet::Partial {
+                    known: vec![ChangedFile {
+                        path: "src/lib/blockNumberStore.ts".to_string(),
+                        additions: 1,
+                        deletions: 0
+                    }],
+                    total: Some(143),
+                    why: "capped at 100".to_string()
+                },
+                DIFF,
+                &claim(),
+                &wrong,
+                &no_sol(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::FilesUnknown(_)
+        ));
+        let d = doc(json!({}));
+        let set = changed_files_from_view(&d);
+        assert_eq!(
+            record_gate(
+                &d,
+                &set,
+                "",
+                &claim(),
+                &wrong,
+                &no_sol(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::NoDiff,
+            "a diff that did not arrive is refused as such, not as a wrong scope"
+        );
+        // With all four clear, the scope IS the next thing refused — so this test drives the boundary
+        // from both sides rather than only asserting what shadows it.
+        assert_eq!(
+            gate(json!({}), &wrong, &claim(), "ready"),
+            RecordGate::WrongLensScope(LensScopeRefusal::Wrong(vec!["whole-repo".to_string()]))
         );
     }
 
@@ -24638,6 +25693,45 @@ index 1111111..2222222 100644
         );
     }
 
+    /// The prompt has to make the vetter DECLARE the scope, or the gate refuses every verdict in the
+    /// pipeline — the binary reads a token off the invocation and cannot supply one.
+    ///
+    /// It must also NOT ask for a scope sentence in the verdict. The audit skill deliberately removed
+    /// evidence-of-reading prose, and a scope claim the model writes is exactly that; the record's
+    /// scope comes off the ledger row, which is why the prompt says there is nothing to narrate.
+    #[test]
+    fn the_review_prompt_makes_the_vetter_declare_the_scope_as_a_token() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("DECLARE THE SCOPE, AS A TOKEN, IN THE SKILL'S `args`: `pr:<number>`"),
+            "the prompt must name the token the gate reads"
+        );
+        // All three values, so the vetter knows the vocabulary is closed rather than guessing at a
+        // fourth — and both wrong ones named as refused.
+        for value in [
+            super::LENS_SCOPE_WHOLE_REPO,
+            super::LENS_SCOPE_PR_PREFIX,
+            super::LENS_SCOPE_PATHS_PREFIX,
+        ] {
+            assert!(prompt.contains(value), "the prompt must name `{value}`");
+        }
+        assert!(
+            prompt.contains("EXACTLY ONCE"),
+            "two scopes declare none, so the prompt must say once"
+        );
+        assert!(
+            prompt.contains("declaring nothing IS declaring whole-repo"),
+            "an undeclared scope is refused, and the prompt must say why"
+        );
+        // The prohibition on narrating it, which is what keeps this from becoming a preamble.
+        assert!(
+            prompt.contains("claiming which scope you read at) is the thing being replaced"),
+            "the prompt must forbid a model-written scope claim"
+        );
+    }
+
     #[test]
     fn the_readme_documents_the_lens_stamp_and_the_ledger() {
         let Some(readme) = repo_root_text("README.md") else {
@@ -24650,6 +25744,12 @@ index 1111111..2222222 100644
         assert!(
             readme.contains("RUN_LENS_LEDGER"),
             "the README must name the env var the gate reads, since a missing one changes behaviour"
+        );
+        // #155: the stamp a reader will actually find carries the SCOPE, so the README's example must
+        // too — an example missing it teaches the reader the old shape.
+        assert!(
+            readme.contains("audit skill invoked at pr:"),
+            "the README's stamp example must name the scope"
         );
     }
 }
