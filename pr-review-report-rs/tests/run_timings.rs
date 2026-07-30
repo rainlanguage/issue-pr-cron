@@ -272,6 +272,12 @@ const REAL_SKILL_EVENT: &str = r#"{"type":"assistant","timestamp":"2026-07-29T17
 /// A `Skill` event the harness would write for a DIFFERENT skill — not the lens, however scoped.
 const OTHER_SKILL_EVENT: &str = r#"{"type":"assistant","timestamp":"2026-07-29T17:22:00.000Z","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"dataviz","args":"chart for cyclofinance/cyclo.site#387"}}]}}"#;
 
+/// The same invocation, DECLARING its scope the way #155 requires — a `pr:<number>` token in `args`.
+const SCOPED_SKILL_EVENT: &str = r#"{"type":"assistant","timestamp":"2026-07-29T17:21:52.000Z","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"audit:audit","args":"Audit cyclofinance/cyclo.site#386 at /home/gildlab/code/vet-cyclo.site-386, scope pr:386."}}]}}"#;
+
+/// And one declaring the WRONG scope — a real invocation over the whole repository.
+const WHOLE_REPO_SKILL_EVENT: &str = r#"{"type":"assistant","timestamp":"2026-07-29T17:21:52.000Z","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"audit:audit","args":"Audit of cyclofinance/cyclo.site#387 at whole-repo scope."}}]}}"#;
+
 #[test]
 fn an_audit_invocation_is_on_disk_before_the_tool_it_announces_could_have_run() {
     let dir = TempDir::new("lens");
@@ -290,6 +296,13 @@ fn an_audit_invocation_is_on_disk_before_the_tool_it_announces_could_have_run() 
     assert_eq!(rows[0]["skill"], "audit:audit");
     assert_eq!(rows[0]["runId"], "20260728T053610Z");
     assert_eq!(rows[0]["role"], "vetter");
+    // #155: this real invocation declared its scope in PROSE ("Findings feed this PR's verdict"), so
+    // the row carries no `scope` key at all — and the verdict gate refuses it. Absent, not `null`.
+    assert!(
+        rows[0].get("scope").is_none(),
+        "an invocation that declared no scope leaves the key off: {}",
+        rows[0]
+    );
     // The metrics file is a DIFFERENT file: a lens row must never land in the committed runs.jsonl
     // the dashboard reads and `run-metrics` reconciles by runId.
     assert!(
@@ -333,6 +346,41 @@ fn only_audit_invocations_reach_the_ledger_and_the_stream_is_unchanged() {
             .collect::<Vec<_>>(),
         vec!["cyclofinance/cyclo.site#386"],
         "a non-audit skill, a tool call and a verdict all announce nothing about the lens"
+    );
+}
+
+/// #155: the SCOPE the invocation declared is on the row, written by the RUNNER from the announced
+/// event — never parsed out of a verdict.
+///
+/// This drives the real binary through the real pipe for the same reason the tests above do: the whole
+/// point of the field is that the process the model does not control is the one that writes it, and a
+/// unit test over `lens_record` would assert our own belief about that rather than observe it.
+#[test]
+fn the_declared_scope_is_written_onto_the_row_by_the_runner() {
+    let dir = TempDir::new("lens-scope");
+    let out = dir.join("metrics/runs.jsonl");
+    let lens = dir.join("runs/20260729T171735Z.lens");
+    let mut child = spawn_with_lens(&out, Some(&lens));
+    {
+        let mut si = child.stdin.take().expect("stdin");
+        writeln!(si, "{SCOPED_SKILL_EVENT}").unwrap();
+        writeln!(si, "{WHOLE_REPO_SKILL_EVENT}").unwrap();
+    }
+    let _ = child.wait();
+    let rows = records(&lens);
+    assert_eq!(
+        rows.iter()
+            .map(|r| (
+                r["pr"].as_str().unwrap(),
+                r.get("scope").and_then(|s| s.as_str())
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("cyclofinance/cyclo.site#386", Some("pr:386")),
+            ("cyclofinance/cyclo.site#387", Some("whole-repo")),
+        ],
+        "the row records the scope the harness announced, right or wrong — judging it is the \
+         verdict gate's job, not this filter's"
     );
 }
 
