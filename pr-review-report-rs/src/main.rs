@@ -7676,15 +7676,55 @@ fn plugin_version_check(entry: &Value, manifest: Option<&Value>) -> PluginVersio
 enum CommandKind {
     /// Every grant is a shell tool, so the payload is the fenced `pr-review-report` transition.
     Subcommand,
-    /// Every grant is an MCP tool, named here: the payload IS those tool calls, and there is no
-    /// shell underneath to fall back to.
-    McpTools(Vec<String>),
+    /// Every grant is an MCP tool or one of the [`MCP_COMMAND_NATIVE_TOOLS`], named here: the
+    /// payload IS those tool calls, and there is no shell underneath to fall back to.
+    McpTools {
+        /// The typed reads, in the order granted. Every one is resolved against what the plugin's
+        /// own manifest serves, in [`command_check`].
+        mcp: Vec<String>,
+        /// The harness's own read tools granted beside them, in the order granted — the audit
+        /// lens (#150). Empty for a command that only reads typed results.
+        native: Vec<String>,
+    },
 }
+
+/// The harness tools an MCP command may grant BESIDE its typed reads: the audit lens, and the read
+/// it performs.
+///
+/// `Skill` is admitted because the review rules live in a skill file, and a reviewer summarising a
+/// rulebook from memory is not applying it — `/nr` missed rain.deploy#20's `^0.8.25` in a concrete
+/// test mock and rain.deploy#21's 22 hardcoded copies of a derivation it had just added, both of
+/// which the `audit` skill states outright (#150). `Read` is admitted because the skill reads
+/// SOURCE: granting the invocation without the read grants a skill that cannot run.
+///
+/// Both are reads with no shell underneath, which is the whole of what #132 bought. What is NOT
+/// admitted matters as much:
+///
+/// - `Bash` — the fallback itself, and the reason this contract exists;
+/// - `Task` — a subagent's tool set is not this command's, so a spawned agent holding `Bash` is the
+///   shell fallback wearing another name;
+/// - `Grep`/`Glob` — MEASURED against Claude Code 2.1.220: they are not tools in this harness at
+///   all, neither listed in the session's `init` event nor resolvable through `ToolSearch`
+///   (`select:Grep` → "No matching deferred tools found"). A grant naming one would be a permitted
+///   tool that does not exist, which is the silent failure [`command_check`] refuses on the MCP
+///   side. The lens therefore NAVIGATES by path (the diff names the files) instead of searching,
+///   and that limit is stated in the command rather than discovered.
+///
+/// Matching is EXACT, not by prefix: a prefix rule is how the Bash deny-list became bypassable, and
+/// `Skill(audit)` — which this harness parses but does not enforce — is a different string from the
+/// grant that was reviewed. Anything outside the set is treated as a shell grant and refused beside
+/// MCP, which is the safe direction to be wrong in.
+#[cfg(test)]
+const MCP_COMMAND_NATIVE_TOOLS: &[&str] = &["Skill", "Read"];
 
 /// PURE: what one shipped command invokes, and whether its body keeps that promise.
 ///
-/// A command IS its `allowed-tools` line — the loader grants exactly that and nothing else — so
-/// that line decides what the body is allowed to say. Two shapes ship here, with OPPOSITE
+/// A command's `allowed-tools` line is its DECLARED surface, and that line decides what the body is
+/// allowed to say. It is a pre-approval rather than a sandbox — MEASURED on Claude Code 2.1.220, a
+/// command granting only `Read` still ran a `Bash` call under `--permission-mode default` with zero
+/// `permission_denials` — so the frontmatter narrows nothing on its own, and the BODY is the only
+/// thing that actually steers the reader. That is exactly why the fenced-shell rule below is
+/// enforced over the body rather than inferred from the grant. Two shapes ship here, with OPPOSITE
 /// obligations:
 ///
 /// - a **subcommand** command must fence the transition it runs, or the caller is handed a name
@@ -7706,6 +7746,17 @@ enum CommandKind {
 /// principle the proxy stood for — no grant mixes MCP with shell, no fenced shell line under an
 /// MCP grant — and, in [`command_check`], that EVERY tool named is one the manifest's server
 /// actually serves.
+///
+/// The [`MCP_COMMAND_NATIVE_TOOLS`] are admitted beside the typed reads by NAME, not by accident
+/// (#150). The old partition had exactly two bins — `mcp__*` and "shell" — so `Skill` landed in the
+/// shell bin and the audit lens was unrepresentable for the same reason two reads once were. There
+/// are three bins now, and the refusal that carries the guarantee is unchanged: anything outside
+/// both sets mixed with either is refused, `Bash` included and `Bash` first of all.
+///
+/// A native read granted with NO typed read beside it is refused too. The lens exists to audit a
+/// SUBJECT, and the subject arrives typed; a command holding `Read` and nothing else has a
+/// filesystem and no idea which PR it is about, which is the hand-assembly this whole contract
+/// removes.
 #[cfg(test)]
 fn command_contract(text: &str) -> Result<CommandKind, String> {
     if !text.starts_with("---\n") {
@@ -7733,16 +7784,38 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
     if tools.is_empty() {
         return Err("allowed-tools is empty — a command granted nothing can run nothing".into());
     }
-    let mcp = tools.iter().filter(|t| t.starts_with("mcp__")).count();
-    let kind = if mcp == 0 {
-        CommandKind::Subcommand
-    } else if mcp < tools.len() {
+    // Three bins, and every grant lands in exactly one: a typed read, an admitted native read, or
+    // everything else — which is a shell grant as far as this contract is concerned.
+    let mcp: Vec<String> = tools
+        .iter()
+        .filter(|t| t.starts_with("mcp__"))
+        .map(|t| (*t).to_string())
+        .collect();
+    let native: Vec<String> = tools
+        .iter()
+        .filter(|t| MCP_COMMAND_NATIVE_TOOLS.contains(t))
+        .map(|t| (*t).to_string())
+        .collect();
+    let kind = if mcp.len() + native.len() < tools.len() {
+        // A shell grant beside EITHER of the other two. Refused whichever way round they are
+        // written, and refused with the MCP wording it has always had, because the guarantee being
+        // lost is the same one: `Bash` under an audit lens is the fallback the lens was supposed to
+        // make unnecessary.
+        if mcp.is_empty() && native.is_empty() {
+            CommandKind::Subcommand
+        } else {
+            return Err(format!(
+                "grants an MCP tool AND a shell tool ({granted:?}) — a command that can do both has \
+                 no guarantee left, which is the whole reason the grant is narrow"
+            ));
+        }
+    } else if mcp.is_empty() {
         return Err(format!(
-            "grants an MCP tool AND a shell tool ({granted:?}) — a command that can do both has \
-             no guarantee left, which is the whole reason the grant is narrow"
+            "grants the audit lens ({native:?}) with no typed read beside it ({granted:?}) — the \
+             lens audits a SUBJECT, and the subject arrives typed"
         ));
     } else {
-        CommandKind::McpTools(tools.iter().map(|t| (*t).to_string()).collect())
+        CommandKind::McpTools { mcp, native }
     };
     // What a command RUNS is what is inside its fenced blocks. Asserted there rather than over the
     // whole document, because the prose says `gh issue close` in order to FORBID it — a substring
@@ -7773,11 +7846,11 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
                 ));
             }
         }
-        CommandKind::McpTools(tools) => {
+        CommandKind::McpTools { mcp, .. } => {
             if let Some(line) = runnable.iter().find(|l| !l.starts_with('/')) {
                 return Err(format!(
                     "fenced line {line:?} is a shell command, but every grant here is MCP \
-                     ({tools:?}) — a fenced fallback is exactly what the all-MCP grant exists to \
+                     ({mcp:?}) — a fenced fallback is exactly what the all-MCP grant exists to \
                      remove"
                 ));
             }
@@ -7825,11 +7898,15 @@ fn grantable_mcp_tools(manifest: &Value) -> Result<Vec<String>, String> {
 /// EVERY named tool is resolved, not just the first: a command may grant a set, and a set whose
 /// second member is misspelled is a command that runs half of what it says it does — silently,
 /// because the loader drops the name it cannot resolve rather than refusing the command.
+///
+/// Only the TYPED names are resolved here. The [`MCP_COMMAND_NATIVE_TOOLS`] are the harness's own
+/// tools, so no plugin manifest serves them; they are checked where they are admitted, against the
+/// set that was measured to exist.
 #[cfg(test)]
 fn command_check(text: &str, grantable: &[String]) -> Result<CommandKind, String> {
     let kind = command_contract(text)?;
-    if let CommandKind::McpTools(tools) = &kind {
-        for tool in tools {
+    if let CommandKind::McpTools { mcp, .. } = &kind {
+        for tool in mcp {
             if !grantable.iter().any(|g| g == tool) {
                 return Err(format!(
                     "grants {tool:?}, which no server in the manifest serves — the grantable set \
@@ -12646,6 +12723,22 @@ impl McpProfile {
                 // hand assembly it replaces is what the ruling below used to rest on.
                 "next_ready",
                 "pr_context",
+                // The AUDIT LENS, and the disposal that pays for it (#150). `/nr` forms its own
+                // view rather than relaying the vetter's, and the mechanical half of that view is
+                // the `audit` skill — which reads SOURCE, so a diff is not a substrate it can run
+                // on: every dimension needing a file the diff never touches (the callees, the
+                // siblings sharing an invariant, the premise the PR body asserts about current
+                // behaviour) would go unexercised SILENTLY. rain.deploy#21 is the measured case —
+                // "one canonical derivation, 22 hardcoded copies" is a count over the TREE, not
+                // over the added lines.
+                //
+                // `clone_release` comes with it for the reason it is on the vetter's profile, and it
+                // matters MORE here: the human's server runs in an interactive session with no
+                // `WORK_DIR`, so its checkouts land under the temp-dir fallback — not necessarily a
+                // root the producer's `clone_gc` cron sweeps at all. Unreleased checkouts are how
+                // this box filled its disk, and a human-gate leak has no collector behind it.
+                "pr_checkout",
+                "clone_release",
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
@@ -25943,6 +26036,14 @@ mod marketplace_tests {
         format!("---\ndescription: d\nargument-hint: h\nallowed-tools: {front}\n---\n\n{body}")
     }
 
+    /// The expected kind for a command granting typed reads and no native tool beside them.
+    fn typed_only(mcp: &[&str]) -> Result<CommandKind, String> {
+        Ok(CommandKind::McpTools {
+            mcp: mcp.iter().map(|t| (*t).to_string()).collect(),
+            native: vec![],
+        })
+    }
+
     #[test]
     fn a_subcommand_command_must_fence_the_transition_it_runs() {
         assert_eq!(
@@ -25966,12 +26067,12 @@ mod marketplace_tests {
         let tool = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
         assert_eq!(
             command_contract(&command(&tool, "call it once")),
-            Ok(CommandKind::McpTools(vec![tool.clone()]))
+            typed_only(&[&tool])
         );
         // Cross-references to sibling commands stay legal — they are not something to run.
         assert_eq!(
             command_contract(&command(&tool, "see ```\n/reject\n```")),
-            Ok(CommandKind::McpTools(vec![tool.clone()]))
+            typed_only(&[&tool])
         );
         // The fallback the narrow grant exists to remove, in the one place a reader would copy it
         // from. It is refused even though the grant could never permit it: the body is what a
@@ -26004,13 +26105,13 @@ mod marketplace_tests {
                 &format!("{next}, {ctx}"),
                 "read one, then the other"
             )),
-            Ok(CommandKind::McpTools(vec![next.clone(), ctx.clone()]))
+            typed_only(&[&next, &ctx])
         );
         // The grant is a SET, not a first-wins name: both members survive in order, because
         // `command_check` resolves each of them against the manifest.
         assert_eq!(
             command_contract(&command(&format!("{ctx},{next}"), "prose")),
-            Ok(CommandKind::McpTools(vec![ctx.clone(), next.clone()]))
+            typed_only(&[&ctx, &next])
         );
         // The shell fence is what the count was standing in for, and it still binds over a set.
         let err = command_contract(&command(
@@ -26125,9 +26226,7 @@ mod marketplace_tests {
         );
         assert_eq!(
             command_check(&good, &grantable),
-            Ok(CommandKind::McpTools(vec![
-                "mcp__plugin_human-fsm_fsm__next_ready".to_string()
-            ]))
+            typed_only(&["mcp__plugin_human-fsm_fsm__next_ready"])
         );
         // A tool the profile does not serve.
         let unserved = command(
@@ -26162,7 +26261,7 @@ mod marketplace_tests {
         let bogus = plugin_mcp_tool_name("human-fsm", "fsm", "pr_contexts");
         assert_eq!(
             command_check(&command(&format!("{next}, {ctx}"), "prose"), &grantable),
-            Ok(CommandKind::McpTools(vec![next.clone(), ctx.clone()]))
+            typed_only(&[&next, &ctx])
         );
         // Real first, unserved second.
         let err =
@@ -26175,12 +26274,150 @@ mod marketplace_tests {
         assert!(err.contains("pr_contexts"), "{err}");
     }
 
-    // `/nr` is why the rule was relaxed, so the file that motivated it is pinned here rather than
-    // left to the generic shipped-command sweep: a later edit that drops `pr_context` back out
-    // leaves a command whose prose promises an independent read it has no tool to perform, and the
-    // sweep would still pass because one grant is a legal shape again.
+    // #150, and the relaxation it is: the audit lens is admitted BY NAME beside the typed reads.
+    // Before this there were two bins — `mcp__*` and "shell" — so `Skill` landed in the shell bin
+    // and the one command that most needs the org's review rules was the one command that could not
+    // reach the file they live in. It hand-rolled them from memory and missed two the skill states
+    // outright (rain.deploy#20, #21).
     #[test]
-    fn nr_grants_both_the_queue_read_and_the_pr_read() {
+    fn the_audit_lens_is_admitted_beside_the_typed_reads() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        let checkout = plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout");
+        assert_eq!(
+            command_contract(&command(
+                &format!("{next}, {checkout}, Skill, Read"),
+                "invoke the audit skill over the checkout"
+            )),
+            Ok(CommandKind::McpTools {
+                mcp: vec![next.clone(), checkout.clone()],
+                native: vec!["Skill".to_string(), "Read".to_string()],
+            })
+        );
+        // The native grants are the harness's own tools, so NO plugin manifest serves them: they
+        // must not be resolved against the grantable set, or admitting them here would refuse them
+        // one function later.
+        let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
+        assert!(!grantable.iter().any(|g| g == "Skill"));
+        assert_eq!(
+            command_check(
+                &command(&format!("{next}, Skill, Read"), "prose"),
+                &grantable
+            ),
+            Ok(CommandKind::McpTools {
+                mcp: vec![next.clone()],
+                native: vec!["Skill".to_string(), "Read".to_string()],
+            })
+        );
+        // The order they are written in is preserved, and the two bins do not have to interleave in
+        // any particular way — this is a SET admission, not a fixed template.
+        assert_eq!(
+            command_contract(&command(&format!("Read, {next}, Skill"), "prose")),
+            Ok(CommandKind::McpTools {
+                mcp: vec![next.clone()],
+                native: vec!["Read".to_string(), "Skill".to_string()],
+            })
+        );
+        // The fenced-shell rule is over the BODY and binds exactly as before: the lens does not buy
+        // a fenced `gh`.
+        let err = command_contract(&command(
+            &format!("{next}, Skill, Read"),
+            "```\ngh pr diff 1 --repo o/r\n```",
+        ))
+        .unwrap_err();
+        assert!(err.contains("all-MCP grant exists to remove"), "{err}");
+    }
+
+    // The floor #150 must not fall through, and the reason `Skill` is admitted by NAME rather than
+    // by widening the bin: everything else is still a shell grant, and a shell grant beside a typed
+    // read is refused whatever else is in the line.
+    #[test]
+    fn a_shell_grant_is_still_refused_beside_the_audit_lens() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        for (front, why) in [
+            (
+                format!("{next}, Skill, Read, Bash(gh pr view:*)"),
+                "Bash last",
+            ),
+            (format!("Bash(gh pr view:*), {next}, Skill"), "Bash first"),
+            (
+                format!("{next}, Bash, Skill, Read"),
+                "bare Bash, in the middle",
+            ),
+            // A SUBAGENT is the fallback wearing another name: its tool set is not this command's,
+            // and the one thing it reliably holds is a shell.
+            (format!("{next}, Skill, Task"), "Task"),
+            // Writes are not part of a read that precedes a ruling.
+            (format!("{next}, Skill, Write"), "Write"),
+            (format!("{next}, Skill, Edit"), "Edit"),
+            // Not admitted because they are not tools in this harness at all (2.1.220): a grant
+            // naming one is a permitted tool that does not exist.
+            (format!("{next}, Skill, Grep"), "Grep"),
+            (format!("{next}, Skill, Glob"), "Glob"),
+        ] {
+            let err = command_contract(&command(&front, "prose")).unwrap_err();
+            assert!(err.contains("no guarantee left"), "{why}: {err}");
+        }
+    }
+
+    // A native read with no typed read beside it. The lens audits a SUBJECT, and the subject arrives
+    // typed — a command holding `Read` and nothing else has a filesystem and no idea which PR it is
+    // about, which is the hand-assembly the whole contract removes. It must not fall through to the
+    // subcommand branch either, where the refusal would talk about fencing a transition and send the
+    // reader looking for the wrong fix.
+    #[test]
+    fn the_audit_lens_alone_is_refused_because_the_subject_arrives_typed() {
+        for front in ["Skill", "Read", "Skill, Read"] {
+            let err = command_contract(&command(front, "prose")).unwrap_err();
+            assert!(err.contains("no typed read beside it"), "{front}: {err}");
+            assert!(
+                !err.contains("nothing for the caller to run"),
+                "{front}: {err}"
+            );
+        }
+        // …and a native read is not a substitute for the fenced transition a SUBCOMMAND command
+        // owes its caller, so the two shapes cannot be blended either.
+        let err = command_contract(&command(
+            "Bash(pr-review-report human-close:*), Read",
+            "```\npr-review-report human-close a/b 1 n\n```",
+        ))
+        .unwrap_err();
+        assert!(err.contains("no guarantee left"), "{err}");
+    }
+
+    // Admission is EXACT. A prefix rule is how the Bash deny-list became bypassable, and
+    // `Skill(audit)` is a live trap: this harness PARSES that spelling and does not enforce it, so a
+    // contract that admitted it by prefix would bless a per-skill restriction that does not exist.
+    #[test]
+    fn the_native_admission_is_by_exact_name_not_by_prefix() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        for spelling in [
+            "Skill(audit)",
+            "Skill(audit:*)",
+            "Skilled",
+            "skill",
+            "SKILL",
+            "Read(*)",
+            "ReadFile",
+        ] {
+            let err =
+                command_contract(&command(&format!("{next}, {spelling}"), "prose")).unwrap_err();
+            assert!(
+                err.contains("no guarantee left"),
+                "{spelling} is not the reviewed grant: {err}"
+            );
+        }
+        // The admitted set is exactly the two, so a future member is added deliberately rather than
+        // arriving because some other name happened to match.
+        assert_eq!(MCP_COMMAND_NATIVE_TOOLS, &["Skill", "Read"]);
+    }
+
+    // `/nr` is why the rule was relaxed both times, so the file that motivated it is pinned here
+    // rather than left to the generic shipped-command sweep: a later edit that drops `pr_context`,
+    // the checkout, its release or the audit lens back out leaves a command whose prose promises a
+    // read it has no tool to perform, and the sweep would still pass because the remainder is a
+    // legal shape again.
+    #[test]
+    fn nr_grants_the_two_reads_the_source_it_audits_and_the_lens() {
         let path = format!(
             "{}/../plugins/human-fsm/commands/nr.md",
             env!("CARGO_MANIFEST_DIR")
@@ -26194,11 +26431,17 @@ mod marketplace_tests {
         .unwrap();
         assert_eq!(
             command_check(&text, &grantable),
-            Ok(CommandKind::McpTools(vec![
-                plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
-                plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
-            ])),
-            "/nr reads the queue row AND the PR behind it"
+            Ok(CommandKind::McpTools {
+                mcp: vec![
+                    plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
+                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
+                    plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                ],
+                native: vec!["Skill".to_string(), "Read".to_string()],
+            }),
+            "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs — and \
+             releases the checkout it took"
         );
     }
 }
@@ -27764,6 +28007,12 @@ mod mcp_tests {
                 // ruling below rests on, in one typed result rather than six hand `gh` reads.
                 "next_ready",
                 "pr_context",
+                // The SOURCE the audit skill reads, and the disposal of it (#150). The human gate
+                // forms its own view, and the mechanical half of that view is a skill that reads
+                // files — a diff cannot exercise the dimensions needing a file the diff never
+                // touches, and it would fail to exercise them silently.
+                "pr_checkout",
+                "clone_release",
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
@@ -27786,6 +28035,49 @@ mod mcp_tests {
             assert!(is_error(&resp), "{not_ours} must not exist for the human");
         }
         assert!(f.calls().is_empty(), "no refused name reached an effect");
+        // The checkout and its release are REACHABLE, past the listing: a tool the guard refuses by
+        // name is a tool the profile does not have, whatever `tools/list` prints.
+        let g = FakeExec {
+            profile: McpProfile::Human,
+            ..FakeExec::ok()
+        };
+        g.handle(&call("pr_checkout", json!({"pr": "o/r#1"})))
+            .unwrap();
+        g.handle(&call("clone_release", json!({"clone": "vet-r-1"})))
+            .unwrap();
+        assert_eq!(
+            g.calls(),
+            vec![
+                McpCall::PrCheckout {
+                    slug: "o/r".to_string(),
+                    num: 1
+                },
+                McpCall::CloneRelease {
+                    root: "/work".to_string(),
+                    name: "vet-r-1".to_string(),
+                    discard_uncommitted: false,
+                },
+            ]
+        );
+    }
+
+    // The DISPOSAL INVARIANT, over every profile rather than the ones that happen to have the
+    // checkout today: `pr_checkout` leaves a clone on the box, and `clone_release` is the only
+    // in-machine way to remove one, so a profile with the first and not the second leaks a tree per
+    // call. Unreleased checkouts are how this box filled its disk — and the human's server has no
+    // `WORK_DIR`, so its checkouts land in the temp-dir fallback where the producer's sweep may never
+    // look.
+    #[test]
+    fn every_profile_that_can_check_out_can_also_release() {
+        for profile in [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human] {
+            let names = profile.tool_names();
+            if names.contains(&"pr_checkout") {
+                assert!(
+                    names.contains(&"clone_release"),
+                    "{profile:?} can take a checkout it cannot dispose of"
+                );
+            }
+        }
     }
 
     // …and symmetrically: the human's writes are unreachable from the AI profiles. The vetter

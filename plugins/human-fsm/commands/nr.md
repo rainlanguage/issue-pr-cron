@@ -1,7 +1,7 @@
 ---
-description: The next ai:ready PR to rule on — the vetter's verdict, checked against an independent read of the diff and the issue it claims to close.
+description: The next ai:ready PR to rule on — the vetter's verdict, checked against an independent read of the diff, the issue it claims to close, and the audit skill run over the PR's own source.
 argument-hint: [1-3]
-allowed-tools: mcp__plugin_human-fsm_fsm__next_ready, mcp__plugin_human-fsm_fsm__pr_context
+allowed-tools: mcp__plugin_human-fsm_fsm__next_ready, mcp__plugin_human-fsm_fsm__pr_context, mcp__plugin_human-fsm_fsm__pr_checkout, mcp__plugin_human-fsm_fsm__clone_release, Skill, Read
 ---
 
 Arguments: `$ARGUMENTS`
@@ -17,7 +17,8 @@ it as clean, at length, because the note said so, and the naming violation sat
 in a file the vetter never opened and this command never opened either.
 
 So the vetter's note is a **claim to check**, and checking it means reading the
-diff and the issue yourself.
+diff and the issue yourself — and running the org's own review rules over the
+source rather than recalling them.
 
 ## The sequence
 
@@ -62,7 +63,59 @@ every summary of that PR and was opened by nobody. If `diffTruncated` is true
 you did not get all of it: say which files you could not see, rather than
 reading the omission as nothing to see.
 
-**5. Put your read beside the vetter's, and say plainly where they diverge.**
+**5. Run the `audit` skill over the PR's own source.** The mechanical half of
+what makes code good is written down — in that skill — and a reviewer who
+summarises a rulebook from memory is not applying it. Steps 3 and 4 come first
+and are yours; this step is an instrument pointed at the same diff, and it runs
+in this order so that the skill's report cannot become the frame your own
+reading is written inside.
+
+- **`pr_checkout`** on the same `owner/repo#n`, because the skill reads SOURCE.
+  Cross-check the `head` it returns against `pr_context`'s `headRefOid` before
+  reading a line: if they differ the tree is not this PR's, and every finding
+  taken from it is about other code. **Never search for a checkout.** The `dir`
+  in `pr_checkout`'s own result is the only path that is this PR's source — you
+  do not glob for one, and a `vet-*` directory you happened to find is a
+  DIFFERENT PR's tree.
+- **Invoke the skill with the `Skill` tool** — `audit` — seeded with the changed
+  file list and that `dir`. Never hand-copy its checks: invoking it is how this
+  command inherits every upgrade to it, and the two findings that motivated this
+  step were both stated plainly in it while a hand-rolled read missed them
+  (`rain.deploy#20`, a newly added concrete test mock carrying a caret pragma;
+  `rain.deploy#21`, a canonical CREATE2 derivation added and then hardcoded 22
+  times beside 4 real calls). Run it INLINE and serial.
+- **Scope it to the middle ground**, exactly as the vetter's is scoped: the
+  changed lines PLUS the code whose behaviour decides whether the diff is
+  correct — the callees the changed lines invoke, the callers relying on the
+  changed behaviour, sibling implementations sharing the invariant being
+  changed, and every claim the PR body or the issue makes about how the code
+  CURRENTLY behaves, since a stated current behaviour the source contradicts is
+  a false premise and a finding in itself. NOT the diff alone; NOT a whole-repo
+  audit on every `/nr`. The test for reading a file is "would understanding it
+  change the ruling on THIS diff?".
+- **Your read surface inside that tree is `Read`.** This harness has no `Grep`
+  and no `Glob` — measured on 2.1.220, neither is listed and neither resolves
+  through `ToolSearch` — so the lens navigates by path, from the changed-file
+  list and the imports it finds there, and it does not search. Where a finding
+  would need a repo-wide count, say what you counted and where, so the reader
+  can see the bound on it.
+- **Map its findings onto the ruling the human is about to make.** A defect in
+  the diff's OWN changed code is a merge blocker and is named as one. A finding
+  in code the PR does not touch is context, never a reason to withhold this
+  merge. A question the diff raises and cannot settle itself is a `/design`
+  rather than a quiet merge. And the skill finding nothing is not "clean": it
+  never read the issue, so it cannot tell you the diff answered it.
+
+**6. `clone_release`** the checkout, passing the `dir` name `pr_checkout`
+returned, before you present anything. A checkout left behind sits on the box
+until a sweep reaches it — and this server has no `WORK_DIR`, so its clones land
+in the temp-dir fallback, which the producer's sweep may never look in.
+Unreleased checkouts are how this box filled its disk. If `pr_checkout` ERRORS
+there is nothing to release and no audit lens either: re-call it ONCE, and if it
+fails again present the read WITHOUT that half and say so in as many words. A
+missing lens, named, is worth more than a lens implied.
+
+**7. Put your read beside the vetter's, and say plainly where they diverge.**
 Agreement reached independently is worth something; agreement by restatement is
 worth nothing, and the reader cannot tell which one they were handed unless you
 say. Where your reading **contradicts** the note, that is the headline and not a
@@ -72,20 +125,66 @@ invalidates is how such a PR gets merged anyway. Where you agree, name what you
 checked, so the agreement is a fact about the diff rather than a fact about the
 note.
 
-## These two tools and nothing else
+## Why the skill does not make this a second vetter
 
-Every input comes from a typed tool call. Do not reach for `gh`, do not assemble
-a field by hand, and do not answer any part of it from memory: a merge decision
-reassembled by hand is a decision whose inputs nobody can audit, and its shape
-drifts with whoever assembled it. If a tool is unavailable, say so and stop —
-the answer is to connect the plugin's MCP server, not to work around it. Both
-grants are **reads**; this command has no write and needs none.
+The vetter runs the same skill, so the obvious worry is that step 5 duplicates
+it and this gate stops being a second opinion. It does not, for three reasons
+worth keeping straight.
 
-The analysis costs a second call and real reasoning, and that is the price of
-the decision rather than an overhead to trim back out. It is additive to the
-queue's latency, so a speedup elsewhere and this cost are one conversation and
-not two — a faster queue that hands the human the vetter's own words back has
-bought nothing.
+**A shared rulebook is not a shared conclusion.** Two readers applying one
+standard to one artefact are independent; a reader who paraphrases the other's
+memo is not. What `#132` removed was the paraphrase — the verdict, relayed — and
+step 5 adds no verdict: it adds the rules, while the conclusion is still derived
+here, from the issue, the diff and the tree. Shared rules mean shared blind
+spots, not shared answers, and a blind spot is fixed once in the skill and
+inherited by both readers.
+
+**The dimensions do not overlap.** The skill's subject is the code as it stands:
+naming, storage class, pragma, derived constants, hazard surface. The scope
+question — does this diff do what the issue asked, all of it, and nothing else —
+is not a dimension it has, because it has no issue to compare against. That is
+the half this gate has actually caught things with: `cyclo.site#393` closed an
+issue with its boundary guard unbuilt, `#408` rendered four expired epochs while
+closing the issue that complained about one, `#331` closed with its
+`parseLeaderboardEntry` half undone. None of those is an audit finding, and
+neither rain.deploy finding is a scope finding. Dropping either half loses a
+class of defect that has already been landed.
+
+**And the duplicate is hypothetical while the gap is measured.** The vetter
+invoked the skill once across 35 verdicts in one run, and both rain.deploy PRs
+reached `ai:ready` with the rules never applied to them at all. A check that
+catches what upstream skipped is not redundant with it.
+
+So: the skill supplies the rules, this command supplies the judgement, and step
+5 is subordinate to steps 3 and 4 rather than a substitute for them.
+
+## Typed reads and the lens, and no shell at all
+
+Every input about the PR arrives from a typed tool call — the queue row, the
+context, the tree. Do not reach for `gh`, do not assemble a field by hand, and
+do not answer any part of it from memory: a merge decision reassembled by hand
+is a decision whose inputs nobody can audit, and its shape drifts with whoever
+assembled it. If a tool is unavailable, say so and stop — the answer is to
+connect the plugin's MCP server, not to work around it.
+
+The grant is four typed calls plus `Skill` and `Read`, and `Read` applies to the
+`pr_checkout` tree and nothing else. All four typed calls are reads except
+`clone_release`, which disposes of what this command itself created and writes no
+GitHub state. The rulings remain `/reject`, `/design`, `/close-candidate`,
+`/keep-open`, and the merge is the human's, on a PR they named.
+
+That list is a **declaration, not a sandbox**: measured on Claude Code 2.1.220, a
+command granting only `Read` still ran a `Bash` call with no permission denial.
+So the prohibition above is the thing that actually binds, which is why it is
+written here rather than assumed of the frontmatter — and why nothing in this
+file is fenced as a shell line, because what a reader copies out of a command is
+what the command showed them.
+
+The analysis costs three more calls, a skill fan-out and real reasoning, and
+that is the price of the decision rather than an overhead to trim back out. It is
+additive to the queue's latency, so a speedup elsewhere and this cost are one
+conversation and not two — a faster queue that hands the human the vetter's own
+words back has bought nothing.
 
 ## What `next_ready` has already settled
 
@@ -97,7 +196,7 @@ hand, in an order they have to remember, where being wrong about any one of them
 changes the ruling:
 
 - **the vetter's sha-bound verdict note** — the reasoning, not the label. A
-  label says `ready`; the note says why, and the why is what step 5 checks.
+  label says `ready`; the note says why, and the why is what step 7 checks.
   `verdict.sha` is the head that reasoning was written against and
   `verdict.atHead` says whether it still describes this code.
 - **headRefOid and baseRefName** — not decoration. `rain-org-health` is on
@@ -126,16 +225,16 @@ bump un-pins it from the rules it was written under.
 ## Present the result, do not summarise it away
 
 Print every field of the row. Then give the independent read — what the issue
-asked for, what the diff does, whether those two agree — and then say where that
-read and the vetter's diverge. Then say what the whole of it adds up to: whether
-anything blocks a merge, and if the deploy gate is set, that this is
-deploy-before-merge and **not** a plain merge, because landing it as if it were
-ordinary is a production error.
+asked for, what the diff does, whether those two agree — then the audit lens's
+findings, each marked as the diff's own code or as surrounding context, and then
+say where the whole of that and the vetter's note diverge. Then say what it adds
+up to: whether anything blocks a merge, and if the deploy gate is set, that this
+is deploy-before-merge and **not** a plain merge, because landing it as if it
+were ordinary is a production error.
 
-Clean is a conclusion you are allowed to reach, not one to reach for: say it
-only about a diff you read against an issue you read, and say which those were.
-**This command does not merge and does not rule.** It is the read that precedes
-the human's word; the writes are `/reject`, `/design`, `/close-candidate`,
-`/keep-open`, and the merge itself is the human's, on a PR they named.
+Clean is a conclusion you are allowed to reach, not one to reach for: say it only
+about a diff you read against an issue you read, with a lens you actually pointed
+at the source, and say which those were. **This command does not merge and does
+not rule.** It is the read that precedes the human's word.
 
 Names collide across plugins; `/human-fsm:nr` disambiguates.
