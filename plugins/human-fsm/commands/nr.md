@@ -85,11 +85,11 @@ reading is written inside.
   not in the room and a scope carried only in prose loses to the document the
   invocation just pulled in. Measured on `rain.deploy#21`, it did: twelve
   findings, five bearing on the PR and seven in code the diff never touches,
-  with the scope hand-typed as free text that nothing could check. The skill
-  accepts exactly three scopes — `whole-repo`, `pr:<number>`,
-  `paths:<comma-separated globs>`, the same vocabulary its run stamp records —
-  and `/nr` always declares the second. A spelling outside those three is free
-  text again.
+  with the scope hand-typed as free text that nothing could check. There are
+  exactly three scopes in the skill's own vocabulary, the three its run stamp
+  records — `whole-repo`, `pr:<number>`, `paths:<comma-separated globs>` — and a
+  declared scope may take no other spelling, because a fourth one is free text
+  again. `/nr` always declares the second.
 - **Never hand-copy the skill's checks.** Invoking it is how this command
   inherits every upgrade to it, and the two findings that motivated this step
   were both stated plainly in it while a hand-rolled read missed them

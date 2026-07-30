@@ -383,17 +383,17 @@ and once it is loaded `nr.md` is not in the room: on `rain.deploy#21` the lens
 ran whole-repo, twelve findings, five bearing on the PR and seven in code the
 diff never touches, with the scope hand-typed as free text nothing could
 validate. So `/nr` DECLARES the scope — `scope=pr:<number>` — beside the `dir`
-and the changed-file list, from the vocabulary the audit skill accepts
-(`whole-repo`, `pr:<number>`, `paths:<globs>`, the same three its run stamp
-records). The value is built from typed results only: the number out of the
-row's own `pr` field, the file list out of `pr_context`. And the ruling `/nr`
-presents NAMES the scope it was formed at, so a PR-scoped review is
-distinguishable from a whole-repo sweep without counting how many findings
-missed the diff. `whole-repo` stays reachable as a separate deliberate
-invocation on a repo somebody named — never as the default that happens when
-nothing is passed, which is precisely how the defect read as working. The step-5
-prose is kept as the REASON the PR scope admits the surrounding files it does,
-rather than as the only thing carrying it.
+and the changed-file list, spelled from the skill's OWN vocabulary: the three
+values its run stamp records (`whole-repo`, `pr:<number>`, `paths:<globs>`) and
+the `scope` field name it records them under. The value is built from typed
+results only: the number out of the row's own `pr` field, the file list out of
+`pr_context`. And the ruling `/nr` presents NAMES the scope it was formed at, so
+a PR-scoped review is distinguishable from a whole-repo sweep without counting
+how many findings missed the diff. `whole-repo` stays reachable as a separate
+deliberate invocation on a repo somebody named — never as the default that
+happens when nothing is passed, which is precisely how the defect read as
+working. The step-5 prose is kept as the REASON the PR scope admits the
+surrounding files it does, rather than as the only thing carrying it.
 
 #### `next_ready` — the merge decision as one typed result
 
