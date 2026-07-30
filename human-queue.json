@@ -1130,14 +1130,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 32,
+        "count": 31,
         "prs": [
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 147,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/147",
-            "title": "dash(pipeline): one reject state — retire human:reject rendering, fold its history into reject"
-          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 159,
@@ -5832,9 +5826,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 158,
+    "totalProducerPrs": 157,
     "uncoveredIssues": 623,
-    "unvetted": 32,
+    "unvetted": 31,
     "reject": 70,
     "relink": 1,
     "closeCandidatePrs": 5,
