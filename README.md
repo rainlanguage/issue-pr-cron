@@ -465,14 +465,14 @@ nothing was ever written.
 
 ### The changed-file list is read once, and it says whether it is whole
 
-`gh pr view --json files` returns at most **100** entries. `changedFiles` reports
-the real total, and it is the **only** thing in the document that says the array
-is a page. Measured on `rainlanguage/raindex#2796`: `changedFiles` 143 against an
-array of 100 — no error, no flag, nothing in the payload. Every consumer read the
-bare array and could not tell, and they all failed **open**: the missing files
-read as _absent_ rather than as _unknown_, so a gate skipped them and called the
-PR clean, a manifest presented 100 files as the whole PR, and a path match
-concluded a requirement did not apply.
+`gh pr view --json files` returns at most **100** entries. `changedFiles`
+reports the real total, and it is the **only** thing in the document that says
+the array is a page. Measured on `rainlanguage/raindex#2796`: `changedFiles` 143
+against an array of 100 — no error, no flag, nothing in the payload. Every
+consumer read the bare array and could not tell, and they all failed **open**:
+the missing files read as _absent_ rather than as _unknown_, so a gate skipped
+them and called the PR clean, a manifest presented 100 files as the whole PR,
+and a path match concluded a requirement did not apply.
 
 Measured across the pipeline orgs (`rainlanguage`, `cyclofinance`, `S01-Issuer`;
 133 non-archived repos, 6,166 PRs): **80 PRs are over the cap**, 1.3%, spread
@@ -481,25 +481,25 @@ that keeps recurring rather than a one-off — and it lands on the widest PRs,
 where an unaccounted file is hardest to notice by reading.
 
 So there is ONE reader. `ChangedFileSet` has two states, `Complete` and
-`Partial`, and there is no bare `Vec` a caller can mistake for the whole set: the
-type is the mechanism, and it makes the truncated case unignorable at the call
-site. `changed_files_from_view` is the pure read of a `gh pr view` document;
-`pr_changed_files` resolves a `Partial` whose total is known by re-fetching the
-paginating REST endpoint. **Either field absent leaves the set `Partial`** — the
-same posture as `Merge::Unknown` and `CodeRabbitCoverage::Unreadable`, because a
-field requested on the call that produced the document is _unknown_ when absent,
-never _nothing_.
+`Partial`, and there is no bare `Vec` a caller can mistake for the whole set:
+the type is the mechanism, and it makes the truncated case unignorable at the
+call site. `changed_files_from_view` is the pure read of a `gh pr view`
+document; `pr_changed_files` resolves a `Partial` whose total is known by
+re-fetching the paginating REST endpoint. **Either field absent leaves the set
+`Partial`** — the same posture as `Merge::Unknown` and
+`CodeRabbitCoverage::Unreadable`, because a field requested on the call that
+produced the document is _unknown_ when absent, never _nothing_.
 
 Pagination is attempted **only when the total is known**, and that restraint is
-#129. `gh_json` collapses every failure into `None`, so a re-fetch that failed on
-a rate limit cannot be told from one that returned nothing; the only defence
+#129. `gh_json` collapses every failure into `None`, so a re-fetch that failed
+on a rate limit cannot be told from one that returned nothing; the only defence
 available is cross-checking the result against a count fetched independently.
 With no count there is nothing to check against, so the reader stays `Partial`
 rather than claiming a completeness it cannot verify.
 
-Each consumer then decides what `Partial` means for **it**. Forcing one answer on
-all three is how a gate that should refuse ends up merely warning, or a read that
-should warn ends up refusing:
+Each consumer then decides what `Partial` means for **it**. Forcing one answer
+on all three is how a gate that should refuse ends up merely warning, or a read
+that should warn ends up refusing:
 
 - **The verdict's scope-coverage gate REFUSES**, on every verdict
   (`RecordGate::FilesUnknown`). A claim checked against a list that may be
@@ -514,27 +514,28 @@ should warn ends up refusing:
   mistake a page for a complete small PR. `filesTotal` is `null` when even the
   count is unknown — a `0` there would read as a PR that changes nothing.
 - **`worklist`'s screenshot gate answers `UiTouch::Unknown`** — _may_ touch UI,
-  so the requirement applies. A match inside the page still proves `Yes` (finding
-  a UI file needs no other file in view); no match proves nothing. `No` is only
-  ever returned off a `Complete` list. That closes a second way past the 3c gate
-  without waiving anything (cf. #140), and the waiver still works.
+  so the requirement applies. A match inside the page still proves `Yes`
+  (finding a UI file needs no other file in view); no match proves nothing. `No`
+  is only ever returned off a `Complete` list. That closes a second way past the
+  3c gate without waiving anything (cf. #140), and the waiver still works.
 
 `worklist` resolves the list at its one impure point — `fetch_pr_detail`, the
 same place `unresolvedThreads` is injected — and writes `files` and
 `changedFiles` back **together**, so `worklist_row` stays a pure function of a
 document that is internally consistent. A full array beside a stale count would
-still read as `Partial`; a corrected count beside a capped array is the fail-open
-itself. When resolution fails the fields are left exactly as fetched, the pure
-read reports `Partial`, and the safe branch fires.
+still read as `Partial`; a corrected count beside a capped array is the
+fail-open itself. When resolution fails the fields are left exactly as fetched,
+the pure read reports `Partial`, and the safe branch fires.
 
 **`gh pr diff` does not have this problem, measured.** It carries every file up
-to **300**, and past that it returns HTTP 406 (`PullRequest.diff too_large`) with
-a non-zero exit — so `gh_text` returns `None` and the existing refusals fire.
-Verified on `raindex#2796` (143 files) and `#2586` (223): every `diff --git`
-header present, 143 and 223 respectively. `#2526` (935 files) returns the 406.
-The diff was already fail-closed, so paginating `files` has closed the fail-open
-rather than moved it. 13 of the 80 over-cap PRs are also over 300, and on those
-`pr_context` and `record_verdict` refuse outright rather than truncate.
+to **300**, and past that it returns HTTP 406 (`PullRequest.diff too_large`)
+with a non-zero exit — so `gh_text` returns `None` and the existing refusals
+fire. Verified on `raindex#2796` (143 files) and `#2586` (223): every
+`diff --git` header present, 143 and 223 respectively. `#2526` (935 files)
+returns the 406. The diff was already fail-closed, so paginating `files` has
+closed the fail-open rather than moved it. 13 of the 80 over-cap PRs are also
+over 300, and on those `pr_context` and `record_verdict` refuse outright rather
+than truncate.
 
 ### Every tool result is bounded, and going over is the tool's error
 
