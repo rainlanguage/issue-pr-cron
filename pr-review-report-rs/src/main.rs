@@ -4436,8 +4436,7 @@ mod usage_gate_tests {
 
         // The instant the week opens: linear = 0, and 0% used is already "inside" a band whose
         // floor is below zero.
-        let start =
-            usage_gate_decide(Some(&reading(0.0, RESET)), reset - USAGE_WEEK_MS, 5.0, 90.0);
+        let start = usage_gate_decide(Some(&reading(0.0, RESET)), reset - USAGE_WEEK_MS, 5.0, 90.0);
         assert_eq!(start.code(), 10, "week start idles: {}", start.reason());
         assert!(
             start.reason().contains("inside the 5% BAU headroom"),
@@ -4676,7 +4675,12 @@ mod usage_gate_tests {
     #[test]
     fn stale_slack_var_refuses_loudly_naming_the_new_knob() {
         let v = stale_slack_refusal(Some("5")).expect("a set USAGE_SLACK_PCT must refuse");
-        assert_eq!(v.code(), 2, "refusal is the config-error exit: {}", v.reason());
+        assert_eq!(
+            v.code(),
+            2,
+            "refusal is the config-error exit: {}",
+            v.reason()
+        );
         assert_ne!(v.code(), 0, "a refusal must never read as RUN");
         assert_ne!(v.code(), 10, "a refusal must never read as PAUSE");
         assert!(v.reason().starts_with("REFUSED:"), "{}", v.reason());
