@@ -1165,8 +1165,14 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 30,
+        "count": 31,
         "prs": [
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 65,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/65",
+            "title": "audit: named returns must be locally provable; org default outranks file-local style"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 106,
@@ -5729,9 +5735,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 23,
-    "totalProducerPrs": 156,
+    "totalProducerPrs": 157,
     "uncoveredIssues": 623,
-    "unvetted": 30,
+    "unvetted": 31,
     "reject": 28,
     "relink": 1,
     "closeCandidatePrs": 5,
