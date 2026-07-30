@@ -1865,6 +1865,12 @@
   ],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 147,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/147",
+      "title": "gh pr view --json files silently caps at 100: the vetter judges a truncated file list and cannot tell"
+    },
+    {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 63,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/63",
@@ -5771,7 +5777,7 @@
     "closeCandidateUpheld": 13,
     "leaks": 23,
     "totalProducerPrs": 161,
-    "uncoveredIssues": 622,
+    "uncoveredIssues": 623,
     "unvetted": 21,
     "reject": 27,
     "relink": 1,
