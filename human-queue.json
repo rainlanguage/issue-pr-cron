@@ -1130,25 +1130,13 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 33,
+        "count": 31,
         "prs": [
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 148,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/148",
-            "title": "dash(pipeline): retired ai:relink files under the vetter — its exit is a re-vet, not a producer transition"
-          },
           {
             "repo": "rainlanguage/claude-audit-skills",
             "number": 68,
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/68",
             "title": "audit: Solidity file placement by kind — own kind in src/ and the suite tree, subject path in the test/src mirror"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 159,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/159",
-            "title": "usage-gate: hold the crons 5% BEHIND pace; retire USAGE_SLACK_PCT (refused, not read)"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -5832,9 +5820,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 159,
+    "totalProducerPrs": 157,
     "uncoveredIssues": 622,
-    "unvetted": 33,
+    "unvetted": 31,
     "reject": 70,
     "relink": 1,
     "closeCandidatePrs": 5,
