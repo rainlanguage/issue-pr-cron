@@ -21212,9 +21212,142 @@ mod repo_root_tests {
     }
 }
 
+/// TEST HELPER: the ONE top-level item of a prompt that a rule lives in, so a conformance
+/// assertion is scoped to the CLAUSE it is about instead of the whole file.
+///
+/// A whole-file `contains` is a WORD-PRESENCE check, not a rule check: an edit can gut the gate
+/// and keep every required phrase somewhere else in the file — a sibling gate, an incident
+/// anecdote, a summary line — and the test still passes. #144's own first cut of the
+/// screenshot-waiver tests was exactly that, which is the defect that PR is about wearing a
+/// test's clothes.
+///
+/// The section runs from the line matching `is_start` to the line before the next line matching
+/// `is_sibling`. Taking whole LINES rather than a byte window means a clause re-wrapped across
+/// lines still resolves, while a phrase moved OUT of the item stops counting.
+///
+/// PANICS when nothing matches `is_start`, and that is load-bearing: an absent section returned
+/// as `""` would make every NEGATIVE `contains` assertion against it pass vacuously — the
+/// pass-by-not-running shape [`repo_root_text`] exists to kill one level up.
+#[cfg(test)]
+fn prompt_section(
+    text: &str,
+    what: &str,
+    is_start: impl Fn(&str) -> bool,
+    is_sibling: impl Fn(&str) -> bool,
+) -> String {
+    let mut lines = text.lines().skip_while(|l| !is_start(l)).peekable();
+    let head = *lines
+        .peek()
+        .unwrap_or_else(|| panic!("no prompt section starts with {what:?}"));
+    let mut out = vec![head];
+    out.extend(lines.skip(1).take_while(|l| !is_sibling(l)));
+    out.join("\n")
+}
+
+/// A numbered STEP of `campaign-prompt.txt` (`5`, `7a`). The producer prompt's top-level items each
+/// start at COLUMN 0 with their number; every continuation line is indented.
+#[cfg(test)]
+fn producer_step(prompt: &str, step: &str) -> String {
+    let head = format!("{step}. ");
+    prompt_section(
+        prompt,
+        &head,
+        |l| l.starts_with(&head),
+        |l| l.starts_with(|c: char| c.is_ascii_digit()),
+    )
+}
+
+/// A `- **<NAME>…**` bullet of `review-prompt.txt` — the vetter's per-PR gates. A bullet ends at
+/// the next bullet OR at the end of the list, i.e. the next numbered step at column 0.
+#[cfg(test)]
+fn vetter_bullet(prompt: &str, name: &str) -> String {
+    let head = format!("- **{name}");
+    prompt_section(
+        prompt,
+        &head,
+        |l| l.trim_start().starts_with(&head),
+        |l| l.trim_start().starts_with("- **") || l.starts_with(|c: char| c.is_ascii_digit()),
+    )
+}
+
+#[cfg(test)]
+mod prompt_section_tests {
+    use super::{producer_step, vetter_bullet};
+
+    /// Shaped like the real prompts: top-level items at column 0, indented continuations, and the
+    /// SAME phrase present in neighbours — which is what a whole-file `contains` cannot tell apart.
+    const PRODUCER: &str = "\
+1. FIRST STEP says THE PHRASE
+5. SCREENSHOTS the rule lives here
+   a wrapped continuation of step 5
+6. NEXT STEP says THE PHRASE too
+7a. LETTERED STEP says THE PHRASE as well
+8. LAST STEP
+";
+
+    const VETTER: &str = "\
+2. For each PR:
+   - **FIRST GATE:** says THE PHRASE
+   - **SCREENSHOT GATE (mandatory):** the rule lives here
+     a wrapped continuation of the gate
+   - **NEXT GATE:** says THE PHRASE too
+3. Record a verdict, which says THE PHRASE as well
+";
+
+    #[test]
+    fn a_step_takes_its_continuations_and_stops_at_the_next_step() {
+        let five = producer_step(PRODUCER, "5");
+        assert!(five.contains("the rule lives here"));
+        assert!(
+            five.contains("a wrapped continuation of step 5"),
+            "an indented continuation is part of the step — a rule may be re-wrapped"
+        );
+        assert!(
+            !five.contains("THE PHRASE"),
+            "a phrase in a NEIGHBOURING step must not count as this step's: {five}"
+        );
+        // A lettered step is its own item, and the digit-sibling rule must find it.
+        let seven_a = producer_step(PRODUCER, "7a");
+        assert!(seven_a.contains("LETTERED STEP"));
+        assert!(!seven_a.contains("LAST STEP"));
+    }
+
+    #[test]
+    fn a_bullet_stops_at_its_sibling_and_at_the_end_of_the_list() {
+        let gate = vetter_bullet(VETTER, "SCREENSHOT GATE");
+        assert!(gate.contains("the rule lives here"));
+        assert!(gate.contains("a wrapped continuation of the gate"));
+        assert!(
+            !gate.contains("THE PHRASE"),
+            "neither a sibling bullet nor the step AFTER the list is inside this gate: {gate}"
+        );
+        // The last bullet ends at the numbered step, not at the end of the file.
+        let last = vetter_bullet(VETTER, "NEXT GATE");
+        assert!(last.contains("says THE PHRASE too"));
+        assert!(
+            !last.contains("Record a verdict"),
+            "the list ends where the next numbered step begins"
+        );
+    }
+
+    /// The guard on the guard: a section that has been RENAMED or deleted must turn the test RED.
+    /// Returning an empty string would leave every `!contains` assertion passing against nothing.
+    #[test]
+    #[should_panic(expected = "no prompt section starts with \"4. \"")]
+    fn a_missing_section_panics_rather_than_yielding_an_empty_haystack() {
+        producer_step(PRODUCER, "4");
+    }
+
+    #[test]
+    #[should_panic(expected = "no prompt section starts with \"- **QA GATE\"")]
+    fn a_missing_bullet_panics_too() {
+        vetter_bullet(VETTER, "QA GATE");
+    }
+}
+
 #[cfg(test)]
 mod settings_tests {
-    use super::repo_root_text;
+    use super::{producer_step, repo_root_text, vetter_bullet};
     use serde_json::Value;
 
     // The producer AND vetter are one-shot crons that must never park themselves — ScheduleWakeup and
@@ -21492,34 +21625,252 @@ mod settings_tests {
         );
     }
 
-    /// #141: `record_verdict` now REFUSES a `ready` whose changed `.sol` files break the pragma
+    /// #141: `record_verdict` REFUSES a `ready` whose changed `.sol` files break the pragma
     /// convention, and a guard the prompt does not teach costs a whole run's tool calls to
     /// discover. Two halves have to be in the prompt for the refusal to be actionable: what the
     /// rule IS (so a `reject` note can state it correctly, per file kind) and the ORDER the check
     /// imposes — it reads the `pr_checkout` tree, so a verdict recorded after `clone_release` has
     /// no source to be checked against.
+    ///
+    /// SCOPED to the gate, on #140's pattern and for its reason: every phrase below also occurs in
+    /// this file's OTHER discussion of the pragma rule, so a whole-file `contains` would keep
+    /// passing while the gate bullet itself was gutted.
     #[test]
     fn the_vetter_prompt_teaches_the_mechanical_convention_gate() {
-        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
+        let gate = vetter_bullet(&prompt, "MECHANICAL CONVENTION GATE");
         assert!(
-            prompt.contains("MECHANICAL CONVENTION GATE"),
-            "the vetter must be told the gate exists, not discover it as a refusal"
+            gate.contains("`record_verdict` REFUSES A `ready`"),
+            "the vetter must be told the WRITE refuses, not that a check exists somewhere: {gate}"
         );
         assert!(
-            prompt.contains("including concrete test mocks"),
+            gate.contains("including concrete test mocks"),
             "the rule the gate enforces must be stated as the skill states it — the miss it was \
-             filed for (rain.deploy#20) was on a test mock"
+             filed for (rain.deploy#20) was on a test mock: {gate}"
         );
         assert!(
-            prompt.contains("BEFORE `clone_release`"),
-            "the check reads the `pr_checkout` tree, so the prompt must state the ordering"
+            gate.contains("BEFORE `clone_release`"),
+            "the check reads the `pr_checkout` tree, so the gate must state the ordering: {gate}"
         );
         assert!(
-            prompt.contains("mass-pinning"),
-            "an inconsistent-pragma finding is answered per file kind; the prompt must forbid the \
-             mass pin, which is the wrong fix the finding invites"
+            gate.contains("NEVER by mass-pinning"),
+            "an inconsistent-pragma finding is answered per file kind; the gate must forbid the \
+             mass pin, which is the wrong fix the finding invites: {gate}"
+        );
+        // A rule with no verdict attached is advice. The refusal IS the reject note.
+        assert!(
+            gate.contains("record `reject` with its lines as the note"),
+            "the gate must name the verdict the refusal routes to, coupled to it: {gate}"
+        );
+        // The honest boundary. Without it the vetter reads a machine-checked pragma as evidence
+        // the audit lens as a whole was applied — the substitution #141 is about, one level up.
+        assert!(
+            gate.contains("This closes the MECHANICAL rules only."),
+            "the gate must say what it does NOT check, or it licenses exactly the assumption \
+             #141 was filed against: {gate}"
+        );
+    }
+
+    // Both tests below are SCOPED: the positive assertions run against the ONE gate/step the rule
+    // lives in (`vetter_bullet` / `producer_step`), never the whole file. A whole-file `contains`
+    // proves a phrase EXISTS somewhere, which is satisfied by an incident anecdote or a sibling
+    // gate while the rule itself is weakened — the same substitution of a claim for the evidence
+    // that #140 is about. The NEGATIVE assertions stay whole-file on purpose: a retired phrase
+    // must not survive ANYWHERE, and scoping those to the section would let the loose bar be
+    // moved one bullet over and still pass.
+    //
+    /// #140: the screenshot waiver was being used to skip the render with the CLAIM the render
+    /// would have made — cyclo.site#431 waived on "rendered output is pixel-identical", #408 rode
+    /// a pending marker through three vetter passes while a render would have shown four expired
+    /// epochs at a glance. Both were human-rejected. A gate that still accepts a free-text
+    /// `<reason>` re-licenses exactly that, so the narrowing is pinned here.
+    #[test]
+    fn the_vetter_prompt_narrows_the_screenshot_waiver_to_a_failed_render() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let gate = vetter_bullet(&prompt, "SCREENSHOT GATE");
+
+        // The marker is EXACT — the colon and a reason are part of it. A bare
+        // `screenshot pending (manual)` with nothing after it is a marker with no why-not at all,
+        // and `worklist`'s `has_shot` backs off on the marker alone, so the prompt has to teach
+        // the whole thing coupled to the word that gates it.
+        assert!(
+            gate.contains("carries a VALID `screenshot pending (manual): <reason>`"),
+            "the gate must spell the marker with its colon AND call it VALID-only: {gate}"
+        );
+        // The bar, as one sentence. Split it and either half reads as a lower bar.
+        assert!(
+            gate.contains(
+                "**A WAIVER IS VALID ONLY WHEN ITS REASON IS A RENDER THAT WAS ATTEMPTED AND \
+                 FAILED**"
+            ),
+            "the waiver's bar is a render that was ATTEMPTED AND FAILED, stated as a rule: {gate}"
+        );
+        // …and what "attempted" has to look like on the page. Without the format, "attempted" is
+        // satisfied by the word "attempted".
+        for part in ["WHAT WAS RUN", "WHERE IT STOPPED"] {
+            assert!(
+                gate.contains(part),
+                "the gate must demand {part}: an attempt is named by what ran and where it \
+                 stopped, or `attempted` is just another adjective"
+            );
+        }
+        assert!(
+            gate.contains("**A STATEMENT ABOUT THE WORLD IS NOT AN ATTEMPT:**"),
+            "an unrenderable-stack ASSERTION is true whether or not anyone tried — the gate must \
+             say so as a rule: {gate}"
+        );
+        // The specific wording CodeRabbit caught: it may appear ONLY as the banned shape, i.e.
+        // AFTER the rule that bans it — never back in the list of valid reasons.
+        let banned_at = gate
+            .find("**A STATEMENT ABOUT THE WORLD IS NOT AN ATTEMPT:**")
+            .expect("asserted above");
+        let phrase = "the stack has never rendered in it";
+        assert_eq!(
+            gate.matches(phrase).count(),
+            1,
+            "`{phrase}` must appear once, as the banned shape — a second copy is a valid-reason \
+             example again: {gate}"
+        );
+        assert!(
+            gate.find(phrase).is_some_and(|at| at > banned_at),
+            "`{phrase}` must sit AFTER the rule that bans it, not in the valid-waiver list: {gate}"
+        );
+        assert!(
+            gate.contains("the verdict is `design`"),
+            "a whole stack with no render path is a standing gap only a human closes — that is \
+             `design`, not a waiver the vetter banks: {gate}"
+        );
+        assert!(
+            gate.contains("**A JUDGEMENT ABOUT THE RENDERED OUTPUT IS NEVER A WHY-NOT:**"),
+            "the ban must be stated as a RULE — examples alone leave the next phrasing open: {gate}"
+        );
+        for conclusion in ["pixel-identical", "no visible effect", "cosmetic only"] {
+            assert!(
+                gate.contains(conclusion),
+                "the gate must name `{conclusion}` as a conclusion a render supports or \
+                 refutes: these are the sentences the evidence was actually skipped with"
+            );
+        }
+        // A rule with no verdict attached is advice. This is the note the producer reads.
+        assert!(
+            gate.contains(
+                "`reject` with note \"screenshot waived on a claim about the render, not a \
+                 failed attempt\""
+            ),
+            "the claim-waiver must carry its verdict AND its note, coupled: {gate}"
+        );
+        for incident in ["cyclo.site#431", "cyclo.site#408"] {
+            assert!(
+                gate.contains(incident),
+                "the rule carries its incidents — a bare prohibition is the kind a vetter argues \
+                 around, and {incident} is one of the two it was written from"
+            );
+        }
+        // The tail symmetry line is what a skimming vetter reads, so it has to state the same bar.
+        assert!(
+            gate.contains("to a screenshot or a FAILED RENDER ATTEMPT"),
+            "the gate's closing symmetry statement must repeat the FAILED ATTEMPT bar: {gate}"
+        );
+        // The old open-ended bar is what let a claim pass as a why-not. Whole-file: it must be
+        // GONE, not moved to a neighbouring bullet where this gate's reader still inherits it.
+        assert!(
+            !prompt.contains("a screenshot or a stated why-not"),
+            "`a stated why-not` is the loose bar #140 closed — it must not survive anywhere"
+        );
+    }
+
+    /// #140, producer side. The two prompts are deliberately symmetric: step 5 governs the PR the
+    /// producer OPENS and 7a the close-candidate flag it FILES, and both offered a free-text
+    /// why-not. Narrowing only the vetter would leave the producer writing waivers that are now
+    /// an automatic reject — a full round trip through the queue per PR.
+    #[test]
+    fn the_producer_prompt_narrows_the_screenshot_waiver_to_a_failed_render() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step5 = producer_step(&prompt, "5");
+        let step7a = producer_step(&prompt, "7a");
+
+        // The EXACT marker, in the one place the producer is told what to write: the colon and the
+        // placeholder are part of the string the vetter's gate and `worklist` both read.
+        assert!(
+            step5.contains("`screenshot pending (manual): <what you ran and where it stopped>`"),
+            "step 5 must spell the marker EXACTLY, colon and reason-shape included — a \
+             differently-worded sentence waives nothing: {step5}"
+        );
+        assert!(
+            step5.contains("THE ONLY WAIVER IS A RENDER YOU ATTEMPTED AND COULD NOT GET"),
+            "step 5's waiver must be anchored to a render that was attempted and COULD NOT GET \
+             produced, or `missing` reads as `pending`: {step5}"
+        );
+        // The placeholder is only a bar if the prompt says it is taken literally.
+        assert!(
+            step5.contains("is LITERAL") && step5.contains("the concrete failure point"),
+            "step 5 must say the placeholder is LITERAL and demand the concrete failure point, or \
+             `<what you ran and where it stopped>` gets filled with a conclusion: {step5}"
+        );
+        assert!(
+            step5.contains("\"THE STACK HAS NEVER RENDERED\" IS NOT A FAILURE POINT"),
+            "an unrenderable-stack assertion describes no attempt — step 5 must reject it as a \
+             reason, symmetric with the vetter's gate: {step5}"
+        );
+        assert!(
+            step5.contains("`flag-design \"unrenderable-render:"),
+            "an unsupported stack belongs in `flag-design`, not in a per-PR waiver: {step5}"
+        );
+        assert!(
+            step5.contains("YOUR OPINION OF WHAT THE RENDER WOULD HAVE SHOWN IS NEVER THE REASON"),
+            "the producer needs the rule that convicted cyclo.site#431, not just the vetter's: \
+             {step5}"
+        );
+        for conclusion in ["pixel-identical", "no visible effect", "cosmetic only"] {
+            assert!(
+                step5.contains(conclusion),
+                "step 5 must name `{conclusion}` as a conclusion a render exists to support or \
+                 refute — these are the sentences the evidence was actually skipped with"
+            );
+        }
+        // The scope test is the OTHER way out of this gate, and #431's argument walked through it.
+        assert!(
+            step5.contains("never whether you predict the render would look the same"),
+            "step 5's scope test must ask whether the code REACHES a rendered surface, never \
+             whether the render is predicted to match: {step5}"
+        );
+        assert!(
+            step5.contains("cyclo.site#431"),
+            "the rule carries its incident, like every other rule in this prompt: {step5}"
+        );
+
+        // 7a is the OTHER waiver: a GUI close-candidate asks a human to destroy work on the
+        // strength of a rendered claim, so its why-not takes the same bar.
+        assert!(
+            step7a.contains(
+                "`already-fixed-on-main: <file:line>; screenshot-not-possible: <concrete reason>`"
+            ),
+            "7a keeps its own marker spelling — the flag tool's reason is parsed by a human: \
+             {step7a}"
+        );
+        assert!(
+            step7a.contains("THE ATTEMPT THAT FAILED (what you rendered, where it stopped)"),
+            "7a's why-not takes the same what-ran/where-it-stopped shape as step 5's: {step7a}"
+        );
+        assert!(
+            step7a.contains("NEITHER a screenshot NOR a FAILED-ATTEMPT why-not"),
+            "7a must demand the attempt too, or the narrowing only covers PRs: {step7a}"
+        );
+        assert!(
+            step7a.contains("An unattempted render is not \"not possible\", it is not done."),
+            "7a must say what `not possible` excludes, or it reads as a free-text field: {step7a}"
+        );
+        // Whole-file: 7a's old bar must be gone from the prompt, not shadowed by a stricter
+        // sentence above it or relocated into a neighbouring step.
+        assert!(
+            !prompt.contains("NEITHER a screenshot NOR a stated why-not"),
+            "7a's old open-ended bar must be gone, not shadowed by a stricter sentence above it"
         );
     }
 
