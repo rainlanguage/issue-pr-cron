@@ -21932,7 +21932,7 @@ mod lens_gate_tests {
         lens_record, lens_refusal, lens_refusal_message, lens_stamp, pr_refs_in, record_gate,
         repo_root_text, verdict_comment, verdict_protocol, vetted_at_head, ChangedFile,
         ChangedFileSet, Covered, LensEvidence, LensRefusal, RecordGate, RunIdentity, VetProtocol,
-        STAGE_LENS, VET_LENS_PREFIX, VET_PROTOCOL, VET_PROTOCOL_PREFIX,
+        STAGE_LENS, VET_LENS_PREFIX, VET_PROTOCOL,
     };
     use serde_json::json;
 
