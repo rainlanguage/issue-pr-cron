@@ -318,16 +318,16 @@ Bash deny-list is prefix-matched and bypassable. For the vetter that gap is
 closed: `pr-review-report mcp` serves its transitions over MCP (stdio), and that
 server is the vetter's **only** tool surface.
 
-| Tool                             | The move it makes                                                                                                                                                                           |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list |
-| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                           |
-| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                              |
-| `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost                                                         |
-| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                             |
-| `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                               |
-| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                     |
-| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                     |
+| Tool                             | The move it makes                                                                                                                                                                              |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unvetted`                       | state-load: ONE PAGE of the open PRs to vet, vet-first, each with head/labels/review/sacred/vetted/ci/mergeable, plus the whole-queue `counts`, `more`, and the `openThreads` withhold list    |
+| `pr_context`                     | read one PR: body, files, diff, every linked issue, and the trusted `🤖 ai:*` comments — one call                                                                                              |
+| `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                                 |
+| `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost — refused unless `covered` accounts for every changed file |
+| `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                                |
+| `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                                  |
+| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                        |
+| `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                        |
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
@@ -445,6 +445,10 @@ carries both facts, and counts as current only when both hold:
   has to move, no branch is touched, no comment is rewritten, and the next
   scheduled vetter run recomputes them. Bump it when the audit lens, a mandatory
   gate or the verdict vocabulary changes — not for a reworded prompt.
+  `vet-protocol 2` is scope coverage (#131): a verdict now carries a claim,
+  checked in the binary, that every file the PR changes was in view when it was
+  formed. That is a mandatory gate by the definition above, so a protocol-1
+  verdict is not a value of the current function and is recomputed.
 
 An **unstamped** comment is `VetProtocol::Unknown` and is never current. It was
 written under rules that cannot be identified, and unidentified is not "fine" —
@@ -458,6 +462,80 @@ verdict from any account other than the trusted one is not a verdict at all
 recomputed verdict at an unchanged head must still be POSTED, or the PR would
 keep the superseded stamp, stay un-vetted, and be re-derived by every run while
 nothing was ever written.
+
+### The changed-file list is read once, and it says whether it is whole
+
+`gh pr view --json files` returns at most **100** entries. `changedFiles`
+reports the real total, and it is the **only** thing in the document that says
+the array is a page. Measured on `rainlanguage/raindex#2796`: `changedFiles` 143
+against an array of 100 — no error, no flag, nothing in the payload. Every
+consumer read the bare array and could not tell, and they all failed **open**:
+the missing files read as _absent_ rather than as _unknown_, so a gate skipped
+them and called the PR clean, a manifest presented 100 files as the whole PR,
+and a path match concluded a requirement did not apply.
+
+Measured across the pipeline orgs (`rainlanguage`, `cyclofinance`, `S01-Issuer`;
+133 non-archived repos, 6,166 PRs): **80 PRs are over the cap**, 1.3%, spread
+over 16 repos including `raindex`, `cyclo.site` and `st0x.deploy`. A thin tail
+that keeps recurring rather than a one-off — and it lands on the widest PRs,
+where an unaccounted file is hardest to notice by reading.
+
+So there is ONE reader. `ChangedFileSet` has two states, `Complete` and
+`Partial`, and there is no bare `Vec` a caller can mistake for the whole set:
+the type is the mechanism, and it makes the truncated case unignorable at the
+call site. `changed_files_from_view` is the pure read of a `gh pr view`
+document; `pr_changed_files` resolves a `Partial` whose total is known by
+re-fetching the paginating REST endpoint. **Either field absent leaves the set
+`Partial`** — the same posture as `Merge::Unknown` and
+`CodeRabbitCoverage::Unreadable`, because a field requested on the call that
+produced the document is _unknown_ when absent, never _nothing_.
+
+Pagination is attempted **only when the total is known**, and that restraint is
+#129. `gh_json` collapses every failure into `None`, so a re-fetch that failed
+on a rate limit cannot be told from one that returned nothing; the only defence
+available is cross-checking the result against a count fetched independently.
+With no count there is nothing to check against, so the reader stays `Partial`
+rather than claiming a completeness it cannot verify.
+
+Each consumer then decides what `Partial` means for **it**. Forcing one answer
+on all three is how a gate that should refuse ends up merely warning, or a read
+that should warn ends up refusing:
+
+- **The verdict's scope-coverage gate REFUSES**, on every verdict
+  (`RecordGate::FilesUnknown`). A claim checked against a list that may be
+  missing 43 files is not checked, and an unchecked claim is not a verdict — the
+  same ruling `NoDiff` already makes. Refusing every verdict rather than only
+  `ready` is right because this is never a property of the PR that a different
+  verdict would route around: it is a read that failed, and the fix is to read
+  again.
+- **`pr_context` DEGRADES loudly**: the manifest it can build, plus
+  `filesTruncated`, `filesTotal` and `filesTruncatedReason`. A reader handed 100
+  of 143 files can still form a partial judgement; what it must never do is
+  mistake a page for a complete small PR. `filesTotal` is `null` when even the
+  count is unknown — a `0` there would read as a PR that changes nothing.
+- **`worklist`'s screenshot gate answers `UiTouch::Unknown`** — _may_ touch UI,
+  so the requirement applies. A match inside the page still proves `Yes`
+  (finding a UI file needs no other file in view); no match proves nothing. `No`
+  is only ever returned off a `Complete` list. That closes a second way past the
+  3c gate without waiving anything (cf. #140), and the waiver still works.
+
+`worklist` resolves the list at its one impure point — `fetch_pr_detail`, the
+same place `unresolvedThreads` is injected — and writes `files` and
+`changedFiles` back **together**, so `worklist_row` stays a pure function of a
+document that is internally consistent. A full array beside a stale count would
+still read as `Partial`; a corrected count beside a capped array is the
+fail-open itself. When resolution fails the fields are left exactly as fetched,
+the pure read reports `Partial`, and the safe branch fires.
+
+**`gh pr diff` does not have this problem, measured.** It carries every file up
+to **300**, and past that it returns HTTP 406 (`PullRequest.diff too_large`)
+with a non-zero exit — so `gh_text` returns `None` and the existing refusals
+fire. Verified on `raindex#2796` (143 files) and `#2586` (223): every
+`diff --git` header present, 143 and 223 respectively. `#2526` (935 files)
+returns the 406. The diff was already fail-closed, so paginating `files` has
+closed the fail-open rather than moved it. 13 of the 80 over-cap PRs are also
+over 300, and on those `pr_context` and `record_verdict` refuse outright rather
+than truncate.
 
 ### Every tool result is bounded, and going over is the tool's error
 
