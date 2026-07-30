@@ -2326,6 +2326,118 @@ fn usage_record(
     doc
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The LENS LEDGER — the harness's own record that the audit skill was invoked.
+//
+// #151. `review-prompt.txt` tells the vetter to INVOKE the `audit` skill per PR and nothing could
+// see whether it did. Measured on the 2026-07-29T17:17:35Z vetter run: 35 `record_verdict` calls,
+// 35 `pr_context`, 3 `pr_checkout`, ONE `Skill`. 34 verdicts were recorded with the lens never run
+// and 32 with no source tree at all, and two of them (`rainlanguage/rain.deploy#20` and `#21`) are
+// `ready` verdicts on Solidity the skill flags verbatim.
+//
+// What makes this observable rather than narrated is WHERE it is read. A `Skill` tool_use is written
+// into the stream-json trace by `claude` itself, before the tool runs; the vetter has no `Bash`, no
+// `Write` and no `Edit`, so it cannot author, suppress or amend a line of it. This filter already
+// sits in the runner's live pipe appending records the instant they become knowable, which makes it
+// the one place in the system that sees the harness say what the model did — so the observation goes
+// HERE and the verdict gate reads the ledger it leaves.
+//
+// It is read from THIS PIPE rather than from the tee'd trace FILE on purpose. `tee` block-buffers
+// its file outputs (only its stdout is `_IONBF`), so the file can lag the stream by up to a block —
+// and a Skill call in the same assistant message as the verdict that follows it would then be
+// invisible to a reader of the file at exactly the moment it mattered. Downstream of `tee`'s
+// unbuffered stdout there is no such window: the whole assistant message is emitted before any of
+// its tool_use blocks execute, so this filter has the line on disk before the MCP server is asked
+// for anything.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The `stage` of a LENS record: the harness invoked the audit skill, scoped to one PR (#151).
+///
+/// A separate FILE from `runs.jsonl` rather than a fifth stage in it. `runs.jsonl` is the committed
+/// per-run metrics series the dashboard reads and `run-metrics` reconciles by `runId`; per-PR rows
+/// are neither a run measurement nor reconcilable that way. The `stage` key is kept so the two files
+/// are read by the same eye.
+const STAGE_LENS: &str = "lens";
+
+/// The skill whose invocation IS the audit lens. Matched on the last `:`-segment of the skill id, so
+/// `audit:audit` (the plugin-qualified name the vetter's surface presents) and a bare `audit` are one
+/// state, while no other skill in the surface can be credited as the lens.
+const AUDIT_SKILL_LEAF: &str = "audit";
+
+/// PURE: every `owner/repo#number` in a blob of prose, validated through [`parse_pr_ref`] — the one
+/// parser — and de-duplicated in first-seen order.
+///
+/// It is a SCAN over free text because the thing being scanned is the model-authored `args` string of
+/// a `Skill` call, which is prose. Candidate tokens are split on whitespace and on the punctuation
+/// prose puts around a reference (a trailing full stop, a comma, brackets); anything that does not
+/// then parse as a strict ref is discarded, so `src/lib/Foo.sol#L3` and `#386` name no PR.
+fn pr_refs_in(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in text.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                ',' | ';' | '(' | ')' | '[' | ']' | '<' | '>' | '"' | '\'' | '`'
+            )
+    }) {
+        let token = raw.trim_matches(|c: char| matches!(c, '.' | ':' | '!' | '?'));
+        if let Ok((slug, num)) = parse_pr_ref(token) {
+            let refname = format!("{slug}#{num}");
+            if !out.contains(&refname) {
+                out.push(refname);
+            }
+        }
+    }
+    out
+}
+
+/// PURE: the PR an audit-skill invocation is the lens for, from ONE stream-json event.
+///
+/// Three conditions, and each is the answer to a way the credit could be claimed without the work:
+///
+/// - the event carries a `tool_use` whose `name` is `Skill` — a `text` block SAYING the skill was
+///   invoked is not an invocation, and that substitution is the whole failure #151 is about;
+/// - `input.skill`'s last `:`-segment is [`AUDIT_SKILL_LEAF`] — invoking `dataviz` is not the lens;
+/// - `input.args` names EXACTLY ONE PR. `review-prompt.txt` says "SCOPED TO THIS PR", singular, and
+///   one invocation listing thirty-five refs would otherwise buy thirty-five verdicts for one call.
+///   Naming none is likewise uncreditable: the ledger's whole content is which PR was examined.
+fn lens_invocation(ev: &Value) -> Option<(String, String)> {
+    let content = ev.get("message")?.get("content")?.as_array()?;
+    for block in content {
+        if block.get("type").and_then(|t| t.as_str()) != Some("tool_use")
+            || block.get("name").and_then(|n| n.as_str()) != Some("Skill")
+        {
+            continue;
+        }
+        let input = block.get("input")?;
+        let skill = input.get("skill").and_then(|s| s.as_str())?;
+        if skill.rsplit(':').next() != Some(AUDIT_SKILL_LEAF) {
+            continue;
+        }
+        let args = input
+            .get("args")
+            .and_then(|a| a.as_str())
+            .unwrap_or_default();
+        let refs = pr_refs_in(args);
+        if let [only] = refs.as_slice() {
+            return Some((only.clone(), skill.to_string()));
+        }
+    }
+    None
+}
+
+/// One ledger row: the audit skill was invoked, and this is the PR it was scoped to.
+fn lens_record(pr: &str, skill: &str, trace: &str, id: &RunIdentity) -> Value {
+    let mut doc = serde_json::json!({
+        "trace": trace,
+        "stage": STAGE_LENS,
+        "pr": pr,
+        "skill": skill,
+    });
+    stamp_identity(&mut doc, id);
+    doc
+}
+
 /// Append one record to the metrics file, creating it (and its directory) if absent.
 ///
 /// Best-effort by contract: this runs INSIDE the runner's live pipe, and a metrics write must
@@ -2361,7 +2473,12 @@ fn append_record(path: &str, doc: &Value) -> std::io::Result<()> {
 /// It is a pass-through FIRST: every line is forwarded before it is parsed, so the downstream
 /// distiller keeps seeing the whole stream even if nothing here works. Every failure — an
 /// unparseable line, an unwritable metrics file — is swallowed for the same reason.
-fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
+///
+/// `lens` is the second thing it records, and the reason it is here rather than in a filter of its
+/// own: this is already the binary standing in the harness's live stream (#151). Every audit-skill
+/// invocation it sees is appended to that ledger the instant the harness announces it, which is
+/// before the tool runs and therefore long before any verdict could be recorded off it.
+fn run_timings_mode(out: &str, trace: &str, lens: Option<&str>, id: &RunIdentity) -> i32 {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -2382,6 +2499,12 @@ fn run_timings_mode(out: &str, trace: &str, id: &RunIdentity) -> i32 {
         };
         for phase in probe.observe(&ev) {
             let _ = append_record(out, &partial_record(&probe, phase, trace, id));
+        }
+        // #151. Best-effort like every other write here — but note what "best effort" means for THIS
+        // one: an unwritable ledger loses an invocation, and the verdict gate then REFUSES rather
+        // than records. The failure direction is a verdict withheld, never a verdict waved through.
+        if let (Some(lens), Some((pr, skill))) = (lens, lens_invocation(&ev)) {
+            let _ = append_record(lens, &lens_record(&pr, &skill, trace, id));
         }
         // An escalation goes to disk immediately; token totals go on the stride. Both write the
         // same record, so an escalation also refreshes the numbers and vice versa.
@@ -4354,8 +4477,13 @@ fn labels_to_remove(current: &[String], target: &str) -> Vec<String> {
 /// at all: every verdict written before this constant existed carries no stamp and reads as
 /// [`VetProtocol::Unknown`]. `2` is scope coverage (#131): a verdict now carries a claim, checked in
 /// the binary, that every file the PR changes was in view when it was formed — a mandatory gate by
-/// the definition above, so a protocol-1 verdict is not a value of the current function.
-const VET_PROTOCOL: u32 = 2;
+/// the definition above, so a protocol-1 verdict is not a value of the current function. `3` is the
+/// audit lens (#151): a verdict is now refused unless this run holds SOURCE at the PR's head and an
+/// audit-skill invocation scoped to it, and the record carries the binary's own account of both. That
+/// is a mandatory gate AND a change to what vetting means, and the bump is the mechanism that undoes
+/// the damage rather than merely stopping more of it — the 34 verdicts the 2026-07-29T17:17:35Z run
+/// recorded with the lens never run all stop being current at once and come back to be re-vetted.
+const VET_PROTOCOL: u32 = 3;
 
 /// The line [`verdict_comment`] stamps the protocol on, and [`verdict_protocol`] reads it back from.
 const VET_PROTOCOL_PREFIX: &str = "vet-protocol ";
@@ -4394,16 +4522,36 @@ fn verdict_protocol(body: &str) -> VetProtocol {
         .unwrap_or(VetProtocol::Unknown)
 }
 
-/// The SHA-bound vetter comment: `🤖 ai:vetter` marker line, the `vet-protocol <n>` stamp, then
-/// `Reviewed <sha>: <verdict>` (plus ` — <note>`), then a `cost <n> — <basis>` line when a cost is
-/// given. Each fact is on its OWN line so the `Reviewed <sha>:`/`Reviewed <sha>: <verdict>` matches
-/// (vetted-at-head, skip-dedup) are unaffected by the others.
+/// The line [`verdict_comment`] writes the binary's own account of the audit lens on (#151).
+const VET_LENS_PREFIX: &str = "lens ";
+
+/// The SHA-bound vetter comment: `🤖 ai:vetter` marker line, the `vet-protocol <n>` stamp, the
+/// `lens <what the binary verified>` stamp, then `Reviewed <sha>: <verdict>` (plus ` — <note>`), then
+/// a `cost <n> — <basis>` line when a cost is given. Each fact is on its OWN line so the
+/// `Reviewed <sha>:`/`Reviewed <sha>: <verdict>` matches (vetted-at-head, skip-dedup) are unaffected
+/// by the others.
 ///
-/// The stamp says which version of the vet function produced this value — the two facts a cache
-/// entry needs, the input (`sha`) and the function ([`VET_PROTOCOL`]), stated together. It sits
-/// ABOVE the verdict line because everything below it is model-authored text.
+/// The protocol stamp says which version of the vet function produced this value — the two facts a
+/// cache entry needs, the input (`sha`) and the function ([`VET_PROTOCOL`]), stated together.
+///
+/// The `lens` stamp says how deep the reading behind it went, and it is written from what
+/// [`verdict_lens_evidence`] ESTABLISHED, never from anything the model said. That is what makes it a
+/// different object from the evidence-of-reading preamble this pipeline spent #131 and #140 removing:
+/// a preamble is the model's account of its own diligence, and this is the binary's account of two
+/// facts it checked. It also makes an ABSENT stamp meaningful — a verdict with no `lens` line is one
+/// written before the lens was checkable at all, which is exactly the 34-in-35 population #151
+/// measured, and no longer indistinguishable from a vet that read the source.
+///
+/// Both stamps sit ABOVE the verdict line because everything below it is model-authored text.
 /// This comment is now the SOLE home of verification cost — there is no cost sidecar.
-fn verdict_comment(sha: &str, verdict: &str, note: &str, cost: Option<i64>, basis: &str) -> String {
+fn verdict_comment(
+    sha: &str,
+    verdict: &str,
+    note: &str,
+    cost: Option<i64>,
+    basis: &str,
+    lens: Option<&str>,
+) -> String {
     let tail = if note.trim().is_empty() {
         String::new()
     } else {
@@ -4414,8 +4562,12 @@ fn verdict_comment(sha: &str, verdict: &str, note: &str, cost: Option<i64>, basi
         Some(c) => format!("\ncost {c} — {}", basis.trim()),
         None => String::new(),
     };
+    let lens_line = match lens {
+        Some(l) => format!("\n{VET_LENS_PREFIX}{l}"),
+        None => String::new(),
+    };
     format!(
-        "🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}\nReviewed {sha}: {verdict}{tail}{cost_line}"
+        "🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}{lens_line}\nReviewed {sha}: {verdict}{tail}{cost_line}"
     )
 }
 
@@ -5630,6 +5782,210 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
 /// every wide PR unvettable, which is why it belongs in the same named constant.
 const RECORD_VERDICT_FIELDS: &str = "headRefOid,labels,comments,reviewDecision,files,changedFiles";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The AUDIT LENS is a PRECONDITION of a verdict, and the binary checks it (#151).
+//
+// Measured on the 2026-07-29T17:17:35Z vetter run: 35 verdicts, 3 `pr_checkout`, 1 `Skill`. The
+// prompt has demanded both per PR for months; asking is what produced 3-in-35 and 1-in-35.
+//
+// TWO facts, and neither is the model's word for anything:
+//
+// - SOURCE — the `pr_checkout` tree for this PR, holding this PR's head. `pr_checkout` is an MCP tool
+//   this same binary implements, `checkout_dir` derives the path from `(work_dir, slug, num)` with no
+//   search, and the vetter has no `Bash`/`Write`/`Edit` with which to make a tree of its own.
+// - INVOCATION — an audit-skill `Skill` call scoped to this PR, as recorded in the run's lens ledger
+//   by [`run_timings_mode`] from the harness's own live stream. The model authors the `args` and so
+//   authors the SCOPE; it does not author the fact that a skill ran, and it cannot write the ledger.
+//
+// The invocation half is therefore stronger than a checkout — which is a precondition of the skill,
+// not the skill — and weaker than proof, because the ref inside `args` is model text. What it does
+// buy is that the credit cannot be had without paying for a real invocation, and that a single
+// invocation buys exactly one PR (see [`lens_invocation`]). It is not, and does not pretend to be, a
+// check on what the skill CONCLUDED; correctness, security and design stay entirely the vetter's.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The env var naming the run's lens ledger. Exported by `review-run.sh` beside the trace it is
+/// derived from, and read HERE because the MCP server's argv is fixed by `review-mcp.json` and
+/// cannot carry a per-run path — the same split `RUN_INFRA_FILE` already uses.
+const LENS_LEDGER_ENV: &str = "RUN_LENS_LEDGER";
+
+/// What the run can say about the audit lens for ONE PR. FOUR states, and the two in the middle are
+/// the whole point of the type: "the run does not record invocations" is NOT "the skill was not
+/// invoked", and collapsing them either refuses every verdict on a run that keeps no ledger or lets a
+/// lensless one through in silence.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum LensEvidence {
+    /// Source at this PR's head AND an audit-skill invocation scoped to it. The lens was pointed at
+    /// this PR.
+    Full { sha: String },
+    /// Source at this PR's head; this run keeps no ledger, so the invocation is UNOBSERVED. Recorded,
+    /// and the record SAYS so — the distinction #146 correctly called unverifiable when a model
+    /// asserts it is verifiable when the binary is the one asserting it.
+    SourceOnly { sha: String, why: String },
+    /// Source at this PR's head; the run keeps a ledger and it holds no invocation for this PR.
+    NotInvoked { ledger: String },
+    /// No `pr_checkout` tree for this PR at its head. Carries why.
+    NoSource(String),
+}
+
+/// PURE: the PR refs an already-read lens ledger credits, newest last. Unparseable lines are skipped
+/// — this file is appended to from inside a live pipe, so a truncated final line is a normal state and
+/// not a reason to discard the rows before it.
+fn lens_ledger_prs(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|d| d.get("stage").and_then(|s| s.as_str()) == Some(STAGE_LENS))
+        .filter_map(|d| {
+            d.get("pr")
+                .and_then(|p| p.as_str())
+                .map(|s| s.trim().to_string())
+        })
+        .collect()
+}
+
+/// PURE: resolve the lens evidence from the two things already read — whether the checkout holds this
+/// PR's head, and what the ledger says.
+///
+/// Split from its I/O so every state is drivable from a test with no clone and no run. `head` is
+/// `Ok(sha)` when the tree at [`checkout_dir`] resolves one, `Err(why)` otherwise.
+fn lens_evidence(
+    head: Result<String, String>,
+    sha: &str,
+    ledger: Option<(&str, &str)>,
+    pr_ref: &str,
+) -> LensEvidence {
+    let head = match head {
+        Ok(h) => h,
+        Err(why) => return LensEvidence::NoSource(why),
+    };
+    // The same cross-check `review-prompt.txt` demands before the vetter reads a line. A tree holding
+    // another commit is not this PR's source, and a lens pointed at it is a confident verdict about
+    // code this PR never touched (#81).
+    if head != sha {
+        return LensEvidence::NoSource(format!(
+            "the audit-lens checkout holds {head}, which is not this PR's head {sha}"
+        ));
+    }
+    match ledger {
+        None => LensEvidence::SourceOnly {
+            sha: head,
+            why: format!("this run names no lens ledger (${LENS_LEDGER_ENV} is unset)"),
+        },
+        Some((path, text)) => {
+            if lens_ledger_prs(text).iter().any(|p| p == pr_ref) {
+                LensEvidence::Full { sha: head }
+            } else {
+                LensEvidence::NotInvoked {
+                    ledger: path.to_string(),
+                }
+            }
+        }
+    }
+}
+
+/// The verdict path's adapter onto [`lens_evidence`]: the two impure reads, and nothing else.
+///
+/// A PR number that will not parse names no checkout, so it is `NoSource` and never a state that
+/// waves the gate through — the MCP tool parses the number before this is reached, which is exactly
+/// why the unreachable spelling must not be the permissive one. A ledger path that is SET but
+/// unreadable is likewise not an absent ledger: it is an empty one, so the PR is `NotInvoked`. The
+/// runner that set the variable is asserting the run records invocations, and "it was going to say
+/// yes" is not a reading.
+fn verdict_lens_evidence(slug: &str, pr: &str, sha: &str) -> LensEvidence {
+    let pr_ref = format!("{slug}#{pr}");
+    let Ok(num) = pr.parse::<u64>() else {
+        return LensEvidence::NoSource(format!(
+            "`{pr}` is not a PR number, so no audit-lens checkout can be named"
+        ));
+    };
+    let dir = checkout_dir(&vet_work_dir(), slug, num);
+    let root = std::path::Path::new(&dir);
+    let head = if !root.join(".git").is_dir() {
+        Err(format!("there is no audit-lens checkout at {dir}"))
+    } else {
+        git_out(root, &["rev-parse", "HEAD"]).ok_or_else(|| format!("{dir} has no resolvable HEAD"))
+    };
+    let ledger_path = std::env::var(LENS_LEDGER_ENV).unwrap_or_default();
+    let ledger_text = if ledger_path.is_empty() {
+        None
+    } else {
+        Some(std::fs::read_to_string(&ledger_path).unwrap_or_default())
+    };
+    lens_evidence(
+        head,
+        sha,
+        ledger_text.as_deref().map(|t| (ledger_path.as_str(), t)),
+        &pr_ref,
+    )
+}
+
+/// Why the lens gate refuses. Data, not prose — the message is rendered at the call site, the same
+/// split [`RecordGate::Uncovered`] uses, so the pure decision is drivable without an `owner/repo#n`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum LensRefusal {
+    /// There is no source tree for this PR at its head, so nothing was read.
+    NoSource(String),
+    /// There is source, and the run recorded no audit-skill invocation for this PR.
+    NotInvoked(String),
+}
+
+/// PURE: does this evidence refuse a verdict?
+///
+/// EVERY verdict, not only `ready`, and that is the one place this gate's shape differs from the
+/// mechanical-convention gate beside it. A convention violation is a property of the PR that
+/// `reject` is the correct routing FOR, so gating `reject` on it would leave the PR unroutable. A
+/// missing lens is not a property of the PR at all — it is work not done, on a PR that will be handed
+/// back on the next tick, and the repair (`pr_checkout`, then invoke the skill) is available for
+/// every verdict. Refusing only `ready` would leave `reject`, `design` and `close` — three of the
+/// four, and 7 of the 35 verdicts in the run this closes — formable with no lens at all.
+fn lens_refusal(evidence: &LensEvidence) -> Option<LensRefusal> {
+    match evidence {
+        LensEvidence::Full { .. } | LensEvidence::SourceOnly { .. } => None,
+        LensEvidence::NoSource(why) => Some(LensRefusal::NoSource(why.clone())),
+        LensEvidence::NotInvoked { ledger } => Some(LensRefusal::NotInvoked(ledger.clone())),
+    }
+}
+
+/// PURE: the `lens …` line the BINARY writes onto the verdict record, from what it verified.
+///
+/// This is the answer to "the verdict should say which it was" (#151) and to #146's objection in one
+/// stroke: the stamp is not the model's account of its own diligence, it is the binary's account of
+/// two facts it established. `None` is unreachable from the write path — the gate above refuses both
+/// refusing states — and exists so the stamp can never be synthesised for a state that has none.
+fn lens_stamp(evidence: &LensEvidence) -> Option<String> {
+    match evidence {
+        LensEvidence::Full { sha } => Some(format!("source@{sha} + audit skill invoked")),
+        LensEvidence::SourceOnly { sha, why } => {
+            Some(format!("source@{sha}, invocation UNOBSERVED ({why})"))
+        }
+        LensEvidence::NoSource(_) | LensEvidence::NotInvoked { .. } => None,
+    }
+}
+
+/// The refusal a vetter reads. It spends its words on the ONE move that follows, and the two states
+/// have DIFFERENT moves — which is the reason they are two states: `pr_checkout` fixes one and only
+/// invoking the skill fixes the other, so a message that blurred them would send half the refusals to
+/// do the wrong work.
+fn lens_refusal_message(pr: &str, refusal: &LensRefusal) -> String {
+    match refusal {
+        LensRefusal::NoSource(why) => format!(
+            "refusing every verdict on {pr}: the audit lens has no source — {why}. Call \
+             `pr_checkout` for THIS PR, invoke the `audit` skill on the `dir` it returns, then \
+             record the verdict BEFORE `clone_release`. A verdict formed on the diff alone is one \
+             where the callees, the callers, the sibling implementations and the linked issue's \
+             claims about current behaviour were never read, and `review-prompt.txt` requires all \
+             four."
+        ),
+        LensRefusal::NotInvoked(ledger) => format!(
+            "refusing every verdict on {pr}: its source is checked out, and this run recorded NO \
+             `audit` skill invocation scoped to it ({ledger}). Invoke the `audit` skill via the \
+             Skill tool, scoped to THIS PR and naming it as `{pr}`, on the `dir` `pr_checkout` \
+             returned — never hand-copy its checks, since invoking it is how you inherit every \
+             skill upgrade. One invocation names ONE PR; a call listing several is credited to none."
+        ),
+    }
+}
+
 /// The WHOLE record decision — every refusal `record_verdict` can make, in the order it makes them,
 /// as one pure function of the fetched PR, its diff and the coverage claim.
 #[derive(PartialEq, Debug)]
@@ -5649,6 +6005,10 @@ enum RecordGate {
     /// unchecked claim is not a verdict, so this is a refusal in its own right rather than a
     /// vacuous pass.
     NoDiff,
+    /// The audit lens was never pointed at this PR (#151) — no source at its head, or no audit-skill
+    /// invocation scoped to it in this run. REFUSAL on every verdict: unlike a defect in the diff,
+    /// this is not a property of the PR that some other verdict routes around.
+    NoLens(LensRefusal),
     /// The claim does not account for the diff (#131).
     Uncovered(CoverageGaps),
     Record {
@@ -5666,11 +6026,20 @@ enum RecordGate {
 /// its coverage claim is also wrong: that PR is not the vetter's to record however well it accounted
 /// for the diff, and "fix your anchors" would be an instruction to do work that is about to be
 /// refused anyway. Same for a PR with no head sha — there is no verdict to write, covered or not.
+///
+/// The lens gate (#151) sits UNDER the four reads-that-failed above it and OVER the coverage refusal.
+/// Under, because each of those is a fact about whether there is a verdict to write at all, and being
+/// told to check a PR out that a human has already decided is work about to be discarded. Over,
+/// because a coverage claim is a claim formed UNDER a lens: "your anchors do not account for the
+/// diff" is the wrong instruction for a vetter that has not read the source yet, and the anchor line
+/// ranges the coverage refusal would print are readable straight out of the checkout it is being sent
+/// to make. Reporting the lens first therefore costs nothing and orders the repairs correctly.
 fn record_gate(
     pr_json: &Value,
     files: &ChangedFileSet,
     diff_text: &str,
     covered: &[Covered],
+    lens: &LensEvidence,
     target: &str,
     verdict: &str,
 ) -> RecordGate {
@@ -5710,6 +6079,12 @@ fn record_gate(
     if !changed.is_empty() && also_known.is_empty() {
         return RecordGate::NoDiff;
     }
+    // #151, and it comes BEFORE the coverage refusal: a claim about the diff is a claim formed under
+    // a lens, so a vetter that has not read the source is sent to read it rather than to fix anchors
+    // for a write that is about to be refused anyway.
+    if let Some(refusal) = lens_refusal(lens) {
+        return RecordGate::NoLens(refusal);
+    }
     let gaps = coverage_gaps(&changed, &also_known, covered, &diff_new_lines(diff_text));
     if !gaps.is_clean() {
         return RecordGate::Uncovered(gaps);
@@ -5728,7 +6103,10 @@ fn record_gate(
 ///
 /// Thin CLI shell over [`record_verdict_apply`]: it OWNS the printing so the core can be reused by a
 /// caller that must not write to stdout (the MCP server — a stray stdout line corrupts its JSON-RPC
-/// stream). Exit codes: 0 ok, 1 error, 2 usage, 3 human-decision refusal, 4 scope-coverage refusal.
+/// stream). Exit codes: 0 ok, 1 error, 2 usage, 3 human-decision refusal, 4 scope-coverage refusal,
+/// 5 audit-lens refusal. Five is its OWN code and not folded into four: the two name different work
+/// by different means — four is "your claim about the diff is wrong", five is "you have not read the
+/// code" — and a caller branching on the code must be able to tell them apart without matching prose.
 #[allow(clippy::too_many_arguments)]
 fn record_verdict_mode(
     slug: &str,
@@ -5799,8 +6177,25 @@ fn record_verdict_apply(
     // gate is ONE pure decision over data already in hand, so every refusal it can make is drivable
     // from a test without a network.
     let files = pr_changed_files(slug, pr, &pr_json);
+    // #151: the audit lens, resolved HERE at the impure boundary — the checkout's head off the disk,
+    // the invocation out of the run's ledger — and handed to `record_gate` as data. Same shape as the
+    // diff and the file list above, so the ORDER of every refusal stays a property of one pure
+    // function rather than a sequence in a side-effecting body.
+    //
+    // The head sha comes straight off the document rather than out of `verdict_plan`, which lives
+    // inside the gate. A missing one makes the evidence `NoSource`, and `RecordGate::NoSha` outranks
+    // the lens refusal anyway — pinned by
+    // `the_human_no_sha_and_file_list_refusals_all_outrank_the_lens_gate`.
+    let lens = verdict_lens_evidence(
+        slug,
+        pr,
+        pr_json
+            .get("headRefOid")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+    );
     let (to_remove, has_target, sha, skip) = match record_gate(
-        &pr_json, &files, &diff_text, covered, target, verdict,
+        &pr_json, &files, &diff_text, covered, &lens, target, verdict,
     ) {
         RecordGate::RefuseHuman => {
             return Err((
@@ -5834,6 +6229,11 @@ fn record_verdict_apply(
                 ),
             ));
         }
+        // Refused BEFORE any write and before the dry-run report, like every other refusal here, so
+        // a verdict whose lens was never pointed at the PR provably changed nothing.
+        RecordGate::NoLens(refusal) => {
+            return Err((5, lens_refusal_message(&format!("{slug}#{pr}"), &refusal)));
+        }
         // Refused BEFORE any write and before the dry-run report, so a claim that does not
         // account for the diff provably changed nothing.
         RecordGate::Uncovered(gaps) => {
@@ -5849,7 +6249,14 @@ fn record_verdict_apply(
             skip_comment,
         } => (to_remove, has_target, sha, skip_comment),
     };
-    let comment = verdict_comment(&sha, verdict, note, cost, basis);
+    let comment = verdict_comment(
+        &sha,
+        verdict,
+        note,
+        cost,
+        basis,
+        lens_stamp(&lens).as_deref(),
+    );
 
     if dry_run {
         return Ok(format!(
@@ -12720,7 +13127,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "record_verdict",
-            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost and the vet-protocol stamp. Refuses if a human has decided the PR, or if `covered` does not account for every file the PR changes.",
+            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost, the vet-protocol stamp and the binary's own `lens` line. Refuses if a human has decided the PR, or if `covered` does not account for every file the PR changes. Also refuses EVERY verdict on a PR this run holds no audit lens for: it checks for a pr_checkout tree at the PR's head AND an `audit` skill invocation naming this PR (one invocation names ONE PR). Order: pr_checkout, then the skill, then this, then clone_release.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -15489,6 +15896,13 @@ enum Cmd {
         /// partial record identifies the same run its final record will.
         #[arg(long)]
         trace: String,
+        /// The run's LENS LEDGER (#151): every audit-skill invocation this stream announces, appended
+        /// the instant it is announced. `record_verdict` reads the same path out of
+        /// `RUN_LENS_LEDGER` and refuses a verdict on a PR the ledger holds no invocation for.
+        /// Omitted, nothing is recorded and every verdict's lens stamp says the invocation was
+        /// UNOBSERVED — absent evidence never reads as evidence.
+        #[arg(long)]
+        lens: Option<String>,
         /// Run id (the runner's UTC timestamp). Enriches the record with `runId`.
         #[arg(long)]
         run_id: Option<String>,
@@ -17280,12 +17694,14 @@ fn main() {
         Cmd::RunTimings {
             out,
             trace,
+            lens,
             run_id,
             role,
             model,
         } => run_timings_mode(
             &out,
             &trace,
+            lens.as_deref(),
             &RunIdentity {
                 run_id: run_id.as_deref(),
                 role: role.as_deref(),
