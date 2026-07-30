@@ -476,6 +476,11 @@ carries both facts, and counts as current only when both hold:
   checked in the binary, that every file the PR changes was in view when it was
   formed. That is a mandatory gate by the definition above, so a protocol-1
   verdict is not a value of the current function and is recomputed.
+  `vet-protocol 3` is the audit lens (#151): a verdict is refused unless the run
+  holds SOURCE at the PR's head and an `audit`-skill invocation scoped to that
+  PR, and the record carries the binary's own account of both. The bump is what
+  makes the fix retroactive — the 34 verdicts the 2026-07-29T17:17:35Z run
+  recorded with the lens never run all stop being current at once.
 
 An **unstamped** comment is `VetProtocol::Unknown` and is never current. It was
 written under rules that cannot be identified, and unidentified is not "fine" —
@@ -703,6 +708,140 @@ does not ask for either:
   evidence block **exists** and that its claims are consistent with the diff it
   reads. It does not re-run the named tests against base; CI runs them, and a
   red CI is the producer's to green, never a vetter `reject` ground.
+
+### The audit lens is a PRECONDITION of a verdict, and the binary checks it
+
+`review-prompt.txt` has told the vetter to **invoke the `audit` skill** per PR
+for months, and nothing could see whether it did. Measured from the vetter's own
+trace, `review-runs/20260729T171735Z.jsonl`:
+
+```
+record_verdict : 35
+pr_context     : 35
+pr_checkout    :  3
+Skill          :  1
+```
+
+**34 of 35 verdicts were recorded with the lens never run, and 32 with no source
+tree at all.** The single invocation was scoped to
+`cyclofinance/cyclo.site#386`. Two of the 34 are `ready` verdicts on Solidity
+the skill flags verbatim (`rainlanguage/rain.deploy#20`'s floated concrete test
+mock, `#21`'s 22 hardcoded copies of a value it also derives). It was otherwise
+the best run to date — zero errors, correct paging, a `design` verdict raised —
+which is the point: nothing about a lensless verdict looked wrong.
+
+So `record_verdict` refuses a verdict on a PR this run holds no lens for, on
+**two facts it establishes for itself**:
+
+- **SOURCE** — the `pr_checkout` tree for this PR, holding this PR's head.
+  `pr_checkout` is a tool this same binary implements, `checkout_dir` derives
+  the path from `(work_dir, slug, num)` with no search, and the vetter has no
+  `Bash`, `Write` or `Edit` to make a tree of its own with.
+- **INVOCATION** — an `audit`-skill `Skill` call scoped to this PR, as recorded
+  in the run's **lens ledger**. A `Skill` tool_use is written into the
+  stream-json stream by `claude` itself, before the tool runs, and `run-timings`
+  — already standing in the runner's live pipe — appends one row per invocation
+  the instant the harness announces it. The row is therefore on disk before the
+  MCP server can be asked about the PR.
+
+The ledger is a per-run file (`review-runs/<TS>.lens`), written by
+`run-timings --lens` and read back through **`RUN_LENS_LEDGER`**, because the
+MCP server's argv is fixed by `review-mcp.json` and cannot carry a per-run path
+— the same writer-flag/reader-env split `RUN_INFRA_FILE` uses. It is
+deliberately not named `.jsonl`: the trace rotation globs `*.jsonl` and would
+count it as a second run.
+
+Five things this is careful about:
+
+- **It reads the LIVE stream, not the tee'd trace file.** `tee` block-buffers
+  its file outputs (only its stdout is `_IONBF`), so the file can lag the stream
+  by up to a block — and a `Skill` call in the same assistant message as the
+  verdict after it would be invisible to a reader of the file at exactly the
+  moment it mattered. Downstream of `tee`'s unbuffered stdout there is no such
+  window.
+- **One invocation names ONE PR.** `review-prompt.txt` says _scoped to this PR_,
+  singular. A call whose `args` list several is credited to **none** of them —
+  otherwise one invocation naming the whole page would buy a verdict for every
+  PR on it. Naming none is likewise uncreditable: which PR was examined is the
+  ledger's whole content.
+- **It refuses EVERY verdict, not only `ready`**, and that is where its shape
+  differs from the mechanical-convention gate
+  ([#141](https://github.com/rainlanguage/issue-pr-cron/issues/141)). A
+  convention violation is a property of the PR that `reject` is the correct
+  routing **for**, so gating `reject` on it would leave the PR unroutable. A
+  missing lens is not a property of the PR at all — it is work not done, and the
+  repair (`pr_checkout`, then invoke the skill) is available whatever the
+  verdict was going to be. 7 of the 35 were not `ready`, and all 7 were
+  lensless.
+- **Its place in `record_gate` is under the reads-that-failed and over the
+  coverage refusal.** Under, because the human ruling, the missing sha, the
+  unresolved file list and the missing diff each say there is no verdict to
+  write at all, and being sent to check out a PR a human has already decided is
+  work about to be discarded. Over, because a coverage claim is a claim formed
+  **under a lens**: _"your anchors do not account for the diff"_ is the wrong
+  instruction for a vetter that has not opened the source, and the anchor ranges
+  that refusal prints are readable straight out of the checkout it is being sent
+  to make.
+- **The exit code is its own.** 5, beside 4 for scope coverage: four says the
+  claim about the diff is wrong, five says the code was not read. A caller
+  branching on the code must not have to match prose to tell them apart.
+
+**The record says which.** The `🤖 ai:vetter` comment now carries a `lens` line,
+written by the binary from what it verified and sitting above the model-authored
+`Reviewed` line with the protocol stamp:
+
+```
+🤖 ai:vetter
+vet-protocol 3
+lens source@6a370a5d… + audit skill invoked
+Reviewed 6a370a5d…: ready — closes #386
+cost 412 — concurrency guard in a store poll loop
+```
+
+That is a different object from the evidence-of-reading preamble #131 and #140
+removed. A preamble is the **model's** account of its own diligence; this is the
+**binary's** account of two facts it checked. It is also why an **absent** stamp
+is meaningful: a verdict with no `lens` line is one written before the lens was
+checkable, which is exactly the 34, and no longer indistinguishable from a vet
+that read the source. `lens source@<sha>, invocation UNOBSERVED (…)` is the
+third state — a run that names no ledger records its verdict and says so,
+because absent evidence must never read as evidence.
+
+**Diff-only verdicts are not legal.** For a one-line front-end change a diff may
+look proportionate, but `review-prompt.txt` requires the callees, the callers,
+the sibling implementations sharing the invariant, and every claim the linked
+issue makes about how the code **currently** behaves — none of which is
+decidable from a diff, and the last of which is how a faithfully-implemented
+false premise gets caught. The cost of the alternative is one depth-1 clone that
+`pr_checkout` reuses and `clone_release` disposes; the cost of a model-written
+_"diff-only was proportionate here"_ waiver is a waiver written 34 times.
+
+**What this does NOT close, stated plainly.** The invocation's SCOPE is model
+text: the binary sees that a skill ran and reads the PR ref out of `args`, so a
+vetter could invoke the lens and describe it dishonestly. What the check buys is
+that the credit cannot be had without paying for a real invocation, and that one
+invocation buys exactly one PR. It says nothing about what the skill
+**concluded** — [#146](https://github.com/rainlanguage/issue-pr-cron/pull/146)
+is right that correctness, security and design are not decidable from source
+text, and those dimensions remain entirely the vetter's. The two gates are
+complementary and neither subsumes the other: this one asks whether the lens was
+pointed at the PR, that one asks whether a `ready` contradicts a rule the lens
+states.
+
+**And what it rests on.** Both facts are unforgeable only while the model cannot
+write to the filesystem. That is currently true of the vetter in the strongest
+available sense — not a deny rule but an absent tool: the `tools` array in every
+run's own `system`/`init` event is `[Glob, Grep, Read, Skill, mcp__fsm__*]`,
+with no `Bash`, `Write` or `Edit` in it, so a redirection into the ledger is not
+a thing the session can express. That is also why the ledger is written by
+`run-timings` — a **different process**, in the runner's pipe, outside the
+model's session — rather than by anything the model calls.
+[#152](https://github.com/rainlanguage/issue-pr-cron/pull/152) is the reason to
+say this out loud rather than leave it implied: a _declared_ tool surface is not
+a sandbox, and a command declaring only `Read` was observed running `Bash`. If
+the vetter is ever granted a write tool, the invocation half degrades to the
+source half and the ledger becomes advisory — so that grant is the moment to
+revisit this, and the `vetter has no write grant` CI job is what fails first.
 
 ### The mechanical half of the audit lens is the binary's, not the model's
 

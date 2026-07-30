@@ -90,11 +90,20 @@ mkdir -p "$RUNDIR"
 mkdir -p "$DIR/metrics"
 cd "$DIR" || exit 1
 
-# rotate per-run traces
-find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d" " -f2- | tail -n +$((REVIEW_KEEP_RUNS + 1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err"; done
+# rotate per-run traces, with each trace's siblings. The glob stays `*.jsonl` and the LENS ledger
+# below is deliberately NOT named `.jsonl`: matching it here would count it as a second run and halve
+# how many runs `REVIEW_KEEP_RUNS` actually keeps.
+find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d" " -f2- | tail -n +$((REVIEW_KEEP_RUNS + 1)) | while read -r old; do rm -f "$old" "${old%.jsonl}.err" "${old%.jsonl}.lens"; done
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
+# The run's LENS LEDGER (#151): every `audit` skill invocation the harness announces, written from
+# inside the live pipe by `run-timings` and read back by `record_verdict`, which REFUSES a verdict on a
+# PR the ledger holds no invocation for. Named in TWO places for the same reason `$RUNLOG` is — the
+# writer takes it as a flag (testable) and the reader takes it from the environment, because the MCP
+# server's argv is fixed by review-mcp.json and cannot carry a per-run path.
+LENSLOG="$RUNDIR/$TS.lens"
+export RUN_LENS_LEDGER="$LENSLOG"
 
 # --- harness read-time dependencies: resolved BEFORE a token is spent -------------------------
 # The audit lens reads whatever the PR ships, and this org's audit evidence is PDF, which the
@@ -200,6 +209,7 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
     | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
+          --lens "$LENSLOG" \
           --run-id "$TS" --role vetter --model "$USED_MODEL" 2>/dev/null || cat ; } \
     | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}
