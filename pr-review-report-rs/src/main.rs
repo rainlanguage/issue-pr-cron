@@ -29637,14 +29637,24 @@ mod marketplace_tests {
                  for, never one this gate can reach"
             );
         }
-        // The vocabulary is CLOSED, and the file has to say so, or "declare a literal" is advice
-        // with no list behind it and the next spelling is invented in good faith.
+        // The vocabulary is CLOSED, and ONE bullet has to say so — asserted there rather than over
+        // the file, because `whole-repo` is discussed elsewhere for its own sake (it is a scope this
+        // command deliberately does not pass) and a mention is not a statement of the closed set.
+        // Without the list, "declare a literal" is advice with nothing behind it and the next
+        // spelling gets invented in good faith.
+        let Some((_, after)) = text.split_once("**A scope is one of three literals") else {
+            panic!(
+                "nr.md states no scope VOCABULARY — a command told to declare a literal, and not \
+                 told which literals exist, is one invented spelling away from free text again"
+            )
+        };
+        let vocabulary = after.split("\n- ").next().unwrap_or(after);
         for scope in AUDIT_SCOPES {
             assert!(
-                text.contains(&format!("`{scope}")),
-                "nr.md never names the {scope:?} scope. The skill's vocabulary is exactly \
-                 {AUDIT_SCOPES:?}, and a command that states only the one it uses cannot tell its \
-                 reader which spellings are the whole set"
+                vocabulary.contains(&format!("`{scope}")),
+                "the vocabulary bullet omits {scope:?}. The skill's whole vocabulary is \
+                 {AUDIT_SCOPES:?} and the bullet has to name all of it; a partial list reads as the \
+                 complete one. The bullet reads: {vocabulary:?}"
             );
         }
     }
