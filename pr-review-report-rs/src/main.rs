@@ -4352,8 +4352,10 @@ fn labels_to_remove(current: &[String], target: &str) -> Vec<String> {
 /// Bump it when what vetting MEANS changes (the audit lens, a mandatory gate, the verdict
 /// vocabulary), not when the prompt is merely reworded. `1` is the first protocol to be identified
 /// at all: every verdict written before this constant existed carries no stamp and reads as
-/// [`VetProtocol::Unknown`].
-const VET_PROTOCOL: u32 = 1;
+/// [`VetProtocol::Unknown`]. `2` is scope coverage (#131): a verdict now carries a claim, checked in
+/// the binary, that every file the PR changes was in view when it was formed — a mandatory gate by
+/// the definition above, so a protocol-1 verdict is not a value of the current function.
+const VET_PROTOCOL: u32 = 2;
 
 /// The line [`verdict_comment`] stamps the protocol on, and [`verdict_protocol`] reads it back from.
 const VET_PROTOCOL_PREFIX: &str = "vet-protocol ";
@@ -4515,6 +4517,503 @@ fn should_skip_comment(last_vetter_body: Option<&str>, sha: &str, verdict: &str)
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SCOPE COVERAGE — the verdict must account for every file the PR changes (#131)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// ONE entry of a verdict's coverage claim: a file this PR changes, and — where the diff can prove
+/// it — a line of that file the vetter had in view.
+///
+/// The claim is checked against data the tool ALREADY HOLDS (`gh pr view --json files` and
+/// `gh pr diff`), never against a promise. Without `anchor` an entry is an ATTESTATION: a model can
+/// type a filename it never opened. With one it is FALSIFIABLE — the same move `verdict_sha` makes
+/// for the head, one level down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Covered {
+    path: String,
+    anchor: Option<CoverageAnchor>,
+}
+
+/// A line of the PR's diff, quoted. `line` is the NEW-side line number (the number the line has in
+/// the file at this head), `text` is a fragment of that line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CoverageAnchor {
+    line: u64,
+    text: String,
+}
+
+/// The new-side lines a diff shows, per file: `path → (line number → content)`.
+type DiffLines = std::collections::BTreeMap<String, std::collections::BTreeMap<u64, String>>;
+
+/// PURE: the one spelling of a path this guard compares on — trimmed, `./` stripped. GitHub's
+/// `files[].path` is already repo-relative with no prefix; a model retyping one is not always.
+fn norm_path(p: &str) -> String {
+    let p = p.trim();
+    p.strip_prefix("./")
+        .unwrap_or(p)
+        .trim_matches('/')
+        .to_string()
+}
+
+/// PURE: strip git's one-component diff prefix (`a/`, `b/`) from a header path. Exactly one, so a
+/// file genuinely named `b/thing` survives as `b/thing`.
+fn strip_diff_prefix(p: &str) -> String {
+    let p = p.trim();
+    norm_path(
+        p.strip_prefix("a/")
+            .or_else(|| p.strip_prefix("b/"))
+            .unwrap_or(p),
+    )
+}
+
+/// PURE: files an ANCHOR may not be demanded of — accounting for them is the whole obligation.
+///
+/// The line is "did a person write this byte": generated output, dependency trees, lockfiles and
+/// binaries are read by nobody and quoting a line of one proves nothing about attention. The rule is
+/// a PATH CONVENTION rather than a size or a count, so it is the same on every PR and a vetter never
+/// has to negotiate which files it is allowed to skip.
+///
+/// Note this is only half the exemption: a file with NO new-side line in the diff (a deletion, a
+/// binary, a mode change) is exempt by DERIVATION in [`coverage_gaps`], because demanding an anchor
+/// that cannot exist is the false gate this guard must not become.
+fn anchor_exempt(path: &str) -> bool {
+    /// Dependency trees that are only ever the REPO ROOT's. `lib` is why this list is separate from
+    /// the next one: `lib/` is forge's submodule tree, but `src/lib/LibFoo.sol` is the org's most
+    /// common source path, and exempting `lib` anywhere would quietly drop most rainlanguage
+    /// Solidity out of the guard.
+    const ROOT_DIRS: [&str; 3] = ["lib", "dependencies", "target"];
+    /// Names that mean "not hand-written" wherever they appear (`crates/js_api/abis`,
+    /// `src/generated`, a nested `node_modules`).
+    const DIRS: [&str; 5] = ["node_modules", "vendor", "generated", "abis", "dist"];
+    const SUFFIXES: [&str; 18] = [
+        ".lock",
+        ".lockb",
+        ".pointers.sol",
+        ".snap",
+        ".gas-snapshot",
+        ".abi.json",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".pdf",
+        ".ico",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".zip",
+        ".wasm",
+        ".bin",
+    ];
+    const NAMES: [&str; 2] = ["package-lock.json", "pnpm-lock.yaml"];
+    let path = norm_path(path);
+    let mut parts = path.split('/');
+    if parts.next().is_some_and(|first| ROOT_DIRS.contains(&first)) && path.contains('/') {
+        return true;
+    }
+    if path.split('/').any(|c| DIRS.contains(&c)) {
+        return true;
+    }
+    let file = path.rsplit('/').next().unwrap_or(&path);
+    NAMES.contains(&file) || SUFFIXES.iter().any(|s| path.ends_with(s))
+}
+
+/// PURE: `(new start, old count, new count)` of a `@@ -a,b +c,d @@` hunk header, else None.
+fn hunk_header(line: &str) -> Option<(u64, u64, u64)> {
+    let inner = line.strip_prefix("@@ ")?.split(" @@").next()?;
+    let (mut old, mut new) = (None, None);
+    for tok in inner.split_whitespace() {
+        let (sign, rest) = match (tok.strip_prefix('-'), tok.strip_prefix('+')) {
+            (Some(r), _) => ('-', r),
+            (_, Some(r)) => ('+', r),
+            _ => continue,
+        };
+        let (start, count) = match rest.split_once(',') {
+            Some((s, c)) => (s.parse::<u64>().ok()?, c.parse::<u64>().ok()?),
+            None => (rest.parse::<u64>().ok()?, 1),
+        };
+        if sign == '-' {
+            old = Some(count);
+        } else {
+            new = Some((start, count));
+        }
+    }
+    let (start, new_count) = new?;
+    Some((start, old?, new_count))
+}
+
+/// PURE: every path a unified diff touches, read off its `diff --git` headers.
+///
+/// Needed BESIDE `gh pr view --json files` because that field is capped at 100 entries: on a wider
+/// PR a file the vetter legitimately names would otherwise look like a file this PR does not change.
+/// The header is the only place a deleted or binary file's path appears (it has no `+++ b/…`).
+fn diff_changed_paths(diff: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(p) = diff_git_new_path(rest) {
+                out.insert(p);
+            }
+        }
+    }
+    out
+}
+
+/// PURE: the b-side path of a `diff --git a/<p> b/<q>` header's argument half.
+///
+/// A filename may contain a space, and may contain ` b/` — so whitespace-tokenising and "split at
+/// the last ` b/`" are both wrong, in different places. For the overwhelmingly common case `p == q`
+/// the split is decided by LENGTH alone: the half is `2 + n + 3 + n` bytes, so `n = (len - 5) / 2`,
+/// exact whatever the name contains.
+///
+/// A RENAME (`p != q`) has no closed form here and falls back to the last ` b/`. That is a best
+/// effort and it is enough: this set only WIDENS what a coverage claim may legitimately name, and
+/// a renamed file with hunks also carries an authoritative `+++ b/<q>` line, which is the one
+/// [`diff_new_lines`] reads.
+fn diff_git_new_path(rest: &str) -> Option<String> {
+    let len = rest.len();
+    if rest.starts_with("a/") && len >= 5 && (len - 5).is_multiple_of(2) {
+        let n = (len - 5) / 2;
+        if let (Some(a), Some(" b/"), Some(b)) = (
+            rest.get(2..2 + n),
+            rest.get(2 + n..5 + n),
+            rest.get(5 + n..),
+        ) {
+            if a == b {
+                return Some(norm_path(b));
+            }
+        }
+    }
+    rest.rfind(" b/").map(|i| strip_diff_prefix(&rest[i + 1..]))
+}
+
+/// PURE: the NEW-side lines of a unified diff, per file — what an anchor is checked against.
+///
+/// Hunk COUNTS drive the walk (not a `+`/`-` sniff), because an added line whose own content starts
+/// with `++` renders as `+++…` and a sniffing parser reads it as a file header.
+fn diff_new_lines(diff: &str) -> DiffLines {
+    let mut out: DiffLines = std::collections::BTreeMap::new();
+    let mut path: Option<String> = None;
+    let mut new_line: u64 = 0;
+    let (mut old_left, mut new_left) = (0u64, 0u64);
+    for raw in diff.lines() {
+        if old_left > 0 || new_left > 0 {
+            // Inside a hunk: byte 0 is the marker, so slicing at 1 is always on a char boundary.
+            match raw.as_bytes().first().copied() {
+                Some(b'+') if new_left > 0 => {
+                    if let Some(p) = path.as_ref() {
+                        out.entry(p.clone())
+                            .or_default()
+                            .insert(new_line, raw[1..].to_string());
+                    }
+                    new_line += 1;
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'-') if old_left > 0 => {
+                    old_left -= 1;
+                    continue;
+                }
+                // A context line, and its degenerate form: git writes " " for an empty context
+                // line, but tools that strip trailing whitespace leave a bare "".
+                m @ (Some(b' ') | None) if old_left > 0 && new_left > 0 => {
+                    if let Some(p) = path.as_ref() {
+                        let content = if m.is_some() { &raw[1..] } else { "" };
+                        out.entry(p.clone())
+                            .or_default()
+                            .insert(new_line, content.to_string());
+                    }
+                    new_line += 1;
+                    old_left -= 1;
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'\\') => continue, // "\ No newline at end of file"
+                _ => {
+                    // The hunk's counts are exhausted or the diff is malformed: leave hunk state and
+                    // re-read this line as a header.
+                    old_left = 0;
+                    new_left = 0;
+                }
+            }
+        }
+        if raw.starts_with("diff --git ") {
+            path = None;
+            continue;
+        }
+        if let Some(rest) = raw.strip_prefix("+++ ") {
+            let p = rest.split('\t').next().unwrap_or("").trim();
+            path = if p == "/dev/null" {
+                None
+            } else {
+                Some(strip_diff_prefix(p))
+            };
+            continue;
+        }
+        if let Some((start, old_count, new_count)) = hunk_header(raw) {
+            new_line = start;
+            old_left = old_count;
+            new_left = new_count;
+        }
+    }
+    out
+}
+
+/// PURE: the contiguous new-side line ranges of one file's diff — what a refusal hands back so the
+/// vetter knows WHICH lines it may anchor to.
+fn anchorable_ranges(lines: &std::collections::BTreeMap<u64, String>) -> Vec<(u64, u64)> {
+    let mut out: Vec<(u64, u64)> = Vec::new();
+    for &n in lines.keys() {
+        match out.last_mut() {
+            Some(last) if last.1 + 1 == n => last.1 = n,
+            _ => out.push((n, n)),
+        }
+    }
+    out
+}
+
+/// PURE: render [`anchorable_ranges`] for a refusal, capped so a 4000-line diff does not become the
+/// error message.
+fn ranges_hint(lines: Option<&std::collections::BTreeMap<u64, String>>) -> String {
+    let Some(lines) = lines else {
+        return "none — this file has no new-side line in the diff".to_string();
+    };
+    let ranges = anchorable_ranges(lines);
+    const MAX: usize = 6;
+    let shown: Vec<String> = ranges
+        .iter()
+        .take(MAX)
+        .map(|(a, b)| {
+            if a == b {
+                a.to_string()
+            } else {
+                format!("{a}-{b}")
+            }
+        })
+        .collect();
+    format!(
+        "{}{}",
+        shown.join(", "),
+        if ranges.len() > MAX { ", …" } else { "" }
+    )
+}
+
+/// An anchor the diff does NOT bear out.
+#[derive(Debug, PartialEq)]
+struct BadAnchor {
+    path: String,
+    line: u64,
+    /// The line the diff actually shows there, or None when the diff has no such line.
+    actual: Option<String>,
+}
+
+/// Everything wrong with one coverage claim, gathered in ONE pass.
+///
+/// All four buckets at once on purpose: a guard that reports one defect per call turns a wide PR
+/// into a negotiation, and "satisfiable in ONE retry" is the property that keeps this from becoming
+/// the paperwork-shaped reject the org already pays for elsewhere.
+#[derive(Debug, PartialEq, Default)]
+struct CoverageGaps {
+    /// Changed by this PR, named by no entry. The `rain.erc4626.words#230` failure exactly.
+    unaccounted: Vec<String>,
+    /// Named by an entry, changed by nothing in this PR — a stale file list or the wrong checkout.
+    not_in_pr: Vec<String>,
+    /// Accounted for, hand-written, anchorable — and given no anchor.
+    unanchored: Vec<String>,
+    bad_anchor: Vec<BadAnchor>,
+}
+
+impl CoverageGaps {
+    fn is_clean(&self) -> bool {
+        self.unaccounted.is_empty()
+            && self.not_in_pr.is_empty()
+            && self.unanchored.is_empty()
+            && self.bad_anchor.is_empty()
+    }
+}
+
+/// PURE: does `covered` account for `changed`, and does the diff bear out every anchor?
+///
+/// `changed` is what the vetter was SHOWN (`files[].path`); `also_known` widens only what may
+/// legitimately be NAMED (the diff's own headers), so the 100-entry cap on `files` can never make a
+/// real file look foreign. The asymmetry is deliberate: never demand accounting for a file the
+/// vetter could not enumerate, never accuse it of inventing one that is really there.
+fn coverage_gaps(
+    changed: &[String],
+    also_known: &std::collections::BTreeSet<String>,
+    covered: &[Covered],
+    diff: &DiffLines,
+) -> CoverageGaps {
+    let mut gaps = CoverageGaps::default();
+    let claimed: std::collections::BTreeMap<&str, &Covered> =
+        covered.iter().map(|c| (c.path.as_str(), c)).collect();
+    for path in changed {
+        let Some(entry) = claimed.get(path.as_str()) else {
+            gaps.unaccounted.push(path.clone());
+            continue;
+        };
+        let lines = diff.get(path.as_str());
+        // Exempt by derivation (no anchorable line exists) or by convention (nobody wrote it).
+        if entry.anchor.is_none() && lines.is_some_and(|l| !l.is_empty()) && !anchor_exempt(path) {
+            gaps.unanchored.push(path.clone());
+        }
+    }
+    for c in covered {
+        if !changed.iter().any(|p| p == &c.path) && !also_known.contains(&c.path) {
+            gaps.not_in_pr.push(c.path.clone());
+            continue;
+        }
+        let Some(anchor) = c.anchor.as_ref() else {
+            continue;
+        };
+        let actual = diff.get(c.path.as_str()).and_then(|l| l.get(&anchor.line));
+        match actual {
+            Some(text) if text.trim().contains(anchor.text.trim()) => {}
+            other => gaps.bad_anchor.push(BadAnchor {
+                path: c.path.clone(),
+                line: anchor.line,
+                actual: other.cloned(),
+            }),
+        }
+    }
+    gaps
+}
+
+/// PURE: the refusal a coverage failure returns — every unmet obligation NAMED, with the lines that
+/// would satisfy it, so the next call is a correction and not a guess.
+fn coverage_refusal(subject: &str, gaps: &CoverageGaps, diff: &DiffLines) -> String {
+    let mut out = format!(
+        "no verdict recorded on {subject} — `covered` does not account for this PR's diff (nothing was written):"
+    );
+    if !gaps.unaccounted.is_empty() {
+        out.push_str("\n  CHANGED BY THIS PR, ACCOUNTED FOR BY NOTHING (read each, then name it):");
+        for p in &gaps.unaccounted {
+            out.push_str(&format!("\n    - {p}"));
+        }
+    }
+    if !gaps.not_in_pr.is_empty() {
+        out.push_str(
+            "\n  NAMED BUT NOT CHANGED HERE (a stale file list, or another PR's checkout):",
+        );
+        for p in &gaps.not_in_pr {
+            out.push_str(&format!("\n    - {p}"));
+        }
+    }
+    if !gaps.unanchored.is_empty() {
+        out.push_str("\n  NO ANCHOR (hand-written source: add \"line\" + \"text\" quoting that line of this PR's diff):");
+        for p in &gaps.unanchored {
+            out.push_str(&format!(
+                "\n    - {p} — anchorable lines: {}",
+                ranges_hint(diff.get(p.as_str()))
+            ));
+        }
+    }
+    if !gaps.bad_anchor.is_empty() {
+        out.push_str("\n  ANCHOR NOT BORNE OUT BY THE DIFF:");
+        for b in &gaps.bad_anchor {
+            let what = match &b.actual {
+                Some(text) => {
+                    let (t, cut) = truncate_utf8(text.trim(), 80);
+                    format!("the diff has `{t}{}`", if cut { "…" } else { "" })
+                }
+                None => "that line is not in this PR's diff".to_string(),
+            };
+            out.push_str(&format!(
+                "\n    - {} line {}: {what} — anchorable lines: {}",
+                b.path,
+                b.line,
+                ranges_hint(diff.get(b.path.as_str()))
+            ));
+        }
+    }
+    out.push_str(
+        "\nFix every entry above and call `record_verdict` ONCE more with the whole `covered` list.",
+    );
+    out
+}
+
+/// PURE: read the `covered` argument off a tool call. Shape only — whether the claim is TRUE is
+/// [`coverage_gaps`]'s job, because that needs the PR.
+fn parse_covered(args: &Value) -> Result<Vec<Covered>, String> {
+    const SHAPE: &str = "covered is required: one entry per file this PR changes — \
+         {\"path\": \"...\"} plus {\"line\": <n>, \"text\": \"...\"} quoting that line of the diff \
+         (path alone for generated/vendored/lockfile paths and for files the diff shows no new line for)";
+    let Some(items) = args.get("covered").and_then(|v| v.as_array()) else {
+        return Err(SHAPE.to_string());
+    };
+    if items.is_empty() {
+        return Err(format!(
+            "covered is empty — every PR changes at least one file. {SHAPE}"
+        ));
+    }
+    let mut out = Vec::new();
+    for it in items {
+        let path = norm_path(it.get("path").and_then(|p| p.as_str()).unwrap_or(""));
+        if path.is_empty() {
+            return Err(format!(
+                "every covered entry needs a non-empty \"path\". {SHAPE}"
+            ));
+        }
+        let line = it.get("line").and_then(|v| v.as_u64());
+        let text = it
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        let anchor = match (line, text) {
+            (Some(0), _) => {
+                return Err(format!("{path}: \"line\" is a 1-based diff line number, not 0"))
+            }
+            (Some(line), Some(text)) => Some(CoverageAnchor {
+                line,
+                text: text.to_string(),
+            }),
+            (None, None) => None,
+            (Some(_), None) => {
+                return Err(format!(
+                    "{path}: \"line\" without \"text\" proves nothing — quote the line's content too"
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(format!(
+                    "{path}: \"text\" without \"line\" is not checkable — give the diff line number too"
+                ))
+            }
+        };
+        out.push(Covered { path, anchor });
+    }
+    Ok(out)
+}
+
+/// PURE: the CLI's spelling of the same claim — a JSON document holding either the bare `covered`
+/// array or an object with a `covered` key, so the file the MCP argument would have been can be
+/// handed straight to the subcommand.
+fn covered_from_document(doc: &Value) -> Result<Vec<Covered>, String> {
+    match doc {
+        Value::Array(_) => parse_covered(&serde_json::json!({"covered": doc})),
+        _ => parse_covered(doc),
+    }
+}
+
+/// Read `--covered-file`. Absent is a USAGE error, never an empty claim: a verdict that accounts for
+/// nothing is exactly what this guard exists to refuse, and defaulting it would make the guard
+/// opt-in.
+fn read_covered_file(path: Option<&str>) -> Result<Vec<Covered>, String> {
+    let Some(path) = path else {
+        return Err(
+            "usage: record-verdict … --covered-file <path> — a JSON array of \
+                    {\"path\", and \"line\"+\"text\" for hand-written source}, one entry per file \
+                    the PR changes"
+                .to_string(),
+        );
+    };
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("error: cannot read --covered-file {path}: {e}"))?;
+    let doc: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("error: --covered-file {path} is not JSON: {e}"))?;
+    covered_from_document(&doc)
+}
+
 /// The recording decision, computed PURELY from the fetched PR JSON so the guard-before-write logic
 /// is unit-testable (not just the leaf helpers): refuse if a human verdict is present, refuse if
 /// there is no head sha, else the label plan + whether the comment is a dedup no-op.
@@ -4566,13 +5065,97 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
     }
 }
 
+/// The `gh pr view --json` field list the verdict write fetches. A named constant for the same
+/// reason [`CC_VERDICT_FIELDS`] is: every one of these is read by [`record_gate`], and a field the
+/// gate READS but the fetch OMITS is a guard that silently stops firing — `files` most of all, since
+/// an absent file list makes the coverage gate vacuously satisfied rather than loud.
+const RECORD_VERDICT_FIELDS: &str = "headRefOid,labels,comments,reviewDecision,files";
+
+/// The WHOLE record decision — every refusal `record_verdict` can make, in the order it makes them,
+/// as one pure function of the fetched PR, its diff and the coverage claim.
+#[derive(PartialEq, Debug)]
+enum RecordGate {
+    RefuseHuman,
+    NoSha,
+    /// The PR changes files but the diff carries not one `diff --git` header — it did not arrive.
+    /// The claim is then UNCHECKED, not satisfied: every anchor becomes unverifiable and every file
+    /// looks unanchorable, so a name-only claim would sail through a gate that never ran. An
+    /// unchecked claim is not a verdict, so this is a refusal in its own right rather than a
+    /// vacuous pass.
+    NoDiff,
+    /// The claim does not account for the diff (#131).
+    Uncovered(CoverageGaps),
+    Record {
+        to_remove: Vec<String>,
+        has_target: bool,
+        sha: String,
+        skip_comment: bool,
+    },
+}
+
+/// PURE: run every guard, in ORDER, and say what the write may do.
+///
+/// The order is load-bearing, which is why it lives in a function a test can drive rather than in
+/// the sequence of a side-effecting body. A human-decided PR is refused as human-decided even when
+/// its coverage claim is also wrong: that PR is not the vetter's to record however well it accounted
+/// for the diff, and "fix your anchors" would be an instruction to do work that is about to be
+/// refused anyway. Same for a PR with no head sha — there is no verdict to write, covered or not.
+fn record_gate(
+    pr_json: &Value,
+    diff_text: &str,
+    covered: &[Covered],
+    target: &str,
+    verdict: &str,
+) -> RecordGate {
+    let (to_remove, has_target, sha, skip_comment) = match verdict_plan(pr_json, target, verdict) {
+        VerdictPlan::RefuseHuman => return RecordGate::RefuseHuman,
+        VerdictPlan::NoSha => return RecordGate::NoSha,
+        VerdictPlan::Record {
+            to_remove,
+            has_target,
+            sha,
+            skip_comment,
+        } => (to_remove, has_target, sha, skip_comment),
+    };
+    let changed: Vec<String> = pr_json
+        .get("files")
+        .and_then(|f| f.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| f.get("path").and_then(|p| p.as_str()))
+                .map(norm_path)
+                .filter(|p| !p.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    // A PR that changes a file always has a `diff --git` header for it. Not one, against a PR that
+    // changes something, means the diff is not here — and a claim checked against a diff that is
+    // not here is not checked. The check lives HERE, in the pure decision, rather than only at the
+    // fetch that reads it: a guard the caller has to remember to arm is a guard that will one day
+    // be called without it.
+    let also_known = diff_changed_paths(diff_text);
+    if !changed.is_empty() && also_known.is_empty() {
+        return RecordGate::NoDiff;
+    }
+    let gaps = coverage_gaps(&changed, &also_known, covered, &diff_new_lines(diff_text));
+    if !gaps.is_clean() {
+        return RecordGate::Uncovered(gaps);
+    }
+    RecordGate::Record {
+        to_remove,
+        has_target,
+        sha,
+        skip_comment,
+    }
+}
+
 /// `--record-verdict <owner/repo> <pr> <verdict> [note...]`: record an AI verdict as the
 /// `ai:<verdict>` label (exactly one AI verdict at a time) + a SHA-bound `🤖 ai:vetter` comment.
 /// The ONE writer of AI verdicts (shared by the vetter); never overrides a human verdict.
 ///
 /// Thin CLI shell over [`record_verdict_apply`]: it OWNS the printing so the core can be reused by a
 /// caller that must not write to stdout (the MCP server — a stray stdout line corrupts its JSON-RPC
-/// stream). Exit codes are unchanged: 0 ok, 1 error, 2 usage, 3 human-decision refusal.
+/// stream). Exit codes: 0 ok, 1 error, 2 usage, 3 human-decision refusal, 4 scope-coverage refusal.
 #[allow(clippy::too_many_arguments)]
 fn record_verdict_mode(
     slug: &str,
@@ -4581,9 +5164,10 @@ fn record_verdict_mode(
     note: &str,
     cost: Option<i64>,
     basis: &str,
+    covered: &[Covered],
     dry_run: bool,
 ) -> i32 {
-    match record_verdict_apply(slug, pr, verdict, note, cost, basis, dry_run) {
+    match record_verdict_apply(slug, pr, verdict, note, cost, basis, covered, dry_run) {
         Ok(msg) => {
             println!("{msg}");
             0
@@ -4605,10 +5189,11 @@ fn record_verdict_apply(
     note: &str,
     cost: Option<i64>,
     basis: &str,
+    covered: &[Covered],
     dry_run: bool,
 ) -> Result<String, (i32, String)> {
     let Some(target) = verdict_label(verdict) else {
-        return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--cost <n>] [--basis <s>] [--dry-run]".to_string()));
+        return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--cost <n>] [--basis <s>] --covered-file <path> [--dry-run]".to_string()));
     };
     let Some(pr_json) = gh_json(&[
         "pr",
@@ -4617,27 +5202,59 @@ fn record_verdict_apply(
         "-R",
         slug,
         "--json",
-        "headRefOid,labels,comments,reviewDecision",
+        RECORD_VERDICT_FIELDS,
     ]) else {
         return Err((
             1,
             format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
         ));
     };
-    let (to_remove, has_target, sha, skip) = match verdict_plan(&pr_json, target, verdict) {
-        VerdictPlan::RefuseHuman => {
+    // The whole coverage gate (#131) needs the PR's diff, and the gate is ONE pure decision over it
+    // — so the diff is fetched before any guard runs rather than lazily behind one, which is what
+    // lets a test drive every refusal and their ORDER without a network.
+    let Some(diff_text) = gh_text(&["pr", "diff", pr, "-R", slug]) else {
+        return Err((
+            1,
+            format!(
+                "error: `gh pr diff {slug}#{pr}` failed — the coverage claim cannot be checked \
+                 against a diff that could not be read, and an unchecked claim is not a verdict"
+            ),
+        ));
+    };
+    let (to_remove, has_target, sha, skip) = match record_gate(
+        &pr_json, &diff_text, covered, target, verdict,
+    ) {
+        RecordGate::RefuseHuman => {
             return Err((
                 3,
                 format!("human verdict present on {slug}#{pr}; not overriding"),
             ));
         }
-        VerdictPlan::NoSha => {
+        RecordGate::NoSha => {
+            return Err((
+                    1,
+                    format!("error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"),
+                ));
+        }
+        RecordGate::NoDiff => {
             return Err((
                 1,
-                format!("error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"),
+                format!(
+                    "error: `gh pr diff {slug}#{pr}` produced no diff for a PR that changes files \
+                     — the coverage claim cannot be checked against a diff that is not there, and \
+                     an unchecked claim is not a verdict"
+                ),
             ));
         }
-        VerdictPlan::Record {
+        // Refused BEFORE any write and before the dry-run report, so a claim that does not
+        // account for the diff provably changed nothing.
+        RecordGate::Uncovered(gaps) => {
+            return Err((
+                4,
+                coverage_refusal(&format!("{slug}#{pr}"), &gaps, &diff_new_lines(&diff_text)),
+            ));
+        }
+        RecordGate::Record {
             to_remove,
             has_target,
             sha,
@@ -4648,7 +5265,9 @@ fn record_verdict_apply(
 
     if dry_run {
         return Ok(format!(
-            "[dry-run] {slug}#{pr} @ {sha}\n  target label: {target}{}\n  labels to remove: {}\n  comment: {}\n  cost: {}",
+            "[dry-run] {slug}#{pr} @ {sha}\n  coverage: {} file(s) accounted for, {} anchored\n  target label: {target}{}\n  labels to remove: {}\n  comment: {}\n  cost: {}",
+            covered.len(),
+            covered.iter().filter(|c| c.anchor.is_some()).count(),
             if has_target { " (already present)" } else { "" },
             if to_remove.is_empty() {
                 "(none)".to_string()
@@ -11499,7 +12118,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "record_verdict",
-            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost and the vet-protocol stamp. Refuses if a human has decided the PR.",
+            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost and the vet-protocol stamp. Refuses if a human has decided the PR, or if `covered` does not account for every file the PR changes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -11507,9 +12126,22 @@ fn mcp_all_tools() -> Value {
                     "verdict": {"type": "string", "enum": ["ready", "reject", "design", "close"]},
                     "note": {"type": "string", "description": "One line naming the issue number(s) and the specific reason."},
                     "cost": {"type": "integer", "description": "Human verification cost, 0-1000."},
-                    "basis": {"type": "string", "description": "3-8 words naming the cost driver."}
+                    "basis": {"type": "string", "description": "3-8 words naming the cost driver."},
+                    "covered": {
+                        "type": "array",
+                        "description": "One entry per file this PR changes — the verdict's scope, checked against the PR's own file list and diff. Hand-written source needs `line`+`text` quoting that line of the diff; `path` alone is enough for generated/vendored/lockfile paths and for files the diff shows no new-side line for (deletions, binaries). The refusal names every unmet entry with the lines that would satisfy it.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": "Repo-relative path, exactly as pr_context's files[].path spells it."},
+                                "line": {"type": "integer", "description": "New-side line number of the anchored line."},
+                                "text": {"type": "string", "description": "The content at that line (a fragment is enough)."}
+                            },
+                            "required": ["path"]
+                        }
+                    }
                 },
-                "required": ["pr", "verdict", "note", "cost", "basis"]
+                "required": ["pr", "verdict", "note", "cost", "basis", "covered"]
             }
         },
         {
@@ -11689,6 +12321,9 @@ enum McpCall {
         note: String,
         cost: i64,
         basis: String,
+        /// The scope-coverage claim (#131) — validated for SHAPE here, checked against the PR's own
+        /// files and diff in the apply, which is the only place they are known.
+        covered: Vec<Covered>,
     },
     UnvettedCloseCandidates {
         include_skipped: bool,
@@ -11958,6 +12593,7 @@ fn validate_call(
                     "basis must be at most {MAX_BASIS_WORDS} words naming the cost driver (put the reasoning in note)"
                 ));
             }
+            let covered = parse_covered(args)?;
             Ok(McpCall::RecordVerdict {
                 slug,
                 num,
@@ -11965,6 +12601,7 @@ fn validate_call(
                 note,
                 cost,
                 basis,
+                covered,
             })
         }
         "unvetted_close_candidates" => Ok(McpCall::UnvettedCloseCandidates {
@@ -12258,6 +12895,7 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             note,
             cost,
             basis,
+            covered,
         } => record_verdict_apply(
             &slug,
             &num.to_string(),
@@ -12265,6 +12903,7 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             &note,
             Some(cost),
             &basis,
+            &covered,
             false,
         )
         .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
@@ -14111,6 +14750,11 @@ enum Cmd {
         cost: Option<i64>,
         #[arg(long, default_value = "")]
         basis: String,
+        /// Path to a JSON file holding the scope-coverage claim: the same array `record_verdict`'s
+        /// `covered` argument takes. A FILE and not repeated flags because an anchor quotes a line
+        /// of source, and source contains every character a shell splits on.
+        #[arg(long)]
+        covered_file: Option<String>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -15883,8 +16527,24 @@ fn main() {
             note,
             cost,
             basis,
+            covered_file,
             dry_run,
-        } => record_verdict_mode(&slug, &pr, &verdict, &note.join(" "), cost, &basis, dry_run),
+        } => match read_covered_file(covered_file.as_deref()) {
+            Ok(covered) => record_verdict_mode(
+                &slug,
+                &pr,
+                &verdict,
+                &note.join(" "),
+                cost,
+                &basis,
+                &covered,
+                dry_run,
+            ),
+            Err(msg) => {
+                eprintln!("{msg}");
+                2
+            }
+        },
         Cmd::FlagCloseCandidate {
             slug,
             issue,
@@ -18546,8 +19206,66 @@ mod usage_probe_tests {
     }
 }
 
+/// TEST HELPER: read a file that lives at the REPO ROOT, one directory up from the crate.
+///
+/// `cargo test` runs with the CRATE directory as its cwd, so a bare `read_to_string("README.md")`
+/// resolves to nothing and the graceful "not checked out" bail fires ALWAYS — a conformance test
+/// that passes by never running, which is exactly the shape #131 is about one level up. Resolving
+/// from `CARGO_MANIFEST_DIR` makes the bail mean what it says: absent SOURCE (the flake package
+/// build filters these files out), never the wrong directory.
+#[cfg(test)]
+fn repo_root_text(rel: &str) -> Option<String> {
+    std::fs::read_to_string(repo_root_path(rel)).ok()
+}
+
+/// TEST HELPER: where [`repo_root_text`] looks. Split out so the RESOLUTION is assertable without
+/// the file having to be there — in the flake build sandbox it is not, which is the whole reason
+/// the read is allowed to come back empty.
+#[cfg(test)]
+fn repo_root_path(rel: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the crate directory always has a parent")
+        .join(rel)
+}
+
+#[cfg(test)]
+mod repo_root_tests {
+    use super::{repo_root_path, repo_root_text};
+
+    /// The guard on the guard. Every conformance test over a repo-root file is written to bail
+    /// gracefully when the file is absent, so if the LOOKUP goes wrong they all pass by not
+    /// running — which is how a `covered` bullet, a protocol number and a whole prompt clause went
+    /// unpinned until a mutation pass measured it.
+    #[test]
+    fn a_repo_root_file_is_looked_for_above_the_crate_and_not_inside_it() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let p = repo_root_path("README.md");
+        assert_eq!(
+            p.file_name().map(|n| n.to_string_lossy().to_string()),
+            Some("README.md".to_string())
+        );
+        assert_eq!(
+            p.parent(),
+            manifest.parent(),
+            "{p:?} must sit in the REPO ROOT"
+        );
+        assert_ne!(
+            p.parent(),
+            Some(manifest),
+            "the crate directory is where a BARE relative read lands, and where the file never is"
+        );
+        // …and the reader actually goes there: same answer, or the same nothing.
+        assert_eq!(
+            repo_root_text("README.md"),
+            std::fs::read_to_string(repo_root_path("README.md")).ok()
+        );
+    }
+}
+
 #[cfg(test)]
 mod settings_tests {
+    use super::repo_root_text;
     use serde_json::Value;
 
     // The producer AND vetter are one-shot crons that must never park themselves — ScheduleWakeup and
@@ -18578,10 +19296,6 @@ mod settings_tests {
         perm_list(rel, "deny")
     }
 
-    fn read_text(rel: &str) -> Option<String> {
-        std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel)).ok()
-    }
-
     // The wiring above only means something if the RUNNER launches it. `review-run.sh` is the only
     // thing that starts the vetter, so this pins the last side: it names the prompt/settings that
     // exist, passes the MCP server config with `--strict-mcp-config`, and offers NO second surface —
@@ -18589,7 +19303,7 @@ mod settings_tests {
     // vetter configurations where one is unreachable is drift a reader cannot resolve.
     #[test]
     fn the_vetter_runner_launches_the_mcp_surface_and_only_that() {
-        let Some(sh) = read_text("review-run.sh") else {
+        let Some(sh) = repo_root_text("review-run.sh") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
 
@@ -18623,14 +19337,16 @@ mod settings_tests {
             "review-mcp.json",
         ] {
             assert!(
-                read_text(f).is_some(),
+                repo_root_text(f).is_some(),
                 "review-run.sh names {f}, which must exist"
             );
         }
 
         // No opt-in flag survives in the runner or the deployment-config template.
         for f in ["review-run.sh", "cron.env.example"] {
-            let Some(text) = read_text(f) else { continue };
+            let Some(text) = repo_root_text(f) else {
+                continue;
+            };
             assert!(
                 !text.contains("VETTER_MCP"),
                 "{f}: the vetter's surface is not selectable — no VETTER_MCP"
@@ -18716,8 +19432,8 @@ mod settings_tests {
     // records nothing (#63). Allowed-and-unused costs one schema; disallowed-and-needed costs a run.
     #[test]
     fn the_vetter_presents_its_surface_instead_of_deferring_it() {
-        let Ok(runner) = std::fs::read_to_string("review-run.sh") else {
-            return;
+        let Some(runner) = repo_root_text("review-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
             runner.contains("export ENABLE_TOOL_SEARCH=false"),
@@ -18738,8 +19454,8 @@ mod settings_tests {
     // the deny-list prefix-matches into unusability (#56).
     #[test]
     fn the_producer_prompt_releases_clones_through_the_tool_not_rm_rf() {
-        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
-            return;
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
             !prompt.contains("rm -rf <clonedir>"),
@@ -18758,9 +19474,14 @@ mod settings_tests {
         ] {
             assert!(prompt.contains(tool), "the prompt must name {tool}");
         }
-        // …and the old shell recipes for those moves are gone.
+        // …and the old shell recipes for those moves are gone. "Those moves" is CREATE, RELEASE
+        // and COLLECT — a PR-BRANCH re-sync (`git -C <dir> fetch origin && …`, the reject rework of
+        // step 2z) is a different operation on a checkout that already exists, and is still shell.
         assert!(!prompt.contains("pr-review-report gc-clones"));
-        assert!(!prompt.contains("git -C <dir> fetch origin &&"));
+        assert!(
+            prompt.contains("Do NOT hand-roll this with `git clone`"),
+            "clone CREATION must be the tool's, said as a prohibition and not merely omitted"
+        );
     }
 
     /// #135/#136: retiring `ai:relink` only works if the work it named became something the
@@ -18768,7 +19489,7 @@ mod settings_tests {
     /// has to teach the reject-handling that replaces it — and name the tool, not a `gh pr edit`.
     #[test]
     fn the_producer_prompt_teaches_the_linkage_repair_as_a_tool() {
-        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         for tool in ["mcp__fsm__weaken_closes", "mcp__fsm__repair_qa_block"] {
@@ -18785,10 +19506,16 @@ mod settings_tests {
             prompt.contains("DIRECTION-LOCKED"),
             "the prompt must state the invariant, not just the call"
         );
-        // The retired verdict must not be taught as a state the producer waits in.
+        // The retired verdict must not be taught as a state the producer waits in. As with the
+        // vetter's own prompt, EXPLAINING that it is gone is exactly what a prompt should do —
+        // what it may not do is send the producer looking for the label.
         assert!(
-            !prompt.contains("ai:relink"),
+            !prompt.contains("--label ai:relink") && !prompt.contains("`ai:relink` PR"),
             "`ai:relink` is retired (#135) — the prompt must not name it as a state"
+        );
+        assert!(
+            prompt.contains("There is no `ai:relink` verdict any more"),
+            "…and it must say so, so a producer that saw the old label knows it is dead"
         );
     }
 
@@ -18796,7 +19523,7 @@ mod settings_tests {
     /// `relink` would spend a whole run's tool calls discovering the guard refuses it.
     #[test]
     fn the_vetter_prompt_teaches_four_verdicts_and_routes_linkage_to_reject() {
-        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
@@ -19105,6 +19832,817 @@ mod record_verdict_tests {
         assert!(has_human_override(&human), "human:reject must guard");
         let ai_only = json!({"labels":[{"name":"ai:ready"}]});
         assert!(!has_human_override(&ai_only));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCOPE COVERAGE (#131) — a verdict must account for every file the PR changes
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod scope_coverage_tests {
+    use super::{
+        anchor_exempt, anchorable_ranges, coverage_gaps, coverage_refusal, covered_from_document,
+        diff_changed_paths, diff_new_lines, hunk_header, parse_covered, ranges_hint,
+        read_covered_file, record_gate, repo_root_text, BadAnchor, CoverageAnchor, CoverageGaps,
+        Covered, RecordGate, TRUSTED_AUTHOR, VET_PROTOCOL, VET_PROTOCOL_PREFIX,
+    };
+    use serde_json::json;
+
+    /// The `rain.erc4626.words#230` shape, plus the classes the proportionality rule has to answer
+    /// for: a hand-written modified file, a hand-written ADDED file, a generated file, a DELETED
+    /// file (no new-side line exists) and a BINARY file (no hunk at all).
+    const DIFF: &str = "\
+diff --git a/src/Vault.sol b/src/Vault.sol
+index 1111111..2222222 100644
+--- a/src/Vault.sol
++++ b/src/Vault.sol
+@@ -10,6 +10,7 @@ contract Vault {
+     uint256 internal sTotal;
+
+     function deposit(uint256 amount) external {
+-        sTotal += amount;
++        sTotal = sTotal + amount;
++        emit Deposit(amount);
+     }
+ }
+diff --git a/test/src/abstract/ERC4626SubParserSplitExtern.wrapper.sol b/test/src/abstract/ERC4626SubParserSplitExtern.wrapper.sol
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/test/src/abstract/ERC4626SubParserSplitExtern.wrapper.sol
+@@ -0,0 +1,4 @@
++// SPDX-License-Identifier: LicenseRef-DCL-1.0
++contract ERC4626SubParserSplitExternWrapper {
++    address private immutable _ext;
++}
+diff --git a/src/generated/Words.pointers.sol b/src/generated/Words.pointers.sol
+index 4444444..5555555 100644
+--- a/src/generated/Words.pointers.sol
++++ b/src/generated/Words.pointers.sol
+@@ -1,2 +1,2 @@
+-bytes constant P = hex\"00\";
++bytes constant P = hex\"01\";
+
+diff --git a/legacy/Old.sol b/legacy/Old.sol
+deleted file mode 100644
+index 6666666..0000000
+--- a/legacy/Old.sol
++++ /dev/null
+@@ -1,3 +0,0 @@
+-contract Old {
+-    uint256 x;
+-}
+diff --git a/docs/logo.png b/docs/logo.png
+index 7777777..8888888 100644
+Binary files a/docs/logo.png and b/docs/logo.png differ
+";
+
+    const WRAPPER: &str = "test/src/abstract/ERC4626SubParserSplitExtern.wrapper.sol";
+
+    fn changed() -> Vec<String> {
+        [
+            "src/Vault.sol",
+            WRAPPER,
+            "src/generated/Words.pointers.sol",
+            "legacy/Old.sol",
+            "docs/logo.png",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+
+    fn anchored(path: &str, line: u64, text: &str) -> Covered {
+        Covered {
+            path: path.to_string(),
+            anchor: Some(CoverageAnchor {
+                line,
+                text: text.to_string(),
+            }),
+        }
+    }
+
+    fn named(path: &str) -> Covered {
+        Covered {
+            path: path.to_string(),
+            anchor: None,
+        }
+    }
+
+    /// The claim that satisfies `DIFF`: an anchor for each hand-written file, the name alone for the
+    /// generated / deleted / binary ones.
+    fn good_claim() -> Vec<Covered> {
+        vec![
+            anchored("src/Vault.sol", 14, "emit Deposit(amount);"),
+            anchored(WRAPPER, 3, "address private immutable _ext;"),
+            named("src/generated/Words.pointers.sol"),
+            named("legacy/Old.sol"),
+            named("docs/logo.png"),
+        ]
+    }
+
+    fn gaps_for(covered: &[Covered]) -> CoverageGaps {
+        coverage_gaps(
+            &changed(),
+            &diff_changed_paths(DIFF),
+            covered,
+            &diff_new_lines(DIFF),
+        )
+    }
+
+    // --- the diff reader the whole guard rests on -----------------------------------------------
+
+    // A field the gate READS but the fetch OMITS is a guard that silently stops firing: with `files`
+    // gone the changed set is empty and EVERY claim is vacuously sufficient.
+    #[test]
+    fn the_verdict_fetch_asks_for_every_field_the_gate_reads() {
+        for field in [
+            "headRefOid",
+            "labels",
+            "comments",
+            "reviewDecision",
+            "files",
+        ] {
+            assert!(
+                super::RECORD_VERDICT_FIELDS.split(',').any(|f| f == field),
+                "{field} is read by record_gate but not fetched"
+            );
+        }
+    }
+
+    #[test]
+    fn hunk_header_reads_both_counts_and_defaults_an_omitted_one() {
+        assert_eq!(
+            hunk_header("@@ -10,6 +10,7 @@ contract Vault {"),
+            Some((10, 6, 7))
+        );
+        assert_eq!(hunk_header("@@ -0,0 +1,4 @@"), Some((1, 0, 4)));
+        // a one-line hunk omits the count entirely; it means 1, not 0
+        assert_eq!(hunk_header("@@ -5 +7 @@"), Some((7, 1, 1)));
+        assert_eq!(hunk_header("@@ -1,3 +0,0 @@"), Some((0, 3, 0)));
+        for bad in ["@@ -a,b +c,d @@", "not a hunk", "@@", "@@ -1,2 @@"] {
+            assert_eq!(hunk_header(bad), None, "{bad:?} must not parse");
+        }
+    }
+
+    #[test]
+    fn diff_new_lines_numbers_the_new_side_and_a_removal_does_not_advance_it() {
+        let d = diff_new_lines(DIFF);
+        let vault = d.get("src/Vault.sol").expect("Vault.sol is in the diff");
+        // context 10-12, the two ADDED lines at 13/14 (the removal at old-10 consumed no new
+        // number), context 15-16.
+        assert_eq!(
+            vault.get(&10).map(String::as_str),
+            Some("    uint256 internal sTotal;")
+        );
+        assert_eq!(
+            vault.get(&12).map(String::as_str),
+            Some("    function deposit(uint256 amount) external {")
+        );
+        assert_eq!(
+            vault.get(&13).map(String::as_str),
+            Some("        sTotal = sTotal + amount;")
+        );
+        assert_eq!(
+            vault.get(&14).map(String::as_str),
+            Some("        emit Deposit(amount);")
+        );
+        assert_eq!(vault.get(&16).map(String::as_str), Some("}"));
+        assert_eq!(vault.get(&17), None, "the hunk's new count is 7, not 8");
+        // an ADDED file is anchorable from line 1
+        let w = d.get(WRAPPER).expect("the added file is in the diff");
+        assert_eq!(
+            w.get(&3).map(String::as_str),
+            Some("    address private immutable _ext;")
+        );
+        // `+++ /dev/null` and a binary stanza contribute NO new-side line — which is what makes
+        // demanding an anchor for them impossible, and therefore what the derived exemption reads.
+        assert_eq!(d.get("legacy/Old.sol"), None);
+        assert_eq!(d.get("docs/logo.png"), None);
+    }
+
+    // The parser walks by HUNK COUNTS. A sniffing one reads an added line that itself starts with
+    // `++` as a `+++ b/…` header and silently re-points every following line at another file.
+    #[test]
+    fn an_added_line_starting_with_plus_plus_is_content_not_a_header() {
+        let d = diff_new_lines(
+            "\
+diff --git a/a.md b/a.md
+--- a/a.md
++++ b/a.md
+@@ -1,0 +1,2 @@
++++ b/evil.md
++ordinary
+",
+        );
+        let a = d.get("a.md").expect("still a.md");
+        assert_eq!(a.get(&1).map(String::as_str), Some("++ b/evil.md"));
+        assert_eq!(a.get(&2).map(String::as_str), Some("ordinary"));
+        assert!(!d.contains_key("evil.md"), "no phantom file");
+    }
+
+    #[test]
+    fn diff_changed_paths_sees_the_deleted_and_binary_files_too() {
+        let paths = diff_changed_paths(DIFF);
+        for p in [
+            "src/Vault.sol",
+            WRAPPER,
+            "src/generated/Words.pointers.sol",
+            "legacy/Old.sol",
+            "docs/logo.png",
+        ] {
+            assert!(paths.contains(p), "{p} must be a known changed path");
+        }
+        // A filename with a space survives, and so does one containing " b/" itself — the split is
+        // decided by the half's LENGTH, which neither tokenising nor find/rfind on " b/" can do.
+        let spaced = diff_changed_paths("diff --git a/my file.md b/my file.md\n");
+        assert!(spaced.contains("my file.md"), "{spaced:?}");
+        let nasty = diff_changed_paths("diff --git a/x b/y b/x b/y\n");
+        assert!(nasty.contains("x b/y"), "{nasty:?}");
+        // a RENAME has no closed form; the LAST " b/" is the best available split and the file is
+        // still NAMED, which is all this set is for — and "last" is what makes a rename FROM a name
+        // that itself contains " b/" still resolve to the new path
+        let renamed = diff_changed_paths("diff --git a/old.md b/new.md\n");
+        assert!(renamed.contains("new.md"), "{renamed:?}");
+        let renamed_nasty = diff_changed_paths("diff --git a/x b/y.md b/new.md\n");
+        assert!(renamed_nasty.contains("new.md"), "{renamed_nasty:?}");
+    }
+
+    // --- the floor: every changed file accounted for --------------------------------------------
+
+    #[test]
+    fn a_claim_that_accounts_for_every_changed_file_records() {
+        assert!(
+            gaps_for(&good_claim()).is_clean(),
+            "{:?}",
+            gaps_for(&good_claim())
+        );
+    }
+
+    // THE #230 FAILURE. The verdict named everything except the file the PR was ADDING; that is now
+    // unrecordable, and the refusal says which file.
+    #[test]
+    fn an_omitted_changed_file_is_refused_and_the_refusal_names_it() {
+        let claim: Vec<Covered> = good_claim()
+            .into_iter()
+            .filter(|c| c.path != WRAPPER)
+            .collect();
+        let gaps = gaps_for(&claim);
+        assert_eq!(gaps.unaccounted, vec![WRAPPER.to_string()]);
+        assert!(!gaps.is_clean());
+        let msg = coverage_refusal("o/r#230", &gaps, &diff_new_lines(DIFF));
+        assert!(msg.contains(WRAPPER), "the refusal names the file: {msg}");
+        assert!(msg.contains("nothing was written"), "{msg}");
+    }
+
+    // Accounting is not optional for a file the vetter merely FORGOT to anchor either: naming a
+    // hand-written file without a line is the attestation the issue says is not proof.
+    #[test]
+    fn a_hand_written_file_named_without_an_anchor_is_refused() {
+        let claim: Vec<Covered> = good_claim()
+            .into_iter()
+            .map(|c| if c.path == WRAPPER { named(WRAPPER) } else { c })
+            .collect();
+        let gaps = gaps_for(&claim);
+        assert_eq!(gaps.unanchored, vec![WRAPPER.to_string()]);
+        assert!(
+            !gaps.is_clean(),
+            "an unanchored hand-written file blocks the write"
+        );
+        let msg = coverage_refusal("o/r#230", &gaps, &diff_new_lines(DIFF));
+        // and it says WHICH lines would satisfy it, so the fix needs no guessing
+        assert!(msg.contains("anchorable lines: 1-4"), "{msg}");
+    }
+
+    // --- the stronger form: the anchor must be borne out by the diff -----------------------------
+
+    #[test]
+    fn an_anchor_whose_text_is_not_at_that_line_is_refused() {
+        let claim: Vec<Covered> = good_claim()
+            .into_iter()
+            .map(|c| {
+                if c.path == WRAPPER {
+                    // the RIGHT file, a REAL line of it, the wrong content
+                    anchored(WRAPPER, 3, "address public iExtern;")
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let gaps = gaps_for(&claim);
+        assert_eq!(
+            gaps.bad_anchor,
+            vec![BadAnchor {
+                path: WRAPPER.to_string(),
+                line: 3,
+                actual: Some("    address private immutable _ext;".to_string()),
+            }]
+        );
+        assert!(!gaps.is_clean(), "a mismatched anchor blocks the write");
+        let msg = coverage_refusal("o/r#230", &gaps, &diff_new_lines(DIFF));
+        assert!(
+            msg.contains("the diff has `address private immutable _ext;`"),
+            "the refusal quotes what is really there: {msg}"
+        );
+    }
+
+    #[test]
+    fn an_anchor_at_a_line_the_diff_does_not_have_is_refused() {
+        let claim: Vec<Covered> = good_claim()
+            .into_iter()
+            .map(|c| {
+                if c.path == "src/Vault.sol" {
+                    // line 2 is inside the file but OUTSIDE every hunk — unverifiable, so refused
+                    anchored("src/Vault.sol", 2, "pragma solidity ^0.8.25;")
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let gaps = gaps_for(&claim);
+        assert_eq!(
+            gaps.bad_anchor,
+            vec![BadAnchor {
+                path: "src/Vault.sol".to_string(),
+                line: 2,
+                actual: None,
+            }]
+        );
+        assert!(
+            !gaps.is_clean(),
+            "an anchor at a line the diff lacks blocks the write"
+        );
+        let msg = coverage_refusal("o/r#1", &gaps, &diff_new_lines(DIFF));
+        assert!(msg.contains("that line is not in this PR's diff"), "{msg}");
+        assert!(msg.contains("anchorable lines: 10-16"), "{msg}");
+    }
+
+    // An anchor is a QUOTE, not a transcription exercise: a fragment matches, and leading
+    // indentation is not part of the claim. Whitespace-exactness would be the refusal that costs a
+    // retry for nothing.
+    #[test]
+    fn an_anchor_matches_on_a_trimmed_fragment() {
+        for text in [
+            "address private immutable _ext;",
+            "    address private immutable _ext;",
+            "immutable _ext",
+        ] {
+            let claim: Vec<Covered> = good_claim()
+                .into_iter()
+                .map(|c| {
+                    if c.path == WRAPPER {
+                        anchored(WRAPPER, 3, text)
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            assert!(gaps_for(&claim).is_clean(), "{text:?} must match");
+        }
+    }
+
+    // --- proportionality --------------------------------------------------------------------------
+
+    #[test]
+    fn generated_vendored_lockfile_and_binary_paths_need_only_accounting() {
+        for p in [
+            "src/generated/Words.pointers.sol",
+            "src/concrete/Foo.pointers.sol",
+            "Cargo.lock",
+            "flake.lock",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "node_modules/left-pad/index.js",
+            "lib/forge-std/src/Test.sol",
+            "dependencies/rain-factory-0.1.5/src/A.sol",
+            "packages/ui/dist/bundle.js",
+            "vendor/x/y.go",
+            "crates/js_api/abis/Orderbook.json",
+            "docs/logo.png",
+            "target/debug/x.bin",
+            "test/.gas-snapshot",
+        ] {
+            assert!(anchor_exempt(p), "{p} must not need an anchor");
+        }
+        // …and everything a person actually writes DOES need one
+        for p in [
+            "src/Vault.sol",
+            WRAPPER,
+            "pr-review-report-rs/src/main.rs",
+            "README.md",
+            "script/Deploy.s.sol",
+            "src/lib/LibGenerate.sol", // `lib` is forge's tree only at the ROOT; src/lib is source
+            "src/libraries/Math.sol",  // and "lib" is a COMPONENT, never a prefix
+            "src/generator/Emit.sol",  // …as "generated" is, not a substring
+            "lib.rs",                  // a root-dir name is a DIRECTORY, not a file
+            // …and its BARE spelling is a file too: a repo-root `target` with nothing under it is
+            // something a person wrote, not cargo's or forge's tree.
+            "target",
+            "lib",
+            "dependencies",
+            "docs/generated-report.md", // a component CONTAINING "generated" is not "generated"
+            // an exempt NAME is the whole basename, never a suffix of one
+            "docs/my-package-lock.json",
+            "src/pnpm-lock.yaml.md",
+        ] {
+            assert!(!anchor_exempt(p), "{p} must need an anchor");
+        }
+    }
+
+    // The derived half of proportionality, and the one that keeps the gate SATISFIABLE: a file with
+    // no new-side line in the diff cannot be anchored by anyone, so it is never asked for.
+    #[test]
+    fn a_file_with_no_new_side_line_is_never_asked_for_an_anchor() {
+        let gaps = gaps_for(&good_claim());
+        assert!(gaps.unanchored.is_empty(), "{gaps:?}");
+        // both classes are present in DIFF and both are hand-written paths by NAME
+        assert!(
+            !anchor_exempt("legacy/Old.sol"),
+            "a deleted .sol is not name-exempt"
+        );
+        assert!(!diff_new_lines(DIFF).contains_key("legacy/Old.sol"));
+    }
+
+    // --- naming a file this PR does not change ----------------------------------------------------
+
+    #[test]
+    fn a_file_this_pr_does_not_change_is_refused() {
+        let mut claim = good_claim();
+        claim.push(named("src/SomeOtherRepo.sol"));
+        let gaps = gaps_for(&claim);
+        assert_eq!(gaps.not_in_pr, vec!["src/SomeOtherRepo.sol".to_string()]);
+        assert!(!gaps.is_clean(), "a foreign file blocks the write");
+        let msg = coverage_refusal("o/r#1", &gaps, &diff_new_lines(DIFF));
+        assert!(msg.contains("another PR's checkout"), "{msg}");
+    }
+
+    // `gh pr view --json files` is capped at 100 entries. A file the DIFF shows but that list left
+    // out must not read as foreign — the vetter is never accused of inventing a file that is really
+    // there. (The reverse asymmetry holds by construction: accounting is only demanded for the list
+    // the vetter was actually shown.)
+    #[test]
+    fn a_file_only_the_diff_knows_about_is_not_foreign() {
+        let truncated = vec!["src/Vault.sol".to_string()];
+        let gaps = coverage_gaps(
+            &truncated,
+            &diff_changed_paths(DIFF),
+            &[
+                anchored("src/Vault.sol", 14, "emit Deposit(amount);"),
+                named("docs/logo.png"),
+                anchored(WRAPPER, 3, "immutable _ext"),
+            ],
+            &diff_new_lines(DIFF),
+        );
+        assert!(gaps.is_clean(), "{gaps:?}");
+    }
+
+    // --- the refusal must be satisfiable in ONE retry ---------------------------------------------
+
+    #[test]
+    fn every_gap_is_reported_at_once_and_one_corrected_call_clears_them() {
+        let broken = vec![
+            // src/Vault.sol omitted entirely
+            anchored(WRAPPER, 900, "not there"),
+            named("src/generated/Words.pointers.sol"),
+            named("legacy/Old.sol"),
+            named("docs/logo.png"),
+            named("src/Elsewhere.sol"),
+        ];
+        let gaps = gaps_for(&broken);
+        // all four buckets in ONE refusal — a guard that reported one per call would turn a wide PR
+        // into a negotiation
+        assert_eq!(gaps.unaccounted, vec!["src/Vault.sol".to_string()]);
+        assert_eq!(gaps.not_in_pr, vec!["src/Elsewhere.sol".to_string()]);
+        assert_eq!(gaps.bad_anchor.len(), 1);
+        let msg = coverage_refusal("o/r#1", &gaps, &diff_new_lines(DIFF));
+        assert!(msg.contains("src/Vault.sol"), "{msg}");
+        assert!(msg.contains("src/Elsewhere.sol"), "{msg}");
+        assert!(msg.contains(WRAPPER), "{msg}");
+        assert!(msg.contains("anchorable lines: 1-4"), "{msg}");
+        // the ranges the refusal printed are enough to build the claim that passes, first try
+        let fixed = vec![
+            anchored("src/Vault.sol", 10, "uint256 internal sTotal;"),
+            anchored(WRAPPER, 1, "SPDX-License-Identifier"),
+            named("src/generated/Words.pointers.sol"),
+            named("legacy/Old.sol"),
+            named("docs/logo.png"),
+            named("src/Elsewhere.sol"),
+        ];
+        // …minus the one entry the refusal said to DROP rather than fix
+        let fixed: Vec<Covered> = fixed
+            .into_iter()
+            .filter(|c| c.path != "src/Elsewhere.sol")
+            .collect();
+        assert!(gaps_for(&fixed).is_clean(), "{:?}", gaps_for(&fixed));
+    }
+
+    #[test]
+    fn anchorable_ranges_collapse_contiguous_runs_and_the_hint_is_capped() {
+        let lines: std::collections::BTreeMap<u64, String> = [1u64, 2, 3, 7, 9, 10]
+            .iter()
+            .map(|n| (*n, String::new()))
+            .collect();
+        assert_eq!(anchorable_ranges(&lines), vec![(1, 3), (7, 7), (9, 10)]);
+        assert_eq!(ranges_hint(Some(&lines)), "1-3, 7, 9-10");
+        // a diff with more ranges than the cap is elided, not dumped into the error
+        let many: std::collections::BTreeMap<u64, String> =
+            (0..20u64).map(|i| (i * 3 + 1, String::new())).collect();
+        assert!(
+            ranges_hint(Some(&many)).ends_with(", …"),
+            "{}",
+            ranges_hint(Some(&many))
+        );
+        assert_eq!(ranges_hint(Some(&many)).matches(", ").count(), 6);
+        assert!(ranges_hint(None).contains("no new-side line"));
+    }
+
+    // --- the argument's SHAPE -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_covered_refuses_a_claim_that_cannot_be_checked() {
+        // absent, wrong type, empty
+        for bad in [
+            json!({}),
+            json!({"covered": "src/a.rs"}),
+            json!({"covered": []}),
+        ] {
+            assert!(parse_covered(&bad).is_err(), "{bad} must be refused");
+        }
+        // a blank path is not a file
+        assert!(parse_covered(&json!({"covered": [{"path": "  "}]})).is_err());
+        // HALF an anchor proves nothing and is not checkable
+        let half_line = parse_covered(&json!({"covered": [{"path": "a.rs", "line": 4}]}));
+        assert!(
+            half_line
+                .as_ref()
+                .is_err_and(|e| e.contains("proves nothing")),
+            "{half_line:?}"
+        );
+        let half_text = parse_covered(&json!({"covered": [{"path": "a.rs", "text": "x"}]}));
+        assert!(
+            half_text
+                .as_ref()
+                .is_err_and(|e| e.contains("not checkable")),
+            "{half_text:?}"
+        );
+        // blank text is the same as no text
+        assert!(
+            parse_covered(&json!({"covered": [{"path": "a.rs", "line": 4, "text": "   "}]}))
+                .is_err()
+        );
+        // diff line numbers are 1-based
+        assert!(
+            parse_covered(&json!({"covered": [{"path": "a.rs", "line": 0, "text": "x"}]})).is_err()
+        );
+        // the shapes that DO parse, with the path normalised to one spelling
+        assert_eq!(
+            parse_covered(&json!({"covered": [
+                {"path": "./src/a.rs", "line": 9, "text": "  fn go() {  "},
+                {"path": "Cargo.lock"}
+            ]})),
+            Ok(vec![
+                Covered {
+                    path: "src/a.rs".to_string(),
+                    anchor: Some(CoverageAnchor {
+                        line: 9,
+                        text: "fn go() {".to_string()
+                    })
+                },
+                Covered {
+                    path: "Cargo.lock".to_string(),
+                    anchor: None
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn the_cli_reads_the_same_claim_from_a_file_and_refuses_an_absent_one() {
+        // absent is a USAGE error, never an empty claim — defaulting it would make the guard opt-in
+        let missing = read_covered_file(None);
+        assert!(
+            missing
+                .as_ref()
+                .is_err_and(|e| e.contains("--covered-file")),
+            "{missing:?}"
+        );
+        assert!(read_covered_file(Some("/nonexistent/covered.json")).is_err());
+        // bare array and {"covered": …} are the same document
+        let bare = json!([{"path": "a.rs", "line": 1, "text": "x"}]);
+        let wrapped = json!({"covered": [{"path": "a.rs", "line": 1, "text": "x"}]});
+        assert_eq!(
+            covered_from_document(&bare),
+            covered_from_document(&wrapped)
+        );
+        assert!(covered_from_document(&json!([])).is_err());
+    }
+
+    // --- the ORDER of the guards --------------------------------------------------------------------
+
+    fn pr_json(extra: serde_json::Value) -> serde_json::Value {
+        let mut base = json!({
+            "headRefOid": "deadbeef",
+            "labels": [],
+            "comments": [],
+            "files": [
+                {"path": "src/Vault.sol"},
+                {"path": WRAPPER},
+                {"path": "src/generated/Words.pointers.sol"},
+                {"path": "legacy/Old.sol"},
+                {"path": "docs/logo.png"}
+            ]
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            base.as_object_mut().unwrap().insert(k.clone(), v.clone());
+        }
+        base
+    }
+
+    #[test]
+    fn a_covered_verdict_reaches_the_record_and_an_uncovered_one_does_not() {
+        assert!(matches!(
+            record_gate(
+                &pr_json(json!({})),
+                DIFF,
+                &good_claim(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::Record { .. }
+        ));
+        let short: Vec<Covered> = good_claim()
+            .into_iter()
+            .filter(|c| c.path != WRAPPER)
+            .collect();
+        match record_gate(&pr_json(json!({})), DIFF, &short, "ai:ready", "ready") {
+            RecordGate::Uncovered(g) => assert_eq!(g.unaccounted, vec![WRAPPER.to_string()]),
+            other => panic!("expected Uncovered, got {other:?}"),
+        }
+    }
+
+    // The pre-existing guards are UNCHANGED and still win. A PR a human has decided is not the
+    // vetter's to record however its claim reads — and being told to fix anchors for a write that is
+    // about to be refused anyway is the wrong instruction.
+    #[test]
+    fn the_human_and_no_sha_refusals_outrank_the_coverage_refusal() {
+        let bad: Vec<Covered> = vec![named("src/Vault.sol")];
+        for sacred in [
+            json!({"labels": [{"name": "human:reject"}]}),
+            json!({"reviewDecision": "APPROVED"}),
+            json!({"reviewDecision": "CHANGES_REQUESTED"}),
+        ] {
+            assert_eq!(
+                record_gate(&pr_json(sacred.clone()), DIFF, &bad, "ai:ready", "ready"),
+                RecordGate::RefuseHuman,
+                "{sacred} must refuse as human-decided, not as uncovered"
+            );
+        }
+        assert_eq!(
+            record_gate(
+                &pr_json(json!({"headRefOid": ""})),
+                DIFF,
+                &bad,
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::NoSha
+        );
+    }
+
+    // …and the guards BELOW the gate survive it: a covered verdict still strips the other ai:*
+    // label and still dedups a comment that is already posted at this head under this protocol.
+    #[test]
+    fn a_covered_verdict_keeps_the_label_plan_and_the_comment_dedup() {
+        let already = json!({
+            "labels": [{"name": "ai:reject"}],
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": format!("🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}\nReviewed deadbeef: ready — ok")
+            }]
+        });
+        match record_gate(&pr_json(already), DIFF, &good_claim(), "ai:ready", "ready") {
+            RecordGate::Record {
+                to_remove,
+                has_target,
+                sha,
+                skip_comment,
+            } => {
+                assert_eq!(to_remove, vec!["ai:reject".to_string()]);
+                assert!(!has_target);
+                assert_eq!(sha, "deadbeef");
+                assert!(
+                    skip_comment,
+                    "the dedup still fires under the coverage gate"
+                );
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    // A guard that silently stops firing is the failure mode this whole issue is about, one level
+    // up. With no diff there is no anchorable line ANYWHERE, so every file reads as exempt by
+    // derivation and a claim of bare filenames would sail through a check that never ran. It is
+    // refused instead — and refused as its own thing, not mis-reported as the vetter's fault.
+    #[test]
+    fn a_diff_that_did_not_arrive_cannot_vacuously_satisfy_a_claim() {
+        let names: Vec<Covered> = changed().iter().map(|p| named(p)).collect();
+        assert_eq!(
+            record_gate(&pr_json(json!({})), "", &names, "ai:ready", "ready"),
+            RecordGate::NoDiff
+        );
+        // …and the very same claim against the REAL diff is refused for the right reason: the two
+        // hand-written files are unanchored, the generated / deleted / binary ones are not.
+        match record_gate(&pr_json(json!({})), DIFF, &names, "ai:ready", "ready") {
+            RecordGate::Uncovered(g) => assert_eq!(
+                g.unanchored,
+                vec!["src/Vault.sol".to_string(), WRAPPER.to_string()]
+            ),
+            other => panic!("expected Uncovered, got {other:?}"),
+        }
+        // The human-decided refusal still outranks even this.
+        assert_eq!(
+            record_gate(
+                &pr_json(json!({"reviewDecision": "APPROVED"})),
+                "",
+                &names,
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::RefuseHuman
+        );
+    }
+
+    // An anchor for file A must never be satisfiable by a line of file B. The path is reset at
+    // every `diff --git`, so a stanza whose `+++ b/…` line is absent contributes NOTHING rather
+    // than silently extending the file before it.
+    #[test]
+    fn a_stanza_with_no_new_side_header_does_not_inherit_the_previous_file() {
+        let d = diff_new_lines(
+            "\
+diff --git a/a.md b/a.md
+--- a/a.md
++++ b/a.md
+@@ -1,0 +1,1 @@
++mine
+diff --git a/b.md b/b.md
+@@ -1,0 +1,1 @@
++not mine
+",
+        );
+        assert_eq!(
+            d.get("a.md").and_then(|l| l.get(&1)).map(String::as_str),
+            Some("mine")
+        );
+        assert_eq!(
+            d.get("a.md").map(|l| l.len()),
+            Some(1),
+            "the second stanza's line must not land in a.md"
+        );
+        assert_eq!(d.get("b.md"), None, "and it names no file of its own");
+    }
+
+    // --- the contract the vetter is TAUGHT, and the one the human reads --------------------------
+
+    // The claim is an ARGUMENT the tool checks, so the prompt is the only place the vetter learns
+    // how to satisfy it. A prompt that does not teach it spends a whole run discovering the refusal
+    // one PR at a time — the vetter cannot escalate, so an unteachable gate is a stuck queue.
+    #[test]
+    fn the_vetter_prompt_teaches_the_coverage_claim_it_must_satisfy() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("`basis`, `covered`"),
+            "`covered` must be listed among record_verdict's arguments"
+        );
+        for taught in [
+            "**`covered` =",             // what it is
+            "\"line\"",                  // the anchor's shape
+            "\"text\"",                  // …both halves of it
+            "never reaches the comment", // and that it is NOT prose
+        ] {
+            assert!(
+                prompt.contains(taught),
+                "the prompt must teach {taught:?} — the vetter has no other way to learn the claim"
+            );
+        }
+    }
+
+    // Bumping VET_PROTOCOL is what retires every verdict formed WITHOUT this gate. Left at 1, the
+    // gate would only ever reach a PR whose head happens to move, and every already-`ai:ready`
+    // #230-shaped verdict would keep reading as current — so the number in force is pinned to the
+    // prose that explains what it means.
+    #[test]
+    fn the_readme_documents_the_protocol_in_force() {
+        let Some(readme) = repo_root_text("README.md") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        // Left at 1 this finds nothing: the README explains what 2 is, so the prose and the
+        // constant fall out of step the moment the bump is reverted or the paragraph rewritten.
+        assert!(
+            readme.contains(&format!("`{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}`")),
+            "README must say what `{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}` means"
+        );
     }
 }
 
@@ -19863,6 +21401,7 @@ mod cli_tests {
                 note: vec![],
                 cost: None,
                 basis: String::new(),
+                covered_file: None,
                 dry_run: false,
             }
         );
@@ -19885,6 +21424,8 @@ mod cli_tests {
             "100",
             "--basis",
             "org gate",
+            "--covered-file",
+            "/tmp/covered.json",
             "--dry-run",
         ]);
         assert_eq!(
@@ -19896,6 +21437,7 @@ mod cli_tests {
                 note: s(&["my", "note", "here"]),
                 cost: Some(100),
                 basis: "org gate".to_string(),
+                covered_file: Some("/tmp/covered.json".to_string()),
                 dry_run: true,
             }
         );
@@ -19927,6 +21469,7 @@ mod cli_tests {
                 note: vec![],
                 cost: Some(5),
                 basis: String::new(),
+                covered_file: None,
                 dry_run: true,
             }
         );
@@ -19945,6 +21488,7 @@ mod cli_tests {
                 note: s(&["bad"]),
                 cost: None,
                 basis: String::new(),
+                covered_file: None,
                 dry_run: false,
             }
         );
@@ -24507,6 +26051,13 @@ mod mcp_tests {
         // cost is REQUIRED by the schema — the prompt could only ask for it.
         assert!(required.contains(&"cost"));
         assert!(required.contains(&"verdict"));
+        // …and the scope-coverage claim (#131): the prompt could only ASK for it, and a claim the
+        // schema treats as optional is a guard the model can decline to arm.
+        assert!(required.contains(&"covered"));
+        assert_eq!(
+            rv["inputSchema"]["properties"]["covered"]["items"]["required"],
+            json!(["path"])
+        );
         let verdicts: Vec<&str> = rv["inputSchema"]["properties"]["verdict"]["enum"]
             .as_array()
             .unwrap()
@@ -24574,7 +26125,7 @@ mod mcp_tests {
     fn record_verdict_requires_a_scored_cost_a_note_and_a_short_basis() {
         let f = FakeExec::ok();
         let base = |extra: Value| {
-            let mut m = json!({"pr": "o/r#1", "verdict": "ready", "note": "closes #88 — pinned by test", "cost": 300, "basis": "small diff"});
+            let mut m = json!({"pr": "o/r#1", "verdict": "ready", "note": "closes #88 — pinned by test", "cost": 300, "basis": "small diff", "covered": [{"path": "src/a.rs", "line": 3, "text": "let x = 1;"}]});
             for (k, v) in extra.as_object().unwrap() {
                 m.as_object_mut().unwrap().insert(k.clone(), v.clone());
             }
@@ -24605,6 +26156,23 @@ mod mcp_tests {
             .unwrap()));
         assert!(f.calls().is_empty(), "no invalid verdict reached the write");
 
+        // A call wrong in MORE than one way is told about the VOCABULARY first: `covered` is what
+        // you assemble once you know which verdict you are recording, so being sent to build a
+        // coverage claim for a word this machine does not have is a wasted retry the vetter cannot
+        // afford — it has no human to escalate to.
+        let both_wrong = f
+            .handle(&call(
+                "record_verdict",
+                json!({"pr": "o/r#1", "verdict": "relink", "note": "n", "cost": 1, "basis": "b"}),
+            ))
+            .unwrap();
+        assert!(is_error(&both_wrong));
+        assert!(
+            text(&both_wrong).contains("not a verdict of this machine"),
+            "vocabulary before coverage: {}",
+            text(&both_wrong)
+        );
+
         // the boundaries themselves are legal.
         for good in [
             json!({"cost": 0}),
@@ -24625,7 +26193,7 @@ mod mcp_tests {
         let resp = f
             .handle(&call(
                 "record_verdict",
-                json!({"pr": "cyclofinance/cyclo.site#369", "verdict": "reject", "note": "closes #12 — no discriminating test", "cost": 640, "basis": "accounting path"}),
+                json!({"pr": "cyclofinance/cyclo.site#369", "verdict": "reject", "note": "closes #12 — no discriminating test", "cost": 640, "basis": "accounting path", "covered": [{"path": "src/lib/Fixed.sol", "line": 12, "text": "uint256 x;"}, {"path": "Cargo.lock"}]}),
             ))
             .unwrap();
         assert!(!is_error(&resp));
@@ -24638,6 +26206,21 @@ mod mcp_tests {
                 note: "closes #12 — no discriminating test".to_string(),
                 cost: 640,
                 basis: "accounting path".to_string(),
+                // the claim arrives at the write VERBATIM — normalised in spelling, never edited
+                // in content, and the exempt entry keeps its `None` anchor rather than being dropped
+                covered: vec![
+                    Covered {
+                        path: "src/lib/Fixed.sol".to_string(),
+                        anchor: Some(CoverageAnchor {
+                            line: 12,
+                            text: "uint256 x;".to_string(),
+                        }),
+                    },
+                    Covered {
+                        path: "Cargo.lock".to_string(),
+                        anchor: None,
+                    },
+                ],
             }]
         );
     }
@@ -24664,7 +26247,7 @@ mod mcp_tests {
         let resp = f
             .handle(&call(
                 "record_verdict",
-                json!({"pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b"}),
+                json!({"pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b", "covered": [{"path": "a.md"}]}),
             ))
             .unwrap();
         assert!(is_error(&resp));
