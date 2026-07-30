@@ -960,14 +960,8 @@
     },
     "leak": {
       "leak": {
-        "count": 2,
+        "count": 1,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 156,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/156",
-            "title": "/nr declares the audit lens's scope as an argument, not a paragraph the skill overrides"
-          },
           {
             "repo": "rainlanguage/flow",
             "number": 475,
@@ -1171,7 +1165,7 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 33,
+        "count": 32,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1184,12 +1178,6 @@
             "number": 67,
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/67",
             "title": "audit: scope is a declared input with three literals; the bendless rule is never diff-only"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 65,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/65",
-            "title": "audit: named returns must be locally provable; org default outranks file-local style"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1841,6 +1829,12 @@
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 158,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/158",
+      "title": "Usage gate: crons should hold 5% BEHIND pace, not run to 5% ahead — BAU work needs the headroom"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 149,
@@ -5582,13 +5576,6 @@
   ],
   "leaks": [
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 156,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/pull/156",
-      "title": "/nr declares the audit lens's scope as an argument, not a paragraph the skill overrides",
-      "reason": "🤖 ai:producer QA-block repair: replaced QA-GUIDE section 8's evidence block in the PR body via `pr-review-report repair-qa-block`. Every byte outside the `## QA` section is unchanged."
-    },
-    {
       "repo": "cyclofinance/cyclo.site",
       "number": 418,
       "url": "https://github.com/cyclofinance/cyclo.site/pull/418",
@@ -5759,10 +5746,10 @@
     "closeCandidateIssues": 13,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
-    "leaks": 24,
-    "totalProducerPrs": 160,
-    "uncoveredIssues": 623,
-    "unvetted": 33,
+    "leaks": 23,
+    "totalProducerPrs": 158,
+    "uncoveredIssues": 624,
+    "unvetted": 32,
     "reject": 28,
     "relink": 1,
     "closeCandidatePrs": 5,
