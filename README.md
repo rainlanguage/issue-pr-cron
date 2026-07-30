@@ -334,18 +334,18 @@ tool?" for the human: `pr-review-report mcp --profile human` (wired by
 `human-mcp.json`) serves `next_ready`, `pr_context`, `pr_checkout`,
 `clone_release`, `close_candidate_context`, `human_rule`, `human_rule_issue` and
 `human_close` — find the subject, read it, audit its source, rule on it, close
-it. `human_close` is a tool rather than something the caller
-composes for the reason above: the alternative is a transition half in a tool
-and half in a prompt, and that half was wrong on all 74 closed-and-still-flagged
-subjects. The subcommands above are for the human at a terminal; the profile is
-for **an agent acting on the human's behalf**, which is the case that actually
-went wrong in #86. A prompt rule cannot take a bypassable Bash away, and a
-`gh issue edit` that no tool offers is exactly what gets improvised; a profile
-makes the non-FSM operation _unavailable_. The vetter's inbox tools are
-deliberately absent — the human's inbox is `human-queue`, which renders whole
-org-wide sets and does not fit one tool result — and so is
-`record_close_candidate_verdict`, which is the vetter's authority and the very
-move `human_rule_issue` refuses on the human's behalf.
+it. `human_close` is a tool rather than something the caller composes for the
+reason above: the alternative is a transition half in a tool and half in a
+prompt, and that half was wrong on all 74 closed-and-still-flagged subjects. The
+subcommands above are for the human at a terminal; the profile is for **an agent
+acting on the human's behalf**, which is the case that actually went wrong in
+#86. A prompt rule cannot take a bypassable Bash away, and a `gh issue edit`
+that no tool offers is exactly what gets improvised; a profile makes the non-FSM
+operation _unavailable_. The vetter's inbox tools are deliberately absent — the
+human's inbox is `human-queue`, which renders whole org-wide sets and does not
+fit one tool result — and so is `record_close_candidate_verdict`, which is the
+vetter's authority and the very move `human_rule_issue` refuses on the human's
+behalf.
 
 `pr_checkout` and `clone_release` are on it for `/nr`'s sake (#150). The human
 gate forms its own view rather than relaying the vetter's, and the mechanical
@@ -354,11 +354,11 @@ not a substrate it can run on: every dimension needing a file the diff never
 touches (the callees, the siblings sharing an invariant, the premise the PR body
 asserts about current behaviour) would go unexercised, and silently.
 `rain.deploy#21` is the measured case — "one canonical CREATE2 derivation, 22
-hardcoded copies" is a count over the tree, not over the added lines. The release
-is not optional garnish beside it: a checkout left behind waits for a sweep, and
-this server runs with no `WORK_DIR`, so its clones land in the temp-dir fallback
-the producer's `clone_gc` may never look in. A human-gate leak has no collector
-behind it.
+hardcoded copies" is a count over the tree, not over the added lines. The
+release is not optional garnish beside it: a checkout left behind waits for a
+sweep, and this server runs with no `WORK_DIR`, so its clones land in the
+temp-dir fallback the producer's `clone_gc` may never look in. A human-gate leak
+has no collector behind it.
 
 #### `next_ready` — the merge decision as one typed result
 

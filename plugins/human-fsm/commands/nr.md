@@ -169,20 +169,20 @@ connect the plugin's MCP server, not to work around it.
 
 The grant is four typed calls plus `Skill` and `Read`, and `Read` applies to the
 `pr_checkout` tree and nothing else. All four typed calls are reads except
-`clone_release`, which disposes of what this command itself created and writes no
-GitHub state. The rulings remain `/reject`, `/design`, `/close-candidate`,
+`clone_release`, which disposes of what this command itself created and writes
+no GitHub state. The rulings remain `/reject`, `/design`, `/close-candidate`,
 `/keep-open`, and the merge is the human's, on a PR they named.
 
-That list is a **declaration, not a sandbox**: measured on Claude Code 2.1.220, a
-command granting only `Read` still ran a `Bash` call with no permission denial.
-So the prohibition above is the thing that actually binds, which is why it is
-written here rather than assumed of the frontmatter — and why nothing in this
-file is fenced as a shell line, because what a reader copies out of a command is
-what the command showed them.
+That list is a **declaration, not a sandbox**: measured on Claude Code 2.1.220,
+a command granting only `Read` still ran a `Bash` call with no permission
+denial. So the prohibition above is the thing that actually binds, which is why
+it is written here rather than assumed of the frontmatter — and why nothing in
+this file is fenced as a shell line, because what a reader copies out of a
+command is what the command showed them.
 
 The analysis costs three more calls, a skill fan-out and real reasoning, and
-that is the price of the decision rather than an overhead to trim back out. It is
-additive to the queue's latency, so a speedup elsewhere and this cost are one
+that is the price of the decision rather than an overhead to trim back out. It
+is additive to the queue's latency, so a speedup elsewhere and this cost are one
 conversation and not two — a faster queue that hands the human the vetter's own
 words back has bought nothing.
 
@@ -232,9 +232,9 @@ up to: whether anything blocks a merge, and if the deploy gate is set, that this
 is deploy-before-merge and **not** a plain merge, because landing it as if it
 were ordinary is a production error.
 
-Clean is a conclusion you are allowed to reach, not one to reach for: say it only
-about a diff you read against an issue you read, with a lens you actually pointed
-at the source, and say which those were. **This command does not merge and does
-not rule.** It is the read that precedes the human's word.
+Clean is a conclusion you are allowed to reach, not one to reach for: say it
+only about a diff you read against an issue you read, with a lens you actually
+pointed at the source, and say which those were. **This command does not merge
+and does not rule.** It is the read that precedes the human's word.
 
 Names collide across plugins; `/human-fsm:nr` disambiguates.

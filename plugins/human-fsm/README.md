@@ -8,14 +8,14 @@ halves of a decision — the read it rests on and the ruling it becomes — reac
 that binary **through typed calls and nothing else**, rather than a hand-written
 JSON-RPC frame, a Python filter over the response, and two raw `gh` calls.
 
-| Command                                      | The call it invokes                                                                                                                      |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Command                                      | The call it invokes                                                                                                                                                                                                     |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/nr [1-3]`                                  | `next_ready` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:ready` PR, and the vetter's verdict checked against its diff, its issue and its source. Writes no GitHub state |
-| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                            |
-| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                             |
-| `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`, pinned to the head sha or the issue                                                  |
-| `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                                                                                       |
-| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this" (issue-only)                                                            |
+| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                                                                                                           |
+| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                                                                                                            |
+| `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`, pinned to the head sha or the issue                                                                                                                                 |
+| `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                                                                                                                                                                      |
+| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this" (issue-only)                                                                                                                                           |
 
 Names collide across plugins; `/human-fsm:close-candidate` disambiguates.
 
@@ -27,18 +27,19 @@ in how they reach the binary, and the difference is the point.
 The rulings shell out to a `pr-review-report` subcommand. `/nr` calls **MCP
 tools** — `next_ready`, `pr_context`, `pr_checkout` and `clone_release`, served
 by the `fsm` server this plugin ships in its own manifest — plus `Skill` and
-`Read`, and **no shell at all**. It does not fall back to `gh`, does not assemble
-a field itself, and does not quietly answer from memory: either the tools
-answered or the command says so and stops. That is the guarantee a merge decision
-needs, because the way this goes wrong is not a refusal, it is a plausible answer
-nobody can trace.
+`Read`, and **no shell at all**. It does not fall back to `gh`, does not
+assemble a field itself, and does not quietly answer from memory: either the
+tools answered or the command says so and stops. That is the guarantee a merge
+decision needs, because the way this goes wrong is not a refusal, it is a
+plausible answer nobody can trace.
 
-The `allowed-tools` line is a **declaration**, not a sandbox — measured on Claude
-Code 2.1.220, a command granting only `Read` still ran a `Bash` call with no
-permission denial — so what binds is the command's own prose, and `cargo test`
-holds the declaration and the prose to each other: `command_contract` admits the
-typed grants plus `Skill` and `Read` by name, refuses any shell grant beside
-them, and refuses a shell line fenced anywhere in the body.
+The `allowed-tools` line is a **declaration**, not a sandbox — measured on
+Claude Code 2.1.220, a command granting only `Read` still ran a `Bash` call with
+no permission denial — so what binds is the command's own prose, and
+`cargo test` holds the declaration and the prose to each other:
+`command_contract` admits the typed grants plus `Skill` and `Read` by name,
+refuses any shell grant beside them, and refuses a shell line fenced anywhere in
+the body.
 
 Same reason the tools exist at all. Six reads — verdict note, head sha, base
 branch, CI, CodeRabbit coverage, deploy gate — done by hand, in an order the
@@ -64,13 +65,13 @@ derivation the same PR had just added — both stated plainly in the skill, both
 caught only when a human named them. Running the same skill the vetter runs does
 not make this a second vetter: it supplies the mechanical rules, while the scope
 question — does the diff do what the issue asked, all of it and nothing else —
-has no counterpart in the skill and is where this gate has actually caught things
-(`cyclo.site#393`, `#408`, `#331`). The skill's findings feed the read; they never
-replace it, and `clone_release` disposes of the tree before the result is
-presented.
+has no counterpart in the skill and is where this gate has actually caught
+things (`cyclo.site#393`, `#408`, `#331`). The skill's findings feed the read;
+they never replace it, and `clone_release` disposes of the tree before the
+result is presented.
 
-It costs three more calls, a skill fan-out and real reasoning, which is the price
-of a merge decision rather than an overhead to trim.
+It costs three more calls, a skill fan-out and real reasoning, which is the
+price of a merge decision rather than an overhead to trim.
 
 ## What lives here and what does not
 
