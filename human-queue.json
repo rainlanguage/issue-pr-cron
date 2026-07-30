@@ -382,12 +382,6 @@
         "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 425,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
-        "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
-      },
-      {
         "repo": "rainlanguage/rain.pyth",
         "number": 28,
         "url": "https://github.com/rainlanguage/rain.pyth/pull/28",
@@ -502,6 +496,12 @@
         "number": 32,
         "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32",
         "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 425,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
+        "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
       },
       {
         "repo": "S01-Issuer/st0x.deploy",
@@ -701,8 +701,14 @@
         ]
       },
       "human:reject": {
-        "count": 41,
+        "count": 42,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 23,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
+            "title": "chore(pragma): pin the three concrete .sol files to =0.8.25"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 20,
@@ -1159,20 +1165,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 33,
+        "count": 30,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 146,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/146",
-            "title": "The mechanical audit conventions are checked by the binary, not asked of the vetter"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 23,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
-            "title": "chore(pragma): pin the three concrete .sol files to =0.8.25"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 106,
@@ -1256,12 +1250,6 @@
             "number": 259,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
             "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 425,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
-            "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
           },
           {
             "repo": "rainlanguage/rain.pyth",
@@ -1482,7 +1470,7 @@
         ]
       },
       "ai:reject": {
-        "count": 27,
+        "count": 28,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
@@ -1501,6 +1489,12 @@
             "number": 32,
             "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32",
             "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 425,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
+            "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1823,18 +1817,6 @@
     }
   ],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 151,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/151",
-      "title": "Vetter ran the audit skill once in 35 verdicts: the lens the verdict claims is not being applied"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 150,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/150",
-      "title": "/nr cannot invoke the audit skill: no Skill grant, and the Human profile has no way to read source"
-    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 149,
@@ -5738,7 +5720,7 @@
     }
   ],
   "counts": {
-    "ready": 31,
+    "ready": 30,
     "design": 13,
     "blockedDeploy": 13,
     "blockedInfra": 0,
@@ -5747,13 +5729,13 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 23,
-    "totalProducerPrs": 157,
-    "uncoveredIssues": 625,
-    "unvetted": 33,
-    "reject": 27,
+    "totalProducerPrs": 156,
+    "uncoveredIssues": 623,
+    "unvetted": 30,
+    "reject": 28,
     "relink": 1,
     "closeCandidatePrs": 5,
-    "humanReject": 41,
+    "humanReject": 42,
     "humanDesign": 6,
     "humanCloseCandidate": 0
   }
