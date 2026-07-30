@@ -482,10 +482,10 @@ carries both facts, and counts as current only when both hold:
   makes the fix retroactive — the 34 verdicts the 2026-07-29T17:17:35Z run
   recorded with the lens never run all stop being current at once.
   `vet-protocol 4` is the audit lens's **scope** (#155): the ledger row now
-  carries the scope the invocation declared, and a verdict is refused unless that
-  scope is this PR's. `whole-repo` and a path list are both real invocations that
-  read the **wrong code**, so every protocol-3 verdict was formed under a
-  scope-blind ledger and is not a value of the current function.
+  carries the scope the invocation declared, and a verdict is refused unless
+  that scope is this PR's. `whole-repo` and a path list are both real
+  invocations that read the **wrong code**, so every protocol-3 verdict was
+  formed under a scope-blind ledger and is not a value of the current function.
 
 An **unstamped** comment is `VetProtocol::Unknown` and is never current. It was
 written under rules that cannot be identified, and unidentified is not "fine" —
@@ -808,8 +808,8 @@ cost 412 — concurrency guard in a store poll loop
 
 That is a different object from the evidence-of-reading preamble #131 and #140
 removed. A preamble is the **model's** account of its own diligence; this is the
-**binary's** account of facts it checked. It is also why an **absent** stamp
-is meaningful: a verdict with no `lens` line is one written before the lens was
+**binary's** account of facts it checked. It is also why an **absent** stamp is
+meaningful: a verdict with no `lens` line is one written before the lens was
 checkable, which is exactly the 34, and no longer indistinguishable from a vet
 that read the source. `lens source@<sha>, invocation UNOBSERVED (…)` is the
 third state — a run that names no ledger records its verdict and says so,
@@ -825,27 +825,28 @@ false premise gets caught. The cost of the alternative is one depth-1 clone that
 _"diff-only was proportionate here"_ waiver is a waiver written 34 times.
 
 **What this does NOT close, stated plainly.** It says nothing about what the
-skill **concluded** — [#146](https://github.com/rainlanguage/issue-pr-cron/pull/146)
-is right that correctness, security and design are not decidable from source
-text, and those dimensions remain entirely the vetter's. The two gates are
-complementary and neither subsumes the other: this one asks whether the lens was
-pointed at the PR, that one asks whether a `ready` contradicts a rule the lens
-states.
+skill **concluded** —
+[#146](https://github.com/rainlanguage/issue-pr-cron/pull/146) is right that
+correctness, security and design are not decidable from source text, and those
+dimensions remain entirely the vetter's. The two gates are complementary and
+neither subsumes the other: this one asks whether the lens was pointed at the
+PR, that one asks whether a `ready` contradicts a rule the lens states.
 
-**And what it rests on.** Every one of these facts is unforgeable only while the model cannot
-write to the filesystem. That is currently true of the vetter in the strongest
-available sense — not a deny rule but an absent tool: the `tools` array in every
-run's own `system`/`init` event is `[Glob, Grep, Read, Skill, mcp__fsm__*]`,
-with no `Bash`, `Write` or `Edit` in it, so a redirection into the ledger is not
-a thing the session can express. That is also why the ledger is written by
-`run-timings` — a **different process**, in the runner's pipe, outside the
-model's session — rather than by anything the model calls.
+**And what it rests on.** Every one of these facts is unforgeable only while the
+model cannot write to the filesystem. That is currently true of the vetter in
+the strongest available sense — not a deny rule but an absent tool: the `tools`
+array in every run's own `system`/`init` event is
+`[Glob, Grep, Read, Skill, mcp__fsm__*]`, with no `Bash`, `Write` or `Edit` in
+it, so a redirection into the ledger is not a thing the session can express.
+That is also why the ledger is written by `run-timings` — a **different
+process**, in the runner's pipe, outside the model's session — rather than by
+anything the model calls.
 [#152](https://github.com/rainlanguage/issue-pr-cron/pull/152) is the reason to
 say this out loud rather than leave it implied: a _declared_ tool surface is not
 a sandbox, and a command declaring only `Read` was observed running `Bash`. If
-the vetter is ever granted a write tool, the invocation and scope halves degrade to the
-source half and the ledger becomes advisory — so that grant is the moment to
-revisit this, and the `vetter has no write grant` CI job is what fails first.
+the vetter is ever granted a write tool, the invocation and scope halves degrade
+to the source half and the ledger becomes advisory — so that grant is the moment
+to revisit this, and the `vetter has no write grant` CI job is what fails first.
 
 ### The scope the lens ran at is on the row too
 
@@ -866,17 +867,18 @@ the check above:
 So the ledger row carries the **scope the invocation declared**, and
 `record_verdict` refuses a verdict whose lens ran at the wrong one
 (`RecordGate::WrongLensScope`, **exit 6**). The vocabulary is the audit skill's
-own ([`claude-audit-skills#66`](https://github.com/rainlanguage/claude-audit-skills/issues/66)),
+own
+([`claude-audit-skills#66`](https://github.com/rainlanguage/claude-audit-skills/issues/66)),
 three values and no fourth: `whole-repo`, `pr:<number>`,
 `paths:<comma-separated globs>`. For a PR verdict exactly one is legal —
 `pr:<this PR's number>`:
 
 - `whole-repo` reviewed the repository.
-- `paths:<globs>` reads the files the list names and nothing that decides whether
-  they are right. On a PR the only file list to hand is the diff's, so this is the
-  diff-only lens under another name — and even where the globs reach wider they
-  are a list the caller assembled, not the ramification set the _"would
-  understanding it change the ruling on THIS diff?"_ test derives.
+- `paths:<globs>` reads the files the list names and nothing that decides
+  whether they are right. On a PR the only file list to hand is the diff's, so
+  this is the diff-only lens under another name — and even where the globs reach
+  wider they are a list the caller assembled, not the ramification set the
+  _"would understanding it change the ruling on THIS diff?"_ test derives.
 - `pr:<other>` declares it reviewed a different PR than the one it was credited
   to.
 
@@ -887,30 +889,31 @@ Four things this is careful about:
   it is **never** parsed out of verdict text. A model-written scope claim is a
   claim about itself, which is the reasoning that made
   [#146](https://github.com/rainlanguage/issue-pr-cron/pull/146) choose the
-  linter shape over a findings record and #151 choose the stream-json observable.
-- **Absent is not the same as wrong**, and neither is the same as **unobserved**.
-  A row with no `scope` key is an invocation that declared nothing (the key is
-  omitted, never `null`); a row with a scope this PR does not own is an
-  invocation that declared the wrong thing; a run with no ledger at all observed
-  nothing. Three states, three refusal messages, because a refusal that told a
-  vetter it declared `whole-repo` when it declared nothing would be a refusal
-  about a call it never made. An **undeclared** scope is still refused: the
-  skill's standing rule is a whole-repo snapshot, so declaring nothing _is_
-  declaring whole-repo.
+  linter shape over a findings record and #151 choose the stream-json
+  observable.
+- **Absent is not the same as wrong**, and neither is the same as
+  **unobserved**. A row with no `scope` key is an invocation that declared
+  nothing (the key is omitted, never `null`); a row with a scope this PR does
+  not own is an invocation that declared the wrong thing; a run with no ledger
+  at all observed nothing. Three states, three refusal messages, because a
+  refusal that told a vetter it declared `whole-repo` when it declared nothing
+  would be a refusal about a call it never made. An **undeclared** scope is
+  still refused: the skill's standing rule is a whole-repo snapshot, so
+  declaring nothing _is_ declaring whole-repo.
 - **Its place in `record_gate` is immediately under the lens gate.** Under,
   because _"at what scope"_ is not a question about a PR whose source was never
   checked out or whose skill was never invoked. Over the convention and coverage
   refusals, for #151's own reason one level in: there is no point reporting a
   pragma or an anchor range to a vetter whose lens read the wrong code.
-- **The exit code is its own.** 6, beside 5: five says the code was not read, six
-  says the **wrong** code was read. One is repaired by a checkout and an
+- **The exit code is its own.** 6, beside 5: five says the code was not read,
+  six says the **wrong** code was read. One is repaired by a checkout and an
   invocation, the other by re-invoking a skill that already ran, at `pr:<n>`.
 
 A scope naming **more than one** value declares none — `args` is prose, and
-`"scope pr:21, not whole-repo"` states two values a reader would have to rank, so
-the same ruling applies as for an invocation naming two PRs. `review-prompt.txt`
-says to write `pr:<number>` and not to write the other two even to say they are
-not being used.
+`"scope pr:21, not whole-repo"` states two values a reader would have to rank,
+so the same ruling applies as for an invocation naming two PRs.
+`review-prompt.txt` says to write `pr:<number>` and not to write the other two
+even to say they are not being used.
 
 ### The mechanical half of the audit lens is the binary's, not the model's
 
