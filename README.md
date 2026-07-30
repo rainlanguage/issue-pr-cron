@@ -373,6 +373,28 @@ sweep, and this server runs with no `WORK_DIR`, so its clones land in the
 temp-dir fallback the producer's `clone_gc` may never look in. A human-gate leak
 has no collector behind it.
 
+**The lens's SCOPE is an argument, because prose does not survive the invocation
+(#154).** `nr.md` described the scope correctly and at length — the diff plus
+the callees, callers, siblings sharing the changed invariant and every
+current-behaviour claim, with _"would understanding it change the ruling on THIS
+diff?"_ as the inclusion test — and none of it reached the run. `Skill audit`
+loads a document whose own first rule is _"whole-repo snapshot, never a diff"_,
+and once it is loaded `nr.md` is not in the room: on `rain.deploy#21` the lens
+ran whole-repo, twelve findings, five bearing on the PR and seven in code the
+diff never touches, with the scope hand-typed as free text nothing could
+validate. So `/nr` DECLARES the scope — `scope=pr:<number>` — beside the `dir`
+and the changed-file list, from the vocabulary the audit skill accepts
+(`whole-repo`, `pr:<number>`, `paths:<globs>`, the same three its run stamp
+records). The value is built from typed results only: the number out of the
+row's own `pr` field, the file list out of `pr_context`. And the ruling `/nr`
+presents NAMES the scope it was formed at, so a PR-scoped review is
+distinguishable from a whole-repo sweep without counting how many findings
+missed the diff. `whole-repo` stays reachable as a separate deliberate
+invocation on a repo somebody named — never as the default that happens when
+nothing is passed, which is precisely how the defect read as working. The step-5
+prose is kept as the REASON the PR scope admits the surrounding files it does,
+rather than as the only thing carrying it.
+
 #### `next_ready` — the merge decision as one typed result
 
 Ruling on an `ai:ready` PR used to take six `gh` reads assembled by hand, in an

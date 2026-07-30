@@ -8208,6 +8208,40 @@ enum CommandKind {
 #[cfg(test)]
 const MCP_COMMAND_NATIVE_TOOLS: &[&str] = &["Skill", "Read"];
 
+/// A full sweep: every first-party file, whatever the diff touched.
+///
+/// One of the three scopes the `audit` skill accepts, spelled as its own run-stamp section spells it
+/// — the only value that means "fully audited" to a consumer of that stamp.
+#[cfg(test)]
+const AUDIT_SCOPE_WHOLE_REPO: &str = "whole-repo";
+
+/// A PR-scoped review, `pr:<number>` — the diff PLUS the code whose behaviour decides whether the
+/// diff is correct. This is the scope every `/nr` invocation declares.
+#[cfg(test)]
+const AUDIT_SCOPE_PR: &str = "pr:";
+
+/// A path-scoped review, `paths:<comma-separated globs>`.
+#[cfg(test)]
+const AUDIT_SCOPE_PATHS: &str = "paths:";
+
+/// The `audit` skill's whole scope vocabulary: a declared scope must BEGIN with one of these, and
+/// `whole-repo` is complete in itself while the other two carry a payload after the colon.
+///
+/// A scope has to be a value from this set or it is free text again, which is the whole of #154.
+/// `nr.md` described the middle-ground scope correctly and at length — the changed lines plus the
+/// callees, callers, siblings sharing the changed invariant, and every current-behaviour claim — and
+/// none of it survived the invocation: `Skill audit` loads a document whose own first rule is
+/// "whole-repo snapshot, never a diff", so once it is loaded the calling command is not in the room
+/// and the skill's rule wins. Measured on `rain.deploy#21`, the lens ran whole-repo — twelve
+/// findings, five bearing on the PR and seven in code the diff never touches — with the scope
+/// hand-typed as free text in an args string that nothing could validate.
+///
+/// Held here as ONE vocabulary rather than re-typed per caller: the value `/nr` declares, the value a
+/// lens ledger records, and the value a gate refuses on are definitionally the same three strings,
+/// and a second copy is a second spelling waiting to drift.
+#[cfg(test)]
+const AUDIT_SCOPES: &[&str] = &[AUDIT_SCOPE_WHOLE_REPO, AUDIT_SCOPE_PR, AUDIT_SCOPE_PATHS];
+
 /// PURE: what one shipped command invokes, and whether its body keeps that promise.
 ///
 /// A command's `allowed-tools` line is its DECLARED surface, and that line decides what the body is
@@ -29563,6 +29597,53 @@ mod marketplace_tests {
             "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs — and \
              releases the checkout it took"
         );
+    }
+
+    // #154: the grant above buys an invocation, and the invocation is only worth what its SCOPE is.
+    // `nr.md` used to carry the scope as a paragraph — correct, detailed, and overridden the moment
+    // `Skill audit` loaded a document whose first rule is "whole-repo snapshot, never a diff". The
+    // fix is a declared value, so what is pinned here is that the value is still there and is still
+    // one the skill accepts: a scope spelled anything else is unvalidated free text wearing an `=`.
+    #[test]
+    fn nr_declares_the_lens_scope_as_a_value_from_the_skills_own_vocabulary() {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
+            return; // not checked out (nix build sandbox)
+        };
+        // `/nr` rules on ONE PR, so the PR scope is what it declares — spelled out, with the
+        // placeholder that says a number goes there rather than a repo name or a branch.
+        assert!(
+            text.contains(&format!("`scope={AUDIT_SCOPE_PR}<number>`")),
+            "/nr must DECLARE the PR scope as an argument; a scope only described in prose is the \
+             #154 defect, and the skill's own whole-repo rule wins over a description"
+        );
+        // EVERY scope the file names, not just the one asserted above — the loop is non-empty
+        // because that assertion passed, and what it catches is a SECOND spelling arriving beside
+        // the right one.
+        let declared: Vec<&str> = text
+            .split("scope=")
+            .skip(1)
+            .map(|rest| {
+                rest.split(|c: char| c == '`' || c.is_whitespace())
+                    .next()
+                    .unwrap_or_default()
+            })
+            .collect();
+        for value in &declared {
+            assert!(
+                AUDIT_SCOPES.iter().any(|v| value.starts_with(v)),
+                "scope={value:?} is not one of {AUDIT_SCOPES:?} — a spelling the skill does not \
+                 accept is free text again, which is what #154 removed"
+            );
+            // And specifically NOT `whole-repo`: this command must have no argument, flag or mode
+            // that passes the widest scope. A whole-repo sweep is a separate, deliberate invocation
+            // — defaulting to it is exactly how the defect read as working.
+            assert!(
+                value.starts_with(AUDIT_SCOPE_PR),
+                "/nr passes {value:?}, but the human PR gate declares only \
+                 {AUDIT_SCOPE_PR}<number>; {AUDIT_SCOPE_WHOLE_REPO} and {AUDIT_SCOPE_PATHS} belong \
+                 to an invocation somebody asked for"
+            );
+        }
     }
 }
 

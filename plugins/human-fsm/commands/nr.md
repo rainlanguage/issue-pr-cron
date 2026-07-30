@@ -1,5 +1,5 @@
 ---
-description: The next ai:ready PR to rule on — the vetter's verdict, checked against an independent read of the diff, the issue it claims to close, and the audit skill run over the PR's own source.
+description: The next ai:ready PR to rule on — the vetter's verdict, checked against an independent read of the diff, the issue it claims to close, and the audit skill run over the PR's own source at a declared pr:<number> scope.
 argument-hint: [1-3]
 allowed-tools: mcp__plugin_human-fsm_fsm__next_ready, mcp__plugin_human-fsm_fsm__pr_context, mcp__plugin_human-fsm_fsm__pr_checkout, mcp__plugin_human-fsm_fsm__clone_release, Skill, Read
 ---
@@ -77,22 +77,45 @@ reading is written inside.
   in `pr_checkout`'s own result is the only path that is this PR's source — you
   do not glob for one, and a `vet-*` directory you happened to find is a
   DIFFERENT PR's tree.
-- **Invoke the skill with the `Skill` tool** — `audit` — seeded with the changed
-  file list and that `dir`. Never hand-copy its checks: invoking it is how this
-  command inherits every upgrade to it, and the two findings that motivated this
-  step were both stated plainly in it while a hand-rolled read missed them
+- **Invoke the skill with the `Skill` tool** — `audit` — and DECLARE THE SCOPE
+  AS AN ARGUMENT, not as something the reader is asked to remember:
+  `scope=pr:<number>`, the `dir` the checkout returned, and the changed-file
+  list. The skill's own top-line rule is _"whole-repo snapshot, never a diff —
+  do not scope by recent changes / PR diff"_, so once it is loaded this file is
+  not in the room and a scope carried only in prose loses to the document the
+  invocation just pulled in. Measured on `rain.deploy#21`, it did: twelve
+  findings, five bearing on the PR and seven in code the diff never touches,
+  with the scope hand-typed as free text that nothing could check. The skill
+  accepts exactly three scopes — `whole-repo`, `pr:<number>`,
+  `paths:<comma-separated globs>`, the same vocabulary its run stamp records —
+  and `/nr` always declares the second. A spelling outside those three is free
+  text again.
+- **Never hand-copy the skill's checks.** Invoking it is how this command
+  inherits every upgrade to it, and the two findings that motivated this step
+  were both stated plainly in it while a hand-rolled read missed them
   (`rain.deploy#20`, a newly added concrete test mock carrying a caret pragma;
   `rain.deploy#21`, a canonical CREATE2 derivation added and then hardcoded 22
   times beside 4 real calls). Run it INLINE and serial.
-- **Scope it to the middle ground**, exactly as the vetter's is scoped: the
-  changed lines PLUS the code whose behaviour decides whether the diff is
-  correct — the callees the changed lines invoke, the callers relying on the
-  changed behaviour, sibling implementations sharing the invariant being
-  changed, and every claim the PR body or the issue makes about how the code
-  CURRENTLY behaves, since a stated current behaviour the source contradicts is
-  a false premise and a finding in itself. NOT the diff alone; NOT a whole-repo
-  audit on every `/nr`. The test for reading a file is "would understanding it
-  change the ruling on THIS diff?".
+- **Every part of that argument comes from a typed result.** The `<number>` in
+  `scope=pr:<number>` is the one inside the row's own `pr` field —
+  `owner/repo#n`, the same string step 2 was addressed with — never a number
+  read off a title, a URL or the vetter's note. The changed-file list is
+  `pr_context`'s `files`, whole, each with its additions and deletions; if
+  `filesTruncated` is true the list is a PAGE of `filesTotal`, and the scope you
+  can honestly declare covers only what you were handed, so say which. The tree
+  is `pr_checkout`'s `dir`. A scope you assembled yourself is the defect `#132`
+  removed one level up: it looks exactly like a derived one, and nothing
+  downstream can tell them apart.
+- **What `pr:<number>` admits, and why — this is the REASON for the argument,
+  not a second carrier of it.** In scope is the middle ground: the changed lines
+  PLUS the code whose behaviour decides whether the diff is correct — the
+  callees the changed lines invoke, the callers relying on the changed
+  behaviour, sibling implementations sharing the invariant being changed, and
+  every claim the PR body or the issue makes about how the code CURRENTLY
+  behaves, since a stated current behaviour the source contradicts is a false
+  premise and a finding in itself. NOT the diff alone; NOT a whole-repo audit on
+  every `/nr`. The test for reading a file is "would understanding it change the
+  ruling on THIS diff?".
 - **Your read surface inside that tree is `Read`.** This harness has no `Grep`
   and no `Glob` — measured on 2.1.220, neither is listed and neither resolves
   through `ToolSearch` — so the lens navigates by path, from the changed-file
@@ -105,6 +128,13 @@ reading is written inside.
   merge. A question the diff raises and cannot settle itself is a `/design`
   rather than a quiet merge. And the skill finding nothing is not "clean": it
   never read the issue, so it cannot tell you the diff answered it.
+- **Carry the declared scope through to what you present.** The value you passed
+  is the one thing that says which code was read, so it is reported verbatim
+  beside the findings rather than left to be inferred from them — a reader
+  counting seven findings in untouched files should not have to work out that
+  the lens swept the repo. If the skill's report contradicts the scope you
+  declared, the scope is what the ruling is measured against and the divergence
+  is the finding: say which one you got.
 
 **6. `clone_release`** the checkout, passing the `dir` name `pr_checkout`
 returned, before you present anything. A checkout left behind sits on the box
@@ -112,8 +142,10 @@ until a sweep reaches it — and this server has no `WORK_DIR`, so its clones la
 in the temp-dir fallback, which the producer's sweep may never look in.
 Unreleased checkouts are how this box filled its disk. If `pr_checkout` ERRORS
 there is nothing to release and no audit lens either: re-call it ONCE, and if it
-fails again present the read WITHOUT that half and say so in as many words. A
-missing lens, named, is worth more than a lens implied.
+fails again present the read WITHOUT that half and say so in as many words — a
+lens that never ran has no scope, and "no lens" is what you report, never a
+scope you would have declared. A missing lens, named, is worth more than a lens
+implied.
 
 **7. Put your read beside the vetter's, and say plainly where they diverge.**
 Agreement reached independently is worth something; agreement by restatement is
@@ -158,6 +190,26 @@ catches what upstream skipped is not redundant with it.
 So: the skill supplies the rules, this command supplies the judgement, and step
 5 is subordinate to steps 3 and 4 rather than a substitute for them.
 
+## `whole-repo` is a different job, and it is asked for on purpose
+
+A genuine whole-repo audit is a real thing to want — most obviously a repo you
+are about to take a dependency on, before you depend on it. It is not this
+command. `/nr` rules on ONE PR and its lens exists to decide THAT merge; a sweep
+of every file answers a question nobody asked at this gate, and it answers it by
+burying the findings that bear on the diff under the ones that do not — five
+among twelve, on `rain.deploy#21`. So this command declares `scope=pr:<number>`
+on every invocation and has no mode, flag or argument that declares anything
+else: the whole argument is the LIMIT, and a scope is not something a caller
+passes here.
+
+That is deliberately not the same as removing whole-repo. It stays available as
+a SEPARATE, explicit invocation of the same skill with `whole-repo` declared, on
+a repo somebody named, outside this command — which is the only shape the skill
+writes a `whole-repo` run stamp for anyway. What must never happen is a
+whole-repo sweep arriving because no scope was passed. A scope that defaults to
+the widest reading is indistinguishable from one that was chosen, and that is
+exactly how this behaviour read as working for as long as it did.
+
 ## Typed reads and the lens, and no shell at all
 
 Every input about the PR arrives from a typed tool call — the queue row, the
@@ -166,6 +218,14 @@ do not answer any part of it from memory: a merge decision reassembled by hand
 is a decision whose inputs nobody can audit, and its shape drifts with whoever
 assembled it. If a tool is unavailable, say so and stop — the answer is to
 connect the plugin's MCP server, not to work around it.
+
+The lens's SCOPE is one of those inputs and not an exception to the rule. It is
+a value derived from two of those results — the PR ref the row named and the
+file list `pr_context` returned — and passed as an argument the skill reads,
+rather than a sentence about the PR written into an args string. Free text is
+what nothing can check: the scope that produced twelve findings on a
+five-finding question was typed out in full, correctly, and lost to the first
+rule of the document it was handed to.
 
 The grant is four typed calls plus `Skill` and `Read`, and `Read` applies to the
 `pr_checkout` tree and nothing else. All four typed calls are reads except
@@ -231,6 +291,14 @@ say where the whole of that and the vetter's note diverge. Then say what it adds
 up to: whether anything blocks a merge, and if the deploy gate is set, that this
 is deploy-before-merge and **not** a plain merge, because landing it as if it
 were ordinary is a production error.
+
+**The lens's findings arrive under the scope they were formed at, stated.** Name
+the value you declared — `scope=pr:<number>`, with the number in it — or, where
+the checkout failed, that there was no lens at all. It is one line and it
+decides how every finding under it should be read: a PR-scoped review and a
+whole-repo sweep produce different lists, and a reader handed the list without
+the scope has to reverse-engineer which one they got from the proportion of
+findings that miss the diff. That is the inference this line removes.
 
 Clean is a conclusion you are allowed to reach, not one to reach for: say it
 only about a diff you read against an issue you read, with a lens you actually
