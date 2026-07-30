@@ -4648,6 +4648,19 @@ fn changed_files_from_rest(v: &Value, total: u64) -> Result<Vec<ChangedFile>, St
 /// The WHOLE changed-file list where one can be had: [`changed_files_from_view`], then a paginated
 /// REST re-fetch when the document handed back a page. Only a PR over the cap pays the extra calls.
 ///
+/// PURE: the total a paginated re-fetch would have to reach, or `None` when no re-fetch is worth
+/// making.
+///
+/// Split out so the TRIGGER is testable without a network. Two answers are `None` for opposite
+/// reasons: a `Complete` set needs no re-fetch, and a `Partial` set with no total has nothing to
+/// check a re-fetch AGAINST — see the #129 note on [`pr_changed_files`].
+fn refetch_total(set: &ChangedFileSet) -> Option<u64> {
+    match set {
+        ChangedFileSet::Complete(_) => None,
+        ChangedFileSet::Partial { total, .. } => *total,
+    }
+}
+
 /// Pagination is attempted ONLY when `total` is known, and that restraint is #129. `gh_json`
 /// collapses every failure into `None`, so a re-fetch that failed because of a rate limit is
 /// indistinguishable from one that returned nothing — the only defence available is to cross-check
@@ -4656,12 +4669,11 @@ fn changed_files_from_rest(v: &Value, total: u64) -> Result<Vec<ChangedFile>, St
 /// distinction the binary does not have.
 fn pr_changed_files(slug: &str, pr: &str, pr_json: &Value) -> ChangedFileSet {
     let set = changed_files_from_view(pr_json);
-    let ChangedFileSet::Partial {
-        known,
-        total: Some(total),
-        why,
-    } = set
-    else {
+    let Some(total) = refetch_total(&set) else {
+        return set;
+    };
+    let ChangedFileSet::Partial { known, why, .. } = set else {
+        // Unreachable: `refetch_total` answers `Some` for `Partial` with a total and nothing else.
         return set;
     };
     let Some(doc) = gh_json(&[
@@ -4740,7 +4752,8 @@ const CHANGED_FILE_READER_FIELD_LISTS: [(&str, &str); 3] = [
 mod changed_file_tests {
     use super::{
         changed_files_from_rest, changed_files_from_view, inject_changed_files, is_ui_path,
-        touches_ui, ChangedFile, ChangedFileSet, UiTouch, CHANGED_FILE_READER_FIELD_LISTS,
+        refetch_total, touches_ui, ChangedFile, ChangedFileSet, UiTouch,
+        CHANGED_FILE_READER_FIELD_LISTS,
     };
     use serde_json::{json, Value};
 
@@ -4913,6 +4926,46 @@ mod changed_file_tests {
         }
     }
 
+    /// The re-fetch TRIGGER, which is where #129 lands: a `Partial` with no total is NOT re-fetched,
+    /// because there would be nothing to check the result against and `gh_json` cannot tell a failed
+    /// call from an empty one. Claiming Complete off such a call would rest the whole fix on a
+    /// distinction this binary does not have.
+    #[test]
+    fn only_a_partial_set_with_a_known_total_is_worth_a_refetch() {
+        assert_eq!(
+            refetch_total(&ChangedFileSet::Complete(vec![f("a.rs")])),
+            None,
+            "a whole list needs no re-fetch"
+        );
+        assert_eq!(refetch_total(&ChangedFileSet::Complete(vec![])), None);
+        assert_eq!(
+            refetch_total(&ChangedFileSet::Partial {
+                known: vec![],
+                total: Some(REAL_TOTAL),
+                why: "capped".to_string(),
+            }),
+            Some(REAL_TOTAL)
+        );
+        assert_eq!(
+            refetch_total(&ChangedFileSet::Partial {
+                known: vec![f("a.rs")],
+                total: None,
+                why: "no count".to_string(),
+            }),
+            None,
+            "with no count there is nothing to check a re-fetch against"
+        );
+        // A total of zero is still a total: the re-fetch is made and checked against 0.
+        assert_eq!(
+            refetch_total(&ChangedFileSet::Partial {
+                known: vec![],
+                total: Some(0),
+                why: "no array".to_string(),
+            }),
+            Some(0)
+        );
+    }
+
     /// The write-back is `files` AND `changedFiles`, together. Either alone leaves the document
     /// reading as Partial — which is safe, but makes the resolution pointless.
     #[test]
@@ -4930,6 +4983,23 @@ mod changed_file_tests {
         assert_eq!(doc["changedFiles"], json!(REAL_TOTAL));
         assert_eq!(doc["files"].as_array().unwrap().len(), REAL_TOTAL as usize);
         assert_eq!(doc["files"][0]["additions"], json!(1));
+        // BOTH fields, and the COUNT write is what this pins. Against a document whose count is
+        // larger than the list being written, an array-only write leaves the two disagreeing and the
+        // read stays Partial — the resolution silently accomplishing nothing. The contract is local
+        // to this function ("afterwards these two fields agree") rather than resting on an unstated
+        // property of whichever caller happens to use it.
+        let mut stale = json!({"changedFiles": 999, "files": view_page(CAP)});
+        let three: Vec<ChangedFile> = (0..3).map(|i| f(&format!("src/g{i}.rs"))).collect();
+        inject_changed_files(&mut stale, &three);
+        assert_eq!(
+            stale["changedFiles"],
+            json!(3),
+            "the count is rewritten too"
+        );
+        assert_eq!(
+            changed_files_from_view(&stale),
+            ChangedFileSet::Complete(three)
+        );
         // A non-object document is left alone rather than panicking.
         let mut arr = json!([]);
         inject_changed_files(&mut arr, &resolved);
@@ -21170,8 +21240,15 @@ diff --git a/a.md b/a.md
     // is itself unknown while the list is, so an empty page would let `NoDiff` skip its own check.
     #[test]
     fn the_file_list_refusal_sits_between_the_sha_guard_and_the_diff_guard() {
+        // The page is NON-EMPTY, which is what makes the order observable. With an empty page the
+        // diff guard would not fire either (a PR that changes nothing needs no diff), so running it
+        // first would look identical — and raindex#2796's page holds 100 files, not zero.
         let partial = ChangedFileSet::Partial {
-            known: vec![],
+            known: vec![ChangedFile {
+                path: "src/Vault.sol".to_string(),
+                additions: 1,
+                deletions: 0,
+            }],
             total: Some(143),
             why: "capped".to_string(),
         };
