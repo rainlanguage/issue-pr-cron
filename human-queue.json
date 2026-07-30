@@ -1130,8 +1130,20 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 31,
+        "count": 33,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 148,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/148",
+            "title": "dash(pipeline): retired ai:relink files under the vetter — its exit is a re-vet, not a producer transition"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 68,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/68",
+            "title": "audit: Solidity file placement by kind — own kind in src/ and the suite tree, subject path in the test/src mirror"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 159,
@@ -2045,12 +2057,6 @@
       "number": 149,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/149",
       "title": "Screenshot publication is a loose transition: the producer pushes a PNG to another repo and hand-types the marker, with no `pr-review-report` subcommand"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/63",
-      "title": "Audit does not check file placement by kind: a concrete contract in lib/ passes clean"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -5826,9 +5832,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 157,
-    "uncoveredIssues": 623,
-    "unvetted": 31,
+    "totalProducerPrs": 159,
+    "uncoveredIssues": 622,
+    "unvetted": 33,
     "reject": 70,
     "relink": 1,
     "closeCandidatePrs": 5,
