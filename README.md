@@ -828,6 +828,21 @@ complementary and neither subsumes the other: this one asks whether the lens was
 pointed at the PR, that one asks whether a `ready` contradicts a rule the lens
 states.
 
+**And what it rests on.** Both facts are unforgeable only while the model cannot
+write to the filesystem. That is currently true of the vetter in the strongest
+available sense — not a deny rule but an absent tool: the `tools` array in every
+run's own `system`/`init` event is `[Glob, Grep, Read, Skill, mcp__fsm__*]`,
+with no `Bash`, `Write` or `Edit` in it, so a redirection into the ledger is not
+a thing the session can express. That is also why the ledger is written by
+`run-timings` — a **different process**, in the runner's pipe, outside the
+model's session — rather than by anything the model calls.
+[#152](https://github.com/rainlanguage/issue-pr-cron/pull/152) is the reason to
+say this out loud rather than leave it implied: a _declared_ tool surface is not
+a sandbox, and a command declaring only `Read` was observed running `Bash`. If
+the vetter is ever granted a write tool, the invocation half degrades to the
+source half and the ledger becomes advisory — so that grant is the moment to
+revisit this, and the `vetter has no write grant` CI job is what fails first.
+
 ### The mechanical half of the audit lens is the binary's, not the model's
 
 `review-prompt.txt` tells the vetter to **invoke the actual `audit` skill** and

@@ -23367,18 +23367,22 @@ diff --git a/a.md b/a.md
         covered: &[Covered],
         sol: &SolScan,
     ) -> RecordGate {
+        gate_with_lens(extra, diff, covered, &full_lens(), sol)
+    }
+
+    /// [`gate_with`] with the LENS chosen by the caller too, so the order of the two gates that both
+    /// refuse a `ready` (#151's and #141's) is a property a test drives rather than a sequence in the
+    /// body. Every other test here wants `full_lens()`, which is what `gate_with` fixes it to.
+    fn gate_with_lens(
+        extra: serde_json::Value,
+        diff: &str,
+        covered: &[Covered],
+        lens: &LensEvidence,
+        sol: &SolScan,
+    ) -> RecordGate {
         let doc = pr_json(extra);
         let set = changed_files_from_view(&doc);
-        record_gate(
-            &doc,
-            &set,
-            diff,
-            covered,
-            &full_lens(),
-            sol,
-            "ai:ready",
-            "ready",
-        )
+        record_gate(&doc, &set, diff, covered, lens, sol, "ai:ready", "ready")
     }
 
     /// The mechanical-convention scan (#141) as these tests want it: it RAN and found nothing. An
@@ -23483,6 +23487,38 @@ diff --git a/a.md b/a.md
                 "{verdict} must be recordable over a convention violation — that IS the exit"
             );
         }
+    }
+
+    /// The LENS gate (#151) outranks the convention gate (#141), and this is the ONE input that shows
+    /// it: a `ready` on a Solidity PR whose source is checked out, whose pragma breaks the convention,
+    /// and for which this run recorded NO audit-skill invocation. Both gates fire on it.
+    ///
+    /// It must report the LENS. The convention finding is true, but it is a statement about a rule the
+    /// audit skill states, handed to a vetter that never ran the audit skill — so reporting it first
+    /// tells that vetter to fix a pragma and says nothing about the lens, and the lens fact is then
+    /// learned a whole cron tick later, once the pragma is fixed and the scan comes back clean. That
+    /// is exactly the round trip #141's own doc argues a gate should not cost, applied one level up.
+    ///
+    /// Below the convention gate this test fails and NOTHING else in the suite does — every other test
+    /// here holds one of the two gates clean, so the order between them is observable only here.
+    #[test]
+    fn the_lens_refusal_outranks_the_convention_gate() {
+        let lensless = LensEvidence::NotInvoked {
+            ledger: "/r/run.lens".to_string(),
+        };
+        assert!(
+            matches!(
+                gate_with_lens(json!({}), DIFF, &good_claim(), &lensless, &dirty_sol()),
+                RecordGate::NoLens(_)
+            ),
+            "with no lens AND a convention violation, the lens is what the vetter is sent to fix"
+        );
+        // …and with the lens in hand the convention refusal IS reached, so the order is observable in
+        // both directions rather than one arm shadowing the other permanently.
+        assert!(matches!(
+            gate_with(json!({}), DIFF, &good_claim(), &dirty_sol()),
+            RecordGate::SolConvention { .. }
+        ));
     }
 
     /// Every refusal ABOVE the convention gate still outranks it, with a dirty scan in hand. The
