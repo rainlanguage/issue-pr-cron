@@ -157,7 +157,7 @@ neither can name the other's transitions.
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `vetter` (default) | PRs: `unvetted`, `pr_context`, `pr_checkout`, `record_verdict`, `clone_release`. Close-candidate flags: `unvetted_close_candidates`, `close_candidate_context`, `record_close_candidate_verdict` |
 | `producer`         | `clone_create`, `clone_release`, `clone_list`, `clone_gc`, `repair_qa_block`, `weaken_closes` — the clone lifecycle plus the two body repairs                                                    |
-| `human`            | `next_ready`, `pr_context`, `close_candidate_context`, `human_rule`, `human_rule_issue`, `human_close` — find the subject, read it, rule on it, close it                                         |
+| `human`            | `next_ready`, `pr_context`, `pr_checkout`, `clone_release`, `close_candidate_context`, `human_rule`, `human_rule_issue`, `human_close` — find the subject, read it, audit its source, rule on it |
 
 The vetter has **two subjects**, not one. A PR is judged on its diff; a producer
 `ai:close-candidate` flag is judged on its evidence — and the second matters

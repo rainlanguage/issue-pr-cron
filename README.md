@@ -278,16 +278,29 @@ whole line of work exists to remove; the shipped commands are asserted against
 that, by a test that reads their fenced blocks and requires every runnable line
 to be a `pr-review-report` transition.
 
-**A command's grant is all shell or all MCP, never a mixture.** What that buys
-is a command with **no shell fallback** — it cannot reach for `gh` and cannot
-assemble a field by hand — so a command may grant a whole SET of MCP tools, and
-`/nr` grants two: the queue row, and the PR the row's verdict is a claim about.
-The rule used to demand exactly one MCP tool as a stand-in for the same
-guarantee, and the stand-in is what broke: it made "check the verdict against
-the diff" unrepresentable rather than making the shell unreachable (#132). Every
-name in the set is still resolved against what the manifest's server actually
-serves, because the loader drops a name it cannot resolve instead of refusing
-the command.
+**A command's grant is all shell, or MCP plus a named read surface — never a
+mixture with shell.** What that buys is a command with **no shell fallback** —
+it cannot reach for `gh` and cannot assemble a field by hand — so a command may
+grant a whole SET of MCP tools, and `/nr` grants four: the queue row, the PR the
+row's verdict is a claim about, the checkout of its source, and the release of
+that checkout. The rule used to demand exactly one MCP tool as a stand-in for
+the same guarantee, and the stand-in is what broke: it made "check the verdict
+against the diff" unrepresentable rather than making the shell unreachable
+(#132). Every name in the set is still resolved against what the manifest's
+server actually serves, because the loader drops a name it cannot resolve
+instead of refusing the command.
+
+Beside the typed grants, exactly two of the harness's own tools are admitted, by
+name: `Skill` and `Read` (#150). They are what lets `/nr` invoke the `audit`
+skill over the PR's source instead of recalling its rules — neither is a shell,
+neither writes, and everything else, `Bash` and `Task` first of all, is still
+refused beside an MCP grant. `Grep` and `Glob` are deliberately not admitted:
+measured on Claude Code 2.1.220 they are not tools in this harness at all, so a
+grant naming one would be a permitted tool that does not exist. And the
+`allowed-tools` line is a declaration rather than a sandbox — a command granting
+only `Read` still ran a `Bash` call with no permission denial — so what the
+contract enforces is that the declaration and the command's own prose agree, and
+that no shell line is fenced anywhere in the body.
 
 **Why a plugin rather than files with an install step.** The org already
 distributes Claude Code assets this way — `claude-audit-skills`,
@@ -331,20 +344,34 @@ server is the vetter's **only** tool surface.
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
-`human-mcp.json`) serves `next_ready`, `pr_context`, `close_candidate_context`,
-`human_rule`, `human_rule_issue` and `human_close` — find the subject, read it,
-rule on it, close it. `human_close` is a tool rather than something the caller
-composes for the reason above: the alternative is a transition half in a tool
-and half in a prompt, and that half was wrong on all 74 closed-and-still-flagged
-subjects. The subcommands above are for the human at a terminal; the profile is
-for **an agent acting on the human's behalf**, which is the case that actually
-went wrong in #86. A prompt rule cannot take a bypassable Bash away, and a
-`gh issue edit` that no tool offers is exactly what gets improvised; a profile
-makes the non-FSM operation _unavailable_. The vetter's inbox tools are
-deliberately absent — the human's inbox is `human-queue`, which renders whole
-org-wide sets and does not fit one tool result — and so is
-`record_close_candidate_verdict`, which is the vetter's authority and the very
-move `human_rule_issue` refuses on the human's behalf.
+`human-mcp.json`) serves `next_ready`, `pr_context`, `pr_checkout`,
+`clone_release`, `close_candidate_context`, `human_rule`, `human_rule_issue` and
+`human_close` — find the subject, read it, audit its source, rule on it, close
+it. `human_close` is a tool rather than something the caller composes for the
+reason above: the alternative is a transition half in a tool and half in a
+prompt, and that half was wrong on all 74 closed-and-still-flagged subjects. The
+subcommands above are for the human at a terminal; the profile is for **an agent
+acting on the human's behalf**, which is the case that actually went wrong in
+#86. A prompt rule cannot take a bypassable Bash away, and a `gh issue edit`
+that no tool offers is exactly what gets improvised; a profile makes the non-FSM
+operation _unavailable_. The vetter's inbox tools are deliberately absent — the
+human's inbox is `human-queue`, which renders whole org-wide sets and does not
+fit one tool result — and so is `record_close_candidate_verdict`, which is the
+vetter's authority and the very move `human_rule_issue` refuses on the human's
+behalf.
+
+`pr_checkout` and `clone_release` are on it for `/nr`'s sake (#150). The human
+gate forms its own view rather than relaying the vetter's, and the mechanical
+half of a view like that is the `audit` skill — which reads SOURCE, so a diff is
+not a substrate it can run on: every dimension needing a file the diff never
+touches (the callees, the siblings sharing an invariant, the premise the PR body
+asserts about current behaviour) would go unexercised, and silently.
+`rain.deploy#21` is the measured case — "one canonical CREATE2 derivation, 22
+hardcoded copies" is a count over the tree, not over the added lines. The
+release is not optional garnish beside it: a checkout left behind waits for a
+sweep, and this server runs with no `WORK_DIR`, so its clones land in the
+temp-dir fallback the producer's `clone_gc` may never look in. A human-gate leak
+has no collector behind it.
 
 #### `next_ready` — the merge decision as one typed result
 
