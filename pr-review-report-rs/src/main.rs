@@ -29609,12 +29609,23 @@ mod marketplace_tests {
         let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
+        // Asserted on the INVOCATION bullet, not on the file. The literal appearing somewhere in a
+        // document that also explains the scope at length is exactly the state #154 describes — the
+        // scope has to be part of the call, and the call is this bullet.
+        let Some((_, after)) = text.split_once("**Invoke the skill") else {
+            panic!(
+                "step 5 has no INVOKE bullet — the scope is declared in the invocation, so there is \
+                 nowhere for it to be declared"
+            )
+        };
+        let invocation = after.split("\n- ").next().unwrap_or(after);
         // `/nr` rules on ONE PR, so the PR scope is what it declares — spelled out, with the
         // placeholder that says a number goes there rather than a repo name or a branch.
         assert!(
-            text.contains(&format!("`scope={AUDIT_SCOPE_PR}<number>`")),
-            "/nr must DECLARE the PR scope as an argument; a scope only described in prose is the \
-             #154 defect, and the skill's own whole-repo rule wins over a description"
+            invocation.contains(&format!("`scope={AUDIT_SCOPE_PR}<number>`")),
+            "the bullet that invokes the skill must DECLARE the PR scope as an argument; a scope \
+             only described in prose is the #154 defect, and the skill's own whole-repo rule wins \
+             over a description. The bullet reads: {invocation:?}"
         );
         // EVERY scope the file names, not just the one asserted above — the loop is non-empty
         // because that assertion passed, and what it catches is a SECOND spelling arriving beside
