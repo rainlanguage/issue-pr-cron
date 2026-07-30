@@ -22004,6 +22004,18 @@ mod lens_gate_tests {
             lens_invocation(&tool_use("mcp__fsm__record_verdict", json!({"pr": PR}))),
             None
         );
+        // …and the tool NAME is what carries that, not the input SHAPE. A tool whose input happens to
+        // hold the same two keys must still be uncreditable: `Agent`/`Task` take a free-text prompt,
+        // and a prompt that says which skill to run and which PR to run it on is the natural thing to
+        // write there — so "there is a `skill` and an `args`" cannot be the test.
+        assert_eq!(
+            lens_invocation(&tool_use(
+                "Agent",
+                json!({"skill": "audit:audit", "args": REAL_ARGS})
+            )),
+            None,
+            "only the Skill tool invokes a skill; another tool describing one does not"
+        );
         // ONE invocation names ONE PR: `review-prompt.txt` says SCOPED TO THIS PR, and a call
         // listing the whole page would otherwise buy a verdict for every PR on it.
         assert_eq!(
@@ -22084,6 +22096,22 @@ mod lens_gate_tests {
         );
         // A lens row with no `pr` credits nothing.
         assert!(lens_ledger_prs(&json!({"stage": STAGE_LENS}).to_string()).is_empty());
+        // The STAGE filter is load-bearing, and this is the input that shows it: a row that carries a
+        // `pr` but is not a lens row must not be credited. The pipeline is full of per-run jsonl files
+        // whose rows are keyed by `pr` — `review-verdicts.jsonl` most of all — so a misconfigured
+        // `RUN_LENS_LEDGER` pointed at one would otherwise let every already-recorded verdict credit
+        // ITSELF as the invocation that licensed it.
+        assert!(
+            lens_ledger_prs(
+                &json!({"pr": PR, "verdict": "ready", "ts": "2026-07-29T17:30:00Z"}).to_string()
+            )
+            .is_empty(),
+            "a row this filter did not write is not evidence, however it is keyed"
+        );
+        assert!(
+            lens_ledger_prs(&json!({"stage": "usage", "pr": PR}).to_string()).is_empty(),
+            "and neither is another stage of the same run"
+        );
     }
 
     #[test]
