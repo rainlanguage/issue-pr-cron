@@ -1124,8 +1124,68 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 29,
+        "count": 39,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 149,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/149",
+            "title": "scan(untested): flag external/public functions on concrete contracts that no test names"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 78,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/78",
+            "title": "audit: flag ambient global state and references — they remove branches from testability"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 77,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/77",
+            "title": "audit: gate Pass 2 on adversarial-mutation-test ledger evidence"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 75,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/75",
+            "title": "audit: framework-native over hand-rolled — a three-step procedure (name the framework, cite the mechanism check, then flag)"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 76,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/76",
+            "title": "audit: verify soldeer autopublish is wired and current (hazard cat. 10 — dead wiring, cross-org secrets: inherit, [package] identity, registry lag)"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 74,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/74",
+            "title": "audit: enforce the deploy-repo / library-repo release-lifecycle split"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 73,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/73",
+            "title": "audit: flag hand-rolled string parsing where a robust domain parser exists"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 72,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/72",
+            "title": "audit: require a pranked fork test for state-changing scripts"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 71,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/71",
+            "title": "audit: flag hand-rolled CLI arg parsing in Rust bins; clap is the standard"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 70,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/70",
+            "title": "audit: flag deploy-pin prod addresses not source-verified on the block explorer per network"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 106,
@@ -2023,6 +2083,12 @@
   ],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 69,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/69",
+      "title": "version-hygiene never reads SKILL.md's frontmatter version — it drifted to 0.19.0 unnoticed and every PR carries a by-hand reminder"
+    },
+    {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 149,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/149",
@@ -2135,12 +2201,6 @@
       "number": 204,
       "url": "https://github.com/rainlanguage/rain.flare/issues/204",
       "title": "Fee precedence is undocumented: a category fee of 0 shadows the default for all crypto feeds"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/61",
-      "title": "Refuse to run Pass 2 before adversarial-mutation-test has covered the repo"
     },
     {
       "repo": "rainlanguage/rain.strategies",
@@ -2473,12 +2533,6 @@
       "title": "rainix-sol-artifacts CI red since 2026-07-24: ETH_RPC_URL resolves empty (org secret/var, not a code regression)"
     },
     {
-      "repo": "rainlanguage/claude-audit-skills",
-      "number": 53,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/53",
-      "title": "Audit check: enforce the deploy-repo / library-repo release split (no repo on both lifecycles)"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 281,
       "url": "https://github.com/rainlanguage/rainix/issues/281",
@@ -2579,12 +2633,6 @@
       "number": 54,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/54",
       "title": "Unchecked mul(_, 0x20) word scaling wraps, turning documented loud failures into silent corruption"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
-      "number": 51,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/51",
-      "title": "Flag ambient global state and references (they remove branches from testability)"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -2798,12 +2846,6 @@
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
-      "number": 45,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/45",
-      "title": "Audit: flag hand-rolled string parsing where a robust domain parser exists"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
       "number": 44,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/44",
       "title": "Audit rule: render untrusted data via DOM construction, never innerHTML + a hand-rolled escaper"
@@ -2828,21 +2870,9 @@
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
-      "number": 42,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/42",
-      "title": "Flag deploy-pin prod addresses not source-verified on the block explorer for every supported network"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
       "number": 41,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/41",
       "title": "Flag byte-index string slicing that panics on multi-byte UTF-8 (not-a-char-boundary)"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/40",
-      "title": "Enforce clap for CLI arg parsing in Rust bins (flag hand-rolled dispatch)"
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
@@ -2891,12 +2921,6 @@
       "number": 24,
       "url": "https://github.com/rainlanguage/rain.datacontract/issues/24",
       "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
-      "number": 38,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/38",
-      "title": "Audit skill: much more framework-tooling awareness — flag hand-rolled reimplementations of framework-native mechanisms"
     },
     {
       "repo": "rainlanguage/rain.strategies",
@@ -2969,12 +2993,6 @@
       "number": 2800,
       "url": "https://github.com/rainlanguage/raindex/issues/2800",
       "title": "Document clear3 signed-context cross-assignment (alice/bob slots)"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
-      "number": 31,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/31",
-      "title": "audit: verify soldeer autopublish is wired and current (dead publish workflows, cross-org secrets: inherit, [package] drift, registry lag)"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -3263,12 +3281,6 @@
       "number": 2746,
       "url": "https://github.com/rainlanguage/raindex/issues/2746",
       "title": "Latest raindex should support Flare end-to-end"
-    },
-    {
-      "repo": "rainlanguage/claude-audit-skills",
-      "number": 54,
-      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/54",
-      "title": "Extend health check to flag untested external/public functions on Solidity contracts"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -5802,9 +5814,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 155,
-    "uncoveredIssues": 622,
-    "unvetted": 29,
+    "totalProducerPrs": 165,
+    "uncoveredIssues": 614,
+    "unvetted": 39,
     "reject": 70,
     "relink": 1,
     "closeCandidatePrs": 5,
