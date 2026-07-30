@@ -8208,6 +8208,40 @@ enum CommandKind {
 #[cfg(test)]
 const MCP_COMMAND_NATIVE_TOOLS: &[&str] = &["Skill", "Read"];
 
+/// A full sweep: every first-party file, whatever the diff touched.
+///
+/// One of the three scopes the `audit` skill accepts, spelled as its own run-stamp section spells it
+/// — the only value that means "fully audited" to a consumer of that stamp.
+#[cfg(test)]
+const AUDIT_SCOPE_WHOLE_REPO: &str = "whole-repo";
+
+/// A PR-scoped review, `pr:<number>` — the diff PLUS the code whose behaviour decides whether the
+/// diff is correct. This is the scope every `/nr` invocation declares.
+#[cfg(test)]
+const AUDIT_SCOPE_PR: &str = "pr:";
+
+/// A path-scoped review, `paths:<comma-separated globs>`.
+#[cfg(test)]
+const AUDIT_SCOPE_PATHS: &str = "paths:";
+
+/// The `audit` skill's whole scope vocabulary: a declared scope must BEGIN with one of these, and
+/// `whole-repo` is complete in itself while the other two carry a payload after the colon.
+///
+/// A scope has to be a value from this set or it is free text again, which is the whole of #154.
+/// `nr.md` described the middle-ground scope correctly and at length — the changed lines plus the
+/// callees, callers, siblings sharing the changed invariant, and every current-behaviour claim — and
+/// none of it survived the invocation: `Skill audit` loads a document whose own first rule is
+/// "whole-repo snapshot, never a diff", so once it is loaded the calling command is not in the room
+/// and the skill's rule wins. Measured on `rain.deploy#21`, the lens ran whole-repo — twelve
+/// findings, five bearing on the PR and seven in code the diff never touches — with the scope
+/// hand-typed as free text in an args string that nothing could validate.
+///
+/// Held here as ONE vocabulary rather than re-typed per caller: the value `/nr` declares, the value a
+/// lens ledger records, and the value a gate refuses on are definitionally the same three strings,
+/// and a second copy is a second spelling waiting to drift.
+#[cfg(test)]
+const AUDIT_SCOPES: &[&str] = &[AUDIT_SCOPE_WHOLE_REPO, AUDIT_SCOPE_PR, AUDIT_SCOPE_PATHS];
+
 /// PURE: what one shipped command invokes, and whether its body keeps that promise.
 ///
 /// A command's `allowed-tools` line is its DECLARED surface, and that line decides what the body is
@@ -29563,6 +29597,66 @@ mod marketplace_tests {
             "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs — and \
              releases the checkout it took"
         );
+    }
+
+    // #154: the grant above buys an invocation, and the invocation is only worth what its SCOPE is.
+    // `nr.md` used to carry the scope as a paragraph — correct, detailed, and overridden the moment
+    // `Skill audit` loaded a document whose first rule is "whole-repo snapshot, never a diff". The
+    // fix is a declared literal, and three things about it are pinned here: it is IN the invocation,
+    // it is the PR one, and the file states the closed vocabulary it comes from.
+    #[test]
+    fn nr_declares_the_lens_scope_as_a_value_from_the_skills_own_vocabulary() {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
+            return; // not checked out (nix build sandbox)
+        };
+        // Asserted on the INVOCATION bullet, not on the file. The literal appearing somewhere in a
+        // document that also explains the scope at length is exactly the state #154 describes — the
+        // scope has to be part of the call, and the call is this bullet.
+        let Some((_, after)) = text.split_once("**Invoke the skill") else {
+            panic!(
+                "step 5 has no INVOKE bullet — the scope is declared in the invocation, so there is \
+                 nowhere for it to be declared"
+            )
+        };
+        let invocation = after.split("\n- ").next().unwrap_or(after);
+        let pr_scope = format!("`{AUDIT_SCOPE_PR}<number>`");
+        assert!(
+            invocation.contains(&pr_scope),
+            "the bullet that invokes the skill must DECLARE {pr_scope} as the scope; a scope only \
+             described in prose is the #154 defect, and the skill's own whole-repo rule wins over a \
+             description. The bullet reads: {invocation:?}"
+        );
+        // And declares no OTHER scope, so the invocation cannot carry two. Matched on the backticked
+        // literal specifically: the bullet quotes the skill's whole-repo RULE in prose, and a quoted
+        // rule is not a declared value — which is the whole distinction this test is about.
+        for other in [AUDIT_SCOPE_WHOLE_REPO, AUDIT_SCOPE_PATHS] {
+            assert!(
+                !invocation.contains(&format!("`{other}")),
+                "the invocation bullet also names `{other}`. /nr rules on ONE PR, so it declares \
+                 {pr_scope} and nothing else — a whole-repo sweep is an invocation somebody asked \
+                 for, never one this gate can reach"
+            );
+        }
+        // The vocabulary is CLOSED, and ONE bullet has to say so — asserted there rather than over
+        // the file, because `whole-repo` is discussed elsewhere for its own sake (it is a scope this
+        // command deliberately does not pass) and a mention is not a statement of the closed set.
+        // Without the list, "declare a literal" is advice with nothing behind it and the next
+        // spelling gets invented in good faith.
+        let Some((_, after)) = text.split_once("**A scope is one of three literals") else {
+            panic!(
+                "nr.md states no scope VOCABULARY — a command told to declare a literal, and not \
+                 told which literals exist, is one invented spelling away from free text again"
+            )
+        };
+        let vocabulary = after.split("\n- ").next().unwrap_or(after);
+        for scope in AUDIT_SCOPES {
+            assert!(
+                vocabulary.contains(&format!("`{scope}")),
+                "the vocabulary bullet omits {scope:?}. The skill's whole vocabulary is \
+                 {AUDIT_SCOPES:?} and the bullet has to name all of it; a partial list reads as the \
+                 complete one. The bullet reads: {vocabulary:?}"
+            );
+        }
     }
 }
 
