@@ -209,6 +209,7 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
     2>"$ERRLOG" \
     | tee "$RUNLOG" \
     | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
+          --lens "$LENSLOG" \
           --run-id "$TS" --role vetter --model "$USED_MODEL" 2>/dev/null || cat ; } \
     | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
   rc=${PIPESTATUS[0]}

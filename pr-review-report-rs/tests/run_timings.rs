@@ -57,25 +57,38 @@ fn events() -> Vec<String> {
 }
 
 fn spawn(out: &std::path::Path) -> Child {
-    Command::new(BIN)
-        .args([
-            "run-timings",
-            "--out",
-            out.to_str().unwrap(),
-            "--trace",
-            "/runs/20260728T053610Z.jsonl",
-            "--run-id",
-            "20260728T053610Z",
-            "--role",
-            "vetter",
-            "--model",
-            "claude-fable-5",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn run-timings")
+    spawn_with_lens(out, None)
+}
+
+/// [`spawn`] with the #151 LENS LEDGER, which is the whole point of the ledger living in THIS
+/// filter: the row has to be on disk before the tool the harness just announced has run, because
+/// `record_verdict` is asked about it moments later. A unit test cannot show that; a real child
+/// process fed a real stream and read while it is still running can.
+fn spawn_with_lens(out: &std::path::Path, lens: Option<&std::path::Path>) -> Child {
+    let mut cmd = Command::new(BIN);
+    cmd.args([
+        "run-timings",
+        "--out",
+        out.to_str().unwrap(),
+        "--trace",
+        "/runs/20260728T053610Z.jsonl",
+    ]);
+    if let Some(l) = lens {
+        cmd.args(["--lens", l.to_str().unwrap()]);
+    }
+    cmd.args([
+        "--run-id",
+        "20260728T053610Z",
+        "--role",
+        "vetter",
+        "--model",
+        "claude-fable-5",
+    ])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null())
+    .spawn()
+    .expect("spawn run-timings")
 }
 
 fn records(path: &std::path::Path) -> Vec<serde_json::Value> {
@@ -243,4 +256,101 @@ fn unparseable_lines_pass_through_and_do_not_stop_the_measurement() {
     assert_eq!(recs.len(), 2);
     assert_eq!(recs[0]["bootMs"], 1125);
     assert_eq!(recs[1]["ttlMs"], 297_016);
+}
+
+// ─── #151: the LENS LEDGER ───────────────────────────────────────────────────
+//
+// `record_verdict` refuses a verdict on a PR this run holds no audit-skill invocation for. That
+// makes WHEN the ledger row lands a correctness property, not a metrics nicety: the row must be on
+// disk before the MCP server is asked about the PR. These drive the real binary for the same reason
+// the tests above do — a stub would assert our own belief about when a write lands.
+
+/// The VERBATIM `Skill` event from the 2026-07-29T17:17:35Z vetter run (line 57 of
+/// `review-runs/20260729T171735Z.jsonl`) — the only audit-skill invocation in 35 verdicts.
+const REAL_SKILL_EVENT: &str = r#"{"type":"assistant","timestamp":"2026-07-29T17:21:52.000Z","message":{"content":[{"type":"tool_use","id":"toolu_01Rxq3uUkdaMkqykAcupwrmM","name":"Skill","input":{"skill":"audit:audit","args":"Vetter-scoped audit of PR cyclofinance/cyclo.site#386 at /home/gildlab/code/vet-cyclo.site-386. Changed files: src/lib/blockNumberStore.ts, src/lib/blockNumberStore.test.ts. Findings feed this PR's verdict; do not open issues or fix anything."}}]}}"#;
+
+/// A `Skill` event the harness would write for a DIFFERENT skill — not the lens, however scoped.
+const OTHER_SKILL_EVENT: &str = r#"{"type":"assistant","timestamp":"2026-07-29T17:22:00.000Z","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"dataviz","args":"chart for cyclofinance/cyclo.site#387"}}]}}"#;
+
+#[test]
+fn an_audit_invocation_is_on_disk_before_the_tool_it_announces_could_have_run() {
+    let dir = TempDir::new("lens");
+    let out = dir.join("metrics/runs.jsonl");
+    let lens = dir.join("runs/20260729T171735Z.lens");
+    let mut child = spawn_with_lens(&out, Some(&lens));
+    let mut si = child.stdin.take().expect("stdin");
+    writeln!(si, "{REAL_SKILL_EVENT}").unwrap();
+    si.flush().unwrap();
+    // stdin stays OPEN — the run is still going and the announced Skill has not returned. This is
+    // exactly the instant `record_verdict` may be called, so the row must already be readable.
+    let rows = wait_for(&lens, 1);
+    assert_eq!(rows.len(), 1, "the row lands while the run is still live");
+    assert_eq!(rows[0]["stage"], "lens");
+    assert_eq!(rows[0]["pr"], "cyclofinance/cyclo.site#386");
+    assert_eq!(rows[0]["skill"], "audit:audit");
+    assert_eq!(rows[0]["runId"], "20260728T053610Z");
+    assert_eq!(rows[0]["role"], "vetter");
+    // The metrics file is a DIFFERENT file: a lens row must never land in the committed runs.jsonl
+    // the dashboard reads and `run-metrics` reconciles by runId.
+    assert!(
+        records(&out).iter().all(|r| r["stage"] != "lens"),
+        "the ledger is its own file"
+    );
+    child.kill().expect("kill");
+    let _ = child.wait();
+}
+
+#[test]
+fn only_audit_invocations_reach_the_ledger_and_the_stream_is_unchanged() {
+    let dir = TempDir::new("lens-filter");
+    let out = dir.join("metrics/runs.jsonl");
+    let lens = dir.join("runs/20260729T171735Z.lens");
+    let mut child = spawn_with_lens(&out, Some(&lens));
+    let mut sent: Vec<String> = Vec::new();
+    {
+        let mut si = child.stdin.take().expect("stdin");
+        for e in events()
+            .into_iter()
+            .chain([OTHER_SKILL_EVENT.to_string(), REAL_SKILL_EVENT.to_string()])
+        {
+            writeln!(si, "{e}").unwrap();
+            sent.push(e);
+        }
+    }
+    let echoed = {
+        let so = child.stdout.take().expect("stdout");
+        BufReader::new(so)
+            .lines()
+            .map(|l| l.unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert!(child.wait().unwrap().success());
+    assert_eq!(echoed, sent, "the stream passes through unchanged");
+    let rows = records(&lens);
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["pr"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["cyclofinance/cyclo.site#386"],
+        "a non-audit skill, a tool call and a verdict all announce nothing about the lens"
+    );
+}
+
+/// No `--lens` writes no ledger — and, at the verdict end, makes every stamp say the invocation was
+/// UNOBSERVED. Absent evidence must never be a file that exists and reads as empty by accident.
+#[test]
+fn without_the_flag_no_ledger_is_created_at_all() {
+    let dir = TempDir::new("lens-off");
+    let out = dir.join("metrics/runs.jsonl");
+    let lens = dir.join("runs/20260729T171735Z.lens");
+    let mut child = spawn(&out);
+    {
+        let mut si = child.stdin.take().expect("stdin");
+        writeln!(si, "{REAL_SKILL_EVENT}").unwrap();
+        for e in events() {
+            writeln!(si, "{e}").unwrap();
+        }
+    }
+    let _ = child.wait();
+    assert!(!lens.exists(), "no flag, no ledger");
 }
