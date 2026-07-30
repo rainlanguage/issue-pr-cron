@@ -1124,7 +1124,7 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 39,
+        "count": 37,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1173,18 +1173,6 @@
             "number": 72,
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/72",
             "title": "audit: require a pranked fork test for state-changing scripts"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 71,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/71",
-            "title": "audit: flag hand-rolled CLI arg parsing in Rust bins; clap is the standard"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 70,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/70",
-            "title": "audit: flag deploy-pin prod addresses not source-verified on the block explorer per network"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -5814,9 +5802,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 165,
+    "totalProducerPrs": 163,
     "uncoveredIssues": 614,
-    "unvetted": 39,
+    "unvetted": 37,
     "reject": 70,
     "relink": 1,
     "closeCandidatePrs": 5,
