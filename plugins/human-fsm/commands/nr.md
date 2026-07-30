@@ -78,18 +78,22 @@ reading is written inside.
   do not glob for one, and a `vet-*` directory you happened to find is a
   DIFFERENT PR's tree.
 - **Invoke the skill with the `Skill` tool** — `audit` — and DECLARE THE SCOPE
-  AS AN ARGUMENT, not as something the reader is asked to remember:
-  `scope=pr:<number>`, the `dir` the checkout returned, and the changed-file
-  list. The skill's own top-line rule is _"whole-repo snapshot, never a diff —
-  do not scope by recent changes / PR diff"_, so once it is loaded this file is
-  not in the room and a scope carried only in prose loses to the document the
-  invocation just pulled in. Measured on `rain.deploy#21`, it did: twelve
-  findings, five bearing on the PR and seven in code the diff never touches,
-  with the scope hand-typed as free text that nothing could check. There are
-  exactly three scopes in the skill's own vocabulary, the three its run stamp
-  records — `whole-repo`, `pr:<number>`, `paths:<comma-separated globs>` — and a
-  declared scope may take no other spelling, because a fourth one is free text
-  again. `/nr` always declares the second.
+  AS AN ARGUMENT, not as something the reader is asked to remember. The declared
+  scope is `pr:<number>`; the `dir` the checkout returned and the changed-file
+  list go beside it. Why an argument at all: the skill's own top-line rule is
+  _"whole-repo snapshot, never a diff — do not scope by recent changes / PR
+  diff"_, so once it is loaded this file is not in the room, and a scope carried
+  only in prose loses to the document the invocation just pulled in. Measured on
+  `rain.deploy#21`, it did: twelve findings, five bearing on the PR and seven in
+  code the diff never touches, with the scope hand-typed as free text that
+  nothing could check.
+- **A scope is one of three literals, and this command declares the middle
+  one.** The skill's whole vocabulary is `whole-repo`, `pr:<number>` and
+  `paths:<comma-separated globs>` — the same three strings its run stamp records
+  verbatim. Declare the literal itself. A key wrapped round it, a synonym, "the
+  changed files", or a sentence describing which files you meant are each a
+  fourth spelling, which is free text with a colon in it, which is the thing
+  being removed.
 - **Never hand-copy the skill's checks.** Invoking it is how this command
   inherits every upgrade to it, and the two findings that motivated this step
   were both stated plainly in it while a hand-rolled read missed them
@@ -97,15 +101,14 @@ reading is written inside.
   `rain.deploy#21`, a canonical CREATE2 derivation added and then hardcoded 22
   times beside 4 real calls). Run it INLINE and serial.
 - **Every part of that argument comes from a typed result.** The `<number>` in
-  `scope=pr:<number>` is the one inside the row's own `pr` field —
-  `owner/repo#n`, the same string step 2 was addressed with — never a number
-  read off a title, a URL or the vetter's note. The changed-file list is
-  `pr_context`'s `files`, whole, each with its additions and deletions; if
-  `filesTruncated` is true the list is a PAGE of `filesTotal`, and the scope you
-  can honestly declare covers only what you were handed, so say which. The tree
-  is `pr_checkout`'s `dir`. A scope you assembled yourself is the defect `#132`
-  removed one level up: it looks exactly like a derived one, and nothing
-  downstream can tell them apart.
+  `pr:<number>` is the one inside the row's own `pr` field — `owner/repo#n`, the
+  same string step 2 was addressed with — never a number read off a title, a URL
+  or the vetter's note. The changed-file list is `pr_context`'s `files`, whole,
+  each with its additions and deletions; if `filesTruncated` is true the list is
+  a PAGE of `filesTotal`, and the scope you can honestly declare covers only
+  what you were handed, so say which. The tree is `pr_checkout`'s `dir`. A scope
+  you assembled yourself is the defect `#132` removed one level up: it looks
+  exactly like a derived one, and nothing downstream can tell them apart.
 - **What `pr:<number>` admits, and why — this is the REASON for the argument,
   not a second carrier of it.** In scope is the middle ground: the changed lines
   PLUS the code whose behaviour decides whether the diff is correct — the
@@ -197,10 +200,10 @@ are about to take a dependency on, before you depend on it. It is not this
 command. `/nr` rules on ONE PR and its lens exists to decide THAT merge; a sweep
 of every file answers a question nobody asked at this gate, and it answers it by
 burying the findings that bear on the diff under the ones that do not — five
-among twelve, on `rain.deploy#21`. So this command declares `scope=pr:<number>`
-on every invocation and has no mode, flag or argument that declares anything
-else: the whole argument is the LIMIT, and a scope is not something a caller
-passes here.
+among twelve, on `rain.deploy#21`. So this command declares `pr:<number>` on
+every invocation and has no mode, flag or argument that declares anything else:
+the whole argument is the LIMIT, and a scope is not something a caller passes
+here.
 
 That is deliberately not the same as removing whole-repo. It stays available as
 a SEPARATE, explicit invocation of the same skill with `whole-repo` declared, on
@@ -293,12 +296,12 @@ is deploy-before-merge and **not** a plain merge, because landing it as if it
 were ordinary is a production error.
 
 **The lens's findings arrive under the scope they were formed at, stated.** Name
-the value you declared — `scope=pr:<number>`, with the number in it — or, where
-the checkout failed, that there was no lens at all. It is one line and it
-decides how every finding under it should be read: a PR-scoped review and a
-whole-repo sweep produce different lists, and a reader handed the list without
-the scope has to reverse-engineer which one they got from the proportion of
-findings that miss the diff. That is the inference this line removes.
+the literal you declared — `pr:<number>`, with the number in it — or, where the
+checkout failed, that there was no lens at all. It is one line and it decides
+how every finding under it should be read: a PR-scoped review and a whole-repo
+sweep produce different lists, and a reader handed the list without the scope
+has to reverse-engineer which one they got from the proportion of findings that
+miss the diff. That is the inference this line removes.
 
 Clean is a conclusion you are allowed to reach, not one to reach for: say it
 only about a diff you read against an issue you read, with a lens you actually

@@ -29602,8 +29602,8 @@ mod marketplace_tests {
     // #154: the grant above buys an invocation, and the invocation is only worth what its SCOPE is.
     // `nr.md` used to carry the scope as a paragraph — correct, detailed, and overridden the moment
     // `Skill audit` loaded a document whose first rule is "whole-repo snapshot, never a diff". The
-    // fix is a declared value, so what is pinned here is that the value is still there and is still
-    // one the skill accepts: a scope spelled anything else is unvalidated free text wearing an `=`.
+    // fix is a declared literal, and three things about it are pinned here: it is IN the invocation,
+    // it is the PR one, and the file states the closed vocabulary it comes from.
     #[test]
     fn nr_declares_the_lens_scope_as_a_value_from_the_skills_own_vocabulary() {
         let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
@@ -29619,40 +29619,32 @@ mod marketplace_tests {
             )
         };
         let invocation = after.split("\n- ").next().unwrap_or(after);
-        // `/nr` rules on ONE PR, so the PR scope is what it declares — spelled out, with the
-        // placeholder that says a number goes there rather than a repo name or a branch.
+        let pr_scope = format!("`{AUDIT_SCOPE_PR}<number>`");
         assert!(
-            invocation.contains(&format!("`scope={AUDIT_SCOPE_PR}<number>`")),
-            "the bullet that invokes the skill must DECLARE the PR scope as an argument; a scope \
-             only described in prose is the #154 defect, and the skill's own whole-repo rule wins \
-             over a description. The bullet reads: {invocation:?}"
+            invocation.contains(&pr_scope),
+            "the bullet that invokes the skill must DECLARE {pr_scope} as the scope; a scope only \
+             described in prose is the #154 defect, and the skill's own whole-repo rule wins over a \
+             description. The bullet reads: {invocation:?}"
         );
-        // EVERY scope the file names, not just the one asserted above — the loop is non-empty
-        // because that assertion passed, and what it catches is a SECOND spelling arriving beside
-        // the right one.
-        let declared: Vec<&str> = text
-            .split("scope=")
-            .skip(1)
-            .map(|rest| {
-                rest.split(|c: char| c == '`' || c.is_whitespace())
-                    .next()
-                    .unwrap_or_default()
-            })
-            .collect();
-        for value in &declared {
+        // And declares no OTHER scope, so the invocation cannot carry two. Matched on the backticked
+        // literal specifically: the bullet quotes the skill's whole-repo RULE in prose, and a quoted
+        // rule is not a declared value — which is the whole distinction this test is about.
+        for other in [AUDIT_SCOPE_WHOLE_REPO, AUDIT_SCOPE_PATHS] {
             assert!(
-                AUDIT_SCOPES.iter().any(|v| value.starts_with(v)),
-                "scope={value:?} is not one of {AUDIT_SCOPES:?} — a spelling the skill does not \
-                 accept is free text again, which is what #154 removed"
+                !invocation.contains(&format!("`{other}")),
+                "the invocation bullet also names `{other}`. /nr rules on ONE PR, so it declares \
+                 {pr_scope} and nothing else — a whole-repo sweep is an invocation somebody asked \
+                 for, never one this gate can reach"
             );
-            // And specifically NOT `whole-repo`: this command must have no argument, flag or mode
-            // that passes the widest scope. A whole-repo sweep is a separate, deliberate invocation
-            // — defaulting to it is exactly how the defect read as working.
+        }
+        // The vocabulary is CLOSED, and the file has to say so, or "declare a literal" is advice
+        // with no list behind it and the next spelling is invented in good faith.
+        for scope in AUDIT_SCOPES {
             assert!(
-                value.starts_with(AUDIT_SCOPE_PR),
-                "/nr passes {value:?}, but the human PR gate declares only \
-                 {AUDIT_SCOPE_PR}<number>; {AUDIT_SCOPE_WHOLE_REPO} and {AUDIT_SCOPE_PATHS} belong \
-                 to an invocation somebody asked for"
+                text.contains(&format!("`{scope}")),
+                "nr.md never names the {scope:?} scope. The skill's vocabulary is exactly \
+                 {AUDIT_SCOPES:?}, and a command that states only the one it uses cannot tell its \
+                 reader which spellings are the whole set"
             );
         }
     }
