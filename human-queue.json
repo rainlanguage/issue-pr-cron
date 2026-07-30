@@ -5641,13 +5641,6 @@
       "reason": "🤖 ai:producer Blocked-infra: test red survives THREE [3b-attempt]s (incl. 'fix(ci): test ReceiptModal svelte-wagmi mock'): run 28742037921 — ReceiptModal.test.ts fails to LOAD with vitest 'error when mocking a module … no top level variables inside vi.mock factory' (hoisting breaks module init through transactionStore.ts → stores.ts → vitest-setup.ts). One-attempt back-off exhausted; the vi.mock factory needs restructuring by a human. Base is green."
     },
     {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 396,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
-      "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector",
-      "reason": "🤖 ai:producer Blocked-infra: test red survives the one permitted [3b-attempt] ('fix(ci): test [3b-attempt]'): run 28726193216 fails NetworkSelector.test.ts 'switches wallet network after updating the store (order check)' — the calls spy records only ['switchNetwork'], 'set:test' is never captured (line 219), and the test is internally inconsistent (name says switch AFTER store update, line 218 asserts switchNetwork FIRST). One-attempt back-off exhausted; the PR's own ordering test needs a human decision on the intended order + a mock that actually observes the store set. Base is green."
-    },
-    {
       "repo": "rainlanguage/rain.flare",
       "number": 186,
       "url": "https://github.com/rainlanguage/rain.flare/pull/186",
@@ -5769,7 +5762,7 @@
     "closeCandidateIssues": 13,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
-    "leaks": 23,
+    "leaks": 22,
     "totalProducerPrs": 161,
     "uncoveredIssues": 622,
     "unvetted": 21,
