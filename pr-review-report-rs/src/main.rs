@@ -4352,8 +4352,10 @@ fn labels_to_remove(current: &[String], target: &str) -> Vec<String> {
 /// Bump it when what vetting MEANS changes (the audit lens, a mandatory gate, the verdict
 /// vocabulary), not when the prompt is merely reworded. `1` is the first protocol to be identified
 /// at all: every verdict written before this constant existed carries no stamp and reads as
-/// [`VetProtocol::Unknown`].
-const VET_PROTOCOL: u32 = 1;
+/// [`VetProtocol::Unknown`]. `2` is scope coverage (#131): a verdict now carries a claim, checked in
+/// the binary, that every file the PR changes was in view when it was formed — a mandatory gate by
+/// the definition above, so a protocol-1 verdict is not a value of the current function.
+const VET_PROTOCOL: u32 = 2;
 
 /// The line [`verdict_comment`] stamps the protocol on, and [`verdict_protocol`] reads it back from.
 const VET_PROTOCOL_PREFIX: &str = "vet-protocol ";
@@ -4515,6 +4517,1057 @@ fn should_skip_comment(last_vetter_body: Option<&str>, sha: &str, verdict: &str)
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CHANGED-FILE LIST — one reader, and it says whether the list is WHOLE (#147)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// ONE file a PR changes.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct ChangedFile {
+    path: String,
+    additions: u64,
+    deletions: u64,
+}
+
+/// A PR's changed-file list, and — decisively — whether it is the WHOLE list.
+///
+/// There is no bare `Vec<ChangedFile>` anywhere a caller can mistake for the whole set, and that is
+/// the entire point of the type. `gh pr view --json files` reads GitHub's file connection, which is
+/// capped at **100 entries**, while `changedFiles` reports the real total. Measured on
+/// `rainlanguage/raindex#2796`: `changedFiles` 143 against an array of 100 — no error, nothing in
+/// the document flagging the gap. A consumer of the bare array reads the 43 missing files as
+/// ABSENT, and absent is the wrong direction for every consumer there is: a gate skips them and
+/// calls the PR clean, a manifest presents 100 files as the whole PR, a path match concludes the
+/// requirement does not apply.
+///
+/// Two states rather than three: a document with no `files` array and a document whose array is a
+/// page are the same fact to every consumer — the list is not known to be whole — and `total` plus
+/// `why` carry the diagnosis without a third variant nobody branches on differently. This is the
+/// fail-safe convention [`Merge::Unknown`] and [`CodeRabbitCoverage::Unreadable`] already set.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum ChangedFileSet {
+    /// Every file the PR changes.
+    Complete(Vec<ChangedFile>),
+    /// NOT every file. `known` is what could be read (possibly empty), `total` is what the PR really
+    /// changes WHERE THAT COULD BE ESTABLISHED, and `why` is the gap in words — the consumer's
+    /// refusal or warning quotes it, so a truncation never has to be inferred from a count.
+    Partial {
+        known: Vec<ChangedFile>,
+        total: Option<u64>,
+        why: String,
+    },
+}
+
+/// PURE: one changed-file entry, from a document that spells the path under `path_key`.
+/// `gh pr view --json files` spells it `path`; the REST `pulls/{n}/files` endpoint spells it
+/// `filename`. The counts are spelled the same in both.
+///
+/// An entry with no usable path is DROPPED rather than admitted as `""`, and that shortens the list
+/// — which is safe here precisely because the length is reconciled against `changedFiles`: a
+/// malformed entry makes the counts disagree and routes to [`ChangedFileSet::Partial`], never to a
+/// `Complete` list quietly one file short.
+fn changed_file_entry(v: &Value, path_key: &str) -> Option<ChangedFile> {
+    let path = v.get(path_key).and_then(|p| p.as_str())?.trim();
+    if path.is_empty() {
+        return None;
+    }
+    Some(ChangedFile {
+        path: path.to_string(),
+        additions: v.get("additions").and_then(|x| x.as_u64()).unwrap_or(0),
+        deletions: v.get("deletions").and_then(|x| x.as_u64()).unwrap_or(0),
+    })
+}
+
+/// The reason a `gh pr view` array that is short of its own count is short. Not a guess: the cap is
+/// GitHub's, it is 100, and it is the only thing that makes these two fields disagree in practice.
+const FILES_CAPPED_WHY: &str =
+    "`gh pr view --json files` is capped at 100 entries while `changedFiles` reports the real total";
+
+/// PURE: read the change set off a `gh pr view` document. THE reader — every consumer of a
+/// changed-file list in this binary goes through this function or through [`pr_changed_files`],
+/// which wraps it.
+fn changed_files_from_view(pr_json: &Value) -> ChangedFileSet {
+    let total = pr_json.get("changedFiles").and_then(|v| v.as_u64());
+    let Some(arr) = pr_json.get("files").and_then(|f| f.as_array()) else {
+        // Requested explicitly on every call that produces such a document, so its absence means
+        // the answer is UNKNOWN — never that the answer is "nothing".
+        return ChangedFileSet::Partial {
+            known: Vec::new(),
+            total,
+            why: "the document carries no `files` array".to_string(),
+        };
+    };
+    let known: Vec<ChangedFile> = arr
+        .iter()
+        .filter_map(|f| changed_file_entry(f, "path"))
+        .collect();
+    let Some(total) = total else {
+        return ChangedFileSet::Partial {
+            known,
+            total: None,
+            why:
+                "the document carries no `changedFiles` count, so a truncated file list cannot be \
+                  told from a complete one"
+                    .to_string(),
+        };
+    };
+    if total > known.len() as u64 {
+        return ChangedFileSet::Partial {
+            known,
+            total: Some(total),
+            why: FILES_CAPPED_WHY.to_string(),
+        };
+    }
+    // `total < known.len()` lands here too, and Complete is right: MORE entries than the count
+    // claims is not a truncation, and the array is then the superset of what the count describes.
+    ChangedFileSet::Complete(known)
+}
+
+/// PURE: read the change set off a paginated `repos/{slug}/pulls/{n}/files` response — the array
+/// `gh api --paginate` merges every page into.
+///
+/// Short of `total` is an `Err`, not a short list: a re-fetch that came back short is a SECOND
+/// truncation, and returning it would replace one silent partial with another.
+fn changed_files_from_rest(v: &Value, total: u64) -> Result<Vec<ChangedFile>, String> {
+    let Some(arr) = v.as_array() else {
+        return Err("the paginated file list is not a JSON array".to_string());
+    };
+    let files: Vec<ChangedFile> = arr
+        .iter()
+        .filter_map(|f| changed_file_entry(f, "filename"))
+        .collect();
+    if (files.len() as u64) < total {
+        return Err(format!(
+            "the paginated re-fetch returned {} of {total} changed files",
+            files.len()
+        ));
+    }
+    Ok(files)
+}
+
+/// The WHOLE changed-file list where one can be had: [`changed_files_from_view`], then a paginated
+/// REST re-fetch when the document handed back a page. Only a PR over the cap pays the extra calls.
+///
+/// PURE: the total a paginated re-fetch would have to reach, or `None` when no re-fetch is worth
+/// making.
+///
+/// Split out so the TRIGGER is testable without a network. Two answers are `None` for opposite
+/// reasons: a `Complete` set needs no re-fetch, and a `Partial` set with no total has nothing to
+/// check a re-fetch AGAINST — see the #129 note on [`pr_changed_files`].
+fn refetch_total(set: &ChangedFileSet) -> Option<u64> {
+    match set {
+        ChangedFileSet::Complete(_) => None,
+        ChangedFileSet::Partial { total, .. } => *total,
+    }
+}
+
+/// Pagination is attempted ONLY when `total` is known, and that restraint is #129. `gh_json`
+/// collapses every failure into `None`, so a re-fetch that failed because of a rate limit is
+/// indistinguishable from one that returned nothing — the only defence available is to cross-check
+/// the result against a count fetched independently. With no count there is nothing to check
+/// against, so the set stays `Partial`: this reader never claims Complete on the strength of a
+/// distinction the binary does not have.
+fn pr_changed_files(slug: &str, pr: &str, pr_json: &Value) -> ChangedFileSet {
+    let set = changed_files_from_view(pr_json);
+    let Some(total) = refetch_total(&set) else {
+        return set;
+    };
+    let ChangedFileSet::Partial { known, why, .. } = set else {
+        // Unreachable: `refetch_total` answers `Some` for `Partial` with a total and nothing else.
+        return set;
+    };
+    let Some(doc) = gh_json(&[
+        "api",
+        &format!("repos/{slug}/pulls/{pr}/files"),
+        "--paginate",
+    ]) else {
+        return ChangedFileSet::Partial {
+            why: format!(
+                "{why} — {slug}#{pr} lists {} of {total} changed files and the paginated re-fetch \
+                 failed",
+                known.len()
+            ),
+            known,
+            total: Some(total),
+        };
+    };
+    match changed_files_from_rest(&doc, total) {
+        Ok(files) => ChangedFileSet::Complete(files),
+        Err(rest_why) => ChangedFileSet::Partial {
+            why: format!("{why} — {slug}#{pr}: {rest_why}"),
+            known,
+            total: Some(total),
+        },
+    }
+}
+
+/// Write a resolved changed-file list back into a `gh pr view` document, `files` AND `changedFiles`
+/// TOGETHER.
+///
+/// Both or neither is the invariant: a full array left beside a stale count still reads as
+/// [`ChangedFileSet::Partial`], and a corrected count beside a capped array is the fail-open this
+/// exists to close. It is the same enrichment `fetch_pr_detail` already does for
+/// `unresolvedThreads` — resolve at the ONE impure point so the pure classifier downstream stays a
+/// function of the document it is handed.
+fn inject_changed_files(doc: &mut Value, files: &[ChangedFile]) {
+    let Some(obj) = doc.as_object_mut() else {
+        return;
+    };
+    obj.insert(
+        "files".into(),
+        Value::Array(
+            files
+                .iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "path": f.path,
+                        "additions": f.additions,
+                        "deletions": f.deletions,
+                    })
+                })
+                .collect(),
+        ),
+    );
+    obj.insert("changedFiles".into(), Value::from(files.len()));
+}
+
+/// The `gh pr view --json` field list `pr_context` fetches. Named for the same reason
+/// [`RECORD_VERDICT_FIELDS`] is, and pinned by the same kind of conformance test.
+const PR_CONTEXT_FIELDS: &str = "number,title,body,url,headRefOid,isDraft,labels,reviewDecision,mergeable,statusCheckRollup,additions,deletions,files,changedFiles,closingIssuesReferences,comments";
+
+/// The `gh pr view --json` field list `worklist` fetches per PR.
+const WORKLIST_DETAIL_FIELDS: &str = "number,title,url,mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,headRefOid,commits,closingIssuesReferences,createdAt,updatedAt,comments,labels,isDraft,body,files,changedFiles";
+
+/// Every field list whose document is read by [`changed_files_from_view`]. `files` WITHOUT
+/// `changedFiles` is the exact shape of the bug this reader closes — a page nothing in the document
+/// says is a page — so the pairing is asserted over the whole set rather than per call site.
+#[cfg(test)]
+const CHANGED_FILE_READER_FIELD_LISTS: [(&str, &str); 3] = [
+    ("RECORD_VERDICT_FIELDS", RECORD_VERDICT_FIELDS),
+    ("PR_CONTEXT_FIELDS", PR_CONTEXT_FIELDS),
+    ("WORKLIST_DETAIL_FIELDS", WORKLIST_DETAIL_FIELDS),
+];
+
+#[cfg(test)]
+mod changed_file_tests {
+    use super::{
+        changed_files_from_rest, changed_files_from_view, inject_changed_files, is_ui_path,
+        refetch_total, touches_ui, ChangedFile, ChangedFileSet, UiTouch,
+        CHANGED_FILE_READER_FIELD_LISTS,
+    };
+    use serde_json::{json, Value};
+
+    /// The measured shape of `rainlanguage/raindex#2796`: `changedFiles` 143, `files` 100.
+    const CAP: usize = 100;
+    const REAL_TOTAL: u64 = 143;
+
+    fn view_page(n: usize) -> Value {
+        Value::Array(
+            (0..n)
+                .map(|i| json!({"path": format!("src/f{i}.rs"), "additions": 1, "deletions": 0}))
+                .collect(),
+        )
+    }
+
+    fn f(path: &str) -> ChangedFile {
+        ChangedFile {
+            path: path.to_string(),
+            additions: 1,
+            deletions: 0,
+        }
+    }
+
+    /// THE bug, in the numbers it was measured in. The count is the only field that distinguishes a
+    /// whole list from a page, so a document where the two disagree must never resolve to a list any
+    /// consumer can treat as complete.
+    #[test]
+    fn a_page_short_of_its_own_count_is_partial_and_names_the_total() {
+        match changed_files_from_view(&json!({"changedFiles": REAL_TOTAL, "files": view_page(CAP)}))
+        {
+            ChangedFileSet::Partial { known, total, why } => {
+                assert_eq!(known.len(), CAP);
+                assert_eq!(total, Some(REAL_TOTAL));
+                assert!(why.contains("100"), "the reason names the cap: {why}");
+            }
+            other => panic!("143 against 100 must be Partial, got {other:?}"),
+        }
+        // Agreement is the ONLY thing that produces a Complete list.
+        assert_eq!(
+            changed_files_from_view(&json!({"changedFiles": 2, "files": view_page(2)})),
+            ChangedFileSet::Complete(vec![f("src/f0.rs"), f("src/f1.rs")])
+        );
+        // One entry short of the count is already Partial — the boundary is `>`, not "much more".
+        assert!(matches!(
+            changed_files_from_view(&json!({"changedFiles": 3, "files": view_page(2)})),
+            ChangedFileSet::Partial { total: Some(3), .. }
+        ));
+        // MORE entries than the count claims is not a truncation.
+        assert!(
+            matches!(changed_files_from_view(&json!({"changedFiles": 1, "files": view_page(2)})),
+                ChangedFileSet::Complete(ref v) if v.len() == 2)
+        );
+    }
+
+    /// Either field absent ⇒ Partial ⇒ the consumer's safe branch. Both are requested explicitly on
+    /// every call that produces such a document, so absence means UNKNOWN, never "nothing".
+    #[test]
+    fn a_document_missing_either_field_is_partial_never_an_empty_list() {
+        // No array at all, and no count either: nothing is known.
+        match changed_files_from_view(&json!({})) {
+            ChangedFileSet::Partial { known, total, why } => {
+                assert!(known.is_empty());
+                assert_eq!(total, None);
+                assert!(why.contains("`files`"), "{why}");
+            }
+            other => panic!("an empty document must be Partial, got {other:?}"),
+        }
+        // No array but a COUNT: still Partial, and the count is carried so the re-fetch is checkable.
+        assert!(matches!(
+            changed_files_from_view(&json!({"changedFiles": 7})),
+            ChangedFileSet::Partial { total: Some(7), .. }
+        ));
+        // A count of ZERO with no array is Partial too — a missing field is not a PR with no files.
+        assert!(matches!(
+            changed_files_from_view(&json!({"changedFiles": 0})),
+            ChangedFileSet::Partial { total: Some(0), .. }
+        ));
+        // An array with no count: Partial with NO total, which is what stops `pr_changed_files`
+        // claiming Complete off a re-fetch it could not check.
+        match changed_files_from_view(&json!({"files": view_page(3)})) {
+            ChangedFileSet::Partial { known, total, why } => {
+                assert_eq!(known.len(), 3);
+                assert_eq!(total, None);
+                assert!(why.contains("changedFiles"), "{why}");
+            }
+            other => panic!("no count must be Partial, got {other:?}"),
+        }
+        // A count that is not a number is the same as no count.
+        assert!(matches!(
+            changed_files_from_view(&json!({"changedFiles": "143", "files": view_page(1)})),
+            ChangedFileSet::Partial { total: None, .. }
+        ));
+        // An empty list the count AGREES with is genuinely complete — the one document that means
+        // "this PR changes nothing", and the reason absence cannot be spelled the same way.
+        assert_eq!(
+            changed_files_from_view(&json!({"changedFiles": 0, "files": []})),
+            ChangedFileSet::Complete(vec![])
+        );
+    }
+
+    /// A malformed entry shortens the list, and the count is what catches it: the result is Partial,
+    /// never a Complete list quietly one file short.
+    #[test]
+    fn a_pathless_entry_cannot_shorten_a_complete_list() {
+        let doc = json!({
+            "changedFiles": 2,
+            "files": [{"path": "src/a.rs"}, {"additions": 9}],
+        });
+        assert!(
+            matches!(changed_files_from_view(&doc),
+                ChangedFileSet::Partial { total: Some(2), ref known, .. } if known.len() == 1),
+            "{:?}",
+            changed_files_from_view(&doc)
+        );
+        // A blank path is as unusable as an absent one.
+        assert!(matches!(
+            changed_files_from_view(&json!({"changedFiles": 1, "files": [{"path": "   "}]})),
+            ChangedFileSet::Partial { total: Some(1), .. }
+        ));
+    }
+
+    /// The per-file counts ride along, because `pr_context`'s manifest carries them and a resolved
+    /// list that dropped them would trade one silent partial for another.
+    #[test]
+    fn the_reader_carries_the_per_file_counts_and_defaults_an_absent_one() {
+        let doc = json!({
+            "changedFiles": 2,
+            "files": [
+                {"path": "a.rs", "additions": 12, "deletions": 3},
+                {"path": "b.rs"},
+            ],
+        });
+        let ChangedFileSet::Complete(files) = changed_files_from_view(&doc) else {
+            panic!("agreeing document must be Complete");
+        };
+        assert_eq!(files[0].additions, 12);
+        assert_eq!(files[0].deletions, 3);
+        assert_eq!((files[1].additions, files[1].deletions), (0, 0));
+    }
+
+    /// The REST re-fetch reads `filename`, not `path`, and a response short of the total is an ERROR
+    /// — returning it would replace one silent truncation with another.
+    #[test]
+    fn a_rest_refetch_short_of_the_total_is_an_error_not_an_answer() {
+        let page = Value::Array(
+            (0..CAP)
+                .map(
+                    |i| json!({"filename": format!("src/f{i}.rs"), "additions": 1, "deletions": 2}),
+                )
+                .collect(),
+        );
+        let short = changed_files_from_rest(&page, REAL_TOTAL);
+        assert!(
+            short
+                .as_ref()
+                .is_err_and(|e| e.contains("100") && e.contains("143")),
+            "{short:?}"
+        );
+        // Exactly the total is the answer, and it reads the REST spelling of the path.
+        let whole = changed_files_from_rest(&page, CAP as u64).expect("100 of 100");
+        assert_eq!(whole.len(), CAP);
+        assert_eq!(whole[0].path, "src/f0.rs");
+        assert_eq!((whole[0].additions, whole[0].deletions), (1, 2));
+        // `path` is NOT the REST spelling: reading the wrong key drops every entry, which the total
+        // check then catches rather than letting an empty list through as the whole PR.
+        assert!(changed_files_from_rest(&json!([{"path": "src/f0.rs"}]), 1).is_err());
+        // Anything that is not an array is unreadable, not empty.
+        for bad in [json!({}), json!(null), json!("[]")] {
+            assert!(changed_files_from_rest(&bad, 0).is_err(), "{bad}");
+        }
+    }
+
+    /// The re-fetch TRIGGER, which is where #129 lands: a `Partial` with no total is NOT re-fetched,
+    /// because there would be nothing to check the result against and `gh_json` cannot tell a failed
+    /// call from an empty one. Claiming Complete off such a call would rest the whole fix on a
+    /// distinction this binary does not have.
+    #[test]
+    fn only_a_partial_set_with_a_known_total_is_worth_a_refetch() {
+        assert_eq!(
+            refetch_total(&ChangedFileSet::Complete(vec![f("a.rs")])),
+            None,
+            "a whole list needs no re-fetch"
+        );
+        assert_eq!(refetch_total(&ChangedFileSet::Complete(vec![])), None);
+        assert_eq!(
+            refetch_total(&ChangedFileSet::Partial {
+                known: vec![],
+                total: Some(REAL_TOTAL),
+                why: "capped".to_string(),
+            }),
+            Some(REAL_TOTAL)
+        );
+        assert_eq!(
+            refetch_total(&ChangedFileSet::Partial {
+                known: vec![f("a.rs")],
+                total: None,
+                why: "no count".to_string(),
+            }),
+            None,
+            "with no count there is nothing to check a re-fetch against"
+        );
+        // A total of zero is still a total: the re-fetch is made and checked against 0.
+        assert_eq!(
+            refetch_total(&ChangedFileSet::Partial {
+                known: vec![],
+                total: Some(0),
+                why: "no array".to_string(),
+            }),
+            Some(0)
+        );
+    }
+
+    /// The write-back is `files` AND `changedFiles`, together. Either alone leaves the document
+    /// reading as Partial — which is safe, but makes the resolution pointless.
+    #[test]
+    fn injecting_a_resolved_list_makes_the_document_read_complete() {
+        let mut doc = json!({"changedFiles": REAL_TOTAL, "files": view_page(CAP)});
+        let resolved: Vec<ChangedFile> = (0..REAL_TOTAL)
+            .map(|i| f(&format!("src/f{i}.rs")))
+            .collect();
+        inject_changed_files(&mut doc, &resolved);
+        assert_eq!(
+            changed_files_from_view(&doc),
+            ChangedFileSet::Complete(resolved.clone()),
+            "the injected document must read as the WHOLE list"
+        );
+        assert_eq!(doc["changedFiles"], json!(REAL_TOTAL));
+        assert_eq!(doc["files"].as_array().unwrap().len(), REAL_TOTAL as usize);
+        assert_eq!(doc["files"][0]["additions"], json!(1));
+        // BOTH fields, and the COUNT write is what this pins. Against a document whose count is
+        // larger than the list being written, an array-only write leaves the two disagreeing and the
+        // read stays Partial — the resolution silently accomplishing nothing. The contract is local
+        // to this function ("afterwards these two fields agree") rather than resting on an unstated
+        // property of whichever caller happens to use it.
+        let mut stale = json!({"changedFiles": 999, "files": view_page(CAP)});
+        let three: Vec<ChangedFile> = (0..3).map(|i| f(&format!("src/g{i}.rs"))).collect();
+        inject_changed_files(&mut stale, &three);
+        assert_eq!(
+            stale["changedFiles"],
+            json!(3),
+            "the count is rewritten too"
+        );
+        assert_eq!(
+            changed_files_from_view(&stale),
+            ChangedFileSet::Complete(three)
+        );
+        // A non-object document is left alone rather than panicking.
+        let mut arr = json!([]);
+        inject_changed_files(&mut arr, &resolved);
+        assert_eq!(arr, json!([]));
+    }
+
+    /// `No` is only ever returned off a COMPLETE list. #147: the old read was a bare `files[]` scan
+    /// whose `false` meant both "no UI file" and "no UI file in the first 100".
+    #[test]
+    fn a_file_list_that_is_not_whole_may_touch_ui() {
+        let ui = f("packages/webapp/src/Foo.svelte");
+        let other = f("src/lib.rs");
+        assert_eq!(
+            touches_ui(&ChangedFileSet::Complete(vec![other.clone()])),
+            UiTouch::No
+        );
+        assert_eq!(
+            touches_ui(&ChangedFileSet::Complete(vec![other.clone(), ui.clone()])),
+            UiTouch::Yes
+        );
+        // A match in the PAGE still proves Yes — finding a UI file needs no other file in view.
+        let partial = |known: Vec<ChangedFile>| ChangedFileSet::Partial {
+            known,
+            total: Some(REAL_TOTAL),
+            why: "capped".to_string(),
+        };
+        assert_eq!(touches_ui(&partial(vec![ui])), UiTouch::Yes);
+        // No match in the page proves NOTHING, so the requirement applies.
+        assert_eq!(touches_ui(&partial(vec![other])), UiTouch::Unknown);
+        assert_eq!(touches_ui(&partial(vec![])), UiTouch::Unknown);
+        // …and an empty list the count agrees with is a real "no".
+        assert_eq!(touches_ui(&ChangedFileSet::Complete(vec![])), UiTouch::No);
+    }
+
+    /// The path convention itself, unchanged by #147 and pinned so the tri-state refactor cannot
+    /// have quietly widened or narrowed it.
+    #[test]
+    fn the_ui_path_convention_is_webapp_ui_components_and_site_html() {
+        for yes in [
+            "packages/webapp/src/Foo.svelte",
+            "apps/packages/webapp/x.ts",
+            "packages/ui-components/src/Bar.svelte",
+            "site/index.html",
+        ] {
+            assert!(is_ui_path(yes), "{yes} must be a UI path");
+        }
+        for no in ["src/lib.rs", "site/style.css", "docs/site/index.html"] {
+            assert!(!is_ui_path(no), "{no} must not be a UI path");
+        }
+    }
+
+    /// A field list that fetches `files` without `changedFiles` produces a page nothing says is a
+    /// page. That is the bug, and it is one omitted word away in three places.
+    #[test]
+    fn every_fetch_the_reader_consumes_asks_for_both_fields() {
+        for (name, list) in CHANGED_FILE_READER_FIELD_LISTS {
+            let fields: Vec<&str> = list.split(',').collect();
+            for field in ["files", "changedFiles"] {
+                assert!(
+                    fields.contains(&field),
+                    "{name} omits {field} — a changed-file list read off it cannot say whether it \
+                     is whole"
+                );
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCOPE COVERAGE — the verdict must account for every file the PR changes (#131)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// ONE entry of a verdict's coverage claim: a file this PR changes, and — where the diff can prove
+/// it — a line of that file the vetter had in view.
+///
+/// The claim is checked against data the tool ALREADY HOLDS (`gh pr view --json files` and
+/// `gh pr diff`), never against a promise. Without `anchor` an entry is an ATTESTATION: a model can
+/// type a filename it never opened. With one it is FALSIFIABLE — the same move `verdict_sha` makes
+/// for the head, one level down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Covered {
+    path: String,
+    anchor: Option<CoverageAnchor>,
+}
+
+/// A line of the PR's diff, quoted. `line` is the NEW-side line number (the number the line has in
+/// the file at this head), `text` is a fragment of that line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CoverageAnchor {
+    line: u64,
+    text: String,
+}
+
+/// The new-side lines a diff shows, per file: `path → (line number → content)`.
+type DiffLines = std::collections::BTreeMap<String, std::collections::BTreeMap<u64, String>>;
+
+/// PURE: the one spelling of a path this guard compares on — trimmed, `./` stripped. GitHub's
+/// `files[].path` is already repo-relative with no prefix; a model retyping one is not always.
+fn norm_path(p: &str) -> String {
+    let p = p.trim();
+    p.strip_prefix("./")
+        .unwrap_or(p)
+        .trim_matches('/')
+        .to_string()
+}
+
+/// PURE: strip git's one-component diff prefix (`a/`, `b/`) from a header path. Exactly one, so a
+/// file genuinely named `b/thing` survives as `b/thing`.
+fn strip_diff_prefix(p: &str) -> String {
+    let p = p.trim();
+    norm_path(
+        p.strip_prefix("a/")
+            .or_else(|| p.strip_prefix("b/"))
+            .unwrap_or(p),
+    )
+}
+
+/// PURE: files an ANCHOR may not be demanded of — accounting for them is the whole obligation.
+///
+/// The line is "did a person write this byte": generated output, dependency trees, lockfiles and
+/// binaries are read by nobody and quoting a line of one proves nothing about attention. The rule is
+/// a PATH CONVENTION rather than a size or a count, so it is the same on every PR and a vetter never
+/// has to negotiate which files it is allowed to skip.
+///
+/// Note this is only half the exemption: a file with NO new-side line in the diff (a deletion, a
+/// binary, a mode change) is exempt by DERIVATION in [`coverage_gaps`], because demanding an anchor
+/// that cannot exist is the false gate this guard must not become.
+fn anchor_exempt(path: &str) -> bool {
+    /// Dependency trees that are only ever the REPO ROOT's. `lib` is why this list is separate from
+    /// the next one: `lib/` is forge's submodule tree, but `src/lib/LibFoo.sol` is the org's most
+    /// common source path, and exempting `lib` anywhere would quietly drop most rainlanguage
+    /// Solidity out of the guard.
+    const ROOT_DIRS: [&str; 3] = ["lib", "dependencies", "target"];
+    /// Names that mean "not hand-written" wherever they appear (`crates/js_api/abis`,
+    /// `src/generated`, a nested `node_modules`).
+    const DIRS: [&str; 5] = ["node_modules", "vendor", "generated", "abis", "dist"];
+    const SUFFIXES: [&str; 18] = [
+        ".lock",
+        ".lockb",
+        ".pointers.sol",
+        ".snap",
+        ".gas-snapshot",
+        ".abi.json",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".pdf",
+        ".ico",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".zip",
+        ".wasm",
+        ".bin",
+    ];
+    const NAMES: [&str; 2] = ["package-lock.json", "pnpm-lock.yaml"];
+    let path = norm_path(path);
+    let mut parts = path.split('/');
+    if parts.next().is_some_and(|first| ROOT_DIRS.contains(&first)) && path.contains('/') {
+        return true;
+    }
+    if path.split('/').any(|c| DIRS.contains(&c)) {
+        return true;
+    }
+    let file = path.rsplit('/').next().unwrap_or(&path);
+    NAMES.contains(&file) || SUFFIXES.iter().any(|s| path.ends_with(s))
+}
+
+/// PURE: `(new start, old count, new count)` of a `@@ -a,b +c,d @@` hunk header, else None.
+fn hunk_header(line: &str) -> Option<(u64, u64, u64)> {
+    let inner = line.strip_prefix("@@ ")?.split(" @@").next()?;
+    let (mut old, mut new) = (None, None);
+    for tok in inner.split_whitespace() {
+        let (sign, rest) = match (tok.strip_prefix('-'), tok.strip_prefix('+')) {
+            (Some(r), _) => ('-', r),
+            (_, Some(r)) => ('+', r),
+            _ => continue,
+        };
+        let (start, count) = match rest.split_once(',') {
+            Some((s, c)) => (s.parse::<u64>().ok()?, c.parse::<u64>().ok()?),
+            None => (rest.parse::<u64>().ok()?, 1),
+        };
+        if sign == '-' {
+            old = Some(count);
+        } else {
+            new = Some((start, count));
+        }
+    }
+    let (start, new_count) = new?;
+    Some((start, old?, new_count))
+}
+
+/// PURE: every path a unified diff touches, read off its `diff --git` headers.
+///
+/// Needed BESIDE `gh pr view --json files` because that field is capped at 100 entries: on a wider
+/// PR a file the vetter legitimately names would otherwise look like a file this PR does not change.
+/// The header is the only place a deleted or binary file's path appears (it has no `+++ b/…`).
+fn diff_changed_paths(diff: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(p) = diff_git_new_path(rest) {
+                out.insert(p);
+            }
+        }
+    }
+    out
+}
+
+/// PURE: the b-side path of a `diff --git a/<p> b/<q>` header's argument half.
+///
+/// A filename may contain a space, and may contain ` b/` — so whitespace-tokenising and "split at
+/// the last ` b/`" are both wrong, in different places. For the overwhelmingly common case `p == q`
+/// the split is decided by LENGTH alone: the half is `2 + n + 3 + n` bytes, so `n = (len - 5) / 2`,
+/// exact whatever the name contains.
+///
+/// A RENAME (`p != q`) has no closed form here and falls back to the last ` b/`. That is a best
+/// effort and it is enough: this set only WIDENS what a coverage claim may legitimately name, and
+/// a renamed file with hunks also carries an authoritative `+++ b/<q>` line, which is the one
+/// [`diff_new_lines`] reads.
+fn diff_git_new_path(rest: &str) -> Option<String> {
+    let len = rest.len();
+    if rest.starts_with("a/") && len >= 5 && (len - 5).is_multiple_of(2) {
+        let n = (len - 5) / 2;
+        if let (Some(a), Some(" b/"), Some(b)) = (
+            rest.get(2..2 + n),
+            rest.get(2 + n..5 + n),
+            rest.get(5 + n..),
+        ) {
+            if a == b {
+                return Some(norm_path(b));
+            }
+        }
+    }
+    rest.rfind(" b/").map(|i| strip_diff_prefix(&rest[i + 1..]))
+}
+
+/// PURE: the NEW-side lines of a unified diff, per file — what an anchor is checked against.
+///
+/// Hunk COUNTS drive the walk (not a `+`/`-` sniff), because an added line whose own content starts
+/// with `++` renders as `+++…` and a sniffing parser reads it as a file header.
+fn diff_new_lines(diff: &str) -> DiffLines {
+    let mut out: DiffLines = std::collections::BTreeMap::new();
+    let mut path: Option<String> = None;
+    let mut new_line: u64 = 0;
+    let (mut old_left, mut new_left) = (0u64, 0u64);
+    for raw in diff.lines() {
+        if old_left > 0 || new_left > 0 {
+            // Inside a hunk: byte 0 is the marker, so slicing at 1 is always on a char boundary.
+            match raw.as_bytes().first().copied() {
+                Some(b'+') if new_left > 0 => {
+                    if let Some(p) = path.as_ref() {
+                        out.entry(p.clone())
+                            .or_default()
+                            .insert(new_line, raw[1..].to_string());
+                    }
+                    new_line += 1;
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'-') if old_left > 0 => {
+                    old_left -= 1;
+                    continue;
+                }
+                // A context line, and its degenerate form: git writes " " for an empty context
+                // line, but tools that strip trailing whitespace leave a bare "".
+                m @ (Some(b' ') | None) if old_left > 0 && new_left > 0 => {
+                    if let Some(p) = path.as_ref() {
+                        let content = if m.is_some() { &raw[1..] } else { "" };
+                        out.entry(p.clone())
+                            .or_default()
+                            .insert(new_line, content.to_string());
+                    }
+                    new_line += 1;
+                    old_left -= 1;
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'\\') => continue, // "\ No newline at end of file"
+                _ => {
+                    // The hunk's counts are exhausted or the diff is malformed: leave hunk state and
+                    // re-read this line as a header.
+                    old_left = 0;
+                    new_left = 0;
+                }
+            }
+        }
+        if raw.starts_with("diff --git ") {
+            path = None;
+            continue;
+        }
+        if let Some(rest) = raw.strip_prefix("+++ ") {
+            let p = rest.split('\t').next().unwrap_or("").trim();
+            path = if p == "/dev/null" {
+                None
+            } else {
+                Some(strip_diff_prefix(p))
+            };
+            continue;
+        }
+        if let Some((start, old_count, new_count)) = hunk_header(raw) {
+            new_line = start;
+            old_left = old_count;
+            new_left = new_count;
+        }
+    }
+    out
+}
+
+/// PURE: the contiguous new-side line ranges of one file's diff — what a refusal hands back so the
+/// vetter knows WHICH lines it may anchor to.
+fn anchorable_ranges(lines: &std::collections::BTreeMap<u64, String>) -> Vec<(u64, u64)> {
+    let mut out: Vec<(u64, u64)> = Vec::new();
+    for &n in lines.keys() {
+        match out.last_mut() {
+            Some(last) if last.1 + 1 == n => last.1 = n,
+            _ => out.push((n, n)),
+        }
+    }
+    out
+}
+
+/// PURE: render [`anchorable_ranges`] for a refusal, capped so a 4000-line diff does not become the
+/// error message.
+fn ranges_hint(lines: Option<&std::collections::BTreeMap<u64, String>>) -> String {
+    let Some(lines) = lines else {
+        return "none — this file has no new-side line in the diff".to_string();
+    };
+    let ranges = anchorable_ranges(lines);
+    const MAX: usize = 6;
+    let shown: Vec<String> = ranges
+        .iter()
+        .take(MAX)
+        .map(|(a, b)| {
+            if a == b {
+                a.to_string()
+            } else {
+                format!("{a}-{b}")
+            }
+        })
+        .collect();
+    format!(
+        "{}{}",
+        shown.join(", "),
+        if ranges.len() > MAX { ", …" } else { "" }
+    )
+}
+
+/// An anchor the diff does NOT bear out.
+#[derive(Debug, PartialEq)]
+struct BadAnchor {
+    path: String,
+    line: u64,
+    /// The line the diff actually shows there, or None when the diff has no such line.
+    actual: Option<String>,
+}
+
+/// Everything wrong with one coverage claim, gathered in ONE pass.
+///
+/// All four buckets at once on purpose: a guard that reports one defect per call turns a wide PR
+/// into a negotiation, and "satisfiable in ONE retry" is the property that keeps this from becoming
+/// the paperwork-shaped reject the org already pays for elsewhere.
+#[derive(Debug, PartialEq, Default)]
+struct CoverageGaps {
+    /// Changed by this PR, named by no entry. The `rain.erc4626.words#230` failure exactly.
+    unaccounted: Vec<String>,
+    /// Named by an entry, changed by nothing in this PR — a stale file list or the wrong checkout.
+    not_in_pr: Vec<String>,
+    /// Accounted for, hand-written, anchorable — and given no anchor.
+    unanchored: Vec<String>,
+    bad_anchor: Vec<BadAnchor>,
+}
+
+impl CoverageGaps {
+    fn is_clean(&self) -> bool {
+        self.unaccounted.is_empty()
+            && self.not_in_pr.is_empty()
+            && self.unanchored.is_empty()
+            && self.bad_anchor.is_empty()
+    }
+}
+
+/// PURE: does `covered` account for `changed`, and does the diff bear out every anchor?
+///
+/// `changed` is every file the PR changes — the WHOLE list, resolved past the 100-entry cap by
+/// [`pr_changed_files`] before it ever reaches here, because a coverage gate that demands accounting
+/// for the first 100 of 143 files is fail-open on exactly the wide PRs where an unaccounted file
+/// matters most (#147). `also_known` widens only what may legitimately be NAMED (the diff's own
+/// headers), so a path GitHub and the diff spell differently can never look foreign. The asymmetry
+/// is deliberate: demand accounting for every file, never accuse the claim of inventing one that is
+/// really there.
+fn coverage_gaps(
+    changed: &[String],
+    also_known: &std::collections::BTreeSet<String>,
+    covered: &[Covered],
+    diff: &DiffLines,
+) -> CoverageGaps {
+    let mut gaps = CoverageGaps::default();
+    let claimed: std::collections::BTreeMap<&str, &Covered> =
+        covered.iter().map(|c| (c.path.as_str(), c)).collect();
+    for path in changed {
+        let Some(entry) = claimed.get(path.as_str()) else {
+            gaps.unaccounted.push(path.clone());
+            continue;
+        };
+        let lines = diff.get(path.as_str());
+        // Exempt by derivation (no anchorable line exists) or by convention (nobody wrote it).
+        if entry.anchor.is_none() && lines.is_some_and(|l| !l.is_empty()) && !anchor_exempt(path) {
+            gaps.unanchored.push(path.clone());
+        }
+    }
+    for c in covered {
+        if !changed.iter().any(|p| p == &c.path) && !also_known.contains(&c.path) {
+            gaps.not_in_pr.push(c.path.clone());
+            continue;
+        }
+        let Some(anchor) = c.anchor.as_ref() else {
+            continue;
+        };
+        let actual = diff.get(c.path.as_str()).and_then(|l| l.get(&anchor.line));
+        match actual {
+            Some(text) if text.trim().contains(anchor.text.trim()) => {}
+            other => gaps.bad_anchor.push(BadAnchor {
+                path: c.path.clone(),
+                line: anchor.line,
+                actual: other.cloned(),
+            }),
+        }
+    }
+    gaps
+}
+
+/// PURE: the refusal a coverage failure returns — every unmet obligation NAMED, with the lines that
+/// would satisfy it, so the next call is a correction and not a guess.
+fn coverage_refusal(subject: &str, gaps: &CoverageGaps, diff: &DiffLines) -> String {
+    let mut out = format!(
+        "no verdict recorded on {subject} — `covered` does not account for this PR's diff (nothing was written):"
+    );
+    if !gaps.unaccounted.is_empty() {
+        out.push_str("\n  CHANGED BY THIS PR, ACCOUNTED FOR BY NOTHING (read each, then name it):");
+        for p in &gaps.unaccounted {
+            out.push_str(&format!("\n    - {p}"));
+        }
+    }
+    if !gaps.not_in_pr.is_empty() {
+        out.push_str(
+            "\n  NAMED BUT NOT CHANGED HERE (a stale file list, or another PR's checkout):",
+        );
+        for p in &gaps.not_in_pr {
+            out.push_str(&format!("\n    - {p}"));
+        }
+    }
+    if !gaps.unanchored.is_empty() {
+        out.push_str("\n  NO ANCHOR (hand-written source: add \"line\" + \"text\" quoting that line of this PR's diff):");
+        for p in &gaps.unanchored {
+            out.push_str(&format!(
+                "\n    - {p} — anchorable lines: {}",
+                ranges_hint(diff.get(p.as_str()))
+            ));
+        }
+    }
+    if !gaps.bad_anchor.is_empty() {
+        out.push_str("\n  ANCHOR NOT BORNE OUT BY THE DIFF:");
+        for b in &gaps.bad_anchor {
+            let what = match &b.actual {
+                Some(text) => {
+                    let (t, cut) = truncate_utf8(text.trim(), 80);
+                    format!("the diff has `{t}{}`", if cut { "…" } else { "" })
+                }
+                None => "that line is not in this PR's diff".to_string(),
+            };
+            out.push_str(&format!(
+                "\n    - {} line {}: {what} — anchorable lines: {}",
+                b.path,
+                b.line,
+                ranges_hint(diff.get(b.path.as_str()))
+            ));
+        }
+    }
+    out.push_str(
+        "\nFix every entry above and call `record_verdict` ONCE more with the whole `covered` list.",
+    );
+    out
+}
+
+/// PURE: read the `covered` argument off a tool call. Shape only — whether the claim is TRUE is
+/// [`coverage_gaps`]'s job, because that needs the PR.
+fn parse_covered(args: &Value) -> Result<Vec<Covered>, String> {
+    const SHAPE: &str = "covered is required: one entry per file this PR changes — \
+         {\"path\": \"...\"} plus {\"line\": <n>, \"text\": \"...\"} quoting that line of the diff \
+         (path alone for generated/vendored/lockfile paths and for files the diff shows no new line for)";
+    let Some(items) = args.get("covered").and_then(|v| v.as_array()) else {
+        return Err(SHAPE.to_string());
+    };
+    if items.is_empty() {
+        return Err(format!(
+            "covered is empty — every PR changes at least one file. {SHAPE}"
+        ));
+    }
+    let mut out = Vec::new();
+    for it in items {
+        let path = norm_path(it.get("path").and_then(|p| p.as_str()).unwrap_or(""));
+        if path.is_empty() {
+            return Err(format!(
+                "every covered entry needs a non-empty \"path\". {SHAPE}"
+            ));
+        }
+        let line = it.get("line").and_then(|v| v.as_u64());
+        let text = it
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        let anchor = match (line, text) {
+            (Some(0), _) => {
+                return Err(format!("{path}: \"line\" is a 1-based diff line number, not 0"))
+            }
+            (Some(line), Some(text)) => Some(CoverageAnchor {
+                line,
+                text: text.to_string(),
+            }),
+            (None, None) => None,
+            (Some(_), None) => {
+                return Err(format!(
+                    "{path}: \"line\" without \"text\" proves nothing — quote the line's content too"
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(format!(
+                    "{path}: \"text\" without \"line\" is not checkable — give the diff line number too"
+                ))
+            }
+        };
+        out.push(Covered { path, anchor });
+    }
+    Ok(out)
+}
+
+/// PURE: the CLI's spelling of the same claim — a JSON document holding either the bare `covered`
+/// array or an object with a `covered` key, so the file the MCP argument would have been can be
+/// handed straight to the subcommand.
+fn covered_from_document(doc: &Value) -> Result<Vec<Covered>, String> {
+    match doc {
+        Value::Array(_) => parse_covered(&serde_json::json!({"covered": doc})),
+        _ => parse_covered(doc),
+    }
+}
+
+/// Read `--covered-file`. Absent is a USAGE error, never an empty claim: a verdict that accounts for
+/// nothing is exactly what this guard exists to refuse, and defaulting it would make the guard
+/// opt-in.
+fn read_covered_file(path: Option<&str>) -> Result<Vec<Covered>, String> {
+    let Some(path) = path else {
+        return Err(
+            "usage: record-verdict … --covered-file <path> — a JSON array of \
+                    {\"path\", and \"line\"+\"text\" for hand-written source}, one entry per file \
+                    the PR changes"
+                .to_string(),
+        );
+    };
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("error: cannot read --covered-file {path}: {e}"))?;
+    let doc: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("error: --covered-file {path} is not JSON: {e}"))?;
+    covered_from_document(&doc)
+}
+
 /// The recording decision, computed PURELY from the fetched PR JSON so the guard-before-write logic
 /// is unit-testable (not just the leaf helpers): refuse if a human verdict is present, refuse if
 /// there is no head sha, else the label plan + whether the comment is a dedup no-op.
@@ -4566,14 +5619,145 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
     }
 }
 
+/// The `gh pr view --json` field list the verdict write fetches. A named constant for the same
+/// reason [`CC_VERDICT_FIELDS`] is: every one of these is read by [`record_gate`], and a field the
+/// gate READS but the fetch OMITS is a guard that silently stops firing — `files` most of all, since
+/// an absent file list makes the coverage gate vacuously satisfied rather than loud.
+///
+/// `changedFiles` is not redundant beside `files`: `files` is a capped PAGE, and the count is the
+/// only thing in the document that says so (see [`changed_files_from_view`]). Omitting it does not
+/// weaken the gate quietly — the set reads as `Partial` and the write is REFUSED — but it makes
+/// every wide PR unvettable, which is why it belongs in the same named constant.
+const RECORD_VERDICT_FIELDS: &str = "headRefOid,labels,comments,reviewDecision,files,changedFiles";
+
+/// The WHOLE record decision — every refusal `record_verdict` can make, in the order it makes them,
+/// as one pure function of the fetched PR, its diff and the coverage claim.
+#[derive(PartialEq, Debug)]
+enum RecordGate {
+    RefuseHuman,
+    NoSha,
+    /// The PR's changed-file list is not known to be WHOLE (#147), so what the claim must account for
+    /// is not known either. REFUSAL, on every verdict, for the same reason [`RecordGate::NoDiff`] is
+    /// one: a claim checked against a list that might be missing 43 files is not checked, and an
+    /// unchecked claim is not a verdict. Refusing every verdict rather than only `ready` is right
+    /// here because this is never a property of the PR that a different verdict would route around
+    /// — it is a read that failed (a rate limit, a missing field), and the fix is to read again.
+    FilesUnknown(String),
+    /// The PR changes files but the diff carries not one `diff --git` header — it did not arrive.
+    /// The claim is then UNCHECKED, not satisfied: every anchor becomes unverifiable and every file
+    /// looks unanchorable, so a name-only claim would sail through a gate that never ran. An
+    /// unchecked claim is not a verdict, so this is a refusal in its own right rather than a
+    /// vacuous pass.
+    NoDiff,
+    /// The Solidity this diff changes breaks a MECHANICAL convention the `audit` skill states (#141),
+    /// on a `ready`. It carries the coverage gaps ALONGSIDE when the claim also fails, because both
+    /// are defects in the same diff that the same actor fixes in one pass — reporting one and holding
+    /// the other back costs a whole round trip through the queue to learn a fact already in hand.
+    /// That is why this sits before [`RecordGate::Uncovered`] rather than after: from here both can
+    /// be reported, from there only one.
+    SolConvention {
+        refusal: SolRefusal,
+        also_uncovered: Option<CoverageGaps>,
+    },
+    /// The claim does not account for the diff (#131).
+    Uncovered(CoverageGaps),
+    Record {
+        to_remove: Vec<String>,
+        has_target: bool,
+        sha: String,
+        skip_comment: bool,
+    },
+}
+
+/// PURE: run every guard, in ORDER, and say what the write may do.
+///
+/// The order is load-bearing, which is why it lives in a function a test can drive rather than in
+/// the sequence of a side-effecting body. A human-decided PR is refused as human-decided even when
+/// its coverage claim is also wrong: that PR is not the vetter's to record however well it accounted
+/// for the diff, and "fix your anchors" would be an instruction to do work that is about to be
+/// refused anyway. Same for a PR with no head sha — there is no verdict to write, covered or not.
+///
+/// The mechanical-convention gate (#141) is the LAST refusal, and its inputs are two things already
+/// resolved by then: the file list must be known WHOLE (a page would hide the very `.sol` file the
+/// convention is about), and `sol_scan` is read at the impure boundary from the `pr_checkout` tree.
+/// It is the last one because it is the only refusal that is specific to `ready` — everything above
+/// it refuses whatever verdict was asked for, so reaching it means the write is otherwise permitted.
+fn record_gate(
+    pr_json: &Value,
+    files: &ChangedFileSet,
+    diff_text: &str,
+    covered: &[Covered],
+    sol_scan: &SolScan,
+    target: &str,
+    verdict: &str,
+) -> RecordGate {
+    let (to_remove, has_target, sha, skip_comment) = match verdict_plan(pr_json, target, verdict) {
+        VerdictPlan::RefuseHuman => return RecordGate::RefuseHuman,
+        VerdictPlan::NoSha => return RecordGate::NoSha,
+        VerdictPlan::Record {
+            to_remove,
+            has_target,
+            sha,
+            skip_comment,
+        } => (to_remove, has_target, sha, skip_comment),
+    };
+    // BEFORE the diff guard, and it has to be: that guard asks whether a PR that changes files got a
+    // diff, and with the file list unresolved "changes files" is itself unknown — an empty page would
+    // make it read as a PR that changes nothing and skip its own check.
+    let whole = match files {
+        ChangedFileSet::Complete(f) => f,
+        ChangedFileSet::Partial { known, total, why } => {
+            return RecordGate::FilesUnknown(match total {
+                Some(t) => format!("{why} ({} of {t} known)", known.len()),
+                None => why.clone(),
+            });
+        }
+    };
+    let changed: Vec<String> = whole
+        .iter()
+        .map(|f| norm_path(&f.path))
+        .filter(|p| !p.is_empty())
+        .collect();
+    // A PR that changes a file always has a `diff --git` header for it. Not one, against a PR that
+    // changes something, means the diff is not here — and a claim checked against a diff that is
+    // not here is not checked. The check lives HERE, in the pure decision, rather than only at the
+    // fetch that reads it: a guard the caller has to remember to arm is a guard that will one day
+    // be called without it.
+    let also_known = diff_changed_paths(diff_text);
+    if !changed.is_empty() && also_known.is_empty() {
+        return RecordGate::NoDiff;
+    }
+    let gaps = coverage_gaps(&changed, &also_known, covered, &diff_new_lines(diff_text));
+    // #141, and it comes BEFORE the coverage refusal so that a `ready` failing BOTH is told both at
+    // once. `sol_convention_gate` decides `ready`-only; every other verdict falls straight through to
+    // the coverage refusal below, which is right — a convention violation is what makes the verdict
+    // `reject`, so gating `reject` on it would leave the PR with no verdict at all.
+    if let Some(refusal) = sol_convention_refusal(verdict, sol_scan) {
+        return RecordGate::SolConvention {
+            refusal,
+            also_uncovered: (!gaps.is_clean()).then_some(gaps),
+        };
+    }
+    if !gaps.is_clean() {
+        return RecordGate::Uncovered(gaps);
+    }
+    RecordGate::Record {
+        to_remove,
+        has_target,
+        sha,
+        skip_comment,
+    }
+}
+
 /// `--record-verdict <owner/repo> <pr> <verdict> [note...]`: record an AI verdict as the
 /// `ai:<verdict>` label (exactly one AI verdict at a time) + a SHA-bound `🤖 ai:vetter` comment.
 /// The ONE writer of AI verdicts (shared by the vetter); never overrides a human verdict.
 ///
 /// Thin CLI shell over [`record_verdict_apply`]: it OWNS the printing so the core can be reused by a
 /// caller that must not write to stdout (the MCP server — a stray stdout line corrupts its JSON-RPC
-/// stream). Exit codes: 0 ok, 1 error, 2 usage, 3 human-decision refusal, 4 mechanical-convention
-/// refusal (#141).
+/// stream). Exit codes: 0 ok, 1 error, 2 usage, 3 human-decision refusal, 4 a DIFF refusal —
+/// scope-coverage (#131) and/or mechanical-convention (#141). One code because they share a fix:
+/// the same actor reworks the same diff.
 #[allow(clippy::too_many_arguments)]
 fn record_verdict_mode(
     slug: &str,
@@ -4582,9 +5766,10 @@ fn record_verdict_mode(
     note: &str,
     cost: Option<i64>,
     basis: &str,
+    covered: &[Covered],
     dry_run: bool,
 ) -> i32 {
-    match record_verdict_apply(slug, pr, verdict, note, cost, basis, dry_run) {
+    match record_verdict_apply(slug, pr, verdict, note, cost, basis, covered, dry_run) {
         Ok(msg) => {
             println!("{msg}");
             0
@@ -4606,15 +5791,12 @@ fn record_verdict_apply(
     note: &str,
     cost: Option<i64>,
     basis: &str,
+    covered: &[Covered],
     dry_run: bool,
 ) -> Result<String, (i32, String)> {
     let Some(target) = verdict_label(verdict) else {
-        return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--cost <n>] [--basis <s>] [--dry-run]".to_string()));
+        return Err((2, "usage: pr-review-report record-verdict <owner/repo> <pr> <ready|reject|design|close> [note...] [--cost <n>] [--basis <s>] --covered-file <path> [--dry-run]".to_string()));
     };
-    // `files` + `changedFiles` ride along on the call that was already being made — the
-    // mechanical-convention gate (#141) needs the PR's changed-file list and must not cost a second
-    // round trip to get it. `changedFiles` is not redundant: `files` is a capped PAGE, and the count
-    // is the only thing in the document that says so (see [`changed_files_from_view`]).
     let Some(pr_json) = gh_json(&[
         "pr",
         "view",
@@ -4622,49 +5804,123 @@ fn record_verdict_apply(
         "-R",
         slug,
         "--json",
-        "headRefOid,labels,comments,reviewDecision,files,changedFiles",
+        RECORD_VERDICT_FIELDS,
     ]) else {
         return Err((
             1,
             format!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data"),
         ));
     };
-    let (to_remove, has_target, sha, skip) = match verdict_plan(&pr_json, target, verdict) {
-        VerdictPlan::RefuseHuman => {
+    // The whole coverage gate (#131) needs the PR's diff, and the gate is ONE pure decision over it
+    // — so the diff is fetched before any guard runs rather than lazily behind one, which is what
+    // lets a test drive every refusal and their ORDER without a network.
+    let Some(diff_text) = gh_text(&["pr", "diff", pr, "-R", slug]) else {
+        return Err((
+            1,
+            format!(
+                "error: `gh pr diff {slug}#{pr}` failed — the coverage claim cannot be checked \
+                 against a diff that could not be read, and an unchecked claim is not a verdict"
+            ),
+        ));
+    };
+    // #147: the changed-file list the coverage gate is checked against, resolved past the 100-entry
+    // cap on `files` before any guard runs. Same placement and same reason as the diff above — the
+    // gate is ONE pure decision over data already in hand, so every refusal it can make is drivable
+    // from a test without a network.
+    let files = pr_changed_files(slug, pr, &pr_json);
+    // #141: the mechanical half of the audit lens, read from the `pr_checkout` tree. Resolved here,
+    // at the impure boundary, and handed to `record_gate` as data — same shape as the diff and the
+    // file list above, so the ORDER of every refusal stays a property of one pure function.
+    //
+    // The head sha is read straight off the document rather than out of `verdict_plan`, which is
+    // inside the gate. A missing one makes the scan `NoSource`, and `RecordGate::NoSha` outranks the
+    // convention refusal anyway — pinned by
+    // `the_human_no_sha_and_file_list_refusals_all_outrank_the_convention_gate`.
+    let sol_scan = verdict_sol_scan(
+        slug,
+        pr,
+        pr_json
+            .get("headRefOid")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+        &files,
+    );
+    let pr_ref = format!("{slug}#{pr}");
+    let (to_remove, has_target, sha, skip) = match record_gate(
+        &pr_json, &files, &diff_text, covered, &sol_scan, target, verdict,
+    ) {
+        RecordGate::RefuseHuman => {
             return Err((
                 3,
                 format!("human verdict present on {slug}#{pr}; not overriding"),
             ));
         }
-        VerdictPlan::NoSha => {
+        RecordGate::NoSha => {
+            return Err((
+                    1,
+                    format!("error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"),
+                ));
+        }
+        RecordGate::FilesUnknown(why) => {
             return Err((
                 1,
-                format!("error: {slug}#{pr} has no head sha (headRefOid) — not recording a verdict without one"),
+                format!(
+                    "error: {slug}#{pr}'s changed-file list could not be read WHOLE — {why}. The \
+                     coverage claim cannot be checked against a list that may be missing files, and \
+                     an unchecked claim is not a verdict. Re-call once the list can be read."
+                ),
             ));
         }
-        VerdictPlan::Record {
+        RecordGate::NoDiff => {
+            return Err((
+                1,
+                format!(
+                    "error: `gh pr diff {slug}#{pr}` produced no diff for a PR that changes files \
+                     — the coverage claim cannot be checked against a diff that is not there, and \
+                     an unchecked claim is not a verdict"
+                ),
+            ));
+        }
+        // Refused BEFORE any write and before the dry-run report, so a claim that does not
+        // account for the diff provably changed nothing.
+        RecordGate::Uncovered(gaps) => {
+            return Err((
+                4,
+                coverage_refusal(&pr_ref, &gaps, &diff_new_lines(&diff_text)),
+            ));
+        }
+        // BOTH, when both apply. The two are defects in the same diff that the same actor fixes in
+        // one pass, so holding the coverage half back would cost a round trip through the queue to
+        // learn a fact this call already had.
+        RecordGate::SolConvention {
+            refusal,
+            also_uncovered,
+        } => {
+            let mut msg = sol_convention_message(&pr_ref, &refusal);
+            if let Some(gaps) = also_uncovered {
+                msg.push_str("\n\nAND the coverage claim does not account for the diff either:\n");
+                msg.push_str(&coverage_refusal(
+                    &pr_ref,
+                    &gaps,
+                    &diff_new_lines(&diff_text),
+                ));
+            }
+            return Err((4, msg));
+        }
+        RecordGate::Record {
             to_remove,
             has_target,
             sha,
             skip_comment,
         } => (to_remove, has_target, sha, skip_comment),
     };
-    // #141: the mechanical half of the audit lens, decided by the binary. It runs BEFORE the
-    // dry-run return so `--dry-run` shows the refusal a real call would hit, and after the human
-    // guard so a human's ruling still wins outright.
-    if let Some(refusal) = sol_convention_gate(
-        slug,
-        pr,
-        verdict,
-        &verdict_sol_scan(slug, pr, &sha, &pr_json),
-    ) {
-        return Err((4, refusal));
-    }
     let comment = verdict_comment(&sha, verdict, note, cost, basis);
 
     if dry_run {
         return Ok(format!(
-            "[dry-run] {slug}#{pr} @ {sha}\n  target label: {target}{}\n  labels to remove: {}\n  comment: {}\n  cost: {}",
+            "[dry-run] {slug}#{pr} @ {sha}\n  coverage: {} file(s) accounted for, {} anchored\n  target label: {target}{}\n  labels to remove: {}\n  comment: {}\n  cost: {}",
+            covered.len(),
+            covered.iter().filter(|c| c.anchor.is_some()).count(),
             if has_target { " (already present)" } else { "" },
             if to_remove.is_empty() {
                 "(none)".to_string()
@@ -9770,6 +11026,7 @@ fn pr_context_doc(
     slug: &str,
     num: u64,
     detail: &Value,
+    changed: &ChangedFileSet,
     diff: &str,
     issues: &[Value],
     max_diff_bytes: usize,
@@ -9780,21 +11037,27 @@ fn pr_context_doc(
         .unwrap_or("");
     let ci = classify_ci(detail.get("statusCheckRollup").unwrap_or(&Value::Null));
     let merge = parse_merge(detail.get("mergeable").and_then(|v| v.as_str()));
-    let files: Vec<Value> = detail
-        .get("files")
-        .and_then(|f| f.as_array())
-        .map(|a| {
-            a.iter()
-                .map(|f| {
-                    serde_json::json!({
-                        "path": f.get("path").and_then(|p| p.as_str()).unwrap_or(""),
-                        "additions": f.get("additions").and_then(|x| x.as_u64()).unwrap_or(0),
-                        "deletions": f.get("deletions").and_then(|x| x.as_u64()).unwrap_or(0),
-                    })
-                })
-                .collect()
+    // #147: this manifest is what the vetter judges the PR FROM, and `gh pr view --json files` caps
+    // at 100 entries. `pr_context` DEGRADES rather than refuses — a reader handed 100 of 143 files
+    // can still form a partial judgement, and refusing outright would make a wide PR unreadable
+    // instead of merely incomplete. What it must never do is present a page as the whole PR, so the
+    // gap is stated in the document: `filesTruncated` beside `filesTotal` and the reason, exactly as
+    // `diffTruncated` sits beside `diffBytes`. The verdict write is the gate (`FilesUnknown`), and
+    // this is the read that tells the vetter which of the two it is looking at.
+    let (known, total, why) = match changed {
+        ChangedFileSet::Complete(f) => (f, Some(f.len() as u64), None),
+        ChangedFileSet::Partial { known, total, why } => (known, *total, Some(why.as_str())),
+    };
+    let files: Vec<Value> = known
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "path": f.path,
+                "additions": f.additions,
+                "deletions": f.deletions,
+            })
         })
-        .unwrap_or_default();
+        .collect();
     let closes: Vec<u64> = detail
         .get("closingIssuesReferences")
         .and_then(|v| v.as_array())
@@ -9822,6 +11085,12 @@ fn pr_context_doc(
         "additions": detail.get("additions").and_then(|v| v.as_u64()).unwrap_or(0),
         "deletions": detail.get("deletions").and_then(|v| v.as_u64()).unwrap_or(0),
         "files": files,
+        // What the PR really changes, where that could be established at all. `null` means even the
+        // count is unknown, which is strictly worse than a known gap and must not read as zero.
+        "filesTotal": total,
+        "filesIncluded": files.len(),
+        "filesTruncated": why.is_some(),
+        "filesTruncatedReason": why,
         "closes": closes,
         "issues": issues,
         "vetterComments": trusted_comments(detail, Some("🤖 ai:vetter")),
@@ -9844,11 +11113,11 @@ fn pr_context_doc(
 /// one call, none of it re-derived in the model's context.
 fn pr_context_fetch(slug: &str, num: u64, max_diff_bytes: usize) -> Result<Value, String> {
     let n = num.to_string();
-    let detail = gh_json(&[
-        "pr", "view", &n, "-R", slug, "--json",
-        "number,title,body,url,headRefOid,isDraft,labels,reviewDecision,mergeable,statusCheckRollup,additions,deletions,files,closingIssuesReferences,comments",
-    ])
-    .ok_or_else(|| format!("error: `gh pr view {slug}#{num}` failed"))?;
+    let detail = gh_json(&["pr", "view", &n, "-R", slug, "--json", PR_CONTEXT_FIELDS])
+        .ok_or_else(|| format!("error: `gh pr view {slug}#{num}` failed"))?;
+    // #147: `files` off that document is a 100-entry page. Resolve it here, once, so the manifest the
+    // vetter reads is the whole PR whenever one can be had — and carries its own gap when it cannot.
+    let changed = pr_changed_files(slug, &n, &detail);
     let diff = gh_text(&["pr", "diff", &n, "-R", slug])
         .ok_or_else(|| format!("error: `gh pr diff {slug}#{num}` failed"))?;
     let mut issues: Vec<Value> = Vec::new();
@@ -9883,7 +11152,7 @@ fn pr_context_fetch(slug: &str, num: u64, max_diff_bytes: usize) -> Result<Value
         }
         issues.push(iss);
     }
-    fit_pr_context(slug, num, &detail, &diff, &issues, max_diff_bytes)
+    fit_pr_context(slug, num, &detail, &changed, &diff, &issues, max_diff_bytes)
 }
 
 /// PURE (given its inputs): build the `pr_context` document so that it FITS
@@ -9908,13 +11177,14 @@ fn fit_pr_context(
     slug: &str,
     num: u64,
     detail: &Value,
+    changed: &ChangedFileSet,
     diff: &str,
     issues: &[Value],
     max_diff_bytes: usize,
 ) -> Result<Value, String> {
     let mut cap = max_diff_bytes.min(diff.len());
     loop {
-        let doc = pr_context_doc(slug, num, detail, diff, issues, cap);
+        let doc = pr_context_doc(slug, num, detail, changed, diff, issues, cap);
         let len = doc.to_string().len();
         if len <= MCP_MAX_RESULT_BYTES {
             return Ok(doc);
@@ -11515,7 +12785,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "record_verdict",
-            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost and the vet-protocol stamp. Refuses if a human has decided the PR. Also refuses a `ready` whose changed .sol files break the rainlanguage pragma convention (^ for library/abstract, = for concrete INCLUDING concrete test mocks) — the refusal names each file and IS the reject note. It reads the pr_checkout tree, so record the verdict BEFORE clone_release.",
+            "description": "The vetter's ONLY write: apply ai:<verdict> (removing any other ai:*) + a sha-bound ai:vetter comment carrying the cost and the vet-protocol stamp. Refuses if a human has decided the PR, or if `covered` does not account for every file the PR changes. Also refuses a `ready` whose changed .sol files break the rainlanguage pragma convention (^ for library/abstract, = for concrete INCLUDING concrete test mocks) — the refusal names each file and IS the reject note. That check reads the pr_checkout tree, so record the verdict BEFORE clone_release.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -11523,9 +12793,22 @@ fn mcp_all_tools() -> Value {
                     "verdict": {"type": "string", "enum": ["ready", "reject", "design", "close"]},
                     "note": {"type": "string", "description": "One line naming the issue number(s) and the specific reason."},
                     "cost": {"type": "integer", "description": "Human verification cost, 0-1000."},
-                    "basis": {"type": "string", "description": "3-8 words naming the cost driver."}
+                    "basis": {"type": "string", "description": "3-8 words naming the cost driver."},
+                    "covered": {
+                        "type": "array",
+                        "description": "One entry per file this PR changes — the verdict's scope, checked against the PR's own file list and diff. Hand-written source needs `line`+`text` quoting that line of the diff; `path` alone is enough for generated/vendored/lockfile paths and for files the diff shows no new-side line for (deletions, binaries). The refusal names every unmet entry with the lines that would satisfy it.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": "Repo-relative path, exactly as pr_context's files[].path spells it."},
+                                "line": {"type": "integer", "description": "New-side line number of the anchored line."},
+                                "text": {"type": "string", "description": "The content at that line (a fragment is enough)."}
+                            },
+                            "required": ["path"]
+                        }
+                    }
                 },
-                "required": ["pr", "verdict", "note", "cost", "basis"]
+                "required": ["pr", "verdict", "note", "cost", "basis", "covered"]
             }
         },
         {
@@ -11705,6 +12988,9 @@ enum McpCall {
         note: String,
         cost: i64,
         basis: String,
+        /// The scope-coverage claim (#131) — validated for SHAPE here, checked against the PR's own
+        /// files and diff in the apply, which is the only place they are known.
+        covered: Vec<Covered>,
     },
     UnvettedCloseCandidates {
         include_skipped: bool,
@@ -11974,6 +13260,7 @@ fn validate_call(
                     "basis must be at most {MAX_BASIS_WORDS} words naming the cost driver (put the reasoning in note)"
                 ));
             }
+            let covered = parse_covered(args)?;
             Ok(McpCall::RecordVerdict {
                 slug,
                 num,
@@ -11981,6 +13268,7 @@ fn validate_call(
                 note,
                 cost,
                 basis,
+                covered,
             })
         }
         "unvetted_close_candidates" => Ok(McpCall::UnvettedCloseCandidates {
@@ -12274,6 +13562,7 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             note,
             cost,
             basis,
+            covered,
         } => record_verdict_apply(
             &slug,
             &num.to_string(),
@@ -12281,6 +13570,7 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             &note,
             Some(cost),
             &basis,
+            &covered,
             false,
         )
         .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
@@ -14503,103 +15793,40 @@ fn sol_scan_pr(work_dir: &str, slug: &str, num: u64, sha: &str, files: &[String]
     SolScan::Scanned(findings)
 }
 
-/// What a `gh pr view` document says about a PR's change set — and, decisively, whether that is the
-/// WHOLE change set.
-#[derive(Clone, PartialEq, Eq, Debug)]
-enum ChangedFiles {
-    /// The list, complete.
-    Whole(Vec<String>),
-    /// A PAGE of the list. `gh pr view --json files` reads GitHub's file connection, which is capped
-    /// at 100 entries, while `changedFiles` reports the real total — measured on raindex#2796: 143
-    /// against 100. A gate reading the page would skip every `.sol` past the cap and call the PR
-    /// clean, which is the one way a fail-closed gate silently fails open.
-    Truncated { seen: usize, total: u64 },
-    /// The document does not say. Both fields are requested explicitly on the call that produced it,
-    /// so either being absent means the answer is unknown, not that the answer is "nothing".
-    Unknown(&'static str),
-}
-
-/// PURE: read the change set off a `gh pr view` document.
-fn changed_files_from_view(pr_json: &Value) -> ChangedFiles {
-    let Some(arr) = pr_json.get("files").and_then(|f| f.as_array()) else {
-        return ChangedFiles::Unknown("the document carries no `files` array");
-    };
-    let files: Vec<String> = arr
-        .iter()
-        .filter_map(|f| f.get("path").and_then(|p| p.as_str()).map(String::from))
-        .collect();
-    let Some(total) = pr_json.get("changedFiles").and_then(|v| v.as_u64()) else {
-        return ChangedFiles::Unknown(
-            "the document carries no `changedFiles` count, so a truncated file list cannot be told \
-             from a complete one",
-        );
-    };
-    if total > files.len() as u64 {
-        return ChangedFiles::Truncated {
-            seen: files.len(),
-            total,
-        };
-    }
-    ChangedFiles::Whole(files)
-}
-
-/// The whole changed-file list, re-fetching from the paginating REST endpoint when `gh pr view`
-/// handed back a page. Only a PR over the cap pays the extra calls.
-fn pr_changed_files(slug: &str, pr: &str, pr_json: &Value) -> Result<Vec<String>, String> {
-    match changed_files_from_view(pr_json) {
-        ChangedFiles::Whole(files) => Ok(files),
-        ChangedFiles::Unknown(why) => Err(format!("`gh pr view {slug}#{pr}` is unreadable: {why}")),
-        ChangedFiles::Truncated { seen, total } => {
-            let Some(text) = gh_text(&[
-                "api",
-                &format!("repos/{slug}/pulls/{pr}/files"),
-                "--paginate",
-                "--jq",
-                ".[].filename",
-            ]) else {
-                return Err(format!(
-                    "`gh pr view {slug}#{pr}` listed {seen} of {total} changed files and the \
-                     paginated re-fetch failed"
-                ));
-            };
-            let all: Vec<String> = text
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(String::from)
-                .collect();
-            if (all.len() as u64) < total {
-                return Err(format!(
-                    "the paginated re-fetch returned {} of {slug}#{pr}'s {total} changed files",
-                    all.len()
-                ));
-            }
-            Ok(all)
-        }
-    }
-}
-
-/// The verdict path's adapter onto [`sol_scan_pr`]: resolve the changed-file list from the `gh pr
-/// view` document `record_verdict` already fetched, and the work root from the environment.
+/// The verdict path's adapter onto [`sol_scan_pr`]. Takes the changed-file list as ALREADY RESOLVED
+/// by [`pr_changed_files`] — the one reader (#147) — rather than reading the `gh pr view` document
+/// itself. There is deliberately no second path here: a private reader for this gate alone is how a
+/// capped 100-entry page becomes "the PR changes no Solidity", which is the fail-open #147 closed.
 ///
-/// Every failure here is `NoSource`, never `NotApplicable`. A PR number that will not parse names no
-/// checkout; an unreadable file list is not an empty one. Both cannot happen through the MCP surface
-/// (the tool parses the number, and the fields are requested on the call itself) — which is exactly
-/// why they must not be spellings that quietly switch the gate off.
-fn verdict_sol_scan(slug: &str, pr: &str, sha: &str, pr_json: &Value) -> SolScan {
+/// Every failure is `NoSource`, never `NotApplicable`. A PR number that will not parse names no
+/// checkout, and a list that is not whole is not an empty one. Neither can happen through the MCP
+/// surface (the tool parses the number, and `record_gate` refuses a `Partial` set before this gate is
+/// reached) — which is exactly why they must not be spellings that quietly switch the gate off.
+fn verdict_sol_scan(slug: &str, pr: &str, sha: &str, files: &ChangedFileSet) -> SolScan {
     let Ok(num) = pr.parse::<u64>() else {
         return SolScan::NoSource(format!(
             "`{pr}` is not a PR number, so no checkout can be named"
         ));
     };
-    let files = match pr_changed_files(slug, pr, pr_json) {
-        Ok(f) => f,
-        Err(why) => return SolScan::NoSource(why),
+    let paths: Vec<String> = match files {
+        ChangedFileSet::Complete(f) => f.iter().map(|c| c.path.clone()).collect(),
+        ChangedFileSet::Partial { why, .. } => return SolScan::NoSource(why.clone()),
     };
-    sol_scan_pr(&vet_work_dir(), slug, num, sha, &files)
+    sol_scan_pr(&vet_work_dir(), slug, num, sha, &paths)
 }
 
-/// PURE: does this scan refuse this verdict, and with what message?
+/// Why the mechanical-convention gate refuses. Data, not prose: the message is rendered at the call
+/// site (`record_verdict_apply`), exactly as [`RecordGate::Uncovered`] defers to `coverage_refusal`,
+/// so the pure decision stays drivable from a test with no `owner/repo#n` in hand.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum SolRefusal {
+    /// The changed Solidity breaks the convention. Never empty — an empty finding set is a PASS.
+    Findings(Vec<SolFinding>),
+    /// The rules could not be applied because the source could not be read.
+    NoSource(String),
+}
+
+/// PURE: does this scan refuse this verdict?
 ///
 /// `ready` ONLY. A `ready` is the claim that the human's next move is to MERGE, and merging a diff
 /// that breaks a stated convention is the failure #141 is about. Every other verdict is how the PR
@@ -14610,33 +15837,43 @@ fn verdict_sol_scan(slug: &str, pr: &str, sha: &str, pr_json: &Value) -> SolScan
 /// `ready` on a Solidity PR whose source was never checked out is exactly the verdict this gate
 /// exists to stop, and `review-prompt.txt` already makes `pr_checkout` mandatory before any verdict.
 /// The cost of being wrong is one re-checkout; the cost of failing open is a `ready` nobody checked.
-fn sol_convention_gate(slug: &str, pr: &str, verdict: &str, scan: &SolScan) -> Option<String> {
+fn sol_convention_refusal(verdict: &str, scan: &SolScan) -> Option<SolRefusal> {
     if verdict != "ready" {
         return None;
     }
     match scan {
         SolScan::NotApplicable => None,
         SolScan::Scanned(f) if f.is_empty() => None,
-        SolScan::Scanned(findings) => Some(format!(
-            "refusing `ready` on {slug}#{pr}: {} changed Solidity file(s) break the rainlanguage \
-             pragma convention, which the `audit` skill states and which is checked HERE rather \
-             than asked of you:\n{}\nThe convention is `^` (floating) for library and abstract \
-             files, `=` (exact pin) for concrete contracts INCLUDING concrete test mocks. Fix each \
-             file PER ITS OWN KIND — never mass-pin a repo to one pragma. This is a defect in the \
-             diff's own code, so the verdict is `reject` with these lines as the note.",
+        SolScan::Scanned(findings) => Some(SolRefusal::Findings(findings.clone())),
+        SolScan::NoSource(why) => Some(SolRefusal::NoSource(why.clone())),
+    }
+}
+
+/// The refusal a vetter reads. It spends its words on the ONE move that follows, because the finding
+/// itself IS the reject note — and it names the per-file-kind fix, since the wrong answer an
+/// "inconsistent pragma" finding invites is mass-pinning a repo to one pragma.
+fn sol_convention_message(pr: &str, refusal: &SolRefusal) -> String {
+    match refusal {
+        SolRefusal::Findings(findings) => format!(
+            "refusing `ready` on {pr}: {} changed Solidity file(s) break the rainlanguage pragma \
+             convention, which the `audit` skill states and which is checked HERE rather than asked \
+             of you:\n{}\nThe convention is `^` (floating) for library and abstract files, `=` \
+             (exact pin) for concrete contracts INCLUDING concrete test mocks. Fix each file PER ITS \
+             OWN KIND — never mass-pin a repo to one pragma. This is a defect in the diff's own \
+             code, so the verdict is `reject` with these lines as the note.",
             findings.len(),
             findings
                 .iter()
                 .map(|f| format!("  - {}", f.render()))
                 .collect::<Vec<_>>()
                 .join("\n")
-        )),
-        SolScan::NoSource(why) => Some(format!(
-            "refusing `ready` on {slug}#{pr}: it changes Solidity files and the mechanical \
-             convention check has no source to read — {why}. Call `pr_checkout` for this PR and \
-             record the verdict BEFORE `clone_release`; a `ready` on Solidity nobody checked out \
-             is the verdict this gate exists to stop."
-        )),
+        ),
+        SolRefusal::NoSource(why) => format!(
+            "refusing `ready` on {pr}: it changes Solidity files and the mechanical convention check \
+             has no source to read — {why}. Call `pr_checkout` for this PR and record the verdict \
+             BEFORE `clone_release`; a `ready` on Solidity nobody checked out is the verdict this \
+             gate exists to stop."
+        ),
     }
 }
 
@@ -14722,11 +15959,20 @@ fn sol_conventions_mode(paths: &[String]) -> i32 {
 #[cfg(test)]
 mod sol_conventions_tests {
     use super::{
-        changed_files_from_view, checkout_dir, sol_convention_gate, sol_decls, sol_pragma,
+        checkout_dir, sol_convention_message, sol_convention_refusal, sol_decls, sol_pragma,
         sol_pragma_finding, sol_pragma_op, sol_scan_pr, sol_scan_skip, sol_strip_noncode,
-        verdict_sol_scan, ChangedFiles, SolFileKind, SolPragmaOp, SolScan,
+        verdict_sol_scan, ChangedFile, ChangedFileSet, SolFileKind, SolPragmaOp, SolRefusal,
+        SolScan,
     };
-    use serde_json::json;
+
+    /// One changed-file entry, as #147's reader hands them over.
+    fn changed(path: &str) -> ChangedFile {
+        ChangedFile {
+            path: path.to_string(),
+            additions: 1,
+            deletions: 0,
+        }
+    }
 
     /// The rain.deploy header shape, so a fixture reads like the real files rather than like a
     /// minimal case the classifier was written against. Every `.sol` in the org opens with a SPDX
@@ -15043,8 +16289,9 @@ mod sol_conventions_tests {
 
     #[test]
     fn the_gate_refuses_a_ready_and_names_the_file_and_the_per_kind_fix() {
-        let msg = sol_convention_gate("rainlanguage/rain.deploy", "20", "ready", &finding_scan())
+        let refusal = sol_convention_refusal("ready", &finding_scan())
             .expect("a ready over a finding must be refused");
+        let msg = sol_convention_message("rainlanguage/rain.deploy#20", &refusal);
         assert!(msg.contains("rainlanguage/rain.deploy#20"));
         assert!(msg.contains("test/src/lib/MockDeployable.sol"));
         assert!(msg.contains("^0.8.25"));
@@ -15064,11 +16311,11 @@ mod sol_conventions_tests {
     fn the_gate_never_blocks_a_routing_verdict() {
         for verdict in ["reject", "design", "close"] {
             assert!(
-                sol_convention_gate("o/r", "1", verdict, &finding_scan()).is_none(),
+                sol_convention_refusal(verdict, &finding_scan()).is_none(),
                 "{verdict} must pass"
             );
             assert!(
-                sol_convention_gate("o/r", "1", verdict, &SolScan::NoSource("x".into())).is_none(),
+                sol_convention_refusal(verdict, &SolScan::NoSource("x".into())).is_none(),
                 "{verdict} must pass with no source"
             );
         }
@@ -15078,25 +16325,25 @@ mod sol_conventions_tests {
     /// makes a `ready` on a clean Solidity PR possible at all.
     #[test]
     fn an_empty_finding_set_passes_a_ready() {
-        assert!(sol_convention_gate("o/r", "1", "ready", &SolScan::Scanned(vec![])).is_none());
+        assert!(sol_convention_refusal("ready", &SolScan::Scanned(vec![])).is_none());
     }
 
     #[test]
     fn a_pr_that_changes_no_solidity_is_not_gated() {
-        assert!(sol_convention_gate("o/r", "1", "ready", &SolScan::NotApplicable).is_none());
+        assert!(sol_convention_refusal("ready", &SolScan::NotApplicable).is_none());
     }
 
     /// FAIL CLOSED. "The source could not be read" is not "nothing was found": a `ready` on a
     /// Solidity PR nobody checked out is the verdict this gate exists to stop.
     #[test]
     fn an_unreadable_source_refuses_a_ready_and_says_what_to_do() {
-        let msg = sol_convention_gate(
-            "o/r",
-            "1",
+        let refusal = sol_convention_refusal(
             "ready",
             &SolScan::NoSource("there is no audit-lens checkout at /w/vet-r-1".into()),
         )
         .expect("no source must refuse a ready");
+        assert!(matches!(refusal, SolRefusal::NoSource(_)));
+        let msg = sol_convention_message("o/r#1", &refusal);
         assert!(msg.contains("/w/vet-r-1"));
         assert!(
             msg.contains("pr_checkout"),
@@ -15256,9 +16503,9 @@ mod sol_conventions_tests {
     /// NoSource — `NotApplicable` there would be a spelling that switches the gate off.
     #[test]
     fn verdict_scan_reads_the_file_list_and_fails_closed_on_a_bad_number() {
-        let doc = json!({"changedFiles":2,"files":[{"path":"src/L.sol"},{"path":"README.md"}]});
+        let set = ChangedFileSet::Complete(vec![changed("src/L.sol"), changed("README.md")]);
         assert!(matches!(
-            verdict_sol_scan("o/r", "not-a-number", "abc", &doc),
+            verdict_sol_scan("o/r", "not-a-number", "abc", &set),
             SolScan::NoSource(_)
         ));
         // A file list with no `.sol` in it is vacuous whatever the number.
@@ -15267,62 +16514,43 @@ mod sol_conventions_tests {
                 "o/r",
                 "1",
                 "abc",
-                &json!({"changedFiles":1,"files":[{"path":"README.md"}]})
+                &ChangedFileSet::Complete(vec![changed("README.md")])
             ),
             SolScan::NotApplicable
         );
     }
 
-    /// FOUND BY THE MUTATION PASS, and it was a live hole rather than a weak test.
+    /// #147's reader is the ONE reader, and this is the mapping it specifies for this consumer.
     ///
-    /// `gh pr view --json files` reads GitHub's file connection, which is CAPPED at 100 — measured
-    /// on `rainlanguage/raindex#2796`, `changedFiles` says 143 and the array holds 100. Reading the
-    /// array as the change set makes every `.sol` past the cap invisible and reports the PR clean:
-    /// a fail-closed gate failing open, on exactly the large PRs where a missed file costs most.
-    /// So the document is only trusted when the count AGREES with the array.
+    /// The fail-open it closed was found here first, as a mutation survivor: `gh pr view --json
+    /// files` is capped at 100 while `changedFiles` reports the real total (raindex#2796: 143 vs
+    /// 100), so a page read as the change set makes every `.sol` past the cap invisible and reports
+    /// the PR clean. This gate now takes a `ChangedFileSet` and can no longer see a bare `Vec`, so
+    /// there is no private path left to re-introduce it — a `Partial` set is `NoSource`, which
+    /// REFUSES a `ready`, whether the list was capped or the fields were missing.
     #[test]
-    fn a_capped_file_page_is_never_read_as_the_whole_change_set() {
-        let page: Vec<serde_json::Value> = (0..100)
-            .map(|i| json!({"path": format!("src/F{i}.sol")}))
-            .collect();
-        assert_eq!(
-            changed_files_from_view(&json!({"changedFiles": 143, "files": page})),
-            ChangedFiles::Truncated {
-                seen: 100,
-                total: 143
+    fn a_file_list_that_is_not_whole_can_never_pass_a_ready() {
+        for (total, why) in [
+            (Some(143), "capped at 100 entries"),
+            (None, "the document carries no `changedFiles` count"),
+        ] {
+            let set = ChangedFileSet::Partial {
+                known: vec![changed("src/L.sol")],
+                total,
+                why: why.to_string(),
+            };
+            let scan = verdict_sol_scan("o/r", "1", "abc", &set);
+            match &scan {
+                SolScan::NoSource(reported) => assert_eq!(
+                    reported, why,
+                    "the refusal must quote the reader's own diagnosis"
+                ),
+                other => panic!("a partial set must be NoSource, got {other:?}"),
             }
-        );
-        // Agreement is the whole list.
-        let ChangedFiles::Whole(files) = changed_files_from_view(
-            &json!({"changedFiles":2,"files":[{"path":"a.sol"},{"path":"b.md"}]}),
-        ) else {
-            panic!("a count that agrees with the array is the whole list");
-        };
-        assert_eq!(files, vec!["a.sol".to_string(), "b.md".to_string()]);
-    }
-
-    /// Neither field is optional: both are requested on the call that builds the document, so an
-    /// absent one means the answer is UNKNOWN. "No `files` key" must never read as "no files".
-    #[test]
-    fn a_document_missing_either_field_is_unknown_not_empty() {
-        assert!(matches!(
-            changed_files_from_view(&json!({})),
-            ChangedFiles::Unknown(_)
-        ));
-        assert!(matches!(
-            changed_files_from_view(&json!({"changedFiles": 0})),
-            ChangedFiles::Unknown(_)
-        ));
-        // `files` present, count absent — the shape that cannot be told from a truncated page.
-        assert!(matches!(
-            changed_files_from_view(&json!({"files":[{"path":"a.sol"}]})),
-            ChangedFiles::Unknown(_)
-        ));
-        // …and each of those refuses a `ready` rather than passing it.
-        for doc in [json!({}), json!({"files":[{"path":"a.sol"}]})] {
-            let scan = verdict_sol_scan("o/r", "1", "abc", &doc);
-            assert!(matches!(scan, SolScan::NoSource(_)), "got {scan:?}");
-            assert!(sol_convention_gate("o/r", "1", "ready", &scan).is_some());
+            assert!(
+                sol_convention_refusal("ready", &scan).is_some(),
+                "…and that must refuse a `ready`"
+            );
         }
     }
 
@@ -15401,6 +16629,11 @@ enum Cmd {
         cost: Option<i64>,
         #[arg(long, default_value = "")]
         basis: String,
+        /// Path to a JSON file holding the scope-coverage claim: the same array `record_verdict`'s
+        /// `covered` argument takes. A FILE and not repeated flags because an anchor quotes a line
+        /// of source, and source contains every character a shell splits on.
+        #[arg(long)]
+        covered_file: Option<String>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -16201,9 +17434,21 @@ fn save_cache(map: &serde_json::Map<String, Value>) {
 fn fetch_pr_detail(slug: &str, num: u64) -> Option<Value> {
     let n = num.to_string();
     let mut j = gh_json(&[
-        "pr", "view", &n, "-R", slug, "--json",
-        "number,title,url,mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,headRefOid,commits,closingIssuesReferences,createdAt,updatedAt,comments,labels,isDraft,body,files",
+        "pr",
+        "view",
+        &n,
+        "-R",
+        slug,
+        "--json",
+        WORKLIST_DETAIL_FIELDS,
     ])?;
+    // #147: `files` is a 100-entry page and `changedFiles` is the only field that says so. Resolve it
+    // HERE, at the one impure point, so `worklist_row` stays a pure function of the document AND sees
+    // a whole list whenever one can be had. When it cannot, the fields are left exactly as fetched,
+    // the pure read reports `Partial`, and `touches_ui` answers "may touch UI" — the safe branch.
+    if let ChangedFileSet::Complete(all) = pr_changed_files(slug, &n, &j) {
+        inject_changed_files(&mut j, &all);
+    }
     let (owner, repo) = slug.split_once('/')?;
     // Same paginated reader the `--queue` and `unvetted` gates use — one query, not a second
     // hand-rolled one. (It replaced a `first:50` single-page count that silently under-reported a
@@ -16217,6 +17462,61 @@ fn fetch_pr_detail(slug: &str, num: u64) -> Option<Value> {
         obj.insert("unresolvedThreads".into(), Value::from(threads));
     }
     Some(j)
+}
+
+/// Whether a PR touches a path the screenshot requirement (step 3c) is about — and the third answer
+/// that decides the gate: NOT KNOWN.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UiTouch {
+    Yes,
+    No,
+    /// The changed-file list is a page, so a UI file may sit past its end. #147: the old read was a
+    /// bare `files[]` scan whose `false` meant BOTH "no UI file" and "no UI file in the first 100",
+    /// which is a second way past the screenshot gate without waiving anything (cf. #140).
+    Unknown,
+}
+
+impl UiTouch {
+    fn as_str(self) -> &'static str {
+        match self {
+            UiTouch::Yes => "yes",
+            UiTouch::No => "no",
+            UiTouch::Unknown => "unknown",
+        }
+    }
+}
+
+/// PURE: does this path fall under the screenshot requirement?
+fn is_ui_path(p: &str) -> bool {
+    p.contains("packages/webapp")
+        || p.contains("packages/ui-components")
+        || (p.starts_with("site/") && p.ends_with(".html"))
+}
+
+/// PURE: the screenshot requirement's read of a changed-file set.
+///
+/// `No` is only ever returned off a COMPLETE list. From a partial one a match still proves `Yes` —
+/// finding a UI file needs no other file to be visible — but no match proves nothing, so the answer
+/// is `Unknown` and the requirement applies. Unknown means MAY touch UI, not does not: the cost of
+/// being wrong is one screenshot (or one explicit waiver, which is a decision on the record), and
+/// the cost of the other direction is a UI change landing unseen.
+fn touches_ui(set: &ChangedFileSet) -> UiTouch {
+    match set {
+        ChangedFileSet::Complete(files) => {
+            if files.iter().any(|f| is_ui_path(&f.path)) {
+                UiTouch::Yes
+            } else {
+                UiTouch::No
+            }
+        }
+        ChangedFileSet::Partial { known, .. } => {
+            if known.iter().any(|f| is_ui_path(&f.path)) {
+                UiTouch::Yes
+            } else {
+                UiTouch::Unknown
+            }
+        }
+    }
 }
 
 /// Derive a PR's signals + next_action from its detail JSON (pure given the JSON).
@@ -16283,23 +17583,12 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         .unwrap_or(false);
     let parked = design_flicked || handed_off;
     // UI PR missing a screenshot: touches a webapp/ui/site path AND no shots/<n>.png marker
-    let touches_ui = detail
-        .get("files")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter().any(|f| {
-                let p = f.get("path").and_then(|p| p.as_str()).unwrap_or("");
-                p.contains("packages/webapp")
-                    || p.contains("packages/ui-components")
-                    || (p.starts_with("site/") && p.ends_with(".html"))
-            })
-        })
-        .unwrap_or(false);
+    let ui = touches_ui(&changed_files_from_view(detail));
     let num = detail.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
     let has_shot = trusted.iter().any(|c| {
         c.contains(&format!("shots/{num}.png")) || c.contains("screenshot pending (manual)")
     });
-    let ui_missing_screenshot = touches_ui && !has_shot;
+    let ui_missing_screenshot = ui != UiTouch::No && !has_shot;
 
     let labels: Vec<String> = detail
         .get("labels")
@@ -16348,6 +17637,10 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
             "handedOff": handed_off,
             "has3bAttempt": has_3b_attempt,
             "screenshotPending": has_shot,
+            // Reported, not just consumed: `unknown` is the case where the screenshot requirement
+            // applies because the file list could not be ruled out, and a producer told to post a
+            // shot has to be able to see that that is why.
+            "uiTouch": ui.as_str(),
         },
         "stateLabel": state_label,
         "humanOverride": has_human_override,
@@ -17182,8 +18475,24 @@ fn main() {
             note,
             cost,
             basis,
+            covered_file,
             dry_run,
-        } => record_verdict_mode(&slug, &pr, &verdict, &note.join(" "), cost, &basis, dry_run),
+        } => match read_covered_file(covered_file.as_deref()) {
+            Ok(covered) => record_verdict_mode(
+                &slug,
+                &pr,
+                &verdict,
+                &note.join(" "),
+                cost,
+                &basis,
+                &covered,
+                dry_run,
+            ),
+            Err(msg) => {
+                eprintln!("{msg}");
+                2
+            }
+        },
         Cmd::FlagCloseCandidate {
             slug,
             issue,
@@ -19846,8 +21155,66 @@ mod usage_probe_tests {
     }
 }
 
+/// TEST HELPER: read a file that lives at the REPO ROOT, one directory up from the crate.
+///
+/// `cargo test` runs with the CRATE directory as its cwd, so a bare `read_to_string("README.md")`
+/// resolves to nothing and the graceful "not checked out" bail fires ALWAYS — a conformance test
+/// that passes by never running, which is exactly the shape #131 is about one level up. Resolving
+/// from `CARGO_MANIFEST_DIR` makes the bail mean what it says: absent SOURCE (the flake package
+/// build filters these files out), never the wrong directory.
+#[cfg(test)]
+fn repo_root_text(rel: &str) -> Option<String> {
+    std::fs::read_to_string(repo_root_path(rel)).ok()
+}
+
+/// TEST HELPER: where [`repo_root_text`] looks. Split out so the RESOLUTION is assertable without
+/// the file having to be there — in the flake build sandbox it is not, which is the whole reason
+/// the read is allowed to come back empty.
+#[cfg(test)]
+fn repo_root_path(rel: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the crate directory always has a parent")
+        .join(rel)
+}
+
+#[cfg(test)]
+mod repo_root_tests {
+    use super::{repo_root_path, repo_root_text};
+
+    /// The guard on the guard. Every conformance test over a repo-root file is written to bail
+    /// gracefully when the file is absent, so if the LOOKUP goes wrong they all pass by not
+    /// running — which is how a `covered` bullet, a protocol number and a whole prompt clause went
+    /// unpinned until a mutation pass measured it.
+    #[test]
+    fn a_repo_root_file_is_looked_for_above_the_crate_and_not_inside_it() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let p = repo_root_path("README.md");
+        assert_eq!(
+            p.file_name().map(|n| n.to_string_lossy().to_string()),
+            Some("README.md".to_string())
+        );
+        assert_eq!(
+            p.parent(),
+            manifest.parent(),
+            "{p:?} must sit in the REPO ROOT"
+        );
+        assert_ne!(
+            p.parent(),
+            Some(manifest),
+            "the crate directory is where a BARE relative read lands, and where the file never is"
+        );
+        // …and the reader actually goes there: same answer, or the same nothing.
+        assert_eq!(
+            repo_root_text("README.md"),
+            std::fs::read_to_string(repo_root_path("README.md")).ok()
+        );
+    }
+}
+
 #[cfg(test)]
 mod settings_tests {
+    use super::repo_root_text;
     use serde_json::Value;
 
     // The producer AND vetter are one-shot crons that must never park themselves — ScheduleWakeup and
@@ -19878,10 +21245,6 @@ mod settings_tests {
         perm_list(rel, "deny")
     }
 
-    fn read_text(rel: &str) -> Option<String> {
-        std::fs::read_to_string(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel)).ok()
-    }
-
     // The wiring above only means something if the RUNNER launches it. `review-run.sh` is the only
     // thing that starts the vetter, so this pins the last side: it names the prompt/settings that
     // exist, passes the MCP server config with `--strict-mcp-config`, and offers NO second surface —
@@ -19889,7 +21252,7 @@ mod settings_tests {
     // vetter configurations where one is unreachable is drift a reader cannot resolve.
     #[test]
     fn the_vetter_runner_launches_the_mcp_surface_and_only_that() {
-        let Some(sh) = read_text("review-run.sh") else {
+        let Some(sh) = repo_root_text("review-run.sh") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
 
@@ -19923,14 +21286,16 @@ mod settings_tests {
             "review-mcp.json",
         ] {
             assert!(
-                read_text(f).is_some(),
+                repo_root_text(f).is_some(),
                 "review-run.sh names {f}, which must exist"
             );
         }
 
         // No opt-in flag survives in the runner or the deployment-config template.
         for f in ["review-run.sh", "cron.env.example"] {
-            let Some(text) = read_text(f) else { continue };
+            let Some(text) = repo_root_text(f) else {
+                continue;
+            };
             assert!(
                 !text.contains("VETTER_MCP"),
                 "{f}: the vetter's surface is not selectable — no VETTER_MCP"
@@ -20016,8 +21381,8 @@ mod settings_tests {
     // records nothing (#63). Allowed-and-unused costs one schema; disallowed-and-needed costs a run.
     #[test]
     fn the_vetter_presents_its_surface_instead_of_deferring_it() {
-        let Ok(runner) = std::fs::read_to_string("review-run.sh") else {
-            return;
+        let Some(runner) = repo_root_text("review-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
             runner.contains("export ENABLE_TOOL_SEARCH=false"),
@@ -20038,8 +21403,8 @@ mod settings_tests {
     // the deny-list prefix-matches into unusability (#56).
     #[test]
     fn the_producer_prompt_releases_clones_through_the_tool_not_rm_rf() {
-        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
-            return;
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
             !prompt.contains("rm -rf <clonedir>"),
@@ -20058,9 +21423,14 @@ mod settings_tests {
         ] {
             assert!(prompt.contains(tool), "the prompt must name {tool}");
         }
-        // …and the old shell recipes for those moves are gone.
+        // …and the old shell recipes for those moves are gone. "Those moves" is CREATE, RELEASE
+        // and COLLECT — a PR-BRANCH re-sync (`git -C <dir> fetch origin && …`, the reject rework of
+        // step 2z) is a different operation on a checkout that already exists, and is still shell.
         assert!(!prompt.contains("pr-review-report gc-clones"));
-        assert!(!prompt.contains("git -C <dir> fetch origin &&"));
+        assert!(
+            prompt.contains("Do NOT hand-roll this with `git clone`"),
+            "clone CREATION must be the tool's, said as a prohibition and not merely omitted"
+        );
     }
 
     /// #135/#136: retiring `ai:relink` only works if the work it named became something the
@@ -20068,7 +21438,7 @@ mod settings_tests {
     /// has to teach the reject-handling that replaces it — and name the tool, not a `gh pr edit`.
     #[test]
     fn the_producer_prompt_teaches_the_linkage_repair_as_a_tool() {
-        let Ok(prompt) = std::fs::read_to_string("campaign-prompt.txt") else {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         for tool in ["mcp__fsm__weaken_closes", "mcp__fsm__repair_qa_block"] {
@@ -20085,10 +21455,16 @@ mod settings_tests {
             prompt.contains("DIRECTION-LOCKED"),
             "the prompt must state the invariant, not just the call"
         );
-        // The retired verdict must not be taught as a state the producer waits in.
+        // The retired verdict must not be taught as a state the producer waits in. As with the
+        // vetter's own prompt, EXPLAINING that it is gone is exactly what a prompt should do —
+        // what it may not do is send the producer looking for the label.
         assert!(
-            !prompt.contains("ai:relink"),
+            !prompt.contains("--label ai:relink") && !prompt.contains("`ai:relink` PR"),
             "`ai:relink` is retired (#135) — the prompt must not name it as a state"
+        );
+        assert!(
+            prompt.contains("There is no `ai:relink` verdict any more"),
+            "…and it must say so, so a producer that saw the old label knows it is dead"
         );
     }
 
@@ -20096,7 +21472,7 @@ mod settings_tests {
     /// `relink` would spend a whole run's tool calls discovering the guard refuses it.
     #[test]
     fn the_vetter_prompt_teaches_four_verdicts_and_routes_linkage_to_reject() {
-        let Ok(prompt) = std::fs::read_to_string("review-prompt.txt") else {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
@@ -20436,6 +21812,1150 @@ mod record_verdict_tests {
         assert!(has_human_override(&human), "human:reject must guard");
         let ai_only = json!({"labels":[{"name":"ai:ready"}]});
         assert!(!has_human_override(&ai_only));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCOPE COVERAGE (#131) — a verdict must account for every file the PR changes
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod scope_coverage_tests {
+    use super::{
+        anchor_exempt, anchorable_ranges, changed_files_from_view, coverage_gaps, coverage_refusal,
+        covered_from_document, diff_changed_paths, diff_new_lines, hunk_header, parse_covered,
+        ranges_hint, read_covered_file, record_gate, repo_root_text, BadAnchor, ChangedFile,
+        ChangedFileSet, CoverageAnchor, CoverageGaps, Covered, RecordGate, SolScan, TRUSTED_AUTHOR,
+        VET_PROTOCOL, VET_PROTOCOL_PREFIX,
+    };
+    use serde_json::json;
+
+    /// The `rain.erc4626.words#230` shape, plus the classes the proportionality rule has to answer
+    /// for: a hand-written modified file, a hand-written ADDED file, a generated file, a DELETED
+    /// file (no new-side line exists) and a BINARY file (no hunk at all).
+    const DIFF: &str = "\
+diff --git a/src/Vault.sol b/src/Vault.sol
+index 1111111..2222222 100644
+--- a/src/Vault.sol
++++ b/src/Vault.sol
+@@ -10,6 +10,7 @@ contract Vault {
+     uint256 internal sTotal;
+
+     function deposit(uint256 amount) external {
+-        sTotal += amount;
++        sTotal = sTotal + amount;
++        emit Deposit(amount);
+     }
+ }
+diff --git a/test/src/abstract/ERC4626SubParserSplitExtern.wrapper.sol b/test/src/abstract/ERC4626SubParserSplitExtern.wrapper.sol
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/test/src/abstract/ERC4626SubParserSplitExtern.wrapper.sol
+@@ -0,0 +1,4 @@
++// SPDX-License-Identifier: LicenseRef-DCL-1.0
++contract ERC4626SubParserSplitExternWrapper {
++    address private immutable _ext;
++}
+diff --git a/src/generated/Words.pointers.sol b/src/generated/Words.pointers.sol
+index 4444444..5555555 100644
+--- a/src/generated/Words.pointers.sol
++++ b/src/generated/Words.pointers.sol
+@@ -1,2 +1,2 @@
+-bytes constant P = hex\"00\";
++bytes constant P = hex\"01\";
+
+diff --git a/legacy/Old.sol b/legacy/Old.sol
+deleted file mode 100644
+index 6666666..0000000
+--- a/legacy/Old.sol
++++ /dev/null
+@@ -1,3 +0,0 @@
+-contract Old {
+-    uint256 x;
+-}
+diff --git a/docs/logo.png b/docs/logo.png
+index 7777777..8888888 100644
+Binary files a/docs/logo.png and b/docs/logo.png differ
+";
+
+    const WRAPPER: &str = "test/src/abstract/ERC4626SubParserSplitExtern.wrapper.sol";
+
+    fn changed() -> Vec<String> {
+        [
+            "src/Vault.sol",
+            WRAPPER,
+            "src/generated/Words.pointers.sol",
+            "legacy/Old.sol",
+            "docs/logo.png",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+
+    fn anchored(path: &str, line: u64, text: &str) -> Covered {
+        Covered {
+            path: path.to_string(),
+            anchor: Some(CoverageAnchor {
+                line,
+                text: text.to_string(),
+            }),
+        }
+    }
+
+    fn named(path: &str) -> Covered {
+        Covered {
+            path: path.to_string(),
+            anchor: None,
+        }
+    }
+
+    /// The claim that satisfies `DIFF`: an anchor for each hand-written file, the name alone for the
+    /// generated / deleted / binary ones.
+    fn good_claim() -> Vec<Covered> {
+        vec![
+            anchored("src/Vault.sol", 14, "emit Deposit(amount);"),
+            anchored(WRAPPER, 3, "address private immutable _ext;"),
+            named("src/generated/Words.pointers.sol"),
+            named("legacy/Old.sol"),
+            named("docs/logo.png"),
+        ]
+    }
+
+    fn gaps_for(covered: &[Covered]) -> CoverageGaps {
+        coverage_gaps(
+            &changed(),
+            &diff_changed_paths(DIFF),
+            covered,
+            &diff_new_lines(DIFF),
+        )
+    }
+
+    // --- the diff reader the whole guard rests on -----------------------------------------------
+
+    // A field the gate READS but the fetch OMITS is a guard that silently stops firing: with `files`
+    // gone the changed set is empty and EVERY claim is vacuously sufficient.
+    #[test]
+    fn the_verdict_fetch_asks_for_every_field_the_gate_reads() {
+        for field in [
+            "headRefOid",
+            "labels",
+            "comments",
+            "reviewDecision",
+            "files",
+            "changedFiles",
+        ] {
+            assert!(
+                super::RECORD_VERDICT_FIELDS.split(',').any(|f| f == field),
+                "{field} is read by record_gate but not fetched"
+            );
+        }
+    }
+
+    #[test]
+    fn hunk_header_reads_both_counts_and_defaults_an_omitted_one() {
+        assert_eq!(
+            hunk_header("@@ -10,6 +10,7 @@ contract Vault {"),
+            Some((10, 6, 7))
+        );
+        assert_eq!(hunk_header("@@ -0,0 +1,4 @@"), Some((1, 0, 4)));
+        // a one-line hunk omits the count entirely; it means 1, not 0
+        assert_eq!(hunk_header("@@ -5 +7 @@"), Some((7, 1, 1)));
+        assert_eq!(hunk_header("@@ -1,3 +0,0 @@"), Some((0, 3, 0)));
+        for bad in ["@@ -a,b +c,d @@", "not a hunk", "@@", "@@ -1,2 @@"] {
+            assert_eq!(hunk_header(bad), None, "{bad:?} must not parse");
+        }
+    }
+
+    #[test]
+    fn diff_new_lines_numbers_the_new_side_and_a_removal_does_not_advance_it() {
+        let d = diff_new_lines(DIFF);
+        let vault = d.get("src/Vault.sol").expect("Vault.sol is in the diff");
+        // context 10-12, the two ADDED lines at 13/14 (the removal at old-10 consumed no new
+        // number), context 15-16.
+        assert_eq!(
+            vault.get(&10).map(String::as_str),
+            Some("    uint256 internal sTotal;")
+        );
+        assert_eq!(
+            vault.get(&12).map(String::as_str),
+            Some("    function deposit(uint256 amount) external {")
+        );
+        assert_eq!(
+            vault.get(&13).map(String::as_str),
+            Some("        sTotal = sTotal + amount;")
+        );
+        assert_eq!(
+            vault.get(&14).map(String::as_str),
+            Some("        emit Deposit(amount);")
+        );
+        assert_eq!(vault.get(&16).map(String::as_str), Some("}"));
+        assert_eq!(vault.get(&17), None, "the hunk's new count is 7, not 8");
+        // an ADDED file is anchorable from line 1
+        let w = d.get(WRAPPER).expect("the added file is in the diff");
+        assert_eq!(
+            w.get(&3).map(String::as_str),
+            Some("    address private immutable _ext;")
+        );
+        // `+++ /dev/null` and a binary stanza contribute NO new-side line — which is what makes
+        // demanding an anchor for them impossible, and therefore what the derived exemption reads.
+        assert_eq!(d.get("legacy/Old.sol"), None);
+        assert_eq!(d.get("docs/logo.png"), None);
+    }
+
+    // The parser walks by HUNK COUNTS. A sniffing one reads an added line that itself starts with
+    // `++` as a `+++ b/…` header and silently re-points every following line at another file.
+    #[test]
+    fn an_added_line_starting_with_plus_plus_is_content_not_a_header() {
+        let d = diff_new_lines(
+            "\
+diff --git a/a.md b/a.md
+--- a/a.md
++++ b/a.md
+@@ -1,0 +1,2 @@
++++ b/evil.md
++ordinary
+",
+        );
+        let a = d.get("a.md").expect("still a.md");
+        assert_eq!(a.get(&1).map(String::as_str), Some("++ b/evil.md"));
+        assert_eq!(a.get(&2).map(String::as_str), Some("ordinary"));
+        assert!(!d.contains_key("evil.md"), "no phantom file");
+    }
+
+    #[test]
+    fn diff_changed_paths_sees_the_deleted_and_binary_files_too() {
+        let paths = diff_changed_paths(DIFF);
+        for p in [
+            "src/Vault.sol",
+            WRAPPER,
+            "src/generated/Words.pointers.sol",
+            "legacy/Old.sol",
+            "docs/logo.png",
+        ] {
+            assert!(paths.contains(p), "{p} must be a known changed path");
+        }
+        // A filename with a space survives, and so does one containing " b/" itself — the split is
+        // decided by the half's LENGTH, which neither tokenising nor find/rfind on " b/" can do.
+        let spaced = diff_changed_paths("diff --git a/my file.md b/my file.md\n");
+        assert!(spaced.contains("my file.md"), "{spaced:?}");
+        let nasty = diff_changed_paths("diff --git a/x b/y b/x b/y\n");
+        assert!(nasty.contains("x b/y"), "{nasty:?}");
+        // a RENAME has no closed form; the LAST " b/" is the best available split and the file is
+        // still NAMED, which is all this set is for — and "last" is what makes a rename FROM a name
+        // that itself contains " b/" still resolve to the new path
+        let renamed = diff_changed_paths("diff --git a/old.md b/new.md\n");
+        assert!(renamed.contains("new.md"), "{renamed:?}");
+        let renamed_nasty = diff_changed_paths("diff --git a/x b/y.md b/new.md\n");
+        assert!(renamed_nasty.contains("new.md"), "{renamed_nasty:?}");
+    }
+
+    // --- the floor: every changed file accounted for --------------------------------------------
+
+    #[test]
+    fn a_claim_that_accounts_for_every_changed_file_records() {
+        assert!(
+            gaps_for(&good_claim()).is_clean(),
+            "{:?}",
+            gaps_for(&good_claim())
+        );
+    }
+
+    // THE #230 FAILURE. The verdict named everything except the file the PR was ADDING; that is now
+    // unrecordable, and the refusal says which file.
+    #[test]
+    fn an_omitted_changed_file_is_refused_and_the_refusal_names_it() {
+        let claim: Vec<Covered> = good_claim()
+            .into_iter()
+            .filter(|c| c.path != WRAPPER)
+            .collect();
+        let gaps = gaps_for(&claim);
+        assert_eq!(gaps.unaccounted, vec![WRAPPER.to_string()]);
+        assert!(!gaps.is_clean());
+        let msg = coverage_refusal("o/r#230", &gaps, &diff_new_lines(DIFF));
+        assert!(msg.contains(WRAPPER), "the refusal names the file: {msg}");
+        assert!(msg.contains("nothing was written"), "{msg}");
+    }
+
+    // Accounting is not optional for a file the vetter merely FORGOT to anchor either: naming a
+    // hand-written file without a line is the attestation the issue says is not proof.
+    #[test]
+    fn a_hand_written_file_named_without_an_anchor_is_refused() {
+        let claim: Vec<Covered> = good_claim()
+            .into_iter()
+            .map(|c| if c.path == WRAPPER { named(WRAPPER) } else { c })
+            .collect();
+        let gaps = gaps_for(&claim);
+        assert_eq!(gaps.unanchored, vec![WRAPPER.to_string()]);
+        assert!(
+            !gaps.is_clean(),
+            "an unanchored hand-written file blocks the write"
+        );
+        let msg = coverage_refusal("o/r#230", &gaps, &diff_new_lines(DIFF));
+        // and it says WHICH lines would satisfy it, so the fix needs no guessing
+        assert!(msg.contains("anchorable lines: 1-4"), "{msg}");
+    }
+
+    // --- the stronger form: the anchor must be borne out by the diff -----------------------------
+
+    #[test]
+    fn an_anchor_whose_text_is_not_at_that_line_is_refused() {
+        let claim: Vec<Covered> = good_claim()
+            .into_iter()
+            .map(|c| {
+                if c.path == WRAPPER {
+                    // the RIGHT file, a REAL line of it, the wrong content
+                    anchored(WRAPPER, 3, "address public iExtern;")
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let gaps = gaps_for(&claim);
+        assert_eq!(
+            gaps.bad_anchor,
+            vec![BadAnchor {
+                path: WRAPPER.to_string(),
+                line: 3,
+                actual: Some("    address private immutable _ext;".to_string()),
+            }]
+        );
+        assert!(!gaps.is_clean(), "a mismatched anchor blocks the write");
+        let msg = coverage_refusal("o/r#230", &gaps, &diff_new_lines(DIFF));
+        assert!(
+            msg.contains("the diff has `address private immutable _ext;`"),
+            "the refusal quotes what is really there: {msg}"
+        );
+    }
+
+    #[test]
+    fn an_anchor_at_a_line_the_diff_does_not_have_is_refused() {
+        let claim: Vec<Covered> = good_claim()
+            .into_iter()
+            .map(|c| {
+                if c.path == "src/Vault.sol" {
+                    // line 2 is inside the file but OUTSIDE every hunk — unverifiable, so refused
+                    anchored("src/Vault.sol", 2, "pragma solidity ^0.8.25;")
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let gaps = gaps_for(&claim);
+        assert_eq!(
+            gaps.bad_anchor,
+            vec![BadAnchor {
+                path: "src/Vault.sol".to_string(),
+                line: 2,
+                actual: None,
+            }]
+        );
+        assert!(
+            !gaps.is_clean(),
+            "an anchor at a line the diff lacks blocks the write"
+        );
+        let msg = coverage_refusal("o/r#1", &gaps, &diff_new_lines(DIFF));
+        assert!(msg.contains("that line is not in this PR's diff"), "{msg}");
+        assert!(msg.contains("anchorable lines: 10-16"), "{msg}");
+    }
+
+    // An anchor is a QUOTE, not a transcription exercise: a fragment matches, and leading
+    // indentation is not part of the claim. Whitespace-exactness would be the refusal that costs a
+    // retry for nothing.
+    #[test]
+    fn an_anchor_matches_on_a_trimmed_fragment() {
+        for text in [
+            "address private immutable _ext;",
+            "    address private immutable _ext;",
+            "immutable _ext",
+        ] {
+            let claim: Vec<Covered> = good_claim()
+                .into_iter()
+                .map(|c| {
+                    if c.path == WRAPPER {
+                        anchored(WRAPPER, 3, text)
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            assert!(gaps_for(&claim).is_clean(), "{text:?} must match");
+        }
+    }
+
+    // --- proportionality --------------------------------------------------------------------------
+
+    #[test]
+    fn generated_vendored_lockfile_and_binary_paths_need_only_accounting() {
+        for p in [
+            "src/generated/Words.pointers.sol",
+            "src/concrete/Foo.pointers.sol",
+            "Cargo.lock",
+            "flake.lock",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "node_modules/left-pad/index.js",
+            "lib/forge-std/src/Test.sol",
+            "dependencies/rain-factory-0.1.5/src/A.sol",
+            "packages/ui/dist/bundle.js",
+            "vendor/x/y.go",
+            "crates/js_api/abis/Orderbook.json",
+            "docs/logo.png",
+            "target/debug/x.bin",
+            "test/.gas-snapshot",
+        ] {
+            assert!(anchor_exempt(p), "{p} must not need an anchor");
+        }
+        // …and everything a person actually writes DOES need one
+        for p in [
+            "src/Vault.sol",
+            WRAPPER,
+            "pr-review-report-rs/src/main.rs",
+            "README.md",
+            "script/Deploy.s.sol",
+            "src/lib/LibGenerate.sol", // `lib` is forge's tree only at the ROOT; src/lib is source
+            "src/libraries/Math.sol",  // and "lib" is a COMPONENT, never a prefix
+            "src/generator/Emit.sol",  // …as "generated" is, not a substring
+            "lib.rs",                  // a root-dir name is a DIRECTORY, not a file
+            // …and its BARE spelling is a file too: a repo-root `target` with nothing under it is
+            // something a person wrote, not cargo's or forge's tree.
+            "target",
+            "lib",
+            "dependencies",
+            "docs/generated-report.md", // a component CONTAINING "generated" is not "generated"
+            // an exempt NAME is the whole basename, never a suffix of one
+            "docs/my-package-lock.json",
+            "src/pnpm-lock.yaml.md",
+        ] {
+            assert!(!anchor_exempt(p), "{p} must need an anchor");
+        }
+    }
+
+    // The derived half of proportionality, and the one that keeps the gate SATISFIABLE: a file with
+    // no new-side line in the diff cannot be anchored by anyone, so it is never asked for.
+    #[test]
+    fn a_file_with_no_new_side_line_is_never_asked_for_an_anchor() {
+        let gaps = gaps_for(&good_claim());
+        assert!(gaps.unanchored.is_empty(), "{gaps:?}");
+        // both classes are present in DIFF and both are hand-written paths by NAME
+        assert!(
+            !anchor_exempt("legacy/Old.sol"),
+            "a deleted .sol is not name-exempt"
+        );
+        assert!(!diff_new_lines(DIFF).contains_key("legacy/Old.sol"));
+    }
+
+    // --- naming a file this PR does not change ----------------------------------------------------
+
+    #[test]
+    fn a_file_this_pr_does_not_change_is_refused() {
+        let mut claim = good_claim();
+        claim.push(named("src/SomeOtherRepo.sol"));
+        let gaps = gaps_for(&claim);
+        assert_eq!(gaps.not_in_pr, vec!["src/SomeOtherRepo.sol".to_string()]);
+        assert!(!gaps.is_clean(), "a foreign file blocks the write");
+        let msg = coverage_refusal("o/r#1", &gaps, &diff_new_lines(DIFF));
+        assert!(msg.contains("another PR's checkout"), "{msg}");
+    }
+
+    // `gh pr view --json files` is capped at 100 entries. A file the DIFF shows but that list left
+    // out must not read as foreign — the vetter is never accused of inventing a file that is really
+    // there. (The reverse asymmetry holds by construction: accounting is only demanded for the list
+    // the vetter was actually shown.)
+    #[test]
+    fn a_file_only_the_diff_knows_about_is_not_foreign() {
+        let truncated = vec!["src/Vault.sol".to_string()];
+        let gaps = coverage_gaps(
+            &truncated,
+            &diff_changed_paths(DIFF),
+            &[
+                anchored("src/Vault.sol", 14, "emit Deposit(amount);"),
+                named("docs/logo.png"),
+                anchored(WRAPPER, 3, "immutable _ext"),
+            ],
+            &diff_new_lines(DIFF),
+        );
+        assert!(gaps.is_clean(), "{gaps:?}");
+    }
+
+    // --- the refusal must be satisfiable in ONE retry ---------------------------------------------
+
+    #[test]
+    fn every_gap_is_reported_at_once_and_one_corrected_call_clears_them() {
+        let broken = vec![
+            // src/Vault.sol omitted entirely
+            anchored(WRAPPER, 900, "not there"),
+            named("src/generated/Words.pointers.sol"),
+            named("legacy/Old.sol"),
+            named("docs/logo.png"),
+            named("src/Elsewhere.sol"),
+        ];
+        let gaps = gaps_for(&broken);
+        // all four buckets in ONE refusal — a guard that reported one per call would turn a wide PR
+        // into a negotiation
+        assert_eq!(gaps.unaccounted, vec!["src/Vault.sol".to_string()]);
+        assert_eq!(gaps.not_in_pr, vec!["src/Elsewhere.sol".to_string()]);
+        assert_eq!(gaps.bad_anchor.len(), 1);
+        let msg = coverage_refusal("o/r#1", &gaps, &diff_new_lines(DIFF));
+        assert!(msg.contains("src/Vault.sol"), "{msg}");
+        assert!(msg.contains("src/Elsewhere.sol"), "{msg}");
+        assert!(msg.contains(WRAPPER), "{msg}");
+        assert!(msg.contains("anchorable lines: 1-4"), "{msg}");
+        // the ranges the refusal printed are enough to build the claim that passes, first try
+        let fixed = vec![
+            anchored("src/Vault.sol", 10, "uint256 internal sTotal;"),
+            anchored(WRAPPER, 1, "SPDX-License-Identifier"),
+            named("src/generated/Words.pointers.sol"),
+            named("legacy/Old.sol"),
+            named("docs/logo.png"),
+            named("src/Elsewhere.sol"),
+        ];
+        // …minus the one entry the refusal said to DROP rather than fix
+        let fixed: Vec<Covered> = fixed
+            .into_iter()
+            .filter(|c| c.path != "src/Elsewhere.sol")
+            .collect();
+        assert!(gaps_for(&fixed).is_clean(), "{:?}", gaps_for(&fixed));
+    }
+
+    #[test]
+    fn anchorable_ranges_collapse_contiguous_runs_and_the_hint_is_capped() {
+        let lines: std::collections::BTreeMap<u64, String> = [1u64, 2, 3, 7, 9, 10]
+            .iter()
+            .map(|n| (*n, String::new()))
+            .collect();
+        assert_eq!(anchorable_ranges(&lines), vec![(1, 3), (7, 7), (9, 10)]);
+        assert_eq!(ranges_hint(Some(&lines)), "1-3, 7, 9-10");
+        // a diff with more ranges than the cap is elided, not dumped into the error
+        let many: std::collections::BTreeMap<u64, String> =
+            (0..20u64).map(|i| (i * 3 + 1, String::new())).collect();
+        assert!(
+            ranges_hint(Some(&many)).ends_with(", …"),
+            "{}",
+            ranges_hint(Some(&many))
+        );
+        assert_eq!(ranges_hint(Some(&many)).matches(", ").count(), 6);
+        assert!(ranges_hint(None).contains("no new-side line"));
+    }
+
+    // --- the argument's SHAPE -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_covered_refuses_a_claim_that_cannot_be_checked() {
+        // absent, wrong type, empty
+        for bad in [
+            json!({}),
+            json!({"covered": "src/a.rs"}),
+            json!({"covered": []}),
+        ] {
+            assert!(parse_covered(&bad).is_err(), "{bad} must be refused");
+        }
+        // a blank path is not a file
+        assert!(parse_covered(&json!({"covered": [{"path": "  "}]})).is_err());
+        // HALF an anchor proves nothing and is not checkable
+        let half_line = parse_covered(&json!({"covered": [{"path": "a.rs", "line": 4}]}));
+        assert!(
+            half_line
+                .as_ref()
+                .is_err_and(|e| e.contains("proves nothing")),
+            "{half_line:?}"
+        );
+        let half_text = parse_covered(&json!({"covered": [{"path": "a.rs", "text": "x"}]}));
+        assert!(
+            half_text
+                .as_ref()
+                .is_err_and(|e| e.contains("not checkable")),
+            "{half_text:?}"
+        );
+        // blank text is the same as no text
+        assert!(
+            parse_covered(&json!({"covered": [{"path": "a.rs", "line": 4, "text": "   "}]}))
+                .is_err()
+        );
+        // diff line numbers are 1-based
+        assert!(
+            parse_covered(&json!({"covered": [{"path": "a.rs", "line": 0, "text": "x"}]})).is_err()
+        );
+        // the shapes that DO parse, with the path normalised to one spelling
+        assert_eq!(
+            parse_covered(&json!({"covered": [
+                {"path": "./src/a.rs", "line": 9, "text": "  fn go() {  "},
+                {"path": "Cargo.lock"}
+            ]})),
+            Ok(vec![
+                Covered {
+                    path: "src/a.rs".to_string(),
+                    anchor: Some(CoverageAnchor {
+                        line: 9,
+                        text: "fn go() {".to_string()
+                    })
+                },
+                Covered {
+                    path: "Cargo.lock".to_string(),
+                    anchor: None
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn the_cli_reads_the_same_claim_from_a_file_and_refuses_an_absent_one() {
+        // absent is a USAGE error, never an empty claim — defaulting it would make the guard opt-in
+        let missing = read_covered_file(None);
+        assert!(
+            missing
+                .as_ref()
+                .is_err_and(|e| e.contains("--covered-file")),
+            "{missing:?}"
+        );
+        assert!(read_covered_file(Some("/nonexistent/covered.json")).is_err());
+        // bare array and {"covered": …} are the same document
+        let bare = json!([{"path": "a.rs", "line": 1, "text": "x"}]);
+        let wrapped = json!({"covered": [{"path": "a.rs", "line": 1, "text": "x"}]});
+        assert_eq!(
+            covered_from_document(&bare),
+            covered_from_document(&wrapped)
+        );
+        assert!(covered_from_document(&json!([])).is_err());
+    }
+
+    // --- the ORDER of the guards --------------------------------------------------------------------
+
+    fn pr_json(extra: serde_json::Value) -> serde_json::Value {
+        let mut base = json!({
+            "headRefOid": "deadbeef",
+            "labels": [],
+            "comments": [],
+            // `changedFiles` AGREES with the array, so the reader calls this list whole. Drop it and
+            // the fixture stops driving the coverage gate at all — see `gate` below.
+            "changedFiles": 5,
+            "files": [
+                {"path": "src/Vault.sol"},
+                {"path": WRAPPER},
+                {"path": "src/generated/Words.pointers.sol"},
+                {"path": "legacy/Old.sol"},
+                {"path": "docs/logo.png"}
+            ]
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            base.as_object_mut().unwrap().insert(k.clone(), v.clone());
+        }
+        base
+    }
+
+    /// Drive the whole record decision over the fixture document, resolving its changed-file list
+    /// through the REAL reader.
+    ///
+    /// The assertion is the point: every coverage test below is about a claim against a KNOWN file
+    /// list, and if the fixture ever stopped reading as complete they would all pass by hitting
+    /// `FilesUnknown` first and never reaching the gate they were written for.
+    fn gate(extra: serde_json::Value, diff: &str, covered: &[Covered]) -> RecordGate {
+        let doc = pr_json(extra);
+        let set = changed_files_from_view(&doc);
+        assert!(
+            matches!(set, ChangedFileSet::Complete(_)),
+            "the fixture must read as a COMPLETE file list or these tests drive the wrong \
+             refusal: {set:?}"
+        );
+        record_gate(&doc, &set, diff, covered, &clean_sol(), "ai:ready", "ready")
+    }
+
+    /// [`gate`] with the convention scan chosen by the caller, for the composition tests below.
+    fn gate_with(
+        extra: serde_json::Value,
+        diff: &str,
+        covered: &[Covered],
+        sol: &SolScan,
+    ) -> RecordGate {
+        let doc = pr_json(extra);
+        let set = changed_files_from_view(&doc);
+        record_gate(&doc, &set, diff, covered, sol, "ai:ready", "ready")
+    }
+
+    /// The mechanical-convention scan (#141) as these tests want it: it RAN and found nothing. An
+    /// empty finding set, not `NotApplicable` — the fixture change set holds `.sol` files, so
+    /// "nothing to check" would be a lie about the data, while "checked and clean" is the state
+    /// every coverage test below is meant to be exercised in.
+    fn clean_sol() -> SolScan {
+        SolScan::Scanned(Vec::new())
+    }
+
+    /// The convention scan with a real finding on a file this fixture's diff actually changes, so
+    /// the two gates are driven over ONE PR rather than over two unrelated situations.
+    fn dirty_sol() -> SolScan {
+        let src = "pragma solidity ^0.8.25;\ncontract Vault {}\n";
+        SolScan::Scanned(vec![
+            super::sol_pragma_finding("src/Vault.sol", src).expect("a concrete floated with `^`")
+        ])
+    }
+
+    // ── how the two gates that both refuse a `ready` COMPOSE (#131 + #141) ──
+
+    /// A `ready` failing BOTH is told BOTH, in one refusal.
+    ///
+    /// This is the whole reason the convention gate sits ABOVE the coverage refusal rather than
+    /// below it: from above it can carry the coverage gaps along, from below it would be masked by
+    /// them. They are defects in the same diff that the same actor fixes in one pass, so learning
+    /// the second one a round trip later is pure cost — and this pipeline's round trip is a whole
+    /// cron tick.
+    #[test]
+    fn a_ready_failing_both_gates_is_told_both_at_once() {
+        let short: Vec<Covered> = vec![named("src/Vault.sol")];
+        match gate_with(json!({}), DIFF, &short, &dirty_sol()) {
+            RecordGate::SolConvention {
+                refusal,
+                also_uncovered,
+            } => {
+                let msg = super::sol_convention_message("o/r#1", &refusal);
+                assert!(msg.contains("src/Vault.sol"), "{msg}");
+                assert!(msg.contains("never mass-pin"), "{msg}");
+                let gaps = also_uncovered.expect("the coverage half must ride along");
+                assert!(
+                    !gaps.is_clean(),
+                    "a claim of one bare filename against this diff is not clean"
+                );
+            }
+            other => panic!("expected SolConvention carrying the gaps, got {other:?}"),
+        }
+        // …and with the claim CLEAN, the same scan reports the convention half alone.
+        match gate_with(json!({}), DIFF, &good_claim(), &dirty_sol()) {
+            RecordGate::SolConvention {
+                also_uncovered: None,
+                ..
+            } => {}
+            other => panic!("expected SolConvention with no coverage half, got {other:?}"),
+        }
+    }
+
+    /// The convention gate is `ready`-ONLY, so a routing verdict with the same dirty scan is judged
+    /// by the coverage gate alone. Without this the two gates would deadlock a convention-breaking
+    /// PR: the verdict it needs is `reject`, and `reject` is what the convention gate would refuse.
+    #[test]
+    fn a_routing_verdict_reaches_the_coverage_refusal_not_the_convention_one() {
+        let short: Vec<Covered> = vec![named("src/Vault.sol")];
+        for (label, verdict) in [
+            ("ai:reject", "reject"),
+            ("ai:design", "design"),
+            ("ai:close", "close"),
+        ] {
+            let doc = pr_json(json!({}));
+            let set = changed_files_from_view(&doc);
+            assert!(
+                matches!(
+                    record_gate(&doc, &set, DIFF, &short, &dirty_sol(), label, verdict),
+                    RecordGate::Uncovered(_)
+                ),
+                "{verdict} must be judged on coverage, not on the convention"
+            );
+            // …and a routing verdict with a CLEAN claim records, dirty scan and all.
+            assert!(
+                matches!(
+                    record_gate(
+                        &doc,
+                        &set,
+                        DIFF,
+                        &good_claim(),
+                        &dirty_sol(),
+                        label,
+                        verdict
+                    ),
+                    RecordGate::Record { .. }
+                ),
+                "{verdict} must be recordable over a convention violation — that IS the exit"
+            );
+        }
+    }
+
+    /// Every refusal ABOVE the convention gate still outranks it, with a dirty scan in hand. The
+    /// human ruling and the missing sha were pinned in #138 and again in #145; a third gate must not
+    /// quietly reorder them, and the file-list refusal must come first for its own reason — a capped
+    /// page could hide the very `.sol` file the convention is about.
+    #[test]
+    fn the_human_no_sha_and_file_list_refusals_all_outrank_the_convention_gate() {
+        let claim = good_claim();
+        for (extra, want) in [
+            (json!({"labels": [{"name": "human:reject"}]}), "human"),
+            (json!({"reviewDecision": "APPROVED"}), "human"),
+            (json!({"headRefOid": ""}), "nosha"),
+        ] {
+            let doc = pr_json(extra.clone());
+            let set = changed_files_from_view(&doc);
+            let got = record_gate(&doc, &set, DIFF, &claim, &dirty_sol(), "ai:ready", "ready");
+            match want {
+                "human" => assert_eq!(got, RecordGate::RefuseHuman, "{extra}"),
+                _ => assert_eq!(got, RecordGate::NoSha, "{extra}"),
+            }
+        }
+        // The unresolved file list, with the same dirty scan.
+        let partial = ChangedFileSet::Partial {
+            known: vec![ChangedFile {
+                path: "src/Vault.sol".to_string(),
+                additions: 1,
+                deletions: 0,
+            }],
+            total: Some(143),
+            why: "capped".to_string(),
+        };
+        assert!(matches!(
+            record_gate(
+                &pr_json(json!({})),
+                &partial,
+                DIFF,
+                &claim,
+                &dirty_sol(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::FilesUnknown(_)
+        ));
+    }
+
+    /// The diff guard also outranks it: with no diff, "what the claim must account for" is unknown,
+    /// and a convention refusal would send the vetter to fix pragmas while the read that failed goes
+    /// unreported.
+    #[test]
+    fn the_missing_diff_refusal_outranks_the_convention_gate() {
+        let names: Vec<Covered> = changed().iter().map(|p| named(p)).collect();
+        assert_eq!(
+            gate_with(json!({}), "", &names, &dirty_sol()),
+            RecordGate::NoDiff
+        );
+    }
+
+    #[test]
+    fn a_covered_verdict_reaches_the_record_and_an_uncovered_one_does_not() {
+        assert!(matches!(
+            gate(json!({}), DIFF, &good_claim()),
+            RecordGate::Record { .. }
+        ));
+        let short: Vec<Covered> = good_claim()
+            .into_iter()
+            .filter(|c| c.path != WRAPPER)
+            .collect();
+        match gate(json!({}), DIFF, &short) {
+            RecordGate::Uncovered(g) => assert_eq!(g.unaccounted, vec![WRAPPER.to_string()]),
+            other => panic!("expected Uncovered, got {other:?}"),
+        }
+    }
+
+    // #147: the gate reads the resolved SET, not the document's `files` page. The document here holds
+    // ONE entry and says the PR changes TWO — exactly raindex#2796's shape in miniature — and the
+    // claim accounts for the one that is on the page. Reading the page it would pass; reading the
+    // set it is refused for the file past the cap.
+    #[test]
+    fn the_gate_demands_accounting_for_a_file_past_the_end_of_the_page() {
+        let doc = pr_json(json!({"changedFiles": 2, "files": [{"path": "src/Vault.sol"}]}));
+        // The document alone cannot answer, and that is the whole point of passing the set.
+        assert!(matches!(
+            changed_files_from_view(&doc),
+            ChangedFileSet::Partial { .. }
+        ));
+        let resolved = ChangedFileSet::Complete(vec![
+            ChangedFile {
+                path: "src/Vault.sol".to_string(),
+                additions: 1,
+                deletions: 0,
+            },
+            ChangedFile {
+                path: WRAPPER.to_string(),
+                additions: 1,
+                deletions: 0,
+            },
+        ]);
+        let page_only = vec![anchored("src/Vault.sol", 14, "emit Deposit(amount);")];
+        match record_gate(
+            &doc,
+            &resolved,
+            DIFF,
+            &page_only,
+            &clean_sol(),
+            "ai:ready",
+            "ready",
+        ) {
+            RecordGate::Uncovered(g) => assert_eq!(g.unaccounted, vec![WRAPPER.to_string()]),
+            other => panic!("the file past the page must be demanded, got {other:?}"),
+        }
+        // …and accounting for BOTH satisfies it, so the gate is not simply refusing wide PRs.
+        let both = vec![
+            anchored("src/Vault.sol", 14, "emit Deposit(amount);"),
+            anchored(WRAPPER, 3, "address private immutable _ext;"),
+        ];
+        assert!(matches!(
+            record_gate(
+                &doc,
+                &resolved,
+                DIFF,
+                &both,
+                &clean_sol(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::Record { .. }
+        ));
+    }
+
+    // A list that is not known to be whole means what the claim must account for is not known
+    // either. Refused on EVERY verdict, like `NoDiff`: this is never a property of the PR that a
+    // different verdict would route around, it is a read that failed.
+    #[test]
+    fn a_file_list_that_is_not_whole_refuses_every_verdict() {
+        let doc = pr_json(json!({"changedFiles": 143}));
+        let partial = ChangedFileSet::Partial {
+            known: vec![],
+            total: Some(143),
+            why: "capped at 100".to_string(),
+        };
+        for (verdict, label) in [
+            ("ready", "ai:ready"),
+            ("reject", "ai:reject"),
+            ("design", "ai:design"),
+            ("close", "ai:close-candidate"),
+        ] {
+            match record_gate(
+                &doc,
+                &partial,
+                DIFF,
+                &good_claim(),
+                &clean_sol(),
+                label,
+                verdict,
+            ) {
+                RecordGate::FilesUnknown(why) => {
+                    assert!(why.contains("capped at 100"), "{verdict}: {why}");
+                    assert!(why.contains("143"), "the total is named: {verdict}: {why}");
+                }
+                other => panic!("{verdict} must refuse on an unresolved list, got {other:?}"),
+            }
+        }
+        // A Partial with NO total still refuses, and says so without inventing a number.
+        let no_total = ChangedFileSet::Partial {
+            known: vec![],
+            total: None,
+            why: "the document carries no `changedFiles` count".to_string(),
+        };
+        assert_eq!(
+            record_gate(
+                &doc,
+                &no_total,
+                DIFF,
+                &good_claim(),
+                &clean_sol(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::FilesUnknown("the document carries no `changedFiles` count".to_string())
+        );
+    }
+
+    // ORDER. The file-list refusal sits UNDER the human and sha guards (a human-decided PR is not
+    // the vetter's however its list reads) and OVER the diff guard — because "this PR changes files"
+    // is itself unknown while the list is, so an empty page would let `NoDiff` skip its own check.
+    #[test]
+    fn the_file_list_refusal_sits_between_the_sha_guard_and_the_diff_guard() {
+        // The page is NON-EMPTY, which is what makes the order observable. With an empty page the
+        // diff guard would not fire either (a PR that changes nothing needs no diff), so running it
+        // first would look identical — and raindex#2796's page holds 100 files, not zero.
+        let partial = ChangedFileSet::Partial {
+            known: vec![ChangedFile {
+                path: "src/Vault.sol".to_string(),
+                additions: 1,
+                deletions: 0,
+            }],
+            total: Some(143),
+            why: "capped".to_string(),
+        };
+        let names: Vec<Covered> = changed().iter().map(|p| named(p)).collect();
+        // human wins
+        assert_eq!(
+            record_gate(
+                &pr_json(json!({"reviewDecision": "APPROVED"})),
+                &partial,
+                "",
+                &names,
+                &clean_sol(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::RefuseHuman
+        );
+        // no sha wins
+        assert_eq!(
+            record_gate(
+                &pr_json(json!({"headRefOid": ""})),
+                &partial,
+                "",
+                &names,
+                &clean_sol(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::NoSha
+        );
+        // …and with both of those clear, an unresolved list beats the missing diff. Both are true
+        // here; reporting `NoDiff` would send the vetter to re-read a diff when the file list is what
+        // could not be read.
+        assert!(matches!(
+            record_gate(
+                &pr_json(json!({})),
+                &partial,
+                "",
+                &names,
+                &clean_sol(),
+                "ai:ready",
+                "ready"
+            ),
+            RecordGate::FilesUnknown(_)
+        ));
+    }
+
+    // The pre-existing guards are UNCHANGED and still win. A PR a human has decided is not the
+    // vetter's to record however its claim reads — and being told to fix anchors for a write that is
+    // about to be refused anyway is the wrong instruction.
+    #[test]
+    fn the_human_and_no_sha_refusals_outrank_the_coverage_refusal() {
+        let bad: Vec<Covered> = vec![named("src/Vault.sol")];
+        for sacred in [
+            json!({"labels": [{"name": "human:reject"}]}),
+            json!({"reviewDecision": "APPROVED"}),
+            json!({"reviewDecision": "CHANGES_REQUESTED"}),
+        ] {
+            assert_eq!(
+                gate(sacred.clone(), DIFF, &bad),
+                RecordGate::RefuseHuman,
+                "{sacred} must refuse as human-decided, not as uncovered"
+            );
+        }
+        assert_eq!(
+            gate(json!({"headRefOid": ""}), DIFF, &bad),
+            RecordGate::NoSha
+        );
+    }
+
+    // …and the guards BELOW the gate survive it: a covered verdict still strips the other ai:*
+    // label and still dedups a comment that is already posted at this head under this protocol.
+    #[test]
+    fn a_covered_verdict_keeps_the_label_plan_and_the_comment_dedup() {
+        let already = json!({
+            "labels": [{"name": "ai:reject"}],
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": format!("🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}\nReviewed deadbeef: ready — ok")
+            }]
+        });
+        match gate(already, DIFF, &good_claim()) {
+            RecordGate::Record {
+                to_remove,
+                has_target,
+                sha,
+                skip_comment,
+            } => {
+                assert_eq!(to_remove, vec!["ai:reject".to_string()]);
+                assert!(!has_target);
+                assert_eq!(sha, "deadbeef");
+                assert!(
+                    skip_comment,
+                    "the dedup still fires under the coverage gate"
+                );
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    // A guard that silently stops firing is the failure mode this whole issue is about, one level
+    // up. With no diff there is no anchorable line ANYWHERE, so every file reads as exempt by
+    // derivation and a claim of bare filenames would sail through a check that never ran. It is
+    // refused instead — and refused as its own thing, not mis-reported as the vetter's fault.
+    #[test]
+    fn a_diff_that_did_not_arrive_cannot_vacuously_satisfy_a_claim() {
+        let names: Vec<Covered> = changed().iter().map(|p| named(p)).collect();
+        assert_eq!(gate(json!({}), "", &names), RecordGate::NoDiff);
+        // …and the very same claim against the REAL diff is refused for the right reason: the two
+        // hand-written files are unanchored, the generated / deleted / binary ones are not.
+        match gate(json!({}), DIFF, &names) {
+            RecordGate::Uncovered(g) => assert_eq!(
+                g.unanchored,
+                vec!["src/Vault.sol".to_string(), WRAPPER.to_string()]
+            ),
+            other => panic!("expected Uncovered, got {other:?}"),
+        }
+        // The human-decided refusal still outranks even this.
+        assert_eq!(
+            gate(json!({"reviewDecision": "APPROVED"}), "", &names),
+            RecordGate::RefuseHuman
+        );
+    }
+
+    // An anchor for file A must never be satisfiable by a line of file B. The path is reset at
+    // every `diff --git`, so a stanza whose `+++ b/…` line is absent contributes NOTHING rather
+    // than silently extending the file before it.
+    #[test]
+    fn a_stanza_with_no_new_side_header_does_not_inherit_the_previous_file() {
+        let d = diff_new_lines(
+            "\
+diff --git a/a.md b/a.md
+--- a/a.md
++++ b/a.md
+@@ -1,0 +1,1 @@
++mine
+diff --git a/b.md b/b.md
+@@ -1,0 +1,1 @@
++not mine
+",
+        );
+        assert_eq!(
+            d.get("a.md").and_then(|l| l.get(&1)).map(String::as_str),
+            Some("mine")
+        );
+        assert_eq!(
+            d.get("a.md").map(|l| l.len()),
+            Some(1),
+            "the second stanza's line must not land in a.md"
+        );
+        assert_eq!(d.get("b.md"), None, "and it names no file of its own");
+    }
+
+    // --- the contract the vetter is TAUGHT, and the one the human reads --------------------------
+
+    // The claim is an ARGUMENT the tool checks, so the prompt is the only place the vetter learns
+    // how to satisfy it. A prompt that does not teach it spends a whole run discovering the refusal
+    // one PR at a time — the vetter cannot escalate, so an unteachable gate is a stuck queue.
+    #[test]
+    fn the_vetter_prompt_teaches_the_coverage_claim_it_must_satisfy() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("`basis`, `covered`"),
+            "`covered` must be listed among record_verdict's arguments"
+        );
+        for taught in [
+            "**`covered` =",             // what it is
+            "\"line\"",                  // the anchor's shape
+            "\"text\"",                  // …both halves of it
+            "never reaches the comment", // and that it is NOT prose
+        ] {
+            assert!(
+                prompt.contains(taught),
+                "the prompt must teach {taught:?} — the vetter has no other way to learn the claim"
+            );
+        }
+    }
+
+    // Bumping VET_PROTOCOL is what retires every verdict formed WITHOUT this gate. Left at 1, the
+    // gate would only ever reach a PR whose head happens to move, and every already-`ai:ready`
+    // #230-shaped verdict would keep reading as current — so the number in force is pinned to the
+    // prose that explains what it means.
+    #[test]
+    fn the_readme_documents_the_protocol_in_force() {
+        let Some(readme) = repo_root_text("README.md") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        // Left at 1 this finds nothing: the README explains what 2 is, so the prose and the
+        // constant fall out of step the moment the bump is reverted or the paragraph rewritten.
+        assert!(
+            readme.contains(&format!("`{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}`")),
+            "README must say what `{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}` means"
+        );
     }
 }
 
@@ -21194,6 +23714,7 @@ mod cli_tests {
                 note: vec![],
                 cost: None,
                 basis: String::new(),
+                covered_file: None,
                 dry_run: false,
             }
         );
@@ -21216,6 +23737,8 @@ mod cli_tests {
             "100",
             "--basis",
             "org gate",
+            "--covered-file",
+            "/tmp/covered.json",
             "--dry-run",
         ]);
         assert_eq!(
@@ -21227,6 +23750,7 @@ mod cli_tests {
                 note: s(&["my", "note", "here"]),
                 cost: Some(100),
                 basis: "org gate".to_string(),
+                covered_file: Some("/tmp/covered.json".to_string()),
                 dry_run: true,
             }
         );
@@ -21258,6 +23782,7 @@ mod cli_tests {
                 note: vec![],
                 cost: Some(5),
                 basis: String::new(),
+                covered_file: None,
                 dry_run: true,
             }
         );
@@ -21276,6 +23801,7 @@ mod cli_tests {
                 note: s(&["bad"]),
                 cost: None,
                 basis: String::new(),
+                covered_file: None,
                 dry_run: false,
             }
         );
@@ -22367,6 +24893,9 @@ mod worklist_tests {
             "body": "REQUIRES redeploy at land",
             "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
             "mergeStateStatus": "CLEAN", "labels": [],
+            // A COMPLETE, empty file list: `changedFiles` agrees, so the screenshot gate reads "no
+            // UI" rather than "not known" and cannot route these deploy fixtures to 3c.
+            "files": [], "changedFiles": 0,
             "comments": [{"author":{"login":"thedavidmeister"},
                           "body":"🤖 ai:producer deploy-confirmed at HEAD_A"}]
         });
@@ -22377,6 +24906,9 @@ mod worklist_tests {
             "body": "REQUIRES redeploy at land",
             "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
             "mergeStateStatus": "CLEAN", "labels": [],
+            // A COMPLETE, empty file list: `changedFiles` agrees, so the screenshot gate reads "no
+            // UI" rather than "not known" and cannot route these deploy fixtures to 3c.
+            "files": [], "changedFiles": 0,
             "comments": [{"author":{"login":"thedavidmeister"},
                           "body":"🤖 ai:producer deploy-confirmed at HEAD_B"}]
         });
@@ -22394,6 +24926,9 @@ mod worklist_tests {
             "body": "REQUIRES redeploy at land",
             "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
             "mergeStateStatus": "CLEAN", "labels": [],
+            // A COMPLETE, empty file list: `changedFiles` agrees, so the screenshot gate reads "no
+            // UI" rather than "not known" and cannot route these deploy fixtures to 3c.
+            "files": [], "changedFiles": 0,
             "comments": [{"author":{"login":"thedavidmeister"},
                           "body":"🤖 ai:producer deploy-confirmed at abcdef012345"}]
         });
@@ -22404,6 +24939,9 @@ mod worklist_tests {
             "body": "REQUIRES redeploy at land",
             "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
             "mergeStateStatus": "CLEAN", "labels": [],
+            // A COMPLETE, empty file list: `changedFiles` agrees, so the screenshot gate reads "no
+            // UI" rather than "not known" and cannot route these deploy fixtures to 3c.
+            "files": [], "changedFiles": 0,
             "comments": [{"author":{"login":"thedavidmeister"},
                           "body":"🤖 ai:producer deploy-confirmed at 999999999999"}]
         });
@@ -22473,9 +25011,59 @@ mod worklist_tests {
             "number": 5, "headRefOid": "H",
             "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
             "mergeStateStatus": "CLEAN", "labels": [], "comments": [],
-            "files": [{"path":"packages/webapp/src/Foo.svelte"}]
+            "files": [{"path":"packages/webapp/src/Foo.svelte"}], "changedFiles": 1
         });
-        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "screenshot-3c");
+        let row = worklist_row("o/r", &detail);
+        assert_eq!(row["nextAction"], "screenshot-3c");
+        assert_eq!(row["markers"]["uiTouch"], "yes");
+    }
+
+    /// #147: a file list that is not known to be whole means the PR MAY touch UI, so the screenshot
+    /// requirement applies. Under the old bare-`files[]` read a UI file past position 100 made the
+    /// requirement silently not apply — a second way past the 3c gate without waiving anything.
+    #[test]
+    fn worklist_row_routes_an_unresolved_file_list_to_the_screenshot_gate() {
+        let green = |extra: serde_json::Value| {
+            let mut d = json!({
+                "number": 5, "headRefOid": "H",
+                "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+                "mergeStateStatus": "CLEAN", "labels": [], "comments": [],
+            });
+            for (k, v) in extra.as_object().unwrap() {
+                d.as_object_mut().unwrap().insert(k.clone(), v.clone());
+            }
+            d
+        };
+        // 143 changed, one non-UI file on the page: nothing rules UI out.
+        let row = worklist_row(
+            "o/r",
+            &green(json!({"files": [{"path": "src/lib.rs"}], "changedFiles": 143})),
+        );
+        assert_eq!(row["nextAction"], "screenshot-3c");
+        assert_eq!(row["markers"]["uiTouch"], "unknown");
+        // No file list at all is the same answer, for the same reason.
+        assert_eq!(
+            worklist_row("o/r", &green(json!({})))["markers"]["uiTouch"],
+            "unknown"
+        );
+        // A WHOLE non-UI list is the one thing that rules it out, and that PR is green-ready.
+        let row = worklist_row(
+            "o/r",
+            &green(json!({"files": [{"path": "src/lib.rs"}], "changedFiles": 1})),
+        );
+        assert_eq!(row["nextAction"], "green-ready");
+        assert_eq!(row["markers"]["uiTouch"], "no");
+        // The waiver still works on the unknown case — the requirement is loud, not immovable.
+        let waived = worklist_row(
+            "o/r",
+            &green(json!({
+                "files": [{"path": "src/lib.rs"}], "changedFiles": 143,
+                "comments": [{"author": {"login": "thedavidmeister"},
+                              "body": "🤖 ai:producer screenshot pending (manual)"}],
+            })),
+        );
+        assert_eq!(waived["nextAction"], "green-ready");
+        assert_eq!(waived["markers"]["uiTouch"], "unknown");
     }
 
     #[test]
@@ -22875,7 +25463,15 @@ mod one_reject_state_tests {
                 {"author": {"login": "imposter"}, "body": human_rule_comment(OLD, "reject", "spoof")},
             ],
         });
-        let doc = pr_context_doc("o/r", 1, &detail, "diff", &[], 1000);
+        let doc = pr_context_doc(
+            "o/r",
+            1,
+            &detail,
+            &changed_files_from_view(&detail),
+            "diff",
+            &[],
+            1000,
+        );
         let human = doc["humanComments"].as_array().unwrap();
         assert_eq!(
             human.len(),
@@ -22895,7 +25491,15 @@ mod one_reject_state_tests {
             "labels": [], "reviewDecision": null,
             "comments": [trusted(&human_rule_comment(HEAD, "reject", note))],
         });
-        let doc = pr_context_doc("o/r", 1, &at_head, "diff", &[], 1000);
+        let doc = pr_context_doc(
+            "o/r",
+            1,
+            &at_head,
+            &changed_files_from_view(&at_head),
+            "diff",
+            &[],
+            1000,
+        );
         assert_eq!(doc["humanRuledAtHead"], json!(true));
         assert_eq!(doc["humanSacred"], json!(true));
     }
@@ -25603,6 +28207,7 @@ mod vetter_state_load_tests {
             "additions": 12,
             "deletions": 3,
             "files": [{"path": "src/lib.rs", "additions": 12, "deletions": 3}],
+            "changedFiles": 1,
             "closingIssuesReferences": [{"number": 88}],
             "comments": [
                 {"author": {"login": TRUSTED_AUTHOR}, "body": verdict_comment("cafe1234", "ready", "", None, "")},
@@ -25614,7 +28219,15 @@ mod vetter_state_load_tests {
         });
         let issues =
             vec![json!({"number": 88, "title": "rounding is wrong", "body": "…", "state": "OPEN"})];
-        let doc = pr_context_doc("o/r", 9, &detail, "diff --git a b\n+x\n", &issues, 300_000);
+        let doc = pr_context_doc(
+            "o/r",
+            9,
+            &detail,
+            &changed_files_from_view(&detail),
+            "diff --git a b\n+x\n",
+            &issues,
+            300_000,
+        );
 
         assert_eq!(doc["pr"], json!("o/r#9"));
         assert_eq!(doc["headRefOid"], json!("cafe1234"));
@@ -25635,11 +28248,102 @@ mod vetter_state_load_tests {
         assert!(!doc.to_string().contains("drive-by chatter"));
     }
 
+    // #147: `pr_context` is what the vetter judges a PR FROM, so it DEGRADES rather than refuses —
+    // but it must never present a page as the whole PR. A partial manifest says so in the document,
+    // beside the total it is partial against, exactly as `diffTruncated` sits beside `diffBytes`.
+    #[test]
+    fn context_says_when_the_file_manifest_is_only_part_of_the_pr() {
+        let detail = json!({"headRefOid": "h", "comments": [], "labels": []});
+        let page: Vec<ChangedFile> = (0..100)
+            .map(|i| ChangedFile {
+                path: format!("src/f{i}.rs"),
+                additions: 1,
+                deletions: 0,
+            })
+            .collect();
+        let doc = pr_context_doc(
+            "o/r",
+            1,
+            &detail,
+            &ChangedFileSet::Partial {
+                known: page.clone(),
+                total: Some(143),
+                why: "capped at 100 entries".to_string(),
+            },
+            "diff",
+            &[],
+            1000,
+        );
+        assert_eq!(doc["filesTruncated"], json!(true));
+        assert_eq!(doc["filesTotal"], json!(143));
+        assert_eq!(doc["filesIncluded"], json!(100));
+        assert_eq!(doc["files"].as_array().unwrap().len(), 100);
+        assert!(
+            doc["filesTruncatedReason"]
+                .as_str()
+                .unwrap()
+                .contains("capped"),
+            "the reason is carried, not just the flag: {}",
+            doc["filesTruncatedReason"]
+        );
+
+        // A COMPLETE list is stated as complete, and carries every file — including the 43 the page
+        // could never have shown.
+        let whole: Vec<ChangedFile> = (0..143)
+            .map(|i| ChangedFile {
+                path: format!("src/f{i}.rs"),
+                additions: 1,
+                deletions: 0,
+            })
+            .collect();
+        let doc = pr_context_doc(
+            "o/r",
+            1,
+            &detail,
+            &ChangedFileSet::Complete(whole),
+            "diff",
+            &[],
+            1000,
+        );
+        assert_eq!(doc["filesTruncated"], json!(false));
+        assert_eq!(doc["filesTotal"], json!(143));
+        assert_eq!(doc["filesIncluded"], json!(143));
+        assert_eq!(doc["filesTruncatedReason"], Value::Null);
+        assert_eq!(doc["files"][142]["path"], json!("src/f142.rs"));
+
+        // Nothing known at all: the total is NULL rather than zero. A `0` here would read as a PR
+        // that changes nothing, which is the fail-open in its purest form.
+        let doc = pr_context_doc(
+            "o/r",
+            1,
+            &detail,
+            &ChangedFileSet::Partial {
+                known: vec![],
+                total: None,
+                why: "no `files` array".to_string(),
+            },
+            "diff",
+            &[],
+            1000,
+        );
+        assert_eq!(doc["filesTotal"], Value::Null);
+        assert_eq!(doc["filesTruncated"], json!(true));
+        assert_eq!(doc["filesIncluded"], json!(0));
+    }
+
     #[test]
     fn context_flags_a_truncated_diff_and_keeps_the_true_size() {
         let detail = json!({"headRefOid": "h", "comments": [], "labels": []});
         let big = "x".repeat(500);
-        let doc = pr_context_doc("o/r", 1, &detail, &big, &[], 100);
+        let doc = pr_context_doc(
+            "o/r",
+            1,
+            &detail,
+            &changed_files_from_view(&detail),
+            &big,
+            &[],
+            100,
+        );
         assert_eq!(doc["diff"].as_str().unwrap().len(), 100);
         assert_eq!(doc["diffTruncated"], json!(true));
         assert_eq!(doc["diffBytes"], json!(500));
@@ -25838,6 +28542,13 @@ mod mcp_tests {
         // cost is REQUIRED by the schema — the prompt could only ask for it.
         assert!(required.contains(&"cost"));
         assert!(required.contains(&"verdict"));
+        // …and the scope-coverage claim (#131): the prompt could only ASK for it, and a claim the
+        // schema treats as optional is a guard the model can decline to arm.
+        assert!(required.contains(&"covered"));
+        assert_eq!(
+            rv["inputSchema"]["properties"]["covered"]["items"]["required"],
+            json!(["path"])
+        );
         let verdicts: Vec<&str> = rv["inputSchema"]["properties"]["verdict"]["enum"]
             .as_array()
             .unwrap()
@@ -25905,7 +28616,7 @@ mod mcp_tests {
     fn record_verdict_requires_a_scored_cost_a_note_and_a_short_basis() {
         let f = FakeExec::ok();
         let base = |extra: Value| {
-            let mut m = json!({"pr": "o/r#1", "verdict": "ready", "note": "closes #88 — pinned by test", "cost": 300, "basis": "small diff"});
+            let mut m = json!({"pr": "o/r#1", "verdict": "ready", "note": "closes #88 — pinned by test", "cost": 300, "basis": "small diff", "covered": [{"path": "src/a.rs", "line": 3, "text": "let x = 1;"}]});
             for (k, v) in extra.as_object().unwrap() {
                 m.as_object_mut().unwrap().insert(k.clone(), v.clone());
             }
@@ -25936,6 +28647,23 @@ mod mcp_tests {
             .unwrap()));
         assert!(f.calls().is_empty(), "no invalid verdict reached the write");
 
+        // A call wrong in MORE than one way is told about the VOCABULARY first: `covered` is what
+        // you assemble once you know which verdict you are recording, so being sent to build a
+        // coverage claim for a word this machine does not have is a wasted retry the vetter cannot
+        // afford — it has no human to escalate to.
+        let both_wrong = f
+            .handle(&call(
+                "record_verdict",
+                json!({"pr": "o/r#1", "verdict": "relink", "note": "n", "cost": 1, "basis": "b"}),
+            ))
+            .unwrap();
+        assert!(is_error(&both_wrong));
+        assert!(
+            text(&both_wrong).contains("not a verdict of this machine"),
+            "vocabulary before coverage: {}",
+            text(&both_wrong)
+        );
+
         // the boundaries themselves are legal.
         for good in [
             json!({"cost": 0}),
@@ -25956,7 +28684,7 @@ mod mcp_tests {
         let resp = f
             .handle(&call(
                 "record_verdict",
-                json!({"pr": "cyclofinance/cyclo.site#369", "verdict": "reject", "note": "closes #12 — no discriminating test", "cost": 640, "basis": "accounting path"}),
+                json!({"pr": "cyclofinance/cyclo.site#369", "verdict": "reject", "note": "closes #12 — no discriminating test", "cost": 640, "basis": "accounting path", "covered": [{"path": "src/lib/Fixed.sol", "line": 12, "text": "uint256 x;"}, {"path": "Cargo.lock"}]}),
             ))
             .unwrap();
         assert!(!is_error(&resp));
@@ -25969,6 +28697,21 @@ mod mcp_tests {
                 note: "closes #12 — no discriminating test".to_string(),
                 cost: 640,
                 basis: "accounting path".to_string(),
+                // the claim arrives at the write VERBATIM — normalised in spelling, never edited
+                // in content, and the exempt entry keeps its `None` anchor rather than being dropped
+                covered: vec![
+                    Covered {
+                        path: "src/lib/Fixed.sol".to_string(),
+                        anchor: Some(CoverageAnchor {
+                            line: 12,
+                            text: "uint256 x;".to_string(),
+                        }),
+                    },
+                    Covered {
+                        path: "Cargo.lock".to_string(),
+                        anchor: None,
+                    },
+                ],
             }]
         );
     }
@@ -25995,7 +28738,7 @@ mod mcp_tests {
         let resp = f
             .handle(&call(
                 "record_verdict",
-                json!({"pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b"}),
+                json!({"pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b", "covered": [{"path": "a.md"}]}),
             ))
             .unwrap();
         assert!(is_error(&resp));
@@ -26194,10 +28937,18 @@ mod mcp_tests {
         // The largest document this tool can be asked for still lands under the gate, not merely
         // under the budget — which is the property the live harness actually checks.
         let (detail, diff) = ctx_fixture(200, 4_000_000);
-        let len = fit_pr_context("o/r", 1, &detail, &diff, &[], MAX_MAX_DIFF_BYTES as usize)
-            .unwrap()
-            .to_string()
-            .len();
+        let len = fit_pr_context(
+            "o/r",
+            1,
+            &detail,
+            &changed_files_from_view(&detail),
+            &diff,
+            &[],
+            MAX_MAX_DIFF_BYTES as usize,
+        )
+        .unwrap()
+        .to_string()
+        .len();
         assert!(
             len < gate,
             "worst-case document is {len} bytes, gate is {gate}"
@@ -26306,6 +29057,7 @@ mod mcp_tests {
             "headRefOid": "a".repeat(40),
             "additions": 1, "deletions": 1,
             "files": [{"path": "src/lib.rs", "additions": 1, "deletions": 1}],
+            "changedFiles": 1,
         });
         (detail, "d".repeat(diff_bytes))
     }
@@ -26319,7 +29071,16 @@ mod mcp_tests {
         for diff_bytes in [0, 1_000, MCP_MAX_RESULT_BYTES, 4_000_000] {
             for asked in [1, 1_000, MCP_MAX_RESULT_BYTES] {
                 let (detail, diff) = ctx_fixture(200, diff_bytes);
-                let doc = fit_pr_context("o/r", 1, &detail, &diff, &[], asked).unwrap();
+                let doc = fit_pr_context(
+                    "o/r",
+                    1,
+                    &detail,
+                    &changed_files_from_view(&detail),
+                    &diff,
+                    &[],
+                    asked,
+                )
+                .unwrap();
                 let len = doc.to_string().len();
                 assert!(
                     len <= MCP_MAX_RESULT_BYTES,
@@ -26342,10 +29103,18 @@ mod mcp_tests {
         let (detail, diff) = ctx_fixture(100, 30_000);
         let mut last = usize::MAX;
         for asked in [20_000, 10_000, 5_000, 1_000, 100, 1] {
-            let len = fit_pr_context("o/r", 1, &detail, &diff, &[], asked)
-                .unwrap()
-                .to_string()
-                .len();
+            let len = fit_pr_context(
+                "o/r",
+                1,
+                &detail,
+                &changed_files_from_view(&detail),
+                &diff,
+                &[],
+                asked,
+            )
+            .unwrap()
+            .to_string()
+            .len();
             assert!(len < last, "asked={asked} gave {len}, not below {last}");
             last = len;
         }
@@ -26356,7 +29125,16 @@ mod mcp_tests {
     #[test]
     fn pr_context_metadata_alone_over_the_ceiling_is_a_typed_error() {
         let (detail, diff) = ctx_fixture(MCP_MAX_RESULT_BYTES + 5_000, 10_000);
-        let e = fit_pr_context("o/r", 1, &detail, &diff, &[], MCP_MAX_RESULT_BYTES).unwrap_err();
+        let e = fit_pr_context(
+            "o/r",
+            1,
+            &detail,
+            &changed_files_from_view(&detail),
+            &diff,
+            &[],
+            MCP_MAX_RESULT_BYTES,
+        )
+        .unwrap_err();
         assert!(e.starts_with("error:"), "{e}");
         assert!(e.contains("with NO diff at all"), "{e}");
         assert!(
