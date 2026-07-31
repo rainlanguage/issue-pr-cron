@@ -1124,7 +1124,7 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 37,
+        "count": 33,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1143,30 +1143,6 @@
             "number": 77,
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/77",
             "title": "audit: gate Pass 2 on adversarial-mutation-test ledger evidence"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 75,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/75",
-            "title": "audit: framework-native over hand-rolled — a three-step procedure (name the framework, cite the mechanism check, then flag)"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 76,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/76",
-            "title": "audit: verify soldeer autopublish is wired and current (hazard cat. 10 — dead wiring, cross-org secrets: inherit, [package] identity, registry lag)"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 74,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/74",
-            "title": "audit: enforce the deploy-repo / library-repo release-lifecycle split"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 73,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/73",
-            "title": "audit: flag hand-rolled string parsing where a robust domain parser exists"
           },
           {
             "repo": "rainlanguage/claude-audit-skills",
@@ -2070,6 +2046,12 @@
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 150,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/150",
+      "title": "site/ is GUI work with no framework — every page hand-rolls fetch/state/render/routing; first live instance of the framework-absence finding"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 69,
@@ -5802,9 +5784,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 163,
-    "uncoveredIssues": 614,
-    "unvetted": 37,
+    "totalProducerPrs": 159,
+    "uncoveredIssues": 615,
+    "unvetted": 33,
     "reject": 70,
     "relink": 1,
     "closeCandidatePrs": 5,
