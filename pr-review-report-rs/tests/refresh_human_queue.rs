@@ -540,6 +540,49 @@ fn a_metrics_only_append_publishes_without_a_history_line() {
     );
 }
 
+/// The change probes compare against HEAD, not the index. A tick that staged its files and then
+/// failed to commit (lock contention, a full disk) leaves the change STAGED — and `git diff`
+/// without `HEAD` reads staged-only content as unchanged, so every later tick would skip the
+/// publish and the skip rows would sit there until unrelated queue churn rescued them. Driven the
+/// way the failure leaves the tree: the row already staged before the tick runs.
+#[test]
+fn a_staged_but_uncommitted_append_is_still_published() {
+    let Some(f) = Fixture::new("staged-metrics") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":1}}\n"); // identical to the seed
+    let skip_row = "{\"runId\":\"20260731T110001Z\",\"role\":\"vetter\",\"exitCode\":10,\
+                    \"outcome\":\"skipped\",\"skipped\":\"usage-gate\",\
+                    \"skipReason\":\"PAUSE: 91% of the weekly budget used (endpoint)\"}\n";
+    let mut runs = std::fs::read_to_string(f.install.join("metrics/runs.jsonl")).unwrap();
+    runs.push_str(skip_row);
+    std::fs::write(f.install.join("metrics/runs.jsonl"), &runs).unwrap();
+    git(&f.install, &["add", "metrics/runs.jsonl"]);
+    let head_before = f.install_head();
+
+    let out = f.tick();
+    assert!(
+        out.status.success(),
+        "a staged-only change must still publish: {}",
+        stderr(&out)
+    );
+    assert_ne!(
+        f.install_head(),
+        head_before,
+        "a staged-only change must still be committed — the probe must compare against HEAD"
+    );
+    assert_eq!(
+        f.origin_head(),
+        f.install_head(),
+        "the staged row must reach the remote\n{}",
+        stderr(&out)
+    );
+    assert!(
+        git(&f.install, &["show", "HEAD:metrics/runs.jsonl"]).contains("usage-gate"),
+        "the committed ledger must carry the staged skip row"
+    );
+}
+
 /// The early exit predates both fixes and has to keep holding: an unchanged snapshot commits
 /// nothing, pushes nothing and succeeds — and an unchanged METRICS ledger (#160) is part of that
 /// stillness: this fixture's runs.jsonl has no new rows, so nothing may publish.

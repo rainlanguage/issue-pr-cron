@@ -117,10 +117,13 @@ fi
 # it — while the pause path itself appends one skip row per gated tick. Gating the publish on the
 # snapshot alone would hold those rows hostage to unrelated queue churn; either file moving is a
 # reason to publish both.
+# Both probes compare against HEAD, not the index: a tick that staged its files and then failed
+# to commit leaves the change STAGED, and a bare `git diff` reads staged-only content as
+# unchanged — every later tick would then skip the publish it exists to make.
 snapshot_changed=1
-git -C "$DIR" diff --quiet -- human-queue.json && snapshot_changed=0
+git -C "$DIR" diff --quiet HEAD -- human-queue.json && snapshot_changed=0
 metrics_changed=1
-git -C "$DIR" diff --quiet -- metrics/runs.jsonl && metrics_changed=0
+git -C "$DIR" diff --quiet HEAD -- metrics/runs.jsonl && metrics_changed=0
 if [ "$snapshot_changed" -eq 0 ] && [ "$metrics_changed" -eq 0 ]; then
   log "snapshot and run metrics unchanged at $(git -C "$DIR" rev-parse --short HEAD); nothing to publish"
   exit 0
