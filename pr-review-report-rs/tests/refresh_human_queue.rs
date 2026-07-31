@@ -171,6 +171,15 @@ impl Fixture {
             "{\"ts\":\"2026-07-01T00:00:00Z\",\"counts\":{\"a\":1}}\n",
         )
         .unwrap();
+        // The run-metrics ledger is TRACKED in the real repo, and the script publishes it
+        // alongside the snapshot (#160) — the fixture mirrors that so `git add` has the same
+        // tracked file to stage.
+        std::fs::create_dir_all(f.install.join("metrics")).unwrap();
+        std::fs::write(
+            f.install.join("metrics/runs.jsonl"),
+            "{\"runId\":\"20260701T000000Z\",\"role\":\"producer\",\"outcome\":\"ok\"}\n",
+        )
+        .unwrap();
         std::fs::write(f.install.join("unrelated.txt"), "seed\n").unwrap();
         git(&f.install, &["add", "-A"]);
         git(&f.install, &["commit", "--quiet", "-m", "seed"]);
@@ -484,8 +493,99 @@ fn divergence_is_reported_loudly_and_nothing_is_merged_or_discarded() {
     );
 }
 
+/// The pause-visibility half of #160: a usage-gate skip row appended to `metrics/runs.jsonl` by a
+/// gated runner tick must reach the remote on the NEXT hourly refresh, even though the queue
+/// snapshot did not move — during a pause, nothing else runs to move it. Publishing is asserted
+/// on the remote's own copy of the file; the history ledger must not gain a rollup line, because
+/// its contract is one line per CHANGED snapshot and the snapshot did not change.
+#[test]
+fn a_metrics_only_append_publishes_without_a_history_line() {
+    let Some(f) = Fixture::new("metrics-only") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":1}}\n"); // identical to the seed
+    let skip_row = "{\"runId\":\"20260731T090001Z\",\"role\":\"producer\",\"exitCode\":10,\
+                    \"outcome\":\"skipped\",\"skipped\":\"usage-gate\",\
+                    \"skipReason\":\"PAUSE: 91% of the weekly budget used (endpoint)\"}\n";
+    let mut runs = std::fs::read_to_string(f.install.join("metrics/runs.jsonl")).unwrap();
+    runs.push_str(skip_row);
+    std::fs::write(f.install.join("metrics/runs.jsonl"), &runs).unwrap();
+    let head_before = f.install_head();
+
+    let out = f.tick();
+    assert!(
+        out.status.success(),
+        "a metrics-only tick must publish: {}",
+        stderr(&out)
+    );
+    let head = f.install_head();
+    assert_ne!(head, head_before, "the skip row must be committed");
+    assert_eq!(
+        f.origin_head(),
+        head,
+        "the skip row must reach the remote — visibility DURING the pause is the point\n{}",
+        stderr(&out)
+    );
+    assert!(
+        git(&f.install, &["show", "HEAD:metrics/runs.jsonl"]).contains("usage-gate"),
+        "the committed ledger must carry the skip row"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.install.join("human-queue-history.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        1,
+        "an unchanged snapshot must not append a history line, whatever the metrics did"
+    );
+}
+
+/// The change probes compare against HEAD, not the index. A tick that staged its files and then
+/// failed to commit (lock contention, a full disk) leaves the change STAGED — and `git diff`
+/// without `HEAD` reads staged-only content as unchanged, so every later tick would skip the
+/// publish and the skip rows would sit there until unrelated queue churn rescued them. Driven the
+/// way the failure leaves the tree: the row already staged before the tick runs.
+#[test]
+fn a_staged_but_uncommitted_append_is_still_published() {
+    let Some(f) = Fixture::new("staged-metrics") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":1}}\n"); // identical to the seed
+    let skip_row = "{\"runId\":\"20260731T110001Z\",\"role\":\"vetter\",\"exitCode\":10,\
+                    \"outcome\":\"skipped\",\"skipped\":\"usage-gate\",\
+                    \"skipReason\":\"PAUSE: 91% of the weekly budget used (endpoint)\"}\n";
+    let mut runs = std::fs::read_to_string(f.install.join("metrics/runs.jsonl")).unwrap();
+    runs.push_str(skip_row);
+    std::fs::write(f.install.join("metrics/runs.jsonl"), &runs).unwrap();
+    git(&f.install, &["add", "metrics/runs.jsonl"]);
+    let head_before = f.install_head();
+
+    let out = f.tick();
+    assert!(
+        out.status.success(),
+        "a staged-only change must still publish: {}",
+        stderr(&out)
+    );
+    assert_ne!(
+        f.install_head(),
+        head_before,
+        "a staged-only change must still be committed — the probe must compare against HEAD"
+    );
+    assert_eq!(
+        f.origin_head(),
+        f.install_head(),
+        "the staged row must reach the remote\n{}",
+        stderr(&out)
+    );
+    assert!(
+        git(&f.install, &["show", "HEAD:metrics/runs.jsonl"]).contains("usage-gate"),
+        "the committed ledger must carry the staged skip row"
+    );
+}
+
 /// The early exit predates both fixes and has to keep holding: an unchanged snapshot commits
-/// nothing, pushes nothing and succeeds.
+/// nothing, pushes nothing and succeeds — and an unchanged METRICS ledger (#160) is part of that
+/// stillness: this fixture's runs.jsonl has no new rows, so nothing may publish.
 #[test]
 fn an_unchanged_snapshot_stays_a_no_op() {
     let Some(f) = Fixture::new("unchanged") else {

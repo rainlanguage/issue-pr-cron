@@ -65,13 +65,15 @@ stateDiagram-v2
     reject --> close : producer judges it not worth doing
     reject --> unvetted : linkage reject · producer weaken-closes Closes→Refs
 
-    %% producer deploy + blocked hand-offs → human resolves → re-work
+    %% producer deploy + blocked hand-offs. blocked-deploy waits on a human; blocked-on sits with
+    %% the VETTER (#161): the flag carries typed --blocked-by refs (refused without one) and the
+    %% vetter's state-load clears it the run after every dep merges/closes → fresh re-vet.
     ready --> ready : producer deploy · red prod-pin → green
     ready --> bdeploy : flag-blocked-deploy · deploy FAILED
-    unvetted --> bon : flag-blocked-on · waiting on a dependency PR
+    unvetted --> bon : flag-blocked-on --blocked-by owner/repo#n · waiting on dependency PRs
     unvetted --> design : flag-design · anything a human must answer or supply
     bdeploy --> unvetted : human resolves deploy → re-work
-    bon --> unvetted : dependency merges → producer re-works
+    bon --> unvetted : vetter clears · every typed dep merged/closed → re-vet fresh
 
     %% infra down is NOT a PR state — the RUN ends and no PR is touched (#108)
     unvetted --> infradown : infra-down · environment is impeding the work
@@ -1143,11 +1145,14 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   whether it has never been judged or its `ai:ready` verdict stopped being
   current at its head. Vetting is a pure function of the PR at its head, so
   "judged before" is not a state — there is one un-vetted state, handled one
-  way.
+  way. Plus `ai:blocked-on` (#161): the vetter's lane because the vetter is its
+  next mover — the state-load clears the flag the run after every typed dep
+  merges/closes and the PR re-enters vetting fresh ("clear when deps merge" is
+  vetter action, not human polling).
 - **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:design`,
   `ai:close-candidate`, plus the RETIRED `ai:relink` for as long as any PR still
   carries it (#135).
-- **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-on`, plus the RETIRED
+- **producer-blocked** — `ai:blocked-deploy`, plus the RETIRED
   `ai:blocked-infra` for as long as any PR still carries it (#108).
 - **human-decisions** — `human:design`, `human:close-candidate`, plus the
   RETIRED `human:reject` for as long as any PR still carries it (#133). That
@@ -1219,11 +1224,56 @@ failed; a consumer just could not render a link.
 
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
-`blocked-deploy`, or `blocked-on`. Those four plus `ready` (the merge queue) are
-the **human-gated states** — the daily review queue, a plain label search, no
-prose scraping. `design` is the **total-function fallback**: a situation the
-producer cannot classify is by definition one a human has to look at, and
-`design` already means exactly that.
+`blocked-deploy`, or `blocked-on`. The first three plus `ready` (the merge
+queue) are the **human-gated states** — the daily review queue, a plain label
+search, no prose scraping. `blocked-on` is **not** human-gated (#161): its next
+mover is the vetter, whose state-load clears it automatically — see below.
+`design` is the **total-function fallback**: a situation the producer cannot
+classify is by definition one a human has to look at, and `design` already means
+exactly that.
+
+### `ai:blocked-on` sits with the vetter (#161)
+
+Human ruling (verbatim): _"things that are blocked on other things due to a
+dependency should sit with the vetter, not with a human, it should be possible
+to automate the judgement about whether a dependency has been cleared."_ And:
+_"merging a dependency isn't a separate responsibility, it's just something that
+happens through normal merging of ready items, it is the ai's responsibility to
+present things that are truly ready."_
+
+Four mechanisms carry that:
+
+- **Typed dependency.**
+  `flag-blocked-on <owner/repo> <n> "<reason>"
+  --blocked-by <owner/repo#n>`
+  (repeatable). Each ref is parsed by the one `owner/repo#number` parser and
+  stored as a machine-readable `blocked-by owner/repo#n` line in the flag
+  comment, **alongside** the prose reason (the prose keeps the WHY). A new flag
+  without at least one typed ref is **refused** — fail closed on the exact input
+  that makes the state automatable. Clearance is never judged from prose.
+- **Automated clearance, in the vetter's state-load.** Every `unvetted` call
+  resolves each typed ref of every open `ai:blocked-on` PR. All deps MERGED or
+  CLOSED ⇒ the label is cleared and a `🤖 ai:vetter` `Blocked-on cleared:`
+  comment records which dep cleared in which state. That comment is deliberately
+  **not** a verdict (no `Reviewed <sha>:`, no protocol stamp), so as the newest
+  vetter comment it makes `vetted_at_head` false even at an unmoved head — the
+  PR re-enters vetting **fresh**, because the dependency landing may have
+  changed what correct means; clearance is never a rubber stamp back to
+  `ai:ready`. Any dep still OPEN ⇒ untouched, withheld from the vet queue
+  (`blockedOn` in the state-load names the open deps).
+- **Manual review is loud, never silent.** A flag with **no typed refs** (the
+  legacy prose-only flags), a malformed `blocked-by` line, or a ref that no
+  longer resolves is `blockedOnManualReview` in every state-load: named ref,
+  named reason, never auto-cleared, never auto-vetted, never silently stuck.
+- **Ownership on the dash.** `ai:blocked-on` emits under the **vet-lifecycle**
+  lane (the vetter's action is "clear when deps merge"), not producer-blocked
+  and not the human's queue. Seventeen human inbox slots of "has #9 merged yet?"
+  were pure polling the machine now does.
+
+The **legacy prose-only flags** are migrated by an eyes-on pass — a human (or an
+interactive session) re-flags each with typed refs derived by reading the PR,
+never by regexing the prose. Until then they sit visibly in
+`blockedOnManualReview`.
 
 ### Infrastructure down ends the run (#108)
 
@@ -1683,6 +1733,33 @@ the current one and `final` supersedes them all. The partials exist because
 `run-metrics` only ever runs after the claude process exits: a run that is
 killed or times out is exactly the run whose startup timings you want, and it
 was precisely the one that left no trace of them at all.
+
+### Skipped ticks — the usage-gate pause row (#160)
+
+A tick the weekly-budget pace gate pauses (usage-gate exit 10) still writes one
+`stage: final` row, from the runner's exit-10 path over an empty trace:
+
+```json
+"skipped": "usage-gate", "skipReason": "<the gate's own PAUSE line, verbatim>", "outcome": "skipped", "exitCode": 10
+```
+
+`exitCode` is the GATE's 10, the same way the preflight-abort row records
+preflight's 12 — the runner itself still exits 0 because a pause is not a
+failure. Both skip fields are **absent** — not null — on every other row, so a
+consumer keys on the field existing at all and pre-#160 records read unchanged.
+Before this row existed a paused stretch left nothing in the file, and the
+dashboard drew nine consecutive gated ticks as a dead cron. A config REFUSAL
+(usage-gate exit 2) is NOT a skip: the tick aborts loudly and writes no row —
+broken config must never render as pacing.
+
+### How the file reaches main
+
+The runners append rows and never push. The hourly `refresh-human-queue` cron
+stages `metrics/runs.jsonl` beside the snapshot it already commits straight to
+main, publishing when EITHER file moved. That cron carries it because it is
+data-only and never usage-gated — the one committer still awake during a pause,
+which is exactly when skip rows are written and nothing else runs. A skip row is
+therefore visible to the dashboard within about an hour of its gated tick.
 
 ### Live token spend — and the one number that is not knowable
 

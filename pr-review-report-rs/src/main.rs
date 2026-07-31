@@ -2729,6 +2729,7 @@ fn run_metrics_mode(
     exit_code: Option<i32>,
     preflight_missing: &[String],
     infra_path: Option<&str>,
+    skip: Option<(&str, &str)>,
 ) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -2743,7 +2744,7 @@ fn run_metrics_mode(
     let outcome = exit_code.map(|rc| {
         (
             rc,
-            classify_outcome(&content, rc, preflight_missing, &infra),
+            classify_outcome(&content, rc, skip.is_some(), preflight_missing, &infra),
         )
     });
     println!(
@@ -2755,7 +2756,8 @@ fn run_metrics_mode(
             outcome,
             &tooling,
             preflight_missing,
-            &infra
+            &infra,
+            skip
         ))
         .unwrap()
     );
@@ -2766,6 +2768,7 @@ fn run_metrics_mode(
 /// outcome that only exist once the run has finished. Built here rather than inline in
 /// [`run_metrics_mode`] so the record's shape — `stage` above all — is a tested value, not a
 /// side effect of printing.
+#[allow(clippy::too_many_arguments)] // one record, one assembly point — splitting it would put the row's shape in two places
 fn final_record(
     path: &str,
     m: &RunMetrics,
@@ -2774,6 +2777,7 @@ fn final_record(
     tooling: &ToolingReport,
     preflight_missing: &[String],
     infra: &InfraRecord,
+    skip: Option<(&str, &str)>,
 ) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
@@ -2820,6 +2824,15 @@ fn final_record(
     if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
         obj.insert("exitCode".into(), serde_json::json!(rc));
         obj.insert("outcome".into(), serde_json::json!(verdict.as_str()));
+    }
+    // The SKIP stamp (#160): present on a skipped tick's row, ABSENT — not null — on every other,
+    // so a consumer can key on the field existing at all and every pre-skip record stays
+    // byte-compatible. `skipReason` is the gate's own output line, verbatim: the row is the only
+    // durable copy (the runner's log rotates with the box), and a paraphrase would be a second
+    // place that knows what the gate says.
+    if let (Some(obj), Some((gate, reason))) = (doc.as_object_mut(), skip) {
+        obj.insert("skipped".into(), serde_json::json!(gate));
+        obj.insert("skipReason".into(), serde_json::json!(reason));
     }
     doc
 }
@@ -3695,6 +3708,13 @@ enum TraceOutcome {
     /// `ai:blocked-infra` with an exit is that the fact must ACCUMULATE somewhere countable. One is
     /// noise; the same one across twenty runs is the signal a human acts on.
     InfraDown,
+    /// A pre-model gate SKIPPED the tick on purpose (#160): `usage-gate` said PAUSE, the model
+    /// never started, and the runner exited 0. Neither `ok` (nothing ran) nor `error` (nothing
+    /// failed) — before this variant a paused stretch left NO row at all, and the dashboard read
+    /// nine consecutive gated ticks as a dead cron. A config REFUSAL (usage-gate exit 2) is NOT
+    /// a skip: the runners abort loudly on it and write no row, and conflating the two would
+    /// dress broken config up as pacing.
+    Skipped,
 }
 
 impl TraceOutcome {
@@ -3707,6 +3727,7 @@ impl TraceOutcome {
             TraceOutcome::ToolingFailure => "tooling-failure",
             TraceOutcome::Error => "error",
             TraceOutcome::InfraDown => "infra-down",
+            TraceOutcome::Skipped => "skipped",
         }
     }
 }
@@ -3773,11 +3794,17 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
     TraceOutcome::Ok
 }
 
-/// The whole run's outcome: what the trace says, plus what `preflight` found before the trace
-/// existed.
+/// The whole run's outcome: what the trace says, plus what the runner's pre-model gates found
+/// before the trace existed.
+///
+/// A SKIP (#160) outranks everything: `usage-gate` runs before preflight, before the lock, before
+/// a token is spent, so a skipped tick has no trace, no preflight result and no infra record —
+/// every other classification of it would be an artifact of the empty trace (an `exitCode` of 10
+/// over zero events reads as `error`, which is precisely the "dead cron" rendering the skip row
+/// exists to correct).
 ///
 /// A preflight failure has no trace to classify — the model never ran — so the fact arrives as the
-/// list of binaries that would not resolve. It outranks everything else: a run that was stopped
+/// list of binaries that would not resolve. It outranks everything below: a run that was stopped
 /// before it started is neither quota-limited nor merely errored.
 ///
 /// An infra exit (#108) is folded in LAST and only over an otherwise-`ok` run. The ordering is
@@ -3788,9 +3815,13 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
 fn classify_outcome(
     trace: &str,
     exit_code: i32,
+    skipped: bool,
     preflight_missing: &[String],
     infra: &InfraRecord,
 ) -> TraceOutcome {
+    if skipped {
+        return TraceOutcome::Skipped;
+    }
     if !preflight_missing.is_empty() {
         return TraceOutcome::ToolingFailure;
     }
@@ -7556,8 +7587,12 @@ fn state_noun(label: &str) -> &'static str {
     }
 }
 
-/// The producer's human-gated state labels — the states a hand-off can land in. `ai:ready` is the
-/// vetter's; the producer transitions to these via [`flag_state_mode`], never a bare prose note.
+/// The producer's state labels — the states a hand-off can land in. `ai:ready` is the vetter's;
+/// the producer transitions to these via [`flag_state_mode`], never a bare prose note.
+///
+/// WHO MOVES each is no longer uniform: `ai:design` and `ai:blocked-deploy` wait on a human, while
+/// `ai:blocked-on` sits with the VETTER (#161) — its typed deps are cleared automatically by the
+/// vetter's state-load, and [`classify_lane`] files it accordingly.
 ///
 /// `ai:blocked-infra` was the fourth and is RETIRED (#108) — see [`RETIRED_STATE_LABEL`].
 const PRODUCER_STATE_LABELS: [&str; 3] = ["ai:design", "ai:blocked-deploy", "ai:blocked-on"];
@@ -7617,12 +7652,23 @@ fn producer_state_plan(pr_json: &Value, target: &str, comment_body: &str) -> Pro
     }
 }
 
-/// `flag-blocked-{deploy,infra,on}` / `flag-design`: the producer's OWN state-transition — move a PR
+/// `flag-blocked-{deploy,on}` / `flag-design`: the producer's OWN state-transition — move a PR
 /// into exactly one modeled `ai:*` state carrying a `🤖 ai:producer` reason. This IS the FSM hand-off:
 /// the producer never narrates a hand-off as a standalone prose note; it transitions here and the
 /// prose rides as the reason. A human override (`human:*` label / native review) is sacred (exit 3);
 /// the transition strips sibling `ai:*` labels so a PR holds one state, and re-flagging is idempotent.
-fn flag_state_mode(slug: &str, pr: &str, target: &str, reason: &str, dry_run: bool) -> i32 {
+///
+/// `blocked_by` is non-empty only for `ai:blocked-on` (via [`flag_blocked_on_mode`], which REFUSES
+/// an empty set before this is reached): the typed deps ride as machine-readable lines in the same
+/// comment as the prose reason — see [`state_comment`].
+fn flag_state_mode(
+    slug: &str,
+    pr: &str,
+    target: &str,
+    reason: &str,
+    blocked_by: &[BlockedByRef],
+    dry_run: bool,
+) -> i32 {
     if reason.trim().is_empty() {
         eprintln!(
             "usage: pr-review-report flag-<state> <owner/repo> <pr> \"<reason>\" [--dry-run]"
@@ -7643,7 +7689,7 @@ fn flag_state_mode(slug: &str, pr: &str, target: &str, reason: &str, dry_run: bo
         eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
         return 1;
     };
-    let comment = format!("🤖 ai:producer\n{}: {reason}", state_noun(target));
+    let comment = state_comment(target, reason, blocked_by);
     let (to_remove, has_target, skip_comment) =
         match producer_state_plan(&pr_json, target, &comment) {
             ProducerStatePlan::RefuseHuman => {
@@ -7724,6 +7770,603 @@ fn flag_state_mode(slug: &str, pr: &str, target: &str, reason: &str, dry_run: bo
         }
     );
     0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ai:blocked-on — typed dependencies + the vetter's automated clearance (#161).
+//
+// Human ruling (verbatim): "things that are blocked on other things due to a dependency should sit
+// with the vetter, not with a human, it should be possible to automate the judgement about whether
+// a dependency has been cleared." And: "merging a dependency isn't a separate responsibility, it's
+// just something that happens through normal merging of ready items, it is the ai's responsibility
+// to present things that are truly ready."
+//
+// The dependency therefore lives as a TYPED reference (`blocked-by <owner/repo#n>` lines in the
+// flag comment, parsed by the one `owner/repo#number` parser), never as prose to be classified —
+// substring-classification of human-readable text is the defect class the org rejects. A new flag
+// without at least one typed ref is REFUSED: fail closed on the exact input that makes the state
+// automatable. The vetter's state-load runs the clearance check every run; a flag with no typed
+// refs (the legacy prose-only set) or a ref that no longer resolves is MANUAL-REVIEW — visible,
+// named, never auto-cleared and never silently stuck.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The line a blocked-on flag comment stores each typed dependency on, and the clearance check
+/// reads back. Same mechanism as [`VET_PROTOCOL_PREFIX`]: a machine-readable line INSIDE the
+/// trusted comment, matched by line prefix — structural, never a classification of the prose.
+const BLOCKED_BY_PREFIX: &str = "blocked-by ";
+
+/// ONE typed dependency of an `ai:blocked-on` PR — the `owner/repo#n` it waits on.
+///
+/// The spelling is the codebase's ONE subject-reference spelling (`owner/repo#number`, via
+/// [`parse_pr_ref`] — the same string every MCP `pr` argument and queue row uses). It is not a
+/// [`SubjectRef`]: that type carries the GitHub-RESOLVED `url`/`title`, which a flag written before
+/// the dep is looked up does not have and must not fabricate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BlockedByRef {
+    /// `owner/repo`.
+    repo: String,
+    number: u64,
+}
+
+impl BlockedByRef {
+    /// Parse through [`parse_pr_ref`] — the one parser — so a garbage ref is REFUSED here, before
+    /// any write, rather than stored and discovered by the clearance check later.
+    fn parse(s: &str) -> Result<Self, String> {
+        parse_pr_ref(s).map(|(repo, number)| BlockedByRef { repo, number })
+    }
+
+    /// The canonical rendering. Round-trips through [`BlockedByRef::parse`].
+    fn render(&self) -> String {
+        format!("{}#{}", self.repo, self.number)
+    }
+}
+
+/// PURE: the `🤖 ai:producer` comment one producer state-transition posts. For `ai:blocked-on` the
+/// typed deps ride as one [`BLOCKED_BY_PREFIX`] line each, AFTER the prose reason — alongside the
+/// WHY, not instead of it. The other states carry no deps and emit exactly the old two-line shape.
+fn state_comment(target: &str, reason: &str, blocked_by: &[BlockedByRef]) -> String {
+    let mut c = format!("🤖 ai:producer\n{}: {reason}", state_noun(target));
+    for r in blocked_by {
+        c.push('\n');
+        c.push_str(BLOCKED_BY_PREFIX);
+        c.push_str(&r.render());
+    }
+    c
+}
+
+/// PURE guard: the typed refs a NEW blocked-on flag must carry. Empty is refused — an
+/// `ai:blocked-on` without a machine-readable dependency is exactly the state the clearance check
+/// cannot judge, and creating more of it is the thing #161 forbids. Any single garbage ref refuses
+/// the whole flag (fail closed, before any write).
+fn blocked_by_guard(raw: &[String]) -> Result<Vec<BlockedByRef>, String> {
+    if raw.is_empty() {
+        return Err(
+            "a blocked-on flag REQUIRES at least one typed dependency: repeat \
+             --blocked-by <owner/repo#n> for each PR this one waits on. The prose reason stays \
+             for the WHY; the typed ref is what lets the vetter clear the flag when the dep \
+             merges (#161)"
+                .to_string(),
+        );
+    }
+    raw.iter().map(|s| BlockedByRef::parse(s)).collect()
+}
+
+/// `flag-blocked-on`: the blocked-on hand-off, refused without at least one typed `--blocked-by`
+/// ref. The refs are validated BEFORE [`flag_state_mode`] fetches anything, so a refusal costs no
+/// network and writes nothing.
+fn flag_blocked_on_mode(
+    slug: &str,
+    pr: &str,
+    reason: &str,
+    blocked_by: &[String],
+    dry_run: bool,
+) -> i32 {
+    let refs = match blocked_by_guard(blocked_by) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    flag_state_mode(slug, pr, "ai:blocked-on", reason, &refs, dry_run)
+}
+
+/// PURE: the LIVE blocked-on flag among the trusted `🤖 ai:producer` comment bodies — the most
+/// recent one carrying a `Blocked-on:` payload line. A producer re-flag supersedes the earlier
+/// flag, the same most-recent-wins rule every other trusted-comment read uses; other producer
+/// notes (deploy confirmations, `Blocked-deploy:`, `Design-question:`) are not flags and never
+/// match.
+fn live_blocked_on_flag(producer_comments: &[String]) -> Option<String> {
+    producer_comments
+        .iter()
+        .rev()
+        .find(|b| b.lines().any(|l| l.starts_with("Blocked-on:")))
+        .cloned()
+}
+
+/// PURE: every [`BLOCKED_BY_PREFIX`] line of one flag comment, each parsed through the one parser.
+/// A line that carries the prefix but does not parse is returned as `Err` — FAIL CLOSED: a
+/// malformed typed dep routes the flag to manual review, it is never silently dropped (dropping it
+/// could clear a flag whose real dependency was the unreadable one).
+fn blocked_by_lines(flag_body: &str) -> Vec<Result<BlockedByRef, String>> {
+    flag_body
+        .lines()
+        .filter_map(|l| l.strip_prefix(BLOCKED_BY_PREFIX))
+        .map(BlockedByRef::parse)
+        .collect()
+}
+
+/// The live state of ONE resolved dependency, as a typed discriminant — never a substring judgement
+/// on a message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DepState {
+    Open,
+    Merged,
+    Closed,
+}
+
+impl DepState {
+    fn as_str(self) -> &'static str {
+        match self {
+            DepState::Open => "open",
+            DepState::Merged => "merged",
+            DepState::Closed => "closed",
+        }
+    }
+}
+
+/// PURE: one dependency's [`DepState`] from the JSON `gh` returned for it. Exactly the three states
+/// GitHub defines are readable; anything else is `None` — unresolvable, fail closed — for the same
+/// reason [`Merge::Unknown`] is never mergeable: a state that cannot be identified is not one of
+/// the states in force.
+fn parse_dep_state(json: &Value) -> Option<DepState> {
+    match json.get("state").and_then(|s| s.as_str()) {
+        Some("OPEN") => Some(DepState::Open),
+        Some("MERGED") => Some(DepState::Merged),
+        Some("CLOSED") => Some(DepState::Closed),
+        _ => None,
+    }
+}
+
+/// Resolve ONE typed dependency's live state: as a PR first (the modeled dependency), then as an
+/// issue (`gh pr view` refuses an issue number, and a dep typed as an issue still resolves — an
+/// issue closing is its "merged"). Both failing is `None` — the ref no longer resolves (deleted
+/// repo, transferred subject, auth) — which the clearance decision routes to manual review.
+fn dep_state(r: &BlockedByRef) -> Option<DepState> {
+    let n = r.number.to_string();
+    if let Some(j) = gh_json(&["pr", "view", &n, "-R", &r.repo, "--json", "state"]) {
+        return parse_dep_state(&j);
+    }
+    if let Some(j) = gh_json(&["issue", "view", &n, "-R", &r.repo, "--json", "state"]) {
+        return parse_dep_state(&j);
+    }
+    None
+}
+
+/// What the clearance check decided about ONE `ai:blocked-on` PR. The three outcomes PARTITION the
+/// input — every flag lands in exactly one:
+#[derive(Debug, PartialEq, Eq)]
+enum BlockedOnClearance {
+    /// Every typed dep resolved and every one is MERGED or CLOSED: clear the label. The PR then
+    /// re-enters the ordinary un-vetted path and is re-vetted fresh at its current head — the dep
+    /// landing may have changed what correct means, so the re-vet is the point, never a rubber
+    /// stamp back to `ai:ready`.
+    Clear {
+        resolved: Vec<(BlockedByRef, DepState)>,
+    },
+    /// At least one dep is still OPEN (and nothing needs eyes): the flag holds, untouched.
+    Hold { open: Vec<BlockedByRef> },
+    /// The flag cannot be judged automatically: no typed refs at all (a legacy prose-only flag), a
+    /// malformed `blocked-by` line, or a ref that no longer resolves. Never auto-cleared, never
+    /// silently held — every reason names its ref and why.
+    ManualReview { reasons: Vec<String> },
+}
+
+/// PURE: the clearance decision for one live flag's parsed dep lines. `resolve` is injected so the
+/// partition is drivable without a network.
+///
+/// Precedence: MANUAL-REVIEW dominates HOLD dominates CLEAR. A broken typed record (malformed line,
+/// unresolvable ref) needs eyes NOW even when another dep is still open — holding silently would
+/// leave the broken ref undiscovered until it became the last dep standing, which is "silently
+/// stuck" with extra steps. `Clear` requires every dep to have positively resolved MERGED/CLOSED;
+/// an empty dep set can therefore never clear (it is manual review by the first arm).
+fn blocked_on_clearance(
+    deps: &[Result<BlockedByRef, String>],
+    resolve: impl Fn(&BlockedByRef) -> Option<DepState>,
+) -> BlockedOnClearance {
+    if deps.is_empty() {
+        return BlockedOnClearance::ManualReview {
+            reasons: vec![
+                "no typed blocked-by refs on the live flag (legacy prose-only flag) — a human \
+                 re-flags it with --blocked-by <owner/repo#n> to make clearance automatable, or \
+                 rules on it (#161)"
+                    .to_string(),
+            ],
+        };
+    }
+    let mut reasons: Vec<String> = Vec::new();
+    let mut open: Vec<BlockedByRef> = Vec::new();
+    let mut resolved: Vec<(BlockedByRef, DepState)> = Vec::new();
+    for d in deps {
+        match d {
+            Err(e) => reasons.push(format!("malformed blocked-by line: {e}")),
+            Ok(r) => match resolve(r) {
+                None => reasons.push(format!(
+                    "{} does not resolve (deleted repo, transferred subject, or unreadable state) \
+                     — clearance cannot be judged",
+                    r.render()
+                )),
+                Some(DepState::Open) => open.push(r.clone()),
+                Some(st @ (DepState::Merged | DepState::Closed)) => resolved.push((r.clone(), st)),
+            },
+        }
+    }
+    if !reasons.is_empty() {
+        BlockedOnClearance::ManualReview { reasons }
+    } else if !open.is_empty() {
+        BlockedOnClearance::Hold { open }
+    } else {
+        BlockedOnClearance::Clear { resolved }
+    }
+}
+
+/// The marker the vetter's clearance record starts with. Trusted like every role marker — by
+/// AUTHOR, via [`trusted_comments`] — and recognisable to the leak check ([`leak_reason`]): an
+/// unlabelled PR whose newest trusted hand-off is this marker is a PR the CLEARANCE un-labelled (a
+/// modeled transition into un-vetted), not the producer acting outside the FSM.
+const BLOCKED_ON_CLEARED_MARKER: &str = "🤖 ai:vetter\nBlocked-on cleared:";
+
+/// PURE: the `🤖 ai:vetter` comment the clearance transition posts, naming each dep and the state
+/// that cleared it.
+///
+/// Deliberately NOT a verdict: it carries no `vet-protocol` stamp and never the words
+/// `Reviewed <sha>:`, so once it is the most-recent vetter comment, [`vetted_at_head`] is FALSE
+/// even at an unmoved head — which is the mechanism. Clearing the label alone would leave a PR
+/// whose old verdict still pins the current head reading as vetted, i.e. a rubber stamp back to
+/// ready; this comment is what forces the fresh re-vet the ruling asks for.
+fn blocked_on_cleared_comment(resolved: &[(BlockedByRef, DepState)]) -> String {
+    let deps: Vec<String> = resolved
+        .iter()
+        .map(|(r, st)| format!("{} {}", r.render(), st.as_str()))
+        .collect();
+    format!(
+        "{BLOCKED_ON_CLEARED_MARKER} {} — label cleared, PR re-enters vetting fresh at its \
+         current head",
+        deps.join(", ")
+    )
+}
+
+#[cfg(test)]
+mod blocked_on_tests {
+    use super::*;
+    use serde_json::json;
+
+    // --- the typed ref: one parser, round-trip, fail closed -------------------------------------
+
+    #[test]
+    fn blocked_by_ref_round_trips_through_the_one_parser() {
+        for good in [
+            "rainlanguage/rain.flare#170",
+            "o/r#1",
+            "  o/r#7  ", // parse_pr_ref trims — the canonical render is untrimmed
+        ] {
+            let r = BlockedByRef::parse(good).expect("must parse");
+            assert_eq!(
+                BlockedByRef::parse(&r.render()),
+                Ok(r.clone()),
+                "render must round-trip through parse"
+            );
+        }
+        assert_eq!(
+            BlockedByRef::parse("rainlanguage/rainix#289"),
+            Ok(BlockedByRef {
+                repo: "rainlanguage/rainix".to_string(),
+                number: 289
+            })
+        );
+    }
+
+    #[test]
+    fn blocked_by_ref_rejects_garbage() {
+        // FAIL CLOSED: anything that is not strictly `owner/repo#number` refuses. Prose, bare
+        // numbers, path#line spellings, zero, and empty components are all garbage.
+        for bad in [
+            "",
+            "waiting on #9",
+            "#9",
+            "o/r",
+            "o/r#",
+            "o/r#0",
+            "o/r#x",
+            "o//#3",
+            "/r#3",
+            "o/#3",
+            "a/b/c#1",
+            "src/lib/Foo.sol#L3",
+        ] {
+            assert!(
+                BlockedByRef::parse(bad).is_err(),
+                "{bad:?} must not parse as a typed dep"
+            );
+        }
+    }
+
+    // --- the flag: refusal without a typed ref, and the comment shape ---------------------------
+
+    #[test]
+    fn a_new_flag_without_a_typed_ref_is_refused() {
+        // The whole automation is gated on the typed ref, so its ABSENCE is the one input the
+        // transition must refuse — fail closed on the input that makes the state automatable.
+        let err = blocked_by_guard(&[]).expect_err("empty --blocked-by must refuse");
+        assert!(
+            err.contains("--blocked-by <owner/repo#n>"),
+            "the refusal must name the exact repair: {err}"
+        );
+        // One garbage ref refuses the WHOLE flag before any write.
+        let err = blocked_by_guard(&["o/r#9".to_string(), "waiting on #9".to_string()])
+            .expect_err("a garbage ref must refuse the flag");
+        assert!(
+            err.contains("waiting on #9"),
+            "the refusal names the ref: {err}"
+        );
+        // Valid refs pass, in order.
+        let refs = blocked_by_guard(&["o/r#9".to_string(), "a/b#2".to_string()]).unwrap();
+        assert_eq!(
+            refs.iter().map(BlockedByRef::render).collect::<Vec<_>>(),
+            vec!["o/r#9", "a/b#2"]
+        );
+    }
+
+    #[test]
+    fn the_flag_comment_carries_prose_and_typed_lines_and_round_trips() {
+        let refs = vec![
+            BlockedByRef::parse("o/r#9").unwrap(),
+            BlockedByRef::parse("a/b#2").unwrap(),
+        ];
+        let c = state_comment("ai:blocked-on", "waiting on the factory bump", &refs);
+        // ALONGSIDE, not instead of: the prose reason line survives verbatim…
+        assert_eq!(
+            c.lines().next(),
+            Some("🤖 ai:producer"),
+            "trusted marker first"
+        );
+        assert!(c.contains("Blocked-on: waiting on the factory bump"));
+        // …and each dep is ONE machine-readable line the clearance check reads back.
+        let parsed: Vec<BlockedByRef> = blocked_by_lines(&c)
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .expect("every written line parses");
+        assert_eq!(parsed, refs, "write → read is the identity");
+        // The other states keep the exact old two-line shape — no dep lines, ever.
+        assert_eq!(
+            state_comment("ai:blocked-deploy", "deploy failed", &[]),
+            "🤖 ai:producer\nBlocked-deploy: deploy failed"
+        );
+    }
+
+    #[test]
+    fn blocked_by_lines_is_line_anchored_and_fails_closed() {
+        // Mid-line mentions are prose, not typed deps — never classified.
+        assert!(blocked_by_lines("🤖 ai:producer\nBlocked-on: see blocked-by o/r#9").is_empty());
+        // A prefixed line that does NOT parse comes back as Err (→ manual review), never dropped:
+        // dropping it could clear a flag whose real dependency was the unreadable line.
+        let got = blocked_by_lines("🤖 ai:producer\nBlocked-on: x\nblocked-by nonsense here");
+        assert_eq!(got.len(), 1);
+        assert!(got[0].is_err(), "malformed typed line must surface as Err");
+    }
+
+    #[test]
+    fn the_live_flag_is_the_most_recent_blocked_on_comment() {
+        let older = state_comment(
+            "ai:blocked-on",
+            "old flag",
+            &[BlockedByRef::parse("o/r#1").unwrap()],
+        );
+        let newer = state_comment(
+            "ai:blocked-on",
+            "re-flag",
+            &[BlockedByRef::parse("o/r#2").unwrap()],
+        );
+        let unrelated = "🤖 ai:producer\ndeploy-confirmed at abc123".to_string();
+        let other_state = "🤖 ai:producer\nBlocked-deploy: rpc down".to_string();
+        assert_eq!(
+            live_blocked_on_flag(&[older.clone(), newer.clone(), unrelated, other_state]),
+            Some(newer),
+            "a re-flag supersedes; non-flag notes and other states never match"
+        );
+        assert_eq!(live_blocked_on_flag(&[]), None);
+    }
+
+    // --- the clearance partition (#157 lesson: disjoint outcomes get the swap-catching test) ----
+
+    fn r(s: &str) -> Result<BlockedByRef, String> {
+        Ok(BlockedByRef::parse(s).unwrap())
+    }
+
+    /// Drive [`blocked_on_clearance`] with a fixed resolver: #1 open, #2 merged, #3 closed,
+    /// #4 unresolvable.
+    fn decide(deps: &[Result<BlockedByRef, String>]) -> BlockedOnClearance {
+        blocked_on_clearance(deps, |d| match d.number {
+            1 => Some(DepState::Open),
+            2 => Some(DepState::Merged),
+            3 => Some(DepState::Closed),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn clearance_partitions_every_dep_combination() {
+        // NO typed refs (every legacy prose-only flag): manual review, never auto-anything.
+        let BlockedOnClearance::ManualReview { reasons } = decide(&[]) else {
+            panic!("no typed refs must be manual review");
+        };
+        assert!(
+            reasons[0].contains("no typed blocked-by refs"),
+            "the report says why: {reasons:?}"
+        );
+
+        // All deps MERGED or CLOSED — and only then — clears. A closed dep clears exactly like a
+        // merged one (closed-unmerged means the dependency is moot, not still pending).
+        assert!(matches!(
+            decide(&[r("o/r#2")]),
+            BlockedOnClearance::Clear { .. }
+        ));
+        assert!(matches!(
+            decide(&[r("o/r#3")]),
+            BlockedOnClearance::Clear { .. }
+        ));
+        let BlockedOnClearance::Clear { resolved } = decide(&[r("o/r#2"), r("o/r#3")]) else {
+            panic!("merged+closed must clear");
+        };
+        assert_eq!(
+            resolved,
+            vec![
+                (BlockedByRef::parse("o/r#2").unwrap(), DepState::Merged),
+                (BlockedByRef::parse("o/r#3").unwrap(), DepState::Closed),
+            ]
+        );
+
+        // ANY open dep holds — one open among cleared is held, not cleared.
+        let BlockedOnClearance::Hold { open } = decide(&[r("o/r#2"), r("o/r#1"), r("o/r#3")])
+        else {
+            panic!("an open dep must hold");
+        };
+        assert_eq!(open, vec![BlockedByRef::parse("o/r#1").unwrap()]);
+
+        // An unresolvable ref is manual review — even when every resolvable dep cleared…
+        let BlockedOnClearance::ManualReview { reasons } = decide(&[r("o/r#2"), r("o/r#404")])
+        else {
+            panic!("unresolvable must be manual review, never auto-cleared");
+        };
+        assert!(
+            reasons[0].contains("o/r#404") && reasons[0].contains("does not resolve"),
+            "the report names the ref and why: {reasons:?}"
+        );
+        // …and even when another dep is still open: a broken typed record needs eyes NOW, not
+        // when it becomes the last dep standing (that would be silently-stuck with extra steps).
+        assert!(matches!(
+            decide(&[r("o/r#1"), r("o/r#404")]),
+            BlockedOnClearance::ManualReview { .. }
+        ));
+        // A malformed stored line is the same class: manual review naming the line.
+        assert!(matches!(
+            decide(&[r("o/r#2"), Err("bad pr ref \"nonsense\"".to_string())]),
+            BlockedOnClearance::ManualReview { .. }
+        ));
+    }
+
+    #[test]
+    fn dep_state_parses_exactly_the_three_github_states() {
+        assert_eq!(
+            parse_dep_state(&json!({"state": "OPEN"})),
+            Some(DepState::Open)
+        );
+        assert_eq!(
+            parse_dep_state(&json!({"state": "MERGED"})),
+            Some(DepState::Merged)
+        );
+        assert_eq!(
+            parse_dep_state(&json!({"state": "CLOSED"})),
+            Some(DepState::Closed)
+        );
+        // Anything else is UNRESOLVABLE (→ manual review), never guessed into a state: a state
+        // that cannot be identified is not one of the states in force.
+        assert_eq!(parse_dep_state(&json!({"state": "DRAFT"})), None);
+        assert_eq!(parse_dep_state(&json!({"state": 3})), None);
+        assert_eq!(parse_dep_state(&json!({})), None);
+    }
+
+    // --- the clearance record un-vets, structurally --------------------------------------------
+
+    #[test]
+    fn the_clearance_comment_un_vets_the_pr_at_an_unmoved_head() {
+        let resolved = vec![
+            (BlockedByRef::parse("o/r#2").unwrap(), DepState::Merged),
+            (BlockedByRef::parse("a/b#3").unwrap(), DepState::Closed),
+        ];
+        let c = blocked_on_cleared_comment(&resolved);
+        assert!(c.starts_with(BLOCKED_ON_CLEARED_MARKER));
+        assert!(c.contains("o/r#2 merged") && c.contains("a/b#3 closed"));
+        // Structural, not incidental: the record must never spell a verdict pin ("Reviewed <sha>:")
+        // or a protocol stamp, because EITHER could make a stale verdict read current again.
+        assert!(
+            !c.contains("Reviewed "),
+            "a clearance is not a verdict: {c}"
+        );
+        assert!(!c.contains(VET_PROTOCOL_PREFIX));
+        // And therefore: once it is the newest vetter comment, the PR is un-vetted even though the
+        // old verdict still pins the CURRENT head — the re-vet is the point, not a rubber stamp.
+        let pr = json!({"comments": [
+            {"author": {"login": TRUSTED_AUTHOR},
+             "body": format!("🤖 ai:vetter\n{VET_PROTOCOL_PREFIX}{VET_PROTOCOL}\nReviewed sha1: ready — fine\ncost 40 — basis")},
+            {"author": {"login": TRUSTED_AUTHOR}, "body": c},
+        ]});
+        assert!(
+            !vetted_at_head(&pr, "sha1"),
+            "the clearance record must invalidate the stored verdict at the same head"
+        );
+    }
+
+    // --- the leak check knows a modeled clearance from a producer leak -------------------------
+
+    #[test]
+    fn leak_reason_treats_the_clearance_as_a_modeled_transition() {
+        let producer = "🤖 ai:producer\nBlocked-on: waiting\nblocked-by o/r#2".to_string();
+        let cleared = blocked_on_cleared_comment(&[(
+            BlockedByRef::parse("o/r#2").unwrap(),
+            DepState::Merged,
+        )]);
+        let verdict = "🤖 ai:vetter\nReviewed sha1: ready — fine".to_string();
+        // Pre-#161 behavior unchanged: a producer note on an unlabelled PR is a leak, named.
+        assert!(leak_reason(std::slice::from_ref(&producer))
+            .is_some_and(|r| r.contains("Blocked-on: waiting")));
+        // The clearance un-labelled the PR itself — that IS the transition, not a leak.
+        assert_eq!(leak_reason(&[producer.clone(), cleared.clone()]), None);
+        // A producer acting AFTER the clearance is unlabelled-with-a-hand-off again: a leak.
+        assert!(leak_reason(&[cleared.clone(), producer.clone()]).is_some());
+        // An ordinary verdict comment is not a hand-off marker and decides nothing.
+        assert!(leak_reason(&[producer, verdict]).is_some());
+        assert_eq!(leak_reason(&[cleared]), None);
+        assert_eq!(leak_reason(&[]), None);
+    }
+
+    // --- the state-load doc carries the blocked inventory --------------------------------------
+
+    #[test]
+    fn unvetted_doc_reports_held_and_manual_review_blocked_prs() {
+        let held = (
+            VetAction::SkipBlockedOn,
+            4u8,
+            json!({"pr": "o/r#5", "url": "https://github.com/o/r/pull/5",
+                   "action": "skip-blocked-on", "openDeps": ["a/b#9"]}),
+        );
+        let manual = (
+            VetAction::SkipBlockedOnManual,
+            4u8,
+            json!({"pr": "o/r#6", "url": "https://github.com/o/r/pull/6",
+                   "action": "blocked-on-manual-review",
+                   "blockedOnReasons": ["no typed blocked-by refs on the live flag"]}),
+        );
+        let vet = (VetAction::Vet, 0u8, json!({"pr": "o/r#7"}));
+        let doc = unvetted_doc(&[held, manual, vet], false, None);
+        // Each blocked outcome is ITS OWN count — never folded into skipVettedAtHead (#78 lesson)…
+        assert_eq!(doc["counts"]["skipBlockedOn"], json!(1));
+        assert_eq!(doc["counts"]["blockedOnManualReview"], json!(1));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(0));
+        assert_eq!(doc["counts"]["vet"], json!(1));
+        // …and each is VISIBLE unconditionally, naming what a reader needs: the held PR its open
+        // deps, the manual one its reasons. Silent is the one thing a blocked state may not be.
+        assert_eq!(doc["blockedOn"][0]["pr"], json!("o/r#5"));
+        assert_eq!(doc["blockedOn"][0]["openDeps"], json!(["a/b#9"]));
+        assert_eq!(doc["blockedOnManualReview"][0]["pr"], json!("o/r#6"));
+        assert_eq!(
+            doc["blockedOnManualReview"][0]["reasons"],
+            json!(["no typed blocked-by refs on the live flag"])
+        );
+        // Neither held nor manual-review PRs are offered for a verdict.
+        assert_eq!(doc["prs"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["prs"][0]["pr"], json!("o/r#7"));
+    }
 }
 
 /// The first `ai:*` label a PR carries, if any (a PR should hold at most one — the FSM invariant).
@@ -9484,9 +10127,11 @@ fn print_transition_result(result: Result<String, (i32, String)>) -> i32 {
 //
 // `human-queue --json` emits EVERY modeled state's inventory, not just the human-action ones, so the
 // dashboard can show where PRs pile up. Each producer PR lands in exactly ONE lane bucket by FSM
-// precedence (a human decision dominates a stale ai:* label; a producer-blocked hand-off next; then
-// an ai:ready PR whose verdict is not current at its head falls back to un-vetted; then the other
-// vetter verdicts; a label-less PR is a leak if the producer commented, else un-vetted).
+// precedence (a human decision dominates a stale ai:* label; a blocked hand-off next — filed under
+// the lane of whoever moves it: the vetter for `ai:blocked-on` (#161), the producer for
+// `ai:blocked-deploy`; then an ai:ready PR whose verdict is not current at its head falls back to
+// un-vetted; then the other vetter verdicts; a label-less PR is a leak if the producer commented,
+// else un-vetted).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The four FSM lanes, plus the `Leak` anti-lane (escaped the machine — not a modeled state).
@@ -9564,7 +10209,17 @@ fn classify_lane(
     }
     for b in PRODUCER_STATE_LABELS {
         if b != "ai:design" && has(b) {
-            return (Lane::ProducerBlocked, b.to_string());
+            // #161: `ai:blocked-on` files under the VETTER's lane — its next mover is the vetter,
+            // whose state-load clears the flag the run after every typed dep merges/closes and
+            // hands the PR straight back to vetting. `ai:blocked-deploy` still waits on a
+            // producer/human deploy resolution and stays producer-blocked. Same PRECEDENCE
+            // position for both: a blocked state still dominates a stale `ai:ready` label.
+            let lane = if b == "ai:blocked-on" {
+                Lane::VetLifecycle
+            } else {
+                Lane::ProducerBlocked
+            };
+            return (lane, b.to_string());
         }
     }
     // The retired state (#108) is still bucketed so a PR a pre-#108 run parked stays VISIBLE in the
@@ -9590,6 +10245,28 @@ fn classify_lane(
     } else {
         (Lane::VetLifecycle, "un-vetted".to_string())
     }
+}
+
+/// PURE: is an UNLABELLED producer PR a leak, and with what reason? `trusted_bodies` is every
+/// trusted-account comment body, in chronological order.
+///
+/// Walk newest→oldest for the first STATE-BEARING hand-off marker: a `🤖 ai:producer` note means
+/// the producer acted and left the PR in no modeled state — a leak, reported with that note as the
+/// reason (the pre-#161 behavior, unchanged). A vetter blocked-on clearance
+/// ([`BLOCKED_ON_CLEARED_MARKER`]) means the label removal WAS a modeled transition (#161): the PR
+/// is un-vetted by design, not leaked. A producer note posted AFTER the clearance supersedes it —
+/// the producer acting on an unlabelled PR is exactly what the leak bucket exists to catch.
+/// Ordinary vetter verdict comments are not hand-off markers and decide nothing here.
+fn leak_reason(trusted_bodies: &[String]) -> Option<String> {
+    for b in trusted_bodies.iter().rev() {
+        if b.starts_with(BLOCKED_ON_CLEARED_MARKER) {
+            return None;
+        }
+        if b.starts_with("🤖 ai:producer") {
+            return Some(b.replace('\n', " "));
+        }
+    }
+    None
 }
 
 /// A reference to ONE GitHub subject — an issue or a PR — in the ONE shape `human-queue --json`
@@ -9969,6 +10646,8 @@ fn human_queue_mode(json_out: bool) -> i32 {
 
     // Leak detection: an unlabeled PR the producer has commented on = a hand-off with no modeled
     // state (the FSM leaking). An unlabeled PR with NO producer comment is just freshly-open/unvetted.
+    // The pure decision is [`leak_reason`]: a vetter blocked-on CLEARANCE as the newest hand-off
+    // marker is a MODELED transition into un-vetted (#161), never a leak.
     let mut leaks: Vec<(SubjectRef, String)> = Vec::new();
     for subject in &unlabeled {
         let Some(j) = gh_json(&[
@@ -9982,9 +10661,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
         ]) else {
             continue;
         };
-        let notes = trusted_comments(&j, Some("🤖 ai:producer"));
-        if let Some(last) = notes.last() {
-            let reason = last.replace('\n', " ");
+        if let Some(reason) = leak_reason(&trusted_comments(&j, None)) {
             leaks.push((subject.clone(), reason));
         }
     }
@@ -10149,6 +10826,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
         "vet-lifecycle",
         "un-vetted",
     );
+    // #161: blocked-on is the VETTER's — its state-load clears the flag when every typed dep
+    // merges/closes and the PR re-enters vetting fresh. Filed with the vetter's work, not the
+    // producer's blocked states.
+    show_lane(
+        "BLOCKED-ON — vetter clears when every typed dep merges/closes",
+        "vet-lifecycle",
+        "ai:blocked-on",
+    );
     // vetter-verdicts
     if let Some(v) = buckets.get("ai:ready") {
         show("MERGE — ai:ready", v);
@@ -10173,15 +10858,12 @@ fn human_queue_mode(json_out: bool) -> i32 {
         "vetter-verdicts",
         "ai:close-candidate",
     );
-    // producer-blocked
+    // producer-blocked (`ai:blocked-on` prints with the vetter's group above — #161)
     if let Some(v) = buckets.get("ai:blocked-deploy") {
         show("BLOCKED-DEPLOY", v);
     }
     if let Some(v) = buckets.get("ai:blocked-infra") {
         show("BLOCKED-INFRA", v);
-    }
-    if let Some(v) = buckets.get("ai:blocked-on") {
-        show("BLOCKED-ON", v);
     }
     // human-decisions
     // RETIRED (#133) — shown so the PRs a pre-#133 run parked stay visible, and so this count is
@@ -11677,6 +12359,14 @@ enum VetAction {
     SkipDraft,
     SkipVetted,
     SkipOpenThreads,
+    /// `ai:blocked-on` with a typed dep still OPEN: the flag holds, the PR is not offered for a
+    /// verdict (a verdict would strip the modeled blocked state outside any transition, and the
+    /// ruling's whole point is that a blocked PR is not truly ready). The row names the open deps.
+    SkipBlockedOn,
+    /// `ai:blocked-on` the clearance check CANNOT judge — no typed refs (a legacy prose-only
+    /// flag), a malformed `blocked-by` line, an unresolvable ref, or a clearance write that
+    /// failed. Never auto-cleared, never vetted, never silent: the row names every reason (#161).
+    SkipBlockedOnManual,
 }
 
 impl VetAction {
@@ -11687,6 +12377,8 @@ impl VetAction {
             VetAction::SkipDraft => "skip-draft",
             VetAction::SkipVetted => "skip-vetted-at-head",
             VetAction::SkipOpenThreads => "skip-open-threads",
+            VetAction::SkipBlockedOn => "skip-blocked-on",
+            VetAction::SkipBlockedOnManual => "blocked-on-manual-review",
         }
     }
 }
@@ -11895,6 +12587,8 @@ fn unvetted_doc(
     let mut vet: Vec<(u8, String, Value)> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
     let mut open_threads: Vec<Value> = Vec::new();
+    let mut blocked_on: Vec<Value> = Vec::new();
+    let mut blocked_manual: Vec<Value> = Vec::new();
     let (mut n_draft, mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize, 0usize);
     for (action, prio, row) in rows {
         match action {
@@ -11923,6 +12617,25 @@ fn unvetted_doc(
                                 .unwrap_or(Value::Null),
                         }));
                     }
+                    // Held: a typed dep is still open. The row says which, so a reader can tell
+                    // "correctly waiting on rainix#289" from "stuck" without opening the PR.
+                    VetAction::SkipBlockedOn => {
+                        blocked_on.push(serde_json::json!({
+                            "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+                            "url": row.get("url").cloned().unwrap_or(Value::Null),
+                            "openDeps": row.get("openDeps").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
+                    // UNCONDITIONAL, like `openThreads`: manual-review is the one blocked outcome
+                    // that says the machine CANNOT move this PR — hiding it behind an optional
+                    // argument is how the state would go silently stuck (#161).
+                    VetAction::SkipBlockedOnManual => {
+                        blocked_manual.push(serde_json::json!({
+                            "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+                            "url": row.get("url").cloned().unwrap_or(Value::Null),
+                            "reasons": row.get("blockedOnReasons").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
                     // `Vet` is taken by the arm above; the only action left here is vetted-at-head.
                     VetAction::SkipVetted | VetAction::Vet => n_vetted += 1,
                 }
@@ -11935,6 +12648,9 @@ fn unvetted_doc(
     let (page_rows, more) = page(vet, limit);
     let prs: Vec<Value> = page_rows.into_iter().map(|(_, _, r)| r).collect();
     let (open_threads, more_threads) = page(open_threads, limit);
+    let (n_blocked, n_blocked_manual) = (blocked_on.len(), blocked_manual.len());
+    let (blocked_on, more_blocked) = page(blocked_on, limit);
+    let (blocked_manual, more_blocked_manual) = page(blocked_manual, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "open": rows.len(),
@@ -11943,6 +12659,8 @@ fn unvetted_doc(
             "skipHumanDecided": n_human,
             "skipVettedAtHead": n_vetted,
             "skipOpenThreads": n_threads,
+            "skipBlockedOn": n_blocked,
+            "blockedOnManualReview": n_blocked_manual,
         },
         "prs": prs,
         // How many vet-able PRs this page LEFT BEHIND. A caller that reads `prs.len()` as the whole
@@ -11950,6 +12668,10 @@ fn unvetted_doc(
         "more": more,
         "openThreads": open_threads,
         "moreOpenThreads": more_threads,
+        "blockedOn": blocked_on,
+        "moreBlockedOn": more_blocked,
+        "blockedOnManualReview": blocked_manual,
+        "moreBlockedOnManualReview": more_blocked_manual,
     });
     if include_skipped {
         let (rows, more_skipped) = page(skipped, limit);
@@ -12368,6 +13090,114 @@ fn record_cc_verdict_apply(
 ///
 /// `limit` bounds the returned PAGE, not the work: every open PR is still classified (the counts are
 /// whole-queue), only the listed rows are capped. `None` = unbounded, the CLI shape.
+/// The state-load's handling of ONE open `ai:blocked-on` PR — the clearance check (#161), run
+/// EVERY vetter state-load so a dependent PR unblocks within one vetter run of its dependency
+/// merging, with no human polling.
+///
+/// - a human decision parks the PR against every AI actor, clearance included → the ordinary
+///   `skip-human-decided` row, nothing touched;
+/// - every typed dep MERGED/CLOSED → the clearance TRANSITION: post the [`blocked_on_cleared_comment`]
+///   (which makes [`vetted_at_head`] false even at an unmoved head), remove the label, re-fetch,
+///   and classify the fresh PR through the ordinary row path — it re-vets NORMALLY, gates included;
+/// - any dep still OPEN → held, untouched, withheld from the vet queue (`skip-blocked-on`, open
+///   deps named). A verdict on a held PR would strip the modeled blocked state outside any
+///   transition, which is how a blocked PR would get presented before it is truly ready;
+/// - no typed refs (the legacy prose-only flags), a malformed line, an unresolvable ref, or a
+///   failed clearance write → `blocked-on-manual-review`, reasons named — visible, never
+///   auto-anything.
+///
+/// Comment BEFORE label removal: if the removal fails, the next state-load recomputes `Clear`,
+/// dedups the identical comment, and retries the removal. The other order can strand a label-less
+/// PR that still reads vetted-at-head — silently stuck, the exact outcome this forbids.
+fn blocked_on_state_load_row(
+    slug: &str,
+    num: u64,
+    url: &str,
+    title: &str,
+    detail: &Value,
+) -> Result<(VetAction, u8, Value), String> {
+    let head = detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if pr_human_sacred(detail, head) {
+        return Ok(unvetted_row(slug, num, url, title, detail));
+    }
+    let base_row = |action: VetAction, key: &str, values: Vec<String>| {
+        let (_, prio, mut row) = unvetted_row(slug, num, url, title, detail);
+        let obj = row.as_object_mut().expect("row is an object");
+        obj.insert("action".into(), Value::from(action.as_str()));
+        obj.insert(
+            key.to_string(),
+            Value::Array(values.into_iter().map(Value::from).collect()),
+        );
+        (action, prio, row)
+    };
+    let manual = |reasons: Vec<String>| {
+        base_row(VetAction::SkipBlockedOnManual, "blockedOnReasons", reasons)
+    };
+    let flag = live_blocked_on_flag(&trusted_comments(detail, Some("🤖 ai:producer")));
+    let deps = flag.as_deref().map(blocked_by_lines).unwrap_or_default();
+    match blocked_on_clearance(&deps, dep_state) {
+        BlockedOnClearance::Hold { open } => Ok(base_row(
+            VetAction::SkipBlockedOn,
+            "openDeps",
+            open.iter().map(BlockedByRef::render).collect(),
+        )),
+        BlockedOnClearance::ManualReview { reasons } => Ok(manual(reasons)),
+        BlockedOnClearance::Clear { resolved } => {
+            let comment = blocked_on_cleared_comment(&resolved);
+            let n = num.to_string();
+            let already = last_vetter_comment(detail).as_deref() == Some(comment.as_str());
+            if !already && !gh_run(&["pr", "comment", &n, "-R", slug, "--body", &comment]) {
+                return Ok(manual(vec![
+                    "every typed dep is merged/closed but posting the clearance comment FAILED — \
+                     nothing was cleared; the next state-load retries"
+                        .to_string(),
+                ]));
+            }
+            if !gh_run(&[
+                "pr",
+                "edit",
+                &n,
+                "-R",
+                slug,
+                "--remove-label",
+                "ai:blocked-on",
+            ]) {
+                return Ok(manual(vec![
+                    "clearance comment posted but removing ai:blocked-on FAILED — the next \
+                     state-load dedups the comment and retries the removal"
+                        .to_string(),
+                ]));
+            }
+            // Re-fetch: the row must describe the LIVE PR (label gone, the clearance comment now
+            // the newest vetter comment ⇒ un-vetted), not the pre-clearance JSON in hand.
+            let Some(fresh) = gh_json(&[
+                "pr",
+                "view",
+                &n,
+                "-R",
+                slug,
+                "--json",
+                "headRefOid,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
+            ]) else {
+                return Err(format!(
+                    "error: `gh pr view {slug}#{num}` failed after blocked-on clearance — \
+                     aborting rather than report an incomplete vet queue"
+                ));
+            };
+            Ok(gate_open_threads(
+                unvetted_row(slug, num, url, title, &fresh),
+                || {
+                    let (owner, repo) = slug.split_once('/')?;
+                    unresolved_threads(owner, repo, num)
+                },
+            ))
+        }
+    }
+}
+
 fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, String> {
     let assignee = pr_assignee();
     let mut args: Vec<String> = vec!["search".into(), "prs".into()];
@@ -12437,6 +13267,12 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
                 "error: `gh pr view {slug}#{num}` failed — aborting rather than report an incomplete vet queue"
             ));
         };
+        // #161: an `ai:blocked-on` PR takes the clearance path, not the vet path — see
+        // [`blocked_on_state_load_row`]. Checked on the DETAIL labels (fresh), not the search row.
+        if label_names(&detail).iter().any(|l| l == "ai:blocked-on") {
+            rows.push(blocked_on_state_load_row(&slug, num, url, title, &detail)?);
+            continue;
+        }
         // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
         // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
         // An unsplittable slug yields None (fail-closed: not vetted this run), never a dropped PR.
@@ -12465,13 +13301,15 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     }
     let c = &doc["counts"];
     println!(
-        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads)",
+        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review)",
         c["vet"],
         c["open"],
         c["skipDraft"],
         c["skipHumanDecided"],
         c["skipVettedAtHead"],
-        c["skipOpenThreads"]
+        c["skipOpenThreads"],
+        c["skipBlockedOn"],
+        c["blockedOnManualReview"]
     );
     for p in doc["prs"].as_array().into_iter().flatten() {
         println!(
@@ -12492,6 +13330,26 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
             "  {}  [withheld · {} unresolved thread(s)]",
             t["pr"].as_str().unwrap_or(""),
             t["unresolvedThreads"]
+        );
+    }
+    // The blocked-on inventory (#161), unconditionally. Held PRs name their open deps; a
+    // manual-review PR is the one blocked outcome the machine cannot move, so it is never silent.
+    for b in doc["blockedOn"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [blocked-on · waiting on {}]",
+            b["pr"].as_str().unwrap_or(""),
+            b["openDeps"]
+        );
+    }
+    for b in doc["blockedOnManualReview"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        println!(
+            "  {}  [blocked-on MANUAL REVIEW · {}]",
+            b["pr"].as_str().unwrap_or(""),
+            b["reasons"]
         );
     }
     0
@@ -14263,7 +15121,7 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — re-call after recording verdicts for the next page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — re-call after recording verdicts for the next page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -18263,6 +19121,16 @@ enum Cmd {
         /// line and makes the outcome `infra-down` rather than `ok` (#108).
         #[arg(long)]
         infra: Option<String>,
+        /// The pre-model gate that SKIPPED this tick (`usage-gate` on a pause, #160). Present
+        /// means the model never started and the tick was a deliberate skip, not a failure: the
+        /// row carries `skipped` + `skipReason` and its outcome is `skipped`. A config REFUSAL
+        /// (usage-gate exit 2) is NOT a skip — the runners abort loudly on it and write no row.
+        #[arg(long, requires = "skip_reason")]
+        skipped: Option<String>,
+        /// The gate's own output line, verbatim, recorded as `skipReason` beside `skipped` —
+        /// the two arrive together or not at all.
+        #[arg(long, requires = "skipped")]
+        skip_reason: Option<String>,
     },
     /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
     ///
@@ -18393,12 +19261,19 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Producer transition: flag a PR into ai:blocked-on (waiting on a dependency PR).
+    /// Producer transition: flag a PR into ai:blocked-on (waiting on a dependency PR). REFUSED
+    /// without at least one typed `--blocked-by` ref — the typed ref is what makes clearance
+    /// automatable (#161); the prose reason stays for the WHY.
     FlagBlockedOn {
         /// owner/repo
         slug: String,
         pr: String,
         reason: Vec<String>,
+        /// A dependency this PR waits on, as `owner/repo#n` (repeatable — a PR can wait on
+        /// several). Stored machine-readably in the flag comment; the vetter's clearance check
+        /// reads these back, never the prose.
+        #[arg(long = "blocked-by", value_name = "OWNER/REPO#N")]
+        blocked_by: Vec<String>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -20146,6 +21021,8 @@ fn main() {
             exit_code,
             preflight_missing,
             infra,
+            skipped,
+            skip_reason,
         } => run_metrics_mode(
             &trace,
             &RunIdentity {
@@ -20156,6 +21033,7 @@ fn main() {
             exit_code,
             &preflight_missing,
             infra.as_deref(),
+            skipped.as_deref().zip(skip_reason.as_deref()),
         ),
         Cmd::Preflight => preflight_mode(),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
@@ -20192,19 +21070,27 @@ fn main() {
             pr,
             reason,
             dry_run,
-        } => flag_state_mode(&slug, &pr, "ai:blocked-deploy", &reason.join(" "), dry_run),
+        } => flag_state_mode(
+            &slug,
+            &pr,
+            "ai:blocked-deploy",
+            &reason.join(" "),
+            &[],
+            dry_run,
+        ),
         Cmd::FlagBlockedOn {
             slug,
             pr,
             reason,
+            blocked_by,
             dry_run,
-        } => flag_state_mode(&slug, &pr, "ai:blocked-on", &reason.join(" "), dry_run),
+        } => flag_blocked_on_mode(&slug, &pr, &reason.join(" "), &blocked_by, dry_run),
         Cmd::FlagDesign {
             slug,
             pr,
             reason,
             dry_run,
-        } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), dry_run),
+        } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), &[], dry_run),
         Cmd::MigrateReject { apply } => migrate_reject_mode(apply),
         Cmd::HumanRule {
             slug,
@@ -22164,6 +23050,7 @@ mod startup_split_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert_eq!(doc["stage"], STAGE_FINAL);
         assert_eq!(doc["bootMs"], 1125);
@@ -22200,12 +23087,120 @@ mod startup_split_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert!(doc.get("runId").is_none());
         assert!(doc.get("role").is_none());
         assert!(doc.get("outcome").is_none());
         assert_eq!(doc["bootMs"], 1125);
         assert_eq!(doc["ttlMs"], 297_016);
+    }
+}
+
+/// The usage-gate SKIP row (#160).
+///
+/// A paused tick used to leave NO runs.jsonl row at all, so the dashboard drew nine consecutive
+/// gated ticks as a dead cron. These pin the row's contract — a sibling renderer is built against
+/// exactly these fields — and the line between a SKIP (exit 10, row) and a config REFUSAL
+/// (exit 2, loud abort, no row), which must not conflate.
+#[cfg(test)]
+mod skip_row_tests {
+    use super::{
+        classify_outcome, final_record, InfraRecord, RunIdentity, RunMetrics, ToolingReport,
+        TraceOutcome, STAGE_FINAL,
+    };
+
+    /// The gate's real ceiling-pause line, verbatim — em-dash, percent signs and all — because the
+    /// contract is "the gate's own output line", not a normalization of it.
+    const PAUSE_LINE: &str =
+        "PAUSE: 91% of the weekly budget used (endpoint) — at/over the 90% ceiling";
+
+    fn id() -> RunIdentity<'static> {
+        RunIdentity {
+            run_id: Some("20260731T090001Z"),
+            role: Some("producer"),
+            model: Some("claude-fable-5"),
+        }
+    }
+
+    /// The full contract of one skip row: the typed discriminant, the verbatim reason, and every
+    /// standard field a consumer already reconciles rows by.
+    #[test]
+    fn a_skip_row_carries_the_gate_and_its_reason_verbatim() {
+        let doc = final_record(
+            "/runs/20260731T090001Z.jsonl",
+            &RunMetrics::default(),
+            &id(),
+            Some((10, TraceOutcome::Skipped)),
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            Some(("usage-gate", PAUSE_LINE)),
+        );
+        assert_eq!(doc["skipped"], "usage-gate");
+        assert_eq!(doc["skipReason"], PAUSE_LINE, "the reason must be verbatim");
+        assert_eq!(doc["stage"], STAGE_FINAL);
+        assert_eq!(doc["runId"], "20260731T090001Z");
+        assert_eq!(doc["role"], "producer");
+        assert_eq!(doc["model"], "claude-fable-5");
+        assert_eq!(doc["exitCode"], 10);
+        assert_eq!(
+            doc["outcome"], "skipped",
+            "a paused tick is neither ok nor error — those are the words that drew a dead cron"
+        );
+    }
+
+    /// ABSENT, not null: a consumer keys on the field existing at all, and every record written
+    /// before the skip fields must stay byte-identical to what this build would write for it.
+    #[test]
+    fn an_unskipped_row_omits_both_skip_fields_entirely() {
+        let doc = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &id(),
+            Some((0, TraceOutcome::Ok)),
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+        );
+        assert!(
+            doc.get("skipped").is_none(),
+            "skipped must be absent, not null, on a run that ran"
+        );
+        assert!(
+            doc.get("skipReason").is_none(),
+            "skipReason must be absent, not null, on a run that ran"
+        );
+    }
+
+    /// The classification half of the same contract: a skip outranks what the empty trace would
+    /// otherwise read as. The runner records the GATE's exit 10 on the row, and 10 over zero
+    /// events classifies `error` — the very rendering the skip row exists to correct.
+    #[test]
+    fn a_skip_classifies_skipped_where_the_bare_exit_code_would_read_error() {
+        assert_eq!(
+            classify_outcome("", 10, true, &[], &InfraRecord::default()),
+            TraceOutcome::Skipped
+        );
+        assert_eq!(
+            classify_outcome("", 10, false, &[], &InfraRecord::default()),
+            TraceOutcome::Error,
+            "without the skip fact, the same row reads as an error — the flag is load-bearing"
+        );
+        assert_eq!(TraceOutcome::Skipped.as_str(), "skipped");
+    }
+
+    /// A config REFUSAL is NOT a skip. The runners abort loudly on usage-gate exit 2 and write no
+    /// row at all — so nothing may classify a refusal's exit as `skipped` unless the runner
+    /// explicitly said so, and the runner never does.
+    #[test]
+    fn a_refusal_exit_is_never_skipped_without_the_flag() {
+        assert_eq!(
+            classify_outcome("", 2, false, &[], &InfraRecord::default()),
+            TraceOutcome::Error,
+            "a refusal must stay loud, never dressed up as pacing"
+        );
     }
 }
 
@@ -22717,6 +23712,7 @@ mod usage_probe_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert_eq!(doc["rateLimits"]["five_hour"]["status"], "allowed");
         // The terminal totals stay authoritative — including the output count the probe cannot
@@ -22733,6 +23729,7 @@ mod usage_probe_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert!(
             bare["rateLimits"].is_object(),
@@ -27075,6 +28072,30 @@ mod cli_tests {
                 .is_err(),
             "flag-blocked-infra must be GONE, not merely unmentioned in the prompt"
         );
+        // `--blocked-by` is repeatable and parses positionals around it. The surface ACCEPTS a
+        // call without one — the refusal is `blocked_by_guard`'s, in the mode, where it can say
+        // WHY and name the repair (a clap arity error names neither).
+        match parse(&[
+            "prr",
+            "flag-blocked-on",
+            "o/r",
+            "1",
+            "waiting",
+            "on",
+            "deps",
+            "--blocked-by",
+            "o/r#9",
+            "--blocked-by",
+            "a/b#2",
+        ]) {
+            Cmd::FlagBlockedOn {
+                blocked_by, reason, ..
+            } => {
+                assert_eq!(blocked_by, vec!["o/r#9", "a/b#2"]);
+                assert_eq!(reason.join(" "), "waiting on deps");
+            }
+            other => panic!("expected FlagBlockedOn, got {other:?}"),
+        }
         assert!(matches!(
             parse(&["prr", "flag-blocked-on", "o/r", "1", "waiting", "on", "#9"]),
             Cmd::FlagBlockedOn { .. }
@@ -27561,6 +28582,8 @@ mod cli_tests {
                 exit_code: None,
                 preflight_missing: vec![],
                 infra: None,
+                skipped: None,
+                skip_reason: None,
             }
         );
         // The form the runners now use in place of the `| jq '. + {…}'` pipe.
@@ -27586,6 +28609,8 @@ mod cli_tests {
                 exit_code: Some(0),
                 preflight_missing: vec![],
                 infra: None,
+                skipped: None,
+                skip_reason: None,
             }
         );
         // The abort form: `preflight` found nothing to render with, so the model never started.
@@ -27607,7 +28632,63 @@ mod cli_tests {
                 exit_code: Some(12),
                 preflight_missing: vec!["pdftoppm".to_string(), "pdfinfo".to_string()],
                 infra: None,
+                skipped: None,
+                skip_reason: None,
             }
+        );
+        // The SKIP form (#160): the usage-gate paused the tick, the runners record the row with
+        // the gate's own line, verbatim.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--run-id",
+                "20260731T090001Z",
+                "--role",
+                "producer",
+                "--model",
+                "claude-fable-5",
+                "--exit-code",
+                "10",
+                "--skipped",
+                "usage-gate",
+                "--skip-reason",
+                "PAUSE: 91% of the weekly budget used (endpoint) — at/over the 90% ceiling"
+            ]),
+            Cmd::RunMetrics {
+                trace: "/t.jsonl".to_string(),
+                run_id: Some("20260731T090001Z".to_string()),
+                role: Some("producer".to_string()),
+                model: Some("claude-fable-5".to_string()),
+                exit_code: Some(10),
+                preflight_missing: vec![],
+                infra: None,
+                skipped: Some("usage-gate".to_string()),
+                skip_reason: Some(
+                    "PAUSE: 91% of the weekly budget used (endpoint) — at/over the 90% ceiling"
+                        .to_string()
+                ),
+            }
+        );
+        // The two skip flags arrive together or not at all: a gate with no reason would emit a
+        // row that cannot say WHY the tick paused, and a reason with no gate has no field to
+        // hang it on. Refused at parse, so no runner edit can half-supply the pair.
+        assert!(
+            Cli::try_parse_from(["prr", "run-metrics", "/t.jsonl", "--skipped", "usage-gate"])
+                .is_err(),
+            "--skipped without --skip-reason must be refused"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--skip-reason",
+                "PAUSE: x"
+            ])
+            .is_err(),
+            "--skip-reason without --skipped must be refused"
         );
     }
 
@@ -28023,12 +29104,12 @@ mod cli_tests {
         // that a declared binary would not resolve.
         let missing = vec!["pdftoppm".to_string()];
         assert_eq!(
-            classify_outcome("", 12, &missing, &InfraRecord::default()),
+            classify_outcome("", 12, false, &missing, &InfraRecord::default()),
             TraceOutcome::ToolingFailure
         );
         // …and an empty list must not change what the trace already said.
         assert_eq!(
-            classify_outcome("", 0, &[], &InfraRecord::default()),
+            classify_outcome("", 0, false, &[], &InfraRecord::default()),
             TraceOutcome::Ok
         );
     }
@@ -29152,10 +30233,30 @@ mod fsm_completeness_tests {
             classify_lane(&s(&["human:design"]), None, false),
             (Lane::HumanDecisions, "human:design".to_string())
         );
-        // producer-blocked next.
+        // blocked states next — same PRECEDENCE, but the LANE names whoever moves each (#161):
+        // the vetter's state-load clears `ai:blocked-on` when its typed deps merge/close, so it
+        // files with the vetter's work; `ai:blocked-deploy` still waits on a producer/human deploy.
         assert_eq!(
             classify_lane(&s(&["ai:blocked-infra"]), None, false),
             (Lane::ProducerBlocked, "ai:blocked-infra".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["ai:blocked-deploy"]), None, false),
+            (Lane::ProducerBlocked, "ai:blocked-deploy".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["ai:blocked-on"]), None, false),
+            (Lane::VetLifecycle, "ai:blocked-on".to_string())
+        );
+        // …and blocked-on keeps its precedence: it dominates a stale ai:ready label, and a human
+        // decision dominates IT. A swap of either comparison files a PR with the wrong mover.
+        assert_eq!(
+            classify_lane(&s(&["ai:ready", "ai:blocked-on"]), Some(true), false),
+            (Lane::VetLifecycle, "ai:blocked-on".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["ai:blocked-on", "human:design"]), None, false),
+            (Lane::HumanDecisions, "human:design".to_string())
         );
         // ai:ready splits on verdict currency: vetted-at-head stays ready, otherwise -> un-vetted.
         assert_eq!(
@@ -29228,8 +30329,8 @@ mod fsm_completeness_tests {
             qpr(7, &["ai:close-candidate"], None, false), // ai:close-candidate (PR)
             qpr(8, &["ai:blocked-deploy"], None, false),  // producer-blocked
             qpr(9, &["ai:blocked-infra"], None, false),
-            qpr(10, &["ai:blocked-on"], None, false),
-            qpr(11, &["human:reject"], None, false), // human decisions
+            qpr(10, &["ai:blocked-on"], None, false), // vet-lifecycle: the vetter clears it (#161)
+            qpr(11, &["human:reject"], None, false),  // human decisions
             qpr(12, &["human:design"], None, false),
             qpr(13, &["human:close-candidate"], None, false),
             qpr(14, &[], None, true),             // leak
@@ -29249,7 +30350,10 @@ mod fsm_completeness_tests {
         assert_eq!(count("vetter-verdicts", "ai:close-candidate"), 1);
         assert_eq!(count("producer-blocked", "ai:blocked-deploy"), 1);
         assert_eq!(count("producer-blocked", "ai:blocked-infra"), 1);
-        assert_eq!(count("producer-blocked", "ai:blocked-on"), 1);
+        // #161: blocked-on emits under the VETTER's lane — the dash files it as vetter action
+        // ("clear when deps merge"), and it must be GONE from producer-blocked, not doubled.
+        assert_eq!(count("vet-lifecycle", "ai:blocked-on"), 1);
+        assert_eq!(count("producer-blocked", "ai:blocked-on"), 0);
         assert_eq!(count("human-decisions", "human:reject"), 1);
         assert_eq!(count("human-decisions", "human:design"), 1);
         assert_eq!(count("human-decisions", "human:close-candidate"), 1);
@@ -35293,20 +36397,23 @@ mod infra_down_tests {
         };
         let up = InfraRecord::default();
         assert_eq!(
-            classify_outcome("", 0, &[], &down),
+            classify_outcome("", 0, false, &[], &down),
             TraceOutcome::InfraDown,
             "an otherwise-clean run that stopped early must not read as ok"
         );
-        assert_eq!(classify_outcome("", 0, &[], &up), TraceOutcome::Ok);
+        assert_eq!(classify_outcome("", 0, false, &[], &up), TraceOutcome::Ok);
         // Worse outcomes win.
-        assert_eq!(classify_outcome("", 1, &[], &down), TraceOutcome::Error);
         assert_eq!(
-            classify_outcome("", 0, &["pdftoppm".to_string()], &down),
+            classify_outcome("", 1, false, &[], &down),
+            TraceOutcome::Error
+        );
+        assert_eq!(
+            classify_outcome("", 0, false, &["pdftoppm".to_string()], &down),
             TraceOutcome::ToolingFailure
         );
         let quota = r#"{"type":"result","api_error_status":429,"result":""}"#;
         assert_eq!(
-            classify_outcome(quota, 0, &[], &down),
+            classify_outcome(quota, 0, false, &[], &down),
             TraceOutcome::QuotaLimited,
             "a quota refusal must still advance model fallback"
         );
@@ -35331,6 +36438,7 @@ mod infra_down_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert_eq!(clean["infraDown"], false);
         assert_eq!(clean["infraReason"], "");
@@ -35350,6 +36458,7 @@ mod infra_down_tests {
             &ToolingReport::default(),
             &[],
             &down,
+            None,
         );
         assert_eq!(doc["infraDown"], true);
         assert_eq!(doc["infraReason"], "fork RPCs erroring org-wide");
