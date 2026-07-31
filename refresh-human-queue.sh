@@ -4,7 +4,11 @@
 # The snapshot itself is OVERWRITE (point-in-time); alongside it we APPEND one rollup line per
 # changed refresh to human-queue-history.jsonl ({ts, counts}, mirroring metrics/runs.jsonl) so the
 # dashboard can render per-state inventory over time (Theory-of-Constraints flow panel;
-# rain-org-health#32). Data-only, safe unattended. Installed on a cron; see crontab.
+# rain-org-health#32). This tick is also what publishes metrics/runs.jsonl itself (#160): the
+# model runners append rows but never push, and during a usage-gate pause they are the ONLY thing
+# writing (one skip row per gated tick) — this cron is data-only, never usage-gated, and already
+# commits straight to main every hour, which makes it the one committer still awake during a
+# pause. Data-only, safe unattended. Installed on a cron; see crontab.
 # Packaged as a flake output (`packages.refresh-human-queue`); nix builds PATH from the flake's
 # locked nixpkgs. errexit is turned back off — writeShellApplication forces it, but this script
 # reads exit status as data (`git diff --quiet` says whether the snapshot moved, a rejected push
@@ -107,34 +111,56 @@ else
   exit 1
 fi
 
-# Commit + push only on a real change.
-if git -C "$DIR" diff --quiet -- human-queue.json; then
-  log "snapshot unchanged at $(git -C "$DIR" rev-parse --short HEAD); nothing to publish"
+# Commit + push only on a real change — to the snapshot OR to the run-metrics ledger (#160).
+# metrics/runs.jsonl rides this tick because the runners that append it never push, and a
+# usage-gate pause suspends the very runs whose completion used to be the occasion for committing
+# it — while the pause path itself appends one skip row per gated tick. Gating the publish on the
+# snapshot alone would hold those rows hostage to unrelated queue churn; either file moving is a
+# reason to publish both.
+snapshot_changed=1
+git -C "$DIR" diff --quiet -- human-queue.json && snapshot_changed=0
+metrics_changed=1
+git -C "$DIR" diff --quiet -- metrics/runs.jsonl && metrics_changed=0
+if [ "$snapshot_changed" -eq 0 ] && [ "$metrics_changed" -eq 0 ]; then
+  log "snapshot and run metrics unchanged at $(git -C "$DIR" rev-parse --short HEAD); nothing to publish"
   exit 0
 fi
 
 # Append one rollup line {ts, counts} to the append-only history so the dashboard can
 # render per-state inventory over time (Theory-of-Constraints flow panel;
-# rain-org-health#32). One line per CHANGED snapshot, mirroring metrics/runs.jsonl.
-# counts come straight from the tool-generated snapshot (the tool stays the single
-# source of truth); ts is this refresh's real UTC time (never synthesized downstream).
-# `queue-history-line` is the same code path the backfill uses, so the live append and the
-# historical rewrite can never produce different line shapes for the same snapshot.
-ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-histerr="$(mktemp)"
-hist="$(pr-review-report queue-history-line "$DIR/human-queue.json" --ts "$ts" 2>"$histerr")"; hist_rc=$?
-if [ "$hist_rc" -eq 0 ] && [ -n "$hist" ]; then
-  printf '%s\n' "$hist" >>"$DIR/human-queue-history.jsonl"
-else
-  # The snapshot is what the dashboard reads; a missing history point costs one plot marker, so
-  # this is reported rather than fatal. Buffering the line (instead of appending the pipe straight
-  # into the file) is what keeps a failure from writing a partial record into an append-only file.
-  log "history line failed (rc=$hist_rc): $(tr '\n' ' ' <"$histerr")— publishing the snapshot without it"
+# rain-org-health#32). One line per CHANGED snapshot, mirroring metrics/runs.jsonl — so it stays
+# gated on the SNAPSHOT having moved: a metrics-only tick appends no history line, or an idle
+# queue would grow one identical rollup per skip row.
+if [ "$snapshot_changed" -eq 1 ]; then
+  # counts come straight from the tool-generated snapshot (the tool stays the single
+  # source of truth); ts is this refresh's real UTC time (never synthesized downstream).
+  # `queue-history-line` is the same code path the backfill uses, so the live append and the
+  # historical rewrite can never produce different line shapes for the same snapshot.
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  histerr="$(mktemp)"
+  hist="$(pr-review-report queue-history-line "$DIR/human-queue.json" --ts "$ts" 2>"$histerr")"; hist_rc=$?
+  if [ "$hist_rc" -eq 0 ] && [ -n "$hist" ]; then
+    printf '%s\n' "$hist" >>"$DIR/human-queue-history.jsonl"
+  else
+    # The snapshot is what the dashboard reads; a missing history point costs one plot marker, so
+    # this is reported rather than fatal. Buffering the line (instead of appending the pipe straight
+    # into the file) is what keeps a failure from writing a partial record into an append-only file.
+    log "history line failed (rc=$hist_rc): $(tr '\n' ' ' <"$histerr")— publishing the snapshot without it"
+  fi
+  rm -f "$histerr"
 fi
-rm -f "$histerr"
 
-git_q add human-queue.json human-queue-history.jsonl || exit 1
-git_q -c commit.gpgsign=false commit --no-verify -m "chore(dashboard): refresh human-queue.json snapshot" --quiet || exit 1
+# The commit message names what actually moved: metrics-only ticks keep the `chore(metrics):`
+# prefix the file's hand-committed history already uses.
+if [ "$snapshot_changed" -eq 1 ] && [ "$metrics_changed" -eq 1 ]; then
+  msg="chore(dashboard): refresh human-queue.json snapshot + run metrics"
+elif [ "$snapshot_changed" -eq 1 ]; then
+  msg="chore(dashboard): refresh human-queue.json snapshot"
+else
+  msg="chore(metrics): publish accrued run metrics"
+fi
+git_q add human-queue.json human-queue-history.jsonl metrics/runs.jsonl || exit 1
+git_q -c commit.gpgsign=false commit --no-verify -m "$msg" --quiet || exit 1
 mine="$(git -C "$DIR" rev-parse HEAD)"
 
 # The remote can still move between the fetch above and this push — a PR merging mid-tick. Replay

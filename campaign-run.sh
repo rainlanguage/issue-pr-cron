@@ -87,14 +87,32 @@ fi
 # --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
 # headroom band under the linear burn toward the reset — the crons hold ~USAGE_HEADROOM_PCT points
 # BEHIND pace so interactive work keeps standing budget (#158). `usage-gate` reads
-# /api/oauth/usage itself; exit 10 means PAUSE (log it, exit 0). It is INERT when it cannot read
-# usage and no fallback is set — it prints OK and we run. Any OTHER non-zero exit is a config
-# REFUSAL (the retired USAGE_SLACK_PCT still set: exit 2, reason on stderr, captured into the
-# log): the tick must not run on config the gate refused to read, so propagate the failure — a
-# refusal is neither a run nor a pause. ---
+# /api/oauth/usage itself; exit 10 means PAUSE (record one skip row, exit 0). It is INERT when it
+# cannot read usage and no fallback is set — it prints OK and we run. Any OTHER non-zero exit is a
+# config REFUSAL (the retired USAGE_SLACK_PCT still set: exit 2, reason on stderr, captured into
+# the log): the tick must not run on config the gate refused to read, so propagate the failure — a
+# refusal is neither a run nor a pause, and it writes NO row. ---
 _ug="$(pr-review-report usage-gate 2>&1)"; _ugrc=$?
 echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
-[ "$_ugrc" -eq 10 ] && exit 0
+if [ "$_ugrc" -eq 10 ]; then
+  # A paused tick still writes its metrics/runs.jsonl row (#160): the dashboard reads runs from
+  # that file, and a pause that wrote nothing rendered as a dead stretch indistinguishable from a
+  # broken cron. Same shape as the preflight abort below — an empty trace, so the record's shape
+  # still comes from `run-metrics` and no second place knows what a runs.jsonl line looks like.
+  # The row records the GATE's exit 10 (as the preflight row records preflight's 12) plus the
+  # gate's own line, verbatim; this script still exits 0 because a pause is not a failure. The row
+  # reaches origin/main via the hourly refresh-human-queue cron, which stages this file — the one
+  # committer still awake during a pause.
+  TS="$(date -u +%Y%m%dT%H%M%SZ)"
+  RUNLOG="$RUNDIR/$TS.jsonl"
+  mkdir -p "$RUNDIR" "$DIR/metrics"
+  : > "$RUNLOG"
+  pr-review-report run-metrics "$RUNLOG" \
+    --run-id "$TS" --role producer --model "$MODEL" --exit-code 10 \
+    --skipped usage-gate --skip-reason "$_ug" \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+  exit 0
+fi
 if [ "$_ugrc" -ne 0 ]; then
   echo "$(date -u +%FT%TZ) campaign run ABORTED: usage-gate refused its config (exit $_ugrc) — fix cron.env" >> "$LOG"
   exit "$_ugrc"
@@ -313,8 +331,9 @@ fi
 echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)" >> "$LOG"
 
 # Persist per-run metrics BEFORE the next run's rotation deletes this trace.
-# Appends one enriched JSON line to metrics/runs.jsonl (committed periodically,
-# never from here — the cron does not push). Best-effort: never fail the run on it.
+# Appends one enriched JSON line to metrics/runs.jsonl (committed+pushed to main by the hourly
+# refresh-human-queue cron, never from here — this cron does not push). Best-effort: never fail
+# the run on it.
 # `run-metrics` emits the whole enriched record itself now, including `outcome` — which it derives
 # with the same typed classifier the fallback loop uses, so the metrics line and the fallback
 # decision can never disagree about whether a run was quota-limited.
