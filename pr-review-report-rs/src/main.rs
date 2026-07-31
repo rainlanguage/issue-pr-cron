@@ -23871,10 +23871,15 @@ mod settings_tests {
             "the retired transition must not be taught as a callable move (#162)"
         );
         assert!(
-            !prompt.contains("via `pr-review-report deploy`") && !prompt.contains("deploy <owner/repo> <n>"),
+            !prompt.contains("via `pr-review-report deploy`")
+                && !prompt.contains("deploy <owner/repo> <n>"),
             "the producer deploy choreography is retired — the prompt must not route anyone to it"
         );
-        for gone in ["WAITING-DEPLOY", "deploy-before-merge", "deploy-BEFORE-merge"] {
+        for gone in [
+            "WAITING-DEPLOY",
+            "deploy-before-merge",
+            "deploy-BEFORE-merge",
+        ] {
             assert!(
                 !prompt.contains(gone),
                 "`{gone}` is the retired choreography's vocabulary — it must not survive"
@@ -29296,7 +29301,10 @@ mod worklist_tests {
             "comments": [{"author":{"login":"thedavidmeister"},
                           "body":"🤖 ai:producer deploy-confirmed at 999999999999"}]
         });
-        assert_eq!(worklist_row("o/r", &notdone)["nextAction"], "flag-migration");
+        assert_eq!(
+            worklist_row("o/r", &notdone)["nextAction"],
+            "flag-migration"
+        );
     }
 
     #[test]
@@ -30312,9 +30320,8 @@ mod subject_ref_tests {
         }]);
         let (ccu, ccu_n) = issue_state_pair(vec![]);
         let (ccup, ccup_n) = issue_state_pair(vec![]);
-        let with_residue = human_queue_doc(
-            &buckets, &lanes, &[], ccu, ccu_n, ccup, ccup_n, &[], &[], 1,
-        );
+        let with_residue =
+            human_queue_doc(&buckets, &lanes, &[], ccu, ccu_n, ccup, ccup_n, &[], &[], 1);
         assert_eq!(
             with_residue.pointer("/counts/blockedDeploy"),
             Some(&json!(1))
