@@ -77,14 +77,18 @@ stateDiagram-v2
     unvetted --> infradown : infra-down · environment is impeding the work
     infradown --> unvetted : next tick · 4h later, from scratch
 
-    %% human decisions are sacred — the vetter never re-verdicts these
-    %% a human REJECT is not one of them: it writes the same ai:reject the vetter writes, and the
-    %% sha-pinned 👤 human comment is what records that a human ruled (#133).
-    ready --> reject : human-rule reject + Rework note
-    ready --> hdesign : human-rule design
+    %% human decisions protect AUTHORSHIP (#111): no AI actor writes a human:* label, none
+    %% removes one as an override. A ruling is an INPUT the machine executes — park is the
+    %% explicit minority spelling, never the default — and clearing-by-execution is modeled.
+    %% a human REJECT writes the same ai:reject the vetter writes, with the work order in the
+    %% same call; the sha-pinned 👤 human comment records that a human ruled (#133).
+    ready --> reject : human-rule reject --rework · ruling + work order, one call
+    ready --> hdesign : human-rule design --rework · delegated work order
+    ready --> hdesign : human-rule design --park · explicit park
     ready --> hclose : human-rule close-candidate
-    hdesign --> [*] : human rules
-    hclose --> [*] : human-close · retires the flag too
+    hdesign --> unvetted : producer executes the order → push · the re-vet clears the spent label
+    hdesign --> [*] : parked · exit is the human superseding their own ruling
+    hclose --> [*] : human-close · the human's terminal edge, retires the flag too
 
     design --> [*] : human design ruling
     close --> [*] : human-close (a PR) · retires the flag too
@@ -104,12 +108,34 @@ and `human:keep-open` appeared in the binary only as strings it **read and
 refused on**, so the one actor whose decisions everything else treats as sacred
 was also the only one improvising raw `gh issue edit --add-label`.
 
-| Transition                                             | The move it makes                                                                                     |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**                       |
-| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed** |
-| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition       |
-| `record-close-candidate-verdict <owner/repo> <issue>`  | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)             |
+| Transition                                                            | The move it makes                                                                                     |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>" [--rework …\|--park]` | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111) |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>" [--rework …\|--park]` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed** |
+| `human-close <owner/repo> <n> "<note>"`                               | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition       |
+| `record-close-candidate-verdict <owner/repo> <issue>`                 | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)             |
+
+**A ruling can delegate, not only park (#111).** The ruling and the work order
+are two records with their own shapes — the ruling is provenance (*a human
+decided X, at anchor Y*; pinned, historical, true forever), the work order is an
+instruction to the producer, spent once acted on — and ONE call emits both:
+`--rework "<order>"` posts a trusted `Rework note @<anchor>: …` comment beside
+the ruling, in the **exact prefix form** the producer's
+`trusted-comments --marker 'Rework note'` verification accepts, pinned to the
+same anchor as the ruling so the two go stale together. The tool owns the
+prefix, so the failure the issue measured — a hand-typed `Rework Note` silently
+parking a PR meant to be delegated — is unconstructible. `reject` **requires**
+the order (a reject IS a send-back; one not worth reworking is a
+close-candidate, not a park); `design` takes exactly one of `--rework` /
+`--park`; and a bare call to either **refuses** rather than parking by
+accident — pure parking is an explicit spelling, never the default meaning of a
+ruling. What the human namespace protects is **authorship only**: no AI actor
+writes a `human:*` label, and none removes one as an override — but a ruling is
+an input the machine executes, so the producer's state-load picks a delegated
+`human:design` up as a work order (`worklist` routes it `rework-ruling`), the
+push moves the head, and the vetter's next verdict clears the spent label as
+the **completion** of the ruling through the ordinary
+rework → un-vetted → re-vet flow.
 
 The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
 (PRs) and `HUMAN_RULING_LABELS` (issues), the same constants every AI transition
@@ -146,8 +172,11 @@ that has already happened:
   no state left to move out of, so nothing is written and the exit is 0;
 - **re-ruling supersedes** rather than refuses. The human owns this namespace
   and may correct a mis-click, so the old `human:*` is removed and the new one
-  added — since #133 the **only** sanctioned removal of a `human:*` label, and
-  sanctioned because the actor removing it wrote it;
+  added — one of exactly **two** sanctioned removals of a `human:*` label,
+  sanctioned because the actor removing it wrote it. The other is #111's
+  clearing-by-execution: the verdict that re-judges an **executed** delegation
+  clears the spent `human:design`, sanctioned because it completes what the
+  human asked rather than overriding it;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:reject` sat on an issue whose producer close-candidate flag had not

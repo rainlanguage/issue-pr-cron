@@ -110,7 +110,7 @@ transition functions:
 | `unvetted [--json] [--include-skipped] [--limit n]`                | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals (MCP always pages; the CLI is unbounded unless `--limit`)                                                     |
 | `unvetted_close_candidates` (MCP)                                  | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                                                                        |
 | `record_close_candidate_verdict` (MCP)                             | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                                                                            |
-| `human-rule <owner/repo> <n> <ruling> "<note>"`                    | the HUMAN's PR ruling: `human:<ruling>` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling)                                                                                                |
+| `human-rule <owner/repo> <n> <ruling> "<note>" [--rework …\|--park]` | the HUMAN's PR ruling: label + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling). Park-or-delegate is chosen HERE (#111): `--rework` emits the trusted `Rework note` work order in the same call; `--park` is the explicit pure park (design only); a bare reject/design refuses           |
 | `human-rule-issue <owner/repo> <n> <ruling> "<note>"`              | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed                                                                                                     |
 | `human-close <owner/repo> <n> "<note>"`                            | the HUMAN's TERMINAL edge on either subject: rule `close-candidate`, retire the pending `ai:close-candidate`, close — ONE transition (#94)                                                                        |
 | `record-close-candidate-verdict <owner/repo> <n> <v> …`            | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                                                                                  |
@@ -271,10 +271,19 @@ it finds is a different PR's code.
 
 ## Invariants
 
-- **Human decisions are sacred.** A `human:*` label, a native `APPROVED` /
-  `CHANGES_REQUESTED` review, OR a `👤 human` ruling comment pinned to the
-  CURRENT head is never overwritten by the vetter — `--record-verdict` refuses
-  (exit 3), closing the TOCTOU race.
+- **Human decisions protect AUTHORSHIP, and a ruling is an INPUT (#111).** No
+  AI actor ever writes a `human:*` label, and none removes one as an OVERRIDE
+  of the human: a native `APPROVED`/`CHANGES_REQUESTED` review, a `👤 human`
+  ruling pinned to the CURRENT head, an absolutely-parking label
+  (`human:close-candidate`, retired `human:reject`), or an un-executed
+  `human:design` is never overwritten by the vetter — `--record-verdict`
+  refuses (exit 3), closing the TOCTOU race. But absolute parking was the
+  ruled-out overreaction: a ruling is an input the machine EXECUTES. A
+  delegated `human:design` (its trusted `Rework note` pinned at head) is the
+  producer's work order; once executed (the push moves the head past the pin)
+  the PR is un-vetted and the verdict that re-judges it clears the spent label
+  — clearing-by-execution, the completion of what the human asked, not an
+  override. Pure parking survives only as the explicit `--park` spelling.
 - **A reject is ONE state, and the ruler rides on the comment (#133).**
   `ai:reject` and `human:reject` demanded the same move from the same actor, so
   they are one state: `ai:reject`, whoever ruled. The label says what the work
@@ -288,10 +297,12 @@ it finds is a different PR's code.
   `pr_context.humanComments`. `reworked-reject` is retired: its timestamp
   comparison proved only that SOME commit post-dated the label event, and what
   actually protects the objection is a stateless re-vet that can read it. So
-  `human:*` now means one thing absolutely — sacred, never written or cleared by
-  an AI actor — with no carve-out. `human:reject` survives only as a RETIRED
-  label on PRs the migration has not moved; it stays sacred and stays bucketed
-  until `migrate-reject` does.
+  `human:*` means one thing — AUTHORSHIP-protected: never written by an AI
+  actor, never removed as an override. (#111 narrowed this from the absolute
+  parking #133 briefly enshrined: an EXECUTED `human:design` delegation is
+  cleared by the re-vet as the ruling's completion.) `human:reject` survives
+  only as a RETIRED label on PRs the migration has not moved; it stays sacred
+  and stays bucketed until `migrate-reject` does.
 - **A verdict accounts for every file the PR changes.** Scope coverage was the
   one thing `record_verdict` took on trust, and a verdict formed without a
   changed file in view is indistinguishable from a diligent one:
