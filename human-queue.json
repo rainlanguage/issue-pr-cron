@@ -1011,7 +1011,9 @@
             "title": "Add canonicalize(Float) -> Float for byte-equivalence use cases"
           }
         ]
-      },
+      }
+    },
+    "vet-lifecycle": {
       "ai:blocked-on": {
         "count": 17,
         "prs": [
@@ -1118,12 +1120,34 @@
             "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
           }
         ]
-      }
-    },
-    "vet-lifecycle": {
+      },
       "un-vetted": {
-        "count": 29,
+        "count": 33,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 156,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
+            "title": "Draw the uncovered-issues median age beside its queue-size sparkline"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 167,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/167",
+            "title": "Emit uncovered-issues age stats (median/oldest days) beside counts"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 166,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/166",
+            "title": "human-rule delegates in one call, and human:* protects authorship only — rulings are inputs the machine executes"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 155,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/155",
+            "title": "dash(nav): Metrics tab moves to third position on every page"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 106,
@@ -2022,24 +2046,6 @@
       "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle — collapse into typed ai:blocked-on refs to the repo's migration"
     },
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 161,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/161",
-      "title": "ai:blocked-on sits with the vetter: typed dependency refs, automated clearance on dep merge, human polling removed"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 152,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/152",
-      "title": "metrics page: render usage-gate skip rows as first-class events — pauses currently draw as dead stretches"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 160,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/160",
-      "title": "usage-gate pauses leave no runs.jsonl row — paused stretches read as a dead cron everywhere downstream"
-    },
-    {
       "repo": "rainlanguage/rain-org-health",
       "number": 150,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/150",
@@ -2131,21 +2137,9 @@
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 111,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/111",
-      "title": "human-rule can park a PR but cannot delegate it — the rework note has no tool"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
       "number": 109,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/109",
       "title": "A gc for FSM state: find and heal the states no transition produces"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 140,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/140",
-      "title": "Sparkline issue age, not just queue size — the count cannot tell turnover from stagnation"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -5777,9 +5771,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 155,
-    "uncoveredIssues": 619,
-    "unvetted": 29,
+    "totalProducerPrs": 159,
+    "uncoveredIssues": 614,
+    "unvetted": 33,
     "reject": 71,
     "relink": 0,
     "closeCandidatePrs": 5,
