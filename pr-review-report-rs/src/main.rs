@@ -36241,7 +36241,11 @@ mod delegation_111_tests {
     #[test]
     fn the_marker_is_the_prompts_exact_spelling() {
         assert_eq!(REWORK_MARKER, "Rework note");
-        let prompt = repo_root_text("campaign-prompt.txt").expect("campaign-prompt.txt readable");
+        // Graceful bail, same as every prompt-conformance test: the flake package's fileset
+        // excludes the prompt files, so inside `nix build`'s sandbox there is nothing to read.
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return;
+        };
         assert!(
             prompt.contains("Rework note"),
             "the producer prompt must still teach the Rework note work-order read"

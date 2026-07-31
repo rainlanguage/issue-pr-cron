@@ -108,16 +108,16 @@ and `human:keep-open` appeared in the binary only as strings it **read and
 refused on**, so the one actor whose decisions everything else treats as sacred
 was also the only one improvising raw `gh issue edit --add-label`.
 
-| Transition                                                            | The move it makes                                                                                     |
-| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>" [--rework …\|--park]` | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111) |
-| `human-rule-issue <owner/repo> <issue> <ruling> "<…>" [--rework …\|--park]` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed** |
-| `human-close <owner/repo> <n> "<note>"`                               | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition       |
-| `record-close-candidate-verdict <owner/repo> <issue>`                 | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)             |
+| Transition                                                                  | The move it makes                                                                                                       |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>" [--rework …\|--park]`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111) |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>" [--rework …\|--park]` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed**                   |
+| `human-close <owner/repo> <n> "<note>"`                                     | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition                         |
+| `record-close-candidate-verdict <owner/repo> <issue>`                       | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)                               |
 
 **A ruling can delegate, not only park (#111).** The ruling and the work order
-are two records with their own shapes — the ruling is provenance (*a human
-decided X, at anchor Y*; pinned, historical, true forever), the work order is an
+are two records with their own shapes — the ruling is provenance (_a human
+decided X, at anchor Y_; pinned, historical, true forever), the work order is an
 instruction to the producer, spent once acted on — and ONE call emits both:
 `--rework "<order>"` posts a trusted `Rework note @<anchor>: …` comment beside
 the ruling, in the **exact prefix form** the producer's
@@ -127,15 +127,15 @@ prefix, so the failure the issue measured — a hand-typed `Rework Note` silentl
 parking a PR meant to be delegated — is unconstructible. `reject` **requires**
 the order (a reject IS a send-back; one not worth reworking is a
 close-candidate, not a park); `design` takes exactly one of `--rework` /
-`--park`; and a bare call to either **refuses** rather than parking by
-accident — pure parking is an explicit spelling, never the default meaning of a
-ruling. What the human namespace protects is **authorship only**: no AI actor
-writes a `human:*` label, and none removes one as an override — but a ruling is
-an input the machine executes, so the producer's state-load picks a delegated
+`--park`; and a bare call to either **refuses** rather than parking by accident
+— pure parking is an explicit spelling, never the default meaning of a ruling.
+What the human namespace protects is **authorship only**: no AI actor writes a
+`human:*` label, and none removes one as an override — but a ruling is an input
+the machine executes, so the producer's state-load picks a delegated
 `human:design` up as a work order (`worklist` routes it `rework-ruling`), the
-push moves the head, and the vetter's next verdict clears the spent label as
-the **completion** of the ruling through the ordinary
-rework → un-vetted → re-vet flow.
+push moves the head, and the vetter's next verdict clears the spent label as the
+**completion** of the ruling through the ordinary rework → un-vetted → re-vet
+flow.
 
 The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
 (PRs) and `HUMAN_RULING_LABELS` (issues), the same constants every AI transition

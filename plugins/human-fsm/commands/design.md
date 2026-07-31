@@ -8,8 +8,8 @@ Arguments: `$ARGUMENTS`
 
 - **SUBJECT** is the first word — an `owner/repo#n` reference. Split it on `#`
   into `<slug>` and `<n>`.
-- **NOTE** is everything after it, and it is required: state the question or
-  the answer, not that there is one.
+- **NOTE** is everything after it, and it is required: state the question or the
+  answer, not that there is one.
 
 Refuse and say why if SUBJECT is not `owner/repo#n` or NOTE is empty. **Never
 infer an owner or a repo.**
@@ -40,8 +40,8 @@ which they meant, ask — that one question is cheaper than parking a work order
 or delegating a placeholder.
 
 Either spelling applies `human:design` and posts a `👤 human` comment pinned to
-the **head sha**; a delegation ALSO posts the `Rework note @<sha>: …` work
-order in the exact trusted form the producer's
+the **head sha**; a delegation ALSO posts the `Rework note @<sha>: …` work order
+in the exact trusted form the producer's
 `trusted-comments --marker 'Rework note'` verification accepts — one call, no
 raw `gh`, no marker to mistype. Both records pin the same sha, so they go stale
 together when the producer pushes the rework.
@@ -53,10 +53,10 @@ refusal names, with the same NOTE and the same disposition flag:
 pr-review-report human-rule-issue <slug> <n> design <NOTE> --rework <WORK ORDER>
 ```
 
-On an issue carrying a **live** producer close-candidate flag this is refused
-on purpose: `human:design` there would strand the flag, since every AI
-transition refuses once a human has ruled. The refusal names all four legal
-moves — pick one of those rather than working around it.
+On an issue carrying a **live** producer close-candidate flag this is refused on
+purpose: `human:design` there would strand the flag, since every AI transition
+refuses once a human has ruled. The refusal names all four legal moves — pick
+one of those rather than working around it.
 
 Any other refusal: relay it verbatim and stop. Do not reach for `gh`.
 
