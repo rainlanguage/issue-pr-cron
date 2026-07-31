@@ -1122,8 +1122,14 @@
         ]
       },
       "un-vetted": {
-        "count": 33,
+        "count": 34,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 168,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/168",
+            "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 156,
@@ -2039,12 +2045,6 @@
     }
   ],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 162,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/162",
-      "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle — collapse into typed ai:blocked-on refs to the repo's migration"
-    },
     {
       "repo": "rainlanguage/rain-org-health",
       "number": 150,
@@ -5771,9 +5771,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 159,
-    "uncoveredIssues": 614,
-    "unvetted": 33,
+    "totalProducerPrs": 160,
+    "uncoveredIssues": 613,
+    "unvetted": 34,
     "reject": 71,
     "relink": 0,
     "closeCandidatePrs": 5,
