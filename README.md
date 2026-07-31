@@ -436,15 +436,15 @@ Three fields are worth their own note:
   the body and the trusted comments, never the title.** Under the split release
   lifecycle no merge waits on a deploy, so `repo-not-migrated` does not say
   "deploy before merging" — it says the PR's repo still has the pre-split
-  premerge deploy shape (the legacy `REQUIRES redeploy at land` marker, or a
-  red prod-pin check) and is owed a lifecycle migration, which is the
-  producer's `flag-blocked-on --blocked-by <migration ref>` route. Of the six
-  open PRs carrying the marker on 2026-07-29, all six had it in the body and
-  one also had it in the title, so title-matching would have found one of six.
-  It is the same predicate the producer's own migration routing reads, shared
-  rather than re-derived, so "the producer flags this blocked on the migration"
-  and "the human sees a repo that needs migrating" cannot be answered
-  differently — and a retitle cannot move the signal.
+  premerge deploy shape (the legacy `REQUIRES redeploy at land` marker, or a red
+  prod-pin check) and is owed a lifecycle migration, which is the producer's
+  `flag-blocked-on --blocked-by <migration ref>` route. Of the six open PRs
+  carrying the marker on 2026-07-29, all six had it in the body and one also had
+  it in the title, so title-matching would have found one of six. It is the same
+  predicate the producer's own migration routing reads, shared rather than
+  re-derived, so "the producer flags this blocked on the migration" and "the
+  human sees a repo that needs migrating" cannot be answered differently — and a
+  retitle cannot move the signal.
 
 It cannot be refused for size. Every variable-length field is capped, so a full
 page's worst case is arithmetic the compiler checks
@@ -1134,8 +1134,8 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   `ai:blocked-infra` (#108), each for as long as any PR still carries it. The
   blocked-deploy residue is deliberately **not** vet-lifecycle: the #164
   clearance reads exactly `ai:blocked-on` typed refs, which this residue does
-  not have — its exit is an eyes-on human pass that re-flags each PR
-  blocked-on its repo's migration, or unblocks it outright.
+  not have — its exit is an eyes-on human pass that re-flags each PR blocked-on
+  its repo's migration, or unblocks it outright.
 - **human-decisions** — `human:design`, `human:close-candidate`, plus the
   RETIRED `human:reject` for as long as any PR still carries it (#133). That
   last count is the migration's progress meter: `migrate-reject` moves those PRs
@@ -1210,12 +1210,11 @@ or `blocked-on`. The first two plus `ready` (the merge queue) are the
 **human-gated states** — the daily review queue, a plain label search, no prose
 scraping. `blocked-on` is **not** human-gated (#161): its next mover is the
 vetter, whose state-load clears it automatically — see below. (`blocked-deploy`
-is RETIRED — #162: no merge waits on a deploy under the split release
-lifecycle, so a deploy-shaped block is a repo-migration dependency expressed as
-`blocked-on`.)
-`design` is the **total-function fallback**: a situation the producer cannot
-classify is by definition one a human has to look at, and `design` already means
-exactly that.
+is RETIRED — #162: no merge waits on a deploy under the split release lifecycle,
+so a deploy-shaped block is a repo-migration dependency expressed as
+`blocked-on`.) `design` is the **total-function fallback**: a situation the
+producer cannot classify is by definition one a human has to look at, and
+`design` already means exactly that.
 
 ### `ai:blocked-on` sits with the vetter (#161)
 

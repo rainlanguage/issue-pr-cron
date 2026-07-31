@@ -279,8 +279,8 @@ changes the ruling:
 - **the legacy deploy signal** (`legacyDeploySignal`), taken from the body and
   trusted producer comments — never the title, where the marker appears in 1 of
   the 6 PRs that carry it. It is **never a merge gate** (#162):
-  `repo-not-migrated` says the PR's repo still has the pre-split premerge
-  deploy shape and is owed a lifecycle migration — the producer's
+  `repo-not-migrated` says the PR's repo still has the pre-split premerge deploy
+  shape and is owed a lifecycle migration — the producer's
   `flag-blocked-on --blocked-by <migration ref>` route — not that anything must
   be deployed before this merge.
 
