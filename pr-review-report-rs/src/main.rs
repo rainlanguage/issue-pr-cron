@@ -3794,7 +3794,8 @@ fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
     0
 }
 
-/// One `{ts, counts}` rollup line for human-queue-history.jsonl, from a human-queue.json snapshot.
+/// One `{ts, counts[, ages]}` rollup line for human-queue-history.jsonl, from a human-queue.json
+/// snapshot.
 ///
 /// Replaces `jq -c --arg ts "$ts" '{ts: $ts, counts: .counts}'` in refresh-human-queue.sh and the
 /// per-commit `select(.counts != null) | …` in backfill-human-queue-history.sh — one implementation
@@ -3803,13 +3804,23 @@ fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
 ///
 /// Returns None when the snapshot has no `counts` (the backfill's `select`): early commits of
 /// human-queue.json predate the key, and those commits must be skipped, not emitted as null.
+///
+/// `ages` (rain-org-health#140 / #165) rides along exactly when the snapshot carries it — a
+/// snapshot without one (every commit predating the key, and any refresh whose backlog had no age
+/// to report) emits a line WITHOUT the key, never `"ages": null`. The dashboard's degradation
+/// contract is a missing field, and a null would be a third shape both sides would have to handle.
 fn queue_history_line(snapshot: &str, ts: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(snapshot).ok()?;
     let counts = doc.get("counts")?;
     if counts.is_null() {
         return None;
     }
-    let line = serde_json::json!({ "ts": ts, "counts": counts });
+    let mut line = serde_json::json!({ "ts": ts, "counts": counts });
+    if let Some(ages) = doc.get("ages").filter(|a| !a.is_null()) {
+        line.as_object_mut()
+            .expect("the rollup line is an object")
+            .insert("ages".into(), ages.clone());
+    }
     Some(serde_json::to_string(&line).unwrap())
 }
 
@@ -9436,28 +9447,78 @@ fn close_candidate_issue_refs(found: &[Value]) -> Vec<SubjectRef> {
         .collect()
 }
 
-/// PURE: the `uncoveredIssues` (producer backlog) subject list, from the shared coverage
+/// One producer-backlog issue: its subject reference plus its `createdAt` as epoch ms, both read
+/// from the SAME coverage-meta row. The pair exists so `counts.uncoveredIssues` and
+/// `ages.uncoveredIssues` are two reads of ONE population ([`producer_backlog`] is the only filter
+/// site) — a separate age derivation could silently count a different backlog than the count does.
+///
+/// `created_ms` is `None` when the meta row is missing or its `createdAt` does not parse. The issue
+/// still COUNTS (a missing row must never shrink the backlog); it just cannot contribute an age.
+struct BacklogIssue {
+    subject: SubjectRef,
+    created_ms: Option<i64>,
+}
+
+/// PURE: the `uncoveredIssues` (producer backlog) population, from the shared coverage
 /// computation's uncovered keys + per-issue meta. The meta is the raw `gh search issues` row, which
-/// already carries `url` — the backlog previously kept only `title` from it (#114).
+/// already carries `url` — the backlog previously kept only `title` from it (#114) — and
+/// `createdAt`, from which the age stats are computed (rain-org-health#140 / #165).
 ///
 /// An issue whose meta is missing is kept (a missing row must not silently shrink the backlog) with
 /// an empty url, because there is no honest link to emit for it — never a `/issues/<n>` guess.
-fn producer_backlog_refs(
+fn producer_backlog(
     open: &[(String, u64)],
     meta: &std::collections::HashMap<(String, u64), Value>,
-) -> Vec<SubjectRef> {
+) -> Vec<BacklogIssue> {
     open.iter()
         .filter(|k| meta.get(*k).map(is_producer_backlog).unwrap_or(true))
         .map(|(slug, num)| {
+            let row = meta.get(&(slug.clone(), *num));
             let field = |k: &str| {
-                meta.get(&(slug.clone(), *num))
-                    .and_then(|m| m.get(k))
+                row.and_then(|m| m.get(k))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
             };
-            SubjectRef::new(slug, *num, field("url"), field("title"))
+            BacklogIssue {
+                subject: SubjectRef::new(slug, *num, field("url"), field("title")),
+                created_ms: row
+                    .and_then(|m| m.get("createdAt"))
+                    .and_then(|v| v.as_str())
+                    .and_then(iso_to_epoch_ms),
+            }
         })
         .collect()
+}
+
+/// PURE: `(medianDays, oldestDays)` — one decimal place — over the backlog members that carry a
+/// parseable `createdAt`, or `None` when none do. Absence is the honest empty value: an empty
+/// backlog HAS no age, and emitting `0` would claim a fresh one (rain-org-health#140).
+///
+/// Median rather than mean as the headline number because issue-age distributions are badly
+/// skewed — a handful of 2024-era issues drags a mean by months while the typical issue is weeks
+/// old. Oldest (max) is recorded beside it as the tail signal those same stragglers ARE.
+///
+/// A `createdAt` after `now_ms` (clock skew between GitHub and this host) clamps to 0.0 — an age
+/// is never negative. Rounding happens once, at the end, on the two emitted numbers.
+fn backlog_age_stats(backlog: &[BacklogIssue], now_ms: i64) -> Option<(f64, f64)> {
+    let mut ages: Vec<f64> = backlog
+        .iter()
+        .filter_map(|b| b.created_ms)
+        .map(|c| ((now_ms - c) as f64 / 86_400_000.0).max(0.0))
+        .collect();
+    if ages.is_empty() {
+        return None;
+    }
+    ages.sort_by(f64::total_cmp);
+    let n = ages.len();
+    let median = if n % 2 == 1 {
+        ages[n / 2]
+    } else {
+        (ages[n / 2 - 1] + ages[n / 2]) / 2.0
+    };
+    let oldest = ages[n - 1];
+    let tenth = |d: f64| (d * 10.0).round() / 10.0;
+    Some((tenth(median), tenth(oldest)))
 }
 
 /// PURE: clip to `n` CHARACTERS. Titles and leak reasons carry unicode (em-dash, middle-dot,
@@ -9503,15 +9564,16 @@ fn human_queue_doc(
     cc_unvetted_n: usize,
     cc_upheld: Value,
     cc_upheld_n: usize,
-    backlog: &[SubjectRef],
+    backlog: &[BacklogIssue],
     leaks: &[(SubjectRef, String)],
     total_producer_prs: usize,
+    now_ms: i64,
 ) -> Value {
     let bmap: serde_json::Map<String, Value> = buckets
         .iter()
         .map(|(k, v)| (k.clone(), Value::Array(SubjectRef::array(v))))
         .collect();
-    serde_json::json!({
+    let mut doc = serde_json::json!({
         "states": bmap,
         "lanes": lanes,
         "closeCandidateIssues": SubjectRef::array(close_issues),
@@ -9519,7 +9581,7 @@ fn human_queue_doc(
         // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
         "closeCandidateUnvetted": cc_unvetted,
         "closeCandidateUpheld": cc_upheld,
-        "uncoveredIssues": SubjectRef::array(backlog),
+        "uncoveredIssues": backlog.iter().map(|b| b.subject.to_json()).collect::<Vec<_>>(),
         "leaks": leaks
             .iter()
             .map(|(s, reason)| s.to_json_with(&[("reason", Value::from(reason.as_str()))]))
@@ -9559,7 +9621,24 @@ fn human_queue_doc(
             "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
             "humanCloseCandidate": lane_state_count(lanes, "human-decisions", "human:close-candidate"),
         }
-    })
+    });
+    // Age stats ride BESIDE `counts`, never inside it — `counts` is named for what it holds and an
+    // age is not a count (rain-org-health#140 / #165). The block is ABSENT (not null, not zero)
+    // when no backlog member carries an age: an empty backlog has no age to report, and the
+    // dashboard's documented degradation for a missing field is no spark, never a broken box.
+    // Median/oldest are computed over the SAME `backlog` the count and item array above are —
+    // one population, read three ways.
+    if let Some((median, oldest)) = backlog_age_stats(backlog, now_ms) {
+        doc.as_object_mut()
+            .expect("human_queue_doc is an object")
+            .insert(
+                "ages".into(),
+                serde_json::json!({
+                    "uncoveredIssues": { "medianDays": median, "oldestDays": oldest }
+                }),
+            );
+    }
+    doc
 }
 
 /// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
@@ -9762,8 +9841,8 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // previously invisible on the FSM dashboard. Same coverage computation as `uncovered-issues`
     // (via `coverage_uncovered`); `is_producer_backlog` narrows it to the producer's share. A gh
     // failure leaves it empty rather than aborting the whole queue render — it is additive.
-    let backlog: Vec<SubjectRef> = coverage_uncovered()
-        .map(|(open, meta)| producer_backlog_refs(&open, &meta))
+    let backlog: Vec<BacklogIssue> = coverage_uncovered()
+        .map(|(open, meta)| producer_backlog(&open, &meta))
         .unwrap_or_default();
 
     if json_out {
@@ -9778,6 +9857,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
             &backlog,
             &leaks,
             prs.len(),
+            // The one impure input to the age arithmetic: "now", taken once so every emitted
+            // age in this snapshot measures against the same instant.
+            now_unix() * 1000,
         );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
@@ -19011,11 +19093,13 @@ type UncoveredCoverage = (
     std::collections::HashMap<(String, u64), Value>,
 );
 
-/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter)
-/// and the covered set from open PRs' native `closingIssuesReferences`, then return the uncovered
-/// issues (no covering open PR) with their meta. `None` on a gh failure — callers MUST abort rather
-/// than report a false-empty set. Both `uncovered-issues` and the `human-queue` producer-backlog
-/// count read this ONE computation, so their coverage semantics can never drift.
+/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter,
+/// and WITH `createdAt` so the backlog age stats are arithmetic on this same payload — one more
+/// field on this one query, never a per-issue fetch) and the covered set from open PRs' native
+/// `closingIssuesReferences`, then return the uncovered issues (no covering open PR) with their
+/// meta. `None` on a gh failure — callers MUST abort rather than report a false-empty set. Both
+/// `uncovered-issues` and the `human-queue` producer-backlog count read this ONE computation, so
+/// their coverage semantics can never drift.
 fn coverage_uncovered() -> Option<UncoveredCoverage> {
     // open issues
     let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
@@ -19027,7 +19111,7 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
             "--limit",
             "1000",
             "--json",
-            "number,repository,url,title,labels",
+            "number,repository,url,title,labels,createdAt",
         ]
         .iter()
         .map(|s| s.to_string()),
@@ -27873,7 +27957,8 @@ mod cli_tests {
             queue_history_line(snap, "2026-07-27T10:00:00Z").unwrap(),
             r#"{"ts":"2026-07-27T10:00:00Z","counts":{"ready":3,"design":1}}"#
         );
-        // Only `counts` is carried over; anything else in the snapshot is dropped.
+        // Only `counts` (and, when present, `ages` — below) is carried over; anything else in the
+        // snapshot is dropped.
         let parsed: Value = serde_json::from_str(&queue_history_line(snap, "t").unwrap()).unwrap();
         assert_eq!(
             parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
@@ -27890,6 +27975,47 @@ mod cli_tests {
         // `git show` of a commit where the file did not exist yields empty output.
         assert!(queue_history_line("", "t").is_none());
         assert!(queue_history_line("not json", "t").is_none());
+    }
+
+    // A snapshot carrying `ages` (rain-org-health#140 / #165) emits it VERBATIM beside `counts` —
+    // same rollup, one more block — so the dashboard's age series reads from the same lines its
+    // count series already does.
+    #[test]
+    fn queue_history_line_carries_ages_beside_counts() {
+        let snap = r#"{"counts":{"ready":3},"ages":{"uncoveredIssues":{"medianDays":41.0,"oldestDays":812.3}}}"#;
+        let line = queue_history_line(snap, "2026-07-31T10:00:00Z").unwrap();
+        let parsed: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["ts", "counts", "ages"]
+        );
+        assert_eq!(
+            parsed["ages"]["uncoveredIssues"]["medianDays"],
+            serde_json::json!(41.0)
+        );
+        assert_eq!(
+            parsed["ages"]["uncoveredIssues"]["oldestDays"],
+            serde_json::json!(812.3)
+        );
+    }
+
+    // Absence-not-null, in BOTH directions: a snapshot without `ages` (every commit predating the
+    // key) emits a line without the key, and a pathological `"ages": null` is dropped rather than
+    // forwarded — the dashboard's degradation contract is a MISSING field, and `null` would be a
+    // third shape every reader would have to handle.
+    #[test]
+    fn queue_history_line_omits_ages_when_the_snapshot_has_none() {
+        for snap in [
+            r#"{"counts":{"ready":3}}"#,
+            r#"{"counts":{"ready":3},"ages":null}"#,
+        ] {
+            let line = queue_history_line(snap, "t").unwrap();
+            let parsed: Value = serde_json::from_str(&line).unwrap();
+            assert!(
+                parsed.get("ages").is_none(),
+                "line for {snap} must carry NO ages key, got {line}"
+            );
+        }
     }
 
     // ---- distill-trace: the jq distiller, with its truncation widths now under test ----
@@ -29121,19 +29247,23 @@ mod subject_ref_tests {
             cc_unvetted_n,
             cc_upheld,
             cc_upheld_n,
-            &[sref(
-                "rainlanguage/rain.math.float",
-                42,
-                "issues",
-                "backlog",
-            )],
+            &[BacklogIssue {
+                subject: sref("rainlanguage/rain.math.float", 42, "issues", "backlog"),
+                // 10 days before DOC_NOW_MS, so `ages` is exercised by the same fixture that
+                // pins the subject-array shape.
+                created_ms: Some(DOC_NOW_MS - 10 * 86_400_000),
+            }],
             &[(
                 sref("rainlanguage/raindex", 99, "pull", "leaking pr"),
                 "blocked on a deploy".to_string(),
             )],
             2,
+            DOC_NOW_MS,
         )
     }
+
+    /// The fixture's "now": 2026-07-31T00:00:00Z, fixed so every age in `doc()` is deterministic.
+    const DOC_NOW_MS: i64 = 1_785_456_000_000;
 
     /// The top-level arrays holding subject references, by JSON pointer. `leaks` is here too: it is
     /// a subject reference with one EXTRA key, not a different shape.
@@ -29267,15 +29397,18 @@ mod subject_ref_tests {
     // `uncoveredIssues` is the biggest array (hundreds of entries). Its url comes from the meta the
     // shared coverage computation ALREADY holds — the `gh search issues` row — so no per-issue
     // fetch is added. A missing meta row keeps the entry (never silently shrink the backlog) with
-    // an empty url: an unknown link is reported unknown, never guessed.
+    // an empty url: an unknown link is reported unknown, never guessed. `createdAt` rides the same
+    // row: parsed to epoch ms where it exists, `None` (still counted, contributing no age) where
+    // the row or the timestamp is missing/malformed.
     #[test]
-    fn producer_backlog_refs_carry_the_url_from_the_coverage_meta() {
+    fn producer_backlog_carries_the_url_and_created_at_from_the_coverage_meta() {
         let mut meta: std::collections::HashMap<(String, u64), Value> =
             std::collections::HashMap::new();
         meta.insert(
             ("rainlanguage/raindex".into(), 512),
             json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
-                   "title": "backlog issue", "labels": []}),
+                   "title": "backlog issue", "labels": [],
+                   "createdAt": "2026-07-21T00:00:00Z"}),
         );
         // Excluded: an `ai:close-candidate` issue is the human's queue, not the producer's.
         meta.insert(
@@ -29286,17 +29419,17 @@ mod subject_ref_tests {
         let open = vec![
             ("rainlanguage/raindex".to_string(), 512),
             ("rainlanguage/raindex".to_string(), 700),
-            // No meta row at all — kept, with no fabricated link.
+            // No meta row at all — kept, with no fabricated link and no fabricated age.
             ("rainlanguage/rain.math.float".to_string(), 3),
         ];
-        let refs = producer_backlog_refs(&open, &meta);
+        let backlog = producer_backlog(&open, &meta);
         assert_eq!(
-            refs.len(),
+            backlog.len(),
             2,
             "the close-candidate issue is excluded, the meta-less one is not"
         );
         assert_eq!(
-            refs[0],
+            backlog[0].subject,
             SubjectRef::new(
                 "rainlanguage/raindex",
                 512,
@@ -29304,11 +29437,176 @@ mod subject_ref_tests {
                 "backlog issue"
             )
         );
-        assert_eq!(refs[1].repo, "rainlanguage/rain.math.float");
         assert_eq!(
-            refs[1].url, "",
+            backlog[0].created_ms,
+            iso_to_epoch_ms("2026-07-21T00:00:00Z"),
+            "createdAt parses through the same reader GitHub timestamps use everywhere here"
+        );
+        assert_eq!(backlog[1].subject.repo, "rainlanguage/rain.math.float");
+        assert_eq!(
+            backlog[1].subject.url, "",
             "no meta means no link — never a guessed one"
         );
+        assert_eq!(
+            backlog[1].created_ms, None,
+            "no meta means no age either — the member still counts, it just contributes none"
+        );
+    }
+
+    // ── backlog age stats (rain-org-health#140 / #165) ──────────────────────────────────────────
+    // Median + oldest in DAYS to one decimal, over the members that carry a parseable createdAt.
+    // The fixture-builder for a member whose only relevant field is its age:
+    fn aged(days_ago_ms: i64, now_ms: i64) -> BacklogIssue {
+        BacklogIssue {
+            subject: sref("o/r", 1, "issues", "t"),
+            created_ms: Some(now_ms - days_ago_ms),
+        }
+    }
+    const DAY_MS: i64 = 86_400_000;
+
+    #[test]
+    fn backlog_age_stats_median_is_the_middle_of_an_odd_population() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            aged(2 * DAY_MS, now),
+            aged(10 * DAY_MS, now),
+            aged(40 * DAY_MS, now),
+        ];
+        assert_eq!(backlog_age_stats(&b, now), Some((10.0, 40.0)));
+    }
+
+    #[test]
+    fn backlog_age_stats_median_is_the_mean_of_the_two_middles_of_an_even_population() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            aged(2 * DAY_MS, now),
+            aged(10 * DAY_MS, now),
+            aged(20 * DAY_MS, now),
+            aged(40 * DAY_MS, now),
+        ];
+        // (10 + 20) / 2 = 15.
+        assert_eq!(backlog_age_stats(&b, now), Some((15.0, 40.0)));
+    }
+
+    #[test]
+    fn backlog_age_stats_round_to_one_decimal() {
+        let now = DOC_NOW_MS;
+        // 36 hours = 1.5 days exactly; 8h = 0.333… days, which must round to 0.3, not truncate
+        // elsewhere or ship 15 decimals into the JSON.
+        let b = vec![aged(36 * 3_600_000, now)];
+        assert_eq!(backlog_age_stats(&b, now), Some((1.5, 1.5)));
+        let b = vec![aged(8 * 3_600_000, now)];
+        assert_eq!(backlog_age_stats(&b, now), Some((0.3, 0.3)));
+    }
+
+    #[test]
+    fn backlog_age_stats_of_one_member_is_that_member_twice() {
+        let now = DOC_NOW_MS;
+        assert_eq!(
+            backlog_age_stats(&[aged(7 * DAY_MS, now)], now),
+            Some((7.0, 7.0))
+        );
+    }
+
+    // An empty population has NO age — `None`, so the caller omits the field entirely. Zero would
+    // claim a fresh backlog, which is the opposite of what an empty backlog means.
+    #[test]
+    fn backlog_age_stats_of_an_empty_population_is_none_not_zero() {
+        assert_eq!(backlog_age_stats(&[], DOC_NOW_MS), None);
+    }
+
+    // Members without a parseable createdAt contribute no age; when NO member carries one there is
+    // nothing honest to emit and the answer is again `None`, never a fabricated 0.
+    #[test]
+    fn backlog_age_stats_ignore_members_without_created_at_and_none_when_all_lack_it() {
+        let now = DOC_NOW_MS;
+        let no_age = BacklogIssue {
+            subject: sref("o/r", 2, "issues", "no meta"),
+            created_ms: None,
+        };
+        assert_eq!(backlog_age_stats(&[no_age], now), None);
+        let no_age = BacklogIssue {
+            subject: sref("o/r", 2, "issues", "no meta"),
+            created_ms: None,
+        };
+        // The aged member alone decides both stats; the age-less one still COUNTS in the
+        // population (asserted against `counts.uncoveredIssues` in the doc tests below).
+        assert_eq!(
+            backlog_age_stats(&[aged(10 * DAY_MS, now), no_age], now),
+            Some((10.0, 10.0))
+        );
+    }
+
+    // Clock skew: a createdAt after "now" clamps to 0.0 — an age is never negative.
+    #[test]
+    fn backlog_age_stats_clamp_future_created_at_to_zero() {
+        let now = DOC_NOW_MS;
+        let future = BacklogIssue {
+            subject: sref("o/r", 3, "issues", "from the future"),
+            created_ms: Some(now + DAY_MS),
+        };
+        assert_eq!(backlog_age_stats(&[future], now), Some((0.0, 0.0)));
+    }
+
+    // The emitted block: a SIBLING of `counts` (an age is not a count), carrying both stats for
+    // the SAME population the count describes — including the members that contribute no age.
+    #[test]
+    fn the_doc_emits_ages_beside_counts_over_the_counted_population() {
+        let d = doc();
+        // doc()'s one backlog member is 10 days old at DOC_NOW_MS.
+        assert_eq!(d["ages"]["uncoveredIssues"]["medianDays"], json!(10.0));
+        assert_eq!(d["ages"]["uncoveredIssues"]["oldestDays"], json!(10.0));
+        assert!(
+            d["counts"].get("ages").is_none()
+                && d["counts"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .all(|k| !k.contains("Days")),
+            "ages live BESIDE counts, never inside it"
+        );
+        assert_eq!(
+            d["counts"]["uncoveredIssues"],
+            json!(1),
+            "the count still counts the same population the ages describe"
+        );
+    }
+
+    // Absence-not-null on the snapshot itself: an empty backlog (and one whose members all lack a
+    // createdAt) emits NO `ages` key. The dashboard's documented degradation handles a missing
+    // field; a null or a zero would be a lie it would faithfully draw.
+    #[test]
+    fn the_doc_omits_ages_when_the_backlog_has_no_age() {
+        let empty: Vec<BacklogIssue> = vec![];
+        let ageless = vec![BacklogIssue {
+            subject: sref("o/r", 9, "issues", "no createdAt"),
+            created_ms: None,
+        }];
+        for (backlog, want_count) in [(&empty, 0u64), (&ageless, 1u64)] {
+            let d = human_queue_doc(
+                &std::collections::BTreeMap::new(),
+                &lanes_doc(&[]),
+                &[],
+                json!([]),
+                0,
+                json!([]),
+                0,
+                backlog,
+                &[],
+                0,
+                DOC_NOW_MS,
+            );
+            assert!(
+                d.get("ages").is_none(),
+                "no age to report ⇒ the key is ABSENT, got {:?}",
+                d.get("ages")
+            );
+            assert_eq!(
+                d["counts"]["uncoveredIssues"],
+                json!(want_count),
+                "the count is independent of whether ages are reportable"
+            );
+        }
     }
 
     // The human-readable daily review prints the same resolved url. It renders
