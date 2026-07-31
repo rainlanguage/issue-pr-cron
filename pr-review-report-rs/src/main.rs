@@ -29330,6 +29330,15 @@ mod worklist_tests {
         assert!(is_producer_backlog(&json!({})));
     }
 
+    /// `action_rank` is string-keyed off `NextAction::as_str`, so a renamed action that missed
+    /// one side would silently sink to the parked-skip rank instead of leading the sort.
+    #[test]
+    fn flag_migration_leads_the_action_rank() {
+        assert_eq!(action_rank(NextAction::FlagMigration.as_str()), 0);
+        // The retired spelling must not secretly still be the ranked one.
+        assert_eq!(action_rank("deploy"), 7, "an unknown action files as parked");
+    }
+
     #[test]
     fn worklist_row_red_prodpin_is_flag_migration() {
         let detail = json!({
