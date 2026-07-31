@@ -2678,6 +2678,7 @@ fn run_metrics_mode(
     exit_code: Option<i32>,
     preflight_missing: &[String],
     infra_path: Option<&str>,
+    skip: Option<(&str, &str)>,
 ) -> i32 {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -2692,7 +2693,7 @@ fn run_metrics_mode(
     let outcome = exit_code.map(|rc| {
         (
             rc,
-            classify_outcome(&content, rc, preflight_missing, &infra),
+            classify_outcome(&content, rc, skip.is_some(), preflight_missing, &infra),
         )
     });
     println!(
@@ -2704,7 +2705,8 @@ fn run_metrics_mode(
             outcome,
             &tooling,
             preflight_missing,
-            &infra
+            &infra,
+            skip
         ))
         .unwrap()
     );
@@ -2715,6 +2717,7 @@ fn run_metrics_mode(
 /// outcome that only exist once the run has finished. Built here rather than inline in
 /// [`run_metrics_mode`] so the record's shape — `stage` above all — is a tested value, not a
 /// side effect of printing.
+#[allow(clippy::too_many_arguments)] // one record, one assembly point — splitting it would put the row's shape in two places
 fn final_record(
     path: &str,
     m: &RunMetrics,
@@ -2723,6 +2726,7 @@ fn final_record(
     tooling: &ToolingReport,
     preflight_missing: &[String],
     infra: &InfraRecord,
+    skip: Option<(&str, &str)>,
 ) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
@@ -2769,6 +2773,15 @@ fn final_record(
     if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
         obj.insert("exitCode".into(), serde_json::json!(rc));
         obj.insert("outcome".into(), serde_json::json!(verdict.as_str()));
+    }
+    // The SKIP stamp (#160): present on a skipped tick's row, ABSENT — not null — on every other,
+    // so a consumer can key on the field existing at all and every pre-skip record stays
+    // byte-compatible. `skipReason` is the gate's own output line, verbatim: the row is the only
+    // durable copy (the runner's log rotates with the box), and a paraphrase would be a second
+    // place that knows what the gate says.
+    if let (Some(obj), Some((gate, reason))) = (doc.as_object_mut(), skip) {
+        obj.insert("skipped".into(), serde_json::json!(gate));
+        obj.insert("skipReason".into(), serde_json::json!(reason));
     }
     doc
 }
@@ -3644,6 +3657,13 @@ enum TraceOutcome {
     /// `ai:blocked-infra` with an exit is that the fact must ACCUMULATE somewhere countable. One is
     /// noise; the same one across twenty runs is the signal a human acts on.
     InfraDown,
+    /// A pre-model gate SKIPPED the tick on purpose (#160): `usage-gate` said PAUSE, the model
+    /// never started, and the runner exited 0. Neither `ok` (nothing ran) nor `error` (nothing
+    /// failed) — before this variant a paused stretch left NO row at all, and the dashboard read
+    /// nine consecutive gated ticks as a dead cron. A config REFUSAL (usage-gate exit 2) is NOT
+    /// a skip: the runners abort loudly on it and write no row, and conflating the two would
+    /// dress broken config up as pacing.
+    Skipped,
 }
 
 impl TraceOutcome {
@@ -3656,6 +3676,7 @@ impl TraceOutcome {
             TraceOutcome::ToolingFailure => "tooling-failure",
             TraceOutcome::Error => "error",
             TraceOutcome::InfraDown => "infra-down",
+            TraceOutcome::Skipped => "skipped",
         }
     }
 }
@@ -3722,11 +3743,17 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
     TraceOutcome::Ok
 }
 
-/// The whole run's outcome: what the trace says, plus what `preflight` found before the trace
-/// existed.
+/// The whole run's outcome: what the trace says, plus what the runner's pre-model gates found
+/// before the trace existed.
+///
+/// A SKIP (#160) outranks everything: `usage-gate` runs before preflight, before the lock, before
+/// a token is spent, so a skipped tick has no trace, no preflight result and no infra record —
+/// every other classification of it would be an artifact of the empty trace (an `exitCode` of 10
+/// over zero events reads as `error`, which is precisely the "dead cron" rendering the skip row
+/// exists to correct).
 ///
 /// A preflight failure has no trace to classify — the model never ran — so the fact arrives as the
-/// list of binaries that would not resolve. It outranks everything else: a run that was stopped
+/// list of binaries that would not resolve. It outranks everything below: a run that was stopped
 /// before it started is neither quota-limited nor merely errored.
 ///
 /// An infra exit (#108) is folded in LAST and only over an otherwise-`ok` run. The ordering is
@@ -3737,9 +3764,13 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
 fn classify_outcome(
     trace: &str,
     exit_code: i32,
+    skipped: bool,
     preflight_missing: &[String],
     infra: &InfraRecord,
 ) -> TraceOutcome {
+    if skipped {
+        return TraceOutcome::Skipped;
+    }
     if !preflight_missing.is_empty() {
         return TraceOutcome::ToolingFailure;
     }
@@ -17874,6 +17905,16 @@ enum Cmd {
         /// line and makes the outcome `infra-down` rather than `ok` (#108).
         #[arg(long)]
         infra: Option<String>,
+        /// The pre-model gate that SKIPPED this tick (`usage-gate` on a pause, #160). Present
+        /// means the model never started and the tick was a deliberate skip, not a failure: the
+        /// row carries `skipped` + `skipReason` and its outcome is `skipped`. A config REFUSAL
+        /// (usage-gate exit 2) is NOT a skip — the runners abort loudly on it and write no row.
+        #[arg(long, requires = "skip_reason")]
+        skipped: Option<String>,
+        /// The gate's own output line, verbatim, recorded as `skipReason` beside `skipped` —
+        /// the two arrive together or not at all.
+        #[arg(long, requires = "skipped")]
+        skip_reason: Option<String>,
     },
     /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
     ///
@@ -19706,6 +19747,8 @@ fn main() {
             exit_code,
             preflight_missing,
             infra,
+            skipped,
+            skip_reason,
         } => run_metrics_mode(
             &trace,
             &RunIdentity {
@@ -19716,6 +19759,7 @@ fn main() {
             exit_code,
             &preflight_missing,
             infra.as_deref(),
+            skipped.as_deref().zip(skip_reason.as_deref()),
         ),
         Cmd::Preflight => preflight_mode(),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
@@ -21724,6 +21768,7 @@ mod startup_split_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert_eq!(doc["stage"], STAGE_FINAL);
         assert_eq!(doc["bootMs"], 1125);
@@ -21760,12 +21805,120 @@ mod startup_split_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert!(doc.get("runId").is_none());
         assert!(doc.get("role").is_none());
         assert!(doc.get("outcome").is_none());
         assert_eq!(doc["bootMs"], 1125);
         assert_eq!(doc["ttlMs"], 297_016);
+    }
+}
+
+/// The usage-gate SKIP row (#160).
+///
+/// A paused tick used to leave NO runs.jsonl row at all, so the dashboard drew nine consecutive
+/// gated ticks as a dead cron. These pin the row's contract — a sibling renderer is built against
+/// exactly these fields — and the line between a SKIP (exit 10, row) and a config REFUSAL
+/// (exit 2, loud abort, no row), which must not conflate.
+#[cfg(test)]
+mod skip_row_tests {
+    use super::{
+        classify_outcome, final_record, InfraRecord, RunIdentity, RunMetrics, ToolingReport,
+        TraceOutcome, STAGE_FINAL,
+    };
+
+    /// The gate's real ceiling-pause line, verbatim — em-dash, percent signs and all — because the
+    /// contract is "the gate's own output line", not a normalization of it.
+    const PAUSE_LINE: &str =
+        "PAUSE: 91% of the weekly budget used (endpoint) — at/over the 90% ceiling";
+
+    fn id() -> RunIdentity<'static> {
+        RunIdentity {
+            run_id: Some("20260731T090001Z"),
+            role: Some("producer"),
+            model: Some("claude-fable-5"),
+        }
+    }
+
+    /// The full contract of one skip row: the typed discriminant, the verbatim reason, and every
+    /// standard field a consumer already reconciles rows by.
+    #[test]
+    fn a_skip_row_carries_the_gate_and_its_reason_verbatim() {
+        let doc = final_record(
+            "/runs/20260731T090001Z.jsonl",
+            &RunMetrics::default(),
+            &id(),
+            Some((10, TraceOutcome::Skipped)),
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            Some(("usage-gate", PAUSE_LINE)),
+        );
+        assert_eq!(doc["skipped"], "usage-gate");
+        assert_eq!(doc["skipReason"], PAUSE_LINE, "the reason must be verbatim");
+        assert_eq!(doc["stage"], STAGE_FINAL);
+        assert_eq!(doc["runId"], "20260731T090001Z");
+        assert_eq!(doc["role"], "producer");
+        assert_eq!(doc["model"], "claude-fable-5");
+        assert_eq!(doc["exitCode"], 10);
+        assert_eq!(
+            doc["outcome"], "skipped",
+            "a paused tick is neither ok nor error — those are the words that drew a dead cron"
+        );
+    }
+
+    /// ABSENT, not null: a consumer keys on the field existing at all, and every record written
+    /// before the skip fields must stay byte-identical to what this build would write for it.
+    #[test]
+    fn an_unskipped_row_omits_both_skip_fields_entirely() {
+        let doc = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &id(),
+            Some((0, TraceOutcome::Ok)),
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+        );
+        assert!(
+            doc.get("skipped").is_none(),
+            "skipped must be absent, not null, on a run that ran"
+        );
+        assert!(
+            doc.get("skipReason").is_none(),
+            "skipReason must be absent, not null, on a run that ran"
+        );
+    }
+
+    /// The classification half of the same contract: a skip outranks what the empty trace would
+    /// otherwise read as. The runner records the GATE's exit 10 on the row, and 10 over zero
+    /// events classifies `error` — the very rendering the skip row exists to correct.
+    #[test]
+    fn a_skip_classifies_skipped_where_the_bare_exit_code_would_read_error() {
+        assert_eq!(
+            classify_outcome("", 10, true, &[], &InfraRecord::default()),
+            TraceOutcome::Skipped
+        );
+        assert_eq!(
+            classify_outcome("", 10, false, &[], &InfraRecord::default()),
+            TraceOutcome::Error,
+            "without the skip fact, the same row reads as an error — the flag is load-bearing"
+        );
+        assert_eq!(TraceOutcome::Skipped.as_str(), "skipped");
+    }
+
+    /// A config REFUSAL is NOT a skip. The runners abort loudly on usage-gate exit 2 and write no
+    /// row at all — so nothing may classify a refusal's exit as `skipped` unless the runner
+    /// explicitly said so, and the runner never does.
+    #[test]
+    fn a_refusal_exit_is_never_skipped_without_the_flag() {
+        assert_eq!(
+            classify_outcome("", 2, false, &[], &InfraRecord::default()),
+            TraceOutcome::Error,
+            "a refusal must stay loud, never dressed up as pacing"
+        );
     }
 }
 
@@ -22277,6 +22430,7 @@ mod usage_probe_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert_eq!(doc["rateLimits"]["five_hour"]["status"], "allowed");
         // The terminal totals stay authoritative — including the output count the probe cannot
@@ -22293,6 +22447,7 @@ mod usage_probe_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert!(
             bare["rateLimits"].is_object(),
@@ -27115,6 +27270,8 @@ mod cli_tests {
                 exit_code: None,
                 preflight_missing: vec![],
                 infra: None,
+                skipped: None,
+                skip_reason: None,
             }
         );
         // The form the runners now use in place of the `| jq '. + {…}'` pipe.
@@ -27140,6 +27297,8 @@ mod cli_tests {
                 exit_code: Some(0),
                 preflight_missing: vec![],
                 infra: None,
+                skipped: None,
+                skip_reason: None,
             }
         );
         // The abort form: `preflight` found nothing to render with, so the model never started.
@@ -27161,7 +27320,63 @@ mod cli_tests {
                 exit_code: Some(12),
                 preflight_missing: vec!["pdftoppm".to_string(), "pdfinfo".to_string()],
                 infra: None,
+                skipped: None,
+                skip_reason: None,
             }
+        );
+        // The SKIP form (#160): the usage-gate paused the tick, the runners record the row with
+        // the gate's own line, verbatim.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--run-id",
+                "20260731T090001Z",
+                "--role",
+                "producer",
+                "--model",
+                "claude-fable-5",
+                "--exit-code",
+                "10",
+                "--skipped",
+                "usage-gate",
+                "--skip-reason",
+                "PAUSE: 91% of the weekly budget used (endpoint) — at/over the 90% ceiling"
+            ]),
+            Cmd::RunMetrics {
+                trace: "/t.jsonl".to_string(),
+                run_id: Some("20260731T090001Z".to_string()),
+                role: Some("producer".to_string()),
+                model: Some("claude-fable-5".to_string()),
+                exit_code: Some(10),
+                preflight_missing: vec![],
+                infra: None,
+                skipped: Some("usage-gate".to_string()),
+                skip_reason: Some(
+                    "PAUSE: 91% of the weekly budget used (endpoint) — at/over the 90% ceiling"
+                        .to_string()
+                ),
+            }
+        );
+        // The two skip flags arrive together or not at all: a gate with no reason would emit a
+        // row that cannot say WHY the tick paused, and a reason with no gate has no field to
+        // hang it on. Refused at parse, so no runner edit can half-supply the pair.
+        assert!(
+            Cli::try_parse_from(["prr", "run-metrics", "/t.jsonl", "--skipped", "usage-gate"])
+                .is_err(),
+            "--skipped without --skip-reason must be refused"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--skip-reason",
+                "PAUSE: x"
+            ])
+            .is_err(),
+            "--skip-reason without --skipped must be refused"
         );
     }
 
@@ -27577,12 +27792,12 @@ mod cli_tests {
         // that a declared binary would not resolve.
         let missing = vec!["pdftoppm".to_string()];
         assert_eq!(
-            classify_outcome("", 12, &missing, &InfraRecord::default()),
+            classify_outcome("", 12, false, &missing, &InfraRecord::default()),
             TraceOutcome::ToolingFailure
         );
         // …and an empty list must not change what the trace already said.
         assert_eq!(
-            classify_outcome("", 0, &[], &InfraRecord::default()),
+            classify_outcome("", 0, false, &[], &InfraRecord::default()),
             TraceOutcome::Ok
         );
     }
@@ -34764,20 +34979,23 @@ mod infra_down_tests {
         };
         let up = InfraRecord::default();
         assert_eq!(
-            classify_outcome("", 0, &[], &down),
+            classify_outcome("", 0, false, &[], &down),
             TraceOutcome::InfraDown,
             "an otherwise-clean run that stopped early must not read as ok"
         );
-        assert_eq!(classify_outcome("", 0, &[], &up), TraceOutcome::Ok);
+        assert_eq!(classify_outcome("", 0, false, &[], &up), TraceOutcome::Ok);
         // Worse outcomes win.
-        assert_eq!(classify_outcome("", 1, &[], &down), TraceOutcome::Error);
         assert_eq!(
-            classify_outcome("", 0, &["pdftoppm".to_string()], &down),
+            classify_outcome("", 1, false, &[], &down),
+            TraceOutcome::Error
+        );
+        assert_eq!(
+            classify_outcome("", 0, false, &["pdftoppm".to_string()], &down),
             TraceOutcome::ToolingFailure
         );
         let quota = r#"{"type":"result","api_error_status":429,"result":""}"#;
         assert_eq!(
-            classify_outcome(quota, 0, &[], &down),
+            classify_outcome(quota, 0, false, &[], &down),
             TraceOutcome::QuotaLimited,
             "a quota refusal must still advance model fallback"
         );
@@ -34802,6 +35020,7 @@ mod infra_down_tests {
             &ToolingReport::default(),
             &[],
             &InfraRecord::default(),
+            None,
         );
         assert_eq!(clean["infraDown"], false);
         assert_eq!(clean["infraReason"], "");
@@ -34821,6 +35040,7 @@ mod infra_down_tests {
             &ToolingReport::default(),
             &[],
             &down,
+            None,
         );
         assert_eq!(doc["infraDown"], true);
         assert_eq!(doc["infraReason"], "fork RPCs erroring org-wide");

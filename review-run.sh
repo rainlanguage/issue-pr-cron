@@ -76,14 +76,29 @@ fi
 # --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
 # headroom band under the linear burn toward the reset — the crons hold ~USAGE_HEADROOM_PCT points
 # BEHIND pace so interactive work keeps standing budget (#158). `usage-gate` reads
-# /api/oauth/usage itself; exit 10 means PAUSE (log it, exit 0). It is INERT when it cannot read
-# usage and no fallback is set — it prints OK and we run. Any OTHER non-zero exit is a config
-# REFUSAL (the retired USAGE_SLACK_PCT still set: exit 2, reason on stderr, captured into the
-# log): the tick must not run on config the gate refused to read, so propagate the failure — a
-# refusal is neither a run nor a pause. ---
+# /api/oauth/usage itself; exit 10 means PAUSE (record one skip row, exit 0). It is INERT when it
+# cannot read usage and no fallback is set — it prints OK and we run. Any OTHER non-zero exit is a
+# config REFUSAL (the retired USAGE_SLACK_PCT still set: exit 2, reason on stderr, captured into
+# the log): the tick must not run on config the gate refused to read, so propagate the failure — a
+# refusal is neither a run nor a pause, and it writes NO row. ---
 _ug="$(pr-review-report usage-gate 2>&1)"; _ugrc=$?
 echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
-[ "$_ugrc" -eq 10 ] && exit 0
+if [ "$_ugrc" -eq 10 ]; then
+  # A paused tick still writes its metrics/runs.jsonl row (#160) — same shape and same reasoning
+  # as campaign-run.sh: an empty trace so the record's shape still comes from `run-metrics`, the
+  # GATE's exit 10 on the row, the gate's own line verbatim, and exit 0 because a pause is not a
+  # failure. The hourly refresh-human-queue cron is what carries the row to origin/main during a
+  # pause. A REFUSAL (exit 2, below) writes no row and aborts loudly.
+  TS="$(date -u +%Y%m%dT%H%M%SZ)"
+  RUNLOG="$RUNDIR/$TS.jsonl"
+  mkdir -p "$RUNDIR" "$DIR/metrics"
+  : > "$RUNLOG"
+  pr-review-report run-metrics "$RUNLOG" \
+    --run-id "$TS" --role vetter --model "$REVIEW_MODEL" --exit-code 10 \
+    --skipped usage-gate --skip-reason "$_ug" \
+    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+  exit 0
+fi
 if [ "$_ugrc" -ne 0 ]; then
   echo "$(date -u +%FT%TZ) review run ABORTED: usage-gate refused its config (exit $_ugrc) — fix cron.env" >> "$LOG"
   exit "$_ugrc"

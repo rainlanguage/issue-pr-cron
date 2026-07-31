@@ -1655,6 +1655,33 @@ the current one and `final` supersedes them all. The partials exist because
 killed or times out is exactly the run whose startup timings you want, and it
 was precisely the one that left no trace of them at all.
 
+### Skipped ticks — the usage-gate pause row (#160)
+
+A tick the weekly-budget pace gate pauses (usage-gate exit 10) still writes one
+`stage: final` row, from the runner's exit-10 path over an empty trace:
+
+```json
+"skipped": "usage-gate", "skipReason": "<the gate's own PAUSE line, verbatim>", "outcome": "skipped", "exitCode": 10
+```
+
+`exitCode` is the GATE's 10, the same way the preflight-abort row records
+preflight's 12 — the runner itself still exits 0 because a pause is not a
+failure. Both skip fields are **absent** — not null — on every other row, so a
+consumer keys on the field existing at all and pre-#160 records read unchanged.
+Before this row existed a paused stretch left nothing in the file, and the
+dashboard drew nine consecutive gated ticks as a dead cron. A config REFUSAL
+(usage-gate exit 2) is NOT a skip: the tick aborts loudly and writes no row —
+broken config must never render as pacing.
+
+### How the file reaches main
+
+The runners append rows and never push. The hourly `refresh-human-queue` cron
+stages `metrics/runs.jsonl` beside the snapshot it already commits straight to
+main, publishing when EITHER file moved. That cron carries it because it is
+data-only and never usage-gated — the one committer still awake during a pause,
+which is exactly when skip rows are written and nothing else runs. A skip row is
+therefore visible to the dashboard within about an hour of its gated tick.
+
 ### Live token spend — and the one number that is not knowable
 
 `run-metrics` reads tokens from the terminal `result` event, so a killed run
