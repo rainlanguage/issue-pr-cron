@@ -29336,7 +29336,11 @@ mod worklist_tests {
     fn flag_migration_leads_the_action_rank() {
         assert_eq!(action_rank(NextAction::FlagMigration.as_str()), 0);
         // The retired spelling must not secretly still be the ranked one.
-        assert_eq!(action_rank("deploy"), 7, "an unknown action files as parked");
+        assert_eq!(
+            action_rank("deploy"),
+            7,
+            "an unknown action files as parked"
+        );
     }
 
     #[test]
