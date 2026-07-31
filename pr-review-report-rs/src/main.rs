@@ -8329,6 +8329,7 @@ fn human_rule_write(
 /// PURE: the report a completed (or dry-run) ruling prints. `work` is the disposition tail — the
 /// report has to SAY whether the subject is delegated or parked, because "which of the two did I
 /// just do" being invisible is the failure #111 is about.
+#[allow(clippy::too_many_arguments)]
 fn human_rule_report(
     slug: &str,
     n: &str,
