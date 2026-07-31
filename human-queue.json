@@ -2016,6 +2016,30 @@
   ],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 162,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/162",
+      "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle — collapse into typed ai:blocked-on refs to the repo's migration"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 161,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/161",
+      "title": "ai:blocked-on sits with the vetter: typed dependency refs, automated clearance on dep merge, human polling removed"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 152,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/152",
+      "title": "metrics page: render usage-gate skip rows as first-class events — pauses currently draw as dead stretches"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 160,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/160",
+      "title": "usage-gate pauses leave no runs.jsonl row — paused stretches read as a dead cron everywhere downstream"
+    },
+    {
       "repo": "rainlanguage/rain-org-health",
       "number": 150,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/150",
@@ -5754,7 +5778,7 @@
     "closeCandidateUpheld": 13,
     "leaks": 5,
     "totalProducerPrs": 155,
-    "uncoveredIssues": 615,
+    "uncoveredIssues": 619,
     "unvetted": 29,
     "reject": 71,
     "relink": 0,
