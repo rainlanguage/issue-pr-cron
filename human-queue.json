@@ -721,6 +721,12 @@
       },
       {
         "repo": "rainlanguage/rain.erc4626.words",
+        "number": 209,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209",
+        "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
         "number": 197,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/197",
         "title": "refactor: consolidate duplicate decimals() into IDecimalsMinimal"
@@ -862,14 +868,6 @@
         "number": 20,
         "url": "https://github.com/rainlanguage/rain.strategies/pull/20",
         "title": "2025 03 05 ds"
-      }
-    ],
-    "ai:relink": [
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 209,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209",
-        "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
       }
     ]
   },
@@ -1124,32 +1122,8 @@
     },
     "vet-lifecycle": {
       "un-vetted": {
-        "count": 33,
+        "count": 29,
         "prs": [
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 149,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/149",
-            "title": "scan(untested): flag external/public functions on concrete contracts that no test names"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 78,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/78",
-            "title": "audit: flag ambient global state and references — they remove branches from testability"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 77,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/77",
-            "title": "audit: gate Pass 2 on adversarial-mutation-test ledger evidence"
-          },
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 72,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/72",
-            "title": "audit: require a pranked fork test for state-changing scripts"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 106,
@@ -1447,7 +1421,7 @@
         ]
       },
       "ai:reject": {
-        "count": 70,
+        "count": 71,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1727,6 +1701,12 @@
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
+            "number": 209,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209",
+            "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
             "number": 197,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/197",
             "title": "refactor: consolidate duplicate decimals() into IDecimalsMinimal"
@@ -1868,17 +1848,6 @@
             "number": 20,
             "url": "https://github.com/rainlanguage/rain.strategies/pull/20",
             "title": "2025 03 05 ds"
-          }
-        ]
-      },
-      "ai:relink": {
-        "count": 1,
-        "prs": [
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 209,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209",
-            "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
           }
         ]
       }
@@ -5784,11 +5753,11 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 159,
+    "totalProducerPrs": 155,
     "uncoveredIssues": 615,
-    "unvetted": 33,
-    "reject": 70,
-    "relink": 1,
+    "unvetted": 29,
+    "reject": 71,
+    "relink": 0,
     "closeCandidatePrs": 5,
     "humanReject": 0,
     "humanDesign": 6,
