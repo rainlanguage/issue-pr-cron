@@ -1200,49 +1200,50 @@ queue) are the **human-gated states** — the daily review queue, a plain label
 search, no prose scraping. `blocked-on` is **not** human-gated (#161): its next
 mover is the vetter, whose state-load clears it automatically — see below.
 `design` is the **total-function fallback**: a situation the producer cannot
-classify is by definition one a human has to look at, and `design` already
-means exactly that.
+classify is by definition one a human has to look at, and `design` already means
+exactly that.
 
 ### `ai:blocked-on` sits with the vetter (#161)
 
 Human ruling (verbatim): _"things that are blocked on other things due to a
 dependency should sit with the vetter, not with a human, it should be possible
 to automate the judgement about whether a dependency has been cleared."_ And:
-_"merging a dependency isn't a separate responsibility, it's just something
-that happens through normal merging of ready items, it is the ai's
-responsibility to present things that are truly ready."_
+_"merging a dependency isn't a separate responsibility, it's just something that
+happens through normal merging of ready items, it is the ai's responsibility to
+present things that are truly ready."_
 
 Four mechanisms carry that:
 
-- **Typed dependency.** `flag-blocked-on <owner/repo> <n> "<reason>"
-  --blocked-by <owner/repo#n>` (repeatable). Each ref is parsed by the one
-  `owner/repo#number` parser and stored as a machine-readable
-  `blocked-by owner/repo#n` line in the flag comment, **alongside** the prose
-  reason (the prose keeps the WHY). A new flag without at least one typed ref
-  is **refused** — fail closed on the exact input that makes the state
-  automatable. Clearance is never judged from prose.
+- **Typed dependency.**
+  `flag-blocked-on <owner/repo> <n> "<reason>"
+  --blocked-by <owner/repo#n>`
+  (repeatable). Each ref is parsed by the one `owner/repo#number` parser and
+  stored as a machine-readable `blocked-by owner/repo#n` line in the flag
+  comment, **alongside** the prose reason (the prose keeps the WHY). A new flag
+  without at least one typed ref is **refused** — fail closed on the exact input
+  that makes the state automatable. Clearance is never judged from prose.
 - **Automated clearance, in the vetter's state-load.** Every `unvetted` call
   resolves each typed ref of every open `ai:blocked-on` PR. All deps MERGED or
   CLOSED ⇒ the label is cleared and a `🤖 ai:vetter` `Blocked-on cleared:`
-  comment records which dep cleared in which state. That comment is
-  deliberately **not** a verdict (no `Reviewed <sha>:`, no protocol stamp), so
-  as the newest vetter comment it makes `vetted_at_head` false even at an
-  unmoved head — the PR re-enters vetting **fresh**, because the dependency
-  landing may have changed what correct means; clearance is never a rubber
-  stamp back to `ai:ready`. Any dep still OPEN ⇒ untouched, withheld from the
-  vet queue (`blockedOn` in the state-load names the open deps).
+  comment records which dep cleared in which state. That comment is deliberately
+  **not** a verdict (no `Reviewed <sha>:`, no protocol stamp), so as the newest
+  vetter comment it makes `vetted_at_head` false even at an unmoved head — the
+  PR re-enters vetting **fresh**, because the dependency landing may have
+  changed what correct means; clearance is never a rubber stamp back to
+  `ai:ready`. Any dep still OPEN ⇒ untouched, withheld from the vet queue
+  (`blockedOn` in the state-load names the open deps).
 - **Manual review is loud, never silent.** A flag with **no typed refs** (the
   legacy prose-only flags), a malformed `blocked-by` line, or a ref that no
   longer resolves is `blockedOnManualReview` in every state-load: named ref,
   named reason, never auto-cleared, never auto-vetted, never silently stuck.
 - **Ownership on the dash.** `ai:blocked-on` emits under the **vet-lifecycle**
   lane (the vetter's action is "clear when deps merge"), not producer-blocked
-  and not the human's queue. Seventeen human inbox slots of "has #9 merged
-  yet?" were pure polling the machine now does.
+  and not the human's queue. Seventeen human inbox slots of "has #9 merged yet?"
+  were pure polling the machine now does.
 
-The **legacy prose-only flags** are migrated by an eyes-on pass — a human (or
-an interactive session) re-flags each with typed refs derived by reading the
-PR, never by regexing the prose. Until then they sit visibly in
+The **legacy prose-only flags** are migrated by an eyes-on pass — a human (or an
+interactive session) re-flags each with typed refs derived by reading the PR,
+never by regexing the prose. Until then they sit visibly in
 `blockedOnManualReview`.
 
 ### Infrastructure down ends the run (#108)
