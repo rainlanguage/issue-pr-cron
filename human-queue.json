@@ -1122,7 +1122,7 @@
         ]
       },
       "un-vetted": {
-        "count": 33,
+        "count": 34,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1201,6 +1201,12 @@
             "number": 433,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
             "title": "fix(component): leaderboard heading reflects the actual row count"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 432,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
+            "title": "fix(components): render generic error copy instead of raw error messages"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1441,17 +1447,6 @@
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
             "title": "2023 12 23 anvil"
-          }
-        ]
-      },
-      "ai:ready": {
-        "count": 1,
-        "prs": [
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 432,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
-            "title": "fix(components): render generic error copy instead of raw error messages"
           }
         ]
       },
@@ -2050,6 +2045,12 @@
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/s01.ops",
+      "number": 20,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/20",
+      "title": "Token Terms template v1.36.0 — conform to the approved Base Prospectus before any generation"
+    },
     {
       "repo": "S01-Issuer/s01.ops",
       "number": 10,
@@ -5795,8 +5796,8 @@
     "closeCandidateUpheld": 13,
     "leaks": 5,
     "totalProducerPrs": 160,
-    "uncoveredIssues": 616,
-    "unvetted": 33,
+    "uncoveredIssues": 617,
+    "unvetted": 34,
     "reject": 71,
     "relink": 0,
     "closeCandidatePrs": 5,
