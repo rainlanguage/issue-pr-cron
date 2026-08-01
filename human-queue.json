@@ -2046,6 +2046,12 @@
   ],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/s01.ops",
+      "number": 2,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/2",
+      "title": "Legal & regulatory portal — v4 blockers, live exposures and go/no-go gates"
+    },
+    {
       "repo": "rainlanguage/rain-org-health",
       "number": 150,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/150",
@@ -5772,7 +5778,7 @@
     "closeCandidateUpheld": 13,
     "leaks": 5,
     "totalProducerPrs": 160,
-    "uncoveredIssues": 613,
+    "uncoveredIssues": 614,
     "unvetted": 34,
     "reject": 71,
     "relink": 0,
