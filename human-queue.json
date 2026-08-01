@@ -2047,6 +2047,12 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/s01.ops",
+      "number": 24,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/24",
+      "title": "Beyond markdown: facts to validated records, registers generated, verification continuous"
+    },
+    {
+      "repo": "S01-Issuer/s01.ops",
       "number": 20,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/20",
       "title": "Token Terms template v1.36.0 — conform to the approved Base Prospectus before any generation"
@@ -5796,7 +5802,7 @@
     "closeCandidateUpheld": 13,
     "leaks": 5,
     "totalProducerPrs": 160,
-    "uncoveredIssues": 617,
+    "uncoveredIssues": 618,
     "unvetted": 34,
     "reject": 71,
     "relink": 0,
