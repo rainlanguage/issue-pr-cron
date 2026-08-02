@@ -9937,6 +9937,28 @@ fn classify_lane(
     }
 }
 
+/// PURE: must [`human_queue_mode`] spend a `gh pr view` establishing whether this PR's `ai:ready`
+/// verdict is still current at its head?
+///
+/// Exactly when the answer CHANGES the lane, and that is a question for [`classify_lane`] rather
+/// than for a list of labels kept in step with it. `ready_vetted_at_head` is read in ONE place —
+/// the `ai:ready` branch — and every state ahead of that branch in the precedence order returns
+/// before it: a human decision, the retired reject, the retired blocked-deploy residue,
+/// `ai:blocked-on`, the retired blocked-infra residue. So the fetch is asked for directly:
+/// `Some(false)` is what a fetch that finds a STALE verdict yields, `None` is literally what the
+/// lookup yields when NO fetch was made, and when the two classify identically the call is dead
+/// weight — its result is written to a map nothing subsequently reads.
+///
+/// DERIVED, not mirrored, because the mirror had already drifted twice. The hand-written predicate
+/// this replaces was built from [`PRODUCER_STATE_LABELS`], and a retirement takes a label OUT of
+/// that array while leaving it ahead of `ai:ready` in [`classify_lane`] — so `ai:blocked-infra`
+/// (#108) and then `ai:blocked-deploy` (#162) each silently re-armed a fetch whose result nothing
+/// reads. Naming no label here means the next precedence change carries itself.
+fn needs_verdict_currency(labels: &[String], producer_commented: bool) -> bool {
+    classify_lane(labels, Some(false), producer_commented)
+        != classify_lane(labels, None, producer_commented)
+}
+
 /// PURE: is an UNLABELLED producer PR a leak, and with what reason? `trusted_bodies` is every
 /// trusted-account comment body, in chronological order.
 ///
@@ -10361,25 +10383,20 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
     }
 
-    // Verdict-currency check for ai:ready PRs: an ai:ready PR with no ai:vetter verdict current at
-    // its head is un-vetted, not ready (the established `queue`/`vetted_at_head` notion). Fetch
-    // only the ai:ready PRs that would actually reach the ai:ready lane branch (no dominating
-    // human:* / ai:blocked-* label) — one `gh pr view` each.
+    // Verdict-currency check: an `ai:ready` PR with no `ai:vetter` verdict current at its head is
+    // un-vetted, not ready (the established `queue`/`vetted_at_head` notion) — one `gh pr view`
+    // each. [`needs_verdict_currency`] picks which PRs are worth one by asking `classify_lane`
+    // whether the answer would move the PR at all, so the set of states that dominate `ai:ready`
+    // is not restated here and cannot drift from the precedence order that decides it.
     let leak_keys: std::collections::HashSet<(String, u64)> = leaks
         .iter()
         .map(|(s, _)| (s.repo.clone(), s.number))
         .collect();
-    let dominated = |labels: &[String]| {
-        let has = |name: &str| labels.iter().any(|l| l == name);
-        PR_SACRED_LABELS.iter().any(|h| has(h))
-            || PRODUCER_STATE_LABELS
-                .iter()
-                .any(|b| *b != "ai:design" && has(b))
-    };
     let mut ready_vetted: std::collections::HashMap<(String, u64), bool> =
         std::collections::HashMap::new();
     for (subject, labels) in &records {
-        if labels.iter().any(|l| l == "ai:ready") && !dominated(labels) {
+        let key = (subject.repo.clone(), subject.number);
+        if needs_verdict_currency(labels, leak_keys.contains(&key)) {
             if let Some(j) = gh_json(&[
                 "pr",
                 "view",
@@ -10390,10 +10407,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
                 "headRefOid,comments",
             ]) {
                 let head = j.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
-                ready_vetted.insert(
-                    (subject.repo.clone(), subject.number),
-                    vetted_at_head(&j, head),
-                );
+                ready_vetted.insert(key, vetted_at_head(&j, head));
             }
         }
     }
@@ -36280,6 +36294,52 @@ mod infra_down_tests {
             ),
             (Lane::HumanDecisions, "human:design".to_string())
         );
+    }
+
+    /// `human-queue`'s verdict-currency fetch is spent on exactly the PRs whose LANE the answer
+    /// moves, and that set is derived from [`classify_lane`] rather than restated as a label list.
+    ///
+    /// The restated version is what drifted: it read [`PRODUCER_STATE_LABELS`], and a retirement
+    /// takes a label OUT of that array while leaving it AHEAD of `ai:ready` in the precedence
+    /// order — so `ai:blocked-infra` (#108) and `ai:blocked-deploy` (#162) each re-armed a
+    /// `gh pr view` per residue PR whose result `classify_lane` then never reads, the second of
+    /// them on a PR shaped exactly like
+    /// [`blocked_deploy_residue_is_producer_blocked_not_the_vetters_to_clear`]'s. Every dominating
+    /// state is asserted here, live and retired alike, so the next retirement cannot re-arm it.
+    #[test]
+    fn verdict_currency_is_fetched_only_where_it_can_change_the_lane() {
+        // The one PR the fetch exists for: `ai:ready` with nothing ahead of it.
+        assert!(needs_verdict_currency(&["ai:ready".to_string()], false));
+        // `ai:design` does NOT dominate — it buckets BELOW `ai:ready`, so the fetch still decides.
+        assert!(needs_verdict_currency(
+            &["ai:ready".to_string(), "ai:design".to_string()],
+            false
+        ));
+        // Everything that returns ahead of the `ai:ready` branch makes the call dead weight.
+        for dominating in [
+            "human:design",
+            "human:close-candidate",
+            RETIRED_HUMAN_REJECT_LABEL,
+            RETIRED_BLOCKED_DEPLOY_LABEL,
+            "ai:blocked-on",
+            RETIRED_STATE_LABEL,
+        ] {
+            let labels = vec!["ai:ready".to_string(), dominating.to_string()];
+            assert!(
+                !needs_verdict_currency(&labels, false),
+                "`{dominating}` dominates `ai:ready`, so its verdict-currency fetch is wasted"
+            );
+            // …and the reason it is wasted: skipping it changes nothing the queue emits.
+            assert_eq!(
+                classify_lane(&labels, None, false),
+                classify_lane(&labels, Some(false), false),
+                "skipping the fetch for `{dominating}` must not move the PR's lane"
+            );
+        }
+        // No `ai:ready` label at all: there is no verdict whose currency could matter.
+        assert!(!needs_verdict_currency(&["ai:reject".to_string()], false));
+        assert!(!needs_verdict_currency(&[], true));
+        assert!(!needs_verdict_currency(&[], false));
     }
 
     /// The one-shot's target list: every open PR the search names, and nothing it cannot identify.
