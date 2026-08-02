@@ -2047,6 +2047,12 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/s01.ops",
+      "number": 38,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/38",
+      "title": "URGENT — retail secondary access opens next week: PRIIPs KID must be signed off and published FIRST"
+    },
+    {
+      "repo": "S01-Issuer/s01.ops",
       "number": 24,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/24",
       "title": "Beyond markdown: facts to validated records, registers generated, verification continuous"
@@ -5802,7 +5808,7 @@
     "closeCandidateUpheld": 13,
     "leaks": 5,
     "totalProducerPrs": 160,
-    "uncoveredIssues": 618,
+    "uncoveredIssues": 619,
     "unvetted": 34,
     "reject": 71,
     "relink": 0,
