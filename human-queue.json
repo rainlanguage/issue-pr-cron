@@ -248,10 +248,22 @@
         "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
       },
       {
+        "repo": "rainlanguage/rain.flare",
+        "number": 199,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/199",
+        "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
+      },
+      {
         "repo": "cyclofinance/cyclo.site",
         "number": 399,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
         "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 396,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
+        "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -264,6 +276,18 @@
         "number": 161,
         "url": "https://github.com/rainlanguage/rain.flare/pull/161",
         "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 134,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/134",
+        "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 112,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/112",
+        "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -504,12 +528,6 @@
         "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
       },
       {
-        "repo": "rainlanguage/rain.flare",
-        "number": 199,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/199",
-        "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 421,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
@@ -589,12 +607,6 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 396,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
-        "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
         "number": 395,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
         "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
@@ -670,6 +682,12 @@
         "number": 226,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/226",
         "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 225,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/225",
+        "title": "style(pragma): pin all non-generated source/test files to =0.8.25"
       },
       {
         "repo": "rainlanguage/rain.erc4626.words",
@@ -799,12 +817,6 @@
       },
       {
         "repo": "rainlanguage/rain.flare",
-        "number": 134,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/134",
-        "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
         "number": 133,
         "url": "https://github.com/rainlanguage/rain.flare/pull/133",
         "title": "test: assert function pointer array length against OPCODE_FUNCTION_POINTERS_LENGTH"
@@ -814,12 +826,6 @@
         "number": 129,
         "url": "https://github.com/rainlanguage/rain.flare/pull/129",
         "title": "Add NatSpec and fix misleading return-param names in interfaces"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 112,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/112",
-        "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
       },
       {
         "repo": "rainlanguage/rainix",
@@ -1368,7 +1374,7 @@
         ]
       },
       "ai:design": {
-        "count": 13,
+        "count": 17,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1401,10 +1407,22 @@
             "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
           },
           {
+            "repo": "rainlanguage/rain.flare",
+            "number": 199,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/199",
+            "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
+          },
+          {
             "repo": "cyclofinance/cyclo.site",
             "number": 399,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
             "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 396,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
+            "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1417,6 +1435,18 @@
             "number": 161,
             "url": "https://github.com/rainlanguage/rain.flare/pull/161",
             "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 134,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/134",
+            "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 112,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/112",
+            "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1451,7 +1481,7 @@
         ]
       },
       "ai:reject": {
-        "count": 71,
+        "count": 68,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1512,12 +1542,6 @@
             "number": 263,
             "url": "https://github.com/rainlanguage/rainix/pull/263",
             "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 199,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/199",
-            "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1599,12 +1623,6 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 396,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
-            "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
             "number": 395,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
             "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
@@ -1680,6 +1698,12 @@
             "number": 226,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/226",
             "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 225,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/225",
+            "title": "style(pragma): pin all non-generated source/test files to =0.8.25"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -1809,12 +1833,6 @@
           },
           {
             "repo": "rainlanguage/rain.flare",
-            "number": 134,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/134",
-            "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
             "number": 133,
             "url": "https://github.com/rainlanguage/rain.flare/pull/133",
             "title": "test: assert function pointer array length against OPCODE_FUNCTION_POINTERS_LENGTH"
@@ -1824,12 +1842,6 @@
             "number": 129,
             "url": "https://github.com/rainlanguage/rain.flare/pull/129",
             "title": "Add NatSpec and fix misleading return-param names in interfaces"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 112,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/112",
-            "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -2464,12 +2476,6 @@
       "number": 69,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/69",
       "title": "[A07] [MEDIUM] unsafeExtend branch tests assert contents only and never pin which branch executed"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 68,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/68",
-      "title": "[A06] [MEDIUM] No deterministic flatten test places an empty inner array anywhere but last, so a write-cursor bug at an empty-array boundary is caught only by a 100-run fuzz"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -5805,7 +5811,7 @@
   ],
   "counts": {
     "ready": 24,
-    "design": 13,
+    "design": 17,
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
@@ -5813,10 +5819,10 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
     "leaks": 5,
-    "totalProducerPrs": 160,
-    "uncoveredIssues": 620,
+    "totalProducerPrs": 161,
+    "uncoveredIssues": 619,
     "unvetted": 34,
-    "reject": 71,
+    "reject": 68,
     "relink": 0,
     "closeCandidatePrs": 5,
     "humanReject": 0,
