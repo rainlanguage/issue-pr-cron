@@ -2047,6 +2047,12 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/s01.ops",
+      "number": 45,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/45",
+      "title": "URGENT: www.s01issuer.com serves a stale Vercel build — none of the corrected site exists on the public domain"
+    },
+    {
+      "repo": "S01-Issuer/s01.ops",
       "number": 38,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/38",
       "title": "URGENT — retail secondary access opens next week: PRIIPs KID must be signed off and published FIRST"
@@ -5808,7 +5814,7 @@
     "closeCandidateUpheld": 13,
     "leaks": 5,
     "totalProducerPrs": 160,
-    "uncoveredIssues": 619,
+    "uncoveredIssues": 620,
     "unvetted": 34,
     "reject": 71,
     "relink": 0,
