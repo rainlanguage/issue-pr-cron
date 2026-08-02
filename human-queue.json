@@ -1122,7 +1122,7 @@
         ]
       },
       "un-vetted": {
-        "count": 33,
+        "count": 34,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1305,6 +1305,12 @@
             "title": "test(extern): assert sub-parser honors overridden extern() address"
           },
           {
+            "repo": "rainlanguage/rain.flare",
+            "number": 125,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/125",
+            "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
+          },
+          {
             "repo": "rainlanguage/rain.uniswap",
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.uniswap/pull/31",
@@ -1441,17 +1447,6 @@
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
             "title": "2023 12 23 anvil"
-          }
-        ]
-      },
-      "ai:ready": {
-        "count": 1,
-        "prs": [
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 125,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/125",
-            "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
           }
         ]
       },
@@ -5808,7 +5803,7 @@
     "leaks": 5,
     "totalProducerPrs": 160,
     "uncoveredIssues": 618,
-    "unvetted": 33,
+    "unvetted": 34,
     "reject": 71,
     "relink": 0,
     "closeCandidatePrs": 5,
