@@ -266,6 +266,12 @@
         "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
       },
       {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 386,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
+        "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
+      },
+      {
         "repo": "rainlanguage/raindex",
         "number": 2777,
         "url": "https://github.com/rainlanguage/raindex/pull/2777",
@@ -637,12 +643,6 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 386,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
-        "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
         "number": 385,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/385",
         "title": "docs(setup): fix README setup steps and add missing env var"
@@ -682,12 +682,6 @@
         "number": 226,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/226",
         "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 225,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/225",
-        "title": "style(pragma): pin all non-generated source/test files to =0.8.25"
       },
       {
         "repo": "rainlanguage/rain.erc4626.words",
@@ -923,8 +917,20 @@
     },
     "leak": {
       "leak": {
-        "count": 1,
+        "count": 3,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 156,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
+            "title": "Draw the uncovered-issues median age beside its queue-size sparkline"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 155,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/155",
+            "title": "dash(nav): Metrics tab moves to third position on every page"
+          },
           {
             "repo": "rainlanguage/flow",
             "number": 475,
@@ -1128,19 +1134,31 @@
         ]
       },
       "un-vetted": {
-        "count": 34,
+        "count": 35,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 109,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/109",
+            "title": "Refuse to consume a sentinel stack that lies above the allocated memory pointer"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 108,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/108",
+            "title": "test(extend): pin which unsafeExtend branch each test executes"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 107,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/107",
+            "title": "test(flatten): pin the empty-inner-array boundary deterministically"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 168,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/168",
             "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 156,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
-            "title": "Draw the uncovered-issues median age beside its queue-size sparkline"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1153,12 +1171,6 @@
             "number": 166,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/166",
             "title": "human-rule delegates in one call, and human:* protects authorship only — rulings are inputs the machine executes"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 155,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/155",
-            "title": "dash(nav): Metrics tab moves to third position on every page"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1374,7 +1386,7 @@
         ]
       },
       "ai:design": {
-        "count": 17,
+        "count": 18,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1423,6 +1435,12 @@
             "number": 396,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
             "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 386,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
+            "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1481,7 +1499,7 @@
         ]
       },
       "ai:reject": {
-        "count": 68,
+        "count": 66,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1653,12 +1671,6 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 386,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
-            "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
             "number": 385,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/385",
             "title": "docs(setup): fix README setup steps and add missing env var"
@@ -1698,12 +1710,6 @@
             "number": 226,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/226",
             "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 225,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/225",
-            "title": "style(pragma): pin all non-generated source/test files to =0.8.25"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -2473,12 +2479,6 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 69,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/69",
-      "title": "[A07] [MEDIUM] unsafeExtend branch tests assert contents only and never pin which branch executed"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 66,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/66",
       "title": "[A04] [LOW] arrayFrom(a, tail) and arrayFrom(a, b, tail) double-read tail.length, the same defect class already fixed in unsafeExtend by #57"
@@ -2488,12 +2488,6 @@
       "number": 65,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/65",
       "title": "[A03] [LOW] unsafeExtend inline branch can write Solidity's reserved zero slot at 0x60"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/63",
-      "title": "[A01] [MEDIUM] consumeSentinelTuples allocates the tuples array at the free memory pointer with no check that the stack lies below it"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -5774,6 +5768,20 @@
   ],
   "leaks": [
     {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 156,
+      "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
+      "title": "Draw the uncovered-issues median age beside its queue-size sparkline",
+      "reason": "🤖 ai:producer  Screenshot backfill of the changed section — the `untouched (no PR)` backlog box in the producer-action row. Rendered `site/pipeline.html` at PR head `e8e679a` against this PR's merge base `162f5b7`, with the repo's pinned harness (`nix run .#screenshot`, headless chromium + bundled dejavu fontconfig), 1300px light theme.  ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/rain-org-health-156.png)  **Fixture, and why.** The recording half (https://github.com/rainlanguage/issue-pr-cron/pull/167) is still open, so the live artifacts carry no `ages` at all — I checked: 0 of 181 lines in the live `human-queue-history.jsonl`. Rendered against live data this section is invisible by design, which is a worthless screenshot. So both variants are served from the **live** `human-queue.json` + `human-queue-history.jsonl` (fetched today) with an `ages.uncoveredIssues` block added to the newest 60 history lines and to the snapshot — median drifting 36.0 → 41.5 then dropping to 33.4 on the newest point, oldest ~795d. Only the two URL constants were repointed at the local copies; no render code was touched.  **What the render confirms.**  - After shows the labelled line `median 33.4d` under `untouched (no PR)`, unit attached — before shows no such line. - The sparkline gains a second, visibly **dashed and thinner** series; before is a single solid line. - The magnified panel is the same SVG enlarged by CSS so it re-renders as vector (not an upscaled bitmap): solid = the 620-item queue, dashed = the median age, each with its own endpoint dot, and the two clearly do not share a y-scale — the age line rises into a peak and falls off at the end while the count line stays roughly flat across the same window.  One honest note on the axis: both series happen to span nearly the whole chart here rather than the age line starting mid-window. That is not the fixture flattering itself — `counts.uncoveredIssues` is itself a recently-added key, present on only 64 of the 181 history lines (earliest `2026-07-26T06:22Z`), so the shared time axis starts about where my injected ages start. The short-line-from-mid-window case is the one the tests cover. "
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 155,
+      "url": "https://github.com/rainlanguage/rain-org-health/pull/155",
+      "title": "dash(nav): Metrics tab moves to third position on every page",
+      "reason": "🤖 ai:producer  Screenshot backfill for the nav reorder. Rendered `site/metrics.html` at PR head `d724d5b` against this PR's own merge base `b618355` (not current `master`, which has drifted) using the repo's pinned harness — `nix run .#screenshot`, headless chromium with the bundled dejavu fontconfig — at 1300px, light theme.  `metrics.html` is the page that carries the moved tab itself, so one page shows both halves of the claim: the new order *and* that the `active` underline travels with the tab. The other four nav-bearing pages take the byte-identical one-line change (`before`/`after` of this file differ only by the `Repositories` line moving, both 47920 bytes).  ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/rain-org-health-155.png)  Before: Pipeline · Audit · Repositories · **Metrics** · Deployments — Metrics 4th. After: Pipeline · Audit · **Metrics** · Repositories · Deployments — Metrics 3rd, still underlined as the active tab. "
+    },
+    {
       "repo": "cyclofinance/cyclo.site",
       "number": 412,
       "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
@@ -5811,18 +5819,18 @@
   ],
   "counts": {
     "ready": 24,
-    "design": 17,
+    "design": 18,
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
     "closeCandidateIssues": 13,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 13,
-    "leaks": 5,
-    "totalProducerPrs": 161,
-    "uncoveredIssues": 619,
-    "unvetted": 34,
-    "reject": 68,
+    "leaks": 7,
+    "totalProducerPrs": 163,
+    "uncoveredIssues": 617,
+    "unvetted": 35,
+    "reject": 66,
     "relink": 0,
     "closeCandidatePrs": 5,
     "humanReject": 0,
