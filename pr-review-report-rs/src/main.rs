@@ -15711,13 +15711,15 @@ fn search_issue_ref(hit: &Value) -> Option<(String, u64)> {
     Some((slug, num))
 }
 
-/// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
-/// `ai:close-candidate`. Shared rather than written twice, so the vetter's queue and the human's are
-/// populations of the same query — two spellings of "which issues are flagged" is how they would
-/// come to answer differently.
+/// PURE: the argv of the one search behind both close-candidate inboxes. Every qualifier is
+/// load-bearing and each is wrong in its own direction: without `--state open` a closed issue's
+/// leftover flag joins the queue, without the label the queue is the whole backlog, and the `--json`
+/// set is exactly what [`search_issue_ref`] needs to ADDRESS a hit — a field dropped here makes
+/// every row unaddressable at once.
 ///
-/// Errors rather than returning a falsely-empty set, for the reason the PR side does.
-fn flagged_open_issues() -> Result<Vec<Value>, String> {
+/// Separated from the fetch so the one thing deciding which population both inboxes see is a value a
+/// test can read; the network call around it is asserted by nothing.
+fn flagged_open_issues_args() -> Vec<String> {
     let mut args: Vec<String> = vec!["search".into(), "issues".into()];
     args.extend(org_owner_args());
     args.extend(
@@ -15734,6 +15736,17 @@ fn flagged_open_issues() -> Result<Vec<Value>, String> {
         .iter()
         .map(|s| s.to_string()),
     );
+    args
+}
+
+/// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
+/// `ai:close-candidate`. Shared rather than written twice, so the vetter's queue and the human's are
+/// populations of the same query — two spellings of "which issues are flagged" is how they would
+/// come to answer differently.
+///
+/// Errors rather than returning a falsely-empty set, for the reason the PR side does.
+fn flagged_open_issues() -> Result<Vec<Value>, String> {
+    let args = flagged_open_issues_args();
     let argref: Vec<&str> = args.iter().map(String::as_str).collect();
     gh_json(&argref)
         .and_then(|v| v.as_array().cloned())
@@ -16510,8 +16523,33 @@ mod next_close_candidate_tests {
     }
 
     // Both close-candidate inboxes must enumerate ONE population, or the vetter and the human come
-    // to disagree about which issues are flagged. The search is shared; this pins the parse the two
-    // of them read a hit with.
+    // to disagree about which issues are flagged. The search is shared; this pins the QUERY they
+    // share, which is otherwise inside a network call nothing asserts.
+    #[test]
+    fn the_two_close_candidate_inboxes_search_one_population() {
+        let args = flagged_open_issues_args();
+        let pairs: Vec<(&str, &str)> = args
+            .windows(2)
+            .map(|w| (w[0].as_str(), w[1].as_str()))
+            .collect();
+        for want in [
+            // Open only: a closed issue's leftover flag is not the human's inbox.
+            ("--state", "open"),
+            // Flagged only: without it this is the whole backlog.
+            ("--label", "ai:close-candidate"),
+            // Exactly what `search_issue_ref` addresses a hit with, plus the title.
+            ("--json", "url,number,repository,title"),
+        ] {
+            assert!(pairs.contains(&want), "{want:?} missing from {args:?}");
+        }
+        assert_eq!(&args[..2], &["search".to_string(), "issues".to_string()]);
+        // The org scope comes from the ONE source every other search reads, never a literal here.
+        for owner in org_owner_args() {
+            assert!(args.contains(&owner), "{owner} missing from {args:?}");
+        }
+    }
+
+    // The parse the two of them read a hit with.
     #[test]
     fn a_search_hit_is_addressed_by_its_repository_and_falls_back_to_the_url() {
         assert_eq!(
