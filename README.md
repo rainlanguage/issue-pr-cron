@@ -1397,9 +1397,9 @@ and then sits in context to be re-read for the rest of the run.
 
 The tempting fix is to permit `bash` / `sh` / `python3`, so a multi-step
 sequence can go in a script file. **It is the one change that must not be
-made**, and the reason is measured rather than argued — run against this
-harness with `Bash(bash:*)` allowed and `Bash(touch:*)` denied, `bash -c
-'touch …'` creates the file, `sh <script>` runs whatever the file says, and
+made**, and the reason is measured rather than argued — run against this harness
+with `Bash(bash:*)` allowed and `Bash(touch:*)` denied, `bash -c 'touch …'`
+creates the file, `sh <script>` runs whatever the file says, and
 `bash -c 'cd <dir> && git …'` walks straight past the cd-before-git refusal. A
 rule matches a command **string**, and an interpreter is a command whose string
 says nothing about what it will do: `gh pr merge`, `gh issue close`,
@@ -1411,11 +1411,11 @@ its shape with `bash` permitted exactly as without it.
 
 The deny-list is not airtight as it stands — `node -e`, `npm run`, `npx`,
 `nix run` and `cargo run` are all allow-listed and all execute arbitrary code.
-That is the point rather than a counter-argument: what the list buys is that
-the common ACCIDENT is impossible, and each of those needs a deliberate wrapper
-the model has no habitual reason to write. The one escape hatch it DID reach
-for out of habit had to be closed by hand — that is what
-`hooks/block-nix-wrap-gh.sh` is.
+That is the point rather than a counter-argument: what the list buys is that the
+common ACCIDENT is impossible, and each of those needs a deliberate wrapper the
+model has no habitual reason to write. The one escape hatch it DID reach for out
+of habit had to be closed by hand — that is what `hooks/block-nix-wrap-gh.sh`
+is.
 
 So the denials are answered where they are actually decidable, in the prompt.
 The permission check is **not** a first-token match: it parses the command,
@@ -1423,19 +1423,19 @@ resolves `env` / `timeout` / `xargs` down to what they would really run, and
 refuses what it cannot statically verify. That makes every refusal
 deterministic, and therefore teachable:
 
-| Class                                   | Denials | Answer                                                                        |
-| --------------------------------------- | ------: | ----------------------------------------------------------------------------- |
-| `cd <dir> && git …`                     |     110 | `git -C <dir> …` (a `cd` before `gh`, or before anything else, is fine)       |
-| loops, `$(…)`, `<(…)`, `( … )`          |      ~94 | separate tool calls; one `jq`/`grep` pipeline instead of ten iterations        |
-| bare `VAR=value <cmd>` prefix           |      ~40 | `env VAR=value <cmd>` (`env -C <dir>` is refused too — `env` carries no dir)   |
-| `cp` with any flag                      |      ~21 | regenerate artifacts in the clone that needs them; plain `cp <src> <dst>` only |
+| Class                                    | Denials | Answer                                                                         |
+| ---------------------------------------- | ------: | ------------------------------------------------------------------------------ |
+| `cd <dir> && git …`                      |     110 | `git -C <dir> …` (a `cd` before `gh`, or before anything else, is fine)        |
+| loops, `$(…)`, `<(…)`, `( … )`           |     ~94 | separate tool calls; one `jq`/`grep` pipeline instead of ten iterations        |
+| bare `VAR=value <cmd>` prefix            |     ~40 | `env VAR=value <cmd>` (`env -C <dir>` is refused too — `env` carries no dir)   |
+| `cp` with any flag                       |     ~21 | regenerate artifacts in the clone that needs them; plain `cp <src> <dst>` only |
 | `bash` / `sh` / `python3` script or `-c` |     ~22 | there is no interpreter, by the section above                                  |
 
 `Monitor` needs no allow-list entry: its `command` is checked against the same
-Bash rules (a denial reads "Permission to use Bash with command …"), so a
-denied `Monitor` is always a command to rewrite. A loop INSIDE it is accepted,
-which makes `until <check>; do sleep …; done` the sanctioned wait even though
-the identical loop is refused as a Bash call.
+Bash rules (a denial reads "Permission to use Bash with command …"), so a denied
+`Monitor` is always a command to rewrite. A loop INSIDE it is accepted, which
+makes `until <check>; do sleep …; done` the sanctioned wait even though the
+identical loop is refused as a Bash call.
 
 ### The retrofit: `repair-qa-block`
 
