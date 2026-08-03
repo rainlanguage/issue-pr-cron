@@ -16180,17 +16180,44 @@ fn covering_open_prs(resp: Option<&Value>) -> (PrCoverage, Vec<String>) {
     (verdict, prs)
 }
 
+/// PURE: the argv of the per-issue covering-PR read, one flag per variable.
+///
+/// **The flag is decided by the variable's declared type, not by taste.** `gh api graphql` gives
+/// `-F` a magic type conversion: a value that parses as an integer, `true`, `false` or `null` is
+/// sent as that JSON type rather than as a string. So `-F o=<owner>` on a repository whose owner
+/// or name is all digits sends an `Int` at [`COVERING_PRS_QUERY`]'s `$o:String!`, and GitHub
+/// refuses the WHOLE query — `Could not coerce value 123 to String` — which arrives here as
+/// [`PrCoverage::Unreadable`], a query failure on a repository that reads perfectly well. `-f` is
+/// the raw-string flag and is what both `String!` variables take. `n` is the one variable GitHub
+/// genuinely types `Int!` and it keeps `-F`, because `-f n=7` sends `"7"` and fails the same query
+/// from the other side; blanket-converting the call site would trade one break for the other.
+///
+/// Separated from the fetch for the reason [`flagged_open_issues_args`] is: the flag/variable
+/// pairing is the thing that decides whether the read can answer at all, and inside a network call
+/// nothing asserts it.
+fn covering_prs_args(owner: &str, repo: &str, num: u64) -> Vec<String> {
+    vec![
+        "api".into(),
+        "graphql".into(),
+        "-f".into(),
+        format!("query={COVERING_PRS_QUERY}"),
+        "-f".into(),
+        format!("o={owner}"),
+        "-f".into(),
+        format!("r={repo}"),
+        "-F".into(),
+        format!("n={num}"),
+    ]
+}
+
 /// Live covering-PR read for one issue.
 fn covering_open_prs_fetch(slug: &str, num: u64) -> (PrCoverage, Vec<String>) {
     let Some((owner, repo)) = slug.split_once('/') else {
         return (PrCoverage::Unreadable, Vec::new());
     };
-    let query = format!("query={COVERING_PRS_QUERY}");
-    let o = format!("o={owner}");
-    let r = format!("r={repo}");
-    let n = format!("n={num}");
-    let resp = gh_json(&["api", "graphql", "-f", &query, "-F", &o, "-F", &r, "-F", &n]);
-    covering_open_prs(resp.as_ref())
+    let args = covering_prs_args(owner, repo, num);
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    covering_open_prs(gh_json(&argref).as_ref())
 }
 
 /// One flag that is the HUMAN's to rule on, as [`next_close_candidate_fetch`] produces it: the
@@ -16975,6 +17002,75 @@ mod next_close_candidate_tests {
             "nameWithOwner",
         ] {
             assert!(COVERING_PRS_QUERY.contains(needed), "{needed}");
+        }
+    }
+
+    // …and it has to ask in a form GitHub will accept. `gh api graphql` types a `-F` value by
+    // parsing it, so `-F o=<owner>` on an all-numeric owner or repo name sends an `Int` at a
+    // `String!` and GitHub refuses the whole query — reported here as `Unreadable`, which is
+    // indistinguishable from a network failure on a repository that reads fine.
+    //
+    // The expectation is DERIVED from the query's own declarations rather than written out, so
+    // this cannot drift from it: an `Int!` variable takes `-F` (a `-f` would send `"7"` and fail
+    // from the other side), and everything else takes `-f`. Adding a variable to
+    // `COVERING_PRS_QUERY` without a matching flag fails here too.
+    #[test]
+    fn each_covering_query_variable_is_passed_with_the_flag_its_declared_type_needs() {
+        // `query($o:String!,$r:String!,$n:Int!){…` → the declarations between the parentheses.
+        let decls = COVERING_PRS_QUERY
+            .split_once('{')
+            .expect("the query has a selection set")
+            .0
+            .trim()
+            .trim_start_matches("query")
+            .trim_matches(|c| c == '(' || c == ')');
+        let declared: Vec<(&str, &str)> = decls
+            .split(',')
+            .map(|d| {
+                let (name, ty) = d.trim().split_once(':').expect("a declared type");
+                (
+                    name.trim().trim_start_matches('$'),
+                    ty.trim().trim_end_matches('!'),
+                )
+            })
+            .collect();
+        assert!(
+            declared.iter().any(|(_, ty)| *ty == "String")
+                && declared.iter().any(|(_, ty)| *ty == "Int"),
+            "the query must still mix both types for this test to be worth anything: {declared:?}"
+        );
+
+        // An owner and a repo that `-F` would silently retype. Both are legal name shapes.
+        let args = covering_prs_args("123", "456", 7);
+        assert_eq!(&args[..2], &["api".to_string(), "graphql".to_string()]);
+        let mut seen: Vec<&str> = Vec::new();
+        for pair in args[2..].chunks(2) {
+            let [flag, field] = pair else {
+                panic!("every variable is a flag/value pair: {args:?}");
+            };
+            let (name, _) = field.split_once('=').expect("key=value");
+            // The query text itself is not a variable — it is always raw.
+            if name == "query" {
+                assert_eq!(flag, "-f", "the query body is passed raw");
+                continue;
+            }
+            let (_, ty) = declared
+                .iter()
+                .find(|(d, _)| *d == name)
+                .unwrap_or_else(|| panic!("`{name}` is passed but not declared by the query"));
+            let want = if *ty == "Int" { "-F" } else { "-f" };
+            assert_eq!(
+                flag, want,
+                "`${name}` is declared `{ty}` and must be passed with `{want}`, not `{flag}`"
+            );
+            seen.push(name);
+        }
+        // Every declared variable is actually supplied — an unbound one fails the query outright.
+        for (name, _) in &declared {
+            assert!(
+                seen.contains(name),
+                "`${name}` is declared but never passed"
+            );
         }
     }
 
