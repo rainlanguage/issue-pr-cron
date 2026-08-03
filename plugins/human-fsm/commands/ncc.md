@@ -98,8 +98,8 @@ rulings at the end of this file are the only ones there are.
   does it ask the same thing, and is it OPEN? A duplicate of a closed issue
   closes nothing, and two issues each named as the other's duplicate is a cycle
   that closes both.
-- **invalid / wont-fix** — these make no claim about code, so nothing in a
-  typed read refutes them. They are DESIGN positions, and agreeing with one is a
+- **invalid / wont-fix** — these make no claim about code, so nothing in a typed
+  read refutes them. They are DESIGN positions, and agreeing with one is a
   decision the human makes on its merits rather than a check you can pass on
   their behalf. Say plainly that this is what you are doing; if the position is
   arguable, `/design` is the ruling that says so, not a quiet uphold.
@@ -120,22 +120,22 @@ itself. `verdict.atFlag` false means the vetter judged a **superseded** claim:
 the producer re-flagged after that verdict, and the note describes evidence
 nobody is offering any more.
 
-**8. Put your read beside theirs and say plainly where they diverge.**
-Agreement reached independently is worth something; agreement by restatement is
-worth nothing, and the reader cannot tell which one they were handed unless you
-say. A flag that does not survive a second read is the most valuable thing this
-command produces, and burying it under the fields it invalidates is how an issue
-gets closed anyway.
+**8. Put your read beside theirs and say plainly where they diverge.** Agreement
+reached independently is worth something; agreement by restatement is worth
+nothing, and the reader cannot tell which one they were handed unless you say. A
+flag that does not survive a second read is the most valuable thing this command
+produces, and burying it under the fields it invalidates is how an issue gets
+closed anyway.
 
 ## A reason you cannot verify is a REJECT, not a close
 
 Close only the cheap-and-clear candidates. Everything else goes back to the
-producer as `/close-candidate <ref> reject` with the reason on the record —
-that is a modelled transition: it strips `ai:close-candidate`, returns the issue
-to the producer's uncovered queue, and the producer may re-flag on better
-evidence. What must never happen is a bare de-flag that leaves no state behind,
-and what must never happen for the opposite reason is upholding a claim because
-checking it was hard.
+producer as `/close-candidate <ref> reject` with the reason on the record — that
+is a modelled transition: it strips `ai:close-candidate`, returns the issue to
+the producer's uncovered queue, and the producer may re-flag on better evidence.
+What must never happen is a bare de-flag that leaves no state behind, and what
+must never happen for the opposite reason is upholding a claim because checking
+it was hard.
 
 "I could not check it" is a complete and correct outcome, stated as such. It is
 not a reason to reach for a substitute read, and it is not the same as "the
@@ -155,18 +155,18 @@ the exact thing `/nr` argues against — and it would take a checkout that then
 has to be released to pay for a report nobody reads.
 
 **There is no scope literal that fits.** The skill's whole vocabulary is
-`whole-repo`, `pr:<number>` and `paths:<globs>`. This gate rules on an issue, and
-none of those three names one. `pr:<number>` on a PR the flag merely cites scopes
-the lens at something that is **not the subject of the ruling**, and `whole-repo`
-is the sweep `/nr` spends a section refusing — twelve findings where five bore on
-the question, on `rain.deploy#21`. Inventing a fourth spelling is free text with
-a colon in it, which is the defect `#154` removed.
+`whole-repo`, `pr:<number>` and `paths:<globs>`. This gate rules on an issue,
+and none of those three names one. `pr:<number>` on a PR the flag merely cites
+scopes the lens at something that is **not the subject of the ruling**, and
+`whole-repo` is the sweep `/nr` spends a section refusing — twelve findings
+where five bore on the question, on `rain.deploy#21`. Inventing a fourth
+spelling is free text with a colon in it, which is the defect `#154` removed.
 
 **And its output type cannot answer the question.** The skill reports PROBLEMS
-and never says "works correctly" — that is its own stated rule. The flag question
-is "does the thing the issue asked for now exist", and a lens that structurally
-cannot confirm anything cannot confirm a fix. Every finding it returned would be
-about code quality that no ruling here governs.
+and never says "works correctly" — that is its own stated rule. The flag
+question is "does the thing the issue asked for now exist", and a lens that
+structurally cannot confirm anything cannot confirm a fix. Every finding it
+returned would be about code quality that no ruling here governs.
 
 So this command swaps the lens for the read that actually falsifies the claim it
 gets: `pr_context` on the PR the reason names, which is precisely the instrument

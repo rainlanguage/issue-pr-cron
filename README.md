@@ -351,18 +351,18 @@ tool?" for the human: `pr-review-report mcp --profile human` (wired by
 `human_rule`, `human_rule_issue` and `human_close` — find the subject, read it,
 audit its source, rule on it, close it. The human has **two** inboxes, so it has
 two "which is next" tools: `next_ready` for PRs and `next_close_candidate` for
-close-candidate flags (#173). `human_close` is a tool rather than something the caller composes for the
-reason above: the alternative is a transition half in a tool and half in a
-prompt, and that half was wrong on all 74 closed-and-still-flagged subjects. The
-subcommands above are for the human at a terminal; the profile is for **an agent
-acting on the human's behalf**, which is the case that actually went wrong in
-#86. A prompt rule cannot take a bypassable Bash away, and a `gh issue edit`
-that no tool offers is exactly what gets improvised; a profile makes the non-FSM
-operation _unavailable_. The vetter's inbox tools are deliberately absent — the
-human's inbox is `human-queue`, which renders whole org-wide sets and does not
-fit one tool result — and so is `record_close_candidate_verdict`, which is the
-vetter's authority and the very move `human_rule_issue` refuses on the human's
-behalf.
+close-candidate flags (#173). `human_close` is a tool rather than something the
+caller composes for the reason above: the alternative is a transition half in a
+tool and half in a prompt, and that half was wrong on all 74
+closed-and-still-flagged subjects. The subcommands above are for the human at a
+terminal; the profile is for **an agent acting on the human's behalf**, which is
+the case that actually went wrong in #86. A prompt rule cannot take a bypassable
+Bash away, and a `gh issue edit` that no tool offers is exactly what gets
+improvised; a profile makes the non-FSM operation _unavailable_. The vetter's
+inbox tools are deliberately absent — the human's inbox is `human-queue`, which
+renders whole org-wide sets and does not fit one tool result — and so is
+`record_close_candidate_verdict`, which is the vetter's authority and the very
+move `human_rule_issue` refuses on the human's behalf.
 
 `pr_checkout` and `clone_release` are on it for `/nr`'s sake (#150). The human
 gate forms its own view rather than relaying the vetter's, and the mechanical
@@ -457,12 +457,12 @@ exists to carry.
 
 The flag lane's human half started with a manual search: the human could read a
 flag it already knew the number of and rule on it, but nothing answered **which
-flag is next**. So the queue where being wrong is least recoverable — a flag asks
-a human to destroy work — was the one worked by hand, while the PR queue had a
-one-call entry point. `next_close_candidate` is that call: the issue's
-title/state/labels/`createdAt`, the producer's **stated reason** (the claim being
-checked, never a fact), the vetter's verdict **pinned to the flag it judged**, and
-whether an open PR claims to close the issue.
+flag is next**. So the queue where being wrong is least recoverable — a flag
+asks a human to destroy work — was the one worked by hand, while the PR queue
+had a one-call entry point. `next_close_candidate` is that call: the issue's
+title/state/labels/`createdAt`, the producer's **stated reason** (the claim
+being checked, never a fact), the vetter's verdict **pinned to the flag it
+judged**, and whether an open PR claims to close the issue.
 
 **The ranking is not the PR queue's.** Cheapest-first is right there because
 merges are the scarce resource and a cheap merge is throughput. Here the scarce
@@ -471,22 +471,22 @@ content is one line whose length says nothing about how hard the claim is to
 falsify ("already fixed on main" is twenty-two characters and needs a diff read
 against the path the issue named), so a cost sort would be sorting by a number
 that does not measure the work. What the queue must protect against instead is
-**starvation**, because a flag is not inert while it waits — `is_producer_backlog`
-excludes an `ai:close-candidate` issue from the producer's backlog, so a flagged
-issue is neither being fixed nor closed. The flag parks it. So the order is
-**oldest flag first**, which bounds that limbo; and it is right on accuracy too,
-since an "already fixed" claim is about a main branch that keeps moving and the
-oldest flag's reason describes the least of what is there now. Newest-first — the
-other candidate — optimises the cost of each check by never reaching the flags
-that have decayed most.
+**starvation**, because a flag is not inert while it waits —
+`is_producer_backlog` excludes an `ai:close-candidate` issue from the producer's
+backlog, so a flagged issue is neither being fixed nor closed. The flag parks
+it. So the order is **oldest flag first**, which bounds that limbo; and it is
+right on accuracy too, since an "already fixed" claim is about a main branch
+that keeps moving and the oldest flag's reason describes the least of what is
+there now. Newest-first — the other candidate — optimises the cost of each check
+by never reaching the flags that have decayed most.
 
 **What it withholds is as load-bearing as what it returns.** A flag the vetter
 has not judged is `counts.unvetted`, not a row: a flag the vetter would REJECT
 never reaches a human at all, because the reject strips the label, so presenting
 one early spends judgement on the vetter's turn. And `strandedFlags` names two
-states no AI transition will ever clear — a label with no producer comment behind
-it (the vetter skips it for ever as `skip-no-flag`) and a `reject` whose label
-removal did not land. Both sat invisible until this tool counted them.
+states no AI transition will ever clear — a label with no producer comment
+behind it (the vetter skips it for ever as `skip-no-flag`) and a `reject` whose
+label removal did not land. Both sat invisible until this tool counted them.
 
 The cap is 3 for `next_ready`'s reason and the argument is stronger: there, a
 human who reads a row and does not merge leaves the PR in the queue, whereas
