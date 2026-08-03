@@ -163,6 +163,27 @@ fn gh_output_report(out: &std::process::Output) -> (bool, String) {
     (out.status.success(), text)
 }
 
+/// Run a `gh` WRITE whose STDOUT IS THE RESULT, and capture it. `Err` carries gh's whole output.
+///
+/// [`gh_run`] folds the child's stdout into stderr because on the MCP server our own stdout is the
+/// JSON-RPC stream — but `gh pr create` prints the new PR's URL there and nothing else in the reply
+/// carries the number, so for that one write the child's stdout is the only place the answer exists.
+/// Capturing it keeps both invariants at once: the protocol stream stays ours, and the URL is read
+/// rather than leaked into a log.
+fn gh_capture(args: &[&str]) -> Result<String, String> {
+    match Command::new("gh").args(args).output() {
+        Ok(out) => {
+            let (ok, text) = gh_output_report(&out);
+            if ok {
+                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+            } else {
+                Err(text)
+            }
+        }
+        Err(e) => Err(format!("could not run gh: {e}")),
+    }
+}
+
 /// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
 /// `--record-verdict`'s logic testable without network.
 fn gh_run(args: &[&str]) -> bool {
@@ -2776,6 +2797,768 @@ fn token_report_mode(path: &str, json: bool) -> i32 {
     0
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// work-tokens — TOKENS TO LAND WORK.
+//
+// WHY THIS METRIC AND NOT THE TWO OBVIOUS ONES. Cost per RUN rewards doing less: a run that
+// dispatches nothing is the cheapest run this pipeline can have and it produces nothing. Cost per
+// DISPATCHED TASK rewards cheap tasks that land nothing, which is the same failure one level down.
+// Only a denominator made of OUTPUT resists both, so the denominator is landed work items and the
+// numerator is everything the run spent to get them — the churn included, because churn is part of
+// what landing cost.
+//
+// THREE BUCKETS, AND ONLY ONE OF THEM IS WASTE. Merges here are human-gated BY DESIGN (`landing is
+// interactive-only`), so a PR sitting green and mergeable is not a failure of the pipeline — it is
+// the pipeline having finished. Reading that backlog as waste would measure the HUMAN's review
+// bandwidth and call it the producer's efficiency. So `delivered-awaiting-human` is its own bucket,
+// the landed:awaiting ratio is explicitly NOT an efficiency figure, and `churn` alone — reworked,
+// abandoned, or nothing produced at all — is unambiguous waste.
+//
+// THE JOIN IS TYPED OR IT DOES NOT EXIST. A dispatch label is free text: over 40 real labels a
+// regex invents eight work items that do not exist (`batch#1` out of "cyclo.site conflicts batch
+// 1", `A0#2` out of "rain.solmem A02 sentinel alignment PR"). A metric whose denominator is
+// hallucinated is worse than no metric, so there is no label parser here, not as a fallback and not
+// behind a flag. A task's work item is what `open_pr` RECORDED, and a task with none goes to churn.
+//
+// `clone_create` is typed too and is deliberately NOT used as a second source. Its `branch` names a
+// CLONE, not a deliverable, and resolving it through GitHub's head index invents items exactly the
+// way the regex does: on the 2026-07-29T17 run one task cloned `main` to read it, and
+// `gh pr list -R rainlanguage/raindex --head main` answers with a real, closed PR the task never
+// touched. Typed data joined on the wrong key is still a wrong join.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The tool whose RESULT names a work item, matched on the last `__`-segment of the tool name.
+///
+/// Matched that way for the reason [`AUDIT_SKILL_LEAF`] is matched on its last `:`-segment: the
+/// harness prefixes an MCP tool with its SERVER name (`mcp__fsm__open_pr`), which is configuration
+/// — `campaign-mcp.json` could name the server anything — while the transition's own name is what
+/// this pipeline defines. Keying on the whole string would make the metric silently empty the day
+/// the server is renamed.
+const OPEN_PR_TOOL_LEAF: &str = "open_pr";
+
+/// One TYPED work item a dispatched task produced: the PR the pipeline's own `open_pr` transition
+/// says it opened, and the issues that PR closes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkItem {
+    slug: String,
+    pr: u64,
+    closes: Vec<u64>,
+}
+
+/// PURE: the work item one `open_pr` RESULT describes, or `None` when the result is not one.
+///
+/// STRICT on both fields it joins on — a slug of the shape every other transition takes, and a
+/// positive number — because a work item that cannot be looked up is not a work item, and admitting
+/// one would put an unresolvable row in the denominator.
+fn work_item_from_result(v: &Value) -> Option<WorkItem> {
+    let slug = parse_repo_arg(v.get("repo")?.as_str()?).ok()?;
+    let pr = v.get("pr")?.as_u64().filter(|n| *n > 0)?;
+    let closes = v
+        .get("closes")
+        .and_then(|c| c.as_array())
+        .map(|a| a.iter().filter_map(|n| n.as_u64()).collect())
+        .unwrap_or_default();
+    Some(WorkItem { slug, pr, closes })
+}
+
+/// PURE: every typed work item each dispatched task produced, keyed by the task's
+/// `parent_tool_use_id` — the same key [`token_attribution`] groups spend by, which is what lets
+/// the two be joined at all.
+///
+/// The call and its result are matched by `tool_use_id`, not by the result event's own
+/// `parent_tool_use_id`: the id proves THIS result answers an `open_pr`, so a task's items can
+/// never pick up a neighbouring tool's output.
+///
+/// A REFUSED call (`is_error`) contributes nothing, and neither does a call whose result the trace
+/// never recorded. Both are the same fact — no PR was demonstrably opened — and counting either as
+/// a work item would put a PR that does not exist in the denominator.
+fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkItem>> {
+    use std::collections::HashMap;
+    let mut owner_of: HashMap<String, String> = HashMap::new();
+    let mut out: HashMap<String, Vec<WorkItem>> = HashMap::new();
+
+    let events: Vec<Value> = trace
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .collect();
+
+    for ev in &events {
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let task = ev
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .unwrap_or("__main__")
+            .to_string();
+        let Some(blocks) = ev.pointer("/message/content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for b in blocks {
+            if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                continue;
+            }
+            let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if name.rsplit("__").next() != Some(OPEN_PR_TOOL_LEAF) {
+                continue;
+            }
+            if let Some(id) = b.get("id").and_then(|i| i.as_str()) {
+                owner_of.insert(id.to_string(), task.clone());
+            }
+        }
+    }
+
+    for ev in &events {
+        let Some(blocks) = ev.pointer("/message/content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for b in blocks {
+            if b.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+                continue;
+            }
+            let Some(task) = b
+                .get("tool_use_id")
+                .and_then(|i| i.as_str())
+                .and_then(|id| owner_of.get(id))
+            else {
+                continue;
+            };
+            if b.get("is_error").and_then(|e| e.as_bool()) == Some(true) {
+                continue;
+            }
+            let Some(item) = serde_json::from_str::<Value>(tool_result_text(b).trim())
+                .ok()
+                .as_ref()
+                .and_then(work_item_from_result)
+            else {
+                continue;
+            };
+            let items = out.entry(task.clone()).or_default();
+            // A retried call can report the same PR twice; the PR is still one work item.
+            if !items.contains(&item) {
+                items.push(item);
+            }
+        }
+    }
+    out
+}
+
+/// What became of one work item, as GitHub reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrOutcome {
+    /// Merged. The work LANDED — the only outcome the headline denominator counts.
+    Merged,
+    /// Open and presentable (or already approved): DELIVERED, and waiting on the one actor this
+    /// pipeline deliberately cannot be: the human who merges.
+    AwaitingHuman,
+    /// Open but not presentable — red, pending, conflicting, or unconfirmed. Work in progress that
+    /// has been paid for and has not arrived.
+    Reworking,
+    /// Closed without merging. Paid for, abandoned.
+    ClosedUnmerged,
+    /// The PR could not be read. NOT a bucket: an unreadable PR is neither landed nor waste, and
+    /// folding it into either would let a transient `gh` failure move the headline number.
+    Unresolved,
+}
+
+/// The three buckets the report is about. Only [`WorkBucket::Churn`] is unambiguous waste.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkBucket {
+    Landed,
+    AwaitingHuman,
+    Churn,
+}
+
+impl WorkBucket {
+    /// The key this bucket is stored and printed under.
+    fn key(self) -> &'static str {
+        match self {
+            WorkBucket::Landed => "landed",
+            WorkBucket::AwaitingHuman => "delivered-awaiting-human",
+            WorkBucket::Churn => "churn",
+        }
+    }
+}
+
+impl PrOutcome {
+    fn bucket(self) -> Option<WorkBucket> {
+        match self {
+            PrOutcome::Merged => Some(WorkBucket::Landed),
+            PrOutcome::AwaitingHuman => Some(WorkBucket::AwaitingHuman),
+            PrOutcome::Reworking | PrOutcome::ClosedUnmerged => Some(WorkBucket::Churn),
+            PrOutcome::Unresolved => None,
+        }
+    }
+    /// How good an outcome this is, so a task holding several items can be ranked by its BEST one.
+    fn rank(self) -> u8 {
+        match self {
+            PrOutcome::Merged => 4,
+            PrOutcome::AwaitingHuman => 3,
+            PrOutcome::Reworking => 2,
+            PrOutcome::ClosedUnmerged => 1,
+            PrOutcome::Unresolved => 0,
+        }
+    }
+}
+
+/// PURE: what one `gh pr view` document says became of the work.
+///
+/// The open case is [`presentable_state`]'s answer, not a second opinion about what "green and
+/// mergeable" means: that function IS the queue's definition of a PR a human can act on now, so
+/// "delivered" here means exactly what "presentable" means there. `Approved` counts as delivered
+/// too — a human who approved and has not merged is still the actor being waited on.
+///
+/// An unrecognised `state` is [`PrOutcome::Unresolved`], never a default bucket, for the reason
+/// `Merge::Unknown` exists: a state that cannot be identified is not evidence of any outcome.
+fn pr_outcome(prj: &Value) -> PrOutcome {
+    match prj.get("state").and_then(|s| s.as_str()) {
+        Some("MERGED") => PrOutcome::Merged,
+        Some("CLOSED") => PrOutcome::ClosedUnmerged,
+        Some("OPEN") => {
+            let ci = classify_ci(prj.get("statusCheckRollup").unwrap_or(&Value::Null));
+            let merge = parse_merge(prj.get("mergeable").and_then(|m| m.as_str()));
+            let review = prj.get("reviewDecision").and_then(|r| r.as_str());
+            match presentable_state(ci, merge, review) {
+                PresentState::Presentable | PresentState::Approved => PrOutcome::AwaitingHuman,
+                _ => PrOutcome::Reworking,
+            }
+        }
+        _ => PrOutcome::Unresolved,
+    }
+}
+
+/// One dispatched task: what it cost, and what became of what it produced.
+#[derive(Debug, Clone, PartialEq)]
+struct TaskWork {
+    label: String,
+    usd: f64,
+    tokens: u64,
+    items: Vec<(WorkItem, PrOutcome)>,
+}
+
+impl TaskWork {
+    /// The bucket this task's SPEND is counted in: its BEST item's, or churn when it produced none.
+    ///
+    /// Best rather than first because a task that opened two PRs and had one merged did land work —
+    /// charging its whole spend to churn because the second is still open would understate landing
+    /// and overstate waste at the same time. `None` is the unresolved case, which is reported
+    /// separately and never bucketed.
+    fn bucket(&self) -> Option<WorkBucket> {
+        match self
+            .items
+            .iter()
+            .max_by_key(|(_, o)| o.rank())
+            .map(|(_, o)| *o)
+        {
+            None => Some(WorkBucket::Churn),
+            Some(o) => o.bucket(),
+        }
+    }
+}
+
+/// One run's contribution to the corpus: its dispatched tasks, plus the spend no task carries.
+#[derive(Debug, Clone, PartialEq)]
+struct RunWork {
+    run_id: String,
+    role: String,
+    tasks: Vec<TaskWork>,
+    /// The MAIN LOOP's own spend. Orchestration, not work — it dispatches, reads the worklist and
+    /// writes the summary — but it is spent to land the same items, so it is in the numerator.
+    main_usd: f64,
+    main_tokens: u64,
+    /// Whole-run output, which no per-agent key can carry ([`unattributable_output`]). Real money,
+    /// so it is in the numerator; unattributable, so it is in no bucket.
+    output_usd: f64,
+    output_tokens: u64,
+}
+
+/// The input-side tokens one agent's key can carry.
+///
+/// Every class is summed rather than reported apart because the question is "how many tokens did
+/// landing this cost", and a reader cannot add a cache read to a fresh input token themselves
+/// without knowing the 10x price gap — which is why the DOLLAR figure leads the report and this is
+/// the volume beside it. Output is absent for [`AgentSpend`]'s reason: it exists only whole-run.
+fn agent_tokens(a: &AgentSpend) -> u64 {
+    a.tokens_in + a.cache_read + a.cache_write_5m + a.cache_write_1h
+}
+
+/// PURE given `resolve`: one run's dispatched tasks, joined to their typed work items.
+///
+/// The main loop is excluded from `tasks` and carried separately: it is not a unit of work and
+/// putting it in a bucket would make every run look like one more churned task.
+fn run_work(
+    run_id: &str,
+    role: &str,
+    trace: &str,
+    resolve: &mut dyn FnMut(&WorkItem) -> PrOutcome,
+) -> RunWork {
+    let items = task_work_items(trace);
+    let (output_tokens, output_usd) = unattributable_output(trace);
+    let mut out = RunWork {
+        run_id: run_id.to_string(),
+        role: role.to_string(),
+        tasks: Vec::new(),
+        main_usd: 0.0,
+        main_tokens: 0,
+        output_usd,
+        output_tokens,
+    };
+    for a in token_attribution(trace) {
+        if a.id == "__main__" {
+            out.main_usd += a.usd;
+            out.main_tokens += agent_tokens(&a);
+            continue;
+        }
+        out.tasks.push(TaskWork {
+            label: a.label.clone(),
+            usd: a.usd,
+            tokens: agent_tokens(&a),
+            items: items
+                .get(&a.id)
+                .map(|v| v.iter().map(|i| (i.clone(), resolve(i))).collect())
+                .unwrap_or_default(),
+        });
+    }
+    out
+}
+
+/// What one bucket accumulates.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct BucketTotals {
+    tasks: usize,
+    items: usize,
+    usd: f64,
+    tokens: u64,
+}
+
+/// The caveats the number cannot carry, printed with it in BOTH renderings.
+///
+/// They are DATA rather than prose in the printer because a JSON consumer misreads this number in
+/// exactly the ways a human does — the backlog as waste, the corpus as a trend — and a caveat only
+/// one of the two outputs carries is a caveat that will be dropped by whichever reader matters.
+fn work_tokens_notes(landed: usize, awaiting: usize, typed: usize, tasks: usize) -> Vec<String> {
+    let mut notes = vec![
+        "Only CHURN is waste. Merges are human-gated by design, so the landed:awaiting ratio \
+         measures the human's review bandwidth, NOT the pipeline's efficiency."
+            .to_string(),
+        "Task-level rows exist only for runs that dispatched subagents AND whose trace survives. \
+         This is a snapshot of that corpus, not a trend — do not read it as one."
+            .to_string(),
+    ];
+    if typed < tasks {
+        notes.push(format!(
+            "{} of {tasks} tasks carry NO typed work item and are counted as churn. A task's work \
+             item is what `open_pr` recorded; nothing is inferred from a dispatch label. Where \
+             this fraction is large the churn figure is a CEILING on waste, not a measurement of \
+             it.",
+            tasks - typed
+        ));
+    }
+    if landed == 0 {
+        notes.push(
+            "No landed item in this corpus, so cost-per-landed-item has no value. That is the \
+             honest answer: the metric needs one merged work item to exist."
+                .to_string(),
+        );
+    } else if awaiting > 0 {
+        notes.push(
+            "Cost per DELIVERED item (landed + awaiting) is what the pipeline controls; cost per \
+             LANDED item additionally depends on how fast the human merges."
+                .to_string(),
+        );
+    }
+    notes
+}
+
+/// PURE: the whole `work-tokens` report as data — the one value both renderings are made of, so
+/// the table and the JSON can never disagree about a number or drop a caveat.
+///
+/// `skipped` is a COUNT PER REASON rather than a list of run ids: the metrics file holds 259 rows
+/// and the overwhelming majority are runs that predate per-agent attribution, so listing them would
+/// bury the report in the very rows it is telling you it cannot use. What a reader needs from that
+/// set is its SIZE and its REASONS, which is what makes the corpus line honest.
+fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
+    use std::collections::HashMap;
+    let mut buckets: HashMap<&'static str, BucketTotals> = HashMap::new();
+    for b in [
+        WorkBucket::Landed,
+        WorkBucket::AwaitingHuman,
+        WorkBucket::Churn,
+    ] {
+        buckets.insert(b.key(), BucketTotals::default());
+    }
+    let (mut churn_no_item, mut churn_reworking, mut churn_closed) = (0usize, 0usize, 0usize);
+    let (mut unresolved_tasks, mut unresolved_items) = (0usize, 0usize);
+    let (mut typed_tasks, mut tasks_total) = (0usize, 0usize);
+    let (mut orchestration_usd, mut orchestration_tokens) = (0.0f64, 0u64);
+    let (mut output_usd, mut output_tokens) = (0.0f64, 0u64);
+    let mut task_rows: Vec<Value> = Vec::new();
+    let mut run_rows: Vec<Value> = Vec::new();
+
+    for r in runs {
+        orchestration_usd += r.main_usd;
+        orchestration_tokens += r.main_tokens;
+        output_usd += r.output_usd;
+        output_tokens += r.output_tokens;
+        let mut run_landed = 0usize;
+        for t in &r.tasks {
+            tasks_total += 1;
+            if !t.items.is_empty() {
+                typed_tasks += 1;
+            }
+            // ITEMS are counted in their OWN bucket, independently of the task's. A task that
+            // landed one PR and abandoned another contributes one item to each — counting items
+            // only in the task's bucket would drop the abandoned one entirely, which is the
+            // denominator quietly disagreeing with the waste figure beside it.
+            for (_, o) in &t.items {
+                match o.bucket() {
+                    Some(b) => {
+                        buckets.get_mut(b.key()).expect("bucket seeded above").items += 1;
+                        if b == WorkBucket::Landed {
+                            run_landed += 1;
+                        }
+                    }
+                    None => unresolved_items += 1,
+                }
+            }
+            // SPEND is counted once, in the bucket of the task's BEST item: a task is one unit of
+            // work however many PRs it opened, and its dollars cannot be split between outcomes
+            // without inventing a split the trace does not record.
+            let bucket = t.bucket();
+            match bucket {
+                None => unresolved_tasks += 1,
+                Some(b) => {
+                    let e = buckets.get_mut(b.key()).expect("bucket seeded above");
+                    e.tasks += 1;
+                    e.usd += t.usd;
+                    e.tokens += t.tokens;
+                    if b == WorkBucket::Churn {
+                        if t.items.is_empty() {
+                            churn_no_item += 1;
+                        } else if t.items.iter().any(|(_, o)| *o == PrOutcome::Reworking) {
+                            churn_reworking += 1;
+                        } else {
+                            churn_closed += 1;
+                        }
+                    }
+                }
+            }
+            task_rows.push(serde_json::json!({
+                "runId": r.run_id,
+                "label": t.label,
+                "usd": round3(t.usd),
+                "tokens": t.tokens,
+                "bucket": bucket.map(|b| b.key()).unwrap_or("unresolved"),
+                "items": t.items.iter().map(|(i, o)| serde_json::json!({
+                    "pr": format!("{}#{}", i.slug, i.pr),
+                    "closes": i.closes,
+                    "outcome": format!("{o:?}"),
+                })).collect::<Vec<Value>>(),
+            }));
+        }
+        run_rows.push(serde_json::json!({
+            "runId": r.run_id,
+            "role": r.role,
+            "tasks": r.tasks.len(),
+            "landedItems": run_landed,
+            "mainLoopUsd": round3(r.main_usd),
+            "outputUsd": round3(r.output_usd),
+        }));
+    }
+
+    let landed = buckets[WorkBucket::Landed.key()];
+    let awaiting = buckets[WorkBucket::AwaitingHuman.key()];
+    let churn = buckets[WorkBucket::Churn.key()];
+    // EVERY dollar the corpus spent, including the churn and the orchestration — the whole point of
+    // the metric is that what a landed item cost includes what it cost to not land the others.
+    let total_usd = landed.usd + awaiting.usd + churn.usd + orchestration_usd + output_usd;
+    let total_tokens =
+        landed.tokens + awaiting.tokens + churn.tokens + orchestration_tokens + output_tokens;
+    let per = |n: usize| -> Value {
+        if n == 0 {
+            Value::Null
+        } else {
+            serde_json::json!(round3(total_usd / n as f64))
+        }
+    };
+    let bucket_json = |b: WorkBucket| {
+        let t = buckets[b.key()];
+        serde_json::json!({"tasks": t.tasks, "items": t.items, "usd": round3(t.usd), "tokens": t.tokens})
+    };
+
+    serde_json::json!({
+        "corpus": {
+            "runs": runs.len(),
+            "tasks": tasks_total,
+            "typedTasks": typed_tasks,
+            "typedCoveragePct": if tasks_total == 0 { Value::Null }
+                else { serde_json::json!(round3(100.0 * typed_tasks as f64 / tasks_total as f64)) },
+            "skippedRows": skipped.iter().map(|(why, rows)| serde_json::json!({"why": why, "rows": rows}))
+                .collect::<Vec<Value>>(),
+        },
+        "buckets": {
+            WorkBucket::Landed.key(): bucket_json(WorkBucket::Landed),
+            WorkBucket::AwaitingHuman.key(): bucket_json(WorkBucket::AwaitingHuman),
+            WorkBucket::Churn.key(): bucket_json(WorkBucket::Churn),
+        },
+        "churnBreakdown": {
+            "noTypedWorkItem": churn_no_item,
+            "openNotPresentable": churn_reworking,
+            "closedUnmerged": churn_closed,
+        },
+        "unresolved": {"tasks": unresolved_tasks, "items": unresolved_items},
+        "orchestrationUsd": round3(orchestration_usd),
+        "orchestrationTokens": orchestration_tokens,
+        "outputUsd": round3(output_usd),
+        "outputTokens": output_tokens,
+        "totalUsd": round3(total_usd),
+        "totalTokens": total_tokens,
+        "usdPerLandedItem": per(landed.items),
+        "usdPerDeliveredItem": per(landed.items + awaiting.items),
+        "notes": work_tokens_notes(landed.items, awaiting.items, typed_tasks, tasks_total),
+        "runs": run_rows,
+        "tasks": task_rows,
+    })
+}
+
+/// PURE: the table, rendered from the report VALUE rather than from the totals again — so a number
+/// printed here is the number `--json` emits, by construction.
+fn render_work_tokens(report: &Value) -> String {
+    let n = |p: &str| report.pointer(p).and_then(|v| v.as_u64()).unwrap_or(0);
+    let f = |p: &str| report.pointer(p).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let money = |p: &str| match report.pointer(p) {
+        Some(Value::Null) | None => "n/a".to_string(),
+        Some(v) => format!("${:.2}", v.as_f64().unwrap_or(0.0)),
+    };
+    let mut out = vec![
+        "tokens to land work".to_string(),
+        String::new(),
+        format!(
+            "corpus: {} runs, {} dispatched tasks; {} carry a typed work item ({:.0}% coverage)",
+            n("/corpus/runs"),
+            n("/corpus/tasks"),
+            n("/corpus/typedTasks"),
+            f("/corpus/typedCoveragePct"),
+        ),
+    ];
+    // The corpus is small enough to NAME. A reader who can see which three runs these are can
+    // check them; "3 runs" alone is a number they have to take on trust.
+    for r in report
+        .get("runs")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&Vec::new())
+    {
+        out.push(format!(
+            "  {} {} — {} tasks, {} landed",
+            r.get("runId").and_then(|v| v.as_str()).unwrap_or("?"),
+            r.get("role").and_then(|v| v.as_str()).unwrap_or("?"),
+            r.get("tasks").and_then(|v| v.as_u64()).unwrap_or(0),
+            r.get("landedItems").and_then(|v| v.as_u64()).unwrap_or(0),
+        ));
+    }
+    out.extend([
+        String::new(),
+        format!(
+            "{:<26}{:>6}{:>7}{:>11}{:>15}",
+            "bucket", "tasks", "items", "usd", "tokens"
+        ),
+    ]);
+    for b in [
+        WorkBucket::Landed,
+        WorkBucket::AwaitingHuman,
+        WorkBucket::Churn,
+    ] {
+        let p = format!("/buckets/{}", b.key());
+        out.push(format!(
+            "{:<26}{:>6}{:>7}{:>11}{:>15}",
+            b.key(),
+            n(&format!("{p}/tasks")),
+            n(&format!("{p}/items")),
+            money(&format!("{p}/usd")),
+            n(&format!("{p}/tokens")),
+        ));
+    }
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "  churn: no typed item",
+        n("/churnBreakdown/noTypedWorkItem"),
+        "",
+        "",
+        ""
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "  churn: open, not ready",
+        n("/churnBreakdown/openNotPresentable"),
+        "",
+        "",
+        ""
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "  churn: closed unmerged",
+        n("/churnBreakdown/closedUnmerged"),
+        "",
+        "",
+        ""
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        format!("orchestration ({} main)", n("/corpus/runs")),
+        "",
+        "",
+        money("/orchestrationUsd"),
+        n("/orchestrationTokens"),
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "output (whole-run)",
+        "",
+        "",
+        money("/outputUsd"),
+        n("/outputTokens"),
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "TOTAL",
+        n("/corpus/tasks"),
+        "",
+        money("/totalUsd"),
+        n("/totalTokens"),
+    ));
+    if n("/unresolved/tasks") > 0 || n("/unresolved/items") > 0 {
+        out.push(format!(
+            "\nunresolved (PR unreadable, in NO bucket): {} tasks, {} items",
+            n("/unresolved/tasks"),
+            n("/unresolved/items")
+        ));
+    }
+    out.extend([
+        String::new(),
+        format!("per LANDED item     {:>10}", money("/usdPerLandedItem")),
+        format!("per DELIVERED item  {:>10}", money("/usdPerDeliveredItem")),
+        String::new(),
+    ]);
+    for note in report
+        .get("notes")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&Vec::new())
+    {
+        out.push(format!("- {}", note.as_str().unwrap_or("")));
+    }
+    for row in report
+        .get("corpus")
+        .and_then(|c| c.get("skippedRows"))
+        .and_then(|v| v.as_array())
+        .unwrap_or(&Vec::new())
+    {
+        out.push(format!(
+            "- {} metrics rows skipped: {}",
+            row.get("rows").and_then(|v| v.as_u64()).unwrap_or(0),
+            row.get("why").and_then(|v| v.as_str()).unwrap_or("?"),
+        ));
+    }
+    // Trailing spaces are what a fixed-width table leaves behind on a row with empty cells.
+    for line in &mut out {
+        while line.ends_with(' ') {
+            line.pop();
+        }
+    }
+    out.join("\n")
+}
+
+/// Read one PR's outcome from GitHub. `Unresolved` on any read failure — never a bucket, so a flaky
+/// API call cannot move the headline number.
+fn fetch_pr_outcome(item: &WorkItem) -> PrOutcome {
+    match gh_json(&[
+        "pr",
+        "view",
+        &item.pr.to_string(),
+        "-R",
+        &item.slug,
+        "--json",
+        "state,mergeable,statusCheckRollup,reviewDecision",
+    ]) {
+        Some(j) => pr_outcome(&j),
+        None => PrOutcome::Unresolved,
+    }
+}
+
+/// `work-tokens <metrics/runs.jsonl> [--json]`: what it cost to LAND work, per landed item.
+fn work_tokens_mode(path: &str, json: bool) -> i32 {
+    use std::collections::{HashMap, HashSet};
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read {path}: {e}");
+            return 2;
+        }
+    };
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut cache: HashMap<(String, u64), PrOutcome> = HashMap::new();
+    let mut runs: Vec<RunWork> = Vec::new();
+    // Ordered so the reasons print in the order a row meets them, not in hash order.
+    let mut skipped: Vec<(String, usize)> = Vec::new();
+    fn skip(skipped: &mut Vec<(String, usize)>, why: &str) {
+        match skipped.iter_mut().find(|(w, _)| w == why) {
+            Some((_, n)) => *n += 1,
+            None => skipped.push((why.to_string(), 1)),
+        }
+    }
+    for line in content.lines() {
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        // Live partials (boot/ttl/usage) restate a run the final record also describes; counting
+        // both would double the run. Same rule [`backfill_row`] applies, for the same reason.
+        let stage = row.get("stage").and_then(|s| s.as_str());
+        if !matches!(stage, None | Some(STAGE_FINAL)) {
+            continue;
+        }
+        let run_id = row
+            .get("runId")
+            .and_then(|r| r.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let Some(trace_path) = row.get("trace").and_then(|t| t.as_str()) else {
+            skip(&mut skipped, "the record names no trace");
+            continue;
+        };
+        if !seen.insert(trace_path.to_string()) {
+            continue;
+        }
+        let Ok(trace) = std::fs::read_to_string(trace_path) else {
+            skip(&mut skipped, "the trace has been collected");
+            continue;
+        };
+        let role = row
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let run = run_work(&run_id, &role, &trace, &mut |item| {
+            *cache
+                .entry((item.slug.clone(), item.pr))
+                .or_insert_with(|| fetch_pr_outcome(item))
+        });
+        if run.tasks.is_empty() {
+            skip(
+                &mut skipped,
+                "the run dispatched no subagents — no task-level rows",
+            );
+            continue;
+        }
+        runs.push(run);
+    }
+    let report = work_tokens_report(&runs, &skipped);
+    if json {
+        println!("{report}");
+    } else {
+        println!("{}", render_work_tokens(&report));
+    }
+    0
+}
+
 /// Which run a record belongs to, as the runner knows it. Nothing here is derivable from the
 /// trace, which is why it arrives as flags.
 struct RunIdentity<'a> {
@@ -4083,9 +4866,20 @@ struct ToolingReport {
 }
 
 /// Read a `tool_result` block's content as text, whatever shape the harness used for it.
+///
+/// A LIST of content blocks is joined on its `text` fields rather than dumped as JSON, because
+/// every caller here reads this as TEXT: the tooling report splits a `Glob` result into lines, and
+/// [`task_work_items`] parses an MCP result as a document. A JSON dump satisfies neither — it
+/// escapes the newlines, so a multi-line result arrives as one line and a JSON payload arrives
+/// wrapped in a second layer of quoting.
 fn tool_result_text(item: &Value) -> String {
     match item.get("content") {
         Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<&str>>()
+            .join(""),
         Some(other) => other.to_string(),
         None => String::new(),
     }
@@ -15270,17 +16064,27 @@ impl McpProfile {
                 "close_candidate_context",
                 "record_close_candidate_verdict",
             ],
-            // The clone lifecycle, plus the two BODY REPAIRS (#136). Both are on the profile, and
-            // that is the settled answer to a split #136 names: `repair_qa_block` was reachable
-            // only as a CLI subcommand under the `Bash(pr-review-report:*)` allow rule, so the
-            // producer's ability to write a PR body was a prefix-matched permission rather than an
-            // enumerable transition. Two body repairs with two call shapes is what makes a future
-            // reader guess; both being tools means `tools/list` states what the producer may write.
+            // The clone lifecycle, the DELIVERY, plus the two BODY REPAIRS (#136). Both repairs are
+            // on the profile, and that is the settled answer to a split #136 names:
+            // `repair_qa_block` was reachable only as a CLI subcommand under the
+            // `Bash(pr-review-report:*)` allow rule, so the producer's ability to write a PR body
+            // was a prefix-matched permission rather than an enumerable transition. Two body
+            // repairs with two call shapes is what makes a future reader guess; both being tools
+            // means `tools/list` states what the producer may write.
+            //
+            // `open_pr` is the producer's OUTPUT edge, and it is here because the run's own record
+            // of what it produced was otherwise unreadable: a PR opened by `gh pr create` inside
+            // Bash leaves a shell string in the trace and nothing typed, so no reader can say which
+            // dispatched task produced which PR. On the reference producer run that is 1,986 Bash
+            // calls against 35 MCP ones — the same root cause as #170, a typed surface displaced by
+            // an untyped one. As a tool the whole `{agent, repo, issue, PR}` tuple is a typed
+            // argument list and a typed result, which is what `work-tokens` joins on.
             McpProfile::Producer => &[
                 "clone_create",
                 "clone_release",
                 "clone_list",
                 "clone_gc",
+                "open_pr",
                 "repair_qa_block",
                 "weaken_closes",
             ],
@@ -15536,6 +16340,22 @@ fn mcp_all_tools() -> Value {
             }
         },
         {
+            "name": "open_pr",
+            "description": "OPEN THE PR for a branch you have already pushed, assigned to the pipeline's assignee. The body comes from a FILE and must carry QA-GUIDE section 8's evidence block — the same rule the `gh pr create` gate applies, checked here before anything is created, so a missing block costs one retry and no PR. `closes` is the issue this PR closes: it is written as a canonical `Closes #N` line when the body does not already close it, and the result reports every issue the body closes. Returns the new PR's number and url.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo"},
+                    "head": {"type": "string", "description": "The branch holding the work, ALREADY PUSHED to that repo."},
+                    "title": {"type": "string", "description": "PR title."},
+                    "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "closes": {"type": "integer", "description": "The issue this PR closes. Omit for a partial fix — then say `Refs #N` in the body yourself."},
+                    "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
+                },
+                "required": ["repo", "head", "title", "body_file"]
+            }
+        },
+        {
             "name": "repair_qa_block",
             "description": "Retrofit QA-GUIDE section 8's evidence block onto an ALREADY-OPEN PR of ours: APPENDS the block, every byte outside the `## QA` section identical, validated with the PR-open gate's own predicate. Refuses a present-but-different block unless replace.",
             "inputSchema": {
@@ -15653,6 +16473,20 @@ enum McpCall {
         max_age_days: u64,
         dry_run: bool,
     },
+    /// The producer's OUTPUT edge: open the PR for work already pushed.
+    ///
+    /// `closes` is a NUMBER for the same reason [`McpCall::WeakenCloses`]'s `issue` is — the only
+    /// thing a caller chooses is WHICH issue, and a free-text argument there is a linkage nobody
+    /// can join on afterwards. `body_file` is a path rather than the body itself so the exact bytes
+    /// stay on disk for the run trace, which is [`McpCall::RepairQaBlock`]'s rule as well.
+    OpenPr {
+        slug: String,
+        head: String,
+        title: String,
+        body_file: String,
+        closes: Option<u64>,
+        base: Option<String>,
+    },
     /// The producer's two BODY REPAIRS (#136). `issue` is a NUMBER, not a `#N` string: the tool
     /// weakens the linkage to exactly one issue, and a free-text argument there is the "edit
     /// whatever looked close enough" the refusal path exists to prevent.
@@ -15686,6 +16520,42 @@ fn parse_pr_ref(s: &str) -> Result<(String, u64), String> {
         return Err(bad());
     }
     Ok((format!("{owner}/{repo}"), num))
+}
+
+/// PURE: an `owner/repo` ARGUMENT → the same string, or the error a caller sees.
+///
+/// ONE definition, two callers (`clone_create` and `open_pr`), for the reason [`carries_qa_block`]
+/// has one: the two tools name the same population — a repo this pipeline works in — and a second
+/// spelling of "well-formed slug" is how they come to disagree about which strings are repos. A
+/// slug is exactly two non-empty segments: `owner/repo/extra` is refused rather than truncated,
+/// because a truncating parser would silently retarget a call.
+///
+/// Distinct from [`parse_repo_slug`], which EXTRACTS a slug from a git remote URL. That one reads a
+/// string git wrote; this one refuses a string a model wrote, and refusing is the whole of it.
+fn parse_repo_arg(s: &str) -> Result<String, String> {
+    let slug = s.trim().to_string();
+    let mut parts = slug.split('/');
+    let (Some(o), Some(r), None) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(format!("bad repo {slug:?} — want owner/repo"));
+    };
+    if o.is_empty() || r.is_empty() {
+        return Err(format!("bad repo {slug:?} — want owner/repo"));
+    }
+    Ok(slug)
+}
+
+/// PURE: a git branch name a tool may act on.
+///
+/// Whitespace and a leading `-` are the two shapes that stop being a branch by the time they reach
+/// a command line: the first splits into two arguments, the second reads as a flag. Everything else
+/// is git's business to accept or reject, and duplicating git's ref grammar here would only add a
+/// second opinion about what a branch is.
+fn parse_branch(s: &str) -> Result<String, String> {
+    let branch = s.trim().to_string();
+    if branch.is_empty() || branch.contains(char::is_whitespace) || branch.starts_with('-') {
+        return Err(format!("bad branch {branch:?}"));
+    }
+    Ok(branch)
 }
 
 /// PURE: a state-load's page size. Absent means [`STATE_LOAD_PAGE_DEFAULT`]; out of range is
@@ -15951,24 +16821,14 @@ fn validate_call(
         // --- work-clone lifecycle. The path guard runs HERE, before any effect exists, which is why
         // a refused clone argument can be proven to have touched nothing.
         "clone_create" => {
-            let slug = req_str(args, "repo")?.trim().to_string();
-            let mut parts = slug.split('/');
-            let (Some(o), Some(r), None) = (parts.next(), parts.next(), parts.next()) else {
-                return Err(format!("bad repo {slug:?} — want owner/repo"));
-            };
-            if o.is_empty() || r.is_empty() {
-                return Err(format!("bad repo {slug:?} — want owner/repo"));
-            }
+            let slug = parse_repo_arg(req_str(args, "repo")?)?;
             // clone_create always builds in the FIRST root (WORK_DIR); the extra roots exist so
             // already-stranded clones can be listed/released, not so new ones can be placed there.
             let root = roots.first().ok_or_else(|| {
                 "no work-clone root is configured (WORK_DIR is unset)".to_string()
             })?;
             let name = clone_name_in_root(root, req_str(args, "name")?)?;
-            let branch = req_str(args, "branch")?.trim().to_string();
-            if branch.contains(char::is_whitespace) || branch.starts_with('-') {
-                return Err(format!("bad branch {branch:?}"));
-            }
+            let branch = parse_branch(req_str(args, "branch")?)?;
             let base = match args.get("base") {
                 None | Some(Value::Null) => None,
                 Some(_) => Some(req_str(args, "base")?.trim().to_string()),
@@ -16013,6 +16873,46 @@ fn validate_call(
                     .get("dry_run")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
+            })
+        }
+        // --- the producer's OUTPUT edge. An ARGUMENT guard only: whether the body may be POSTED is
+        // `carries_qa_block`'s answer, in the apply, because it is a property of bytes that only
+        // exist on disk.
+        "open_pr" => {
+            let slug = parse_repo_arg(req_str(args, "repo")?)?;
+            let head = parse_branch(req_str(args, "head")?)?;
+            let title = req_str(args, "title")?.trim().to_string();
+            // ABSOLUTE, and refused here rather than resolved. The MCP server runs in the CRON's
+            // working directory, never the model's clone, so a relative path resolves against a
+            // directory the caller never named — reading some other file, or none, with no way for
+            // either side to notice which happened.
+            let body_file = req_str(args, "body_file")?.trim().to_string();
+            if !body_file.starts_with('/') {
+                return Err(format!(
+                    "body_file {body_file:?} must be an ABSOLUTE path — this server's working \
+                     directory is the cron's, not your clone's"
+                ));
+            }
+            // Optional, and a positive integer when present — `closes: 0` is not an issue, the same
+            // ruling `parse_pr_ref` makes for `#0`.
+            let closes = match args.get("closes") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.as_u64().filter(|n| *n > 0).ok_or_else(|| {
+                    "closes must be a positive integer — the issue number this PR closes"
+                        .to_string()
+                })?),
+            };
+            let base = match args.get("base") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(parse_branch(req_str(args, "base")?)?),
+            };
+            Ok(McpCall::OpenPr {
+                slug,
+                head,
+                title,
+                body_file,
+                closes,
+                base,
             })
         }
         // --- the producer's body repairs. Both guards are ARGUMENT guards only: what may be
@@ -16234,6 +17134,15 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             max_age_days,
             dry_run,
         } => clone_gc_exec(&roots, max_age_days, dry_run).map(|d| d.to_string()),
+        McpCall::OpenPr {
+            slug,
+            head,
+            title,
+            body_file,
+            closes,
+            base,
+        } => open_pr_apply(&slug, &head, &title, &body_file, closes, base.as_deref())
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::RepairQaBlock {
             slug,
             num,
@@ -17492,6 +18401,265 @@ fn append_separator(body: &str) -> &'static str {
     } else {
         "\n\n"
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// open_pr — the producer's OUTPUT edge as a TYPED transition.
+//
+// WHY IT EXISTS AT ALL. Every other move the producer makes is a tool; opening the PR — the one
+// move that IS the run's output — was a `gh pr create` inside Bash. That leaves a shell string in
+// the run trace and nothing a reader can join on: which dispatched task produced which PR is a
+// question the trace of a 1,986-Bash-call run cannot answer, against 35 MCP calls in the same run.
+// So the run's cost could be attributed per task (`token-report`) and the run's OUTPUT could not,
+// which makes "what did it cost to land this" unanswerable from the record the pipeline keeps.
+// `open_pr` closes that: the arguments carry `{repo, head, closes}` and the result carries the PR
+// number, so one typed line of the trace holds the whole `{agent, repo, issue, PR}` tuple.
+//
+// It is NOT a second QA gate. `carries_qa_block` is THE predicate — one definition, now three
+// callers (the PR-open hook, the retrofit, and this) — so a body this tool accepts is a body
+// `require-qa-block` accepts, by construction rather than by two implementations agreeing. The
+// hook stays exactly as it is: it binds every session on the box, including the interactive ones
+// that have no MCP surface at all and are the population #83 was filed about. What changes is that
+// the CRON producer no longer needs it, because it no longer reaches for `gh pr create`.
+//
+// THE ONE THING THIS TOOL WRITES THAT THE FILE DID NOT. `closes` is typed because a linkage nobody
+// can join on is the defect this whole tool is about — and the closing keyword is what GitHub
+// resolves into `closingIssuesReferences`, which `uncovered-issues` reads as the producer's own
+// backlog. That is the same power `weaken-closes` is DIRECTION-LOCKED against, and the lock is not
+// weakened here: `weaken-closes` edits a PR a human may already have read, where adding a `Closes`
+// would retroactively mark work covered; `open_pr` states the linkage at the moment the work is
+// first published, which is exactly what the producer already declared in prose in every body it
+// wrote. Typing it changes who can read it, not what may be claimed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// WHY an `open_pr` was refused — a TYPED discriminant, like [`Refusal`] and [`RepairRefusal`], so
+/// the exit code and the message both derive from the variant and no caller re-classifies by prose.
+#[derive(Debug, PartialEq, Eq)]
+enum OpenPrRefusal {
+    /// The `body_file` could not be read when the call ran.
+    UnreadableBody { path: String, err: String },
+    /// The body does not carry a section-8 block. Carries the lines it does not name; EMPTY means
+    /// all four are named but not on four distinct lines — [`Refusal`]'s own distinction.
+    NoQaBlock { path: String, missing: Vec<QaLine> },
+    /// `gh pr create` failed. Carries gh's own output, which already names the cause (an unpushed
+    /// head, a PR that exists for this branch, no permission) far better than a re-classification
+    /// of it would.
+    GhFailed(String),
+    /// The PR WAS created and `gh` printed something no PR url could be read out of. Distinct from
+    /// every other variant because the effect happened: a caller that retried this as a failure
+    /// would open a second PR.
+    UnreadableUrl(String),
+}
+
+impl OpenPrRefusal {
+    /// Exit code, distinct per variant because they are four different things to do next: fix the
+    /// path, write the block, read gh's error, or go and look at what was created.
+    fn exit(&self) -> i32 {
+        match self {
+            OpenPrRefusal::UnreadableBody { .. } => 2,
+            OpenPrRefusal::NoQaBlock { .. } => 3,
+            OpenPrRefusal::GhFailed(_) => 1,
+            OpenPrRefusal::UnreadableUrl(_) => 6,
+        }
+    }
+
+    /// The whole refusal text. The QA case reuses [`QA_TEMPLATE`] and [`QaLine::name`], so it reads
+    /// like the PR-open gate's refusal and names the same lines — the retry is the same edit
+    /// whichever surface refused it.
+    fn render(&self, subject: &str) -> String {
+        let mut lines = vec![format!("REFUSED - open_pr {subject}"), String::new()];
+        match self {
+            OpenPrRefusal::UnreadableBody { path, err } => lines.extend([
+                format!("  could not read body_file {path}: {err}"),
+                "  Write the body to a file first, and pass its ABSOLUTE path.".to_string(),
+            ]),
+            OpenPrRefusal::NoQaBlock { path, missing } => {
+                lines.extend([
+                    format!("  {path} does not carry QA-GUIDE section 8's evidence block, so this"),
+                    "  PR would be opened into a reject the vetter has already written for you."
+                        .to_string(),
+                    String::new(),
+                ]);
+                if missing.is_empty() {
+                    lines.push(
+                        "  all four named, but not on four distinct lines - write one entry per line"
+                            .to_string(),
+                    );
+                } else {
+                    let names: Vec<&'static str> = missing.iter().map(|l| l.name()).collect();
+                    lines.push(format!("  still missing: {}", names.join(", ")));
+                }
+                lines.extend([
+                    String::new(),
+                    QA_TEMPLATE.to_string(),
+                    String::new(),
+                    "You ran the mutation testing to get here - transcribe what it produced."
+                        .to_string(),
+                    "`n/a` with a reason is a valid value for a line the change cannot have;"
+                        .to_string(),
+                    "an ABSENT line is not. NOTHING was created.".to_string(),
+                ]);
+            }
+            OpenPrRefusal::GhFailed(out) => lines.extend([
+                "  `gh pr create` failed and NO PR was created. gh said:".to_string(),
+                String::new(),
+                out.trim_end().to_string(),
+            ]),
+            OpenPrRefusal::UnreadableUrl(out) => lines.extend([
+                "  the PR WAS CREATED, but gh printed no url this could read a number out of."
+                    .to_string(),
+                "  Do NOT retry this call - that would open a second PR. gh said:".to_string(),
+                String::new(),
+                out.trim_end().to_string(),
+            ]),
+        }
+        lines.join("\n")
+    }
+}
+
+/// PURE: the body `open_pr` posts — the file's bytes, plus the canonical closing line when `closes`
+/// names an issue the body does not already close.
+///
+/// The line goes FIRST, which is where `campaign-prompt.txt` has always put it (`Closes #N`
+/// followed by the QA block) and is the only position that cannot land INSIDE the `## QA` section —
+/// a section runs to the next heading, so an appended line would be swallowed by it and read as
+/// part of the evidence.
+///
+/// Whether the body already closes the issue is [`closing_keywords`]'s answer, never a substring
+/// search: that is the one scanner `commit-closes` and `weaken-closes` both use, so what this
+/// writes and what those two read are the same notion of a closing reference.
+fn open_pr_body(body: &str, closes: Option<u64>) -> String {
+    match closes {
+        Some(n) if !closing_keywords(body).contains(&n) => format!("Closes #{n}\n\n{body}"),
+        _ => body.to_string(),
+    }
+}
+
+/// PURE: the whole open decision — the body this call would POST, or the refusal that stops it.
+///
+/// Everything a refusal can be decided from is here, which is what makes "a refused `open_pr`
+/// created nothing" a property of the ORDER rather than a claim: `gh` is not reachable until this
+/// has returned an `Ok`. [`qa_repair`] is the same shape for the same reason.
+///
+/// The gate runs on the COMPOSED body, not on the file, because the composed body is what GitHub
+/// will hold — and [`carries_qa_block`] is THE predicate, so a body this accepts is a body
+/// `require-qa-block` accepts, by construction rather than by two implementations agreeing.
+fn open_pr_plan(
+    file_body: &str,
+    body_file: &str,
+    closes: Option<u64>,
+) -> Result<String, OpenPrRefusal> {
+    let body = open_pr_body(file_body, closes);
+    if !carries_qa_block(&body) {
+        return Err(OpenPrRefusal::NoQaBlock {
+            path: body_file.to_string(),
+            missing: missing_lines(qa_section(&body)),
+        });
+    }
+    Ok(body)
+}
+
+/// PURE: the `owner/repo` and number a GitHub PR url names.
+///
+/// `gh pr create` prints the url of what it made and offers no `--json`, so this IS the read of the
+/// number. It is STRICT — `github.com/<owner>/<repo>/pull/<digits>` and nothing else — because the
+/// caller compares the slug against the one it asked for, and a lenient parse would let something
+/// that is not a slug past that comparison. Anchoring on the HOST is what makes that hold: taking
+/// the last two path segments instead reads `github.com/r/pull/12` as the repo `github.com/r`.
+fn pr_url_ref(url: &str) -> Option<(String, u64)> {
+    let (before, after) = url.trim().rsplit_once("/pull/")?;
+    let num: u64 = after.split('/').next()?.parse().ok().filter(|n| *n > 0)?;
+    let (_, path) = before.split_once("github.com/")?;
+    let mut segs = path.split('/');
+    let (Some(owner), Some(repo), None) = (segs.next(), segs.next(), segs.next()) else {
+        return None;
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((format!("{owner}/{repo}"), num))
+}
+
+/// PURE: the PR ref `gh pr create`'s output names, taking the FIRST url in it.
+///
+/// gh prints warnings and hints on the same stream, so the output is scanned word by word rather
+/// than read as a single line. FIRST rather than last: one `gh pr create` creates one PR, so a
+/// second url is something else gh had to say, not a second result.
+fn created_pr_ref(out: &str) -> Option<(String, u64)> {
+    out.split_whitespace().find_map(pr_url_ref)
+}
+
+/// The `open_pr` producer MCP tool: open the PR for a branch already pushed, assigned to the
+/// pipeline's assignee, with a body the PR-open gate's own predicate has already accepted.
+///
+/// ORDER IS THE GUARD, as it is in [`qa_repair`]: the body is read and checked BEFORE `gh` is
+/// invoked, so a refused call provably created nothing — which is what makes the QA refusal a
+/// one-edit retry inside the run rather than a PR that has to be repaired after the fact.
+///
+/// Returns the report text rather than printing it: on the MCP server STDOUT IS THE PROTOCOL.
+///
+/// Exit: 0 opened, 1 `gh pr create` failed (nothing created), 2 unreadable body file, 3 no QA
+/// block, 6 created but the url could not be read.
+fn open_pr_apply(
+    slug: &str,
+    head: &str,
+    title: &str,
+    body_file: &str,
+    closes: Option<u64>,
+    base: Option<&str>,
+) -> Result<String, (i32, String)> {
+    let subject = format!("{slug} {head}");
+    let refuse = |r: OpenPrRefusal| (r.exit(), r.render(&subject));
+
+    let file_body = std::fs::read_to_string(body_file).map_err(|e| {
+        refuse(OpenPrRefusal::UnreadableBody {
+            path: body_file.to_string(),
+            err: e.to_string(),
+        })
+    })?;
+    let body = open_pr_plan(&file_body, body_file, closes).map_err(refuse)?;
+
+    let assignee = pr_assignee();
+    let mut args: Vec<&str> = vec![
+        "pr",
+        "create",
+        "-R",
+        slug,
+        "--head",
+        head,
+        "--title",
+        title,
+        "--body",
+        &body,
+        "--assignee",
+        &assignee,
+    ];
+    if let Some(b) = base {
+        args.extend(["--base", b]);
+    }
+    let out = gh_capture(&args).map_err(|e| refuse(OpenPrRefusal::GhFailed(e)))?;
+
+    // The url is gh's own statement of what it created. A parse failure is NOT retried and NOT
+    // guessed at with a `gh pr list --head` lookup: the branch is now the head of a PR that exists,
+    // so any such read would return it and hide the fact that this tool could not tell.
+    let (found, num) =
+        created_pr_ref(&out).ok_or_else(|| refuse(OpenPrRefusal::UnreadableUrl(out.clone())))?;
+    if !found.eq_ignore_ascii_case(slug) {
+        return Err(refuse(OpenPrRefusal::UnreadableUrl(out)));
+    }
+    Ok(serde_json::json!({
+        "repo": found,
+        "pr": num,
+        "url": format!("https://github.com/{found}/pull/{num}"),
+        "head": head,
+        "base": base,
+        // Every issue the posted body closes, read back with the scanner GitHub's own
+        // `closingIssuesReferences` is compared against — so the typed record of what this PR
+        // covers is the whole set, not just the argument that was passed.
+        "closes": closing_keywords(&body),
+        "assignee": assignee,
+    })
+    .to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19431,6 +20599,17 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// What it cost to LAND work: per-task spend joined to the typed work items `open_pr` recorded,
+    /// bucketed landed / delivered-awaiting-human / churn. Only churn is waste — merges are
+    /// human-gated by design. A task with no typed work item is churn; nothing is inferred from a
+    /// dispatch label.
+    WorkTokens {
+        /// The metrics file to read (metrics/runs.jsonl).
+        path: String,
+        /// Emit the report object instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
     /// Correct historical metrics rows against their traces: whole-run numbers where the trace
     /// survives, an `accuracy: main-thread-only` label where it does not. Estimates nothing.
     BackfillMetrics {
@@ -21241,6 +22420,7 @@ fn main() {
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
         Cmd::TokenReport { trace, json } => token_report_mode(&trace, json),
+        Cmd::WorkTokens { path, json } => work_tokens_mode(&path, json),
         Cmd::BackfillMetrics { path, write } => backfill_metrics_mode(&path, write),
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
@@ -34527,7 +35707,7 @@ mod mcp_tests {
     // --- profiles -------------------------------------------------------------------------------
 
     #[test]
-    fn the_producer_surface_is_clone_lifecycle_and_the_two_body_repairs() {
+    fn the_producer_surface_is_clone_lifecycle_the_open_and_the_two_body_repairs() {
         let f = FakeExec::producer();
         let resp = f
             .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
@@ -34541,6 +35721,10 @@ mod mcp_tests {
                 "clone_release",
                 "clone_list",
                 "clone_gc",
+                // The producer's OUTPUT edge. It is a tool so the run's own trace records WHICH
+                // task produced WHICH PR — a `gh pr create` inside Bash leaves a shell string that
+                // no reader can join a work item on.
+                "open_pr",
                 // #136: BOTH body repairs are tools, so what the producer may write to a PR body is
                 // something `tools/list` states rather than something a prefix-matched
                 // `Bash(pr-review-report:*)` allow rule happens to permit.
@@ -34576,13 +35760,16 @@ mod mcp_tests {
             "clone_create",
             "clone_gc",
             "clone_list",
+            // The vetter judging a PR must not be able to OPEN one either: an actor that can
+            // produce the thing it judges has no judgement left to make.
+            "open_pr",
             "repair_qa_block",
             "weaken_closes",
         ] {
             let resp = v
                 .handle(&call(
                     producer_only,
-                    json!({"repo": "o/r", "name": "x", "branch": "b", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
+                    json!({"repo": "o/r", "name": "x", "branch": "b", "head": "b", "title": "t", "body_file": "/b.md", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
                 ))
                 .unwrap();
             assert!(is_error(&resp), "{producer_only} must not exist for vetter");
@@ -34638,6 +35825,9 @@ mod mcp_tests {
             "record_verdict",
             "record_close_candidate_verdict",
             "clone_create",
+            // The human RULES on PRs; opening one is the producer's edge, and a human surface that
+            // could open a PR would be a human ruling on their own work.
+            "open_pr",
         ] {
             let resp = f
                 .handle(&call(not_ours, json!({"pr": "o/r#1", "issue": "o/r#1"})))
@@ -35112,6 +36302,170 @@ mod mcp_tests {
                 base: None,
             }]
         );
+    }
+
+    // --- open_pr: the producer's OUTPUT edge ------------------------------------------------------
+
+    #[test]
+    fn open_pr_refuses_every_argument_it_could_not_act_on() {
+        let f = FakeExec::producer();
+        for bad in [
+            json!({"repo": "raindex", "head": "b", "title": "t", "body_file": "/b.md"}), // no owner
+            json!({"repo": "a/b/c", "head": "b", "title": "t", "body_file": "/b.md"}),
+            json!({"repo": "o/r", "head": "two words", "title": "t", "body_file": "/b.md"}),
+            json!({"repo": "o/r", "head": "--upload-pack=evil", "title": "t", "body_file": "/b.md"}),
+            json!({"repo": "o/r", "head": "b", "title": "", "body_file": "/b.md"}),
+            json!({"repo": "o/r", "head": "b", "title": "t"}), // no body at all
+            // RELATIVE: this server's cwd is the cron's, not the caller's clone, so a relative
+            // path names a file neither side can identify.
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "body.md"}),
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "closes": 0}),
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "closes": "12"}),
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "base": "two words"}),
+        ] {
+            let resp = f.handle(&call("open_pr", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(
+            f.calls().is_empty(),
+            "no refused argument reached an effect"
+        );
+
+        f.handle(&call(
+            "open_pr",
+            json!({"repo": "rainlanguage/rain.solmem", "head": "2026-08-02-issue-63",
+                   "title": "Guard the empty inner position", "body_file": "/scratch/pr-63.md",
+                   "closes": 63}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::OpenPr {
+                slug: "rainlanguage/rain.solmem".to_string(),
+                head: "2026-08-02-issue-63".to_string(),
+                title: "Guard the empty inner position".to_string(),
+                body_file: "/scratch/pr-63.md".to_string(),
+                closes: Some(63),
+                base: None,
+            }]
+        );
+    }
+
+    /// A minimal section-8 block, so a body fixture says what it is about rather than restating
+    /// the gate's vocabulary at every call site.
+    fn qa_block() -> &'static str {
+        "## QA\n- Discriminating tests: t_one - fails on base\n- Mutations applied: l1 -> x -> t_one\n- Oracle: the spec\n- Category check: asks A; covered A\n"
+    }
+
+    #[test]
+    fn open_pr_refuses_a_body_the_pr_open_gate_would_refuse_and_creates_nothing() {
+        // The SAME predicate, so what one accepts the other accepts. Asserted as the relation
+        // rather than as two literals: a body is refused here exactly when `carries_qa_block` is
+        // false for it.
+        for body in [
+            "Closes #63\n\nno evidence here\n",
+            "## QA\n- Discriminating tests: t_one\n", // a heading is not the block
+            "## QA\n- discriminating mutation oracle category on ONE line\n",
+        ] {
+            assert!(!carries_qa_block(body));
+            let e = open_pr_plan(body, "/scratch/pr-63.md", Some(63)).unwrap_err();
+            assert!(matches!(e, OpenPrRefusal::NoQaBlock { .. }), "{e:?}");
+            assert_eq!(e.exit(), 3);
+            let rendered = e.render("o/r branch");
+            assert!(
+                rendered.contains("NOTHING was created"),
+                "the refusal must say the effect did not happen: {rendered}"
+            );
+            assert!(
+                rendered.contains("## QA") && rendered.contains("Category check"),
+                "the refusal carries section 8's own template: {rendered}"
+            );
+        }
+        // …and a body that passes the gate is planned, unchanged apart from the linkage.
+        let ok = open_pr_plan(qa_block(), "/scratch/pr-63.md", None).unwrap();
+        assert_eq!(ok, qa_block());
+        assert!(carries_qa_block(&ok));
+    }
+
+    #[test]
+    fn open_pr_writes_the_closing_line_only_when_the_body_does_not_already_close_it() {
+        let plain = format!("Some prose.\n\n{}", qa_block());
+        // Absent linkage: the canonical line is written, and it leads — anywhere after the `## QA`
+        // heading would land INSIDE the evidence section.
+        let composed = open_pr_body(&plain, Some(63));
+        assert!(composed.starts_with("Closes #63\n\n"));
+        assert!(composed.ends_with(&plain));
+        assert_eq!(closing_keywords(&composed), vec![63]);
+
+        // Already closing it: nothing is written twice.
+        let already = format!("Closes #63\n\n{}", qa_block());
+        assert_eq!(open_pr_body(&already, Some(63)), already);
+        // A DIFFERENT keyword for the same issue is still a closing reference to it.
+        let fixes = format!("Fixes #63\n\n{}", qa_block());
+        assert_eq!(open_pr_body(&fixes, Some(63)), fixes);
+        // A bare mention is NOT a closing reference, so the linkage is still written.
+        let refs = format!("Refs #63\n\n{}", qa_block());
+        assert!(open_pr_body(&refs, Some(63)).starts_with("Closes #63"));
+        // No argument, no line: a partial fix says `Refs` and stays that way.
+        assert_eq!(open_pr_body(&refs, None), refs);
+        // And composing never breaks the block it prefixes.
+        assert!(carries_qa_block(&composed));
+    }
+
+    #[test]
+    fn the_created_pr_is_read_out_of_ghs_own_url() {
+        assert_eq!(
+            created_pr_ref("https://github.com/rainlanguage/rain.solmem/pull/76\n"),
+            Some(("rainlanguage/rain.solmem".to_string(), 76))
+        );
+        // gh prints hints on the same stream; the FIRST url is the one it created.
+        assert_eq!(
+            created_pr_ref(
+                "Warning: 3 uncommitted changes\nhttps://github.com/o/r/pull/12\nsee https://github.com/o/r/pull/99\n"
+            ),
+            Some(("o/r".to_string(), 12))
+        );
+        // A dotted repo name survives, because the number is read off `/pull/`, never off dots.
+        assert_eq!(
+            created_pr_ref("https://github.com/cyclofinance/cyclo.site/pull/431"),
+            Some(("cyclofinance/cyclo.site".to_string(), 431))
+        );
+        for not_a_pr in [
+            "",
+            "https://github.com/o/r/pull/0",
+            "https://github.com/o/r/pull/abc",
+            "https://github.com/o/r/issues/12",
+            "https://github.com/r/pull/12", // no owner segment
+        ] {
+            assert_eq!(created_pr_ref(not_a_pr), None, "{not_a_pr}");
+        }
+    }
+
+    #[test]
+    fn the_open_pr_refusals_are_four_distinct_things_to_do_next() {
+        // A created-but-unreadable PR must never look like a failure: retrying it opens a SECOND PR.
+        let created = OpenPrRefusal::UnreadableUrl("(no url)".to_string());
+        let failed = OpenPrRefusal::GhFailed("pull request already exists".to_string());
+        assert_ne!(created.exit(), failed.exit());
+        assert!(created.render("o/r b").contains("Do NOT retry"));
+        assert!(failed.render("o/r b").contains("NO PR was created"));
+        // The exits are distinct across every variant — each names a different next move.
+        let all = [
+            OpenPrRefusal::UnreadableBody {
+                path: "/b.md".to_string(),
+                err: "no such file".to_string(),
+            },
+            OpenPrRefusal::NoQaBlock {
+                path: "/b.md".to_string(),
+                missing: vec![QaLine::Oracle],
+            },
+            failed,
+            created,
+        ];
+        let mut exits: Vec<i32> = all.iter().map(|r| r.exit()).collect();
+        exits.sort_unstable();
+        exits.dedup();
+        assert_eq!(exits.len(), all.len(), "two refusals share an exit code");
     }
 
     #[test]
@@ -37676,5 +39030,435 @@ mod weaken_closes_tests {
         // flag that selects a keyword — the direction is not something a caller can ask about.
         assert!(Cli::try_parse_from(["prr", "weaken-closes", "o/r", "1", "#88"]).is_err());
         assert!(Cli::try_parse_from(["prr", "weaken-closes", "o/r", "1"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod work_tokens_tests {
+    use super::{
+        agent_tokens, pr_outcome, render_work_tokens, run_work, task_work_items,
+        work_tokens_report, AgentSpend, PrOutcome, RunWork, TaskWork, WorkItem,
+    };
+    use serde_json::{json, Value};
+
+    /// The main-thread turn that dispatches a task, naming it — the label a cost table shows.
+    fn dispatch(tool_id: &str, description: &str) -> String {
+        json!({"type":"assistant","parent_tool_use_id":Value::Null,"message":{
+            "id": format!("d_{tool_id}"),
+            "content":[{"type":"tool_use","name":"Agent","id":tool_id,
+                        "input":{"description":description}}]}})
+        .to_string()
+    }
+
+    /// One assistant event that SPENDS, on `parent` (None = the main loop).
+    fn spend(id: &str, parent: Option<&str>, cache_read: u64) -> String {
+        json!({"type":"assistant","parent_tool_use_id":parent,"message":{
+            "id": id, "model":"claude-opus-5",
+            "usage":{"input_tokens":0,"cache_read_input_tokens":cache_read,
+                     "cache_creation_input_tokens":0}}})
+        .to_string()
+    }
+
+    /// An `open_pr` CALL issued by `parent`, and the RESULT the server answered it with.
+    fn open_pr_call(tool_id: &str, parent: Option<&str>) -> String {
+        json!({"type":"assistant","parent_tool_use_id":parent,"message":{
+            "id": format!("c_{tool_id}"),
+            "content":[{"type":"tool_use","name":"mcp__fsm__open_pr","id":tool_id,
+                        "input":{"repo":"o/r","head":"b","title":"t","body_file":"/b.md"}}]}})
+        .to_string()
+    }
+    fn open_pr_result(tool_id: &str, body: Value, is_error: bool) -> String {
+        json!({"type":"user","message":{"content":[
+            {"type":"tool_result","tool_use_id":tool_id,"is_error":is_error,
+             "content": body.to_string()}]}})
+        .to_string()
+    }
+    fn pr_result(slug: &str, pr: u64, closes: Vec<u64>) -> Value {
+        json!({"repo":slug,"pr":pr,"url":"u","closes":closes})
+    }
+
+    /// THE JOIN: an `open_pr` call lands its work item on the TASK that issued it, keyed by the
+    /// same `parent_tool_use_id` the spend is grouped by. Without that the metric has no
+    /// denominator at all.
+    #[test]
+    fn a_work_item_belongs_to_the_task_that_opened_it() {
+        let trace = [
+            dispatch("toolu_A", "rain.solmem 63 audit PR"),
+            open_pr_call("toolu_call1", Some("toolu_A")),
+            open_pr_result(
+                "toolu_call1",
+                pr_result("rainlanguage/rain.solmem", 76, vec![63]),
+                false,
+            ),
+        ]
+        .join("\n");
+        let items = task_work_items(&trace);
+        assert_eq!(
+            items.get("toolu_A"),
+            Some(&vec![WorkItem {
+                slug: "rainlanguage/rain.solmem".to_string(),
+                pr: 76,
+                closes: vec![63],
+            }])
+        );
+        assert_eq!(items.len(), 1, "nothing lands on the main loop");
+    }
+
+    /// A call the trace never answered, and a call the server REFUSED, are the same fact: no PR was
+    /// demonstrably opened. Counting either would put a PR that does not exist in the denominator.
+    #[test]
+    fn a_refused_or_unanswered_open_is_not_a_work_item() {
+        let refused = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", json!("REFUSED - open_pr o/r b"), true),
+        ]
+        .join("\n");
+        assert!(task_work_items(&refused).is_empty());
+
+        // The FLAG is the authority, not the payload's shape: a result marked `is_error` is not a
+        // work item even when it carries a PR-shaped object.
+        let error_flag_wins = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 5, vec![]), true),
+        ]
+        .join("\n");
+        assert!(task_work_items(&error_flag_wins).is_empty());
+
+        let unanswered = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+        ]
+        .join("\n");
+        assert!(task_work_items(&unanswered).is_empty());
+
+        // …and a result whose payload names no PR number is not one either.
+        let malformed = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", json!({"repo":"o/r"}), false),
+        ]
+        .join("\n");
+        assert!(task_work_items(&malformed).is_empty());
+    }
+
+    /// A result is matched to its call by `tool_use_id`, so a task cannot pick up the output of a
+    /// tool that is not `open_pr` — including one that happens to answer with a PR-shaped object.
+    #[test]
+    fn only_an_open_pr_result_names_a_work_item() {
+        let trace = [
+            dispatch("toolu_A", "t"),
+            json!({"type":"assistant","parent_tool_use_id":"toolu_A","message":{"id":"c1",
+                "content":[{"type":"tool_use","name":"mcp__fsm__clone_create","id":"toolu_other",
+                            "input":{"repo":"o/r","name":"n","branch":"b"}}]}})
+            .to_string(),
+            open_pr_result("toolu_other", pr_result("o/r", 9, vec![]), false),
+        ]
+        .join("\n");
+        assert!(task_work_items(&trace).is_empty());
+    }
+
+    /// The tool is found by its own NAME, not by the server prefix the harness happens to use —
+    /// `campaign-mcp.json` could name the server anything and the metric must not go silently empty.
+    #[test]
+    fn the_open_pr_tool_is_matched_past_its_server_prefix() {
+        for name in ["mcp__fsm__open_pr", "mcp__producer__open_pr", "open_pr"] {
+            let trace = [
+                dispatch("toolu_A", "t"),
+                json!({"type":"assistant","parent_tool_use_id":"toolu_A","message":{"id":"c1",
+                    "content":[{"type":"tool_use","name":name,"id":"toolu_c","input":{}}]}})
+                .to_string(),
+                open_pr_result("toolu_c", pr_result("o/r", 5, vec![]), false),
+            ]
+            .join("\n");
+            assert_eq!(task_work_items(&trace).len(), 1, "{name}");
+        }
+        // A different tool whose name merely ENDS in something else is not it.
+        let trace = [
+            dispatch("toolu_A", "t"),
+            json!({"type":"assistant","parent_tool_use_id":"toolu_A","message":{"id":"c1",
+                "content":[{"type":"tool_use","name":"mcp__fsm__reopen_pr","id":"toolu_c","input":{}}]}})
+            .to_string(),
+            open_pr_result("toolu_c", pr_result("o/r", 5, vec![]), false),
+        ]
+        .join("\n");
+        assert!(task_work_items(&trace).is_empty());
+    }
+
+    /// The three buckets' input. `Unresolved` is deliberately NOT a bucket — an unreadable PR must
+    /// not be able to move the headline number in either direction.
+    #[test]
+    fn a_prs_outcome_is_read_off_github_never_guessed() {
+        let green = json!({"state":"OPEN","mergeable":"MERGEABLE",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]});
+        assert_eq!(pr_outcome(&green), PrOutcome::AwaitingHuman);
+        // An APPROVED PR is still waiting on the human to merge it.
+        let mut approved = green.clone();
+        approved["reviewDecision"] = json!("APPROVED");
+        assert_eq!(pr_outcome(&approved), PrOutcome::AwaitingHuman);
+
+        let red = json!({"state":"OPEN","mergeable":"MERGEABLE",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]});
+        assert_eq!(pr_outcome(&red), PrOutcome::Reworking);
+        let conflicting = json!({"state":"OPEN","mergeable":"CONFLICTING",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]});
+        assert_eq!(pr_outcome(&conflicting), PrOutcome::Reworking);
+        // Unconfirmed mergeability is not clean, so it is not delivered.
+        let unknown_merge = json!({"state":"OPEN","mergeable":"UNKNOWN",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]});
+        assert_eq!(pr_outcome(&unknown_merge), PrOutcome::Reworking);
+
+        assert_eq!(pr_outcome(&json!({"state":"MERGED"})), PrOutcome::Merged);
+        assert_eq!(
+            pr_outcome(&json!({"state":"CLOSED"})),
+            PrOutcome::ClosedUnmerged
+        );
+        for unreadable in [json!({}), json!({"state":"WAT"}), json!({"state":null})] {
+            assert_eq!(
+                pr_outcome(&unreadable),
+                PrOutcome::Unresolved,
+                "{unreadable}"
+            );
+        }
+    }
+
+    fn task(label: &str, usd: f64, items: Vec<(WorkItem, PrOutcome)>) -> TaskWork {
+        TaskWork {
+            label: label.to_string(),
+            usd,
+            tokens: 1_000,
+            items,
+        }
+    }
+    fn item(pr: u64) -> WorkItem {
+        WorkItem {
+            slug: "o/r".to_string(),
+            pr,
+            closes: vec![],
+        }
+    }
+    fn one_run(tasks: Vec<TaskWork>) -> RunWork {
+        RunWork {
+            run_id: "20260802T130003Z".to_string(),
+            role: "producer".to_string(),
+            tasks,
+            main_usd: 10.0,
+            main_tokens: 100,
+            output_usd: 5.0,
+            output_tokens: 50,
+        }
+    }
+
+    /// THE METRIC. The denominator is landed ITEMS; the numerator is EVERY dollar the corpus spent,
+    /// churn and orchestration included — what a landed item cost includes what it cost not to land
+    /// the others. Anything else rewards doing less.
+    #[test]
+    fn cost_per_landed_item_charges_the_churn_to_the_landing() {
+        let runs = [one_run(vec![
+            task("landed one", 20.0, vec![(item(1), PrOutcome::Merged)]),
+            task(
+                "still open",
+                30.0,
+                vec![(item(2), PrOutcome::AwaitingHuman)],
+            ),
+            task(
+                "abandoned",
+                35.0,
+                vec![(item(3), PrOutcome::ClosedUnmerged)],
+            ),
+        ])];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(r["buckets"]["landed"]["items"], json!(1));
+        assert_eq!(r["buckets"]["landed"]["usd"], json!(20.0));
+        assert_eq!(r["buckets"]["delivered-awaiting-human"]["items"], json!(1));
+        assert_eq!(r["buckets"]["churn"]["usd"], json!(35.0));
+        // 20 + 30 + 35 tasks, + 10 main loop, + 5 whole-run output.
+        assert_eq!(r["totalUsd"], json!(100.0));
+        assert_eq!(r["usdPerLandedItem"], json!(100.0), "ALL of it, over one");
+        assert_eq!(
+            r["usdPerDeliveredItem"],
+            json!(50.0),
+            "over landed+awaiting"
+        );
+    }
+
+    /// The veto, as a test: a task with no typed work item is CHURN, whatever its label says. The
+    /// naive regex over 40 real labels invents eight items that do not exist, so a label is never
+    /// read as one.
+    #[test]
+    fn a_task_with_no_typed_item_is_churn_however_its_label_reads() {
+        let runs = [one_run(vec![
+            task("rain.solmem A02 sentinel alignment PR", 7.0, vec![]),
+            task("cyclo.site conflicts batch 1", 3.0, vec![]),
+        ])];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(r["buckets"]["churn"]["tasks"], json!(2));
+        assert_eq!(r["buckets"]["churn"]["items"], json!(0));
+        assert_eq!(r["churnBreakdown"]["noTypedWorkItem"], json!(2));
+        assert_eq!(r["corpus"]["typedTasks"], json!(0));
+        assert_eq!(r["corpus"]["typedCoveragePct"], json!(0.0));
+        assert_eq!(
+            r["usdPerLandedItem"],
+            Value::Null,
+            "no landed item means no number, not a zero"
+        );
+        // And the report SAYS the churn figure is a ceiling rather than a measurement.
+        let notes = r["notes"].as_array().unwrap();
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.as_str().unwrap().contains("CEILING")),
+            "{notes:?}"
+        );
+    }
+
+    /// A task that opened two PRs and had one merged DID land work. Charging its whole spend to
+    /// churn because the second is still open would understate landing and overstate waste at once.
+    #[test]
+    fn a_task_is_bucketed_by_its_best_item() {
+        let runs = [one_run(vec![task(
+            "two PRs",
+            40.0,
+            vec![
+                (item(1), PrOutcome::ClosedUnmerged),
+                (item(2), PrOutcome::Merged),
+            ],
+        )])];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(r["buckets"]["landed"]["tasks"], json!(1));
+        assert_eq!(r["buckets"]["landed"]["usd"], json!(40.0));
+        assert_eq!(r["buckets"]["churn"]["tasks"], json!(0));
+        // The ITEM counts stay per-item: one landed, one churned, in the bucket each belongs to.
+        assert_eq!(r["buckets"]["landed"]["items"], json!(1));
+        assert_eq!(r["buckets"]["churn"]["items"], json!(1));
+    }
+
+    /// An unreadable PR is in NO bucket. Folding it into churn would let a transient `gh` failure
+    /// print a worse waste figure; folding it into landed would print a better one.
+    #[test]
+    fn an_unresolved_pr_is_reported_apart_from_every_bucket() {
+        let runs = [one_run(vec![task(
+            "unreadable",
+            9.0,
+            vec![(item(1), PrOutcome::Unresolved)],
+        )])];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(r["unresolved"]["tasks"], json!(1));
+        assert_eq!(r["unresolved"]["items"], json!(1));
+        for b in ["landed", "delivered-awaiting-human", "churn"] {
+            assert_eq!(r["buckets"][b]["tasks"], json!(0), "{b}");
+            assert_eq!(r["buckets"][b]["usd"], json!(0.0), "{b}");
+        }
+        // Its spend is therefore in no bucket either — but the run's orchestration and output are
+        // still real money and still counted.
+        assert_eq!(r["totalUsd"], json!(15.0));
+    }
+
+    /// The two readings the number invites are both wrong, so BOTH outputs carry the caveats: a
+    /// green backlog is not waste, and three runs are not a trend.
+    #[test]
+    fn both_renderings_carry_the_caveats_and_the_same_numbers() {
+        let runs = [one_run(vec![
+            task("landed", 20.0, vec![(item(1), PrOutcome::Merged)]),
+            task("waiting", 5.0, vec![(item(2), PrOutcome::AwaitingHuman)]),
+        ])];
+        let r = work_tokens_report(&runs, &[("the trace has been collected".to_string(), 200)]);
+        let text = render_work_tokens(&r);
+        assert!(text.contains("Only CHURN is waste"), "{text}");
+        assert!(text.contains("not a trend"), "{text}");
+        assert!(
+            text.contains("200 metrics rows skipped: the trace has been collected"),
+            "the corpus's own gaps are printed, not hidden: {text}"
+        );
+        // The table prints the report's own numbers rather than recomputing them.
+        assert!(text.contains("$40.00"), "per landed item: {text}");
+        assert!(text.contains("$20.00"), "per delivered item: {text}");
+        assert!(text.contains("delivered-awaiting-human"), "{text}");
+    }
+
+    /// With nothing landed the headline is `n/a`, printed as such. A zero would read as free.
+    #[test]
+    fn nothing_landed_prints_no_number_at_all() {
+        let runs = [one_run(vec![task("churn", 1.0, vec![])])];
+        let text = render_work_tokens(&work_tokens_report(&runs, &[]));
+        assert!(text.contains("per LANDED item"), "{text}");
+        assert!(text.contains("n/a"), "{text}");
+        assert!(
+            text.contains("needs one merged work item"),
+            "the note says why: {text}"
+        );
+    }
+
+    /// The two halves of the join meet on one key: [`run_work`] groups spend by
+    /// `parent_tool_use_id` and attaches the items [`task_work_items`] filed under the same id. The
+    /// main loop is carried apart — it is not a unit of work, and bucketing it would make every run
+    /// look like one more churned task.
+    #[test]
+    fn spend_and_work_items_join_on_the_same_task_key() {
+        let trace = [
+            dispatch("toolu_A", "rain.solmem 63 audit PR"),
+            dispatch("toolu_B", "verify stale issues"),
+            spend("m_main", None, 1_000_000),
+            spend("m_a", Some("toolu_A"), 4_000_000),
+            spend("m_b", Some("toolu_B"), 2_000_000),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 76, vec![63]), false),
+        ]
+        .join("\n");
+        let run = run_work("run1", "producer", &trace, &mut |_| PrOutcome::Merged);
+        assert_eq!(run.tasks.len(), 2, "the main loop is not a task");
+        assert_eq!(run.main_tokens, 1_000_000);
+        let opened = run
+            .tasks
+            .iter()
+            .find(|t| t.label == "rain.solmem 63 audit PR")
+            .unwrap();
+        assert_eq!(opened.items.len(), 1);
+        assert_eq!(opened.items[0].0.pr, 76);
+        assert_eq!(opened.tokens, 4_000_000);
+        let verified = run
+            .tasks
+            .iter()
+            .find(|t| t.label == "verify stale issues")
+            .unwrap();
+        assert!(
+            verified.items.is_empty(),
+            "a task that opened nothing carries nothing"
+        );
+    }
+
+    /// A PR is resolved ONCE however many tasks name it — and the resolver is a seam, so the join
+    /// is testable without a network at all.
+    #[test]
+    fn every_item_is_resolved_through_the_one_seam() {
+        let trace = [
+            dispatch("toolu_A", "t"),
+            spend("m_a", Some("toolu_A"), 1),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 76, vec![]), false),
+        ]
+        .join("\n");
+        let mut asked: Vec<String> = Vec::new();
+        let run = run_work("run1", "producer", &trace, &mut |i| {
+            asked.push(format!("{}#{}", i.slug, i.pr));
+            PrOutcome::AwaitingHuman
+        });
+        assert_eq!(asked, vec!["o/r#76".to_string()]);
+        assert_eq!(run.tasks[0].items[0].1, PrOutcome::AwaitingHuman);
+    }
+
+    /// Every input-side class is summed, because the question is what landing COST — and a reader
+    /// cannot add a cache read to a fresh token without knowing the 10x price gap.
+    #[test]
+    fn a_tasks_tokens_are_every_input_side_class() {
+        let a = AgentSpend {
+            tokens_in: 1,
+            cache_read: 20,
+            cache_write_5m: 300,
+            cache_write_1h: 4_000,
+            ..Default::default()
+        };
+        assert_eq!(agent_tokens(&a), 4_321);
     }
 }
