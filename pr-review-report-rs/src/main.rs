@@ -14030,11 +14030,15 @@ const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 /// STRUCTURAL: at 25 rows a state-load cannot reach [`MCP_MAX_RESULT_BYTES`] even with GitHub's
 /// longest legal titles, so the size of the queue stops being able to break the state-load.
 ///
-/// RUN BUDGET (2026-08-03): the page is now the run's whole ALLOWANCE, not a window onto a longer
-/// queue. A vetter run vets at most 3 PRs, so a state-load handing back 10 or 25 is handing back
-/// work the run must not do — and "stop at 3" becomes a rule the surface enforces rather than one
-/// the prompt merely asserts. Raising the cap is a deliberate act: move THIS number, and only once
-/// the run logs show the smaller one landing cleanly.
+/// RUN BUDGET (2026-08-03): a page is now an ALLOWANCE, not a window onto a longer queue. A vetter
+/// run spends at most 3 ITEMS — a PR vetted or a close-candidate flag ruled on, ONE budget shared
+/// across both state-loads — because a human has to read the run's log end to end afterwards and
+/// judge whether the machine behaved, which six items of log defeats however cheaply it was
+/// produced. So a state-load handing back 10 or 25 is handing back work the run must not do, and
+/// the per-tool half of "stop at 3" is a rule the surface enforces rather than one the prompt
+/// merely asserts. The SHARING is necessarily the prompt's to enforce: each tool call is bounded
+/// on its own, and neither can see what the other already spent. Raising the cap is a deliberate
+/// act: move THIS number, and only once the run logs show the smaller one landing cleanly.
 const STATE_LOAD_PAGE_DEFAULT: usize = 3;
 const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=3;
 
@@ -15345,12 +15349,12 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: the page is this run's whole allowance, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why (digest rows: pr, action, unresolvedThreads)."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3). The page is the run's whole work budget."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3) — a run's whole work budget is 3 items across both state-loads."}
                 }
             }
         },
@@ -15415,12 +15419,12 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "unvetted_close_candidates",
-            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: the page is this run's whole allowance, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
+            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3). The page is the run's whole work budget."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3) — a run's whole work budget is 3 items across both state-loads."}
                 }
             }
         },
