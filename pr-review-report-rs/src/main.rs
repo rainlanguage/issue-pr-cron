@@ -2502,6 +2502,35 @@ impl SpendRecord<'_> {
     }
 }
 
+impl AgentSpend {
+    /// Every token this task moved: fresh input, cache reads, cache writes.
+    ///
+    /// The headline figure for a task. Cost is a function of this and of rates that change; the
+    /// token count is what the work actually did. Output is NOT included and cannot be —
+    /// `usage.output_tokens` is a message-start snapshot, so the only true output figure is
+    /// whole-run (see [`AgentSpend`]). Output runs ~0.5% of a dispatching run's tokens, so a task
+    /// total without it is within a rounding error of complete, but it is an exclusion rather than
+    /// an oversight.
+    fn tokens(&self) -> u64 {
+        self.tokens_in + self.cache_read + self.cache_write_5m + self.cache_write_1h
+    }
+}
+
+/// One task's row in a metrics record: what the work was, and what it moved.
+///
+/// One constructor, so the end-of-run record and the backfill cannot drift into describing a task
+/// differently.
+fn agent_row(a: &AgentSpend) -> Value {
+    serde_json::json!({
+        "label": a.label,
+        "tokens": a.tokens(),
+        "usd": round3(a.usd),
+        "messages": a.messages,
+        "cacheRead": a.cache_read,
+        "cacheWrite": a.cache_write_5m + a.cache_write_1h,
+    })
+}
+
 /// PURE: what the run was billed, as the harness reports it.
 ///
 /// The MAXIMUM `total_cost_usd` across every `result` line, because those values are CUMULATIVE:
@@ -2597,16 +2626,7 @@ fn backfill_row(mut row: Value, trace_body: Option<&str>) -> (Value, bool) {
     );
     obj.insert(
         "agents".into(),
-        serde_json::json!(agents
-            .iter()
-            .map(|a| serde_json::json!({
-                "label": a.label,
-                "usd": round3(a.usd),
-                "messages": a.messages,
-                "cacheRead": a.cache_read,
-                "cacheWrite": a.cache_write_5m + a.cache_write_1h,
-            }))
-            .collect::<Vec<Value>>()),
+        serde_json::json!(agents.iter().map(agent_row).collect::<Vec<Value>>()),
     );
     obj.insert("accuracy".into(), serde_json::json!("whole-run"));
     (row, true)
