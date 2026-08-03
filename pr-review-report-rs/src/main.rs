@@ -14029,8 +14029,14 @@ const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 /// default is small rather than "everything that fits". The ceiling is what keeps the bound
 /// STRUCTURAL: at 25 rows a state-load cannot reach [`MCP_MAX_RESULT_BYTES`] even with GitHub's
 /// longest legal titles, so the size of the queue stops being able to break the state-load.
-const STATE_LOAD_PAGE_DEFAULT: usize = 10;
-const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=25;
+///
+/// RUN BUDGET (2026-08-03): the page is now the run's whole ALLOWANCE, not a window onto a longer
+/// queue. A vetter run vets at most 3 PRs, so a state-load handing back 10 or 25 is handing back
+/// work the run must not do — and "stop at 3" becomes a rule the surface enforces rather than one
+/// the prompt merely asserts. Raising the cap is a deliberate act: move THIS number, and only once
+/// the run logs show the smaller one landing cleanly.
+const STATE_LOAD_PAGE_DEFAULT: usize = 3;
+const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=3;
 
 /// The byte budget ONE tool result must fit in — the contract this server holds itself to, checked
 /// on every result before it is handed back (#78), and sized so that OUR error always arrives before
@@ -15339,12 +15345,12 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — re-call after recording verdicts for the next page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: the page is this run's whole allowance, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why (digest rows: pr, action, unresolvedThreads)."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3). The page is the run's whole work budget."}
                 }
             }
         },
@@ -15409,12 +15415,12 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "unvetted_close_candidates",
-            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — re-call after recording verdicts. Human-ruled and already-vetted-at-flag issues are excluded.",
+            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: the page is this run's whole allowance, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3). The page is the run's whole work budget."}
                 }
             }
         },
@@ -33366,13 +33372,14 @@ mod vetter_state_load_tests {
                 doc["prs"].as_array().unwrap().len(),
                 STATE_LOAD_PAGE_DEFAULT
             );
-            assert_eq!(doc["more"], json!(10));
+            // 20 vet-able minus the 3-row page; 150 skipped minus the same page.
+            assert_eq!(doc["more"], json!(17));
             if include_skipped {
                 assert_eq!(
                     doc["skipped"].as_array().unwrap().len(),
                     STATE_LOAD_PAGE_DEFAULT
                 );
-                assert_eq!(doc["moreSkipped"], json!(140));
+                assert_eq!(doc["moreSkipped"], json!(147));
             }
         }
 
@@ -34137,34 +34144,45 @@ mod mcp_tests {
         );
     }
 
-    // #78: a state-load handed to a token-budgeted caller is ALWAYS paged. An out-of-range page is
-    // refused rather than clamped — a clamp leaves the caller believing it got what it asked for.
+    // #78: a state-load handed to a token-budgeted caller is ALWAYS paged, and the page is the
+    // run's whole work budget (see STATE_LOAD_PAGE_RANGE). An out-of-range page is refused rather
+    // than clamped — a clamp leaves the caller believing it got what it asked for — and the
+    // refusal covers the sizes the pre-budget 1..=25 bound used to accept (4, the old default 10,
+    // the old ceiling 25): asking for them is asking for more work than a run may do.
     #[test]
     fn a_state_load_page_is_bounded_by_the_transition_guard() {
         let f = FakeExec::ok();
         for tool in ["unvetted", "unvetted_close_candidates"] {
-            for bad in [json!(0), json!(26), json!("10"), json!(-1), json!(1000)] {
+            for bad in [
+                json!(0),
+                json!(4),
+                json!(10),
+                json!(25),
+                json!("3"),
+                json!(-1),
+                json!(1000),
+            ] {
                 let resp = f.handle(&call(tool, json!({"limit": bad}))).unwrap();
                 assert!(is_error(&resp), "{tool} limit={bad} must be refused");
-                assert!(text(&resp).contains("limit must be an integer in 1..=25"));
+                assert!(text(&resp).contains("limit must be an integer in 1..=3"));
             }
         }
         assert!(f.calls().is_empty(), "no refused page reached a fetch");
 
         // …and an in-range page is carried through verbatim.
-        f.handle(&call("unvetted", json!({"limit": 3}))).unwrap();
-        f.handle(&call("unvetted_close_candidates", json!({"limit": 25})))
+        f.handle(&call("unvetted", json!({"limit": 1}))).unwrap();
+        f.handle(&call("unvetted_close_candidates", json!({"limit": 3})))
             .unwrap();
         assert_eq!(
             f.calls(),
             vec![
                 McpCall::Unvetted {
                     include_skipped: false,
-                    limit: 3
+                    limit: 1
                 },
                 McpCall::UnvettedCloseCandidates {
                     include_skipped: false,
-                    limit: 25
+                    limit: 3
                 },
             ]
         );
