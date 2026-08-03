@@ -2347,6 +2347,14 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
         let Ok(ev) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        // Only `assistant` events carry model usage, and only they issue tool calls. [`UsageProbe`]
+        // guards the same way ten lines from here, and two readers of one stream disagreeing about
+        // which events count is how a future event type silently doubles a run's cost. No trace on
+        // disk has usage on any other type — this is parity with the existing reader, not a fix for
+        // an observed defect.
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
         let Some(msg) = ev.get("message") else {
             continue;
         };
@@ -2377,11 +2385,17 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
         let Some(usage) = msg.get("usage") else {
             continue;
         };
-        // No id means nothing to dedupe on; counting it once beats dropping it.
-        if let Some(id) = msg.get("id").and_then(|i| i.as_str()) {
-            if !counted.insert(id.to_string()) {
-                continue;
+        // Dedupe on `message.id`, which repeats as a message streams. An ABSENT id and an EMPTY one
+        // are treated alike: neither identifies a message, so each such event is counted rather
+        // than deduped. Letting `""` into the set would make the first empty-id message swallow
+        // every later one — dropping real spend to avoid double-counting a case no trace exhibits.
+        match msg.get("id").and_then(|i| i.as_str()) {
+            Some(id) if !id.is_empty() => {
+                if !counted.insert(id.to_string()) {
+                    continue;
+                }
             }
+            _ => {}
         }
 
         let owner = ev
@@ -23783,6 +23797,33 @@ mod usage_probe_tests {
             "from modelUsage, not the per-message snapshot"
         );
         assert_eq!(full["accuracy"], "whole-run");
+    }
+
+    /// Only `assistant` events carry usage. A `user` or `result` event that happens to hold a
+    /// `message.usage` must not be priced — [`UsageProbe`] has always guarded this way, and the two
+    /// readers of one stream must not disagree about what counts.
+    #[test]
+    fn only_assistant_events_are_priced() {
+        let mut ev: Value = serde_json::from_str(&spend_ev("m1", None, 1_000_000, 0, 0)).unwrap();
+        ev["type"] = serde_json::json!("user");
+        assert!(
+            token_attribution(&serde_json::to_string(&ev).unwrap()).is_empty(),
+            "a non-assistant event must contribute nothing"
+        );
+    }
+
+    /// An empty `message.id` identifies nothing. Two such events are two messages, not one — the
+    /// dedupe must not let the first swallow the second.
+    #[test]
+    fn empty_message_ids_are_not_deduped_together() {
+        let ev = |cr: u64| {
+            let mut v: Value = serde_json::from_str(&spend_ev("x", None, cr, 0, 0)).unwrap();
+            v["message"]["id"] = serde_json::json!("");
+            serde_json::to_string(&v).unwrap()
+        };
+        let rows = token_attribution(&[ev(1_000), ev(2_000)].join("\n"));
+        assert_eq!(rows[0].messages, 2, "both counted");
+        assert_eq!(rows[0].cache_read, 3_000, "neither dropped");
     }
 
     /// A traceless row is LABELLED, never estimated: every number it carries survives byte for
