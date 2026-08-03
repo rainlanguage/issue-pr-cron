@@ -347,9 +347,11 @@ server is the vetter's **only** tool surface.
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
 `human-mcp.json`) serves `next_ready`, `pr_context`, `pr_checkout`,
-`clone_release`, `close_candidate_context`, `human_rule`, `human_rule_issue` and
-`human_close` — find the subject, read it, audit its source, rule on it, close
-it. `human_close` is a tool rather than something the caller composes for the
+`clone_release`, `next_close_candidate`, `close_candidate_context`,
+`human_rule`, `human_rule_issue` and `human_close` — find the subject, read it,
+audit its source, rule on it, close it. The human has **two** inboxes, so it has
+two "which is next" tools: `next_ready` for PRs and `next_close_candidate` for
+close-candidate flags (#173). `human_close` is a tool rather than something the caller composes for the
 reason above: the alternative is a transition half in a tool and half in a
 prompt, and that half was wrong on all 74 closed-and-still-flagged subjects. The
 subcommands above are for the human at a terminal; the profile is for **an agent
@@ -450,6 +452,48 @@ argument the tool does not accept. It caps at 3 rather than 25 because every
 human ruling changes this queue, so a long page is stale past its head, and
 because a page long enough to matter would have to clip the reasoning the tool
 exists to carry.
+
+#### `next_close_candidate` — the flag decision, and why its order is different
+
+The flag lane's human half started with a manual search: the human could read a
+flag it already knew the number of and rule on it, but nothing answered **which
+flag is next**. So the queue where being wrong is least recoverable — a flag asks
+a human to destroy work — was the one worked by hand, while the PR queue had a
+one-call entry point. `next_close_candidate` is that call: the issue's
+title/state/labels/`createdAt`, the producer's **stated reason** (the claim being
+checked, never a fact), the vetter's verdict **pinned to the flag it judged**, and
+whether an open PR claims to close the issue.
+
+**The ranking is not the PR queue's.** Cheapest-first is right there because
+merges are the scarce resource and a cheap merge is throughput. Here the scarce
+resource is the human's judgement, and neither half transfers: a flag's whole
+content is one line whose length says nothing about how hard the claim is to
+falsify ("already fixed on main" is twenty-two characters and needs a diff read
+against the path the issue named), so a cost sort would be sorting by a number
+that does not measure the work. What the queue must protect against instead is
+**starvation**, because a flag is not inert while it waits — `is_producer_backlog`
+excludes an `ai:close-candidate` issue from the producer's backlog, so a flagged
+issue is neither being fixed nor closed. The flag parks it. So the order is
+**oldest flag first**, which bounds that limbo; and it is right on accuracy too,
+since an "already fixed" claim is about a main branch that keeps moving and the
+oldest flag's reason describes the least of what is there now. Newest-first — the
+other candidate — optimises the cost of each check by never reaching the flags
+that have decayed most.
+
+**What it withholds is as load-bearing as what it returns.** A flag the vetter
+has not judged is `counts.unvetted`, not a row: a flag the vetter would REJECT
+never reaches a human at all, because the reject strips the label, so presenting
+one early spends judgement on the vetter's turn. And `strandedFlags` names two
+states no AI transition will ever clear — a label with no producer comment behind
+it (the vetter skips it for ever as `skip-no-flag`) and a `reject` whose label
+removal did not land. Both sat invisible until this tool counted them.
+
+The cap is 3 for `next_ready`'s reason and the argument is stronger: there, a
+human who reads a row and does not merge leaves the PR in the queue, whereas
+**every** ruling here retires its flag — uphold-and-close, keep-open and
+reject-the-flag all remove the row — so a page is stale past its head by
+construction. The same per-field caps make a full page's worst case arithmetic
+the compiler checks, this time including both withheld lists at their caps.
 
 The last three vetter tools are its **second subject**. A PR asks a human to
 merge code; a close-candidate flag asks a human to **destroy work**, so the flag

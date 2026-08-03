@@ -13020,30 +13020,10 @@ fn unvetted_close_candidates_fetch(
     include_skipped: bool,
     limit: Option<usize>,
 ) -> Result<Value, String> {
-    let mut args: Vec<String> = vec!["search".into(), "issues".into()];
-    args.extend(org_owner_args());
-    args.extend(
-        [
-            "--state",
-            "open",
-            "--label",
-            "ai:close-candidate",
-            "--limit",
-            "1000",
-            "--json",
-            "url,number,repository,title",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
-    let found = gh_json(&argref)
-        .and_then(|v| v.as_array().cloned())
-        .ok_or_else(|| {
-            "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
-             aborting rather than report a falsely-empty close-candidate queue"
-                .to_string()
-        })?;
+    // The SAME search the human's `next_close_candidate` gate runs, shared rather than written
+    // twice: two spellings of "which issues are flagged" is how the vetter's inbox and the human's
+    // would come to answer differently.
+    let found = flagged_open_issues()?;
     // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
     // reported (see `fetchErrors` below), never dropped.
 
@@ -13054,14 +13034,7 @@ fn unvetted_close_candidates_fetch(
     for i in &found {
         let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
-        // `repository.nameWithOwner` is authoritative; the url parse is the fallback.
-        let slug = i
-            .get("repository")
-            .and_then(|r| r.get("nameWithOwner"))
-            .and_then(|s| s.as_str())
-            .map(String::from)
-            .or_else(|| issue_slug(url));
-        let (Some(slug), Some(num)) = (slug, i.get("number").and_then(|n| n.as_u64())) else {
+        let Some((slug, num)) = search_issue_ref(i) else {
             errors.push(
                 serde_json::json!({"url": url, "title": title, "error": "unparseable issue ref"}),
             );
@@ -15224,6 +15197,1347 @@ mod next_ready_tests {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// next_close_candidate — the human's FLAG DECISION, as one typed result (#173).
+//
+// The PR lane has had a one-call entry point since #121; the flag lane had none.
+// The human could read a flag it already knew the number of and rule on it, but
+// nothing answered WHICH FLAG IS NEXT — so the queue that asks a human to
+// DESTROY work was the one worked by hand.
+//
+// This is the READ that precedes `human_close` / `human_rule_issue`. It is not
+// `next_ready` with the nouns changed: the ordering is argued below rather than
+// inherited, and the row carries a CLAIM (the producer's stated reason) rather
+// than a verdict on code.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Which side of the HUMAN's flag gate one `ai:close-candidate` issue is on.
+///
+/// A typed state rather than a bool, because "not presentable" covers four situations that need
+/// four different things done about them, and three of them are invisible unless named: the vetter
+/// owes a verdict, nobody can judge this at all, a human already ruled, or a write landed half-done.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CcGate {
+    /// The vetter UPHELD the current flag and no human has ruled: the human's to rule on.
+    Presentable,
+    /// A `human:*` label is already on the issue. Human decisions are sacred, and a ruling is not an
+    /// inbox item — whatever the flag still says.
+    HumanRuled,
+    /// The label is on the issue and NO trusted producer comment says why. There is no claim to
+    /// check, so there is nothing to rule on evidence — and no AI transition clears it either (the
+    /// vetter skips it as `skip-no-flag`), which is why it is reported rather than dropped.
+    NoFlag,
+    /// No trusted `🤖 ai:vetter` verdict pinned to the CURRENT flag. The vetter owes this one a
+    /// verdict; presenting it here would spend the human's judgement on the vetter's turn, and a
+    /// flag the vetter REJECTS never reaches the human at all (the reject strips the label).
+    Unvetted,
+    /// The verdict at the current flag is `reject` and the label is STILL here. A reject removes it,
+    /// so this is a half-applied write, not a state the machine produces — reported, never presented.
+    RejectedStillFlagged,
+}
+
+impl CcGate {
+    fn as_str(self) -> &'static str {
+        match self {
+            CcGate::Presentable => "presentable",
+            CcGate::HumanRuled => "human-ruled",
+            CcGate::NoFlag => "no-producer-flag",
+            CcGate::Unvetted => "unvetted-vetter-owes-a-verdict",
+            CcGate::RejectedStillFlagged => "vetter-rejected-but-still-flagged",
+        }
+    }
+    /// The two states no modelled transition will ever clear on its own — a human has to act, and
+    /// until this tool named them nothing said they existed.
+    fn is_stranded(self) -> bool {
+        matches!(self, CcGate::NoFlag | CcGate::RejectedStillFlagged)
+    }
+}
+
+/// PURE: the `(flag timestamp, verdict word)` a trusted `🤖 ai:vetter` close-candidate comment
+/// recorded, out of the body [`cc_verdict_comment`] writes.
+///
+/// The verdict WORD is parsed rather than inferred from the label still being present. Inference
+/// would be right in the ordinary case and silently wrong in the one that matters: a `reject` whose
+/// label removal failed looks exactly like an `uphold` to anything reading the label, and that is
+/// the case a human must never be handed as "the vetter agrees".
+///
+/// A word outside [`CC_VERDICTS`] is returned as it was written and treated as UNKNOWN by
+/// [`cc_gate`] — the same posture as [`VetProtocol::Unknown`]: a verdict that cannot be identified
+/// is not a verdict in force.
+fn cc_verdict_parts(body: &str) -> Option<(String, String)> {
+    let rest = body
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Reviewed close-candidate @"))?;
+    // The separator is a colon-SPACE, not a colon: the pin is an ISO-8601 timestamp and its own
+    // colons are the ones inside `09:00:00Z`, never followed by a space. Splitting on the first
+    // bare colon reads the pin as `2026-07-20T09` and the verdict as `00:00Z:` — which then fails
+    // the `atFlag` comparison, so a correct verdict would read as no verdict at all.
+    let (at, tail) = rest.split_once(": ")?;
+    let at = at.trim();
+    let verdict = tail.split_whitespace().next().unwrap_or("");
+    if at.is_empty() || verdict.is_empty() {
+        return None;
+    }
+    Some((at.to_string(), verdict.to_string()))
+}
+
+/// PURE: where one flagged issue stands, from the three facts that decide it.
+///
+/// Ordered as the vetter's own `cc_row` orders its skips, and for the same reason: a human ruling
+/// dominates everything (it is sacred and already made), then "nothing was claimed", then what the
+/// vetter did with the claim. Only the last arm can produce a row.
+fn cc_gate(human_ruled: bool, flag_at: &str, verdict: Option<(String, String)>) -> CcGate {
+    if human_ruled {
+        return CcGate::HumanRuled;
+    }
+    if flag_at.is_empty() {
+        return CcGate::NoFlag;
+    }
+    match verdict {
+        // The verdict has to pin THIS flag. A re-flag is new evidence, and a verdict written against
+        // the old one describes a claim nobody is making any more.
+        Some((at, word)) if at == flag_at => match word.as_str() {
+            "uphold" => CcGate::Presentable,
+            "reject" => CcGate::RejectedStillFlagged,
+            _ => CcGate::Unvetted,
+        },
+        _ => CcGate::Unvetted,
+    }
+}
+
+/// Whether an OPEN pull request already claims to close this issue — the `covered-by-open-pr` state,
+/// which is a KNOWN non-closeable one: an open PR is not a landed fix.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PrCoverage {
+    /// At least one open PR's native closing references name this issue.
+    Covered,
+    /// The query answered, and named none.
+    Uncovered,
+    /// The query failed or came back malformed. FAIL-SAFE: never read as `Uncovered`, because the
+    /// error direction matters here — an unseen covering PR is an issue closed out from under work
+    /// in flight, while a falsely-reported one only costs a second look.
+    Unreadable,
+}
+
+impl PrCoverage {
+    fn as_str(self) -> &'static str {
+        match self {
+            PrCoverage::Covered => "covered-by-open-pr",
+            PrCoverage::Uncovered => "no-open-pr",
+            PrCoverage::Unreadable => "unreadable",
+        }
+    }
+    /// Does this signal stand in the way of a close? `Unreadable` does, which is what makes the
+    /// failure fail SAFE rather than merely fail.
+    fn blocks_close(self) -> bool {
+        !matches!(self, PrCoverage::Uncovered)
+    }
+    /// What the signal MEANS for the ruling, in the shape [`ThreadMeaning`] uses: the raw state is
+    /// no use to a reader who has to remember which way round the hazard runs.
+    fn meaning(self) -> &'static str {
+        match self {
+            PrCoverage::Covered => "not-closeable-an-open-pr-is-not-a-landed-fix",
+            PrCoverage::Uncovered => "no-open-pr-claims-this-issue",
+            PrCoverage::Unreadable => "unknown-read-as-covered",
+        }
+    }
+}
+
+/// The ISSUE-side twin of [`CLOSING_REFS_QUERY`]: the open PRs GitHub itself resolves as closing
+/// THIS issue. `includeClosedPrs:false` is the whole point — a merged PR that closed something else,
+/// or a closed one that never landed, is not coverage.
+///
+/// Per-issue rather than the org-wide PR search `uncovered-issues` runs, because this tool returns
+/// at most [`NEXT_CC_MAX_ROWS`] rows: the cost is paid on the rows actually returned, exactly as
+/// [`next_ready_fetch`] pays for its CodeRabbit read.
+const COVERING_PRS_QUERY: &str = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){closedByPullRequestsReferences(first:10,includeClosedPrs:false){nodes{number state repository{nameWithOwner}}}}}}";
+
+/// PURE: the open PRs claiming to close an issue, out of a [`COVERING_PRS_QUERY`] response.
+///
+/// `None` — or a response missing the nodes array — is [`PrCoverage::Unreadable`], never an empty
+/// answer. Each PR is emitted as `owner/repo#n`, the same addressing string every other tool takes,
+/// so a caller can hand one straight to `pr_context` without reassembling a ref (#132).
+fn covering_open_prs(resp: Option<&Value>) -> (PrCoverage, Vec<String>) {
+    let Some(nodes) = resp
+        .and_then(|v| v.pointer("/data/repository/issue/closedByPullRequestsReferences/nodes"))
+        .and_then(|n| n.as_array())
+    else {
+        return (PrCoverage::Unreadable, Vec::new());
+    };
+    let prs: Vec<String> = nodes
+        .iter()
+        // The argument already asks GitHub to exclude closed PRs; the state is checked again here
+        // because a filter asserted at the far end of a network call is not one this function knows
+        // ran, and every non-OPEN state is silently dropped rather than counted as coverage.
+        .filter(|n| n.get("state").and_then(|s| s.as_str()) == Some("OPEN"))
+        .filter_map(|n| {
+            let slug = n
+                .pointer("/repository/nameWithOwner")
+                .and_then(|s| s.as_str())?;
+            let num = n.get("number").and_then(|x| x.as_u64())?;
+            Some(format!("{slug}#{num}"))
+        })
+        .collect();
+    let verdict = if prs.is_empty() {
+        PrCoverage::Uncovered
+    } else {
+        PrCoverage::Covered
+    };
+    (verdict, prs)
+}
+
+/// Live covering-PR read for one issue.
+fn covering_open_prs_fetch(slug: &str, num: u64) -> (PrCoverage, Vec<String>) {
+    let Some((owner, repo)) = slug.split_once('/') else {
+        return (PrCoverage::Unreadable, Vec::new());
+    };
+    let query = format!("query={COVERING_PRS_QUERY}");
+    let o = format!("o={owner}");
+    let r = format!("r={repo}");
+    let n = format!("n={num}");
+    let resp = gh_json(&["api", "graphql", "-f", &query, "-F", &o, "-F", &r, "-F", &n]);
+    covering_open_prs(resp.as_ref())
+}
+
+/// One flag that is the HUMAN's to rule on, as [`next_close_candidate_fetch`] produces it: the
+/// ordering key plus the `gh issue view` snapshot the row reads its fields out of. Carrying the JSON
+/// rather than a flattened row is what lets the ranking and the row answer off the SAME snapshot,
+/// for the reason [`PresentablePr`] does.
+struct PresentableFlag {
+    slug: String,
+    num: u64,
+    /// The CURRENT flag's timestamp — the ordering key, and the anchor every record on this issue
+    /// pins to (the vetter's verdict, and the human's ruling after it).
+    flag_at: String,
+    flag_body: String,
+    detail: Value,
+}
+
+/// PURE: the total order the human's flag queue is worked in — **OLDEST FLAG FIRST**, ties broken by
+/// the issue reference so the order is total and two runs a second apart name the same head.
+///
+/// This deliberately does NOT reuse [`queue_order`]'s cheapest-first rule. That rule exists because
+/// merges are the scarce resource on the PR side: a cheap merge is throughput, and clearing it frees
+/// the next one. Neither half of that transfers.
+///
+/// **There is no cost signal to sort by.** A flag's whole content is one line of stated reason, and
+/// its length says nothing about how hard the claim is to falsify — "already fixed on main" is
+/// twenty-two characters and needs a diff read against the path the ISSUE named (`raindex#1348`,
+/// where the merged PR touched `getAllDepositFields` rather than the `updateFields` path). Ordering
+/// by a number that does not measure the work is worse than not ordering by cost at all, because it
+/// looks like it does.
+///
+/// **The scarce resource is the human's judgement, so the hazard is starvation, not latency.** And a
+/// flag is not inert while it waits: [`is_producer_backlog`] excludes an `ai:close-candidate` issue
+/// from the producer's backlog, so a flagged issue is not being worked either. The flag PARKS the
+/// issue — not fixed, not closed, owned by nobody — and the time it spends in this queue is exactly
+/// that limbo. FIFO bounds the worst case of it; every order that is not FIFO leaves some flag at
+/// the back for ever.
+///
+/// **And the evidence decays in the same direction.** An "already fixed" claim is a claim about a
+/// main branch that keeps moving, and the oldest flag is the one whose reason describes the least of
+/// what is there now. Newest-first — the other order #173 offers — optimises the cost of each check
+/// by systematically never reaching the flags that have decayed most, which is the one ordering that
+/// makes the queue's accuracy worse the longer it runs.
+///
+/// What it is emphatically NOT sorted by is the vetter's verdict or its note. Ordering a
+/// second-opinion queue by the upstream opinion is the restatement failure `/nr` exists to avoid,
+/// one level up in the ranking instead of down in the prose.
+fn flag_order_key(f: &PresentableFlag) -> (&str, &str, u64) {
+    (&f.flag_at, &f.slug, f.num)
+}
+
+/// PURE: apply [`flag_order_key`] to the whole set. Separate from the paging below so the ORDER and
+/// the PREFIX are two testable facts rather than one `sort().take()` nobody can pin.
+fn rank_flags(flags: &mut [PresentableFlag]) {
+    flags.sort_by(|a, b| flag_order_key(a).cmp(&flag_order_key(b)));
+}
+
+/// PURE: the flags this call answers with — a PREFIX of the already-ranked set, and nothing else. It
+/// does not sort, for the reason [`next_ready_page`] does not: a second ordering is a second answer
+/// to "which flag is next".
+fn next_close_candidate_page(ordered: &[PresentableFlag], limit: usize) -> Vec<&PresentableFlag> {
+    ordered.iter().take(limit).collect()
+}
+
+/// Rows one call may return, and the default.
+///
+/// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, and the argument applies here with MORE force
+/// rather than merely also. There, a ruling may leave the PR in the queue — a human who reads a row
+/// and does not merge changes nothing. Here EVERY move retires the row: `human_close` closes the
+/// issue, `keep-open` clears the flag, and a `reject` back to the producer strips it too. So a page
+/// is stale past its head by construction, not just usually.
+///
+/// The second half carries over unchanged: the fields this tool exists for are the producer's stated
+/// reason and the vetter's note, and a page long enough to be worth having would have to clip both
+/// to fit — trading the two fields a caller cannot reconstruct for rows it can get from the
+/// dashboard.
+const NEXT_CC_MAX_ROWS: usize = 3;
+const NEXT_CC_DEFAULT_ROWS: usize = 1;
+
+// Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable to
+// exceed the budget rather than merely unlikely to.
+const NCC_REASON_BYTES: usize = 1_000;
+const NCC_NOTE_BYTES: usize = 1_000;
+const NCC_TITLE_BYTES: usize = 200;
+const NCC_URL_BYTES: usize = 200;
+const NCC_ISSUE_BYTES: usize = 160;
+const NCC_TIME_BYTES: usize = 40;
+const NCC_STATE_BYTES: usize = 32;
+const NCC_VERDICT_BYTES: usize = 32;
+const NCC_LABEL_BYTES: usize = 60;
+const NCC_MAX_LABELS: usize = 8;
+const NCC_PR_REF_BYTES: usize = 160;
+const NCC_MAX_PRS: usize = 3;
+const NCC_ERROR_BYTES: usize = 200;
+
+/// Every capped field in one row, summed. Three timestamps (the issue's `createdAt`, the flag's, and
+/// the one the vetter's verdict pinned) are counted at their own cap.
+const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
+    + NCC_NOTE_BYTES
+    + NCC_TITLE_BYTES
+    + NCC_URL_BYTES
+    + NCC_ISSUE_BYTES
+    + 3 * NCC_TIME_BYTES
+    + NCC_STATE_BYTES
+    + NCC_VERDICT_BYTES
+    + NCC_MAX_LABELS * NCC_LABEL_BYTES
+    + NCC_MAX_PRS * NCC_PR_REF_BYTES;
+
+/// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
+/// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
+const NCC_ROW_FIXED_BYTES: usize = 1_200;
+const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
+
+// The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded, because
+// they ride inside the same one budget the rows do — and an unbounded list of stranded flags is how
+// a document that must always be servable becomes one that is refused on a bad day.
+const NCC_MAX_STRANDED: usize = 3;
+const NCC_MAX_ERRORS: usize = 3;
+const NCC_WITHHELD_FIELD_BYTES: usize = NCC_ISSUE_BYTES + NCC_ERROR_BYTES;
+const NCC_WITHHELD_FIXED_BYTES: usize = 150;
+const NCC_WITHHELD_CEILING: usize =
+    NCC_WITHHELD_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_WITHHELD_FIXED_BYTES;
+
+/// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
+const NCC_ENVELOPE_BYTES: usize = 1_500;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — a full page of maximal rows PLUS both withheld
+/// lists at their caps cannot reach [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this
+/// crate does not build.
+const _: () = assert!(
+    NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
+        + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
+        + NCC_ENVELOPE_BYTES
+        <= MCP_MAX_RESULT_BYTES
+);
+
+/// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
+/// [`next_ready_limit`]'s is.
+fn next_close_candidate_limit(args: &Value) -> Result<usize, String> {
+    match args.get("limit") {
+        None | Some(Value::Null) => Ok(NEXT_CC_DEFAULT_ROWS),
+        Some(v) => match v.as_u64() {
+            Some(n) if n >= 1 && n <= NEXT_CC_MAX_ROWS as u64 => Ok(n as usize),
+            _ => Err(format!(
+                "limit must be an integer in 1..={NEXT_CC_MAX_ROWS}"
+            )),
+        },
+    }
+}
+
+/// Everything ONE row is built from, grouped so the row builder is PURE and testable without a
+/// network.
+struct NextCcFacts<'a> {
+    slug: &'a str,
+    num: u64,
+    /// The `gh issue view` JSON the queue classified this flag from.
+    detail: &'a Value,
+    /// The CURRENT producer flag: when it was posted, and its whole body.
+    flag_at: &'a str,
+    flag_body: &'a str,
+    coverage: PrCoverage,
+    /// The open PRs behind that verdict, as `owner/repo#n`.
+    covering: &'a [String],
+}
+
+/// PURE: the flag decision for ONE issue. Every string is clipped, so the row's size is bounded by
+/// [`NCC_ROW_CEILING`] whatever GitHub returns.
+///
+/// The row's centre is the pair a ruling turns on: `flag.reason` is the producer's CLAIM — the thing
+/// being checked, never a fact — and `verdict` is what the vetter made of that same claim, pinned to
+/// the flag it judged so a stale one is visibly stale. They are separate objects because collapsing
+/// them into one "reason" is the restatement `/nr` was built against, in the data instead of the
+/// prose.
+fn next_close_candidate_row(f: &NextCcFacts) -> Value {
+    let labels_all = label_names(f.detail);
+    let labels: Vec<String> = labels_all
+        .iter()
+        .take(NCC_MAX_LABELS)
+        .map(|l| clip_field(l, NCC_LABEL_BYTES))
+        .collect();
+    let reason_full = flag_reason(f.flag_body);
+    let note_full = last_cc_vetter_comment(f.detail).unwrap_or_default();
+    let parts = cc_verdict_parts(&note_full);
+    let prs: Vec<String> = f
+        .covering
+        .iter()
+        .take(NCC_MAX_PRS)
+        .map(|p| clip_field(p, NCC_PR_REF_BYTES))
+        .collect();
+    serde_json::json!({
+        "issue": clip_field(&format!("{}#{}", f.slug, f.num), NCC_ISSUE_BYTES),
+        "url": clip_field(f.detail.get("url").and_then(|v| v.as_str()).unwrap_or(""), NCC_URL_BYTES),
+        "title": clip_field(f.detail.get("title").and_then(|v| v.as_str()).unwrap_or(""), NCC_TITLE_BYTES),
+        // Stated even though every row here is an OPEN issue, for the reason `next_ready` states a
+        // verdict sha it already guarantees: a reader can see the flag is live rather than take the
+        // tool's word that it filtered.
+        "state": clip_field(f.detail.get("state").and_then(|v| v.as_str()).unwrap_or(""), NCC_STATE_BYTES),
+        // The issue's own creation time is the RECENCY BASELINE the flag's evidence is measured
+        // against: a fix that predates the report cannot be the fix for it.
+        "createdAt": clip_field(f.detail.get("createdAt").and_then(|v| v.as_str()).unwrap_or(""), NCC_TIME_BYTES),
+        "labels": labels,
+        "labelsTruncated": labels_all.len() > NCC_MAX_LABELS,
+        "flag": {
+            "at": clip_field(f.flag_at, NCC_TIME_BYTES),
+            // The CLAIM. `close_candidate_context` carries the flag body whole; this is the payload
+            // line, clipped, and `reasonTruncated` says when the whole one has to be read there.
+            "reason": clip_field(&reason_full, NCC_REASON_BYTES),
+            "reasonBytes": reason_full.len(),
+            "reasonTruncated": reason_full.len() > NCC_REASON_BYTES,
+        },
+        "verdict": {
+            // The flag the vetter PINNED its verdict to, and whether that is the flag above. Equal
+            // for every row this tool returns — the gate admits no other kind — and stated anyway,
+            // exactly as `next_ready` states `verdict.sha` beside `headRefOid`.
+            "flagAt": parts.as_ref().map(|(at, _)| clip_field(at, NCC_TIME_BYTES)),
+            "atFlag": parts.as_ref().is_some_and(|(at, _)| at == f.flag_at),
+            "verdict": parts.as_ref().map(|(_, v)| clip_field(v, NCC_VERDICT_BYTES)),
+            "note": clip_field(&note_full, NCC_NOTE_BYTES),
+            "noteBytes": note_full.len(),
+            "noteTruncated": note_full.len() > NCC_NOTE_BYTES,
+        },
+        "openPr": {
+            "coverage": f.coverage.as_str(),
+            "blocksClose": f.coverage.blocks_close(),
+            "meaning": f.coverage.meaning(),
+            // NAMED, not counted — the ref is what a reader hands to `pr_context` to see what the
+            // open PR actually does.
+            "prs": prs,
+            "prsTruncated": f.covering.len() > NCC_MAX_PRS,
+        },
+    })
+}
+
+/// The whole-queue breakdown. Every flag the search returned lands in exactly one of these, plus the
+/// fetch errors — so `flagged == presentable + unvetted + noProducerFlag + humanRuled +
+/// vetterRejectedStillFlagged + fetchErrors`, always, and a reader can see there is no sixth bucket
+/// quietly absorbing rows.
+#[derive(Default)]
+struct FlagQueueCounts {
+    flagged: usize,
+    presentable: usize,
+    unvetted: usize,
+    no_flag: usize,
+    human_ruled: usize,
+    rejected_still_flagged: usize,
+    fetch_errors: usize,
+}
+
+/// The document's non-row halves: the counts, and the two lists a reader must see even though this
+/// call will not act on them.
+struct FlagQueueWithheld {
+    counts: FlagQueueCounts,
+    /// The [`CcGate::is_stranded`] flags — capped, with the overflow in `more_stranded`.
+    stranded: Vec<Value>,
+    more_stranded: usize,
+    errors: Vec<Value>,
+    more_errors: usize,
+}
+
+/// PURE: the whole document.
+///
+/// `counts.unvetted` is the answer to "why is the flag I expected not here": the vetter has not
+/// judged it, and a flag the vetter would reject must never cost a human anything. `strandedFlags`
+/// is the answer to a question nothing else asks — those flags are in states no AI transition
+/// clears, so they sit until a human notices, and a queue that silently skipped them is how they
+/// stayed unnoticed.
+fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
+    let returned = rows.len();
+    let presentable = w.counts.presentable;
+    serde_json::json!({
+        "queue": {
+            "presentable": presentable,
+            "returned": returned,
+            "more": presentable.saturating_sub(returned),
+        },
+        "counts": {
+            "flagged": w.counts.flagged,
+            "presentable": presentable,
+            "unvetted": w.counts.unvetted,
+            "noProducerFlag": w.counts.no_flag,
+            "humanRuled": w.counts.human_ruled,
+            "vetterRejectedStillFlagged": w.counts.rejected_still_flagged,
+            "fetchErrors": w.counts.fetch_errors,
+        },
+        "strandedFlags": w.stranded,
+        "moreStrandedFlags": w.more_stranded,
+        "fetchErrors": w.errors,
+        "moreFetchErrors": w.more_errors,
+        "next": rows,
+    })
+}
+
+/// PURE: one entry of either withheld list — the ref, and one line saying what is wrong with it.
+fn withheld_entry(issue: &str, why: &str) -> Value {
+    serde_json::json!({
+        "issue": clip_field(issue, NCC_ISSUE_BYTES),
+        "why": clip_field(why, NCC_ERROR_BYTES),
+    })
+}
+
+/// PURE: the `(slug, number)` of one `gh search issues` hit. `repository.nameWithOwner` is
+/// authoritative and the url parse is the fallback — shared by both close-candidate state-loads so
+/// the vetter's inbox and the human's can never disagree about which issue a hit names.
+fn search_issue_ref(hit: &Value) -> Option<(String, u64)> {
+    let url = hit.get("url").and_then(|u| u.as_str()).unwrap_or("");
+    let slug = hit
+        .get("repository")
+        .and_then(|r| r.get("nameWithOwner"))
+        .and_then(|s| s.as_str())
+        .map(String::from)
+        .or_else(|| issue_slug(url))?;
+    let num = hit.get("number").and_then(|n| n.as_u64())?;
+    Some((slug, num))
+}
+
+/// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
+/// `ai:close-candidate`. Shared rather than written twice, so the vetter's queue and the human's are
+/// populations of the same query — two spellings of "which issues are flagged" is how they would
+/// come to answer differently.
+///
+/// Errors rather than returning a falsely-empty set, for the reason the PR side does.
+fn flagged_open_issues() -> Result<Vec<Value>, String> {
+    let mut args: Vec<String> = vec!["search".into(), "issues".into()];
+    args.extend(org_owner_args());
+    args.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            "ai:close-candidate",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,title",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    gh_json(&argref)
+        .and_then(|v| v.as_array().cloned())
+        .ok_or_else(|| {
+            "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
+             aborting rather than report a falsely-empty close-candidate queue"
+                .to_string()
+        })
+}
+
+/// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
+/// then pay for the covering-PR read only on the rows actually returned.
+fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
+    let found = flagged_open_issues()?;
+    let mut flags: Vec<PresentableFlag> = Vec::new();
+    let mut counts = FlagQueueCounts {
+        flagged: found.len(),
+        ..Default::default()
+    };
+    let mut stranded: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
+    for hit in &found {
+        let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        let Some((slug, num)) = search_issue_ref(hit) else {
+            counts.fetch_errors += 1;
+            errors.push(withheld_entry(title, "unparseable issue ref"));
+            continue;
+        };
+        // A dropped issue must be VISIBLE: silently skipping one shrinks the human's inbox with
+        // nothing to explain the gap, which is the same defect the vetter's state-load fixed.
+        let Some(detail) = gh_json(&[
+            "issue",
+            "view",
+            &num.to_string(),
+            "-R",
+            &slug,
+            "--json",
+            "number,title,url,state,createdAt,labels,comments",
+        ]) else {
+            counts.fetch_errors += 1;
+            errors.push(withheld_entry(
+                &format!("{slug}#{num}"),
+                "gh issue view failed — not classified this run",
+            ));
+            continue;
+        };
+        let flag = last_close_candidate_flag(&detail);
+        let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
+        let gate = cc_gate(
+            has_human_ruling(&label_names(&detail)),
+            &flag_at,
+            last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
+        );
+        // EXHAUSTIVE on purpose: a new gate state must be given its own count rather than folding
+        // silently into an existing one, which is what makes `flagged` provably the sum of its
+        // parts. The listing decision below is the STATE's (`is_stranded`), not a second list of
+        // variants here that could drift from it.
+        match gate {
+            CcGate::Presentable => counts.presentable += 1,
+            CcGate::HumanRuled => counts.human_ruled += 1,
+            CcGate::Unvetted => counts.unvetted += 1,
+            CcGate::NoFlag => counts.no_flag += 1,
+            CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
+        }
+        if gate.is_stranded() {
+            stranded.push(withheld_entry(&format!("{slug}#{num}"), gate.as_str()));
+        }
+        if gate == CcGate::Presentable {
+            flags.push(PresentableFlag {
+                slug,
+                num,
+                flag_at,
+                flag_body: flag.map(|(_, b)| b).unwrap_or_default(),
+                detail,
+            });
+        }
+    }
+    rank_flags(&mut flags);
+    let rows: Vec<Value> = next_close_candidate_page(&flags, limit)
+        .into_iter()
+        .map(|f| {
+            let (coverage, covering) = covering_open_prs_fetch(&f.slug, f.num);
+            next_close_candidate_row(&NextCcFacts {
+                slug: &f.slug,
+                num: f.num,
+                detail: &f.detail,
+                flag_at: &f.flag_at,
+                flag_body: &f.flag_body,
+                coverage,
+                covering: &covering,
+            })
+        })
+        .collect();
+    let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
+    let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
+    Ok(next_close_candidate_doc(
+        rows,
+        &FlagQueueWithheld {
+            counts,
+            stranded,
+            more_stranded,
+            errors,
+            more_errors,
+        },
+    ))
+}
+
+/// Digits reserved, per numeric field, in the fixed allowances above.
+#[cfg(test)]
+const NCC_MAX_DIGITS: usize = 20;
+
+#[cfg(test)]
+mod next_close_candidate_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Built by the REAL writer, so a fixture carries exactly the bytes a live verdict does.
+    fn vetter(flag_at: &str, verdict: &str, note: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": cc_verdict_comment(flag_at, verdict, note),
+        })
+    }
+
+    fn producer(flag_at: &str, reason: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "createdAt": flag_at,
+            "body": format!("🤖 ai:producer\nClose-candidate: {reason}"),
+        })
+    }
+
+    fn issue(labels: &[&str], comments: Vec<Value>) -> Value {
+        json!({
+            "number": 7,
+            "title": "the thing does not work",
+            "url": "https://github.com/o/r/issues/7",
+            "state": "OPEN",
+            "createdAt": "2026-07-01T00:00:00Z",
+            "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+            "comments": comments,
+        })
+    }
+
+    fn flag(slug: &str, num: u64, at: &str) -> PresentableFlag {
+        PresentableFlag {
+            slug: slug.to_string(),
+            num,
+            flag_at: at.to_string(),
+            flag_body: format!("🤖 ai:producer\nClose-candidate: already-fixed: o/r#{num}"),
+            detail: issue(&["ai:close-candidate"], vec![producer(at, "already-fixed")]),
+        }
+    }
+
+    fn refs(page: Vec<&PresentableFlag>) -> Vec<String> {
+        page.iter()
+            .map(|f| format!("{}#{}", f.slug, f.num))
+            .collect()
+    }
+
+    // --- the verdict the row reports is PARSED, not inferred ------------------------------------
+
+    // Round-tripped through the writer, so the reader cannot drift from what the vetter records.
+    #[test]
+    fn the_verdict_pin_and_word_are_read_off_the_comment_the_writer_wrote() {
+        let at = "2026-07-20T09:00:00Z";
+        for (verdict, note) in [
+            ("uphold", "evidence holds"),
+            ("reject", ""),
+            ("uphold", "—"),
+        ] {
+            let body = cc_verdict_comment(at, verdict, note);
+            assert_eq!(
+                cc_verdict_parts(&body),
+                Some((at.to_string(), verdict.to_string())),
+                "{body:?}"
+            );
+        }
+        // The pin's OWN colons must not be read as the separator: `09:00:00Z` would otherwise split
+        // the timestamp and hand back `00:00Z:` as the verdict, and a correct verdict would read as
+        // no verdict at all.
+        assert_eq!(
+            cc_verdict_parts(
+                "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z: uphold"
+            ),
+            Some(("2026-07-20T09:00:00Z".to_string(), "uphold".to_string()))
+        );
+        // Not a close-candidate verdict at all, or half of one.
+        for junk in [
+            "🤖 ai:vetter\nReviewed abc123: ready — note",
+            "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z",
+            "🤖 ai:vetter\nReviewed close-candidate @: uphold",
+            "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z:",
+            "",
+        ] {
+            assert_eq!(cc_verdict_parts(junk), None, "{junk:?}");
+        }
+    }
+
+    // THE reason the word is parsed rather than inferred from the label. A `reject` REMOVES
+    // `ai:close-candidate`, so an issue that still carries it looks upheld to anything reading
+    // labels — and a half-applied write would be handed to a human as "the vetter agrees".
+    #[test]
+    fn the_gate_reads_the_verdict_word_not_the_label_still_being_there() {
+        let at = "2026-07-20T09:00:00Z";
+        let parts = |w: &str| Some((at.to_string(), w.to_string()));
+        assert_eq!(cc_gate(false, at, parts("uphold")), CcGate::Presentable);
+        assert_eq!(
+            cc_gate(false, at, parts("reject")),
+            CcGate::RejectedStillFlagged
+        );
+        // A word this machine does not know is not a verdict in force — the vetter still owes one,
+        // exactly as an unstamped vet-protocol is never current.
+        for unknown in ["close", "ready", "UPHOLD"] {
+            assert_eq!(
+                cc_gate(false, at, parts(unknown)),
+                CcGate::Unvetted,
+                "{unknown}"
+            );
+        }
+        assert_eq!(cc_gate(false, at, None), CcGate::Unvetted);
+        assert!(CcGate::RejectedStillFlagged.is_stranded());
+        assert!(CcGate::NoFlag.is_stranded());
+        for live in [CcGate::Presentable, CcGate::Unvetted, CcGate::HumanRuled] {
+            assert!(!live.is_stranded(), "{live:?}");
+        }
+    }
+
+    // A RE-flag is new evidence: the verdict written against the old flag describes a claim nobody
+    // is making any more, so it does not present the issue to a human as vetted.
+    #[test]
+    fn a_verdict_pinned_to_an_earlier_flag_does_not_present_the_reflag() {
+        let first = "2026-07-20T09:00:00Z";
+        let second = "2026-07-25T09:00:00Z";
+        assert_eq!(
+            cc_gate(false, second, Some((first.to_string(), "uphold".into()))),
+            CcGate::Unvetted
+        );
+        assert_eq!(
+            cc_gate(false, first, Some((first.to_string(), "uphold".into()))),
+            CcGate::Presentable
+        );
+    }
+
+    // The precedence, in the one order that matters: a human ruling is sacred and already made, so
+    // it dominates a flag, a verdict, and the absence of either.
+    #[test]
+    fn a_human_ruling_dominates_and_a_flagless_label_is_stranded() {
+        let at = "2026-07-20T09:00:00Z";
+        assert_eq!(
+            cc_gate(true, at, Some((at.to_string(), "uphold".into()))),
+            CcGate::HumanRuled
+        );
+        assert_eq!(cc_gate(true, "", None), CcGate::HumanRuled);
+        // Labelled, with no trusted producer comment behind it: nothing was CLAIMED, so there is
+        // nothing to rule on evidence — and the vetter skips it too, which is why it is named.
+        assert_eq!(cc_gate(false, "", None), CcGate::NoFlag);
+        assert_eq!(
+            cc_gate(false, "", Some((at.to_string(), "uphold".into()))),
+            CcGate::NoFlag
+        );
+    }
+
+    // --- the ordering, which is this tool's own design decision ---------------------------------
+
+    // OLDEST FLAG FIRST. The flag parks the issue — `is_producer_backlog` excludes a flagged issue
+    // from the producer's queue — so the time a flag waits here is time nobody owns the issue, and
+    // FIFO is what bounds the worst case of that.
+    #[test]
+    fn the_queue_is_oldest_flag_first() {
+        let mut set = vec![
+            flag("o/r", 3, "2026-07-25T09:00:00Z"),
+            flag("o/r", 1, "2026-07-10T09:00:00Z"),
+            flag("o/r", 2, "2026-07-20T09:00:00Z"),
+        ];
+        rank_flags(&mut set);
+        assert_eq!(
+            refs(set.iter().collect()),
+            vec!["o/r#1", "o/r#2", "o/r#3"],
+            "the flag that has waited longest is the next decision"
+        );
+        // And NOT newest-first, the other order #173 offers: it optimises the cost of each check by
+        // never reaching the flags whose evidence has decayed most.
+        assert_ne!(refs(set.iter().collect())[0], "o/r#3");
+    }
+
+    // The order has to be TOTAL, or two runs a second apart name different heads and "which flag is
+    // next" stops being a question with one answer.
+    #[test]
+    fn flags_posted_at_the_same_instant_are_ordered_by_their_ref() {
+        let at = "2026-07-20T09:00:00Z";
+        let mut set = vec![
+            flag("o/z", 1, at),
+            flag("o/a", 9, at),
+            flag("o/a", 2, at),
+            flag("o/a", 10, at),
+        ];
+        rank_flags(&mut set);
+        assert_eq!(
+            refs(set.iter().collect()),
+            vec!["o/a#2", "o/a#9", "o/a#10", "o/z#1"],
+            "the number sorts NUMERICALLY: #10 after #9, which a string key would invert"
+        );
+    }
+
+    // The seam #121 named: paging must not be a second sort. A `take` that also ordered would let
+    // the head of this page disagree with the head of the ranked set for no reason a caller can see.
+    #[test]
+    fn the_page_is_a_prefix_and_never_a_second_ordering() {
+        let mut set = vec![
+            flag("o/r", 3, "2026-07-25T09:00:00Z"),
+            flag("o/r", 1, "2026-07-10T09:00:00Z"),
+            flag("o/r", 2, "2026-07-20T09:00:00Z"),
+        ];
+        rank_flags(&mut set);
+        assert_eq!(refs(next_close_candidate_page(&set, 1)), vec!["o/r#1"]);
+        assert_eq!(
+            refs(next_close_candidate_page(&set, NEXT_CC_MAX_ROWS)),
+            refs(set.iter().collect())
+        );
+        // Unranked in, unranked out: the function itself contributes no order.
+        let unranked = vec![
+            flag("o/r", 3, "2026-07-25T09:00:00Z"),
+            flag("o/r", 1, "2026-07-10T09:00:00Z"),
+        ];
+        assert_eq!(
+            refs(next_close_candidate_page(&unranked, 2)),
+            vec!["o/r#3", "o/r#1"]
+        );
+        assert_eq!(next_close_candidate_page(&set, 99).len(), set.len());
+    }
+
+    // The page size is a REAL argument with a REAL range, refused rather than clamped.
+    #[test]
+    fn the_page_size_defaults_to_one_and_is_refused_outside_its_range() {
+        assert_eq!(
+            next_close_candidate_limit(&json!({})).unwrap(),
+            NEXT_CC_DEFAULT_ROWS
+        );
+        assert_eq!(
+            next_close_candidate_limit(&json!({"limit": null})).unwrap(),
+            1
+        );
+        assert_eq!(
+            next_close_candidate_limit(&json!({"limit": NEXT_CC_MAX_ROWS})).unwrap(),
+            NEXT_CC_MAX_ROWS
+        );
+        for bad in [
+            json!(0),
+            json!(NEXT_CC_MAX_ROWS + 1),
+            json!(-1),
+            json!("2"),
+            json!(1.5),
+        ] {
+            let e = next_close_candidate_limit(&json!({"limit": bad})).unwrap_err();
+            assert!(e.contains(&format!("1..={NEXT_CC_MAX_ROWS}")), "{bad}: {e}");
+        }
+    }
+
+    // --- the covering-PR read -------------------------------------------------------------------
+
+    // `covered-by-open-pr` is a known NON-closeable state, so the failure direction is not
+    // symmetric: an unseen covering PR closes an issue out from under work in flight, while a
+    // falsely-reported one costs a second look. A failed query is `Unreadable` and BLOCKS.
+    #[test]
+    fn an_unreadable_coverage_query_is_never_read_as_uncovered() {
+        for bad in [
+            None,
+            Some(json!({})),
+            Some(json!({"data": {"repository": null}})),
+            Some(json!({"errors": [{"message": "Something went wrong"}]})),
+            Some(
+                json!({"data": {"repository": {"issue": {"closedByPullRequestsReferences": {}}}}}),
+            ),
+        ] {
+            let (v, prs) = covering_open_prs(bad.as_ref());
+            assert_eq!(v, PrCoverage::Unreadable, "{bad:?}");
+            assert!(prs.is_empty());
+            assert!(v.blocks_close(), "an unknown answer must fail SAFE");
+        }
+        assert!(PrCoverage::Covered.blocks_close());
+        assert!(!PrCoverage::Uncovered.blocks_close());
+    }
+
+    fn coverage_response(nodes: Value) -> Value {
+        json!({"data": {"repository": {"issue": {
+            "closedByPullRequestsReferences": {"nodes": nodes}
+        }}}})
+    }
+
+    // Only an OPEN PR is coverage, and the ref is emitted as `owner/repo#n` — the addressing string
+    // `pr_context` takes, so nothing downstream reassembles one (#132).
+    #[test]
+    fn only_open_prs_count_as_coverage_and_they_are_named_as_refs() {
+        let resp = coverage_response(json!([
+            {"number": 109, "state": "OPEN", "repository": {"nameWithOwner": "o/r"}},
+            {"number": 44, "state": "MERGED", "repository": {"nameWithOwner": "o/r"}},
+            {"number": 45, "state": "CLOSED", "repository": {"nameWithOwner": "o/r"}},
+            // A cross-repo PR closing this issue is still coverage, and its OWN slug is the ref.
+            {"number": 7, "state": "OPEN", "repository": {"nameWithOwner": "o/other"}},
+        ]));
+        let (v, prs) = covering_open_prs(Some(&resp));
+        assert_eq!(v, PrCoverage::Covered);
+        assert_eq!(prs, vec!["o/r#109".to_string(), "o/other#7".to_string()]);
+        assert_eq!(v.meaning(), "not-closeable-an-open-pr-is-not-a-landed-fix");
+
+        // An empty answer is an ANSWER — this is the one state that does not block a close.
+        let (v, prs) = covering_open_prs(Some(&coverage_response(json!([]))));
+        assert_eq!(v, PrCoverage::Uncovered);
+        assert!(prs.is_empty());
+        // …and so is one whose only references are landed or abandoned.
+        let (v, _) = covering_open_prs(Some(&coverage_response(json!([
+            {"number": 44, "state": "MERGED", "repository": {"nameWithOwner": "o/r"}}
+        ]))));
+        assert_eq!(v, PrCoverage::Uncovered);
+    }
+
+    // The query has to ask GitHub for the right thing, or the parse above is exercised on a
+    // population that was never restricted: closed PRs excluded at the source, and the fields the
+    // parse reads present.
+    #[test]
+    fn the_covering_query_asks_only_for_prs_that_would_close_this_issue() {
+        for needed in [
+            "closedByPullRequestsReferences",
+            "includeClosedPrs:false",
+            "state",
+            "nameWithOwner",
+        ] {
+            assert!(COVERING_PRS_QUERY.contains(needed), "{needed}");
+        }
+    }
+
+    // --- the row --------------------------------------------------------------------------------
+
+    // The row's centre: the producer's CLAIM and the vetter's judgement of that same claim are two
+    // objects, pinned to the flag, so a stale verdict is visibly stale rather than merged into one
+    // "reason" field a reader would take as settled.
+    #[test]
+    fn the_row_separates_the_producers_claim_from_the_vetters_verdict() {
+        let at = "2026-07-20T09:00:00Z";
+        let body = "🤖 ai:producer\nClose-candidate: already-fixed: merged in o/r#1348";
+        let detail = issue(
+            &["ai:close-candidate", "bug"],
+            vec![
+                producer(at, "already-fixed: merged in o/r#1348"),
+                vetter(at, "uphold", "diff matches the ask"),
+            ],
+        );
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 7,
+            detail: &detail,
+            flag_at: at,
+            flag_body: body,
+            coverage: PrCoverage::Uncovered,
+            covering: &[],
+        });
+        assert_eq!(row["issue"], json!("o/r#7"));
+        assert_eq!(row["url"], json!("https://github.com/o/r/issues/7"));
+        assert_eq!(row["title"], json!("the thing does not work"));
+        assert_eq!(row["state"], json!("OPEN"));
+        // The recency baseline the evidence is measured against.
+        assert_eq!(row["createdAt"], json!("2026-07-01T00:00:00Z"));
+        assert_eq!(row["labels"], json!(["ai:close-candidate", "bug"]));
+        assert_eq!(row["flag"]["at"], json!(at));
+        assert_eq!(
+            row["flag"]["reason"],
+            json!("already-fixed: merged in o/r#1348"),
+            "the CLAIM, without the marker line"
+        );
+        assert_eq!(row["verdict"]["verdict"], json!("uphold"));
+        assert_eq!(row["verdict"]["flagAt"], json!(at));
+        assert_eq!(row["verdict"]["atFlag"], json!(true));
+        assert!(row["verdict"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("diff matches the ask"));
+        assert_eq!(row["openPr"]["coverage"], json!("no-open-pr"));
+        assert_eq!(row["openPr"]["blocksClose"], json!(false));
+        assert_eq!(row["openPr"]["prs"], json!([]));
+    }
+
+    // A verdict against an EARLIER flag reaches the row (it is the vetter's most recent word) and
+    // must arrive marked stale — the same thing `verdict.atHead` does one lane over. A row that
+    // printed the note without the pin would present a judgement of a superseded claim.
+    #[test]
+    fn a_stale_verdict_arrives_visibly_stale_rather_than_omitted() {
+        let first = "2026-07-20T09:00:00Z";
+        let second = "2026-07-25T09:00:00Z";
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![
+                producer(first, "already-fixed: #10"),
+                vetter(first, "uphold", "held then"),
+                producer(second, "already-fixed: #11"),
+            ],
+        );
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 7,
+            detail: &detail,
+            flag_at: second,
+            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed: #11",
+            coverage: PrCoverage::Uncovered,
+            covering: &[],
+        });
+        assert_eq!(row["flag"]["at"], json!(second));
+        assert_eq!(row["verdict"]["flagAt"], json!(first));
+        assert_eq!(row["verdict"]["atFlag"], json!(false));
+        assert!(row["verdict"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("held then"));
+    }
+
+    // An open PR claiming the issue is the state the flag lane already knows is not closeable, and
+    // the row says so in the field AND in the meaning beside it — the raw enum is no use to a reader
+    // who has to remember which way round the hazard runs.
+    #[test]
+    fn an_open_pr_claiming_the_issue_blocks_the_close_and_is_named() {
+        let at = "2026-07-20T09:00:00Z";
+        let detail = issue(&["ai:close-candidate"], vec![producer(at, "already-fixed")]);
+        let covering = vec![
+            "o/r#109".to_string(),
+            "o/r#110".to_string(),
+            "o/r#111".to_string(),
+            "o/r#112".to_string(),
+        ];
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 7,
+            detail: &detail,
+            flag_at: at,
+            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed",
+            coverage: PrCoverage::Covered,
+            covering: &covering,
+        });
+        assert_eq!(row["openPr"]["coverage"], json!("covered-by-open-pr"));
+        assert_eq!(row["openPr"]["blocksClose"], json!(true));
+        assert_eq!(
+            row["openPr"]["meaning"],
+            json!("not-closeable-an-open-pr-is-not-a-landed-fix")
+        );
+        assert_eq!(
+            row["openPr"]["prs"],
+            json!(["o/r#109", "o/r#110", "o/r#111"])
+        );
+        assert_eq!(
+            row["openPr"]["prsTruncated"],
+            json!(true),
+            "the list is a PAGE, and a reader must not read three as all of them"
+        );
+    }
+
+    // The two fields a caller cannot reconstruct are the ones that get clipped, so each says so.
+    #[test]
+    fn a_clipped_claim_or_note_says_it_was_clipped() {
+        let at = "2026-07-20T09:00:00Z";
+        let long = "x".repeat(NCC_REASON_BYTES + 500);
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![vetter(at, "uphold", &"y".repeat(NCC_NOTE_BYTES + 500))],
+        );
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 7,
+            detail: &detail,
+            flag_at: at,
+            flag_body: &format!("🤖 ai:producer\nClose-candidate: {long}"),
+            coverage: PrCoverage::Uncovered,
+            covering: &[],
+        });
+        assert_eq!(
+            row["flag"]["reason"].as_str().unwrap().len(),
+            NCC_REASON_BYTES
+        );
+        assert_eq!(row["flag"]["reasonBytes"], json!(long.len()));
+        assert_eq!(row["flag"]["reasonTruncated"], json!(true));
+        assert_eq!(
+            row["verdict"]["note"].as_str().unwrap().len(),
+            NCC_NOTE_BYTES
+        );
+        assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+    }
+
+    // --- the document ---------------------------------------------------------------------------
+
+    fn withheld(counts: FlagQueueCounts) -> FlagQueueWithheld {
+        FlagQueueWithheld {
+            counts,
+            stranded: vec![],
+            more_stranded: 0,
+            errors: vec![],
+            more_errors: 0,
+        }
+    }
+
+    // `more` is derived, never passed: a caller that read `next.len()` as the whole queue is wrong
+    // by exactly this number, so the number is stated rather than inferable.
+    #[test]
+    fn the_envelope_states_what_the_page_left_behind() {
+        let w = withheld(FlagQueueCounts {
+            flagged: 9,
+            presentable: 5,
+            unvetted: 2,
+            no_flag: 1,
+            human_ruled: 1,
+            rejected_still_flagged: 0,
+            fetch_errors: 0,
+        });
+        let doc = next_close_candidate_doc(vec![json!({"issue": "o/r#7"})], &w);
+        assert_eq!(doc["queue"]["presentable"], json!(5));
+        assert_eq!(doc["queue"]["returned"], json!(1));
+        assert_eq!(doc["queue"]["more"], json!(4));
+        // The counts partition the search: nothing is in two buckets and nothing is in none.
+        let c = &doc["counts"];
+        let parts: u64 = [
+            "presentable",
+            "unvetted",
+            "noProducerFlag",
+            "humanRuled",
+            "vetterRejectedStillFlagged",
+            "fetchErrors",
+        ]
+        .iter()
+        .map(|k| c[k].as_u64().unwrap())
+        .sum();
+        assert_eq!(parts, c["flagged"].as_u64().unwrap());
+    }
+
+    // The flags no modelled transition will ever clear. Reporting them is the whole reason they are
+    // classified separately: the vetter skips a flagless label for ever, and a half-applied reject
+    // is not a state the machine produces — both sit until a human is told they exist.
+    #[test]
+    fn stranded_flags_are_named_rather_than_silently_skipped() {
+        let mut w = withheld(FlagQueueCounts {
+            flagged: 3,
+            no_flag: 2,
+            rejected_still_flagged: 1,
+            ..Default::default()
+        });
+        w.stranded = vec![
+            withheld_entry("o/r#1", CcGate::NoFlag.as_str()),
+            withheld_entry("o/r#2", CcGate::RejectedStillFlagged.as_str()),
+        ];
+        w.more_stranded = 1;
+        let doc = next_close_candidate_doc(vec![], &w);
+        assert_eq!(doc["strandedFlags"][0]["issue"], json!("o/r#1"));
+        assert_eq!(doc["strandedFlags"][0]["why"], json!("no-producer-flag"));
+        assert_eq!(
+            doc["strandedFlags"][1]["why"],
+            json!("vetter-rejected-but-still-flagged")
+        );
+        assert_eq!(doc["moreStrandedFlags"], json!(1));
+        assert_eq!(doc["queue"]["presentable"], json!(0));
+    }
+
+    // --- the budget -----------------------------------------------------------------------------
+
+    fn hostile(n: usize) -> String {
+        // The characters JSON escapes WORST: a quote and a backslash cost two bytes each, and a
+        // control character would cost six if `clip_field` did not neutralise it.
+        std::iter::repeat_n("\"\\\u{1}\n", n / 4).collect()
+    }
+
+    // THE GUARANTEE, exercised rather than asserted: a full page built from the worst input GitHub
+    // can hand us, with both withheld lists at their caps, must fit the ONE budget. Remove any
+    // `clip_field` in `next_close_candidate_row` and this fails.
+    #[test]
+    fn a_maximal_page_of_adversarial_rows_still_fits_the_budget() {
+        let h = hostile(20_000);
+        let at = hostile(400);
+        let detail = json!({
+            "url": h,
+            "title": h,
+            "state": h,
+            "createdAt": h,
+            "labels": (0..40).map(|_| json!({"name": h})).collect::<Vec<_>>(),
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": format!("🤖 ai:vetter\nReviewed close-candidate @{at}: {h}"),
+            }],
+        });
+        let covering: Vec<String> = (0..20).map(|_| h.clone()).collect();
+        let rows: Vec<Value> = (0..NEXT_CC_MAX_ROWS)
+            .map(|i| {
+                next_close_candidate_row(&NextCcFacts {
+                    slug: &h,
+                    num: u64::MAX - i as u64,
+                    detail: &detail,
+                    flag_at: &at,
+                    flag_body: &format!("🤖 ai:producer\nClose-candidate: {h}"),
+                    coverage: PrCoverage::Covered,
+                    covering: &covering,
+                })
+            })
+            .collect();
+        for (i, row) in rows.iter().enumerate() {
+            let len = row.to_string().len();
+            assert!(
+                len <= NCC_ROW_CEILING,
+                "row {i} is {len} bytes, over the {NCC_ROW_CEILING}-byte ceiling the compile-time \
+                 budget assertion is computed from"
+            );
+        }
+        let entry = withheld_entry(&h, &h);
+        let entry_len = entry.to_string().len();
+        assert!(
+            entry_len <= NCC_WITHHELD_CEILING,
+            "a withheld entry is {entry_len} bytes, over the {NCC_WITHHELD_CEILING}-byte ceiling"
+        );
+        let doc = next_close_candidate_doc(
+            rows,
+            &FlagQueueWithheld {
+                counts: FlagQueueCounts {
+                    flagged: usize::MAX,
+                    presentable: usize::MAX,
+                    unvetted: usize::MAX,
+                    no_flag: usize::MAX,
+                    human_ruled: usize::MAX,
+                    rejected_still_flagged: usize::MAX,
+                    fetch_errors: usize::MAX,
+                },
+                stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
+                more_stranded: usize::MAX,
+                errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
+                more_errors: usize::MAX,
+            },
+        );
+        let len = doc.to_string().len();
+        assert!(
+            len <= MCP_MAX_RESULT_BYTES,
+            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+        );
+    }
+
+    // The three fixed allowances the compile-time assertion rests on are MEASURED, not guessed. A
+    // field added without room for it lands here rather than at a caller's over-budget refusal.
+    #[test]
+    fn the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope() {
+        // Every enum at its longest spelling, every string empty.
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "",
+            num: 0,
+            detail: &json!({}),
+            flag_at: "",
+            flag_body: "",
+            coverage: PrCoverage::Covered,
+            covering: &[],
+        });
+        // Two numeric fields per row: reasonBytes and noteBytes.
+        let row_len = row.to_string().len() + 2 * NCC_MAX_DIGITS;
+        assert!(
+            row_len <= NCC_ROW_FIXED_BYTES,
+            "a row's fixed cost is {row_len} bytes, over the {NCC_ROW_FIXED_BYTES} allowed"
+        );
+
+        let entry_len = withheld_entry("", "").to_string().len();
+        assert!(
+            entry_len <= NCC_WITHHELD_FIXED_BYTES,
+            "a withheld entry's fixed cost is {entry_len} bytes, over the \
+             {NCC_WITHHELD_FIXED_BYTES} allowed"
+        );
+
+        // Twelve numeric fields in the envelope: seven counts, three queue figures, two overflows.
+        let env_len = next_close_candidate_doc(vec![], &withheld(FlagQueueCounts::default()))
+            .to_string()
+            .len()
+            + 12 * NCC_MAX_DIGITS;
+        assert!(
+            env_len <= NCC_ENVELOPE_BYTES,
+            "the envelope's fixed cost is {env_len} bytes, over the {NCC_ENVELOPE_BYTES} allowed"
+        );
+    }
+
+    // Both close-candidate inboxes must enumerate ONE population, or the vetter and the human come
+    // to disagree about which issues are flagged. The search is shared; this pins the parse the two
+    // of them read a hit with.
+    #[test]
+    fn a_search_hit_is_addressed_by_its_repository_and_falls_back_to_the_url() {
+        assert_eq!(
+            search_issue_ref(&json!({
+                "url": "https://github.com/o/other/issues/9",
+                "number": 7,
+                "repository": {"nameWithOwner": "o/r"}
+            })),
+            Some(("o/r".to_string(), 7)),
+            "nameWithOwner is authoritative"
+        );
+        assert_eq!(
+            search_issue_ref(&json!({"url": "https://github.com/o/r/issues/7", "number": 7})),
+            Some(("o/r".to_string(), 7))
+        );
+        // Unaddressable is `None` — a row nobody can name is a row nobody can rule on.
+        for bad in [
+            json!({"number": 7}),
+            json!({"url": "https://github.com/o/r/pull/7", "number": 7}),
+            json!({"url": "https://github.com/o/r/issues/7"}),
+        ] {
+            assert_eq!(search_issue_ref(&bad), None, "{bad}");
+        }
+    }
+}
+
 /// WHICH ROLE this server is serving. The two roles are different state machines that happen to
 /// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
 /// not a permission — `tools/list` returns only the profile's tools, so the producer never sees
@@ -15320,6 +16634,16 @@ impl McpProfile {
                 // this box filled its disk, and a human-gate leak has no collector behind it.
                 "pr_checkout",
                 "clone_release",
+                // The FLAG lane's read chain, in the order it is walked (#173). `next_ready` gives
+                // the PR queue a one-call entry point; without this one the human's other inbox —
+                // the one that asks for work to be DESTROYED — started with a manual search, so the
+                // queue where being wrong is least recoverable was the queue worked by hand.
+                //
+                // It is the human's, not the vetter's inbox re-listed: `unvetted_close_candidates`
+                // answers "which flag needs a VERDICT" and this answers "which upheld flag needs a
+                // RULING". They are different sets, and a flag the vetter rejects never appears here
+                // at all because the reject strips the label.
+                "next_close_candidate",
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
@@ -15368,6 +16692,16 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "PRs to return, 1-3 (default 1). Each ruling changes the queue, so a page is stale past its head."}
+                }
+            }
+        },
+        {
+            "name": "next_close_candidate",
+            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact), the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue (`covered-by-open-pr` is NOT closeable — an open PR is not a landed fix; an unreadable answer blocks too). `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are the ones no AI transition will ever clear.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Flags to return, 1-3 (default 1). Every ruling retires its flag, so a page is stale past its head."}
                 }
             }
         },
@@ -15575,6 +16909,11 @@ enum McpCall {
         /// argument: rows are independent, so dropping one strictly removes its bytes.
         limit: usize,
     },
+    /// The human's FLAG read: the next N upheld `ai:close-candidate` flags, oldest flag first.
+    NextCloseCandidate {
+        /// Always in `1..=NEXT_CC_MAX_ROWS`, and a REAL narrowing argument for the same reason.
+        limit: usize,
+    },
     Unvetted {
         include_skipped: bool,
         /// Page size. Always `Some` from the MCP guard — the token-budgeted caller never gets an
@@ -15736,11 +17075,12 @@ fn call_result_budget(_call: &McpCall) -> usize {
 /// catch-all itself is #117's to fix (it advises `limit` to `clone_list`, which has none, making
 /// [`oversize_result_error`]'s truthful `None` branch unreachable); this arm keeps `next_ready` out
 /// of that blast radius. For this tool the refusal is doubly sound: `limit` is real AND lowering it
-/// strictly removes whole rows, against a budget the row caps already keep it under.
+/// strictly removes whole rows, against a budget the row caps already keep it under. Both human
+/// gates share the arm, because both are true of both.
 fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
     match call {
         McpCall::PrContext { .. } => Some("max_diff_bytes"),
-        McpCall::NextReady { .. } => Some("limit"),
+        McpCall::NextReady { .. } | McpCall::NextCloseCandidate { .. } => Some("limit"),
         _ => Some("limit"),
     }
 }
@@ -15816,6 +17156,9 @@ fn validate_call(
     match name {
         "next_ready" => Ok(McpCall::NextReady {
             limit: next_ready_limit(args)?,
+        }),
+        "next_close_candidate" => Ok(McpCall::NextCloseCandidate {
+            limit: next_close_candidate_limit(args)?,
         }),
         "unvetted" => Ok(McpCall::Unvetted {
             include_skipped: args
@@ -16154,6 +17497,9 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
     let roots = clone_roots();
     match call {
         McpCall::NextReady { limit } => next_ready_fetch(limit).map(|d| d.to_string()),
+        McpCall::NextCloseCandidate { limit } => {
+            next_close_candidate_fetch(limit).map(|d| d.to_string())
+        }
         McpCall::Unvetted {
             include_skipped,
             limit,
@@ -32565,7 +33911,14 @@ mod marketplace_tests {
         seen.sort();
         assert_eq!(
             seen,
-            vec!["close-candidate", "design", "keep-open", "nr", "reject"],
+            vec![
+                "close-candidate",
+                "design",
+                "keep-open",
+                "ncc",
+                "nr",
+                "reject"
+            ],
             "the shipped command set changed"
         );
     }
@@ -32980,6 +34333,35 @@ mod marketplace_tests {
             }),
             "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs — and \
              releases the checkout it took"
+        );
+    }
+
+    // `/ncc` is the flag lane's gate (#173), and its grant is pinned for the same reason `/nr`'s is
+    // — plus one the sweep cannot see. The absence of `Skill` and `Read` here is a DECISION, argued
+    // in the file: a flag is a claim about an issue, the audit skill's vocabulary has no scope
+    // literal that names one, and a lens whose own rule is never to say "works correctly" cannot
+    // confirm a fix. Adding either back would pass the generic sweep, because a lens beside a typed
+    // read is a legal shape — so it is asserted here, where it has to be argued to change.
+    #[test]
+    fn ncc_grants_the_flag_queue_the_flag_itself_and_the_pr_its_reason_cites() {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/ncc.md") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let grantable = grantable_mcp_tools(
+            &read_json("plugins/human-fsm/.claude-plugin/plugin.json").expect("the manifest"),
+        )
+        .unwrap();
+        assert_eq!(
+            command_check(&text, &grantable),
+            typed_only(&[
+                &plugin_mcp_tool_name("human-fsm", "fsm", "next_close_candidate"),
+                &plugin_mcp_tool_name("human-fsm", "fsm", "close_candidate_context"),
+                // The instrument that falsifies an "already fixed" claim: the PR the reason names,
+                // read against the path the ISSUE named. raindex#1348 is the near-miss it is for.
+                &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+            ]),
+            "/ncc reads the flag queue, the flag it heads, and the PR its reason cites — and takes \
+             no audit lens, on purpose"
         );
     }
 
@@ -34623,6 +36005,10 @@ mod mcp_tests {
                 // touches, and it would fail to exercise them silently.
                 "pr_checkout",
                 "clone_release",
+                // The FLAG lane's read chain (#173). The human's OTHER inbox — the one that asks
+                // for work to be destroyed — had no "which is next" call at all, so the queue where
+                // being wrong is least recoverable was the one worked by hand.
+                "next_close_candidate",
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",

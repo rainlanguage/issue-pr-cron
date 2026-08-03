@@ -11,6 +11,7 @@ JSON-RPC frame, a Python filter over the response, and two raw `gh` calls.
 | Command                                      | The call it invokes                                                                                                                                                                                                     |
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/nr [1-3]`                                  | `next_ready` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:ready` PR, and the vetter's verdict checked against its diff, its issue and its source. Writes no GitHub state |
+| `/ncc [1-3]`                                 | `next_close_candidate` + `close_candidate_context` + `pr_context` (MCP) — the next `ai:close-candidate` flag, and the producer's reason checked against the issue as filed and the code it claims about. Writes no GitHub state |
 | `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                                                                                                           |
 | `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                                                                                                            |
 | `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`, pinned to the head sha or the issue                                                                                                                                 |
@@ -21,8 +22,8 @@ Names collide across plugins; `/human-fsm:close-candidate` disambiguates.
 
 ## The read and the writes
 
-`/nr` is the read that precedes a ruling; the rest are the rulings. They differ
-in how they reach the binary, and the difference is the point.
+`/nr` and `/ncc` are the reads that precede a ruling; the rest are the rulings.
+They differ in how they reach the binary, and the difference is the point.
 
 The rulings shell out to a `pr-review-report` subcommand. `/nr` calls **MCP
 tools** — `next_ready`, `pr_context`, `pr_checkout` and `clone_release`, served
