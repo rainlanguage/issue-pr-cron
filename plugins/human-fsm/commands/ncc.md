@@ -60,17 +60,19 @@ against, so no evidence can meet it, and saying so beats promoting the flag's
 account of the issue into the standard the flag is judged by.
 
 **4. Read the flag reason and NAME THE CLAIM'S KIND.** The producer writes
-`Close-candidate: <category>: <evidence>`, and the categories in use are
-already-fixed, invalid, duplicate, superseded and won't-fix. This is naming what
-is being CLAIMED so you know what would refute it — it is not a new ruling
-vocabulary, and the rulings at the end of this file are the only ones there are.
+`Close-candidate: <category>: <evidence>`, and its vocabulary is exactly four
+categories: `already-fixed-on-main`, `invalid`, `duplicate`, `wont-fix`. A
+reason outside that shape is itself a finding — the flag was not written by the
+transition that is supposed to write it. This is naming what is being CLAIMED so
+you know what would refute it; it is not a new ruling vocabulary, and the
+rulings at the end of this file are the only ones there are.
 
 **5. Falsify it. The kind decides the instrument.**
 
-- **already-fixed** — a claim about CODE, and the one that has actually been
-  wrong. `pr_context` on the PR the reason names, then check the diff against
-  the path and the behaviour the ISSUE named in step 3. `raindex#1348` is the
-  recorded near-miss: a merged PR that looked like the fix touched
+- **already-fixed-on-main** — a claim about CODE, and the one that has actually
+  been wrong. `pr_context` on the PR the reason names, then check the diff
+  against the path and the behaviour the ISSUE named in step 3. `raindex#1348`
+  is the recorded near-miss: a merged PR that looked like the fix touched
   `getAllDepositFields` and `getAllFieldDefinitions`, while the issue was about
   the `updateFields` path — a real PR, really merged, really adjacent, and not
   this issue's fix. Check three things and say which: the PR is **merged** (an
@@ -78,18 +80,25 @@ vocabulary, and the rulings at the end of this file are the only ones there are.
   changed files bear on **this** issue rather than a sibling; and the change
   does what the issue asked, not something in the same file. A PR that closed a
   DIFFERENT issue is evidence about that issue.
-- **already-fixed with nothing to read** — the reason names a bare commit,
-  "main", "verified locally", or nothing at all. There is no typed read on this
-  surface that reaches a commit or a branch tip, so the claim **cannot be
-  checked here**. That is not a small gap to work around: it is the reject
+- **already-fixed-on-main about RENDERED behaviour** — the flag tool requires a
+  screenshot URL, or a why-not naming the render ATTEMPT that failed, and a
+  waiver of the form "pixel-identical" / "no visible effect" / "cosmetic only"
+  is not one: it asserts the conclusion the render existed to establish. That
+  exact shape has already been human-rejected (`cyclo.site#431`). A GUI claim
+  carrying neither is unverifiable here, whatever the `file:line` beside it
+  says.
+- **already-fixed-on-main with nothing to read** — the reason names a bare
+  commit, "main", "verified locally", or nothing at all. There is no typed read
+  on this surface that reaches a commit or a branch tip, so the claim **cannot
+  be checked here**. That is not a small gap to work around: it is the reject
   condition below, and it is reached honestly rather than by finding something
   adjacent to read.
-- **duplicate / superseded** — the other issue must be READ, not assumed.
+- **duplicate** — the other issue must be READ, not assumed.
   `close_candidate_context` takes any `owner/repo#n`, so use it on the sibling:
   does it ask the same thing, and is it OPEN? A duplicate of a closed issue
   closes nothing, and two issues each named as the other's duplicate is a cycle
   that closes both.
-- **invalid / won't-fix** — these make no claim about code, so nothing in a
+- **invalid / wont-fix** — these make no claim about code, so nothing in a
   typed read refutes them. They are DESIGN positions, and agreeing with one is a
   decision the human makes on its merits rather than a check you can pass on
   their behalf. Say plainly that this is what you are doing; if the position is
@@ -98,9 +107,11 @@ vocabulary, and the rulings at the end of this file are the only ones there are.
 **6. `openPr.coverage`, whatever the reason says.** `covered-by-open-pr` means
 an open PR already claims to close this issue, and an open PR is **not a landed
 fix** — the issue is not closeable while it is in flight, even if the flag's
-reason is otherwise sound. `unreadable` means the query failed and is treated as
-covered: it blocks, and you say the query failed rather than reading a failure
-as an absence.
+reason is otherwise sound. This is the producer's own rule ("an issue merely
+COVERED BY AN OPEN PR is NOT a close-candidate"), so a flag on such an issue is
+already a flag that should not have been written, and saying so is the finding.
+`unreadable` means the query failed and is treated as covered: it blocks, and
+you say the query failed rather than reading a failure as an absence.
 
 **7. Read the vetter's word as a claim too, and check `verdict.atFlag`.** Every
 row here was upheld by the vetter — a rejected flag has its label stripped and

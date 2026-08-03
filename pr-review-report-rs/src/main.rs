@@ -16015,22 +16015,27 @@ mod next_close_candidate_tests {
     // OLDEST FLAG FIRST. The flag parks the issue — `is_producer_backlog` excludes a flagged issue
     // from the producer's queue — so the time a flag waits here is time nobody owns the issue, and
     // FIFO is what bounds the worst case of that.
+    //
+    // The issue NUMBERS deliberately run AGAINST the flag times. With the two agreeing, dropping the
+    // timestamp out of the key altogether still produced the expected order and that mutation
+    // survived: the tie-break alone would have been standing in for the whole ranking, and a queue
+    // ordered by issue number is not a queue ordered by anything.
     #[test]
     fn the_queue_is_oldest_flag_first() {
         let mut set = vec![
-            flag("o/r", 3, "2026-07-25T09:00:00Z"),
-            flag("o/r", 1, "2026-07-10T09:00:00Z"),
+            flag("o/r", 1, "2026-07-25T09:00:00Z"),
+            flag("o/r", 3, "2026-07-10T09:00:00Z"),
             flag("o/r", 2, "2026-07-20T09:00:00Z"),
         ];
         rank_flags(&mut set);
         assert_eq!(
             refs(set.iter().collect()),
-            vec!["o/r#1", "o/r#2", "o/r#3"],
+            vec!["o/r#3", "o/r#2", "o/r#1"],
             "the flag that has waited longest is the next decision"
         );
         // And NOT newest-first, the other order #173 offers: it optimises the cost of each check by
         // never reaching the flags whose evidence has decayed most.
-        assert_ne!(refs(set.iter().collect())[0], "o/r#3");
+        assert_ne!(refs(set.iter().collect())[0], "o/r#1");
     }
 
     // The order has to be TOTAL, or two runs a second apart name different heads and "which flag is
