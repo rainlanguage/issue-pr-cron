@@ -65,6 +65,7 @@
       "Bash(false:*)",
       "Bash(which:*)",
       "Bash(command:*)",
+      "Bash(ps:*)",
       "Bash(date:*)",
       "Bash(curl:*)",
       "Bash(timeout:*)",
