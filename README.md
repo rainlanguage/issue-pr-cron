@@ -1077,7 +1077,9 @@ with `^`, and one `abstract contract` pinned with `=`.
 ### Work-clone lifecycle as an MCP surface (always on)
 
 `pr-review-report mcp --profile producer` serves the **producer's** clone
-lifecycle — `clone_create`, `clone_release`, `clone_list`, `clone_gc` — plus the
+lifecycle — `clone_create`, `clone_release`, `clone_list`, `clone_gc` — plus
+**`open_pr`**, the output edge (see
+[opening a PR is a transition](#opening-a-pr-is-a-transition-open_pr)), and the
 two **body repairs**, `repair_qa_block` and `weaken_closes` (see
 [the linkage repair](#the-linkage-repair-weaken-closes)). Unlike the vetter's
 surface this one is **additive** — the producer keeps its Bash, and is wired
@@ -1203,6 +1205,60 @@ count without its array renders a number that then lists nothing. Arrays and
 counts are derived from a single document, so `counts.X == X.len()` holds by
 construction. These are ISSUE states, so — like `closeCandidateIssues` — they
 are **not** in `lanes`, which groups PRs.
+
+### Opening a PR is a transition: `open_pr`
+
+Every other move the producer makes is a tool. Opening the PR — the one move
+that **is** the run's output — was a `gh pr create` inside Bash, which leaves a
+shell string in the trace and nothing a reader can join on. On the reference
+producer run that is **1,986 Bash calls against 35 MCP calls**, so the question
+"which dispatched task produced which PR" had no answer in the record the
+pipeline keeps. The cost side already had one (`token-report` splits a run by
+`parent_tool_use_id`); the output side did not, which made _what did it cost to
+land this_ unanswerable.
+
+`open_pr` is that edge as a tool:
+
+```json
+{
+  "repo": "rainlanguage/rain.solmem",
+  "head": "2026-08-02-issue-63",
+  "title": "Guard the empty inner position",
+  "body_file": "/scratch/pr-63.md",
+  "closes": 63
+}
+```
+
+and its **result** carries the PR number and url, so one typed line of the trace
+holds the whole `{agent, repo, issue, PR}` tuple. That tuple is what
+[`work-tokens`](#tokens-to-land-work-work-tokens) joins on.
+
+Four properties are deliberate:
+
+- **The QA gate runs BEFORE anything is created**, using
+  [`carries_qa_block`](#the-retrofit-repair-qa-block) — THE predicate, now with
+  three callers (the PR-open hook, the retrofit, and this). A body this tool
+  accepts is a body `require-qa-block` accepts by construction rather than by
+  two implementations agreeing, and a refusal (exit 3) provably created nothing,
+  so it costs one edit inside the run.
+- **`body_file` is a FILE, and absolute.** The bytes stay on disk for the trace,
+  and the MCP server's working directory is the cron's, not the caller's clone —
+  so a relative path names a file neither side can identify, and is refused.
+- **`closes` is a number, not prose.** The tool writes the canonical `Closes #N`
+  line only when [`closing_keywords`](#the-linkage-repair-weaken-closes) says
+  the body does not already close that issue, and the result reports every issue
+  the posted body closes. Stating a linkage at PR-open is what the producer
+  always did in prose; `weaken-closes`'s direction lock is untouched (it guards
+  a PR a human may already have read, where adding a `Closes` would
+  retroactively mark work covered).
+- **The PR number is read out of gh's OWN url**, and a url that cannot be read
+  is its own refusal (exit 6) saying the PR **was** created — retrying it would
+  open a second one.
+
+The `require-qa-block` PreToolUse hook stays exactly as it is. It binds every
+session on the box, including the interactive ones with no MCP surface at all,
+which are the population it was filed about; it is simply redundant on the cron
+producer's path now.
 
 ### The subject-reference shape
 
@@ -1356,10 +1412,11 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 - **Producer** (`campaign-run.sh`, every 4h at :00 of 1,5,9,13,17,21 UTC) —
   opens drives its OWN red PRs green FIRST (existing in-flight work, non-force
   commits), THEN opens one fix PR per tractable, uncovered issue (audit-backlog
-  first). Org-mutating actions: `gh pr create`, `gh pr comment` (screenshots),
-  and non-force `git push` to its own PR branches. Never
-  merges/closes/deploys/force-pushes. Skips issues with a `reject` verdict
-  (parked for a human, so a rejected fix isn't re-attempted into dead PRs).
+  first). Org-mutating actions: `open_pr` (a tool, not `gh pr create`),
+  `gh pr comment` (screenshots), and non-force `git push` to its own PR
+  branches. Never merges/closes/deploys/force-pushes. Skips issues with a
+  `reject` verdict (parked for a human, so a rejected fix isn't re-attempted
+  into dead PRs).
 - **Vetter** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) —
   AI-reviews open PRs and records a verdict as an `ai:*` label plus a sha-bound
   comment. Approval is the human's gate.
@@ -1371,14 +1428,14 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 
 ## Scope — read this first
 
-**The org-mutating actions this routine takes are `gh pr create`,
-`gh pr comment` (UI screenshots), and a non-force `git push` of fix commits to
-its OWN open red PR branches (to drive them green).** It **never** merges,
-deploys, force-pushes, or closes/edits/comments-on issues. If it believes an
-issue should be closed (already fixed, invalid, duplicate) it records a
-_close-candidate_ — it never acts on it. This is enforced two ways: the
-permission deny-list in `campaign-settings.json` and the rules in
-`campaign-prompt.txt` (step 7 / 7a).
+**The org-mutating actions this routine takes are `open_pr` (the producer MCP
+tool that opens a PR, replacing `gh pr create`), `gh pr comment` (UI
+screenshots), and a non-force `git push` of fix commits to its OWN open red PR
+branches (to drive them green).** It **never** merges, deploys, force-pushes, or
+closes/edits/comments-on issues. If it believes an issue should be closed
+(already fixed, invalid, duplicate) it records a _close-candidate_ — it never
+acts on it. This is enforced two ways: the permission deny-list in
+`campaign-settings.json` and the rules in `campaign-prompt.txt` (step 7 / 7a).
 
 That flag is then **vetted before a human sees it**. The producer is the party
 with an incentive to believe its own evidence, so the vetter judges the claim
@@ -1414,11 +1471,11 @@ A prompt is advice and a permission deny-list is prefix-matched, so some
 invariants can only be held by a PreToolUse hook, which sees the actual tool
 call. Three are wired that way. **Only two of them are scripts:**
 
-| Guard                               | Holds                                                                                                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pr-review-report require-qa-block` | QA-GUIDE.md section 8 — a `gh pr create` whose body has no `## QA` section, or names fewer than all four evidence lines, is refused with what's missing |
-| `hooks/block-nix-wrap-gh.sh`        | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                  |
-| `hooks/block-cron-git-bypass.sh`    | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                  |
+| Guard                               | Holds                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr-review-report require-qa-block` | QA-GUIDE.md section 8 — a `gh pr create` whose body has no `## QA` section, or names fewer than all four evidence lines, is refused with what's missing. Redundant on the cron producer's path since `open_pr` (which applies the same predicate before creating anything); still the only thing holding the rule for a session opened outside the cron |
+| `hooks/block-nix-wrap-gh.sh`        | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                                                                                                                                                                                                                  |
+| `hooks/block-cron-git-bypass.sh`    | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                                                                                                                                                                                                                  |
 
 The QA gate is a **subcommand**, per CLAUDE.md's north star: everything it does
 is parsing — a shell word-splitter, a heading scanner, a distinct-line
@@ -1429,6 +1486,57 @@ manifests plus the crate, so a repo-root script is absent there and every test
 driving one skipped. The other two are still bash and still untested —
 [#10](https://github.com/rainlanguage/issue-pr-cron/issues/10) tracks giving
 them the same treatment.
+
+### Why the producer has no interpreter
+
+Measured over 18 producer traces
+([#171](https://github.com/rainlanguage/issue-pr-cron/issues/171)): **358
+permission denials in 6,350 tool calls**, against 533 error results — two of
+every three errors a run reads back is the permission layer refusing a command
+**shape**, not a tool doing something wrong. A denied call costs a round trip
+and then sits in context to be re-read for the rest of the run.
+
+The tempting fix is to permit `bash` / `sh` / `python3`, so a multi-step
+sequence can go in a script file. **It is the one change that must not be
+made**, and the reason is measured rather than argued — run against this harness
+with `Bash(bash:*)` allowed and `Bash(touch:*)` denied, `bash -c 'touch …'`
+creates the file, `sh <script>` runs whatever the file says, and
+`bash -c 'cd <dir> && git …'` walks straight past the cd-before-git refusal. A
+rule matches a command **string**, and an interpreter is a command whose string
+says nothing about what it will do: `gh pr merge`, `gh issue close`,
+`git push --force` and a `gh pr create` that never meets `require-qa-block` all
+come back within reach — by ACCIDENT, not by intent, because a provisioning
+script is precisely what a model reaches for when a sequence gets long. It also
+buys nothing for the denials actually being paid: a `for` loop is refused for
+its shape with `bash` permitted exactly as without it.
+
+The deny-list is not airtight as it stands — `node -e`, `npm run`, `npx`,
+`nix run` and `cargo run` are all allow-listed and all execute arbitrary code.
+That is the point rather than a counter-argument: what the list buys is that the
+common ACCIDENT is impossible, and each of those needs a deliberate wrapper the
+model has no habitual reason to write. The one escape hatch it DID reach for out
+of habit had to be closed by hand — that is what `hooks/block-nix-wrap-gh.sh`
+is.
+
+So the denials are answered where they are actually decidable, in the prompt.
+The permission check is **not** a first-token match: it parses the command,
+resolves `env` / `timeout` / `xargs` down to what they would really run, and
+refuses what it cannot statically verify. That makes every refusal
+deterministic, and therefore teachable:
+
+| Class                                    | Denials | Answer                                                                         |
+| ---------------------------------------- | ------: | ------------------------------------------------------------------------------ |
+| `cd <dir> && git …`                      |     110 | `git -C <dir> …` (a `cd` before `gh`, or before anything else, is fine)        |
+| loops, `$(…)`, `<(…)`, `( … )`           |     ~94 | separate tool calls; one `jq`/`grep` pipeline instead of ten iterations        |
+| bare `VAR=value <cmd>` prefix            |     ~40 | `env VAR=value <cmd>` (`env -C <dir>` is refused too — `env` carries no dir)   |
+| `cp` with any flag                       |     ~21 | regenerate artifacts in the clone that needs them; plain `cp <src> <dst>` only |
+| `bash` / `sh` / `python3` script or `-c` |      18 | there is no interpreter, by the section above                                  |
+
+`Monitor` needs no allow-list entry: its `command` is checked against the same
+Bash rules (a denial reads "Permission to use Bash with command …"), so a denied
+`Monitor` is always a command to rewrite. A loop INSIDE it is accepted, which
+makes `until <check>; do sleep …; done` the sanctioned wait even though the
+identical loop is refused as a Bash call.
 
 ### The retrofit: `repair-qa-block`
 
@@ -1833,6 +1941,63 @@ the three exact fields account for a **median 72%** of a run's spend, range
 55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
 the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
 
+### Tokens to land work — `work-tokens`
+
+`pr-review-report work-tokens metrics/runs.jsonl [--json]`.
+
+**Cost per RUN rewards doing less** — a run that dispatches nothing is the
+cheapest run this pipeline can have, and it produces nothing. **Cost per
+dispatched TASK rewards cheap tasks that land nothing**, the same failure one
+level down. Only a denominator made of OUTPUT resists both, so the denominator
+is **landed work items** and the numerator is **everything the corpus spent** —
+churn and orchestration included, because what a landed item cost includes what
+it cost not to land the others.
+
+Three buckets, and **only one of them is waste**:
+
+| bucket                     | means                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `landed`                   | the work item merged                                                                                          |
+| `delivered-awaiting-human` | PR open and [presentable](#reviewing-the-output--the-merge-pipeline) (green, mergeable) — or already approved |
+| `churn`                    | reworked, abandoned, or no work item at all                                                                   |
+
+Landing is human-gated **by design**, so a green mergeable PR is not a failure
+of the pipeline — it is the pipeline having finished. Reading that backlog as
+waste would measure the human's review bandwidth and call it the producer's
+efficiency, which is why `delivered-awaiting-human` is its own bucket and the
+report says so in both its renderings. `per DELIVERED item` is what the pipeline
+controls; `per LANDED item` additionally depends on how fast the human merges.
+
+**The join is typed or it does not exist.** A dispatch label is free text: over
+40 real labels a regex invents **eight** work items that do not exist (`batch#1`
+out of "cyclo.site conflicts batch 1", `A0#2` out of "rain.solmem A02 sentinel
+alignment PR"). A denominator that is partly hallucinated is worse than no
+metric, so there is no label parser — a task's work item is what
+[`open_pr`](#opening-a-pr-is-a-transition-open_pr) recorded, and a task with
+none is churn.
+
+`clone_create` is typed too and is deliberately **not** a second source. Its
+`branch` names a CLONE, not a deliverable, and resolving it through GitHub's
+head index invents items exactly the way the regex does: on the 2026-07-29T17
+run one task cloned `main` to read it, and
+`gh pr list -R rainlanguage/raindex --head main` answers with a real, closed PR
+that task never touched. Typed data joined on the wrong key is still a wrong
+join.
+
+The corpus is **small and stated**: task-level rows exist only for runs that
+dispatched subagents AND whose trace survives — 3 runs, 40 tasks as of
+2026-08-03. It is a snapshot, not a trend. Every run that could not be used is
+counted with its reason, and typed coverage is printed as a fraction, so a
+reader can see how much the number rests on. Every one of those 40 tasks
+predates `open_pr`, so today coverage is 0/40, everything is churn, and the
+headline is `n/a` rather than a zero — the metric needs one merged work item to
+exist, and it starts acquiring them on the first producer run after `open_pr`
+ships.
+
+A PR that cannot be read is `unresolved` and sits in **no** bucket: folding it
+into churn would let a transient `gh` failure print a worse waste figure, and
+folding it into landed would print a better one.
+
 ### Rate-limit windows — `rateLimits`
 
 Every record (`usage` and `final`) carries a `rateLimits` object, keyed by the
@@ -1956,8 +2121,9 @@ shape; the two presence gates are what hold that bug.
    is forbidden).
 4. For each tractable, genuinely-uncovered issue: clone, branch, implement a
    minimal fix with mutation-validated tests, build + test, open ONE PR per
-   issue (`gh pr create --assignee $PR_ASSIGNEE`, body `Closes #N` / `Refs #N`).
-   If already fixed on main → no PR, log a close-candidate.
+   issue (the `open_pr` tool: it assigns `$PR_ASSIGNEE` and writes the
+   `Closes #N` linkage from a typed `closes` argument). If already fixed on main
+   → no PR, log a close-candidate.
 5. UI PRs require a screenshot (headless chromium harness → `pr-screenshots`
    branch).
 6. End with a summary: PRs opened, issues skipped, close-candidates logged.
