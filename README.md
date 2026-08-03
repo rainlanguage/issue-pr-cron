@@ -1386,6 +1386,57 @@ driving one skipped. The other two are still bash and still untested —
 [#10](https://github.com/rainlanguage/issue-pr-cron/issues/10) tracks giving
 them the same treatment.
 
+### Why the producer has no interpreter
+
+Measured over 18 producer traces
+([#171](https://github.com/rainlanguage/issue-pr-cron/issues/171)): **358
+permission denials in 6,350 tool calls**, against 533 error results — two of
+every three errors a run reads back is the permission layer refusing a command
+**shape**, not a tool doing something wrong. A denied call costs a round trip
+and then sits in context to be re-read for the rest of the run.
+
+The tempting fix is to permit `bash` / `sh` / `python3`, so a multi-step
+sequence can go in a script file. **It is the one change that must not be
+made**, and the reason is measured rather than argued — run against this harness
+with `Bash(bash:*)` allowed and `Bash(touch:*)` denied, `bash -c 'touch …'`
+creates the file, `sh <script>` runs whatever the file says, and
+`bash -c 'cd <dir> && git …'` walks straight past the cd-before-git refusal. A
+rule matches a command **string**, and an interpreter is a command whose string
+says nothing about what it will do: `gh pr merge`, `gh issue close`,
+`git push --force` and a `gh pr create` that never meets `require-qa-block` all
+come back within reach — by ACCIDENT, not by intent, because a provisioning
+script is precisely what a model reaches for when a sequence gets long. It also
+buys nothing for the denials actually being paid: a `for` loop is refused for
+its shape with `bash` permitted exactly as without it.
+
+The deny-list is not airtight as it stands — `node -e`, `npm run`, `npx`,
+`nix run` and `cargo run` are all allow-listed and all execute arbitrary code.
+That is the point rather than a counter-argument: what the list buys is that the
+common ACCIDENT is impossible, and each of those needs a deliberate wrapper the
+model has no habitual reason to write. The one escape hatch it DID reach for out
+of habit had to be closed by hand — that is what `hooks/block-nix-wrap-gh.sh`
+is.
+
+So the denials are answered where they are actually decidable, in the prompt.
+The permission check is **not** a first-token match: it parses the command,
+resolves `env` / `timeout` / `xargs` down to what they would really run, and
+refuses what it cannot statically verify. That makes every refusal
+deterministic, and therefore teachable:
+
+| Class                                    | Denials | Answer                                                                         |
+| ---------------------------------------- | ------: | ------------------------------------------------------------------------------ |
+| `cd <dir> && git …`                      |     110 | `git -C <dir> …` (a `cd` before `gh`, or before anything else, is fine)        |
+| loops, `$(…)`, `<(…)`, `( … )`           |     ~94 | separate tool calls; one `jq`/`grep` pipeline instead of ten iterations        |
+| bare `VAR=value <cmd>` prefix            |     ~40 | `env VAR=value <cmd>` (`env -C <dir>` is refused too — `env` carries no dir)   |
+| `cp` with any flag                       |     ~21 | regenerate artifacts in the clone that needs them; plain `cp <src> <dst>` only |
+| `bash` / `sh` / `python3` script or `-c` |      18 | there is no interpreter, by the section above                                  |
+
+`Monitor` needs no allow-list entry: its `command` is checked against the same
+Bash rules (a denial reads "Permission to use Bash with command …"), so a denied
+`Monitor` is always a command to rewrite. A loop INSIDE it is accepted, which
+makes `until <check>; do sleep …; done` the sanctioned wait even though the
+identical loop is refused as a Bash call.
+
 ### The retrofit: `repair-qa-block`
 
 The QA gate is on **open**, so it stopped the population of block-less PRs
