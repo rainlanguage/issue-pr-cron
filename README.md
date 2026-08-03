@@ -1170,8 +1170,8 @@ shell string in the trace and nothing a reader can join on. On the reference
 producer run that is **1,986 Bash calls against 35 MCP calls**, so the question
 "which dispatched task produced which PR" had no answer in the record the
 pipeline keeps. The cost side already had one (`token-report` splits a run by
-`parent_tool_use_id`); the output side did not, which made
-_what did it cost to land this_ unanswerable.
+`parent_tool_use_id`); the output side did not, which made _what did it cost to
+land this_ unanswerable.
 
 `open_pr` is that edge as a tool:
 
@@ -1200,12 +1200,12 @@ Four properties are deliberate:
 - **`body_file` is a FILE, and absolute.** The bytes stay on disk for the trace,
   and the MCP server's working directory is the cron's, not the caller's clone —
   so a relative path names a file neither side can identify, and is refused.
-- **`closes` is a number, not prose.** The tool writes the canonical
-  `Closes #N` line only when [`closing_keywords`](#the-linkage-repair-weaken-closes)
-  says the body does not already close that issue, and the result reports every
-  issue the posted body closes. Stating a linkage at PR-open is what the
-  producer always did in prose; `weaken-closes`'s direction lock is untouched
-  (it guards a PR a human may already have read, where adding a `Closes` would
+- **`closes` is a number, not prose.** The tool writes the canonical `Closes #N`
+  line only when [`closing_keywords`](#the-linkage-repair-weaken-closes) says
+  the body does not already close that issue, and the result reports every issue
+  the posted body closes. Stating a linkage at PR-open is what the producer
+  always did in prose; `weaken-closes`'s direction lock is untouched (it guards
+  a PR a human may already have read, where adding a `Closes` would
   retroactively mark work covered).
 - **The PR number is read out of gh's OWN url**, and a url that cannot be read
   is its own refusal (exit 6) saying the PR **was** created — retrying it would
@@ -1369,10 +1369,10 @@ The three crons are **staggered by 2 h** so work flows downstream within each
   opens drives its OWN red PRs green FIRST (existing in-flight work, non-force
   commits), THEN opens one fix PR per tractable, uncovered issue (audit-backlog
   first). Org-mutating actions: `open_pr` (a tool, not `gh pr create`),
-  `gh pr comment` (screenshots),
-  and non-force `git push` to its own PR branches. Never
-  merges/closes/deploys/force-pushes. Skips issues with a `reject` verdict
-  (parked for a human, so a rejected fix isn't re-attempted into dead PRs).
+  `gh pr comment` (screenshots), and non-force `git push` to its own PR
+  branches. Never merges/closes/deploys/force-pushes. Skips issues with a
+  `reject` verdict (parked for a human, so a rejected fix isn't re-attempted
+  into dead PRs).
 - **Vetter** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) —
   AI-reviews open PRs and records a verdict as an `ai:*` label plus a sha-bound
   comment. Approval is the human's gate.
@@ -1385,14 +1385,13 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 ## Scope — read this first
 
 **The org-mutating actions this routine takes are `open_pr` (the producer MCP
-tool that opens a PR, replacing `gh pr create`),
-`gh pr comment` (UI screenshots), and a non-force `git push` of fix commits to
-its OWN open red PR branches (to drive them green).** It **never** merges,
-deploys, force-pushes, or closes/edits/comments-on issues. If it believes an
-issue should be closed (already fixed, invalid, duplicate) it records a
-_close-candidate_ — it never acts on it. This is enforced two ways: the
-permission deny-list in `campaign-settings.json` and the rules in
-`campaign-prompt.txt` (step 7 / 7a).
+tool that opens a PR, replacing `gh pr create`), `gh pr comment` (UI
+screenshots), and a non-force `git push` of fix commits to its OWN open red PR
+branches (to drive them green).** It **never** merges, deploys, force-pushes, or
+closes/edits/comments-on issues. If it believes an issue should be closed
+(already fixed, invalid, duplicate) it records a _close-candidate_ — it never
+acts on it. This is enforced two ways: the permission deny-list in
+`campaign-settings.json` and the rules in `campaign-prompt.txt` (step 7 / 7a).
 
 That flag is then **vetted before a human sees it**. The producer is the party
 with an incentive to believe its own evidence, so the vetter judges the claim
@@ -1428,11 +1427,11 @@ A prompt is advice and a permission deny-list is prefix-matched, so some
 invariants can only be held by a PreToolUse hook, which sees the actual tool
 call. Three are wired that way. **Only two of them are scripts:**
 
-| Guard                               | Holds                                                                                                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Guard                               | Holds                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pr-review-report require-qa-block` | QA-GUIDE.md section 8 — a `gh pr create` whose body has no `## QA` section, or names fewer than all four evidence lines, is refused with what's missing. Redundant on the cron producer's path since `open_pr` (which applies the same predicate before creating anything); still the only thing holding the rule for a session opened outside the cron |
-| `hooks/block-nix-wrap-gh.sh`        | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                  |
-| `hooks/block-cron-git-bypass.sh`    | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                  |
+| `hooks/block-nix-wrap-gh.sh`        | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                                                                                                                                                                                                                  |
+| `hooks/block-cron-git-bypass.sh`    | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                                                                                                                                                                                                                  |
 
 The QA gate is a **subcommand**, per CLAUDE.md's north star: everything it does
 is parsing — a shell word-splitter, a heading scanner, a distinct-line
@@ -1861,11 +1860,11 @@ it cost not to land the others.
 
 Three buckets, and **only one of them is waste**:
 
-| bucket                     | means                                                       |
-| -------------------------- | ----------------------------------------------------------- |
-| `landed`                   | the work item merged                                        |
+| bucket                     | means                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `landed`                   | the work item merged                                                                                          |
 | `delivered-awaiting-human` | PR open and [presentable](#reviewing-the-output--the-merge-pipeline) (green, mergeable) — or already approved |
-| `churn`                    | reworked, abandoned, or no work item at all                 |
+| `churn`                    | reworked, abandoned, or no work item at all                                                                   |
 
 Landing is human-gated **by design**, so a green mergeable PR is not a failure
 of the pipeline — it is the pipeline having finished. Reading that backlog as
@@ -2028,8 +2027,8 @@ shape; the two presence gates are what hold that bug.
 4. For each tractable, genuinely-uncovered issue: clone, branch, implement a
    minimal fix with mutation-validated tests, build + test, open ONE PR per
    issue (the `open_pr` tool: it assigns `$PR_ASSIGNEE` and writes the
-   `Closes #N` linkage from a typed `closes` argument).
-   If already fixed on main → no PR, log a close-candidate.
+   `Closes #N` linkage from a typed `closes` argument). If already fixed on main
+   → no PR, log a close-candidate.
 5. UI PRs require a screenshot (headless chromium harness → `pr-screenshots`
    branch).
 6. End with a summary: PRs opened, issues skipped, close-candidates logged.
