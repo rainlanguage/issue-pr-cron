@@ -9,8 +9,8 @@
     {
       "name": "human-fsm",
       "source": "./plugins/human-fsm",
-      "description": "Slash commands for the human's side of the issue→PR pipeline FSM: read the next ai:ready PR and check the vetter's verdict against the diff and the issue it closes, then rule on a close-candidate, reject, raise a design question, or keep an issue open. Every input comes from pr-review-report; none writes GitHub state itself.",
-      "version": "0.6.0",
+      "description": "Slash commands for the human's side of the issue→PR pipeline FSM: read the next ai:ready PR and check the vetter's verdict against the diff and the issue it closes, read the next ai:close-candidate flag and check the producer's reason against the issue and the code it claims about, then rule on a close-candidate, reject, raise a design question, or keep an issue open. Every input comes from pr-review-report; none writes GitHub state itself.",
+      "version": "0.7.0",
       "author": { "name": "Rain Open Source Software Ltd" },
       "keywords": [
         "rainlanguage",

@@ -8,30 +8,37 @@ halves of a decision — the read it rests on and the ruling it becomes — reac
 that binary **through typed calls and nothing else**, rather than a hand-written
 JSON-RPC frame, a Python filter over the response, and two raw `gh` calls.
 
-| Command                                      | The call it invokes                                                                                                                                                                                                     |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/nr [1-3]`                                  | `next_ready` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:ready` PR, and the vetter's verdict checked against its diff, its issue and its source. Writes no GitHub state |
-| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                                                                                                           |
-| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                                                                                                            |
-| `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`, pinned to the head sha or the issue                                                                                                                                 |
-| `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                                                                                                                                                                      |
-| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this" (issue-only)                                                                                                                                           |
+| Command                                      | The call it invokes                                                                                                                                                                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/nr [1-3]`                                  | `next_ready` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:ready` PR, and the vetter's verdict checked against its diff, its issue and its source. Writes no GitHub state         |
+| `/ncc [1-3]`                                 | `next_close_candidate` + `close_candidate_context` + `pr_context` (MCP) — the next `ai:close-candidate` flag, and the producer's reason checked against the issue as filed and the code it claims about. Writes no GitHub state |
+| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                                                                                                                   |
+| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                                                                                                                    |
+| `/reject <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:reject`, pinned to the head sha or the issue                                                                                                                                         |
+| `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                                                                                                                                                                              |
+| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this" (issue-only)                                                                                                                                                   |
 
 Names collide across plugins; `/human-fsm:close-candidate` disambiguates.
 
-## The read and the writes
+## The reads and the writes
 
-`/nr` is the read that precedes a ruling; the rest are the rulings. They differ
-in how they reach the binary, and the difference is the point.
+`/nr` and `/ncc` are the reads that precede a ruling; the rest are the rulings.
+They differ in how they reach the binary, and the difference is the point.
 
-The rulings shell out to a `pr-review-report` subcommand. `/nr` calls **MCP
-tools** — `next_ready`, `pr_context`, `pr_checkout` and `clone_release`, served
-by the `fsm` server this plugin ships in its own manifest — plus `Skill` and
-`Read`, and **no shell at all**. It does not fall back to `gh`, does not
-assemble a field itself, and does not quietly answer from memory: either the
-tools answered or the command says so and stops. That is the guarantee a merge
-decision needs, because the way this goes wrong is not a refusal, it is a
-plausible answer nobody can trace.
+The rulings shell out to a `pr-review-report` subcommand. Both reads call **MCP
+tools** — served by the `fsm` server this plugin ships in its own manifest — and
+**no shell at all**. `/nr` is granted `next_ready`, `pr_context`, `pr_checkout`
+and `clone_release`, plus `Skill` and `Read`, which it needs because it puts the
+PR's source on disk and audits it. `/ncc` is granted `next_close_candidate`,
+`close_candidate_context` and `pr_context`, and those three only: a flag has no
+diff and no tree to check out, so there is nothing for `Skill` or `Read` to
+reach, and a grant a command cannot use is surface it cannot account for.
+Neither falls back to `gh`, neither assembles a field itself, and neither
+quietly answers from memory: either the tools answered or the command says so
+and stops. That is the guarantee a merge decision needs, because the way this
+goes wrong is not a refusal, it is a plausible answer nobody can trace — and a
+close decision needs it no less, since upholding a flag closes an issue somebody
+filed.
 
 The `allowed-tools` line is a **declaration**, not a sandbox — measured on
 Claude Code 2.1.220, a command granting only `Read` still ran a `Bash` call with
