@@ -2227,6 +2227,535 @@ fn run_metrics(content: &str) -> RunMetrics {
     m
 }
 
+/// USD per MILLION tokens for one model.
+///
+/// Cache writes are split by TTL because the two are priced differently (1h is 2x input, 5m is
+/// 1.25x) and the trace records which was used — pricing both at one rate was worth tens of
+/// dollars a run on the traces this was built against.
+struct Rates {
+    input: f64,
+    output: f64,
+    cache_read: f64,
+    cache_write_5m: f64,
+    cache_write_1h: f64,
+}
+
+/// PURE: per-million rates for a model id.
+///
+/// Matched on a PREFIX, not equality: the harness reports `claude-opus-5` today but has reported
+/// dated variants before, and a table that falls through on an unrecognised suffix prices an Opus
+/// run at Haiku rates without saying so. The fallback is the Opus tier on purpose — for a fleet
+/// that runs Opus and Fable, guessing the cheaper of the two understates, and an understated cost
+/// is a wrong answer nobody goes back to check.
+fn rates_for(model: &str) -> Rates {
+    let (input, output) =
+        if model.starts_with("claude-fable-5") || model.starts_with("claude-mythos") {
+            (10.0, 50.0)
+        } else if model.starts_with("claude-sonnet") {
+            (3.0, 15.0)
+        } else if model.starts_with("claude-haiku") {
+            (1.0, 5.0)
+        } else {
+            // claude-opus-* and anything unrecognised.
+            (5.0, 25.0)
+        };
+    Rates {
+        input,
+        output,
+        cache_read: input * 0.1,
+        cache_write_5m: input * 1.25,
+        cache_write_1h: input * 2.0,
+    }
+}
+
+/// What one agent — the main loop, or one dispatched subagent — spent.
+///
+/// There is deliberately no output-token field. `usage.output_tokens` on a streamed assistant
+/// event is a message-START snapshot that this trace never revises (the same `message.id` repeats
+/// it unchanged), so summing it yields 59,641 against the harness's true 1,107,017 — an 18x
+/// understatement. Output is real money (~19% of a run) but is only knowable whole-run, from
+/// `result.modelUsage`; see [`unattributable_output`]. A column that is wrong by 18x is worse than
+/// no column.
+#[derive(Debug, Default, PartialEq, Clone)]
+struct AgentSpend {
+    /// `__main__`, or the `tool_use` id of the `Agent` call that spawned it.
+    id: String,
+    /// The dispatching call's `description`, or `main loop`. Never the agent's own prompt: the
+    /// description is what the operator wrote to name the work, so it is the label that means
+    /// something in a cost table.
+    label: String,
+    messages: usize,
+    tokens_in: u64,
+    cache_read: u64,
+    cache_write_5m: u64,
+    cache_write_1h: u64,
+    usd: f64,
+}
+
+/// PURE: the run's output tokens and their cost, which no per-agent key can carry.
+///
+/// Read from `result.modelUsage`, the only place the real figure appears. Every `result` line
+/// repeats the same whole-run totals, so the last one is taken rather than summed — summing would
+/// multiply the run by its result count (twelve, on the trace this was built against).
+///
+/// Priced per model, because a fleet that runs the producer on Opus and the vetter on Fable pays
+/// $25 and $50 per million for the same field.
+fn unattributable_output(content: &str) -> (u64, f64) {
+    let mut tokens = 0u64;
+    let mut usd = 0.0;
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if ev.get("type").and_then(|t| t.as_str()) != Some("result") {
+            continue;
+        }
+        let Some(mu) = ev.get("modelUsage").and_then(|m| m.as_object()) else {
+            continue;
+        };
+        // Overwrite, never accumulate: these are whole-run totals, restated.
+        tokens = 0;
+        usd = 0.0;
+        for (model, u) in mu {
+            let out = u.get("outputTokens").and_then(|n| n.as_u64()).unwrap_or(0);
+            tokens += out;
+            usd += out as f64 * rates_for(model).output / 1e6;
+        }
+    }
+    (tokens, usd)
+}
+
+/// PURE: attribute a run's token spend to the agent that incurred it, dearest first.
+///
+/// No new instrumentation is needed for this: every assistant event already carries
+/// `parent_tool_use_id` — null on the main thread, and the id of the dispatching `Agent` tool_use
+/// on a subagent's own turns. [`UsageProbe`] discards exactly those non-null events, deliberately,
+/// because it reconciles against `result.usage`, which counts the main thread only. That is why a
+/// runs.jsonl record can carry a $136 `costUsd` beside token counts describing $5 of it: the cost
+/// field is whole-run, the token fields are main-thread. This groups by the same key instead of
+/// dropping it, so those two halves can be read against each other.
+///
+/// Dedupe is by `message.id` across ALL threads (the same message is re-emitted as it streams),
+/// which is [`UsageProbe`]'s rule applied one level wider.
+fn token_attribution(content: &str) -> Vec<AgentSpend> {
+    use std::collections::{HashMap, HashSet};
+    let mut agents: HashMap<String, AgentSpend> = HashMap::new();
+    let mut labels: HashMap<String, String> = HashMap::new();
+    let mut counted: HashSet<String> = HashSet::new();
+
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        // Only `assistant` events carry model usage, and only they issue tool calls. [`UsageProbe`]
+        // guards the same way ten lines from here, and two readers of one stream disagreeing about
+        // which events count is how a future event type silently doubles a run's cost. No trace on
+        // disk has usage on any other type — this is parity with the existing reader, not a fix for
+        // an observed defect.
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(msg) = ev.get("message") else {
+            continue;
+        };
+
+        // An `Agent` tool_use names the work its subagent is about to do. Recorded from whichever
+        // thread issues it, so a nested dispatch is labelled too.
+        if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
+            for b in blocks {
+                let is_dispatch = b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                    && matches!(
+                        b.get("name").and_then(|n| n.as_str()),
+                        Some("Agent") | Some("Task")
+                    );
+                if !is_dispatch {
+                    continue;
+                }
+                let (Some(id), Some(input)) =
+                    (b.get("id").and_then(|i| i.as_str()), b.get("input"))
+                else {
+                    continue;
+                };
+                if let Some(d) = input.get("description").and_then(|d| d.as_str()) {
+                    labels.insert(id.to_string(), d.to_string());
+                }
+            }
+        }
+
+        let Some(usage) = msg.get("usage") else {
+            continue;
+        };
+        // Dedupe on `message.id`, which repeats as a message streams. An ABSENT id and an EMPTY one
+        // are treated alike: neither identifies a message, so each such event is counted rather
+        // than deduped. Letting `""` into the set would make the first empty-id message swallow
+        // every later one — dropping real spend to avoid double-counting a case no trace exhibits.
+        match msg.get("id").and_then(|i| i.as_str()) {
+            Some(id) if !id.is_empty() => {
+                if !counted.insert(id.to_string()) {
+                    continue;
+                }
+            }
+            _ => {}
+        }
+
+        let owner = ev
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .unwrap_or("__main__")
+            .to_string();
+        let g = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+        let cc = usage.get("cache_creation");
+        let ttl = |k: &str| cc.and_then(|c| c.get(k)).and_then(|n| n.as_u64());
+        // Absent breakdown: charge the whole write at the 5m rate. The default TTL is the honest
+        // assumption when the trace does not say, and it is the cheaper of the two — this
+        // understates rather than inventing a premium the run may never have paid.
+        let (w5, w1) = match (
+            ttl("ephemeral_5m_input_tokens"),
+            ttl("ephemeral_1h_input_tokens"),
+        ) {
+            (None, None) => (g("cache_creation_input_tokens"), 0),
+            (a, b) => (a.unwrap_or(0), b.unwrap_or(0)),
+        };
+
+        let rates = rates_for(msg.get("model").and_then(|m| m.as_str()).unwrap_or(""));
+        let e = agents.entry(owner.clone()).or_insert_with(|| AgentSpend {
+            id: owner.clone(),
+            ..Default::default()
+        });
+        e.messages += 1;
+        e.tokens_in += g("input_tokens");
+        e.cache_read += g("cache_read_input_tokens");
+        e.cache_write_5m += w5;
+        e.cache_write_1h += w1;
+        // No output term — see [`AgentSpend`].
+        e.usd += (g("input_tokens") as f64 * rates.input
+            + g("cache_read_input_tokens") as f64 * rates.cache_read
+            + w5 as f64 * rates.cache_write_5m
+            + w1 as f64 * rates.cache_write_1h)
+            / 1e6;
+    }
+
+    let mut rows: Vec<AgentSpend> = agents.into_values().collect();
+    for r in &mut rows {
+        r.label = if r.id == "__main__" {
+            "main loop".to_string()
+        } else {
+            // An unlabelled id is a dispatch this trace never showed — a resumed run, or a stream
+            // that lost the dispatching turn. Naming the id beats printing an empty cell.
+            labels.get(&r.id).cloned().unwrap_or_else(|| r.id.clone())
+        };
+    }
+    rows.sort_by(|a, b| {
+        b.usd
+            .partial_cmp(&a.usd)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    rows
+}
+
+/// Round a dollar figure to the mils every cost field in the record already uses.
+fn round3(usd: f64) -> f64 {
+    (usd * 1000.0).round() / 1000.0
+}
+
+/// The whole-run spend block [`final_record`] carries beside its frozen legacy cost fields.
+///
+/// One struct rather than four parameters so a test that cares about `outcome` or `infraDown` can
+/// pass `&SpendRecord::default()` and say nothing about spend — and so the next field added here
+/// does not touch a single call site.
+#[derive(Default)]
+struct SpendRecord<'a> {
+    agents: &'a [AgentSpend],
+    output_tokens: u64,
+    output_usd: f64,
+    billed_usd: f64,
+}
+
+impl SpendRecord<'_> {
+    /// What the per-agent rows sum to — everything the trace can attribute to a dispatch.
+    fn attributed(&self) -> f64 {
+        self.agents.iter().map(|a| a.usd).sum()
+    }
+
+    /// Whole-run totals: every thread, not just the main one. These SUPERSEDE the same-named
+    /// fields on [`RunMetrics`], which read one result line's `usage` and so describe the main
+    /// thread alone.
+    fn tokens_in(&self) -> u64 {
+        self.agents.iter().map(|a| a.tokens_in).sum()
+    }
+    fn cache_read(&self) -> u64 {
+        self.agents.iter().map(|a| a.cache_read).sum()
+    }
+    fn cache_creation(&self) -> u64 {
+        self.agents
+            .iter()
+            .map(|a| a.cache_write_5m + a.cache_write_1h)
+            .sum()
+    }
+
+    /// True when the trace was readable and these numbers describe the whole run. A record built
+    /// without one keeps [`RunMetrics`]'s main-thread figures and says so in `accuracy`, rather
+    /// than passing them off as the run.
+    fn is_whole_run(&self) -> bool {
+        !self.agents.is_empty()
+    }
+}
+
+/// PURE: what the run was billed, as the harness reports it.
+///
+/// The MAXIMUM `total_cost_usd` across every `result` line, because those values are CUMULATIVE:
+/// a run with twelve results climbs 37.84 → 136.08, one line per completed agent. Not
+/// [`run_metrics`]'s figure, which selects the result with the most turns — that is the main
+/// loop's own line ($37.84 here), correct for a per-thread metric and a 3.6x understatement of the
+/// run. Not a sum either, which would report $990 for a $136 run.
+fn billed_cost(content: &str) -> f64 {
+    content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|ev| ev.get("type").and_then(|t| t.as_str()) == Some("result"))
+        .filter_map(|ev| ev.get("total_cost_usd").and_then(|c| c.as_f64()))
+        .fold(0.0, f64::max)
+}
+
+/// PURE: rewrite one metrics row against its trace, or label it if the trace is gone.
+///
+/// Returns `(row, recomputed)`. A row whose trace still exists gets whole-run numbers and
+/// `accuracy: "whole-run"`; one whose trace has been collected keeps every number it had and gets
+/// `accuracy: "main-thread-only"` — a label, not a guess.
+///
+/// Nothing is estimated. The error this corrects is BIMODAL, not a ratio: a run that dispatched no
+/// subagents was always recorded correctly (exactly 1.00x on every field), and one that did is
+/// wrong by 1.8–3.6x on cost and 5–76x on cache reads. Which of the two a traceless row is cannot
+/// be recovered from what the row carries, and a mean of the two describes neither — so the row
+/// says it is not comparable instead of pretending to a number.
+fn backfill_row(mut row: Value, trace_body: Option<&str>) -> (Value, bool) {
+    let Some(obj) = row.as_object_mut() else {
+        return (row, false);
+    };
+    // Live partials (boot/ttl/usage) are main-thread BY NATURE — the subagents have not finished,
+    // and often not started. They are left exactly as they are.
+    let stage = obj.get("stage").and_then(|s| s.as_str());
+    if !matches!(stage, None | Some(STAGE_FINAL)) {
+        return (row, false);
+    }
+    let Some(body) = trace_body else {
+        obj.insert("accuracy".into(), serde_json::json!("main-thread-only"));
+        return (row, false);
+    };
+    let agents = token_attribution(body);
+    // A trace carrying no usage at all is either a run that genuinely spent nothing — a usage-gate
+    // pause exits in milliseconds — or a truncated stream. The `result` line tells them apart: the
+    // harness writes it when a run REACHES an end, so its presence makes "zero on every thread" a
+    // measurement. Without one this is no better evidence than a missing trace, and the row is
+    // labelled rather than rewritten.
+    let completed = body
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .any(|ev| ev.get("type").and_then(|t| t.as_str()) == Some("result"));
+    if agents.is_empty() && !completed {
+        obj.insert("accuracy".into(), serde_json::json!("main-thread-only"));
+        return (row, false);
+    }
+    let (out_tokens, out_usd) = unattributable_output(body);
+    let spend = SpendRecord {
+        agents: &agents,
+        output_tokens: out_tokens,
+        output_usd: out_usd,
+        billed_usd: billed_cost(body),
+    };
+    obj.insert("tokensIn".into(), serde_json::json!(spend.tokens_in()));
+    obj.insert("tokensOut".into(), serde_json::json!(spend.output_tokens));
+    obj.insert("cacheRead".into(), serde_json::json!(spend.cache_read()));
+    obj.insert(
+        "cacheCreation".into(),
+        serde_json::json!(spend.cache_creation()),
+    );
+    obj.insert(
+        "costUsd".into(),
+        serde_json::json!(round3(spend.billed_usd)),
+    );
+    obj.insert(
+        "attributedUsd".into(),
+        serde_json::json!(round3(spend.attributed())),
+    );
+    obj.insert(
+        "outputUsd".into(),
+        serde_json::json!(round3(spend.output_usd)),
+    );
+    obj.insert(
+        "outputTokens".into(),
+        serde_json::json!(spend.output_tokens),
+    );
+    obj.insert(
+        "listUsd".into(),
+        serde_json::json!(round3(spend.attributed() + spend.output_usd)),
+    );
+    obj.insert(
+        "billedUsd".into(),
+        serde_json::json!(round3(spend.billed_usd)),
+    );
+    obj.insert(
+        "agents".into(),
+        serde_json::json!(agents
+            .iter()
+            .map(|a| serde_json::json!({
+                "label": a.label,
+                "usd": round3(a.usd),
+                "messages": a.messages,
+                "cacheRead": a.cache_read,
+                "cacheWrite": a.cache_write_5m + a.cache_write_1h,
+            }))
+            .collect::<Vec<Value>>()),
+    );
+    obj.insert("accuracy".into(), serde_json::json!("whole-run"));
+    (row, true)
+}
+
+/// `backfill-metrics <runs.jsonl> [--write]`: correct historical rows against their traces.
+///
+/// Dry-run by default — it prints what would change and touches nothing. `--write` rewrites the
+/// file in place.
+fn backfill_metrics_mode(path: &str, write: bool) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read {path}: {e}");
+            return 2;
+        }
+    };
+    let (mut done, mut labelled, mut untouched) = (0usize, 0usize, 0usize);
+    let (mut before, mut after) = (0.0f64, 0.0f64);
+    let mut out = String::with_capacity(content.len());
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            out.push_str(line);
+            out.push('\n');
+            untouched += 1;
+            continue;
+        };
+        let old_cost = row.get("costUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
+        let body = row
+            .get("trace")
+            .and_then(|t| t.as_str())
+            .and_then(|t| std::fs::read_to_string(t).ok());
+        let (row, recomputed) = backfill_row(row, body.as_deref());
+        let new_cost = row.get("costUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
+        if recomputed {
+            done += 1;
+            before += old_cost;
+            after += new_cost;
+            if (new_cost - old_cost).abs() > 0.005 {
+                println!(
+                    "  {} {}  costUsd {old_cost:.2} -> {new_cost:.2}",
+                    row.get("runId").and_then(|r| r.as_str()).unwrap_or("?"),
+                    row.get("role").and_then(|r| r.as_str()).unwrap_or("?"),
+                );
+            }
+        } else if row.get("accuracy").is_some() {
+            labelled += 1;
+        } else {
+            untouched += 1;
+        }
+        out.push_str(&serde_json::to_string(&row).unwrap());
+        out.push('\n');
+    }
+    println!(
+        "\nrecomputed {done} rows (costUsd {before:.2} -> {after:.2}), \
+         labelled {labelled} as main-thread-only, left {untouched} untouched"
+    );
+    if !write {
+        println!("dry run — pass --write to apply");
+        return 0;
+    }
+    match std::fs::write(path, out) {
+        Ok(()) => {
+            println!("wrote {path}");
+            0
+        }
+        Err(e) => {
+            eprintln!("error: cannot write {path}: {e}");
+            2
+        }
+    }
+}
+
+/// `token-report <trace.jsonl> [--json]`: print what each dispatched agent cost, dearest first.
+///
+/// Three totals print together because they answer different questions and disagree by design:
+/// the per-agent sum (what this can attribute), plus whole-run output (real spend no agent key
+/// carries), reconstructs the harness's own `modelUsage.costUSD` — on the reference trace, to the
+/// cent. `result.total_cost_usd` is a FOURTH number, lower than all of them, and is what the
+/// account is actually billed; printing both is how a reader sees list price against billed.
+fn token_report_mode(path: &str, json: bool) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read trace {path}: {e}");
+            return 2;
+        }
+    };
+    let rows = token_attribution(&content);
+    let attributed: f64 = rows.iter().map(|r| r.usd).sum();
+    let (out_tokens, out_usd) = unattributable_output(&content);
+    let billed = billed_cost(&content);
+
+    if json {
+        let agents: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id,
+                    "label": r.label,
+                    "usd": r.usd,
+                    "messages": r.messages,
+                    "inputTokens": r.tokens_in,
+                    "cacheRead": r.cache_read,
+                    "cacheWrite5m": r.cache_write_5m,
+                    "cacheWrite1h": r.cache_write_1h,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "trace": path,
+                "attributedUsd": attributed,
+                "outputUsd": out_usd,
+                "outputTokens": out_tokens,
+                "listUsd": attributed + out_usd,
+                "billedUsd": billed,
+                "agents": agents,
+            }))
+            .unwrap()
+        );
+        return 0;
+    }
+
+    println!(
+        "{:>8}  {:>5}  {:>14}  {:>11}  task",
+        "cost", "msgs", "cache read", "cache write"
+    );
+    for r in &rows {
+        println!(
+            "{:>8}  {:>5}  {:>14}  {:>11}  {}",
+            format!("${:.2}", r.usd),
+            r.messages,
+            r.cache_read,
+            r.cache_write_5m + r.cache_write_1h,
+            r.label
+        );
+    }
+    println!("\nattributed to agents  ${attributed:>8.2}");
+    println!("output (whole-run)    ${out_usd:>8.2}   {out_tokens} tokens, not attributable");
+    println!("list price            ${:>8.2}", attributed + out_usd);
+    println!("billed                ${billed:>8.2}");
+    0
+}
+
 /// Which run a record belongs to, as the runner knows it. Nothing here is derivable from the
 /// trace, which is why it arrives as flags.
 struct RunIdentity<'a> {
@@ -2690,6 +3219,7 @@ fn run_metrics_mode(
     let m = run_metrics(&content);
     let tooling = trace_tooling_report(&content);
     let infra = infra_record_at(infra_path);
+    let (out_tokens, out_usd) = unattributable_output(&content);
     let outcome = exit_code.map(|rc| {
         (
             rc,
@@ -2706,7 +3236,13 @@ fn run_metrics_mode(
             &tooling,
             preflight_missing,
             &infra,
-            skip
+            skip,
+            &SpendRecord {
+                agents: &token_attribution(&content),
+                output_tokens: out_tokens,
+                output_usd: out_usd,
+                billed_usd: billed_cost(&content),
+            }
         ))
         .unwrap()
     );
@@ -2727,6 +3263,7 @@ fn final_record(
     preflight_missing: &[String],
     infra: &InfraRecord,
     skip: Option<(&str, &str)>,
+    spend: &SpendRecord,
 ) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
@@ -2741,11 +3278,18 @@ fn final_record(
         "startupMs": m.startup_ms,
         "durationMs": m.duration_ms,
         "numTurns": m.num_turns,
-        "tokensIn": m.tokens_in,
-        "tokensOut": m.tokens_out,
-        "cacheRead": m.cache_read,
-        "cacheCreation": m.cache_creation,
-        "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
+        // WHOLE-RUN, superseding the main-thread figures these keys carried before. They are the
+        // same keys because the dashboard reads them and the question they answer — what did this
+        // run cost, how much context did it move — never changed; only the answer was wrong, by
+        // 3.6x on cost and 76x on cache reads for a run that dispatched 16 agents. A row is
+        // labelled `accuracy` so a consumer can tell a corrected row from a legacy one, and rows
+        // whose trace no longer exists keep their old numbers and say `main-thread-only`.
+        "tokensIn": if spend.is_whole_run() { spend.tokens_in() } else { m.tokens_in },
+        "tokensOut": if spend.is_whole_run() { spend.output_tokens } else { m.tokens_out },
+        "cacheRead": if spend.is_whole_run() { spend.cache_read() } else { m.cache_read },
+        "cacheCreation": if spend.is_whole_run() { spend.cache_creation() } else { m.cache_creation },
+        "costUsd": round3(if spend.is_whole_run() { spend.billed_usd } else { m.cost_usd }),
+        "accuracy": if spend.is_whole_run() { "whole-run" } else { "main-thread-only" },
         // Per-window rate-limit summary (#97). Coerced to an object here rather than trusted from
         // the caller so the "always an object" contract holds even for a `RunMetrics` built by
         // hand, whose `Default` for a `Value` is null.
@@ -2768,6 +3312,31 @@ fn final_record(
         "infraDown": infra.down,
         "infraReason": infra.reason,
         "infraRootCause": infra.root_cause,
+        // Per-agent spend (see [`token_attribution`]). Added rather than folded into the fields
+        // above because every one of those is frozen by the series already committed to
+        // metrics/runs.jsonl: `costUsd` is the result line with the most turns — the MAIN LOOP's
+        // cumulative total, not the run's — and `tokensIn`/`cacheRead`/`cacheCreation` count the
+        // main thread only, because [`UsageProbe`] reconciles against `result.usage`, which does.
+        // On a 16-agent run that is $37.84 beside a run that actually cost $136.08. Re-deriving
+        // those keys would put a step in the series no run experienced, so they stay as they are
+        // and the whole-run truth arrives in new keys beside them.
+        "agents": spend.agents.iter().map(|a| serde_json::json!({
+            "label": a.label,
+            "usd": round3(a.usd),
+            "messages": a.messages,
+            "cacheRead": a.cache_read,
+            "cacheWrite": a.cache_write_5m + a.cache_write_1h,
+        })).collect::<Vec<Value>>(),
+        // What the agent rows sum to. NOT the run: output tokens are real spend that no agent key
+        // can carry (`usage.output_tokens` is a message-start snapshot understating ~18x), so they
+        // arrive whole-run from `result.modelUsage`.
+        "attributedUsd": round3(spend.attributed()),
+        "outputUsd": round3(spend.output_usd),
+        "outputTokens": spend.output_tokens,
+        // List price and what the account was actually charged. `billedUsd` is the CUMULATIVE
+        // maximum across result lines and is the number `costUsd` should have been.
+        "listUsd": round3(spend.attributed() + spend.output_usd),
+        "billedUsd": round3(spend.billed_usd),
     });
     stamp_identity(&mut doc, id);
     if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
@@ -18819,6 +19388,25 @@ enum Cmd {
     },
     /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
     DistillTrace,
+    /// Attribute a run's token spend to the agent that incurred it, dearest first. `run-metrics`
+    /// reports whole-run COST beside main-thread-only TOKENS; this splits the same trace by
+    /// `parent_tool_use_id` so a run's cost can be read per dispatched task.
+    TokenReport {
+        /// The run trace to read (runs/<id>.jsonl).
+        trace: String,
+        /// Emit one JSON object instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Correct historical metrics rows against their traces: whole-run numbers where the trace
+    /// survives, an `accuracy: main-thread-only` label where it does not. Estimates nothing.
+    BackfillMetrics {
+        /// The metrics file to correct (metrics/runs.jsonl).
+        path: String,
+        /// Apply the rewrite. Without it, prints what would change and touches nothing.
+        #[arg(long)]
+        write: bool,
+    },
     /// Weekly-budget pace gate. Prints one line; exits 0 to RUN this tick, 10 to PAUSE it, and
     /// 2 to REFUSE retired config (USAGE_SLACK_PCT, whose meaning inverted with the #158 pace
     /// flip — replace it with USAGE_HEADROOM_PCT). Config is env-only (USAGE_CEILING_PCT,
@@ -20619,6 +21207,8 @@ fn main() {
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
+        Cmd::TokenReport { trace, json } => token_report_mode(&trace, json),
+        Cmd::BackfillMetrics { path, write } => backfill_metrics_mode(&path, write),
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
@@ -22293,7 +22883,8 @@ mod run_metrics_tests {
 mod startup_split_tests {
     use super::{
         final_record, is_mutation_tool, partial_record, run_metrics, InfraRecord, RunIdentity,
-        RunMetrics, StartupPhase, StartupProbe, ToolingReport, TraceOutcome, STAGE_FINAL,
+        RunMetrics, SpendRecord, StartupPhase, StartupProbe, ToolingReport, TraceOutcome,
+        STAGE_FINAL,
     };
     use serde_json::{json, Value};
 
@@ -22611,6 +23202,7 @@ mod startup_split_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert_eq!(doc["stage"], STAGE_FINAL);
         assert_eq!(doc["bootMs"], 1125);
@@ -22648,6 +23240,7 @@ mod startup_split_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert!(doc.get("runId").is_none());
         assert!(doc.get("role").is_none());
@@ -22666,8 +23259,8 @@ mod startup_split_tests {
 #[cfg(test)]
 mod skip_row_tests {
     use super::{
-        classify_outcome, final_record, InfraRecord, RunIdentity, RunMetrics, ToolingReport,
-        TraceOutcome, STAGE_FINAL,
+        classify_outcome, final_record, InfraRecord, RunIdentity, RunMetrics, SpendRecord,
+        ToolingReport, TraceOutcome, STAGE_FINAL,
     };
 
     /// The gate's real ceiling-pause line, verbatim — em-dash, percent signs and all — because the
@@ -22696,6 +23289,7 @@ mod skip_row_tests {
             &[],
             &InfraRecord::default(),
             Some(("usage-gate", PAUSE_LINE)),
+            &SpendRecord::default(),
         );
         assert_eq!(doc["skipped"], "usage-gate");
         assert_eq!(doc["skipReason"], PAUSE_LINE, "the reason must be verbatim");
@@ -22723,6 +23317,7 @@ mod skip_row_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert!(
             doc.get("skipped").is_none(),
@@ -23006,6 +23601,290 @@ mod usage_probe_tests {
         assert_eq!(p.messages, 0);
     }
 
+    /// One assistant event with a full usage block, on `parent` (None = main thread).
+    fn spend_ev(id: &str, parent: Option<&str>, cache_read: u64, w5: u64, w1: u64) -> String {
+        let mut ev = serde_json::json!({"type":"assistant","message":{
+            "id": id, "model": "claude-opus-5",
+            "usage":{"input_tokens":0,"output_tokens":7,
+                     "cache_read_input_tokens":cache_read,
+                     "cache_creation_input_tokens": w5 + w1,
+                     "cache_creation":{"ephemeral_5m_input_tokens":w5,
+                                       "ephemeral_1h_input_tokens":w1}}}});
+        ev["parent_tool_use_id"] = match parent {
+            Some(p) => serde_json::json!(p),
+            None => Value::Null,
+        };
+        serde_json::to_string(&ev).unwrap()
+    }
+
+    /// The main-thread turn that dispatches a subagent, naming it.
+    fn dispatch_ev(tool_id: &str, description: &str) -> String {
+        serde_json::to_string(&serde_json::json!({"type":"assistant","message":{
+            "id": format!("msg_dispatch_{tool_id}"),
+            "content":[{"type":"tool_use","name":"Agent","id":tool_id,
+                        "input":{"description":description,"prompt":"…"}}]}}))
+        .unwrap()
+    }
+
+    /// The whole point: a subagent's spend lands on the subagent, not the main loop, and carries
+    /// the label the dispatching call gave it.
+    #[test]
+    fn spend_is_attributed_to_the_dispatched_agent() {
+        let trace = [
+            dispatch_ev("toolu_A", "rework pointers"),
+            spend_ev("m1", None, 1_000_000, 0, 0),
+            spend_ev("m2", Some("toolu_A"), 4_000_000, 0, 0),
+        ]
+        .join("\n");
+        let rows = token_attribution(&trace);
+        assert_eq!(rows.len(), 2, "one row per agent");
+        // Dearest first: the subagent read 4x what the main loop did.
+        assert_eq!(rows[0].label, "rework pointers");
+        assert_eq!(rows[0].cache_read, 4_000_000);
+        assert_eq!(rows[1].label, "main loop");
+        assert_eq!(rows[1].cache_read, 1_000_000);
+    }
+
+    /// Cache writes are priced by the TTL the trace records, not one blended guess. 1M tokens at
+    /// 5m is $6.25; the same 1M at 1h is $10.
+    #[test]
+    fn cache_writes_are_priced_by_ttl() {
+        let five = token_attribution(&spend_ev("m1", None, 0, 1_000_000, 0));
+        let hour = token_attribution(&spend_ev("m1", None, 0, 0, 1_000_000));
+        assert!((five[0].usd - 6.25).abs() < 1e-9, "5m: {}", five[0].usd);
+        assert!((hour[0].usd - 10.0).abs() < 1e-9, "1h: {}", hour[0].usd);
+    }
+
+    /// A repeated `message.id` is one message however many events stream it — the same rule
+    /// [`UsageProbe`] applies, one level wider so subagents are deduped too.
+    #[test]
+    fn a_repeated_message_is_counted_once_per_agent() {
+        let trace = [
+            spend_ev("m1", Some("toolu_A"), 500_000, 0, 0),
+            spend_ev("m1", Some("toolu_A"), 500_000, 0, 0),
+        ]
+        .join("\n");
+        let rows = token_attribution(&trace);
+        assert_eq!(rows[0].messages, 1);
+        assert_eq!(rows[0].cache_read, 500_000);
+    }
+
+    /// `output_tokens` is a message-start snapshot (7 per event in these fixtures). If it ever
+    /// reaches a cost, this fires — the real figure is whole-run only.
+    #[test]
+    fn output_tokens_never_reach_an_agents_cost() {
+        let rows = token_attribution(&spend_ev("m1", None, 0, 0, 0));
+        assert_eq!(rows[0].usd, 0.0, "a usage block of only output must cost 0");
+    }
+
+    /// Twelve `result` lines restate one whole-run total. Summing them would report the run
+    /// twelve times over.
+    #[test]
+    fn repeated_result_lines_do_not_multiply_output() {
+        let one = serde_json::to_string(&serde_json::json!({
+            "type":"result","modelUsage":{"claude-opus-5":{"outputTokens":1_000_000}}}))
+        .unwrap();
+        let (tokens, usd) = unattributable_output(&[one.clone(), one.clone(), one].join("\n"));
+        assert_eq!(tokens, 1_000_000, "restated, not accumulated");
+        assert!((usd - 25.0).abs() < 1e-9, "{usd}");
+    }
+
+    /// The vetter runs Fable, the producer Opus; the same field is $50 and $25 per million.
+    #[test]
+    fn output_is_priced_per_model() {
+        let fable = serde_json::to_string(&serde_json::json!({
+            "type":"result","modelUsage":{"claude-fable-5":{"outputTokens":1_000_000}}}))
+        .unwrap();
+        assert!((unattributable_output(&fable).1 - 50.0).abs() < 1e-9);
+    }
+
+    /// `total_cost_usd` is CUMULATIVE across result lines. Taking the first understates the run
+    /// (it is the main loop's own line); summing overstates it wildly. Only the last/max is the
+    /// run.
+    #[test]
+    fn billed_cost_is_the_cumulative_maximum() {
+        let line = |usd: f64| {
+            serde_json::to_string(&serde_json::json!({"type":"result","total_cost_usd":usd}))
+                .unwrap()
+        };
+        let trace = [line(37.84), line(106.42), line(136.08)].join("\n");
+        assert!((billed_cost(&trace) - 136.08).abs() < 1e-9);
+        assert_eq!(
+            billed_cost("{\"type\":\"assistant\"}"),
+            0.0,
+            "no result lines"
+        );
+    }
+
+    /// The spend block is ADDITIVE. A record built with no spend data still carries `agents` as an
+    /// empty array rather than omitting it — the same "always present" contract `unreadableFiles`
+    /// holds, so a consumer can tell "this run dispatched nobody" from "this row predates the
+    /// field". And the frozen fields keep their old meanings beside it: `costUsd` stays the
+    /// turn-selected figure every committed row was written under, while `billedUsd` carries the
+    /// run's actual total.
+    #[test]
+    fn the_spend_block_is_additive() {
+        let m = RunMetrics {
+            cost_usd: 37.84,
+            ..Default::default()
+        };
+        let empty = final_record(
+            "/t.jsonl",
+            &m,
+            &RunIdentity {
+                run_id: None,
+                role: None,
+                model: None,
+            },
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+            &SpendRecord::default(),
+        );
+        assert_eq!(
+            empty["agents"],
+            serde_json::json!([]),
+            "absent spend is an empty array, never a missing key"
+        );
+        // No trace to recompute from: the main-thread figures stand, and the row SAYS so rather
+        // than presenting them as the run.
+        assert_eq!(empty["costUsd"], 37.84);
+        assert_eq!(empty["accuracy"], "main-thread-only");
+
+        let agents = [AgentSpend {
+            label: "rework pointers".to_string(),
+            usd: 12.5,
+            messages: 3,
+            cache_read: 9,
+            ..Default::default()
+        }];
+        let full = final_record(
+            "/t.jsonl",
+            &m,
+            &RunIdentity {
+                run_id: None,
+                role: None,
+                model: None,
+            },
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+            &SpendRecord {
+                agents: &agents,
+                output_tokens: 1_000_000,
+                output_usd: 25.0,
+                billed_usd: 136.08,
+            },
+        );
+        assert_eq!(full["agents"][0]["label"], "rework pointers");
+        assert_eq!(full["attributedUsd"], 12.5);
+        assert_eq!(full["listUsd"], 37.5, "attributed + output");
+        assert_eq!(full["billedUsd"], 136.08);
+        // The correction: with a trace to recompute from, the legacy keys carry the WHOLE run.
+        // `costUsd` is the billed total rather than the main loop's $37.84 share, `cacheRead` and
+        // `tokensIn` sum every thread, and `tokensOut` is the harness's true figure.
+        assert_eq!(
+            full["costUsd"], 136.08,
+            "costUsd is the run now, not the main loop"
+        );
+        assert_eq!(full["cacheRead"], 9, "summed across agents");
+        assert_eq!(
+            full["tokensOut"], 1_000_000,
+            "from modelUsage, not the per-message snapshot"
+        );
+        assert_eq!(full["accuracy"], "whole-run");
+    }
+
+    /// Only `assistant` events carry usage. A `user` or `result` event that happens to hold a
+    /// `message.usage` must not be priced — [`UsageProbe`] has always guarded this way, and the two
+    /// readers of one stream must not disagree about what counts.
+    #[test]
+    fn only_assistant_events_are_priced() {
+        let mut ev: Value = serde_json::from_str(&spend_ev("m1", None, 1_000_000, 0, 0)).unwrap();
+        ev["type"] = serde_json::json!("user");
+        assert!(
+            token_attribution(&serde_json::to_string(&ev).unwrap()).is_empty(),
+            "a non-assistant event must contribute nothing"
+        );
+    }
+
+    /// An empty `message.id` identifies nothing. Two such events are two messages, not one — the
+    /// dedupe must not let the first swallow the second.
+    #[test]
+    fn empty_message_ids_are_not_deduped_together() {
+        let ev = |cr: u64| {
+            let mut v: Value = serde_json::from_str(&spend_ev("x", None, cr, 0, 0)).unwrap();
+            v["message"]["id"] = serde_json::json!("");
+            serde_json::to_string(&v).unwrap()
+        };
+        let rows = token_attribution(&[ev(1_000), ev(2_000)].join("\n"));
+        assert_eq!(rows[0].messages, 2, "both counted");
+        assert_eq!(rows[0].cache_read, 3_000, "neither dropped");
+    }
+
+    /// A traceless row is LABELLED, never estimated: every number it carries survives byte for
+    /// byte, and the only addition is the honesty flag. The error being corrected is bimodal
+    /// (1.00x when a run dispatched nobody, 1.8–3.6x when it did), so a mean would describe no
+    /// row that actually ran.
+    #[test]
+    fn a_traceless_row_is_labelled_not_estimated() {
+        let row = serde_json::json!({
+            "runId": "20260702T050001Z", "role": "producer",
+            "costUsd": 6.928, "cacheRead": 1234, "tokensOut": 99,
+        });
+        let (out, recomputed) = backfill_row(row.clone(), None);
+        assert!(!recomputed);
+        assert_eq!(out["accuracy"], "main-thread-only");
+        for k in ["costUsd", "cacheRead", "tokensOut"] {
+            assert_eq!(out[k], row[k], "{k} must be untouched");
+        }
+    }
+
+    /// A row WITH a trace is recomputed from it — the whole point of the backfill.
+    #[test]
+    fn a_traced_row_is_recomputed_whole_run() {
+        let trace = [
+            dispatch_ev("toolu_A", "some work"),
+            spend_ev("m1", None, 1_000_000, 0, 0),
+            spend_ev("m2", Some("toolu_A"), 4_000_000, 0, 0),
+            serde_json::to_string(&serde_json::json!({
+                "type":"result","total_cost_usd":9.0,
+                "modelUsage":{"claude-opus-5":{"outputTokens":200_000}}}))
+            .unwrap(),
+        ]
+        .join("\n");
+        let row = serde_json::json!({"runId":"x","role":"producer","costUsd":1.0,"cacheRead":7});
+        let (out, recomputed) = backfill_row(row, Some(&trace));
+        assert!(recomputed);
+        assert_eq!(out["accuracy"], "whole-run");
+        assert_eq!(out["cacheRead"], 5_000_000, "both threads, not just main");
+        assert_eq!(out["costUsd"], 9.0, "billed, not the stale 1.0");
+        assert_eq!(out["agents"].as_array().unwrap().len(), 2);
+    }
+
+    /// Live partial rows (boot/ttl/usage) are main-thread by nature — the subagents have not
+    /// finished. Rewriting them would invent a total the run had not yet reached.
+    #[test]
+    fn partial_stage_rows_are_left_alone() {
+        let row = serde_json::json!({"stage":"usage","costUsd":1.0,"trace":"/nope"});
+        let (out, recomputed) = backfill_row(row, Some("{}"));
+        assert!(!recomputed);
+        assert!(out.get("accuracy").is_none(), "not even labelled");
+        assert_eq!(out["costUsd"], 1.0);
+    }
+
+    /// An unrecognised model must not silently price as the cheapest tier.
+    #[test]
+    fn an_unknown_model_falls_back_to_opus_rates() {
+        assert_eq!(rates_for("claude-opus-9-future").input, 5.0);
+        assert_eq!(rates_for("").input, 5.0);
+        assert_eq!(rates_for("claude-haiku-4-5").input, 1.0);
+    }
+
     /// An explicit `null` is the main thread, exactly as an absent key is. The real traces spell it
     /// both ways and they must not diverge.
     #[test]
@@ -23273,6 +24152,7 @@ mod usage_probe_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert_eq!(doc["rateLimits"]["five_hour"]["status"], "allowed");
         // The terminal totals stay authoritative — including the output count the probe cannot
@@ -23290,6 +24170,7 @@ mod usage_probe_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert!(
             bare["rateLimits"].is_object(),
@@ -35910,6 +36791,7 @@ mod infra_down_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert_eq!(clean["infraDown"], false);
         assert_eq!(clean["infraReason"], "");
@@ -35930,6 +36812,7 @@ mod infra_down_tests {
             &[],
             &down,
             None,
+            &SpendRecord::default(),
         );
         assert_eq!(doc["infraDown"], true);
         assert_eq!(doc["infraReason"], "fork RPCs erroring org-wide");
