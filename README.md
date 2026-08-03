@@ -1429,7 +1429,7 @@ deterministic, and therefore teachable:
 | loops, `$(…)`, `<(…)`, `( … )`           |     ~94 | separate tool calls; one `jq`/`grep` pipeline instead of ten iterations        |
 | bare `VAR=value <cmd>` prefix            |     ~40 | `env VAR=value <cmd>` (`env -C <dir>` is refused too — `env` carries no dir)   |
 | `cp` with any flag                       |     ~21 | regenerate artifacts in the clone that needs them; plain `cp <src> <dst>` only |
-| `bash` / `sh` / `python3` script or `-c` |     ~22 | there is no interpreter, by the section above                                  |
+| `bash` / `sh` / `python3` script or `-c` |      18 | there is no interpreter, by the section above                                  |
 
 `Monitor` needs no allow-list entry: its `command` is checked against the same
 Bash rules (a denial reads "Permission to use Bash with command …"), so a denied
