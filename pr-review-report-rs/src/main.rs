@@ -14032,13 +14032,16 @@ const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 ///
 /// RUN BUDGET (2026-08-03): a page is now an ALLOWANCE, not a window onto a longer queue. A vetter
 /// run spends at most 3 ITEMS — a PR vetted or a close-candidate flag ruled on, ONE budget shared
-/// across both state-loads — because a human has to read the run's log end to end afterwards and
-/// judge whether the machine behaved, which six items of log defeats however cheaply it was
-/// produced. So a state-load handing back 10 or 25 is handing back work the run must not do, and
-/// the per-tool half of "stop at 3" is a rule the surface enforces rather than one the prompt
-/// merely asserts. The SHARING is necessarily the prompt's to enforce: each tool call is bounded
-/// on its own, and neither can see what the other already spent. Raising the cap is a deliberate
-/// act: move THIS number, and only once the run logs show the smaller one landing cleanly.
+/// across both state-loads. It is a RISK CONTROL, not a throughput preference: the FSM is not yet
+/// reliable or efficient, every item a run attempts is an item that can go wrong (a wrong verdict
+/// a human acts on, a sound flag stripped, tokens burnt for nothing), and 3 bounds how much damage
+/// ONE run can do while that is still true. So a state-load handing back 10 or 25 is handing back
+/// work the run must not do, and the per-tool half of "stop at 3" is a rule the surface enforces
+/// rather than one the prompt merely asserts. The SHARING is necessarily the prompt's to enforce:
+/// each tool call is bounded on its own, and neither can see what the other already spent. The
+/// bound is deliberately conservative and explicitly temporary — raising it is moving THIS number,
+/// gated on evidence from the run logs that runs have become reliable and efficient, never on a
+/// run having finished early with budget to spare.
 const STATE_LOAD_PAGE_DEFAULT: usize = 3;
 const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=3;
 
