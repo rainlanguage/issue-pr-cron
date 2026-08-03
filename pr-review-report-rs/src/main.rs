@@ -2463,6 +2463,29 @@ impl SpendRecord<'_> {
     fn attributed(&self) -> f64 {
         self.agents.iter().map(|a| a.usd).sum()
     }
+
+    /// Whole-run totals: every thread, not just the main one. These SUPERSEDE the same-named
+    /// fields on [`RunMetrics`], which read one result line's `usage` and so describe the main
+    /// thread alone.
+    fn tokens_in(&self) -> u64 {
+        self.agents.iter().map(|a| a.tokens_in).sum()
+    }
+    fn cache_read(&self) -> u64 {
+        self.agents.iter().map(|a| a.cache_read).sum()
+    }
+    fn cache_creation(&self) -> u64 {
+        self.agents
+            .iter()
+            .map(|a| a.cache_write_5m + a.cache_write_1h)
+            .sum()
+    }
+
+    /// True when the trace was readable and these numbers describe the whole run. A record built
+    /// without one keeps [`RunMetrics`]'s main-thread figures and says so in `accuracy`, rather
+    /// than passing them off as the run.
+    fn is_whole_run(&self) -> bool {
+        !self.agents.is_empty()
+    }
 }
 
 /// PURE: what the run was billed, as the harness reports it.
@@ -2479,6 +2502,171 @@ fn billed_cost(content: &str) -> f64 {
         .filter(|ev| ev.get("type").and_then(|t| t.as_str()) == Some("result"))
         .filter_map(|ev| ev.get("total_cost_usd").and_then(|c| c.as_f64()))
         .fold(0.0, f64::max)
+}
+
+/// PURE: rewrite one metrics row against its trace, or label it if the trace is gone.
+///
+/// Returns `(row, recomputed)`. A row whose trace still exists gets whole-run numbers and
+/// `accuracy: "whole-run"`; one whose trace has been collected keeps every number it had and gets
+/// `accuracy: "main-thread-only"` — a label, not a guess.
+///
+/// Nothing is estimated. The error this corrects is BIMODAL, not a ratio: a run that dispatched no
+/// subagents was always recorded correctly (exactly 1.00x on every field), and one that did is
+/// wrong by 1.8–3.6x on cost and 5–76x on cache reads. Which of the two a traceless row is cannot
+/// be recovered from what the row carries, and a mean of the two describes neither — so the row
+/// says it is not comparable instead of pretending to a number.
+fn backfill_row(mut row: Value, trace_body: Option<&str>) -> (Value, bool) {
+    let Some(obj) = row.as_object_mut() else {
+        return (row, false);
+    };
+    // Live partials (boot/ttl/usage) are main-thread BY NATURE — the subagents have not finished,
+    // and often not started. They are left exactly as they are.
+    let stage = obj.get("stage").and_then(|s| s.as_str());
+    if !matches!(stage, None | Some(STAGE_FINAL)) {
+        return (row, false);
+    }
+    let Some(body) = trace_body else {
+        obj.insert("accuracy".into(), serde_json::json!("main-thread-only"));
+        return (row, false);
+    };
+    let agents = token_attribution(body);
+    // A trace carrying no usage at all is either a run that genuinely spent nothing — a usage-gate
+    // pause exits in milliseconds — or a truncated stream. The `result` line tells them apart: the
+    // harness writes it when a run REACHES an end, so its presence makes "zero on every thread" a
+    // measurement. Without one this is no better evidence than a missing trace, and the row is
+    // labelled rather than rewritten.
+    let completed = body
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .any(|ev| ev.get("type").and_then(|t| t.as_str()) == Some("result"));
+    if agents.is_empty() && !completed {
+        obj.insert("accuracy".into(), serde_json::json!("main-thread-only"));
+        return (row, false);
+    }
+    let (out_tokens, out_usd) = unattributable_output(body);
+    let spend = SpendRecord {
+        agents: &agents,
+        output_tokens: out_tokens,
+        output_usd: out_usd,
+        billed_usd: billed_cost(body),
+    };
+    obj.insert("tokensIn".into(), serde_json::json!(spend.tokens_in()));
+    obj.insert("tokensOut".into(), serde_json::json!(spend.output_tokens));
+    obj.insert("cacheRead".into(), serde_json::json!(spend.cache_read()));
+    obj.insert(
+        "cacheCreation".into(),
+        serde_json::json!(spend.cache_creation()),
+    );
+    obj.insert(
+        "costUsd".into(),
+        serde_json::json!(round3(spend.billed_usd)),
+    );
+    obj.insert(
+        "attributedUsd".into(),
+        serde_json::json!(round3(spend.attributed())),
+    );
+    obj.insert(
+        "outputUsd".into(),
+        serde_json::json!(round3(spend.output_usd)),
+    );
+    obj.insert(
+        "outputTokens".into(),
+        serde_json::json!(spend.output_tokens),
+    );
+    obj.insert(
+        "listUsd".into(),
+        serde_json::json!(round3(spend.attributed() + spend.output_usd)),
+    );
+    obj.insert(
+        "billedUsd".into(),
+        serde_json::json!(round3(spend.billed_usd)),
+    );
+    obj.insert(
+        "agents".into(),
+        serde_json::json!(agents
+            .iter()
+            .map(|a| serde_json::json!({
+                "label": a.label,
+                "usd": round3(a.usd),
+                "messages": a.messages,
+                "cacheRead": a.cache_read,
+                "cacheWrite": a.cache_write_5m + a.cache_write_1h,
+            }))
+            .collect::<Vec<Value>>()),
+    );
+    obj.insert("accuracy".into(), serde_json::json!("whole-run"));
+    (row, true)
+}
+
+/// `backfill-metrics <runs.jsonl> [--write]`: correct historical rows against their traces.
+///
+/// Dry-run by default — it prints what would change and touches nothing. `--write` rewrites the
+/// file in place.
+fn backfill_metrics_mode(path: &str, write: bool) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read {path}: {e}");
+            return 2;
+        }
+    };
+    let (mut done, mut labelled, mut untouched) = (0usize, 0usize, 0usize);
+    let (mut before, mut after) = (0.0f64, 0.0f64);
+    let mut out = String::with_capacity(content.len());
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            out.push_str(line);
+            out.push('\n');
+            untouched += 1;
+            continue;
+        };
+        let old_cost = row.get("costUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
+        let body = row
+            .get("trace")
+            .and_then(|t| t.as_str())
+            .and_then(|t| std::fs::read_to_string(t).ok());
+        let (row, recomputed) = backfill_row(row, body.as_deref());
+        let new_cost = row.get("costUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
+        if recomputed {
+            done += 1;
+            before += old_cost;
+            after += new_cost;
+            if (new_cost - old_cost).abs() > 0.005 {
+                println!(
+                    "  {} {}  costUsd {old_cost:.2} -> {new_cost:.2}",
+                    row.get("runId").and_then(|r| r.as_str()).unwrap_or("?"),
+                    row.get("role").and_then(|r| r.as_str()).unwrap_or("?"),
+                );
+            }
+        } else if row.get("accuracy").is_some() {
+            labelled += 1;
+        } else {
+            untouched += 1;
+        }
+        out.push_str(&serde_json::to_string(&row).unwrap());
+        out.push('\n');
+    }
+    println!(
+        "\nrecomputed {done} rows (costUsd {before:.2} -> {after:.2}), \
+         labelled {labelled} as main-thread-only, left {untouched} untouched"
+    );
+    if !write {
+        println!("dry run — pass --write to apply");
+        return 0;
+    }
+    match std::fs::write(path, out) {
+        Ok(()) => {
+            println!("wrote {path}");
+            0
+        }
+        Err(e) => {
+            eprintln!("error: cannot write {path}: {e}");
+            2
+        }
+    }
 }
 
 /// `token-report <trace.jsonl> [--json]`: print what each dispatched agent cost, dearest first.
@@ -3076,11 +3264,18 @@ fn final_record(
         "startupMs": m.startup_ms,
         "durationMs": m.duration_ms,
         "numTurns": m.num_turns,
-        "tokensIn": m.tokens_in,
-        "tokensOut": m.tokens_out,
-        "cacheRead": m.cache_read,
-        "cacheCreation": m.cache_creation,
-        "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
+        // WHOLE-RUN, superseding the main-thread figures these keys carried before. They are the
+        // same keys because the dashboard reads them and the question they answer — what did this
+        // run cost, how much context did it move — never changed; only the answer was wrong, by
+        // 3.6x on cost and 76x on cache reads for a run that dispatched 16 agents. A row is
+        // labelled `accuracy` so a consumer can tell a corrected row from a legacy one, and rows
+        // whose trace no longer exists keep their old numbers and say `main-thread-only`.
+        "tokensIn": if spend.is_whole_run() { spend.tokens_in() } else { m.tokens_in },
+        "tokensOut": if spend.is_whole_run() { spend.output_tokens } else { m.tokens_out },
+        "cacheRead": if spend.is_whole_run() { spend.cache_read() } else { m.cache_read },
+        "cacheCreation": if spend.is_whole_run() { spend.cache_creation() } else { m.cache_creation },
+        "costUsd": round3(if spend.is_whole_run() { spend.billed_usd } else { m.cost_usd }),
+        "accuracy": if spend.is_whole_run() { "whole-run" } else { "main-thread-only" },
         // Per-window rate-limit summary (#97). Coerced to an object here rather than trusted from
         // the caller so the "always an object" contract holds even for a `RunMetrics` built by
         // hand, whose `Default` for a `Value` is null.
@@ -19189,6 +19384,15 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Correct historical metrics rows against their traces: whole-run numbers where the trace
+    /// survives, an `accuracy: main-thread-only` label where it does not. Estimates nothing.
+    BackfillMetrics {
+        /// The metrics file to correct (metrics/runs.jsonl).
+        path: String,
+        /// Apply the rewrite. Without it, prints what would change and touches nothing.
+        #[arg(long)]
+        write: bool,
+    },
     /// Weekly-budget pace gate. Prints one line; exits 0 to RUN this tick, 10 to PAUSE it, and
     /// 2 to REFUSE retired config (USAGE_SLACK_PCT, whose meaning inverted with the #158 pace
     /// flip — replace it with USAGE_HEADROOM_PCT). Config is env-only (USAGE_CEILING_PCT,
@@ -20990,6 +21194,7 @@ fn main() {
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
         Cmd::TokenReport { trace, json } => token_report_mode(&trace, json),
+        Cmd::BackfillMetrics { path, write } => backfill_metrics_mode(&path, write),
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
@@ -23529,7 +23734,10 @@ mod usage_probe_tests {
             serde_json::json!([]),
             "absent spend is an empty array, never a missing key"
         );
-        assert_eq!(empty["costUsd"], 37.84, "the frozen field is untouched");
+        // No trace to recompute from: the main-thread figures stand, and the row SAYS so rather
+        // than presenting them as the run.
+        assert_eq!(empty["costUsd"], 37.84);
+        assert_eq!(empty["accuracy"], "main-thread-only");
 
         let agents = [AgentSpend {
             label: "rework pointers".to_string(),
@@ -23562,10 +23770,70 @@ mod usage_probe_tests {
         assert_eq!(full["attributedUsd"], 12.5);
         assert_eq!(full["listUsd"], 37.5, "attributed + output");
         assert_eq!(full["billedUsd"], 136.08);
+        // The correction: with a trace to recompute from, the legacy keys carry the WHOLE run.
+        // `costUsd` is the billed total rather than the main loop's $37.84 share, `cacheRead` and
+        // `tokensIn` sum every thread, and `tokensOut` is the harness's true figure.
         assert_eq!(
-            full["costUsd"], 37.84,
-            "still the legacy figure, not billed"
+            full["costUsd"], 136.08,
+            "costUsd is the run now, not the main loop"
         );
+        assert_eq!(full["cacheRead"], 9, "summed across agents");
+        assert_eq!(
+            full["tokensOut"], 1_000_000,
+            "from modelUsage, not the per-message snapshot"
+        );
+        assert_eq!(full["accuracy"], "whole-run");
+    }
+
+    /// A traceless row is LABELLED, never estimated: every number it carries survives byte for
+    /// byte, and the only addition is the honesty flag. The error being corrected is bimodal
+    /// (1.00x when a run dispatched nobody, 1.8–3.6x when it did), so a mean would describe no
+    /// row that actually ran.
+    #[test]
+    fn a_traceless_row_is_labelled_not_estimated() {
+        let row = serde_json::json!({
+            "runId": "20260702T050001Z", "role": "producer",
+            "costUsd": 6.928, "cacheRead": 1234, "tokensOut": 99,
+        });
+        let (out, recomputed) = backfill_row(row.clone(), None);
+        assert!(!recomputed);
+        assert_eq!(out["accuracy"], "main-thread-only");
+        for k in ["costUsd", "cacheRead", "tokensOut"] {
+            assert_eq!(out[k], row[k], "{k} must be untouched");
+        }
+    }
+
+    /// A row WITH a trace is recomputed from it — the whole point of the backfill.
+    #[test]
+    fn a_traced_row_is_recomputed_whole_run() {
+        let trace = [
+            dispatch_ev("toolu_A", "some work"),
+            spend_ev("m1", None, 1_000_000, 0, 0),
+            spend_ev("m2", Some("toolu_A"), 4_000_000, 0, 0),
+            serde_json::to_string(&serde_json::json!({
+                "type":"result","total_cost_usd":9.0,
+                "modelUsage":{"claude-opus-5":{"outputTokens":200_000}}}))
+            .unwrap(),
+        ]
+        .join("\n");
+        let row = serde_json::json!({"runId":"x","role":"producer","costUsd":1.0,"cacheRead":7});
+        let (out, recomputed) = backfill_row(row, Some(&trace));
+        assert!(recomputed);
+        assert_eq!(out["accuracy"], "whole-run");
+        assert_eq!(out["cacheRead"], 5_000_000, "both threads, not just main");
+        assert_eq!(out["costUsd"], 9.0, "billed, not the stale 1.0");
+        assert_eq!(out["agents"].as_array().unwrap().len(), 2);
+    }
+
+    /// Live partial rows (boot/ttl/usage) are main-thread by nature — the subagents have not
+    /// finished. Rewriting them would invent a total the run had not yet reached.
+    #[test]
+    fn partial_stage_rows_are_left_alone() {
+        let row = serde_json::json!({"stage":"usage","costUsd":1.0,"trace":"/nope"});
+        let (out, recomputed) = backfill_row(row, Some("{}"));
+        assert!(!recomputed);
+        assert!(out.get("accuracy").is_none(), "not even labelled");
+        assert_eq!(out["costUsd"], 1.0);
     }
 
     /// An unrecognised model must not silently price as the cheapest tier.
