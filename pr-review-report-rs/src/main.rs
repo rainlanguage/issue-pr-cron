@@ -2502,6 +2502,35 @@ impl SpendRecord<'_> {
     }
 }
 
+impl AgentSpend {
+    /// Every token this task moved: fresh input, cache reads, cache writes.
+    ///
+    /// The headline figure for a task. Cost is a function of this and of rates that change; the
+    /// token count is what the work actually did. Output is NOT included and cannot be —
+    /// `usage.output_tokens` is a message-start snapshot, so the only true output figure is
+    /// whole-run (see [`AgentSpend`]). Output runs ~0.5% of a dispatching run's tokens, so a task
+    /// total without it is within a rounding error of complete, but it is an exclusion rather than
+    /// an oversight.
+    fn tokens(&self) -> u64 {
+        self.tokens_in + self.cache_read + self.cache_write_5m + self.cache_write_1h
+    }
+}
+
+/// One task's row in a metrics record: what the work was, and what it moved.
+///
+/// One constructor, so the end-of-run record and the backfill cannot drift into describing a task
+/// differently.
+fn agent_row(a: &AgentSpend) -> Value {
+    serde_json::json!({
+        "label": a.label,
+        "tokens": a.tokens(),
+        "usd": round3(a.usd),
+        "messages": a.messages,
+        "cacheRead": a.cache_read,
+        "cacheWrite": a.cache_write_5m + a.cache_write_1h,
+    })
+}
+
 /// PURE: what the run was billed, as the harness reports it.
 ///
 /// The MAXIMUM `total_cost_usd` across every `result` line, because those values are CUMULATIVE:
@@ -2597,16 +2626,7 @@ fn backfill_row(mut row: Value, trace_body: Option<&str>) -> (Value, bool) {
     );
     obj.insert(
         "agents".into(),
-        serde_json::json!(agents
-            .iter()
-            .map(|a| serde_json::json!({
-                "label": a.label,
-                "usd": round3(a.usd),
-                "messages": a.messages,
-                "cacheRead": a.cache_read,
-                "cacheWrite": a.cache_write_5m + a.cache_write_1h,
-            }))
-            .collect::<Vec<Value>>()),
+        serde_json::json!(agents.iter().map(agent_row).collect::<Vec<Value>>()),
     );
     obj.insert("accuracy".into(), serde_json::json!("whole-run"));
     (row, true)
@@ -14009,8 +14029,21 @@ const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 /// default is small rather than "everything that fits". The ceiling is what keeps the bound
 /// STRUCTURAL: at 25 rows a state-load cannot reach [`MCP_MAX_RESULT_BYTES`] even with GitHub's
 /// longest legal titles, so the size of the queue stops being able to break the state-load.
-const STATE_LOAD_PAGE_DEFAULT: usize = 10;
-const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=25;
+///
+/// RUN BUDGET (2026-08-03): a page is now an ALLOWANCE, not a window onto a longer queue. A vetter
+/// run spends at most 3 ITEMS — a PR vetted or a close-candidate flag ruled on, ONE budget shared
+/// across both state-loads. It is a RISK CONTROL, not a throughput preference: the FSM is not yet
+/// reliable or efficient, every item a run attempts is an item that can go wrong (a wrong verdict
+/// a human acts on, a sound flag stripped, tokens burnt for nothing), and 3 bounds how much damage
+/// ONE run can do while that is still true. So a state-load handing back 10 or 25 is handing back
+/// work the run must not do, and the per-tool half of "stop at 3" is a rule the surface enforces
+/// rather than one the prompt merely asserts. The SHARING is necessarily the prompt's to enforce:
+/// each tool call is bounded on its own, and neither can see what the other already spent. The
+/// bound is deliberately conservative and explicitly temporary — raising it is moving THIS number,
+/// gated on evidence from the run logs that runs have become reliable and efficient, never on a
+/// run having finished early with budget to spare.
+const STATE_LOAD_PAGE_DEFAULT: usize = 3;
+const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=3;
 
 /// The byte budget ONE tool result must fit in — the contract this server holds itself to, checked
 /// on every result before it is handed back (#78), and sized so that OUR error always arrives before
@@ -15319,12 +15352,12 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — re-call after recording verdicts for the next page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why (digest rows: pr, action, unresolvedThreads)."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3) — a run's whole work budget is 3 items across both state-loads."}
                 }
             }
         },
@@ -15389,12 +15422,12 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "unvetted_close_candidates",
-            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — re-call after recording verdicts. Human-ruled and already-vetted-at-flag issues are excluded.",
+            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3) — a run's whole work budget is 3 items across both state-loads."}
                 }
             }
         },
@@ -33346,13 +33379,14 @@ mod vetter_state_load_tests {
                 doc["prs"].as_array().unwrap().len(),
                 STATE_LOAD_PAGE_DEFAULT
             );
-            assert_eq!(doc["more"], json!(10));
+            // 20 vet-able minus the 3-row page; 150 skipped minus the same page.
+            assert_eq!(doc["more"], json!(17));
             if include_skipped {
                 assert_eq!(
                     doc["skipped"].as_array().unwrap().len(),
                     STATE_LOAD_PAGE_DEFAULT
                 );
-                assert_eq!(doc["moreSkipped"], json!(140));
+                assert_eq!(doc["moreSkipped"], json!(147));
             }
         }
 
@@ -34117,34 +34151,45 @@ mod mcp_tests {
         );
     }
 
-    // #78: a state-load handed to a token-budgeted caller is ALWAYS paged. An out-of-range page is
-    // refused rather than clamped — a clamp leaves the caller believing it got what it asked for.
+    // #78: a state-load handed to a token-budgeted caller is ALWAYS paged, and the page is the
+    // run's whole work budget (see STATE_LOAD_PAGE_RANGE). An out-of-range page is refused rather
+    // than clamped — a clamp leaves the caller believing it got what it asked for — and the
+    // refusal covers the sizes the pre-budget 1..=25 bound used to accept (4, the old default 10,
+    // the old ceiling 25): asking for them is asking for more work than a run may do.
     #[test]
     fn a_state_load_page_is_bounded_by_the_transition_guard() {
         let f = FakeExec::ok();
         for tool in ["unvetted", "unvetted_close_candidates"] {
-            for bad in [json!(0), json!(26), json!("10"), json!(-1), json!(1000)] {
+            for bad in [
+                json!(0),
+                json!(4),
+                json!(10),
+                json!(25),
+                json!("3"),
+                json!(-1),
+                json!(1000),
+            ] {
                 let resp = f.handle(&call(tool, json!({"limit": bad}))).unwrap();
                 assert!(is_error(&resp), "{tool} limit={bad} must be refused");
-                assert!(text(&resp).contains("limit must be an integer in 1..=25"));
+                assert!(text(&resp).contains("limit must be an integer in 1..=3"));
             }
         }
         assert!(f.calls().is_empty(), "no refused page reached a fetch");
 
         // …and an in-range page is carried through verbatim.
-        f.handle(&call("unvetted", json!({"limit": 3}))).unwrap();
-        f.handle(&call("unvetted_close_candidates", json!({"limit": 25})))
+        f.handle(&call("unvetted", json!({"limit": 1}))).unwrap();
+        f.handle(&call("unvetted_close_candidates", json!({"limit": 3})))
             .unwrap();
         assert_eq!(
             f.calls(),
             vec![
                 McpCall::Unvetted {
                     include_skipped: false,
-                    limit: 3
+                    limit: 1
                 },
                 McpCall::UnvettedCloseCandidates {
                     include_skipped: false,
-                    limit: 25
+                    limit: 3
                 },
             ]
         );
