@@ -4758,15 +4758,11 @@ fn names_token(line: &str, token: &str) -> bool {
 fn workflow_gates_a_push(text: &str) -> bool {
     let mut in_on = false;
     for line in text.lines() {
-        let indented = line.starts_with([' ', '\t']);
-        if !indented && !line.trim().is_empty() {
-            if in_on {
-                return false; // the `on:` block ended without naming push/pull_request
-            }
+        // A column-zero key CLOSES whatever block was open and opens its own, so this single
+        // assignment is the whole boundary: a `push` under `jobs:` cannot make a dispatch-only
+        // workflow look like a gate, and `on: [push]` is still read off the `on:` line itself.
+        if !line.starts_with([' ', '\t']) && !line.trim().is_empty() {
             in_on = line.starts_with("on:");
-            if !in_on {
-                continue;
-            }
         }
         if in_on && (names_token(line, "push") || names_token(line, "pull_request")) {
             return true;
