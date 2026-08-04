@@ -30095,9 +30095,64 @@ fn repo_root_path(rel: &str) -> std::path::PathBuf {
         .join(rel)
 }
 
+/// TEST HELPER: this crate's own source, embedded at COMPILE time.
+///
+/// `include_str!` resolves against the file it is written in, so unlike every runtime conformance
+/// read in this crate it cannot come back empty — there is no "not checked out" bail for it to
+/// pass by, in the flake build sandbox or anywhere else. That is why the gate over it is written
+/// against this rather than `repo_root_text("pr-review-report-rs/src/main.rs")`: a guard whose job
+/// is to stop tests passing vacuously must not be able to pass vacuously itself.
+#[cfg(test)]
+const CRATE_SOURCE: &str = include_str!("main.rs");
+
 #[cfg(test)]
 mod repo_root_tests {
     use super::{repo_root_path, repo_root_text};
+
+    /// TEST HELPER: the TOP-LEVEL item a line sits in — the name a hit is reported under, because
+    /// a line number moves with every edit above it and a name does not. A free function or the
+    /// module, never the test fn inside it: the granularity that matters is which item owns the
+    /// code, and one name per module keeps the expected set readable.
+    ///
+    /// Column 0 IS the test — `strip_prefix` runs on the unindented line — so anything nested
+    /// resolves to the item it is nested in.
+    fn enclosing_item(line: &str) -> Option<String> {
+        let decl = line
+            .strip_prefix("pub(crate) ")
+            .or_else(|| line.strip_prefix("pub "))
+            .unwrap_or(line);
+        let name: String = [
+            "fn ", "mod ", "impl ", "struct ", "enum ", "trait ", "const ", "static ",
+        ]
+        .into_iter()
+        .find_map(|kw| decl.strip_prefix(kw))?
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// TEST HELPER: every top-level item whose CODE contains `needle`, in source order, once each.
+    ///
+    /// Comment lines are skipped. This file documents the very bug the gate below catches, quoting
+    /// the shape in prose so a reader knows it when they see it, and a scan that cannot tell a
+    /// description from a call would make writing that description impossible.
+    fn items_whose_code_contains(needle: &str) -> Vec<String> {
+        let mut item = String::from("<above the first item>");
+        let mut hits: Vec<String> = Vec::new();
+        for line in super::CRATE_SOURCE.lines() {
+            if let Some(name) = enclosing_item(line) {
+                item = name;
+            }
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if line.contains(needle) && !hits.contains(&item) {
+                hits.push(item.clone());
+            }
+        }
+        hits
+    }
 
     /// The guard on the guard. Every conformance test over a repo-root file is written to bail
     /// gracefully when the file is absent, so if the LOOKUP goes wrong they all pass by not
@@ -30125,6 +30180,65 @@ mod repo_root_tests {
         assert_eq!(
             repo_root_text("README.md"),
             std::fs::read_to_string(repo_root_path("README.md")).ok()
+        );
+    }
+
+    /// #143: four prompt-pinning tests asserted NOTHING for months, every one of them the same
+    /// shape — a repo-root file reached by a path the test built itself, resolving against the
+    /// crate directory where that file has never been, with the graceful "not checked out" bail
+    /// swallowing the miss. Routing those four through [`repo_root_text`] fixed those four. It
+    /// left the SHAPE writable, and the fifth one is whatever gets added next — `settings_tests`
+    /// gains prompt-pinning tests faster than any other module in this file.
+    ///
+    /// Rust cannot take `std::fs` away from a test module, so the line is drawn over the crate's
+    /// own source instead: the repo root is resolved in exactly ONE place, and no filesystem call
+    /// is handed a path literal. Both halves fail LOUDLY at the call site that reintroduced the
+    /// shape, which is the property the swallowed bail never had.
+    ///
+    /// The needles are ASSEMBLED from parts rather than spelled out, so this test's own source is
+    /// not a hit for the shapes it hunts. The alternative — exempting the scanner from the scan —
+    /// puts the hole in the one function a person reads to learn what the rule is.
+    ///
+    /// Scope is `src/main.rs`. Each integration test under `tests/` carries its own resolver
+    /// because a binary crate's `#[cfg(test)]` items are not importable from one; that is a
+    /// property of the crate layout, and it is why this pins "one place" across the unit-test
+    /// tree rather than across the repository.
+    #[test]
+    fn the_repo_root_is_resolved_in_one_place_and_no_read_takes_a_path_literal() {
+        let manifest_dir = format!("env!(\"{}\")", ["CARGO", "MANIFEST", "DIR"].join("_"));
+        assert_eq!(
+            items_whose_code_contains(&manifest_dir),
+            ["repo_root_path", "repo_root_tests"],
+            "the crate directory is read by `repo_root_path`, and by the test above that pins \
+             where it looks — nowhere else. A second one is a second resolver, and #143 is what \
+             one that got the `/../` wrong cost: four tests, silent, for months"
+        );
+
+        let mut offenders = Vec::new();
+        for call in [
+            "fs::read_to_string",
+            "fs::read",
+            "fs::read_dir",
+            "fs::write",
+            "fs::metadata",
+            "fs::canonicalize",
+            "fs::copy",
+            "fs::rename",
+            "fs::create_dir_all",
+            "fs::remove_file",
+            "fs::remove_dir_all",
+            "File::open",
+            "File::create",
+        ] {
+            for item in items_whose_code_contains(&format!("{call}(\"")) {
+                offenders.push(format!("{item}: {call}(\"…\")"));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a filesystem call takes a path LITERAL, which is #143's bare relative read whatever \
+             the literal names: {offenders:?}. A repo-root file goes through `repo_root_text` / \
+             `repo_root_path`; every other path in this crate is built from a value"
         );
     }
 }
@@ -30333,9 +30447,8 @@ mod settings_tests {
     // a filtered src that omits them, so the read is skipped there; the rs-test gate (cargo test at the
     // repo root) has the files and enforces the assertion.
     fn read_json(rel: &str) -> Option<Value> {
-        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
-        let text = std::fs::read_to_string(&path).ok()?;
-        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+        let text = repo_root_text(rel)?;
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {rel}: {e}")))
     }
 
     fn perm_list(rel: &str, which: &str) -> Option<Vec<String>> {
@@ -39014,9 +39127,8 @@ mod marketplace_tests {
     use serde_json::json;
 
     fn read_json(rel: &str) -> Option<Value> {
-        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
-        let text = std::fs::read_to_string(&path).ok()?;
-        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+        let text = repo_root_text(rel)?;
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {rel}: {e}")))
     }
 
     // The whole point: installers read the LISTING, so a listing that names a different version
@@ -39204,11 +39316,7 @@ mod marketplace_tests {
     // or it is listed with no description and no argument hint.
     #[test]
     fn every_shipped_command_carries_its_frontmatter() {
-        let dir = format!(
-            "{}/../plugins/human-fsm/commands",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = std::fs::read_dir(repo_root_path("plugins/human-fsm/commands")) else {
             return; // not checked out (nix build sandbox)
         };
         // The MCP grants are resolved against what this repo ACTUALLY ships — the plugin's own
@@ -39632,11 +39740,7 @@ mod marketplace_tests {
     // legal shape again.
     #[test]
     fn nr_grants_the_two_reads_the_source_it_audits_and_the_lens() {
-        let path = format!(
-            "{}/../plugins/human-fsm/commands/nr.md",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
