@@ -24780,7 +24780,8 @@ enum AwaitState {
     HeadUnchanged,
     /// Checks are still in flight.
     ChecksPending,
-    /// A push landed and the head carries NO checks yet. Not settled: see [`await_state`].
+    /// The head carries NO checks yet, and the grace period for them to appear has not run out.
+    /// Not settled: see [`await_state`].
     ChecksUnregistered,
     /// The read failed, or the document did not carry what the poll asked for.
     Unreadable,
@@ -24798,6 +24799,36 @@ impl AwaitState {
     }
 }
 
+/// How long an EMPTY check rollup is read as "the checks have not appeared yet" rather than "this
+/// repo has no CI".
+///
+/// `NoChecks` is the `nochecks` is not `passed` trap: an empty rollup is a true statement about the
+/// document and a false answer to "is anything still coming", because GitHub registers a push's
+/// checks seconds AFTER the push. Both readings are right sometimes and there is no field that
+/// distinguishes them, so the only honest discriminator is TIME — and it has to be bounded in both
+/// directions, since settling instantly is a phantom green and never settling hangs every repo that
+/// genuinely has no CI. Two minutes is an order of magnitude beyond the observed registration
+/// window while still ending a no-CI wait long before the default deadline.
+///
+/// The grace is timed from the moment a subject became ELIGIBLE (see [`await_head_ready`]), never
+/// from the start of the wait: a head that moves at minute ten must still get its full grace, and
+/// timing from the start would hand it a phantom green precisely when a push had just landed.
+const AWAIT_CHECKS_GRACE_SECS: u64 = 120;
+
+/// PURE: the head gate on its own — `Some(true)` when the checks in this document are the ones the
+/// caller is waiting on, `Some(false)` while the head has not moved off the named baseline, `None`
+/// when the document could not be read.
+///
+/// Split out of [`await_state`] because the poll loop has to know WHEN a subject became eligible in
+/// order to time [`AWAIT_CHECKS_GRACE_SECS`] from that moment.
+fn await_head_ready(detail: Option<&Value>, baseline: Option<&str>) -> Option<bool> {
+    let head = detail?.get("headRefOid").and_then(|v| v.as_str())?;
+    Some(match baseline {
+        Some(b) => head_moved(head, b),
+        None => true,
+    })
+}
+
 /// PURE: one subject's state, from the document one poll fetched.
 ///
 /// Three things here are decisions rather than mechanics, and each one is a way this could report
@@ -24807,26 +24838,25 @@ impl AwaitState {
 ///  1. AN UNMOVED HEAD OUTRANKS THE CHECKS. When the caller named a baseline sha and the head is
 ///     still on it, the rollup being green describes the PREVIOUS head — the phantom green the
 ///     prompt's STALE-CI GUARD is about. So the checks are not even consulted.
-///  2. AN EMPTY ROLLUP ON A HEAD THAT JUST MOVED IS NOT GREEN. GitHub registers a push's checks
-///     seconds after the push, and a poll landing inside that window sees `[]`, which
-///     [`classify_ci`] correctly calls `NoChecks` — correct about the document, wrong as an answer
-///     to "is anything still coming". This is scoped to the case where a baseline was given,
-///     because that is exactly the case where a push is KNOWN to have just happened; without one,
-///     an empty rollup is a repo with no CI and waiting on it would never end.
+///  2. AN EMPTY ROLLUP IS NOT GREEN UNTIL THE GRACE RUNS OUT — see [`AWAIT_CHECKS_GRACE_SECS`].
+///     This is NOT scoped to the `@sha` case: a caller that names no baseline is waiting on checks
+///     it believes are already running, and "they have not been created yet" is the same wrong
+///     answer whether or not this process is the one that saw the push.
 ///  3. AN UNREADABLE SUBJECT IS NOT SETTLED. A failed read is not an answer, the same way
 ///     [`count_unresolved_page`] returns `None` rather than a silent zero.
-fn await_state(detail: Option<&Value>, baseline: Option<&str>) -> AwaitState {
+fn await_state(
+    detail: Option<&Value>,
+    baseline: Option<&str>,
+    checks_grace_expired: bool,
+) -> AwaitState {
+    match await_head_ready(detail, baseline) {
+        None => return AwaitState::Unreadable,
+        Some(false) => return AwaitState::HeadUnchanged,
+        Some(true) => {}
+    }
     let Some(detail) = detail else {
         return AwaitState::Unreadable;
     };
-    let Some(head) = detail.get("headRefOid").and_then(|v| v.as_str()) else {
-        return AwaitState::Unreadable;
-    };
-    if let Some(b) = baseline {
-        if !head_moved(head, b) {
-            return AwaitState::HeadUnchanged;
-        }
-    }
     // Key presence, not value shape: the poll ASKED for this field, so a document without it is a
     // document that did not answer. `null` is an answer (no checks) and reaches `classify_ci`.
     let Some(rollup) = detail.get("statusCheckRollup") else {
@@ -24834,28 +24864,99 @@ fn await_state(detail: Option<&Value>, baseline: Option<&str>) -> AwaitState {
     };
     match classify_ci(rollup) {
         Ci::Pending => AwaitState::ChecksPending,
-        Ci::NoChecks if baseline.is_some() => AwaitState::ChecksUnregistered,
+        Ci::NoChecks if !checks_grace_expired => AwaitState::ChecksUnregistered,
         _ => AwaitState::Settled,
     }
 }
 
-/// What one `await` ended up with: every subject's last-polled state, and whether the deadline is
-/// what stopped it.
+/// How many CONSECUTIVE unreadable polls of one subject end the wait.
+///
+/// An unreadable subject never settles, so without a bound a wait on one runs the full deadline —
+/// and since `gh_json` collapses every failure to `None` (#129, PR 199), a RATE LIMIT arrives here
+/// as `Unreadable` and the wait answers it by making 45 more calls per subject into the limit that
+/// caused it. Ending on the FIRST one instead would be worse in the other direction: a single 502
+/// would abort a legitimate wait, which is the case
+/// `an_unreadable_subject_does_not_end_the_wait` pins.
+///
+/// So the discriminator is PERSISTENCE, which is the right one here precisely BECAUSE the cause is
+/// not knowable: whatever a read failure means, one that survives five consecutive polls is not a
+/// blip, and the wait cannot answer it by asking again. At the 20-second default that is 100
+/// seconds of continuous failure. When #199 lands and read failures carry a TYPE, this budget is
+/// where a rate limit can start honouring its reset header and a 404 can become terminal on the
+/// first poll — the structure is what makes that a refinement rather than a rewrite, so nothing
+/// here tries to guess the cause from an error string in the meantime.
+const AWAIT_UNREADABLE_LIMIT: u32 = 5;
+
+/// Why a wait stopped. A bare `timed_out: bool` could not say "we gave up because a subject stayed
+/// unreadable", which is a different thing for the caller to do something about than a deadline —
+/// and a caller that cannot tell them apart re-derives the difference from the per-subject lines,
+/// which is the kind of re-derivation this whole tool exists to remove.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AwaitStop {
+    AllSettled,
+    Deadline,
+    Unreadable,
+}
+
+impl AwaitStop {
+    fn as_str(self) -> &'static str {
+        match self {
+            AwaitStop::AllSettled => "all-settled",
+            AwaitStop::Deadline => "deadline",
+            AwaitStop::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// What one `await` ended up with: every subject's last-polled state, and what stopped the wait.
 #[derive(Debug, PartialEq)]
 struct AwaitOutcome {
     rows: Vec<(AwaitRef, AwaitState)>,
     polls: u32,
-    timed_out: bool,
+    stop: AwaitStop,
+}
+
+impl AwaitOutcome {
+    fn settled(&self) -> bool {
+        self.stop == AwaitStop::AllSettled
+    }
+}
+
+/// Per-subject state the loop carries ACROSS polls. Everything else about a subject is a pure
+/// function of the document in front of it; these two are not, and both exist to bound a wait that
+/// would otherwise run to the deadline.
+#[derive(Default)]
+struct AwaitProgress {
+    /// Clock at the first poll where this subject's head test passed — when its checks became the
+    /// ones being waited on, and therefore when [`AWAIT_CHECKS_GRACE_SECS`] starts.
+    eligible_since: Option<u64>,
+    /// Consecutive polls this subject has come back [`AwaitState::Unreadable`].
+    unreadable_streak: u32,
 }
 
 /// The wait itself, with its clock, its reads and its sleeping injected — so every branch that
 /// decides WHEN A WAIT ENDS is testable without a network or a real second passing.
 ///
-/// Two orderings carry the correctness:
+/// EVERY SUBJECT IS RE-FETCHED ON EVERY POLL, INCLUDING ONES ALREADY SETTLED, AND THAT IS THE
+/// POINT. The exit condition is "all settled AT ONCE", not "each has settled at least once", so a
+/// green PR that receives another push goes back to `checks-pending` and holds the wait open. The
+/// difference is not hypothetical: in run `20260729T170004Z`, which is the run this subcommand was
+/// derived from, `cyclofinance/cyclo.site#294` was pushed at 17:42:40Z and AGAIN at 18:01:08Z
+/// inside one wait, and `#409` at 17:33:37Z and 17:43:05Z. Under settle-once both would have been
+/// reported finished on the first green, and the second push's CI — the CI that describes the code
+/// a human would then be shown — would never have been looked at. Caching a settled subject to
+/// save API calls buys back exactly the staleness the `@sha` gate above exists to prevent, one
+/// dimension over: that gate refuses a verdict from a stale HEAD, this refuses one from a stale
+/// MOMENT. The cost is real but it is quota, not tokens, and the turn count — the thing #170 is
+/// about — is 1 either way.
 ///
-///  * THE SETTLE CHECK COMES BEFORE THE DEADLINE CHECK, so a fleet that settles on the very poll
-///    that exhausts the budget is reported settled rather than timed out. The deadline exists to
-///    bound the wait, not to overrule an answer already in hand.
+/// Three orderings carry the rest of the correctness:
+///
+///  * THE SETTLE CHECK COMES BEFORE EVERY REASON TO GIVE UP, so a fleet that settles on the very
+///    poll that exhausts the budget is reported settled. The deadline bounds the wait; it does not
+///    overrule an answer already in hand.
+///  * THE UNREADABLE BUDGET COMES BEFORE THE DEADLINE, because when both are true the specific
+///    reason is the useful one and stopping sooner is the whole point of having it.
 ///  * A FULL PASS ALWAYS HAPPENS FIRST, so `--timeout-secs 0` is a single snapshot rather than a
 ///    report of nothing, and the sleep only ever happens between passes — never after the last one,
 ///    where it would be pure latency.
@@ -24868,33 +24969,45 @@ fn await_poll(
     sleep: &mut dyn FnMut(u64),
 ) -> AwaitOutcome {
     let start = now();
+    let mut progress: Vec<AwaitProgress> = refs.iter().map(|_| AwaitProgress::default()).collect();
     let mut polls = 0u32;
     loop {
-        let rows: Vec<(AwaitRef, AwaitState)> = refs
-            .iter()
-            .map(|r| {
-                (
-                    r.clone(),
-                    await_state(fetch(r).as_ref(), r.from_head.as_deref()),
-                )
-            })
-            .collect();
+        let at = now();
+        let mut rows: Vec<(AwaitRef, AwaitState)> = Vec::with_capacity(refs.len());
+        let mut stalled = false;
+        for (r, p) in refs.iter().zip(progress.iter_mut()) {
+            let detail = fetch(r);
+            let baseline = r.from_head.as_deref();
+            if await_head_ready(detail.as_ref(), baseline) == Some(true) && p.eligible_since.is_none()
+            {
+                p.eligible_since = Some(at);
+            }
+            let grace_expired = p
+                .eligible_since
+                .is_some_and(|since| at.saturating_sub(since) >= AWAIT_CHECKS_GRACE_SECS);
+            let state = await_state(detail.as_ref(), baseline, grace_expired);
+            if state == AwaitState::Unreadable {
+                p.unreadable_streak += 1;
+                if p.unreadable_streak >= AWAIT_UNREADABLE_LIMIT {
+                    stalled = true;
+                }
+            } else {
+                p.unreadable_streak = 0;
+            }
+            rows.push((r.clone(), state));
+        }
         polls += 1;
-        if rows.iter().all(|(_, s)| *s == AwaitState::Settled) {
-            return AwaitOutcome {
-                rows,
-                polls,
-                timed_out: false,
-            };
-        }
-        if now().saturating_sub(start) >= timeout_secs {
-            return AwaitOutcome {
-                rows,
-                polls,
-                timed_out: true,
-            };
-        }
-        sleep(interval_secs);
+        let stop = if rows.iter().all(|(_, s)| *s == AwaitState::Settled) {
+            AwaitStop::AllSettled
+        } else if stalled {
+            AwaitStop::Unreadable
+        } else if now().saturating_sub(start) >= timeout_secs {
+            AwaitStop::Deadline
+        } else {
+            sleep(interval_secs);
+            continue;
+        };
+        return AwaitOutcome { rows, polls, stop };
     }
 }
 
@@ -24916,7 +25029,11 @@ fn await_report(out: &AwaitOutcome) -> String {
         out.rows.len() - unsettled,
         out.rows.len(),
         out.polls,
-        if out.timed_out { " — TIMED OUT" } else { "" }
+        match out.stop {
+            AwaitStop::AllSettled => "",
+            AwaitStop::Deadline => " — TIMED OUT",
+            AwaitStop::Unreadable => " — GAVE UP: a subject stayed unreadable",
+        }
     ));
     s
 }
@@ -24924,8 +25041,8 @@ fn await_report(out: &AwaitOutcome) -> String {
 /// PURE: the machine-readable form of the same answer.
 fn await_json(out: &AwaitOutcome) -> Value {
     serde_json::json!({
-        "settled": !out.timed_out,
-        "timedOut": out.timed_out,
+        "settled": out.settled(),
+        "stop": out.stop.as_str(),
         "polls": out.polls,
         "subjects": out.rows.iter().map(|(r, st)| serde_json::json!({
             "repo": format!("{}/{}", r.owner, r.repo),
@@ -24940,6 +25057,12 @@ fn await_json(out: &AwaitOutcome) -> Value {
 /// caller acts on it: a timeout is a real answer about a fleet that is still moving, and the
 /// per-subject lines say which parts of it.
 const AWAIT_TIMED_OUT: i32 = 3;
+
+/// Exit code for an `await` that gave up because a subject stayed unreadable. Distinct from the
+/// deadline (3) because the two ask for different next moves: a deadline says the fleet is still
+/// working, this says the tool could not see it — often the rate limit that would also spoil
+/// whatever the caller does next.
+const AWAIT_UNREADABLE: i32 = 4;
 
 fn await_mode(refs: &[String], timeout_secs: u64, interval_secs: u64, json_out: bool) -> i32 {
     let mut subjects = Vec::new();
@@ -24979,18 +25102,19 @@ fn await_mode(refs: &[String], timeout_secs: u64, interval_secs: u64, json_out: 
     } else {
         print!("{}", await_report(&out));
     }
-    if out.timed_out {
-        AWAIT_TIMED_OUT
-    } else {
-        0
+    match out.stop {
+        AwaitStop::AllSettled => 0,
+        AwaitStop::Deadline => AWAIT_TIMED_OUT,
+        AwaitStop::Unreadable => AWAIT_UNREADABLE,
     }
 }
 
 #[cfg(test)]
 mod await_tests {
     use super::{
-        await_json, await_poll, await_report, await_state, head_moved, parse_await_ref, AwaitRef,
-        AwaitState, AWAIT_DETAIL_FIELDS,
+        await_head_ready, await_json, await_poll, await_report, await_state, head_moved,
+        parse_await_ref, AwaitRef, AwaitState, AwaitStop, AWAIT_CHECKS_GRACE_SECS,
+        AWAIT_DETAIL_FIELDS, AWAIT_UNREADABLE_LIMIT,
     };
     use serde_json::{json, Value};
 
@@ -25084,11 +25208,11 @@ mod await_tests {
     #[test]
     fn checks_that_have_all_reported_are_settled_whether_green_or_red() {
         assert_eq!(
-            await_state(Some(&doc("h", green())), None),
+            await_state(Some(&doc("h", green())), None, false),
             AwaitState::Settled
         );
         assert_eq!(
-            await_state(Some(&doc("h", red())), None),
+            await_state(Some(&doc("h", red())), None, false),
             AwaitState::Settled,
             "a red IS the answer — the wait is for the checks to report, not to pass"
         );
@@ -25097,7 +25221,7 @@ mod await_tests {
     #[test]
     fn checks_still_running_are_pending() {
         assert_eq!(
-            await_state(Some(&doc("h", pending())), None),
+            await_state(Some(&doc("h", pending())), None, false),
             AwaitState::ChecksPending
         );
     }
@@ -25108,7 +25232,7 @@ mod await_tests {
     fn an_unmoved_head_outranks_the_checks_however_they_read() {
         for checks in [green(), red(), pending(), json!([])] {
             assert_eq!(
-                await_state(Some(&doc("abc1234def", checks)), Some("abc1234")),
+                await_state(Some(&doc("abc1234def", checks)), Some("abc1234"), false),
                 AwaitState::HeadUnchanged,
                 "checks on the old head can never settle a wait for a push"
             );
@@ -25118,7 +25242,7 @@ mod await_tests {
     #[test]
     fn a_moved_head_lets_the_checks_decide() {
         assert_eq!(
-            await_state(Some(&doc("fff0000", green())), Some("abc1234")),
+            await_state(Some(&doc("fff0000", green())), Some("abc1234"), false),
             AwaitState::Settled
         );
     }
@@ -25128,25 +25252,54 @@ mod await_tests {
     #[test]
     fn an_empty_rollup_right_after_an_awaited_push_is_not_settled() {
         assert_eq!(
-            await_state(Some(&doc("fff0000", json!([]))), Some("abc1234")),
+            await_state(Some(&doc("fff0000", json!([]))), Some("abc1234"), false),
             AwaitState::ChecksUnregistered
         );
     }
 
-    /// …and with no push awaited, an empty rollup is a repo with no CI. Waiting on that would never
-    /// end, so it settles — which is why the case above is scoped to a named baseline.
+    /// …and an empty rollup with NO push awaited gets the same grace, because the caller is waiting
+    /// on checks it believes are already running and "not created yet" is the same wrong answer
+    /// either way. The `nochecks` is not `passed` trap is closed by design here, not by telling the
+    /// prompt to always pass `@sha` — an instruction the design does not support is exactly the
+    /// failure this whole subcommand was built to diagnose.
     #[test]
-    fn an_empty_rollup_with_no_push_awaited_is_settled() {
+    fn an_empty_rollup_is_ungraded_until_the_grace_runs_out_with_or_without_a_baseline() {
+        for baseline in [None, Some("abc1234")] {
+            let head = if baseline.is_some() { "fff0000" } else { "h" };
+            assert_eq!(
+                await_state(Some(&doc(head, json!([]))), baseline, false),
+                AwaitState::ChecksUnregistered,
+                "inside the grace, an empty rollup is not an answer (baseline={baseline:?})"
+            );
+            assert_eq!(
+                await_state(Some(&doc(head, json!([]))), baseline, true),
+                AwaitState::Settled,
+                "once the grace is out, a repo with no CI must not hang the wait \
+                 (baseline={baseline:?})"
+            );
+        }
+    }
+
+    /// The gate the grace clock is timed from, on its own.
+    #[test]
+    fn the_head_gate_reports_readable_moved_and_unmoved_separately() {
+        assert_eq!(await_head_ready(Some(&doc("h", green())), None), Some(true));
         assert_eq!(
-            await_state(Some(&doc("h", json!([]))), None),
-            AwaitState::Settled
+            await_head_ready(Some(&doc("fff0000", green())), Some("abc1234")),
+            Some(true)
         );
+        assert_eq!(
+            await_head_ready(Some(&doc("abc1234def", green())), Some("abc1234")),
+            Some(false)
+        );
+        assert_eq!(await_head_ready(None, None), None);
+        assert_eq!(await_head_ready(Some(&json!({})), None), None);
     }
 
     #[test]
     fn a_failed_read_is_unreadable_never_settled() {
-        assert_eq!(await_state(None, None), AwaitState::Unreadable);
-        assert_eq!(await_state(None, Some("abc1234")), AwaitState::Unreadable);
+        assert_eq!(await_state(None, None, false), AwaitState::Unreadable);
+        assert_eq!(await_state(None, Some("abc1234"), false), AwaitState::Unreadable);
     }
 
     /// CONFORMANCE: every field `AWAIT_DETAIL_FIELDS` fetches is one `await_state` cannot answer
@@ -25158,7 +25311,7 @@ mod await_tests {
         let fields: Vec<&str> = AWAIT_DETAIL_FIELDS.split(',').collect();
         assert_eq!(fields, vec!["headRefOid", "statusCheckRollup"]);
         assert_eq!(
-            await_state(Some(&doc("h", green())), None),
+            await_state(Some(&doc("h", green())), None, false),
             AwaitState::Settled,
             "the full document settles, or the removals below prove nothing"
         );
@@ -25166,7 +25319,7 @@ mod await_tests {
             let mut d = doc("h", green());
             d.as_object_mut().expect("object").remove(f);
             assert_eq!(
-                await_state(Some(&d), None),
+                await_state(Some(&d), None, false),
                 AwaitState::Unreadable,
                 "a document missing {f} did not answer the poll"
             );
@@ -25177,7 +25330,7 @@ mod await_tests {
     #[test]
     fn a_null_rollup_is_an_answer_not_a_malformed_document() {
         assert_eq!(
-            await_state(Some(&doc("h", Value::Null)), None),
+            await_state(Some(&doc("h", Value::Null)), None, false),
             AwaitState::Settled
         );
     }
