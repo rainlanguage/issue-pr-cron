@@ -1291,6 +1291,74 @@ session on the box, including the interactive ones with no MCP surface at all,
 which are the population it was filed about; it is simply redundant on the cron
 producer's path now.
 
+### There is no screenshot gate at PR-open, and that is a ruling (#142)
+
+The QA block is gated at `gh pr create`. The screenshot is **not**, and asking
+for the same shape there is the obvious next move — a gate at open is worth more
+than a reject after the fact, because the reject costs a round trip through the
+queue. The ruling is that the enforcement point **stays where it is**: the
+vetter's SCREENSHOT GATE rejects a UI PR with no visual evidence, and the
+producer's step 3c backfills its own open UI PRs on the next pass, so the round
+trip runs inside the pipeline rather than through a human.
+
+What settles it is that the two gates are not the same shape. `require-qa-block`
+reads a `## QA` heading and four evidence lines — a STRUCTURE, present or
+absent, and `carries_qa_block` decides it exactly. The screenshot rule's subject
+is _does a user see this change_, and nothing on a `gh pr create` command line
+answers that. Measured over the **681 PRs the producer has opened since the
+cron's first commit** (`rainlanguage`, `cyclofinance`, `S01-Issuer`), with the
+shots on raindex's `pr-screenshots` branch as ground truth for _the producer
+judged this one visual and rendered it_ — **35** such PRs:
+
+| classifier                                                     | fires on | catches (of 35) | fires with no markup/style/template line changed |
+| -------------------------------------------------------------- | -------- | --------------- | ------------------------------------------------ |
+| `packages/webapp` \| `packages/ui-components` \| `site/*.html` | 78       | 24              | —                                                |
+| any `.svelte` / `.css` / `.html`                               | 116      | 31              | **32 of 116**                                    |
+| both, plus the whole `site/` tree                              | 123      | 35              | —                                                |
+
+The narrow rule misses **all nine** shot-carrying `cyclo.site` PRs, which is the
+repo both of #140's incidents happened in — `cyclo.site` keeps its components in
+`src/lib/components/`. Widening to extensions flips the failure over: **32 of
+the 116** it fires on change no markup, style or template line at all — and **5
+of that same 32** carry a screenshot the producer judged necessary anyway,
+because a string a `<script>` block assigns can be the text a user reads
+(`cyclo.site#432` renders generic error copy in place of a raw one). The rule
+that catches all 35 fires on 123 PRs and cannot say which of them a user sees.
+So every available classifier is wrong in one direction or both, and a refusal
+at open would land that error on the PR — whose only escape is the
+`screenshot pending (manual)` marker, i.e. it would manufacture pressure to
+write the bogus waiver #140 exists to remove.
+
+The same imprecision is **cheap** one step later. `is_ui_path` is read to ROUTE
+a PR to `screenshot-3c`, where step 3c's own next sentence is the narrowing —
+read the diff, skip a change with no visible effect. A false positive there
+costs one diff read, which is the price `UiTouch::Unknown` is already set at;
+the same false positive at open costs the PR. That asymmetry is why the
+classifier is deliberately wide and the gate deliberately absent.
+
+Three things the measurement found broken are fixed rather than ruled on,
+because the ruling above depends on all of them working:
+
+- **`is_ui_path` names all three families** (the frontend packages, the whole
+  `site/` tree, and the `.svelte`/`.css`/`.html` extensions). The claim that
+  step 3c catches its own open UI PRs was false for `cyclo.site`: neither the
+  tool nor the step could see a single one of them.
+- **A shot is recognised by its branch URL, not by a filename.** Step 5 names a
+  raindex shot `shots/<pr>.png` and every other repo's `shots/<repo>-<pr>.png`,
+  and the branch also holds per-view suffixes and shots naming no PR at all, so
+  matching `shots/<number>.png` recognised raindex's spelling and nothing else.
+  On 2026-08-04 `rain-org-health#155` and `#156` each carried
+  `shots/rain-org-health-<n>.png` and `worklist` reported both as having no
+  screenshot — re-routing them to `screenshot-3c` every run, which is also what
+  held them out of `green-ready`. `screenshot_settled` now accepts what the
+  vetter's SCREENSHOT GATE accepts, so the two ends of the convention agree by
+  construction rather than by two spellings happening to match.
+
+The other half of #142 — moving the evidence channel so the artifact is keyed to
+branch + head sha and the shot rides in the BODY at open — is what a gate would
+require and is not done, because the gate is not being built. Reopen it with the
+gate, not before.
+
 ### Pushing a rework is a transition: `push`
 
 `open_pr` records a PR that did not exist before. The RUN BUDGET counts three
