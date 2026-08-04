@@ -9304,7 +9304,10 @@ fn citation_stamp(ev: &CitationEvidence) -> String {
             .collect();
         s.push_str(&format!(" Paths this reason names: {}", shown.join("; ")));
         if ev.paths.len() > CITATION_MAX_LISTED {
-            s.push_str(&format!(" (+{} more)", ev.paths.len() - CITATION_MAX_LISTED));
+            s.push_str(&format!(
+                " (+{} more)",
+                ev.paths.len() - CITATION_MAX_LISTED
+            ));
         }
         s.push('.');
     }
@@ -9323,7 +9326,10 @@ fn citation_stamp(ev: &CitationEvidence) -> String {
                 .collect();
             s.push_str(&format!("; absent: {}", shown.join(", ")));
             if ev.absent.len() > CITATION_MAX_LISTED {
-                s.push_str(&format!(" (+{} more)", ev.absent.len() - CITATION_MAX_LISTED));
+                s.push_str(&format!(
+                    " (+{} more)",
+                    ev.absent.len() - CITATION_MAX_LISTED
+                ));
             }
         }
         s.push('.');
@@ -26761,7 +26767,11 @@ diff --git a/test/src/lib/dia/LibDiaStringV3Test.t.sol b/test/src/lib/dia/LibDia
         assert_eq!(bad.present, 0);
         assert_eq!(
             bad.absent,
-            vec!["testRoundTrip", "testRoundTrip31Bytes", "testRoundTripEmpty"],
+            vec![
+                "testRoundTrip",
+                "testRoundTrip31Bytes",
+                "testRoundTripEmpty"
+            ],
             "not one function the reason says PR #48 landed is in PR #48's changed lines"
         );
 
@@ -26824,10 +26834,7 @@ diff --git a/app/_components/TableRowLink.tsx b/app/_components/TableRowLink.tsx
         );
         assert_eq!(
             ev.paths,
-            vec![(
-                "app/_components/TableRowLink.tsx".to_string(),
-                Some((1, 1))
-            )]
+            vec![("app/_components/TableRowLink.tsx".to_string(), Some((1, 1)))]
         );
         assert!(
             ev.absent.is_empty() && ev.present == 1,
@@ -26885,7 +26892,10 @@ diff --git a/src/concrete/ob/OrderBook.sol b/src/concrete/ob/OrderBook.sol
             diff,
         );
         assert!(
-            ev.present >= 2 && ev.absent.contains(&"testRaindexWithdrawalEvalZeroAmountEvalNoop".to_string()),
+            ev.present >= 2
+                && ev
+                    .absent
+                    .contains(&"testRaindexWithdrawalEvalZeroAmountEvalNoop".to_string()),
             "the guard symbols are in the cited diff and the current-main test is not — BOTH are \
              honest, and neither may refuse the flag: {ev:?}"
         );
@@ -26974,7 +26984,10 @@ diff --git a/a.c b/a.c
         let c = diff_churn(d);
         assert_eq!(c.files, vec![("a.c".to_string(), 2, 1)]);
         assert!(c.changed.contains("++weird"), "{:?}", c.changed);
-        assert!(c.changed.contains("old"), "the removed side is searchable too");
+        assert!(
+            c.changed.contains("old"),
+            "the removed side is searchable too"
+        );
     }
 
     #[test]
@@ -37373,8 +37386,10 @@ mod human_rule_tests {
         let (anchor, ..) = record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
         assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
         // The same anchor string the vetter's own comment carries — one re-flag stales both.
-        assert!(cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x", None)
-            .contains("close-candidate @2026-07-17T21:23:11Z"));
+        assert!(
+            cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x", None)
+                .contains("close-candidate @2026-07-17T21:23:11Z")
+        );
     }
 
     // With no LIVE flag the ruling is on the ISSUE AS FILED, and it says so. That wording is the
