@@ -464,6 +464,31 @@ title/state/labels/`createdAt`, the producer's **stated reason** (the claim
 being checked, never a fact), the vetter's verdict **pinned to the flag it
 judged**, and whether an open PR claims to close the issue.
 
+**Coverage is reported; what it COSTS is a pairing.** Rule 7a bars an issue
+"**merely** COVERED BY AN OPEN PR" and calls an open PR "never sufficient
+**evidence**" — one clause about having nothing else, one about what may be
+cited FOR a close. Read as a veto instead, it lets an unverified claim override
+a verified one: `rain.dia#6` was fixed on main by a merged PR and stayed blocked
+from 2026-07-28 behind `rain.dia#60`, a redundant PR that was itself queued for
+closure. Nothing in the pipeline could exit that — two queues each holding half
+the picture, neither reading the other. So `openPr.blocksClose` pairs the
+coverage read with `flag.grounds`: a flag citing **no landing** (`invalid` /
+`duplicate` / `wont-fix`, or an `already-fixed-on-main` claim naming nothing
+datable) is the "merely" case and the open PR may be the only thing that would
+ever resolve the issue, so it blocks — and an unreadable coverage query blocks
+with it. A flag citing a **landing** does not block: a redundant PR in flight
+does not un-land what landed, and disposing of it is a decision in the PR lane.
+
+Mergeability is deliberately **not** the discriminator. `rain.dia#60` happened
+to be `CONFLICTING`, but any PR can assert `Closes #N` and the assertion is not
+evidence; `rain.dia#63` blocks a sibling flag today and is perfectly mergeable.
+And `grounds` is a fact about the reason's TEXT — read off
+`already_fixed_anchor`, the same parse `flag-close-candidate` gates the write
+on, so the two cannot disagree about what a reason cites. It is not a claim that
+the citation holds: whether the merged PR is really this issue's fix is `/ncc`
+step 5's check, and `pr_context` still carries no merged/state field for the
+human to confirm it with.
+
 **The ranking is not the PR queue's.** Cheapest-first is right there because
 merges are the scarce resource and a cheap merge is throughput. Here the scarce
 resource is the human's judgement, and neither half transfers: a flag's whole

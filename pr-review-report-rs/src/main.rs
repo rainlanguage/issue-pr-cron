@@ -16264,17 +16264,17 @@ fn cc_gate(human_ruled: bool, flag_at: &str, verdict: Option<(String, String)>) 
     }
 }
 
-/// Whether an OPEN pull request already claims to close this issue — the `covered-by-open-pr` state,
-/// which is a KNOWN non-closeable one: an open PR is not a landed fix.
+/// Whether an OPEN pull request already claims to close this issue — the `covered-by-open-pr`
+/// signal. It says something is IN FLIGHT against the issue and nothing more; what that costs a
+/// ruling is [`coverage_blocks_close`]'s answer, not this enum's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PrCoverage {
     /// At least one open PR's native closing references name this issue.
     Covered,
     /// The query answered, and named none.
     Uncovered,
-    /// The query failed or came back malformed. FAIL-SAFE: never read as `Uncovered`, because the
-    /// error direction matters here — an unseen covering PR is an issue closed out from under work
-    /// in flight, while a falsely-reported one only costs a second look.
+    /// The query failed or came back malformed. NEVER read as `Uncovered`: an unseen covering PR is
+    /// work in flight nobody was told about, while a falsely-reported one only costs a second look.
     Unreadable,
 }
 
@@ -16286,19 +16286,83 @@ impl PrCoverage {
             PrCoverage::Unreadable => "unreadable",
         }
     }
-    /// Does this signal stand in the way of a close? `Unreadable` does, which is what makes the
-    /// failure fail SAFE rather than merely fail.
-    fn blocks_close(self) -> bool {
+    /// Is something in flight against this issue, as far as the read can tell? `Unreadable` counts,
+    /// which is what makes an unanswered query fail SAFE rather than merely fail.
+    fn in_flight(self) -> bool {
         !matches!(self, PrCoverage::Uncovered)
     }
-    /// What the signal MEANS for the ruling, in the shape [`ThreadMeaning`] uses: the raw state is
-    /// no use to a reader who has to remember which way round the hazard runs.
-    fn meaning(self) -> &'static str {
-        match self {
-            PrCoverage::Covered => "not-closeable-an-open-pr-is-not-a-landed-fix",
-            PrCoverage::Uncovered => "no-open-pr-claims-this-issue",
-            PrCoverage::Unreadable => "unknown-read-as-covered",
+}
+
+/// What the producer's flag OFFERS as grounds — the second input to [`coverage_blocks_close`], and
+/// the distinction rule 7a's "**merely** COVERED BY AN OPEN PR" turns on.
+///
+/// This is a fact about the flag's TEXT, never about the world. It says which of the two shapes the
+/// reason has, not that the reason is true, and nothing on this surface can check the latter: the
+/// claim "this is fixed" is settled by reading the code the issue named, which is the human's job at
+/// `/ncc` step 5 and the whole reason that step exists.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FlagGrounds {
+    /// An `already-fixed-on-main` claim citing a commit or a PR number — a LANDING, offered as
+    /// grounds independent of anything in flight. [`already_fixed_recency_gate`] is what put it
+    /// there: the flag could not have been written without that anchor resolving to a date past the
+    /// issue's own, so a PR anchor here is one that was merged when the flag was posted.
+    CitedLanding,
+    /// Everything else. `invalid` / `duplicate` / `wont-fix` are judgements that name no landing at
+    /// all, and an `already-fixed-on-main` claim with no datable anchor names one nobody can find.
+    NoLanding,
+}
+
+impl FlagGrounds {
+    /// PURE: read the grounds off a [`flag_reason`] payload, reusing the parse the write side gates
+    /// on so the two cannot disagree about what a reason cites.
+    fn of(reason: &str) -> Self {
+        match already_fixed_anchor(reason) {
+            FixAnchor::Commit(_) | FixAnchor::Pr(_) => FlagGrounds::CitedLanding,
+            FixAnchor::Missing | FixAnchor::NotApplicable => FlagGrounds::NoLanding,
         }
+    }
+    fn as_str(self) -> &'static str {
+        match self {
+            FlagGrounds::CitedLanding => "cites-a-landing",
+            FlagGrounds::NoLanding => "cites-no-landing",
+        }
+    }
+}
+
+/// PURE: does the coverage signal stand in the way of THIS close?
+///
+/// **Coverage alone does not decide it, and reading it as though it did inverts the evidence
+/// hierarchy.** Rule 7a bars an issue "**merely** COVERED BY AN OPEN PR" and calls an open PR "never
+/// sufficient **evidence**" — a rule about what may be cited FOR a close, not a veto over one. A
+/// flag citing a landing is not merely covered: it offers something an open PR is not, and a
+/// redundant PR in flight does not un-land what landed. There the covering PR is a second thing to
+/// dispose of, in the PR lane, rather than this issue's blocker — `rain.dia#6` sat blocked from
+/// 2026-07-28 behind a PR that was itself queued for closure, each queue holding half the picture.
+///
+/// Where the flag cites NO landing the open PR may be the only thing that would ever resolve the
+/// issue, so closing under it discards work in flight. There coverage blocks, and an unreadable
+/// answer blocks with it.
+///
+/// `false` is not "close it". It says the coverage read is not what stands in the way; whether the
+/// cited landing is really this issue's fix is the check the human runs, and this function has not
+/// run it.
+fn coverage_blocks_close(coverage: PrCoverage, grounds: FlagGrounds) -> bool {
+    match grounds {
+        FlagGrounds::CitedLanding => false,
+        FlagGrounds::NoLanding => coverage.in_flight(),
+    }
+}
+
+/// PURE: what the pair MEANS for the ruling, in the shape [`ThreadMeaning`] uses — two raw states
+/// are no use to a reader who has to remember which way round the hazard runs.
+fn coverage_meaning(coverage: PrCoverage, grounds: FlagGrounds) -> &'static str {
+    match (coverage, grounds) {
+        (PrCoverage::Uncovered, _) => "no-open-pr-claims-this-issue",
+        (_, FlagGrounds::CitedLanding) => "reported-not-blocking-the-flag-cites-a-landing",
+        (PrCoverage::Covered, FlagGrounds::NoLanding) => {
+            "not-closeable-an-open-pr-is-not-a-landed-fix"
+        }
+        (PrCoverage::Unreadable, FlagGrounds::NoLanding) => "unknown-read-as-covered",
     }
 }
 
@@ -16471,6 +16535,7 @@ const NCC_ISSUE_BYTES: usize = 160;
 const NCC_TIME_BYTES: usize = 40;
 const NCC_STATE_BYTES: usize = 32;
 const NCC_VERDICT_BYTES: usize = 32;
+const NCC_GROUNDS_BYTES: usize = 32;
 const NCC_LABEL_BYTES: usize = 60;
 const NCC_MAX_LABELS: usize = 8;
 const NCC_PR_REF_BYTES: usize = 160;
@@ -16487,6 +16552,7 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
     + 3 * NCC_TIME_BYTES
     + NCC_STATE_BYTES
     + NCC_VERDICT_BYTES
+    + NCC_GROUNDS_BYTES
     + NCC_MAX_LABELS * NCC_LABEL_BYTES
     + NCC_MAX_PRS * NCC_PR_REF_BYTES;
 
@@ -16563,6 +16629,7 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
         .map(|l| clip_field(l, NCC_LABEL_BYTES))
         .collect();
     let reason_full = flag_reason(f.flag_body);
+    let grounds = FlagGrounds::of(&reason_full);
     let note_full = last_cc_vetter_comment(f.detail).unwrap_or_default();
     let parts = cc_verdict_parts(&note_full);
     let prs: Vec<String> = f
@@ -16591,6 +16658,10 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "reason": clip_field(&reason_full, NCC_REASON_BYTES),
             "reasonBytes": reason_full.len(),
             "reasonTruncated": reason_full.len() > NCC_REASON_BYTES,
+            // Stated because it is the second input to `openPr.blocksClose`, and a decision whose
+            // inputs are not both on the row is one a reader has to take on trust. It is a fact
+            // about the reason's TEXT — what it cites, never whether the citation holds.
+            "grounds": grounds.as_str(),
         },
         "verdict": {
             // The flag the vetter PINNED its verdict to, and whether that is the flag above. Equal
@@ -16604,9 +16675,11 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "noteTruncated": note_full.len() > NCC_NOTE_BYTES,
         },
         "openPr": {
+            // REPORTED whatever the flag says: a human ruling on this issue must see that a PR
+            // claims it, even where that claim is not what stands in the way.
             "coverage": f.coverage.as_str(),
-            "blocksClose": f.coverage.blocks_close(),
-            "meaning": f.coverage.meaning(),
+            "blocksClose": coverage_blocks_close(f.coverage, grounds),
+            "meaning": coverage_meaning(f.coverage, grounds),
             // NAMED, not counted — the ref is what a reader hands to `pr_context` to see what the
             // open PR actually does.
             "prs": prs,
@@ -17099,9 +17172,9 @@ mod next_close_candidate_tests {
 
     // --- the covering-PR read -------------------------------------------------------------------
 
-    // `covered-by-open-pr` is a known NON-closeable state, so the failure direction is not
-    // symmetric: an unseen covering PR closes an issue out from under work in flight, while a
-    // falsely-reported one costs a second look. A failed query is `Unreadable` and BLOCKS.
+    // The failure direction is not symmetric: an unseen covering PR is work in flight nobody was
+    // told about, while a falsely-reported one costs a second look. A failed query is `Unreadable`
+    // and counts as in flight.
     #[test]
     fn an_unreadable_coverage_query_is_never_read_as_uncovered() {
         for bad in [
@@ -17116,10 +17189,101 @@ mod next_close_candidate_tests {
             let (v, prs) = covering_open_prs(bad.as_ref());
             assert_eq!(v, PrCoverage::Unreadable, "{bad:?}");
             assert!(prs.is_empty());
-            assert!(v.blocks_close(), "an unknown answer must fail SAFE");
+            assert!(v.in_flight(), "an unknown answer must fail SAFE");
+            assert!(
+                coverage_blocks_close(v, FlagGrounds::NoLanding),
+                "and blocking is what failing safe COSTS: a flag with nothing landed behind it \
+                 waits on a query nobody could answer"
+            );
         }
-        assert!(PrCoverage::Covered.blocks_close());
-        assert!(!PrCoverage::Uncovered.blocks_close());
+        assert!(PrCoverage::Covered.in_flight());
+        assert!(!PrCoverage::Uncovered.in_flight());
+    }
+
+    // --- what coverage costs a ruling, which is NOT a function of coverage ----------------------
+
+    // Rule 7a bars an issue MERELY covered by an open PR and calls an open PR never sufficient
+    // EVIDENCE — a rule about what may be cited FOR a close. A flag citing a landing is not merely
+    // covered, and a redundant PR in flight does not un-land what landed; a flag citing none may
+    // have that PR as the only thing that would ever resolve it. So the same coverage state costs
+    // two different things, and reading it as a veto is what deadlocked `rain.dia#6`.
+    #[test]
+    fn coverage_blocks_only_a_flag_that_cites_no_landing() {
+        for coverage in [PrCoverage::Covered, PrCoverage::Unreadable] {
+            assert!(
+                !coverage_blocks_close(coverage, FlagGrounds::CitedLanding),
+                "{coverage:?}: a cited landing is grounds an open PR is not and cannot undo"
+            );
+            assert!(
+                coverage_blocks_close(coverage, FlagGrounds::NoLanding),
+                "{coverage:?}: with nothing landed cited, the PR in flight may be the fix"
+            );
+        }
+        // Nothing in flight blocks nothing, whichever grounds the flag offers — otherwise the new
+        // input would have turned a clean row into a blocked one.
+        for grounds in [FlagGrounds::CitedLanding, FlagGrounds::NoLanding] {
+            assert!(!coverage_blocks_close(PrCoverage::Uncovered, grounds));
+        }
+    }
+
+    // The meaning has to distinguish the two ways a row does not block, or a reader cannot tell "no
+    // PR claims this" from "one does and it is not the obstacle" — and the second is the whole
+    // finding. `unreadable` keeps its own wording in the lane where it still blocks, so a query
+    // failure never reads as an absence.
+    #[test]
+    fn the_meaning_names_which_of_the_two_it_is() {
+        assert_eq!(
+            coverage_meaning(PrCoverage::Uncovered, FlagGrounds::NoLanding),
+            "no-open-pr-claims-this-issue"
+        );
+        assert_eq!(
+            coverage_meaning(PrCoverage::Uncovered, FlagGrounds::CitedLanding),
+            "no-open-pr-claims-this-issue"
+        );
+        assert_eq!(
+            coverage_meaning(PrCoverage::Covered, FlagGrounds::NoLanding),
+            "not-closeable-an-open-pr-is-not-a-landed-fix"
+        );
+        assert_eq!(
+            coverage_meaning(PrCoverage::Unreadable, FlagGrounds::NoLanding),
+            "unknown-read-as-covered"
+        );
+        for coverage in [PrCoverage::Covered, PrCoverage::Unreadable] {
+            assert_eq!(
+                coverage_meaning(coverage, FlagGrounds::CitedLanding),
+                "reported-not-blocking-the-flag-cites-a-landing",
+                "{coverage:?}"
+            );
+        }
+    }
+
+    // The grounds are read off the SAME parse the write side gates on, so the two cannot disagree
+    // about what a reason cites. A bare `file:line` is the case that matters: it is an
+    // `already-fixed-on-main` claim naming nothing anyone can date, so it offers no landing and
+    // coverage still cautions.
+    #[test]
+    fn only_a_dated_already_fixed_claim_counts_as_citing_a_landing() {
+        for cites in [
+            "already-fixed-on-main: fixed by PR #2420",
+            "already-fixed-on-main: 2a319034 removed the tauri app",
+            "already-fixed-on-main: merged PR #48 (commit 8e6bcd6, merged 2026-07-20)",
+        ] {
+            assert_eq!(FlagGrounds::of(cites), FlagGrounds::CitedLanding, "{cites}");
+        }
+        for none in [
+            // A judgement names no landing at all, whatever numbers it happens to contain.
+            "invalid: every 256-bit word IS a valid Float",
+            "duplicate: of #123",
+            "wont-fix: superseded by the registry flow",
+            // The `already-fixed-on-main` shape with nothing datable in it.
+            "already-fixed-on-main: crates/settings/src/raindex.rs:116-133",
+            "already-fixed-on-main: see foo#bar in the docs",
+            // Not one of the four categories at all — itself a finding, and never grounds.
+            "already-fixed: merged in o/r#1348",
+            "",
+        ] {
+            assert_eq!(FlagGrounds::of(none), FlagGrounds::NoLanding, "{none}");
+        }
     }
 
     fn coverage_response(nodes: Value) -> Value {
@@ -17142,9 +17306,12 @@ mod next_close_candidate_tests {
         let (v, prs) = covering_open_prs(Some(&resp));
         assert_eq!(v, PrCoverage::Covered);
         assert_eq!(prs, vec!["o/r#109".to_string(), "o/other#7".to_string()]);
-        assert_eq!(v.meaning(), "not-closeable-an-open-pr-is-not-a-landed-fix");
+        assert_eq!(
+            coverage_meaning(v, FlagGrounds::NoLanding),
+            "not-closeable-an-open-pr-is-not-a-landed-fix"
+        );
 
-        // An empty answer is an ANSWER — this is the one state that does not block a close.
+        // An empty answer is an ANSWER — this is the one state nothing is in flight against.
         let (v, prs) = covering_open_prs(Some(&coverage_response(json!([]))));
         assert_eq!(v, PrCoverage::Uncovered);
         assert!(prs.is_empty());
@@ -17284,6 +17451,11 @@ mod next_close_candidate_tests {
             .as_str()
             .unwrap()
             .contains("diff matches the ask"));
+        assert_eq!(
+            row["flag"]["grounds"],
+            json!("cites-no-landing"),
+            "outside the four categories, so it offers nothing datable"
+        );
         assert_eq!(row["openPr"]["coverage"], json!("no-open-pr"));
         assert_eq!(row["openPr"]["blocksClose"], json!(false));
         assert_eq!(row["openPr"]["prs"], json!([]));
@@ -17322,13 +17494,15 @@ mod next_close_candidate_tests {
             .contains("held then"));
     }
 
-    // An open PR claiming the issue is the state the flag lane already knows is not closeable, and
-    // the row says so in the field AND in the meaning beside it — the raw enum is no use to a reader
-    // who has to remember which way round the hazard runs.
+    // A flag that cites no landing is the one rule 7a calls MERELY covered: the open PR may be the
+    // only thing that would ever resolve the issue, so it blocks — and the row says so in the field
+    // AND in the meaning beside it, because the raw enum is no use to a reader who has to remember
+    // which way round the hazard runs.
     #[test]
-    fn an_open_pr_claiming_the_issue_blocks_the_close_and_is_named() {
+    fn an_open_pr_blocks_a_flag_that_cites_no_landing_and_is_named() {
         let at = "2026-07-20T09:00:00Z";
-        let detail = issue(&["ai:close-candidate"], vec![producer(at, "already-fixed")]);
+        let reason = "wont-fix: the reported surface is not a product path";
+        let detail = issue(&["ai:close-candidate"], vec![producer(at, reason)]);
         let covering = vec![
             "o/r#109".to_string(),
             "o/r#110".to_string(),
@@ -17340,10 +17514,11 @@ mod next_close_candidate_tests {
             num: 7,
             detail: &detail,
             flag_at: at,
-            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed",
+            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
             coverage: PrCoverage::Covered,
             covering: &covering,
         });
+        assert_eq!(row["flag"]["grounds"], json!("cites-no-landing"));
         assert_eq!(row["openPr"]["coverage"], json!("covered-by-open-pr"));
         assert_eq!(row["openPr"]["blocksClose"], json!(true));
         assert_eq!(
@@ -17358,6 +17533,45 @@ mod next_close_candidate_tests {
             row["openPr"]["prsTruncated"],
             json!(true),
             "the list is a PAGE, and a reader must not read three as all of them"
+        );
+    }
+
+    // `rain.dia#6`'s shape, which sat blocked from 2026-07-28 until a human happened to look: the
+    // flag cites a MERGED PR, and a redundant PR is open against the same issue. The covering PR is
+    // still REPORTED and still NAMED — a human ruling must see that a PR claims the issue — but it
+    // is not what stands in the way, and the meaning says which of the two "does not block" this is.
+    #[test]
+    fn a_flag_citing_a_landing_reports_its_coverage_without_being_blocked_by_it() {
+        let at = "2026-07-28T09:00:00Z";
+        let reason = "already-fixed-on-main: arity guard landed in MERGED PR #33";
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![
+                producer(at, reason),
+                vetter(at, "uphold", "guard is on main"),
+            ],
+        );
+        let covering = vec!["o/r#60".to_string()];
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 6,
+            detail: &detail,
+            flag_at: at,
+            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
+            coverage: PrCoverage::Covered,
+            covering: &covering,
+        });
+        assert_eq!(row["flag"]["grounds"], json!("cites-a-landing"));
+        assert_eq!(
+            row["openPr"]["coverage"],
+            json!("covered-by-open-pr"),
+            "coverage is REPORTED either way — the human still has to see the claim"
+        );
+        assert_eq!(row["openPr"]["prs"], json!(["o/r#60"]));
+        assert_eq!(row["openPr"]["blocksClose"], json!(false));
+        assert_eq!(
+            row["openPr"]["meaning"],
+            json!("reported-not-blocking-the-flag-cites-a-landing")
         );
     }
 
@@ -17805,7 +18019,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "next_close_candidate",
-            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact), the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue (`covered-by-open-pr` is NOT closeable — an open PR is not a landed fix; an unreadable answer blocks too). `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are the ones no AI transition will ever clear.",
+            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue. Coverage is always reported; `openPr.blocksClose` pairs it with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are the ones no AI transition will ever clear.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
