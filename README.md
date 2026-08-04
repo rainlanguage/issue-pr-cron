@@ -1600,14 +1600,18 @@ So the rule, in the order it is worth knowing:
    the shape it sits in, and only the least useful one — the "multiple
    operations" summary — is the one a compound normally gets.
 
-**Measured population: 15 occurrences in 4 of 21 runs.** Eleven of them predate
-#174 and are its classes, correctly named by their own messages: 4 `bash`/`sh`
-scripts, 3 `python3` heredocs or `-c`, 2 `pkill` (off-list), 1 bare
-`FONTCONFIG_FILE=` prefix, 1 `for` loop. The four in `20260804T114433Z`, the
-only run whose prompt carried #174's rules, are this class: an out-of-scope
-`2>/tmp` plus its `head` (the run's opening state load), two
-`cd <clone> && … >> <log>` provisioning calls, and an `ls /nix/store/*dejavu*`
-inside a pipeline.
+**Measured population: 15 occurrences in 4 of 21 runs** — not the 12 #180
+reports, and the shortfall is the message again: the refusal is worded "The
+following **part requires** approval" for one offending part and "The following
+**parts require** approval" for several, so a scan for the singular misses
+three, two of them in the run #180 leads with and one of them its own headline
+example. Eleven of the fifteen predate #174 and are its classes, correctly named
+by their own messages: 4 `bash`/`sh` scripts, 3 `python3` heredocs or `-c`, 2
+`pkill` (off-list), 1 bare `FONTCONFIG_FILE=` prefix, 1 `for` loop. The four in
+`20260804T114433Z`, the only run whose prompt carried #174's rules, are this
+class: an out-of-scope `2>/tmp` plus its `head` (the run's opening state load),
+two `cd <clone> && … >> <log>` provisioning calls, and an
+`ls /nix/store/*dejavu*` inside a pipeline.
 
 [#182](https://github.com/rainlanguage/issue-pr-cron/issues/182) removes the
 first one's OCCASION and not its cause: the opening state load is now one typed
