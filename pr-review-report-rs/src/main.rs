@@ -5500,9 +5500,17 @@ impl TraceDistiller {
                             let mut detail = flatten(&detail, 200);
                             // A dispatch NAMES the agent it creates. Minting here is what binds
                             // `a7` to the prompt it was given; the clip is applied before the tag
-                            // so the widths above stay the widths of the DETAIL.
+                            // so the widths above stay the widths of the DETAIL. The id must be
+                            // one an event can be attributed BY: `""` is the main loop on the
+                            // owner side, so a tag minted from it is one no line can ever wear,
+                            // and spending a number on it shifts every later agent off dispatch
+                            // order exactly as a `tool_progress` mint would.
                             if matches!(name, "Agent" | "Task") {
-                                if let Some(id) = item.get("id").and_then(|i| i.as_str()) {
+                                if let Some(id) = item
+                                    .get("id")
+                                    .and_then(|i| i.as_str())
+                                    .filter(|i| !i.is_empty())
+                                {
                                     detail = format!("[{}] {}", self.tag_for(id), detail);
                                 }
                             }
@@ -27563,9 +27571,11 @@ fn producer_step(prompt: &str, step: &str) -> String {
     )
 }
 
-/// The PREAMBLE of `campaign-prompt.txt` — everything above the first blank line. The run budget,
-/// the shell shapes and the one-shot rule live there rather than in a numbered step, so
-/// [`producer_step`] cannot reach them.
+/// The PREAMBLE of `campaign-prompt.txt` — its FIRST PARAGRAPH, everything above the first blank
+/// line. The run budget lives there rather than in a numbered step, so [`producer_step`] cannot
+/// reach it. The paragraphs that follow it (the shell shapes, the one-shot rule) are as far outside
+/// this section as they are outside a step, which is the point: a `!contains` is only worth
+/// anything against a haystack that stops where the rule it is about stops.
 ///
 /// PANICS on an empty first paragraph, for [`prompt_section`]'s reason: a section returned as `""`
 /// makes every NEGATIVE assertion against it pass vacuously.
@@ -27597,7 +27607,7 @@ fn vetter_bullet(prompt: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod prompt_section_tests {
-    use super::{producer_step, vetter_bullet};
+    use super::{producer_preamble, producer_step, vetter_bullet};
 
     /// Shaped like the real prompts: top-level items at column 0, indented continuations, and the
     /// SAME phrase present in neighbours — which is what a whole-file `contains` cannot tell apart.
@@ -27667,6 +27677,44 @@ mod prompt_section_tests {
     #[should_panic(expected = "no prompt section starts with \"- **QA GATE\"")]
     fn a_missing_bullet_panics_too() {
         vetter_bullet(VETTER, "QA GATE");
+    }
+
+    /// The preamble is the FIRST PARAGRAPH and only that: the rules above the numbered steps are
+    /// several paragraphs, and a `!contains` assertion is only worth anything if the haystack stops
+    /// where the rule it is about stops. It is joined back with newlines rather than flattened,
+    /// because a rule re-wrapped across lines must read the same to a `contains` either way.
+    #[test]
+    fn the_preamble_is_the_first_paragraph_and_stops_at_the_blank_line() {
+        const PROMPT: &str = "\
+RUN BUDGET: at most 3 WORK ITEMS
+FAN OUT BY DEFAULT, and here is why
+   \nSHELL SHAPES: a LATER paragraph
+
+ONE-SHOT, NOT A LOOP
+";
+        let preamble = producer_preamble(PROMPT);
+        assert_eq!(
+            preamble, "RUN BUDGET: at most 3 WORK ITEMS\nFAN OUT BY DEFAULT, and here is why",
+            "a wrapped paragraph is joined back with its own newlines, not flattened"
+        );
+        // A whitespace-only line ENDS the paragraph — it is blank to a reader, and a separator that
+        // only counts when it is byte-empty would silently swallow the paragraphs after it.
+        assert!(
+            !preamble.contains("SHELL SHAPES"),
+            "the paragraph ends at the first blank line, however that line is spelled: {preamble}"
+        );
+        assert!(
+            !preamble.contains("ONE-SHOT"),
+            "later paragraphs are outside the preamble: {preamble}"
+        );
+    }
+
+    /// The guard on the guard, as for the sections above: a prompt whose first paragraph is gone
+    /// must turn the test RED rather than hand back `""`, against which every `!contains` passes.
+    #[test]
+    #[should_panic(expected = "campaign-prompt.txt has no preamble paragraph")]
+    fn a_missing_preamble_panics_rather_than_yielding_an_empty_haystack() {
+        producer_preamble("\nRUN BUDGET: at most 3 WORK ITEMS\n");
     }
 }
 
@@ -33271,6 +33319,104 @@ mod cli_tests {
         let out = &d.distill(&ev)[0];
         assert!(out.starts_with("  ▸ Agent  [a2] "));
         assert_eq!(out.chars().filter(|c| *c == 'y').count(), 200);
+    }
+
+    /// `Task` is the other spelling of the dispatch tool, and a run whose dispatches arrive under
+    /// it must read exactly like an `Agent` one — the tag minted on the call is still the only
+    /// binding between `a1` and the work that agent was sent to do. Both spellings feed ONE
+    /// numbering: they name the same kind of thing, so a reader counts one sequence.
+    #[test]
+    fn distill_tags_a_task_spelled_dispatch_like_an_agent_one() {
+        let mut d = TraceDistiller::default();
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Task","id":"toolu_1","input":{"description":"Resolve threads"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Task  [a1] Resolve threads"]);
+        let call = serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_1",
+            "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"gh pr view 12"}}]}});
+        assert_eq!(d.distill(&call), vec!["  [a1] ▸ Bash  gh pr view 12"]);
+
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_2","input":{"description":"Rework 400"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Agent  [a2] Rework 400"]);
+    }
+
+    /// A sub-agent may dispatch further, and the line that does it is BOTH ends at once: it wears
+    /// the tag of the agent that ran it and carries the tag it creates. The DISPATCHER numbers
+    /// first — an agent cannot exist before the one that spawned it, so reading the two numbers off
+    /// one line tells a reader which way the nesting goes.
+    #[test]
+    fn distill_numbers_a_nested_dispatch_after_the_agent_that_made_it() {
+        let mut d = TraceDistiller::default();
+        let outer = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"t1","input":{"description":"cyclo.site batch"}}]}});
+        assert_eq!(d.distill(&outer), vec!["  ▸ Agent  [a1] cyclo.site batch"]);
+        let inner = serde_json::json!({"type":"assistant","parent_tool_use_id":"t1","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"t2","input":{"description":"screenshot 431"}}]}});
+        assert_eq!(d.distill(&inner), vec!["  [a1] ▸ Agent  [a2] screenshot 431"]);
+        let leaf = serde_json::json!({"type":"assistant","parent_tool_use_id":"t2",
+            "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"npm run build"}}]}});
+        assert_eq!(d.distill(&leaf), vec!["  [a2] ▸ Bash  npm run build"]);
+
+        // Same order when the dispatcher's OWN tag is minted by this very line, which is the case
+        // that fixes which end numbers first: the owner of the line, then what the line creates.
+        let mut d = TraceDistiller::default();
+        let ev = serde_json::json!({"type":"assistant","parent_tool_use_id":"unseen","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"made-here","input":{"description":"sub"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  [a1] ▸ Agent  [a2] sub"]);
+    }
+
+    /// `parent_tool_use_id` is the whole of the attribution, so a value that is not a string names
+    /// no agent and must not conjure one: the line stays the main loop's, and no number is spent.
+    /// The tag also sits OUTSIDE the glyph, which is what keeps it unforgeable — a main-loop line
+    /// whose own text opens `[a1] ` renders that text AFTER the `·`, never before it.
+    #[test]
+    fn distill_never_invents_an_agent_from_a_malformed_parent_or_from_line_text() {
+        let mut d = TraceDistiller::default();
+        for parent in [
+            serde_json::json!(7),
+            serde_json::json!(true),
+            serde_json::json!({"id": "toolu_1"}),
+            serde_json::json!(["toolu_1"]),
+        ] {
+            let ev = serde_json::json!({"type":"assistant","parent_tool_use_id":parent,
+                "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}});
+            assert_eq!(d.distill(&ev), vec!["  ▸ Bash  ls"], "parent {parent}");
+        }
+        // Nothing was minted for any of them, so the first real dispatch is still a1.
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_1","input":{"description":"first"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Agent  [a1] first"]);
+
+        let looks_tagged = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"[a1] is still running"}]}});
+        assert_eq!(d.distill(&looks_tagged), vec!["  · [a1] is still running"]);
+        let really_tagged = serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_1",
+            "message":{"content":[{"type":"text","text":"is still running"}]}});
+        assert_eq!(d.distill(&really_tagged), vec!["  [a1] · is still running"]);
+    }
+
+    /// An id is what binds a tag to an agent, and an EMPTY one binds nothing: an event parented to
+    /// `""` is the main loop, so no line can ever wear the tag such a dispatch would mint. Minting
+    /// it anyway spends a number on nothing and pushes every later agent off dispatch order — the
+    /// same harm the `tool_progress` case is guarded against. A missing id and an empty one are
+    /// therefore the same thing: render the call, name no agent.
+    #[test]
+    fn distill_mints_no_tag_for_a_dispatch_with_no_usable_id() {
+        let mut d = TraceDistiller::default();
+        let empty = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"","input":{"description":"empty id"}}]}});
+        assert_eq!(d.distill(&empty), vec!["  ▸ Agent  empty id"]);
+        let missing = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","input":{"description":"no id at all"}}]}});
+        assert_eq!(d.distill(&missing), vec!["  ▸ Agent  no id at all"]);
+        let non_string = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":7,"input":{"description":"numeric id"}}]}});
+        assert_eq!(d.distill(&non_string), vec!["  ▸ Agent  numeric id"]);
+
+        // …so the first dispatch that CAN be attributed is a1, not a4.
+        let real = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_1","input":{"description":"rain.flare 186"}}]}});
+        assert_eq!(d.distill(&real), vec!["  ▸ Agent  [a1] rain.flare 186"]);
     }
 
     // The pre-conversion `--foo` dispatch forms are gone: clap must REJECT them as unknown args
