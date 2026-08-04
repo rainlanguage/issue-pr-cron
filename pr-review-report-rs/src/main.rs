@@ -27814,6 +27814,69 @@ mod settings_tests {
         );
     }
 
+    /// TEST HELPER: the `SHELL SHAPES …` paragraph and its indented bullets, ending at the blank
+    /// line before the next top-level paragraph. Placement is the invariant being asserted — the
+    /// same sentence sitting in some other part of a 75 KB prompt is a different instruction, and
+    /// the paragraph is what #174 established as the one place these rules live.
+    fn shell_shapes_paragraph(prompt: &str) -> &str {
+        let start = prompt
+            .find("SHELL SHAPES THE PERMISSION LAYER REFUSES")
+            .expect("campaign-prompt.txt must carry the SHELL SHAPES paragraph (#174)");
+        let rest = &prompt[start..];
+        match rest.find("\n\n") {
+            Some(end) => &rest[..end],
+            None => rest,
+        }
+    }
+
+    /// #180: a chain of allow-listed commands came back as "This Bash command contains multiple
+    /// operations. The following parts require approval: pr-review-report worklist --json, head -5
+    /// /tmp/claude-1000/wl.err" — and the producer read that as its allow-list failing, reissued
+    /// the command bare, and paid the round trip. Probed against the harness, the chain is not the
+    /// trigger and neither is the allow-list: ONE part was refused for a `/tmp` path, and the
+    /// message prints the named part with its redirection stripped, so the disqualifier is invisible
+    /// in the only text the producer gets to read. The prompt has to say what that message means,
+    /// or the next run makes the same wrong inference from the same evidence.
+    #[test]
+    fn the_producer_prompt_reads_a_multi_part_refusal_as_a_path_problem() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let para = shell_shapes_paragraph(&prompt);
+
+        assert!(
+            para.contains("CHAINING IS NOT THE PROBLEM"),
+            "the paragraph must say chaining is not itself refused — 4,232 accepted calls carry \
+             `;`, `&&`, `|` and redirections, so a producer that stops chaining pays for nothing: \
+             {para}"
+        );
+        assert!(
+            para.contains("with its redirection stripped off"),
+            "the message hides the disqualifier; unless the prompt says so, a named part that is \
+             allow-listed reads as a broken allow-list, which is exactly what #180 concluded"
+        );
+        assert!(
+            para.contains("DO NOT reissue it bare"),
+            "reissuing bare is the recovery the traces show, and it fixes nothing a corrected \
+             path would not have fixed"
+        );
+        assert!(
+            para.contains("{{SCRATCH_DIR}}") && para.contains("`/tmp/…` is outside both"),
+            "every byte the producer writes goes to the scratch dir: `/tmp` is outside both \
+             `--add-dir` roots, which is what refused `2>/tmp/wl.err` and `head -5 /tmp/wl.err`"
+        );
+        assert!(
+            para.contains("**Read tool**"),
+            "the one `/tmp` path the harness itself hands back — a backgrounded command's output \
+             file — is reachable, but only with the Read tool; `head` on it is refused by path"
+        );
+        assert!(
+            para.contains("keep `cd` out of every call that writes"),
+            "a `cd` anywhere in a redirecting command is refused on the `cd`, absolute targets \
+             included — two of the four post-#174 occurrences were that shape"
+        );
+    }
+
     /// The vetter's prompt is where the verdict vocabulary is TAUGHT, and a prompt still offering
     /// `relink` would spend a whole run's tool calls discovering the guard refuses it.
     #[test]
