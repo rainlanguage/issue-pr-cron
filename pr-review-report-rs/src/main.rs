@@ -13248,10 +13248,110 @@ fn default_branch_of(dir: &std::path::Path) -> Result<String, String> {
         .ok_or_else(|| "could not determine the repo's default branch — pass `base`".to_string())
 }
 
-/// Every work clone under every configured root, with the state that decides whether it is
-/// releasable. Read-only: the answer to "what is on this box and who owns it".
-fn clone_list_exec(roots: &[String]) -> Result<Value, String> {
-    let mut out = Vec::new();
+/// Byte cap on each clone-root path and each sweep error a clone tool echoes back. The roots are
+/// the environment's (`clone_roots`), never a caller's, so this clips nothing in practice — it is
+/// what makes the envelope of a clone result a BOUNDED size, which is the half [`fit_clone_rows`]
+/// cannot supply.
+const CLONE_ECHO_BYTES: usize = 300;
+
+/// PURE: the roots a clone result echoes, each clipped to [`CLONE_ECHO_BYTES`].
+fn clone_roots_echo(roots: &[String]) -> Value {
+    Value::Array(
+        roots
+            .iter()
+            .map(|r| Value::from(clip_field(r, CLONE_ECHO_BYTES)))
+            .collect(),
+    )
+}
+
+/// PURE: pack as many of `rows` into `doc` under `key` as [`MCP_MAX_RESULT_BYTES`] has room for,
+/// and STATE the split as `listed` / `omitted`.
+///
+/// This is what makes a per-clone listing safe on a box of any size. The alternative shapes both
+/// fail on the box this was measured on: an uncapped list is refused outright (#117 —
+/// `clone_list` produced 60,237 bytes against a 36,000-byte budget and the producer replaced a
+/// state load with `ls | wc -l`), and a fixed row cap either truncates a small box needlessly or
+/// still overflows a large one, because a row's size is a clone NAME and a BRANCH name, neither of
+/// which has a length this crate controls.
+///
+/// It is a truncation, and a truncation is only acceptable because the counts around it are NOT:
+/// every caller of this gets whole-population figures in the same document, so the omitted rows
+/// are a sample that was dropped rather than state that went unmentioned. `omitted` says exactly
+/// how many.
+///
+/// TERMINATION / POSTCONDITION: the base length is measured with both counters at `usize::MAX` —
+/// the widest they can serialise — and with the row array empty, so the finished document is at
+/// most `base + Σ rows + commas`, which is the quantity the loop compares against the budget. Rows
+/// are only ever added while that sum stays under, so `doc.to_string().len() <= MCP_MAX_RESULT_BYTES`
+/// holds whenever the empty-row envelope does.
+fn fit_clone_rows(doc: &mut serde_json::Map<String, Value>, key: &str, rows: &[Value]) {
+    doc.insert("listed".to_string(), Value::from(usize::MAX));
+    doc.insert("omitted".to_string(), Value::from(usize::MAX));
+    doc.insert(key.to_string(), Value::Array(Vec::new()));
+    let mut used = Value::Object(doc.clone()).to_string().len();
+    let mut kept: Vec<Value> = Vec::new();
+    for row in rows {
+        // The row's own bytes, plus the comma that joins it to the row before it.
+        let cost = row.to_string().len() + usize::from(!kept.is_empty());
+        if used + cost > MCP_MAX_RESULT_BYTES {
+            break;
+        }
+        used += cost;
+        kept.push(row.clone());
+    }
+    doc.insert("listed".to_string(), Value::from(kept.len()));
+    doc.insert("omitted".to_string(), Value::from(rows.len() - kept.len()));
+    doc.insert(key.to_string(), Value::Array(kept));
+}
+
+/// The four states a clone can be in, as the names `clone_list` counts and reports them under.
+/// They PARTITION the box: [`clone_hold`] returns the first that applies, in the order
+/// [`release_decision`] itself tests them, so the counts always sum to the number of clones.
+const CLONE_HOLDS: [&str; 3] = ["unknown", "unpushed", "uncommitted"];
+const CLONE_RELEASABLE: &str = "releasable";
+
+/// PURE: WHY this clone cannot be released right now, as a TYPED discriminant — `None` when it can.
+///
+/// Derived from the same ladder as [`release_decision`] (unknown push state, then unpushed commits,
+/// then uncommitted changes) rather than from its message, so a caller grouping clones by reason is
+/// grouping by the decision and not by a sentence that may be reworded.
+fn clone_hold(s: &LocalCloneState) -> Option<&'static str> {
+    match s.unpushed {
+        None => return Some("unknown"),
+        Some(n) if n > 0 => return Some("unpushed"),
+        Some(_) => {}
+    }
+    match &s.dirt {
+        None => Some("unknown"),
+        Some(d) if !d.is_empty() => Some("uncommitted"),
+        Some(_) => None,
+    }
+}
+
+/// PURE: the order a listing is truncated in — the clones whose state is unreadable first, then the
+/// ones holding commits nobody else has, then merely dirty ones, then the releasable ones. Within a
+/// class, OLDEST first. So the rows the budget drops are always the ones a caller acts on last.
+fn clone_row_rank(hold: Option<&str>) -> u8 {
+    match hold {
+        Some("unknown") => 0,
+        Some("unpushed") => 1,
+        Some("uncommitted") => 2,
+        _ => 3,
+    }
+}
+
+/// Every work clone under every configured root: the whole box as COUNTS, plus the rows that name a
+/// decision. Read-only: the answer to "what is on this box and who owns it".
+///
+/// The counts are the load-bearing half and they are never truncated, which is what lets the rows
+/// be. `include` chooses which rows are offered to the budget — the held ones by default, because
+/// the question this tool is called for is why something is still here (`campaign-prompt.txt`'s gc
+/// step names it for exactly that) and a releasable clone is the answer to no question. `"all"`
+/// offers every row, still ordered so that the ones the budget drops are the boring ones.
+fn clone_list_exec(roots: &[String], include_all: bool) -> Result<Value, String> {
+    let mut rows = Vec::new();
+    let mut counts: std::collections::HashMap<&'static str, usize> =
+        std::collections::HashMap::new();
     for root in roots {
         let Ok(entries) = std::fs::read_dir(root) else {
             continue;
@@ -13264,29 +13364,77 @@ fn clone_list_exec(roots: &[String]) -> Result<Value, String> {
         for dir in dirs {
             let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
             let state = local_clone_state(&dir);
-            out.push(serde_json::json!({
-                "name": name,
-                "root": root,
-                "branch": state.branch,
-                "unpushed": state.unpushed,
-                "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
-                "ageDays": clone_age_days(&dir),
-                "releasable": release_decision(&state, false).is_ok(),
-            }));
+            let hold = clone_hold(&state);
+            *counts.entry(hold.unwrap_or(CLONE_RELEASABLE)).or_default() += 1;
+            let age = clone_age_days(&dir);
+            rows.push((
+                clone_row_rank(hold),
+                std::cmp::Reverse(age),
+                name.to_string(),
+                serde_json::json!({
+                    "name": name,
+                    "root": clip_field(root, CLONE_ECHO_BYTES),
+                    "branch": state.branch,
+                    "unpushed": state.unpushed,
+                    "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
+                    "ageDays": age,
+                    "releasable": hold.is_none(),
+                    "held": hold,
+                }),
+            ));
         }
     }
-    Ok(serde_json::json!({"roots": roots, "clones": out}))
+    let total = rows.len();
+    rows.sort_by(|a, b| (a.0, a.1, &a.2).cmp(&(b.0, b.1, &b.2)));
+    let offered: Vec<Value> = rows
+        .into_iter()
+        .filter(|(rank, ..)| include_all || *rank != clone_row_rank(None))
+        .map(|(.., row)| row)
+        .collect();
+    let mut doc = serde_json::Map::new();
+    doc.insert("roots".to_string(), clone_roots_echo(roots));
+    doc.insert("total".to_string(), Value::from(total));
+    doc.insert(
+        "counts".to_string(),
+        Value::Object(
+            CLONE_HOLDS
+                .into_iter()
+                .chain([CLONE_RELEASABLE])
+                // Every state gets a key even at zero, so an absent class is never something a
+                // caller has to infer from silence.
+                .map(|k| {
+                    (
+                        k.to_string(),
+                        Value::from(counts.get(k).copied().unwrap_or(0)),
+                    )
+                })
+                .collect(),
+        ),
+    );
+    doc.insert(
+        "include".to_string(),
+        Value::from(if include_all { "all" } else { "held" }),
+    );
+    doc.insert("matched".to_string(), Value::from(offered.len()));
+    fit_clone_rows(&mut doc, "clones", &offered);
+    Ok(Value::Object(doc))
 }
 
 /// The unattended sweep, as a tool. Same decision function as the CLI (`gc_decision`), across every
 /// configured root, returning what it did instead of printing it — STDOUT is the MCP protocol.
+///
+/// Its per-clone records go through the same budget fit `clone_list` uses, and for a sharper reason:
+/// this call has already DELETED things by the time the result is built, so an over-budget refusal
+/// would discard the only account of what it destroyed. The rows are ordered so the ones the budget
+/// drops are the `kept` ones — a clone that is still there and can be listed again — and never an
+/// `error` or a deletion.
 fn clone_gc_exec(roots: &[String], max_age_days: u64, dry_run: bool) -> Result<Value, String> {
     let mut recs = Vec::new();
     let mut errors = Vec::new();
     for root in roots {
         match gc_clones_sweep(root, max_age_days, dry_run, &mut |_r| {}) {
             Ok(mut r) => recs.append(&mut r),
-            Err(e) => errors.push(e),
+            Err(e) => errors.push(Value::from(clip_field(&e, CLONE_ECHO_BYTES))),
         }
     }
     let freed: u64 = recs.iter().map(|r| r.bytes).sum();
@@ -13294,20 +13442,38 @@ fn clone_gc_exec(roots: &[String], max_age_days: u64, dry_run: bool) -> Result<V
         .iter()
         .filter(|r| r.outcome == "deleted" || r.outcome == "would-delete")
         .count();
-    Ok(serde_json::json!({
-        "dryRun": dry_run,
-        "roots": roots,
-        "scanned": recs.len(),
-        "deleted": deleted,
-        "kept": recs.len() - deleted,
-        "bytesReclaimed": freed,
-        "reclaimed": human_bytes(freed),
-        "errors": errors,
-        "clones": recs.iter().map(|r| serde_json::json!({
-            "name": r.name, "root": r.root, "outcome": r.outcome,
-            "reason": r.reason, "bytes": r.bytes,
-        })).collect::<Vec<_>>(),
-    }))
+    recs.sort_by_key(|r| gc_outcome_rank(r.outcome));
+    let rows: Vec<Value> = recs
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.name, "root": clip_field(&r.root, CLONE_ECHO_BYTES),
+                "outcome": r.outcome, "reason": r.reason, "bytes": r.bytes,
+            })
+        })
+        .collect();
+    let mut doc = serde_json::Map::new();
+    doc.insert("dryRun".to_string(), Value::from(dry_run));
+    doc.insert("roots".to_string(), clone_roots_echo(roots));
+    doc.insert("scanned".to_string(), Value::from(recs.len()));
+    doc.insert("deleted".to_string(), Value::from(deleted));
+    doc.insert("kept".to_string(), Value::from(recs.len() - deleted));
+    doc.insert("bytesReclaimed".to_string(), Value::from(freed));
+    doc.insert("reclaimed".to_string(), Value::from(human_bytes(freed)));
+    doc.insert("errors".to_string(), Value::Array(errors));
+    fit_clone_rows(&mut doc, "clones", &rows);
+    Ok(Value::Object(doc))
+}
+
+/// PURE: the order sweep records are truncated in — what FAILED first, then what was destroyed, then
+/// what was left alone. The first two are the account of an irreversible act; the third can be read
+/// again from `clone_list` at any time.
+fn gc_outcome_rank(outcome: &str) -> u8 {
+    match outcome {
+        "error" => 0,
+        "deleted" | "would-delete" => 1,
+        _ => 2,
+    }
 }
 
 // --- --deploy: the SOLE, constrained way the producer triggers a sanctioned Zoltu deploy ---------
@@ -18358,8 +18524,15 @@ impl McpProfile {
     }
 }
 
+/// The tool table's own declaration of [`narrowing_argument`]'s answer. It lives ON the tool, beside
+/// the schema that has to advertise it, so the refusal and the schema cannot come to disagree about
+/// which arguments a tool accepts — which is the whole of #117. It is NOT part of the MCP tool
+/// object, so [`mcp_tools`] strips it before listing.
+const TOOL_NARROWS_KEY: &str = "narrows";
+
 /// The TOOL SURFACE. Descriptions are one line each on purpose: every schema here is re-sent in the
-/// preamble of every API call, so the surface must replace more prose than it adds.
+/// preamble of every API call, so the surface must replace more prose than it adds — which is also
+/// why [`TOOL_NARROWS_KEY`] comes off here rather than riding along in every preamble.
 fn mcp_tools(profile: McpProfile) -> Value {
     let names = profile.tool_names();
     let all = mcp_all_tools();
@@ -18368,10 +18541,15 @@ fn mcp_tools(profile: McpProfile) -> Value {
         names
             .iter()
             .map(|n| {
-                all.iter()
+                let mut t = all
+                    .iter()
                     .find(|t| t["name"] == Value::String((*n).to_string()))
                     .unwrap_or_else(|| panic!("profile names an undefined tool {n:?}"))
-                    .clone()
+                    .clone();
+                if let Some(o) = t.as_object_mut() {
+                    o.remove(TOOL_NARROWS_KEY);
+                }
+                t
             })
             .collect(),
     )
@@ -18381,6 +18559,7 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
+            "narrows": "limit",
             "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
@@ -18392,6 +18571,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "next_ready",
+            "narrows": "limit",
             "description": "The next ai:ready PR to rule on, cheapest-first off the same queue: the vetter's sha-bound verdict note, headRefOid, baseRefName, CI rollup with failing checks named, whether CodeRabbit actually reviewed (only `reviewed` is coverage — rate-limited/queued are green checks with no review, making 0 unresolved threads vacuous), unresolved threads, and any deploy-before-merge gate.",
             "inputSchema": {
                 "type": "object",
@@ -18402,6 +18582,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "next_close_candidate",
+            "narrows": "limit",
             "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue. Coverage is always reported; `openPr.blocksClose` pairs it with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are the ones no AI transition will ever clear.",
             "inputSchema": {
                 "type": "object",
@@ -18412,6 +18593,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "pr_context",
+            "narrows": "max_diff_bytes",
             "description": "Everything needed to judge one PR: title, body, files, additions/deletions, headRefOid, ci, mergeable, the full diff, every linked issue's title/body/labels, and the trusted ai:vetter/ai:producer comments.",
             "inputSchema": {
                 "type": "object",
@@ -18461,6 +18643,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "unvetted_close_candidates",
+            "narrows": "limit",
             "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
             "inputSchema": {
                 "type": "object",
@@ -18560,8 +18743,13 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "clone_list",
-            "description": "Every work clone on this box: name, branch, unpushed/uncommitted counts, age, and whether it is releasable now.",
-            "inputSchema": {"type": "object", "properties": {}}
+            "description": "Every work clone on this box, as COUNTS plus the rows that name a decision. `counts` partitions the WHOLE box — releasable / unpushed / uncommitted / unknown, zeroes stated — and is never truncated. Rows carry name, root, branch, unpushed/uncommitted counts, age, `releasable`, and `held` (the typed reason it is not; null when it is), unreadable state first, then unpushed, then dirty, oldest first within each. `listed`/`omitted` say how many rows the budget fitted and how many it left — only ever the least interesting ones, and never a count.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "include": {"type": "string", "enum": ["held", "all"], "description": "Which clones get a ROW: the held ones (default — why is this still here) or all of them. The counts cover the whole box either way."}
+                }
+            }
         },
         {
             "name": "clone_gc",
@@ -18720,7 +18908,12 @@ enum McpCall {
         name: String,
         discard_uncommitted: bool,
     },
-    CloneList,
+    /// `include_all` widens the ROWS to the releasable clones as well. It is not a narrowing
+    /// argument and the tool has none: [`fit_clone_rows`] already keeps every result inside the
+    /// budget, so there is nothing for a caller to lower.
+    CloneList {
+        include_all: bool,
+    },
     CloneGc {
         max_age_days: u64,
         dry_run: bool,
@@ -18852,27 +19045,43 @@ fn call_result_budget(_call: &McpCall) -> usize {
     MCP_MAX_RESULT_BYTES
 }
 
-/// PURE: which argument actually makes THIS call's result fit.
+/// PURE: which argument actually makes THIS TOOL's result fit — read off the tool's own table entry
+/// ([`TOOL_NARROWS_KEY`]), never guessed from the call.
 ///
-/// Every answer here is now truthful because [`call_result_budget`] does not move with the argument:
-/// lowering the named argument lowers the payload against a FIXED allowance, so narrowing strictly
-/// converges. While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument
-/// was advice that could not work — budget and content fell together and the caller could loop for
-/// ever — which is why the fix is the budget, not the wording.
-/// `next_ready` gets an arm of its own rather than falling through the catch-all. The catch-all
-/// would answer `limit` — which happens to be true here — but a tool whose refusal is correct only
-/// because a default guessed right is a tool that inherits #117 the day the default changes. The
-/// catch-all itself is #117's to fix (it advises `limit` to `clone_list`, which has none, making
-/// [`oversize_result_error`]'s truthful `None` branch unreachable); this arm keeps `next_ready` out
-/// of that blast radius. For this tool the refusal is doubly sound: `limit` is real AND lowering it
-/// strictly removes whole rows, against a budget the row caps already keep it under. Both human
-/// gates share the arm, because both are true of both.
-fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
-    match call {
-        McpCall::PrContext { .. } => Some("max_diff_bytes"),
-        McpCall::NextReady { .. } | McpCall::NextCloseCandidate { .. } => Some("limit"),
-        _ => Some("limit"),
-    }
+/// It is keyed by NAME, and that is the fix for #117. The answer used to come from a match over
+/// [`McpCall`] whose catch-all was `Some("limit")`, so every tool without an arm of its own was
+/// ASSERTED to take a `limit`: of the seventeen variants that reached it, exactly two did.
+/// `clone_list` is the one that bit — schema `{"properties": {}}`, refusal "lower `limit`" — and a
+/// refusal naming an argument the tool does not accept is advice the caller cannot follow, so the
+/// producer improvised `ls -d …/*/ | wc -l` and reported a COUNT where a state load belonged. That
+/// is the exact failure [`oversize_result_error`] exists to prevent, arriving through the guard
+/// meant to prevent it.
+///
+/// Reading the declaration off the tool table means the refusal and the advertised schema are the
+/// same datum: `each_refusal_names_an_argument_that_actually_narrows_it` walks the whole table and
+/// requires every declared name to be a property the tool advertises, so a tool added without one
+/// gets the truthful `None` rather than a `limit` that does not exist. The default is now the SAFE
+/// answer instead of the confident one.
+///
+/// What the table cannot derive is which of a tool's arguments narrows: `clone_gc` accepts
+/// `dry_run` and `max_age_days` and neither changes the size of the result, and `pr_context`
+/// accepts `pr` as well as `max_diff_bytes`. So the property is DECLARED beside the schema rather
+/// than inferred from a property name — inference would be a convention hidden in a spelling, and
+/// the first tool with a `limit` that does not narrow would revive #117 silently.
+///
+/// Every declared answer is also one that CONVERGES, because [`call_result_budget`] does not move
+/// with the argument: lowering the named argument lowers the payload against a FIXED allowance.
+/// While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument was advice
+/// that could not work — budget and content fell together and the caller could loop for ever —
+/// which is why that fix was the budget and not the wording.
+fn narrowing_argument(name: &str) -> Option<String> {
+    mcp_all_tools()
+        .as_array()?
+        .iter()
+        .find(|t| t["name"] == Value::String(name.to_string()))?
+        .get(TOOL_NARROWS_KEY)?
+        .as_str()
+        .map(std::string::ToString::to_string)
 }
 
 /// PURE: the over-budget refusal. It is an ERROR, not a truncation and not a spill, and it names the
@@ -18880,20 +19089,34 @@ fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
 /// improvised one. (#78: the vetter met an over-budget state-load, invented a fallback that dropped
 /// the open-threads accounting, and nothing in the run said so.) When NO argument makes it smaller
 /// it says that instead, and names the only honest move left.
+///
+/// The prohibition on improvising sits in the HEAD, shared by both branches. It used to sit only in
+/// the `None` branch, on the reasoning that a caller told to re-call narrower has somewhere to go —
+/// but #117 is what happens when it does not: the advice was followable-looking and wrong, and the
+/// caller improvised anyway. A refusal a caller cannot act on is worse than a stated truncation,
+/// because the substitute it provokes is unstated.
+///
+/// The `None` text is TOOL-GENERAL. It used to describe `max_diff_bytes` and end "record NO verdict
+/// for this PR", which was `pr_context`'s case written into the branch every other tool reaches —
+/// so fixing the catch-all alone would only have routed `clone_list` from one untruth to another.
 fn oversize_result_error(name: &str, len: usize, budget: usize, narrow: Option<&str>) -> String {
     let head = format!(
         "error: tool `{name}` produced {len} bytes, over the {budget}-byte budget one tool result \
          must fit in. Nothing was truncated or spilled — a partial state-load cannot say what it is \
-         missing. "
+         missing. Do NOT improvise a substitute read: a shell command that answers part of this \
+         question drops the rest silently, and the run then carries a fragment nothing declares as \
+         one. "
     );
     match narrow {
-        Some(arg) => format!("{head}Re-call NARROWER: lower `{arg}`."),
+        Some(arg) => format!(
+            "{head}Re-call NARROWER: lower `{arg}` — it is an argument this tool accepts, and the \
+             budget does not move with it, so a smaller value is a strictly smaller result."
+        ),
         None => format!(
-            "{head}NO argument makes this call smaller — `max_diff_bytes` caps the diff and raises \
-             this budget by the same amount, so this result is over budget on its METADATA alone. \
-             Do not retry it with a different `max_diff_bytes` expecting a different answer, and do \
-             not improvise a substitute read: record NO verdict for this PR and name it in your run \
-             summary."
+            "{head}NO argument makes this call smaller: `{name}` accepts none that shrinks its \
+             result, so re-calling it with different arguments cannot change this answer. Record \
+             NOTHING from it and name this call, by tool name, in your run summary — an unanswered \
+             read is a reportable state, and it is the only honest move left."
         ),
     }
 }
@@ -19127,7 +19350,18 @@ fn validate_call(
             };
             Ok(McpCall::Push { root, name, branch })
         }
-        "clone_list" => Ok(McpCall::CloneList),
+        // `include` is REFUSED rather than clamped to a default when it is not one of the two
+        // words, for the reason `state_load_limit` refuses an out-of-range page: a silently
+        // reinterpreted argument leaves the caller believing it asked for something it did not get.
+        "clone_list" => {
+            let include_all = match args.get("include") {
+                None | Some(Value::Null) => false,
+                Some(Value::String(s)) if s.trim() == "all" => true,
+                Some(Value::String(s)) if s.trim() == "held" => false,
+                Some(v) => return Err(format!("include must be \"held\" or \"all\", not {v}")),
+            };
+            Ok(McpCall::CloneList { include_all })
+        }
         "clone_gc" => {
             let max_age_days = match args.get("max_age_days") {
                 None | Some(Value::Null) => GC_MAX_AGE_DEFAULT,
@@ -19295,16 +19529,21 @@ fn mcp_handle(
             let out = match validate_call(profile, roots, name, &args) {
                 Err(e) => tool_result(e, true),
                 Ok(call) => {
-                    // The budget AND the narrowing advice are read off the VALIDATED call, before the
-                    // effect runs, because `exec` consumes it — and because both are properties of
-                    // what was asked for.
+                    // The budget is read off the VALIDATED call, before the effect runs, because
+                    // `exec` consumes it — and because it is a property of what was asked for. The
+                    // narrowing advice is read off the tool NAME instead (#117), so it survives the
+                    // call being consumed and comes from the same table entry as the schema.
                     let budget = call_result_budget(&call);
-                    let narrow = narrowing_argument(&call);
                     match exec(call) {
                         // A result over budget is THIS server's error to raise. Handing it back and
                         // letting the harness reject it is what left the vetter improvising (#78).
                         Ok(text) if text.len() > budget => tool_result(
-                            oversize_result_error(name, text.len(), budget, narrow),
+                            oversize_result_error(
+                                name,
+                                text.len(),
+                                budget,
+                                narrowing_argument(name).as_deref(),
+                            ),
                             true,
                         ),
                         Ok(text) => tool_result(text, false),
@@ -19407,7 +19646,9 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             name,
             discard_uncommitted,
         } => clone_release_exec(&root, &name, discard_uncommitted).map(|d| d.to_string()),
-        McpCall::CloneList => clone_list_exec(&roots).map(|d| d.to_string()),
+        McpCall::CloneList { include_all } => {
+            clone_list_exec(&roots, include_all).map(|d| d.to_string())
+        }
         McpCall::CloneGc {
             max_age_days,
             dry_run,
@@ -40070,7 +40311,8 @@ mod mcp_tests {
                 include_skipped: true,
                 limit: 25,
             },
-            McpCall::CloneList,
+            McpCall::CloneList { include_all: false },
+            McpCall::CloneList { include_all: true },
         ];
         for c in &calls {
             assert_eq!(
@@ -40092,54 +40334,166 @@ mod mcp_tests {
         assert!(e.contains("max_diff_bytes must be an integer in"), "{e}");
     }
 
-    // The advice each refusal gives must be advice that can work. With one fixed budget it is:
-    // lowering the named argument lowers the payload against an allowance that does not move.
+    /// The SMALLEST argument object each tool validates. One arm per tool, rather than one union
+    /// blob, because two tools disagree about the type of a shared name (`issue` is `owner/repo#n`
+    /// to the flag tools and a bare number to `weaken_closes`) — and because the arms double as a
+    /// statement of what a minimal call to each transition looks like.
+    fn minimal_args(name: &str) -> Value {
+        match name {
+            "unvetted"
+            | "next_ready"
+            | "next_close_candidate"
+            | "unvetted_close_candidates"
+            | "clone_list"
+            | "clone_gc" => json!({}),
+            "pr_context" | "pr_checkout" => json!({"pr": "o/r#1"}),
+            "record_verdict" => json!({
+                "pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b",
+                "covered": [{"path": "src/lib.rs"}]
+            }),
+            "close_candidate_context" => json!({"issue": "o/r#1"}),
+            "record_close_candidate_verdict" => {
+                json!({"issue": "o/r#1", "verdict": "uphold", "note": "n"})
+            }
+            "human_rule" => json!({"pr": "o/r#1", "ruling": "reject", "note": "n"}),
+            "human_rule_issue" => json!({"issue": "o/r#1", "ruling": "reject", "note": "n"}),
+            "human_close" => json!({"subject": "o/r#1", "note": "n"}),
+            "clone_create" => json!({"repo": "o/r", "name": "x", "branch": "b"}),
+            "clone_release" | "push" => json!({"clone": "x"}),
+            "open_pr" => {
+                json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md"})
+            }
+            "repair_qa_block" => json!({"pr": "o/r#1", "block_file": "/b.md"}),
+            "weaken_closes" => json!({"pr": "o/r#1", "issue": 5}),
+            _ => panic!("{name} has no minimal-args arm — add one when you add a tool"),
+        }
+    }
+
+    /// The profile that LISTS this tool, so a refusal can be driven through the real server rather
+    /// than through `oversize_result_error` in isolation.
+    fn profile_listing(name: &str) -> McpProfile {
+        [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human]
+            .into_iter()
+            .find(|p| p.tool_names().contains(&name))
+            .unwrap_or_else(|| panic!("{name} is on no profile"))
+    }
+
+    // The advice each refusal gives must be advice that can work — and #117 is what it looks like
+    // when it cannot: `clone_list`, whose schema was `{"properties": {}}`, was told to "lower
+    // `limit`" by a catch-all that asserted every non-`pr_context` tool had one. The producer had no
+    // second call to make, so it improvised `ls -d …/*/ | wc -l` and reported a COUNT in place of a
+    // state load.
+    //
+    // The old version of this test asserted "each" while naming three tools by hand, which is why
+    // the one tool that could never satisfy the property sat outside it. This one walks the
+    // ADVERTISED TABLE, so a tool added tomorrow is inside it on the day it is added.
     #[test]
     fn each_refusal_names_an_argument_that_actually_narrows_it() {
-        let too_big = FakeExec {
-            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
-            ..FakeExec::ok()
-        };
-        let load = text(&too_big.handle(&call("unvetted", json!({}))).unwrap());
-        assert!(load.contains("Re-call NARROWER: lower `limit`."), "{load}");
-        let ctx = text(
-            &too_big
-                .handle(&call(
-                    "pr_context",
-                    json!({"pr": "o/r#1", "max_diff_bytes": 1_000}),
-                ))
-                .unwrap(),
+        let all = mcp_all_tools();
+        let tools = all.as_array().unwrap();
+        for t in tools {
+            let name = t["name"].as_str().unwrap();
+            let f = FakeExec {
+                profile: profile_listing(name),
+                reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
+                ..FakeExec::ok()
+            };
+            let resp = f.handle(&call(name, minimal_args(name))).unwrap();
+            assert!(
+                is_error(&resp),
+                "{name}: an over-budget result must be refused"
+            );
+            let msg = text(&resp);
+            assert!(
+                msg.contains("over the") && msg.contains("byte budget"),
+                "{name} was refused for some OTHER reason, so this test proved nothing: {msg}"
+            );
+            // Whatever it advises, it forbids the improvisation. Both #78 and #117 ended in one.
+            assert!(
+                msg.contains("Do NOT improvise a substitute read"),
+                "{name}: {msg}"
+            );
+            match narrowing_argument(name) {
+                Some(arg) => {
+                    assert!(
+                        msg.contains(&format!("Re-call NARROWER: lower `{arg}`")),
+                        "{name}: {msg}"
+                    );
+                    // THE property: the argument the refusal names is one the tool's own schema
+                    // advertises. Same table entry, so the two cannot disagree.
+                    assert!(
+                        t["inputSchema"]["properties"][&arg].is_object(),
+                        "{name}'s refusal names `{arg}`, which its schema does not advertise: {}",
+                        t["inputSchema"]
+                    );
+                }
+                None => {
+                    assert!(
+                        msg.contains("NO argument makes this call smaller"),
+                        "{name}: {msg}"
+                    );
+                    assert!(!msg.contains("Re-call NARROWER"), "{name}: {msg}");
+                    // The catch-all's answer specifically: a tool with no narrowing argument must
+                    // never be told to lower one.
+                    assert!(!msg.contains("`limit`"), "{name}: {msg}");
+                    // …and the `None` text must be about THIS tool, not about the one whose case it
+                    // was originally written for.
+                    assert!(
+                        msg.contains(&format!("`{name}` accepts none")),
+                        "{name}: {msg}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            tools.len(),
+            20,
+            "a tool was added or removed — check it against this property, then update the count"
         );
-        assert!(
-            ctx.contains("Re-call NARROWER: lower `max_diff_bytes`."),
-            "{ctx}"
-        );
-        // `next_ready` accepts a REAL `limit`, so the advice is one the caller can follow — and it
-        // is followable to a fix rather than to another refusal, because rows are independent and
-        // dropping one strictly removes its bytes. (It cannot reach this refusal in practice: the
-        // per-field caps put a full page under the budget by construction. Both halves matter —
-        // #117 is what a tool whose refusal names an argument it does not accept looks like.)
-        let human = FakeExec {
-            profile: McpProfile::Human,
-            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
-            ..FakeExec::ok()
-        };
-        let nr = text(
-            &human
-                .handle(&call("next_ready", json!({"limit": 3})))
-                .unwrap(),
-        );
-        assert!(nr.contains("Re-call NARROWER: lower `limit`."), "{nr}");
-        assert!(
-            mcp_all_tools()
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|t| t["name"] == json!("next_ready"))
-                .unwrap()["inputSchema"]["properties"]["limit"]
-                .is_object(),
-            "the argument the refusal names must be one the schema advertises"
-        );
+    }
+
+    // The other direction of the same drift. A tool that advertises one of the two arguments this
+    // server narrows with, and declares nothing, would get the truthful-but-useless `None` refusal
+    // — safe, but a page the caller could have re-asked for smaller and was not told to.
+    #[test]
+    fn a_tool_advertising_a_narrowing_argument_must_declare_it() {
+        for t in mcp_all_tools().as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            let props = &t["inputSchema"]["properties"];
+            for arg in ["limit", "max_diff_bytes"] {
+                if props[arg].is_object() {
+                    assert_eq!(
+                        narrowing_argument(name).as_deref(),
+                        Some(arg),
+                        "{name} advertises `{arg}` but its refusal does not name it"
+                    );
+                }
+            }
+        }
+    }
+
+    // The declaration is OURS, not MCP's: it must not reach the wire, where it would be an
+    // unrecognised key on every tool object and preamble bytes on every API call.
+    #[test]
+    fn the_narrowing_declaration_never_reaches_the_listed_schema() {
+        let declared = mcp_all_tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t.get(TOOL_NARROWS_KEY).is_some())
+            .count();
+        assert_eq!(declared, 5, "five tools narrow; the rest genuinely cannot");
+        for profile in [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human] {
+            for t in mcp_tools(profile).as_array().unwrap() {
+                assert!(
+                    t.get(TOOL_NARROWS_KEY).is_none(),
+                    "{profile:?} listed {} with the declaration attached",
+                    t["name"]
+                );
+                // …and the listing is otherwise intact.
+                assert!(t["name"].is_string() && t["inputSchema"]["type"] == json!("object"));
+            }
+        }
     }
 
     /// A `pr_context` input whose metadata is `meta_bytes`-ish and whose diff is `diff` bytes long.
@@ -41475,7 +41829,320 @@ mod mcp_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // --- the listing: counts that never truncate, rows that may -----------------------------------
+
+    // The four buckets must PARTITION the box, and they must be the ladder `release_decision` walks
+    // — not a re-derivation of it. A clone counted under a reason that does not match the decision
+    // is a caller told to commit changes on a clone that is actually holding unpushed commits.
+    #[test]
+    fn clone_hold_is_release_decisions_own_ladder_as_a_discriminant() {
+        for (unpushed, dirt, want) in [
+            (None, Some(""), Some("unknown")),
+            (None, Some("?? a"), Some("unknown")), // unknown push state OUTRANKS dirt
+            (Some(3), Some(""), Some("unpushed")),
+            (Some(3), Some("?? a"), Some("unpushed")), // unpushed OUTRANKS dirt
+            (Some(0), None, Some("unknown")),          // `git status` failed
+            (Some(0), Some("?? a\n M b"), Some("uncommitted")),
+            (Some(0), Some(""), None),
+        ] {
+            let s = st(unpushed, dirt);
+            assert_eq!(clone_hold(&s), want, "{unpushed:?}/{dirt:?}");
+            // …and it agrees with the decision it is derived from, in both directions.
+            assert_eq!(
+                clone_hold(&s).is_none(),
+                release_decision(&s, false).is_ok(),
+                "{unpushed:?}/{dirt:?}"
+            );
+        }
+        // Every discriminant it can return is a key `clone_list` counts under, so the counts can
+        // never lose a clone to a bucket nobody prints.
+        for h in CLONE_HOLDS {
+            assert!(!h.is_empty());
+        }
+        assert!(!CLONE_HOLDS.contains(&CLONE_RELEASABLE));
+    }
+
+    // The rows the budget drops are the ones a caller acts on LAST. An unreadable clone might be
+    // holding anything; an unpushed one is holding work that exists nowhere else; a dirty one is
+    // usually build output; a releasable one is the answer to no question.
+    #[test]
+    fn a_listing_is_truncated_from_the_least_interesting_end() {
+        let ranks: Vec<u8> = [Some("unknown"), Some("unpushed"), Some("uncommitted"), None]
+            .into_iter()
+            .map(clone_row_rank)
+            .collect();
+        assert_eq!(ranks, vec![0, 1, 2, 3]);
+        // An unrecognised discriminant sorts with the releasable ones rather than jumping the
+        // queue — a new hold word must be ADDED to the ladder to be treated as one.
+        assert_eq!(clone_row_rank(Some("something-new")), 3);
+
+        // …and the fit keeps a PREFIX of whatever order it is handed, so that order is the whole of
+        // the truncation policy.
+        let rows: Vec<Value> = (0..2_000)
+            .map(|i| serde_json::json!({"name": format!("clone-{i}"), "held": "unpushed"}))
+            .collect();
+        let mut doc = serde_json::Map::new();
+        fit_clone_rows(&mut doc, "clones", &rows);
+        let kept = doc["clones"].as_array().unwrap();
+        assert!(
+            !kept.is_empty() && kept.len() < rows.len(),
+            "{}",
+            kept.len()
+        );
+        assert_eq!(kept.as_slice(), &rows[..kept.len()]);
+        assert_eq!(doc["listed"], serde_json::json!(kept.len()));
+        assert_eq!(doc["omitted"], serde_json::json!(rows.len() - kept.len()));
+    }
+
+    // THE requirement of #117: no clone result can exceed the budget, whatever the box holds. The
+    // guard measured 60,237 bytes at ~289 clones and 38,229 at a smaller count; a fixed row cap
+    // would not have covered either, because a row's size is a clone NAME and a BRANCH name.
+    #[test]
+    fn a_clone_result_can_never_exceed_the_ceiling() {
+        for (count, width) in [
+            (0, 10),
+            (5, 10),
+            (289, 200),   // the box #117 was found on
+            (5_000, 60),  // ~20x that box
+            (50, 40_000), // one row bigger than the whole budget
+            (2, 4_000_000),
+        ] {
+            let rows: Vec<Value> = (0..count)
+                .map(|i| {
+                    serde_json::json!({
+                        "name": format!("c{i}"),
+                        "branch": "b".repeat(width),
+                        "held": "uncommitted",
+                    })
+                })
+                .collect();
+            let mut doc = serde_json::Map::new();
+            doc.insert(
+                "roots".to_string(),
+                clone_roots_echo(&["/home/x/code".into()]),
+            );
+            doc.insert("total".to_string(), Value::from(count));
+            fit_clone_rows(&mut doc, "clones", &rows);
+            let len = Value::Object(doc.clone()).to_string().len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "{count} rows x {width} produced {len} bytes, over {MCP_MAX_RESULT_BYTES}"
+            );
+            // The split is always STATED, so what is missing is a number rather than an inference.
+            let listed = doc["listed"].as_u64().unwrap() as usize;
+            assert_eq!(listed, doc["clones"].as_array().unwrap().len());
+            assert_eq!(doc["omitted"].as_u64().unwrap() as usize, count - listed);
+            // A row too big for the budget on its own omits itself rather than being clipped into
+            // something that reads like a whole row.
+            if width < MCP_MAX_RESULT_BYTES && count > 0 {
+                assert!(listed > 0, "{count} rows x {width} fitted nothing");
+            }
+        }
+        // The roots echo is the one part of the envelope that is not a number, so it is the one
+        // part that has to be bounded before the row fit can promise anything.
+        let absurd = "/".to_string() + &"r".repeat(100_000);
+        let echo = clone_roots_echo(&[absurd.clone(), absurd]);
+        assert!(
+            echo.to_string().len() <= 2 * (CLONE_ECHO_BYTES * 2 + 8),
+            "{}",
+            echo.to_string().len()
+        );
+    }
+
+    // The whole box as counts, the held ones as rows. Real clones, because the four states are
+    // states of a real `git` working tree and a stub would assert our belief about git instead.
+    #[test]
+    fn a_clone_listing_states_the_whole_box_and_lists_what_is_held() {
+        let root = tmp_root("listing");
+        let rs = root.to_string_lossy().to_string();
+        // `unknown`: a directory with a `.git` that is not a repository at all.
+        mk_clone(&root, "d-unknown");
+        // `releasable`: a real repo, no commits, nothing untracked.
+        let clean = root.join("a-clean");
+        std::fs::create_dir_all(&clean).unwrap();
+        if git_run(&clean, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // no git in this sandbox
+        }
+        // `uncommitted`: a real repo with an untracked file.
+        let dirty = root.join("b-dirty");
+        std::fs::create_dir_all(&dirty).unwrap();
+        git_run(&dirty, &["init", "-q"]).unwrap();
+        std::fs::write(dirty.join("f.txt"), "x").unwrap();
+        // `unpushed`: a real repo with a commit on no remote.
+        let wip = root.join("c-wip");
+        std::fs::create_dir_all(&wip).unwrap();
+        git_run(&wip, &["init", "-q"]).unwrap();
+        let _ = git_run(&wip, &["config", "user.email", "t@t"]);
+        let _ = git_run(&wip, &["config", "user.name", "t"]);
+        std::fs::write(wip.join("f.txt"), "work").unwrap();
+        git_run(&wip, &["add", "-A"]).unwrap();
+        git_run(
+            &wip,
+            &["-c", "commit.gpgsign=false", "commit", "-qm", "wip"],
+        )
+        .unwrap();
+
+        let held = clone_list_exec(std::slice::from_ref(&rs), false).unwrap();
+        // The counts cover the WHOLE box and every state has a key, at zero or not.
+        assert_eq!(held["total"], json!(4));
+        assert_eq!(held["counts"]["unknown"], json!(1));
+        assert_eq!(held["counts"]["unpushed"], json!(1));
+        assert_eq!(held["counts"]["uncommitted"], json!(1));
+        assert_eq!(held["counts"][CLONE_RELEASABLE], json!(1));
+        let sum: u64 = ["unknown", "unpushed", "uncommitted", CLONE_RELEASABLE]
+            .iter()
+            .map(|k| held["counts"][k].as_u64().unwrap())
+            .sum();
+        assert_eq!(
+            sum, 4,
+            "the counts must partition the box: {}",
+            held["counts"]
+        );
+
+        // The rows are the HELD ones, worst first, and the releasable one is counted, not listed.
+        assert_eq!(held["include"], json!("held"));
+        assert_eq!(held["matched"], json!(3));
+        assert_eq!(held["listed"], json!(3));
+        assert_eq!(held["omitted"], json!(0));
+        let names: Vec<&str> = held["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["d-unknown", "c-wip", "b-dirty"]);
+        let row = &held["clones"][1];
+        assert_eq!(row["held"], json!("unpushed"));
+        assert_eq!(row["releasable"], json!(false));
+        assert_eq!(row["unpushed"], json!(1));
+        assert_eq!(row["root"], json!(rs));
+        assert!(row["ageDays"].is_u64() && row["branch"].is_string());
+
+        // `include: all` adds the releasable one, LAST, and changes no count.
+        let all = clone_list_exec(std::slice::from_ref(&rs), true).unwrap();
+        assert_eq!(all["counts"], held["counts"]);
+        assert_eq!(all["total"], json!(4));
+        assert_eq!(all["include"], json!("all"));
+        assert_eq!(all["matched"], json!(4));
+        let all_names: Vec<&str> = all["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(all_names, vec!["d-unknown", "c-wip", "b-dirty", "a-clean"]);
+        assert_eq!(all["clones"][3]["held"], json!(null));
+        assert_eq!(all["clones"][3]["releasable"], json!(true));
+
+        // An unreadable root contributes nothing rather than aborting the listing.
+        let with_missing = clone_list_exec(&[rs, "/no/such/root".to_string()], false).unwrap();
+        assert_eq!(with_missing["total"], json!(4));
+        assert_eq!(with_missing["roots"].as_array().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A refused `include` reaches no effect, and is refused rather than quietly read as the default
+    // — a listing the caller believes is the whole box and is not is #117's failure with the guard
+    // on the other side of it.
+    #[test]
+    fn clone_list_include_is_refused_rather_than_reinterpreted() {
+        let f = FakeExec::producer();
+        for bad in [
+            json!({"include": "everything"}),
+            json!({"include": 1}),
+            json!({"include": ["all"]}),
+        ] {
+            let resp = f.handle(&call("clone_list", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+            assert!(text(&resp).contains("include must be"), "{}", text(&resp));
+        }
+        assert!(f.calls().is_empty(), "a refused include reached an effect");
+        for (args, want) in [
+            (json!({}), false),
+            (json!({"include": "held"}), false),
+            (json!({"include": " all "}), true),
+        ] {
+            f.handle(&call("clone_list", args.clone())).unwrap();
+            assert_eq!(
+                *f.calls().last().unwrap(),
+                McpCall::CloneList { include_all: want },
+                "{args}"
+            );
+        }
+        // The schema advertises exactly the two words the guard accepts.
+        let all = mcp_all_tools();
+        let t = all
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == json!("clone_list"))
+            .unwrap();
+        assert_eq!(
+            t["inputSchema"]["properties"]["include"]["enum"],
+            json!(["held", "all"])
+        );
+    }
+
     // --- the sweep --------------------------------------------------------------------------------
+
+    // The sweep's rows are the account of an IRREVERSIBLE act, so the budget must never be paid for
+    // out of them. What it drops is `kept` rows — clones that are still on disk and can be listed
+    // again — and never an error or a deletion.
+    #[test]
+    fn a_sweep_report_keeps_its_account_of_what_it_destroyed() {
+        assert_eq!(gc_outcome_rank("error"), 0);
+        assert_eq!(gc_outcome_rank("deleted"), 1);
+        assert_eq!(gc_outcome_rank("would-delete"), 1);
+        assert_eq!(gc_outcome_rank("kept"), 2);
+        // An outcome nobody has taught it about sorts with `kept`, so a new word can only ever LOSE
+        // priority — never silently outrank a deletion.
+        assert_eq!(gc_outcome_rank("quarantined"), 2);
+
+        let mut recs: Vec<GcRecord> = (0..400)
+            .map(|i| GcRecord {
+                root: "/w".to_string(),
+                name: format!("clone-{i}"),
+                outcome: if i == 399 {
+                    "deleted"
+                } else if i == 398 {
+                    "error"
+                } else {
+                    "kept"
+                },
+                reason: "uncommitted changes".repeat(6),
+                bytes: 1_234_567,
+            })
+            .collect();
+        recs.sort_by_key(|r| gc_outcome_rank(r.outcome));
+        assert_eq!(
+            recs.iter().map(|r| r.outcome).take(2).collect::<Vec<_>>(),
+            vec!["error", "deleted"]
+        );
+        let rows: Vec<Value> = recs
+            .iter()
+            .map(|r| serde_json::json!({"name": r.name, "outcome": r.outcome, "reason": r.reason}))
+            .collect();
+        let mut doc = serde_json::Map::new();
+        doc.insert("scanned".to_string(), Value::from(recs.len()));
+        fit_clone_rows(&mut doc, "clones", &rows);
+        assert!(Value::Object(doc.clone()).to_string().len() <= MCP_MAX_RESULT_BYTES);
+        assert!(
+            doc["omitted"].as_u64().unwrap() > 0,
+            "this fixture must truncate"
+        );
+        // …and the two rows that record what happened survived the truncation.
+        let kept: Vec<&str> = doc["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["outcome"].as_str().unwrap())
+            .collect();
+        assert_eq!(kept[0], "error");
+        assert_eq!(kept[1], "deleted");
+        // The whole-sweep figures are never the thing that gets dropped.
+        assert_eq!(doc["scanned"], json!(400));
+    }
 
     #[test]
     fn the_sweep_only_considers_git_clones_directly_under_a_root() {
