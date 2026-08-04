@@ -30123,6 +30123,177 @@ mod settings_tests {
         );
     }
 
+    /// The subagent TYPE the runner defines and the producer prompt dispatches. Read out of both
+    /// files rather than compared against a literal in two asserts: a rename that touched only one
+    /// side would leave the run dispatching a type the harness never registered, and `Agent` with
+    /// an unknown `subagent_type` is a failed dispatch, not a briefed one.
+    fn dispatched_worker_type(text: &str) -> Option<String> {
+        let at = text.find("pr-worker")?;
+        Some(text[at..at + "pr-worker".len()].to_string())
+    }
+
+    /// #200: a dispatched sub-agent starts with NO prompt, so the run's standing rules reach it
+    /// only if something puts them there. The channel is `--agents`, whose JSON the harness loads
+    /// straight into each worker — which is why the main loop pays none of those bytes. Assert the
+    /// whole chain, because any one link missing degrades silently into the old improvised brief:
+    /// the brief file is read, it becomes the `prompt` of a defined type, that JSON reaches
+    /// `claude`, and the type is the one the producer prompt actually dispatches.
+    #[test]
+    fn the_runner_hands_every_dispatched_worker_the_standing_brief() {
+        let (Some(sh), Some(prompt)) = (
+            repo_root_text("campaign-run.sh"),
+            repo_root_text("campaign-prompt.txt"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            sh.contains("campaign-worker-prompt.txt"),
+            "the runner must build the worker brief from campaign-worker-prompt.txt"
+        );
+        assert!(
+            sh.contains("--rawfile brief"),
+            "the brief must be read as RAW TEXT into the JSON — hand-escaping prompt prose into a \
+             JSON string literal is what keeps it unreadable and undiffable"
+        );
+        assert!(
+            sh.contains("--agents \"$AGENTS_JSON\""),
+            "the built brief must reach `claude` — without the flag the JSON is computed and \
+             thrown away, and every worker is briefed by whatever the main loop improvises"
+        );
+        let (Some(in_runner), Some(in_prompt)) =
+            (dispatched_worker_type(&sh), dispatched_worker_type(&prompt))
+        else {
+            panic!(
+                "both the runner's `--agents` JSON and the producer prompt must name the worker \
+                 type; a type defined but never dispatched briefs nobody"
+            );
+        };
+        assert_eq!(
+            in_runner, in_prompt,
+            "the type the runner DEFINES and the type the prompt DISPATCHES must be the same \
+             string: an `Agent` call naming an unregistered type is a failed dispatch"
+        );
+    }
+
+    /// A brief that cannot be built must END the run. Dispatch would still work without it, which
+    /// is precisely the hazard: the workers would go back to improvised briefing and nothing in
+    /// the trace would say the rules had stopped reaching them.
+    #[test]
+    fn a_missing_worker_brief_aborts_the_run_rather_than_dispatching_without_one() {
+        let Some(sh) = repo_root_text("campaign-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            sh.contains("no campaign-worker-prompt.txt in"),
+            "an absent brief must abort with a message naming the file, not fall through"
+        );
+        assert!(
+            sh.contains("could not build the worker brief"),
+            "a jq failure must abort too — an empty --agents value registers no type at all"
+        );
+    }
+
+    /// The two rules the improvised dispatch prompts never carried, and which the measurement in
+    /// #200 says are 68% of the sub-agent cold-start bucket: 142 of the 362 GitHub reads dispatched
+    /// agents made were a `gh pr checks` probe per turn, and 72 were a re-read of a subject already
+    /// in that agent's own context. Neither is about state the worker lacks — both are about a
+    /// standing rule that never reached it.
+    #[test]
+    fn the_worker_brief_holds_the_two_rules_the_dispatch_prompts_never_carried() {
+        let Some(brief) = repo_root_text("campaign-worker-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            brief.contains("READ YOUR SUBJECT ONCE"),
+            "the brief must state the read-once rule"
+        );
+        assert!(
+            brief.contains("WAIT IN ONE CALL"),
+            "the brief must state the one-call wait rule"
+        );
+        assert!(
+            brief.contains("never a `gh pr checks`"),
+            "stating the wait rule is not enough — the brief must name the per-probe poll it \
+             replaces, because that is the shape the runs reached for on their own"
+        );
+        // The whole reason the dispatch prompt may now carry only the item: the prohibitions and
+        // the write tools it used to retype live HERE. Dropping one silently un-teaches it.
+        for tool in [
+            "mcp__fsm__clone_create",
+            "mcp__fsm__clone_release",
+            "mcp__fsm__push",
+            "mcp__fsm__open_pr",
+        ] {
+            assert!(
+                brief.contains(tool),
+                "the brief must name {tool}: the dispatch prompt no longer does"
+            );
+        }
+        assert!(
+            brief.contains("Never `gh pr create`") && brief.contains("never force-push"),
+            "the prohibitions move with the tools or they move nowhere"
+        );
+    }
+
+    /// The fix must not become the thing #200 warns about. The brief is bytes in EVERY worker's
+    /// context on EVERY one of its turns, so it is the one part of this change that can silently
+    /// cost more than it saves — and it would be invisible, because the calls it removes leave the
+    /// trace while the cost moves into cache reads.
+    ///
+    /// The ceiling is derived, not picked. Across the retained traces the 40 dispatched agents ran
+    /// 7,922 turns between them, so one byte present in every worker costs 7922/4 tokens of cache
+    /// read at the $0.4996/MTok those traces imply — $0.000989 per byte. The waste the brief is
+    /// aimed at is $18.23 ($15.73 of spin-wait plus $2.50 of retyped boilerplate leaving the main
+    /// loop), which breaks even at 18,424 bytes. 4,096 keeps a 4.5x margin over break-even while
+    /// leaving room to state a rule properly.
+    #[test]
+    fn the_worker_brief_stays_inside_its_context_budget() {
+        const BRIEF_BYTE_CEILING: usize = 4096;
+        let Some(brief) = repo_root_text("campaign-worker-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            brief.len() <= BRIEF_BYTE_CEILING,
+            "the worker brief is {} bytes, over the {BRIEF_BYTE_CEILING}-byte ceiling: it is \
+             re-read on every turn of every dispatched agent, so growth here is the regression \
+             this change exists to avoid",
+            brief.len()
+        );
+    }
+
+    /// The other half of #200's answer, and the one that is counter-intuitive: the dispatch must
+    /// carry the ITEM and NOT the fleet. Of the 148 first-reads dispatched agents made, none could
+    /// have been answered from a `worklist` row — they asked for `body`, `comments`, `state`,
+    /// `headRefName`, `createdAt`, none of which is on one. Pasting the fleet in would buy nothing
+    /// and be re-read on every turn of every worker, so the prompt has to forbid it outright.
+    #[test]
+    fn the_producer_prompt_dispatches_the_briefed_type_and_pastes_no_fleet_state() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("subagent_type: \"pr-worker\""),
+            "the FAN OUT rule must name the briefed type in the form the `Agent` call takes"
+        );
+        assert!(
+            prompt.contains("DO NOT PASTE FLEET STATE INTO A DISPATCH"),
+            "the prompt must forbid the obvious fix, which measures as a loss"
+        );
+        assert!(
+            prompt.contains(
+                "not one of the 148 first-reads they made could have been answered \
+                 from a row"
+            ),
+            "the prohibition must carry its evidence: without the measurement it reads as \
+             stinginess and the next run talks itself out of it"
+        );
+        assert!(
+            prompt.contains("PUT ONLY THE ITEM IN THE PROMPT"),
+            "the prompt must say what a dispatch DOES carry, or dropping the boilerplate just \
+             drops the rules"
+        );
+    }
+
     #[test]
     fn both_crons_deny_scheduling_tools() {
         for f in ["campaign-settings.json", "review-settings.json"] {

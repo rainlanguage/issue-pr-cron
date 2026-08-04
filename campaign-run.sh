@@ -256,6 +256,37 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{SCRATCH_DIR}}#$SCRATCH_DIR#g" \
               "$DIR/campaign-prompt.txt")"
 
+# --- the STANDING BRIEF every dispatched worker starts with (#200) -----------------------------
+# A dispatched sub-agent starts with no prompt, so the run's standing rules reach it only if
+# something puts them there. Until now the only channel was the dispatch prompt the main loop
+# improvised per item, and 36% of those bytes (60,891 of 181,867 across the 40 dispatches in the
+# retained traces) were the same standing rules retyped — held in the MAIN LOOP's context and
+# re-read on every one of its remaining turns, which is where they are dearest ($2.50 measured).
+# The rules the main loop did NOT retype are the ones it never thought to: 142 of the 362 GitHub
+# reads dispatched agents made were a per-turn `gh pr checks` poll and 72 were a re-read of a
+# subject already in the agent's own context — $15.73, 68% of the sub-agent cold-start bucket.
+#
+# `--agents` is the harness's own channel for this: the JSON defines a subagent TYPE whose prompt
+# the harness loads directly into each dispatched agent, so the main loop pays none of those bytes
+# and cannot paraphrase the rules away. Verified against claude 2.1.221 that a `--agents`-defined
+# type is dispatchable and inherits the full surface these settings grant — Bash, ToolSearch and
+# the `mcp__fsm__*` producer profile all resolve inside one.
+#
+# Built with jq rather than committed as JSON so the brief stays PLAIN TEXT: it is prompt prose a
+# human edits and a conformance test greps, and a hand-escaped JSON string literal is neither.
+# A brief that cannot be built ABORTS the run: dispatch would still work, which is the problem —
+# the workers would silently go back to improvised briefing and nothing in the trace would say so.
+if [ ! -f "$DIR/campaign-worker-prompt.txt" ]; then
+  echo "$(date -u +%FT%TZ) campaign run ABORT: no campaign-worker-prompt.txt in '$DIR'" >> "$LOG"
+  exit 1
+fi
+AGENTS_JSON="$(jq -nc --rawfile brief "$DIR/campaign-worker-prompt.txt" \
+  '{"pr-worker":{"description":"Producer worker: does ONE dispatched item end to end and reports its outcome.","prompt":$brief}}')"
+if [ -z "$AGENTS_JSON" ]; then
+  echo "$(date -u +%FT%TZ) campaign run ABORT: could not build the worker brief from campaign-worker-prompt.txt" >> "$LOG"
+  exit 1
+fi
+
 {
   echo "================================================================="
   echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(uname -n)) trace=$RUNLOG"
@@ -308,6 +339,7 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     --model "$USED_MODEL" \
     --settings "$DIR/campaign-settings.json" \
     --mcp-config "$DIR/campaign-mcp.json" \
+    --agents "$AGENTS_JSON" \
     --permission-mode default \
     --verbose --output-format stream-json \
     --add-dir "$WORK_DIR" \

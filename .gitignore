@@ -8,6 +8,10 @@
 !/CLAUDE.md
 !/campaign-run.sh
 !/campaign-prompt.txt
+# The standing brief `--agents` loads into every DISPATCHED worker. Tracked as PLAIN TEXT and
+# wrapped into JSON by the runner, so it stays a prompt a human diffs rather than an escaped
+# string literal — and so the conformance tests can grep it the way they grep the two prompts.
+!/campaign-worker-prompt.txt
 !/campaign-settings.json
 !/cron.env.example
 # weekly-budget pace gate (pre-flight called by both runners):
