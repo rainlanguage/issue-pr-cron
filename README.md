@@ -1985,6 +1985,27 @@ rather than silently read as clean (which would present a dirty PR) or as dirty
 step-3e duty, and `worklist` routes the PR there as `nextAction:
 coderabbit-3e`.
 
+**A rate limit is not a fetch error, and the queue now says which it had.**
+`gh_json` used to collapse every failure into one `None`, so a candidate GitHub
+had merely asked us to re-ask for was reported as an unreadable PR and dropped —
+and #123/#126 put those fetches on a bounded pool, which makes a secondary limit
+_likelier_. The classification is typed and comes only from typed fields: the
+HTTP status code, the `Retry-After` / `X-RateLimit-Remaining` headers
+(`gh api
+--include`), GitHub's documented GraphQL `errors[].type`, and the REST
+body's own `status`. **No message is ever matched.** `gh pr view` supplies none
+of those — measured: exit 1 and an empty stdout for a missing PR, a missing repo
+and a dead network alike — so when it fails the queue RE-ASKS the same question
+through `gh
+api graphql`, which answers in types.
+
+What each class does: a rate limit is retried with backoff (GitHub's own
+`Retry-After` where it gave one, clamped), and a candidate still limited after
+the budget is counted as `rate-limited`, never `fetch-error`; a genuinely
+missing PR _is_ a `fetch-error`; an auth failure **aborts** the enumeration
+rather than printing a falsely-short queue. Where nothing typed is available the
+answer is `Unknown` — an honest class, not a guess.
+
 **There is no local review ledger.** Verdict state lives on GitHub as `ai:*` /
 `human:*` labels plus sha-bound comments, so it survives a lost box, is visible
 without shell access, and cannot drift from what the PR itself shows. To approve
