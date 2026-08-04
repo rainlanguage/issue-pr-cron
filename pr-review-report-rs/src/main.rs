@@ -3185,8 +3185,8 @@ fn agent_tokens(a: &AgentSpend) -> u64 {
 /// task's spend do not mean the same thing: a task's dollars bought that task's items and nothing
 /// else, while the main loop's dollars bought its items AND the orchestration around them, with no
 /// boundary in the trace between the two. Merging it into `tasks` would put that mixture in a
-/// bucket and print it as the cost of the work; dropping its items — which is what this did before
-/// — makes a run that worked inline produce nothing at all.
+/// bucket and print it as the cost of the work; dropping its items leaves a run that worked
+/// inline producing nothing at all.
 fn run_work(
     run_id: &str,
     role: &str,
@@ -20720,12 +20720,21 @@ enum PushedPr {
 /// PURE: which PR this push MOVED, decided from the pushed sha and GitHub's own answer for that
 /// head branch.
 ///
+/// An answer that could not be READ is its own nothing, never "no PR has this branch": a producer
+/// told there is no PR on the branch it just reworked would open a second one.
+///
 /// The sha equality is the whole guard. `gh pr list --head <branch>` answers on a NAME, and a name
 /// is what attributed a read-only clone of `main` a real closed PR in #175; requiring the PR's
 /// `headRefOid` to BE the commit this call pushed makes the record a statement about the effect
 /// that just happened. More than one match names none of them: two PRs at one head is a real shape
 /// (a branch opened against two bases), and picking one would be a guess.
-fn pushed_pr(pushed_sha: &str, prs: &[Value]) -> PushedPr {
+fn pushed_pr(pushed_sha: &str, resp: Option<&Value>) -> PushedPr {
+    let Some(prs) = resp.and_then(|v| v.as_array()) else {
+        return PushedPr::None(
+            "GitHub could not be read, so this push names no PR — the push itself succeeded"
+                .to_string(),
+        );
+    };
     let at_head: Vec<&Value> = prs
         .iter()
         .filter(|p| {
@@ -20752,9 +20761,7 @@ fn pushed_pr(pushed_sha: &str, prs: &[Value]) -> PushedPr {
                 ),
             }
         }
-        0 if prs.is_empty() => {
-            PushedPr::None("no open PR has this branch as its head".to_string())
-        }
+        0 if prs.is_empty() => PushedPr::None("no open PR has this branch as its head".to_string()),
         0 => PushedPr::None(
             "an open PR has this branch, but its head is not the commit this call pushed"
                 .to_string(),
@@ -20774,11 +20781,14 @@ fn pushed_pr(pushed_sha: &str, prs: &[Value]) -> PushedPr {
 /// 4 origin names no repo, 5 local/remote state unreadable, 6 the remote head could not be
 /// confirmed.
 fn push_apply(root: &str, name: &str, branch: Option<&str>) -> Result<String, (i32, String)> {
-    let subject = format!("{name}{}", branch.map(|b| format!(" {b}")).unwrap_or_default());
+    let subject = format!(
+        "{name}{}",
+        branch.map(|b| format!(" {b}")).unwrap_or_default()
+    );
     let refuse = |r: PushRefusal| (r.exit(), r.render(&subject));
 
-    let dir = resolve_existing_clone(root, name)
-        .map_err(|e| refuse(PushRefusal::CloneUnusable(e)))?;
+    let dir =
+        resolve_existing_clone(root, name).map_err(|e| refuse(PushRefusal::CloneUnusable(e)))?;
     let state = local_clone_state(&dir);
     let branch = match branch {
         Some(b) => b.to_string(),
@@ -20829,12 +20839,20 @@ fn push_apply(root: &str, name: &str, branch: Option<&str>) -> Result<String, (i
     // read-only call comes to own a real PR.
     let pr = if moved {
         let prs = gh_json(&[
-            "pr", "list", "-R", &slug, "--head", &branch, "--state", "open", "--json",
-            "number,headRefOid,url", "--limit", "10",
-        ])
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
-        pushed_pr(&head, &prs)
+            "pr",
+            "list",
+            "-R",
+            &slug,
+            "--head",
+            &branch,
+            "--state",
+            "open",
+            "--json",
+            "number,headRefOid,url",
+            "--limit",
+            "10",
+        ]);
+        pushed_pr(&head, prs.as_ref())
     } else {
         PushedPr::None("the remote ref was already at this commit — nothing moved".to_string())
     };
@@ -28326,6 +28344,28 @@ mod settings_tests {
             prompt.contains("Do NOT hand-roll this with `git clone`"),
             "clone CREATION must be the tool's, said as a prohibition and not merely omitted"
         );
+    }
+
+    // The rework is the producer's most common output and its record: a `git push` in Bash moves
+    // a PR head and leaves nothing any reader can join to a PR, so the prompt has to name the tool
+    // at every place it tells the producer to push to one of its own PR branches.
+    #[test]
+    fn the_producer_prompt_pushes_to_its_prs_through_the_tool() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("`mcp__fsm__push` TOOL"),
+            "the prompt must name the push tool: without it the rework — the producer's most \
+             common item — records nothing at all"
+        );
+        assert!(
+            prompt.contains("PUSHING IS A TOOL"),
+            "step 7's permitted-mutation list must say the push is a tool, not a bare `git push`"
+        );
+        // The force-push ban is NOT what this replaces, and the prompt must keep stating it: the
+        // tool covers the producer's own PR branches, and Bash git is still reachable.
+        assert!(prompt.contains("NEVER force-push in ANY form or spelling"));
     }
 
     /// #135/#136: retiring `ai:relink` only works if the work it named became something the
@@ -38569,9 +38609,9 @@ mod mcp_tests {
                 "clone_release",
                 "clone_list",
                 "clone_gc",
-                // The REWORK edge (#184). A moved head on an existing PR is the outcome of two of
-                // the four kinds of work the run budget counts, and as a bare `git push` it left
-                // nothing typed at all — the first capped run's three items were all this shape.
+                // The REWORK edge. A moved head on an existing PR is the outcome of two of the
+                // four kinds of work the run budget counts, and a `git push` in Bash records
+                // none of it — the first capped run's three items were all this shape.
                 "push",
                 // The producer's OUTPUT edge. It is a tool so the run's own trace records WHICH
                 // task produced WHICH PR — a `gh pr create` inside Bash leaves a shell string that
@@ -39336,47 +39376,51 @@ mod mcp_tests {
     fn a_push_names_a_pr_only_when_that_prs_head_is_the_commit_it_pushed() {
         let sha = "0123456789abcdef0123456789abcdef01234567";
         let other = "fedcba9876543210fedcba9876543210fedcba98";
-        let pr = |n: u64, head: &str| {
-            json!({"number": n, "headRefOid": head, "url": format!("https://github.com/o/r/pull/{n}")})
-        };
+        let pr = |n: u64, head: &str| json!({"number": n, "headRefOid": head, "url": format!("https://github.com/o/r/pull/{n}")});
 
-        assert_eq!(
-            pushed_pr(sha, &[pr(369, sha)]),
-            PushedPr::Moved {
-                pr: 369,
-                url: "https://github.com/o/r/pull/369".to_string()
-            }
-        );
+        let moved = PushedPr::Moved {
+            pr: 369,
+            url: "https://github.com/o/r/pull/369".to_string(),
+        };
+        assert_eq!(pushed_pr(sha, Some(&json!([pr(369, sha)]))), moved);
         // Same branch, different head: something else moved it, so this call owns nothing.
-        let PushedPr::None(why) = pushed_pr(sha, &[pr(369, other)]) else {
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([pr(369, other)]))) else {
             panic!("a PR at another head must not be claimed");
         };
         assert!(why.contains("not the commit this call pushed"), "{why}");
         // No PR on the branch at all — the ordinary shape of a branch pushed before `open_pr`.
-        let PushedPr::None(why) = pushed_pr(sha, &[]) else {
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([]))) else {
             panic!("no PR means no item");
         };
         assert!(why.contains("no open PR"), "{why}");
+        // An UNREADABLE answer is NOT "no PR": a producer told its reworked branch has no PR
+        // would open a second one. Distinct reason, distinct next move.
+        for unreadable in [None, Some(json!({"message": "Bad credentials"}))] {
+            let PushedPr::None(why) = pushed_pr(sha, unreadable.as_ref()) else {
+                panic!("an unreadable answer must claim nothing");
+            };
+            assert!(why.contains("could not be read"), "{why}");
+        }
         // Two PRs at one head is a real shape (one branch, two bases). Picking one is a guess.
-        let PushedPr::None(why) = pushed_pr(sha, &[pr(369, sha), pr(370, sha)]) else {
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([pr(369, sha), pr(370, sha)]))) else {
             panic!("an ambiguous head must not be resolved");
         };
         assert!(why.contains("2 open PRs"), "{why}");
         // A row that names no usable number is not a PR reference.
-        for malformed in [json!({"headRefOid": sha}), json!({"number": 0, "headRefOid": sha})] {
+        for malformed in [
+            json!({"headRefOid": sha}),
+            json!({"number": 0, "headRefOid": sha}),
+        ] {
             assert!(
-                matches!(pushed_pr(sha, &[malformed.clone()]), PushedPr::None(_)),
+                matches!(pushed_pr(sha, Some(&json!([malformed]))), PushedPr::None(_)),
                 "{malformed}"
             );
         }
         // Sha comparison is case-insensitive: git and the API differ on hex casing, and a case
         // mismatch would silently drop every work item.
         assert_eq!(
-            pushed_pr(&sha.to_uppercase(), &[pr(369, sha)]),
-            PushedPr::Moved {
-                pr: 369,
-                url: "https://github.com/o/r/pull/369".to_string()
-            }
+            pushed_pr(&sha.to_uppercase(), Some(&json!([pr(369, sha)]))),
+            moved
         );
     }
 
@@ -39424,14 +39468,14 @@ mod mcp_tests {
     fn push_refuses_every_argument_it_could_not_act_on() {
         let f = FakeExec::producer().with_roots(&["/work"]);
         for bad in [
-            json!({}),                                     // no clone named
-            json!({"clone": "../etc"}),                    // traversal
-            json!({"clone": "/elsewhere/repo"}),           // outside every root
-            json!({"clone": "/work"}),                     // the root itself
-            json!({"clone": "a/b"}),                       // not a direct child
-            json!({"clone": "c", "branch": "+b"}),         // the force spelling
-            json!({"clone": "c", "branch": "a:b"}),        // a refspec, not a branch
-            json!({"clone": "c", "branch": ""}),           // no branch at all
+            json!({}),                              // no clone named
+            json!({"clone": "../etc"}),             // traversal
+            json!({"clone": "/elsewhere/repo"}),    // outside every root
+            json!({"clone": "/work"}),              // the root itself
+            json!({"clone": "a/b"}),                // not a direct child
+            json!({"clone": "c", "branch": "+b"}),  // the force spelling
+            json!({"clone": "c", "branch": "a:b"}), // a refspec, not a branch
+            json!({"clone": "c", "branch": ""}),    // no branch at all
         ] {
             let resp = f.handle(&call("push", bad.clone())).unwrap();
             assert!(is_error(&resp), "{bad} must be refused");
@@ -42790,7 +42834,11 @@ mod work_tokens_tests {
             output_tokens: 160_556,
         }];
         let r = work_tokens_report(&runs, &[]);
-        assert_eq!(r["buckets"]["landed"]["items"], json!(1), "in the denominator");
+        assert_eq!(
+            r["buckets"]["landed"]["items"],
+            json!(1),
+            "in the denominator"
+        );
         assert_eq!(r["buckets"]["delivered-awaiting-human"]["items"], json!(1));
         // …and NOT in the bucket's cost: every dollar of it is the main loop's.
         assert_eq!(r["buckets"]["landed"]["usd"], json!(0.0));

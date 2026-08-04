@@ -1212,12 +1212,11 @@ are **not** in `lanes`, which groups PRs.
 
 Opening the PR — the one move that **is** a new PR's output — was a
 `gh pr create` inside Bash, which leaves a shell string in the trace and nothing
-a reader can join on. On the reference
-producer run that is **1,986 Bash calls against 35 MCP calls**, so the question
-"which dispatched task produced which PR" had no answer in the record the
-pipeline keeps. The cost side already had one (`token-report` splits a run by
-`parent_tool_use_id`); the output side did not, which made _what did it cost to
-land this_ unanswerable.
+a reader can join on. On the reference producer run that is **1,986 Bash calls
+against 35 MCP calls**, so the question "which dispatched task produced which
+PR" had no answer in the record the pipeline keeps. The cost side already had
+one (`token-report` splits a run by `parent_tool_use_id`); the output side did
+not, which made _what did it cost to land this_ unanswerable.
 
 `open_pr` is that edge as a tool:
 
@@ -1312,11 +1311,12 @@ Four properties are deliberate:
 - **The command string is not a substitute**, and that is measured rather than
   asserted. Across the seven producer traces **76** command strings contain a
   `git … push`; they are not one shape (`git -C <dir> push`,
-  `push origin <branch>`, `push -u origin <branch>`, `push origin HEAD:<branch>`,
-  `push origin <local>:<remote>`), several are chained behind `;` into unrelated
-  commands, and at least two are not pushes at all — one is a
-  `for c in "git push" …` grep list, one is a diff argument. A parser over that
-  invents work items, which is what a label regex was rejected for.
+  `push origin <branch>`, `push -u origin <branch>`,
+  `push origin HEAD:<branch>`, `push origin <local>:<remote>`), several are
+  chained behind `;` into unrelated commands, and two are not pushes at all — a
+  `for c in "git push" …` loop counting occurrences in a prompt file, and a
+  `grep -c -- "git push" <file>`. A parser over that invents work items, which
+  is what a label regex was rejected for.
 - **A push that moved nothing records nothing.** Being up to date is not this
   transition's work item, whatever the PR's head says: the head it would name
   was put there by something else, and crediting it here is how a read-only call
@@ -2046,20 +2046,19 @@ transition** recorded, and an actor with none is churn.
 `clone_create` is typed too and is deliberately **not** a source. Its `branch`
 names a CLONE, not a deliverable, and resolving it through GitHub's head index
 invents items exactly the way the regex does: on the 2026-07-29T17 run one task
-cloned `main` to read it, and
-`gh pr list -R rainlanguage/raindex --head main` answers with a real, closed PR
-that task never touched. Typed data joined on the wrong key is still a wrong
-join.
+cloned `main` to read it, and `gh pr list -R rainlanguage/raindex --head main`
+answers with a real, closed PR that task never touched. Typed data joined on the
+wrong key is still a wrong join.
 
 **Four kinds of work, and which of them are typed.** The RUN BUDGET counts "an
 issue you PR, a rework you push, a conflict you resolve, a deploy you dispatch".
 The kind comes from the TRANSITION, never from the payload:
 
-| kind of work                                | typed by                                              | item `kind` |
-| ------------------------------------------- | ----------------------------------------------------- | ----------- |
-| an issue you PR                             | [`open_pr`](#opening-a-pr-is-a-transition-open_pr)    | `opened`    |
-| a rework you push / a conflict you resolve  | [`push`](#pushing-a-rework-is-a-transition-push)      | `reworked`  |
-| a deploy you dispatch                       | **nothing** — see below                               | —           |
+| kind of work                               | typed by                                           | item `kind` |
+| ------------------------------------------ | -------------------------------------------------- | ----------- |
+| an issue you PR                            | [`open_pr`](#opening-a-pr-is-a-transition-open_pr) | `opened`    |
+| a rework you push / a conflict you resolve | [`push`](#pushing-a-rework-is-a-transition-push)   | `reworked`  |
+| a deploy you dispatch                      | **nothing** — see below                            | —           |
 
 The middle two are one row because they are one typed effect: a moved head on an
 existing PR, which the transition cannot tell a motive apart within. The deploy
