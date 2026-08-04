@@ -30123,13 +30123,29 @@ mod settings_tests {
         );
     }
 
-    /// The subagent TYPE the runner defines and the producer prompt dispatches. Read out of both
-    /// files rather than compared against a literal in two asserts: a rename that touched only one
-    /// side would leave the run dispatching a type the harness never registered, and `Agent` with
-    /// an unknown `subagent_type` is a failed dispatch, not a briefed one.
-    fn dispatched_worker_type(text: &str) -> Option<String> {
-        let at = text.find("pr-worker")?;
-        Some(text[at..at + "pr-worker".len()].to_string())
+    /// The subagent TYPE, read out of each file rather than compared against a literal on both
+    /// sides: a rename that touched only one would leave the run dispatching a type the harness
+    /// never registered, and `Agent` with an unknown `subagent_type` is a failed dispatch, not a
+    /// briefed one. Two literals asserted separately cannot see that — both would still be found.
+    fn type_between(text: &str, open: &str, close: &str) -> Option<String> {
+        let at = text.find(open)? + open.len();
+        let end = at + text[at..].find(close)?;
+        let name = &text[at..end];
+        (!name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'))
+        .then(|| name.to_string())
+    }
+
+    /// The type the RUNNER registers: the sole key of the `--agents` object it builds.
+    fn worker_type_defined(sh: &str) -> Option<String> {
+        type_between(sh, "'{\"", "\":{\"description\"")
+    }
+
+    /// The type the PRODUCER PROMPT dispatches: the value of the `Agent` call's `subagent_type`.
+    fn worker_type_dispatched(prompt: &str) -> Option<String> {
+        type_between(prompt, "subagent_type: \"", "\"")
     }
 
     /// #200: a dispatched sub-agent starts with NO prompt, so the run's standing rules reach it
@@ -30161,7 +30177,7 @@ mod settings_tests {
              thrown away, and every worker is briefed by whatever the main loop improvises"
         );
         let (Some(in_runner), Some(in_prompt)) =
-            (dispatched_worker_type(&sh), dispatched_worker_type(&prompt))
+            (worker_type_defined(&sh), worker_type_dispatched(&prompt))
         else {
             panic!(
                 "both the runner's `--agents` JSON and the producer prompt must name the worker \
