@@ -33352,7 +33352,10 @@ mod cli_tests {
         assert_eq!(d.distill(&outer), vec!["  ▸ Agent  [a1] cyclo.site batch"]);
         let inner = serde_json::json!({"type":"assistant","parent_tool_use_id":"t1","message":{"content":[
             {"type":"tool_use","name":"Agent","id":"t2","input":{"description":"screenshot 431"}}]}});
-        assert_eq!(d.distill(&inner), vec!["  [a1] ▸ Agent  [a2] screenshot 431"]);
+        assert_eq!(
+            d.distill(&inner),
+            vec!["  [a1] ▸ Agent  [a2] screenshot 431"]
+        );
         let leaf = serde_json::json!({"type":"assistant","parent_tool_use_id":"t2",
             "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"npm run build"}}]}});
         assert_eq!(d.distill(&leaf), vec!["  [a2] ▸ Bash  npm run build"]);

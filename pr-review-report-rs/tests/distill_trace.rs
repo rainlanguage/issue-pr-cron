@@ -29,7 +29,11 @@ fn distill(trace: &str) -> String {
         .write_all(trace.as_bytes())
         .expect("write trace");
     let out = child.wait_with_output().expect("wait for distill-trace");
-    assert!(out.status.success(), "distill-trace exited {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "distill-trace exited {:?}",
+        out.status
+    );
     String::from_utf8(out.stdout).expect("stdout is utf-8")
 }
 
@@ -67,8 +71,10 @@ fn one_distiller_holds_the_tags_across_the_whole_stream() {
     trace.push_str(&call(Some("toolu_2"), "git -C /w/flare push"));
     trace.push_str(&call(Some("toolu_1"), "git -C /w/cyclo push"));
     trace.push_str(&call(Some("toolu_2"), "git -C /w/flare status"));
-    trace.push_str(&line(serde_json::json!({"type":"result","subtype":"success",
-        "origin":{"kind":"task-notification"},"result":"rain.flare 186 reworked"})));
+    trace.push_str(&line(
+        serde_json::json!({"type":"result","subtype":"success",
+        "origin":{"kind":"task-notification"},"result":"rain.flare 186 reworked"}),
+    ));
     trace.push_str(&line(
         serde_json::json!({"type":"result","subtype":"success","result":"3 items"}),
     ));
@@ -84,7 +90,8 @@ fn one_distiller_holds_the_tags_across_the_whole_stream() {
     assert_eq!(lines[52], "  [a2] ▸ Bash  git -C /w/flare push");
     assert_eq!(lines[53], "  [a1] ▸ Bash  git -C /w/cyclo push");
     assert_eq!(lines[54], "  [a2] ▸ Bash  git -C /w/flare status");
-    assert_eq!(lines[55 - 1 + 1], "  [task] ⟹ SUCCESS: rain.flare 186 reworked");
+    assert_eq!(lines[55], "  [task] ⟹ SUCCESS: rain.flare 186 reworked");
+    assert_eq!(lines[56], "  ⟹ SUCCESS: 3 items");
 }
 
 /// The run's OWN result is the line a human reads, so it stays distinguishable from the task
@@ -120,8 +127,10 @@ fn a_run_that_dispatches_nothing_renders_untagged_throughout() {
         + &line(serde_json::json!({"type":"tool_progress","parent_tool_use_id":"toolu_bg"}))
         + "\n"
         + &line(serde_json::json!({"type":"user","parent_tool_use_id":"toolu_bg"}))
-        + &line(serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_bg",
-            "message":{"content":[{"type":"thinking","thinking":"hidden"}]}}))
+        + &line(
+            serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_bg",
+            "message":{"content":[{"type":"thinking","thinking":"hidden"}]}}),
+        )
         + &line(serde_json::json!({"type":"result","subtype":"success","result":"3 items"}))
         + "{\"type\":\"assis";
 
