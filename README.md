@@ -1606,6 +1606,89 @@ Bash rules (a denial reads "Permission to use Bash with command …"), so a deni
 makes `until <check>; do sleep …; done` the sanctioned wait even though the
 identical loop is refused as a Bash call.
 
+#### "The following parts require approval" is not an allow-list failure
+
+The refusal that reads as one:
+
+```
+This Bash command contains multiple operations. The following parts require approval:
+  pr-review-report worklist --json, head -5 /tmp/claude-1000/wl.err
+```
+
+Both named commands are allow-listed, nothing in the call is denied, and nothing
+is unlisted — which is how
+[#180](https://github.com/rainlanguage/issue-pr-cron/issues/180) came to be
+filed as a permission bug. It is not one. **Compounding is not refused**, and no
+part that should match its allow rule fails to: across the 21 producer traces
+4,232 accepted Bash calls include 2,460 carrying a pipe, 1,825 a `;`, 626 an
+`&&` and 481 a redirection. A chain is refused when ONE PART is refused — and
+the message prints that part **with its redirection stripped**, so the byte that
+actually disqualified it (`2>/tmp/claude-1000/wl.err`, hanging off the first
+command) is the one thing the reader never sees.
+
+Probed against the live harness — claude 2.1.221, `campaign-settings.json`,
+`--permission-mode default`, both `--add-dir` roots and the `Edit(//…/**)`
+rules, i.e. `campaign-run.sh`'s own invocation — over 91 Bash calls in 14
+sessions. `<in>` is a path under `WORK_DIR`, `<out>` is `/tmp/…` or
+`/nix/store/…`:
+
+| Command                                                          | Result                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `echo a; echo b` / `echo a && echo b` / `echo a \| wc -c`        | allowed — chaining is not the trigger                                           |
+| `cmd > <in> 2> <in>; echo "exit=$?"; wc -c <in>; head -5 <in>`   | **allowed** — the reported command, with `/tmp` swapped for the scratch dir     |
+| `cmd > <in> 2> <out>; echo "exit=$?"; wc -c <in>; head -5 <out>` | refused: "parts require approval: `cmd`, `head -5 <out>`" — the `2> <out>` gone |
+| `cmd 2> <out>` alone                                             | refused, and here the message DOES name it: "Output redirection to … blocked"   |
+| `head -2 <out>` alone, and `head -2 <out>; echo b`               | refused, message names the path and the allowed root                            |
+| `head -2 <out> \| wc -l`, `ls -d <out> \| head -2`               | refused as "multiple operations" — a pipe re-reports the same path block        |
+| Read **tool** on `/tmp/claude-1000/…`                            | **allowed** — the tool is not path-scoped the way Bash's readers are            |
+| `cd <dir> && cmd >> <in>` (and `&& echo b`)                      | allowed                                                                         |
+| `cd <dir> && cmd >> <in> 2>&1`                                   | refused — a second redirection                                                  |
+| `cd <dir> && cmd > <in>; echo b`                                 | refused — a `;`                                                                 |
+| `echo a >> <in>; cd <dir> && echo b`                             | refused — the `cd` may sit anywhere                                             |
+| `cd <dir> && ls \| head -2; echo b`                              | allowed — a `cd` with no redirection anywhere is fine                           |
+| `mkdir -p <in> <in> && FOO=bar echo x`                           | refused: the bare assignment prefix (#174's rule, message accurate)             |
+| `pkill -f x 2>/dev/null; sleep 1; echo x`                        | refused: `pkill` is off-list (message accurate)                                 |
+
+So the rule, in the order it is worth knowing:
+
+1. A part is refused for its own disqualifier; the rest of the chain is
+   irrelevant. **Reissuing the offending command bare — what the producer does
+   today — fixes nothing that swapping the path would not have fixed, and costs
+   the round trip twice.**
+2. `/tmp/…` is outside both `--add-dir` roots, so a redirect into it is a
+   refused WRITE and a `head`/`cat`/`tail`/`ls` of it is a refused READ. The
+   `…/tasks/<id>.output` file the harness names when it backgrounds a command is
+   in exactly that position: readable with the **Read tool**, refused to `head`.
+3. A `cd` anywhere in a command that also REDIRECTS is refused on the `cd`
+   ("cannot automatically determine the final working directory"), whatever the
+   paths — absolute targets included. The tolerated form is narrow (an `&&`-only
+   chain with a single redirection), which is why the prompt says keep `cd` out
+   of every call that writes rather than teaching the boundary.
+4. The same disqualifier surfaces under three different messages depending on
+   the shape it sits in, and only the least useful one — the "multiple
+   operations" summary — is the one a compound normally gets.
+
+**Measured population: 15 occurrences in 4 of 21 runs** — not the 12 #180
+reports, and the shortfall is the message again: the refusal is worded "The
+following **part requires** approval" for one offending part and "The following
+**parts require** approval" for several, so a scan for the singular misses
+three, two of them in the run #180 leads with and one of them its own headline
+example. Eleven of the fifteen predate #174 and are its classes, correctly named
+by their own messages: 4 `bash`/`sh` scripts, 3 `python3` heredocs or `-c`, 2
+`pkill` (off-list), 1 bare `FONTCONFIG_FILE=` prefix, 1 `for` loop. The four in
+`20260804T114433Z`, the only run whose prompt carried #174's rules, are this
+class: an out-of-scope `2>/tmp` plus its `head` (the run's opening state load),
+two `cd <clone> && … >> <log>` provisioning calls, and an
+`ls /nix/store/*dejavu*` inside a pipeline.
+
+[#182](https://github.com/rainlanguage/issue-pr-cron/issues/182) removes the
+first one's OCCASION and not its cause: the opening state load is now one typed
+`state-load` result with no redirect at all, so the run no longer opens with
+that command — but `worklist --json > {{SCRATCH_DIR}}/worklist.json` survives as
+the documented fallback, and what was refused was the
+`2>/tmp/claude-1000/wl.err` the model added of its own accord, which nothing in
+#182 touches. Three of the four remain reachable as written.
+
 ### The retrofit: `repair-qa-block`
 
 The QA gate is on **open**, so it stopped the population of block-less PRs
@@ -2271,6 +2354,55 @@ reliable: four runs spent 2–4 `jq` calls each fighting `uncovered-issues`'s
 label shape (`startswith() requires string inputs`), and one of them accepted
 `audit-backlog total: 0` for a backlog that actually held 46 issues. A grouping
 computed in the tool is a grouping that cannot be silently wrong.
+
+### Covered is not fixed — `already-fixed`
+
+`uncovered-issues` splits covered from uncovered using **open** PRs' closing
+references. That is the right denominator for "is anyone already working on
+this" and the wrong one for "is this still broken": an issue whose fix has
+landed on `main` with no open PR pointing at it is `uncovered` by that
+definition, so it enters the candidate set and gets worked.
+`rainlanguage/rain.dia#60` is the shape — a producer PR opened 2026-07-18
+re-implementing an arity guard merged PR `#33` had landed on 2026-07-17, 25
+hours earlier.
+
+`pr-review-report already-fixed <owner/repo#n>...` is the missing question, and
+it is deliberately **not** part of `uncovered-issues`. It answers, per subject:
+has a MERGED PR referencing this issue landed since the issue was filed? Exit 4
+= yes, 1 = it could not tell, 0 = clear. Exit 4 is a reason to **read** that
+merged PR, never a finding that the issue is fixed — establishing that is
+`flag-close-candidate`'s job, and the recency rule both ends apply is the same
+`landed_after_filed`, so a run cannot disagree with itself about what
+"post-dates" means.
+
+Per-subject is a **cost** decision, measured: the uncovered set is 617 issues
+and the read is one GraphQL round trip each (~0.65 s over a 40-issue sample, so
+~6.7 minutes of network per run), against a producer budget of 3 work items.
+Folding it into the backlog buys ~614 answers per run that nothing reads.
+
+It reads `timelineItems(CROSS_REFERENCED_EVENT)` and **not**
+`closedByPullRequestsReferences(includeClosedPrs: true)`, which is the field
+that looks like the answer. Measured against the three cases it exists for, that
+field returns only the producer's own open PR for all three and none of the
+merged fixes — a PR appears there only when it declared a closing keyword, and
+`rain.dia#33`, `rain.dia#48` and `st0x.deploy#252` each declared none for the
+issue they fixed. A merged fix that never wrote `Closes` is exactly the fix
+`uncovered-issues` is blind to, so reading a field that requires one reproduces
+the blind spot. In a 40-issue sample of the live uncovered set, 5 issues (12.5%)
+carry such a merged reference — a look-first rate, not a skip rate, which is why
+the tool reports evidence rather than a verdict.
+
+A **PR** reference is resolved to the issues it closes and each is checked, so
+the same predicate detects the superseded-PR condition step 3 already has a
+route for ("log the narrower one as a PR close-candidate noting which PR
+supersedes it") and nothing detected. The PR being checked is excluded from its
+own result.
+
+Every uncertainty reports `unreadable` rather than a shorter list — a failed
+query, a missing filing date, a truncated timeline page, a malformed node, or a
+merge date that cannot be ordered against the filing. A shorter list is
+indistinguishable from a complete one once it is just an array, and the
+direction that matters is the one that opens a duplicate PR.
 
 ## What a run does
 

@@ -22866,6 +22866,18 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Has a MERGED PR referencing this issue landed SINCE it was filed? The candidate-selection
+    /// question `uncovered-issues` cannot answer, since that split is computed from OPEN PRs only.
+    /// Takes ISSUE refs (should this be worked at all) and PR refs (is this open PR superseded —
+    /// each of the issues it closes is checked). Exit 4 = something is merged-since, 1 = something
+    /// could not be read, 0 = every subject clear.
+    AlreadyFixed {
+        /// `owner/repo#n`, repeatable — a run checks the candidates it actually took.
+        #[arg(required = true, num_args = 1..)]
+        refs: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// The PRODUCER's state-load in ONE result: the fleet's `nextAction` histogram, the rows that
     /// name work, the approved set, and the audit backlog by severity — pre-grouped, so a run opens
     /// on a typed answer rather than on a blob it re-slices with `jq`.
@@ -24822,6 +24834,410 @@ fn migrate_reject_mode(apply: bool) -> i32 {
     0
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// already-fixed — the MERGED-side read the candidate set does not have.
+//
+// `uncovered-issues` splits covered from uncovered using OPEN PRs' closing references. That is the
+// right denominator for "is anyone already working on this" and the wrong one for "is this still
+// broken": an issue whose fix has landed on main with no open PR pointing at it is UNCOVERED by
+// that definition, so it enters the candidate set and gets worked. `rainlanguage/rain.dia#60` is
+// the shape — a producer PR opened 2026-07-18 re-implementing a guard merged PR #33 had landed on
+// 2026-07-17.
+//
+// This is the CHEAP precursor to that judgement, not the judgement: it answers "does a MERGED PR
+// reference this issue and land AFTER it was filed", which is a reason to LOOK before working an
+// issue, never a finding that it is fixed. Establishing the fix is `flag-close-candidate`'s job and
+// it re-checks the recency of whatever is finally cited.
+//
+// PER-SUBJECT AND NOT FOLDED INTO `uncovered-issues`, which is a cost decision, measured: the
+// uncovered set is 617 issues and the read is one GraphQL round trip each (~0.65s measured over a
+// 40-issue sample), while the producer's run budget is 3 work items. Running it over the backlog
+// buys ~614 answers per run that nothing reads. Running it over the candidates costs three calls.
+//
+// The recency rule is [`landed_after_filed`] — the SAME function `already_fixed_recency_gate`
+// enforces at flag time, so the two ends of a run cannot disagree about what "post-dates" means.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The MERGED-side twin of [`COVERING_PRS_QUERY`]: every PR that has REFERENCED this issue, with
+/// the date it merged, plus the issue's own filing date to compare against.
+///
+/// `timelineItems(CROSS_REFERENCED_EVENT)` and NOT `closedByPullRequestsReferences(
+/// includeClosedPrs:true)`, which is the field that looks like the answer. Measured against the
+/// three cases this exists for: that field returns only the producer's OWN open PR for all three
+/// and NONE of the merged fixes, because a PR appears there only when it declared a closing
+/// KEYWORD — and `rain.dia#33`, `rain.dia#48` and `st0x.deploy#252` each declared none for the
+/// issue they fixed. A merged fix that never wrote `Closes` is exactly the fix `uncovered-issues`
+/// is blind to, so reading a field that requires one reproduces the blind spot.
+///
+/// `mergedAt` is both filters in one field: null means never landed, and the value is the date the
+/// recency rule compares. `state` is not asked for, because a PR carrying a `mergedAt` is merged.
+///
+/// `pageInfo` is asked for because a truncated page reads as "nothing merged references this",
+/// which is the direction that opens a duplicate PR — see [`merged_fixes_since_filing`].
+const MERGED_REFS_QUERY: &str = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){createdAt timelineItems(first:100,itemTypes:[CROSS_REFERENCED_EVENT]){pageInfo{hasNextPage}nodes{... on CrossReferencedEvent{source{... on PullRequest{number title url mergedAt repository{nameWithOwner}}}}}}}}}";
+
+/// Resolve `owner/repo#n` to WHICH population it is in, and — for a PR — the issues it claims to
+/// close. `issueOrPullRequest` is one lookup for both, so a reference can never be checked against
+/// the wrong population (the rule [`HumanClose`](Cmd::HumanClose) already holds for rulings).
+const SUBJECT_KIND_QUERY: &str = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issueOrPullRequest(number:$n){__typename ... on PullRequest{closingIssuesReferences(first:50){nodes{number repository{nameWithOwner}}}}}}}";
+
+/// A merged PR referencing an issue that landed AFTER the issue was filed.
+#[derive(Debug, PartialEq, Clone)]
+struct MergedFix {
+    /// `owner/repo#n` — the addressing string every other tool takes, so a caller can hand one
+    /// straight on without reassembling a ref (#132).
+    pr: String,
+    merged_at: String,
+    title: String,
+    url: String,
+}
+
+/// What the merged-side read says about one issue.
+#[derive(Debug, PartialEq)]
+enum AlreadyFixed {
+    /// The read could not be answered. NEVER an empty answer: an unseen merged fix is what makes
+    /// the producer duplicate landed work, so an unknown reads as "go and look".
+    Unreadable,
+    /// Nothing merged since the issue was filed references it — no reason here not to work it.
+    Clear,
+    /// Merged PRs referencing the issue that post-date it, newest merge first.
+    MergedSince(Vec<MergedFix>),
+}
+
+impl AlreadyFixed {
+    /// Does this answer stop the producer from opening a PR on the issue without looking first?
+    /// `Unreadable` does, for the same reason [`PrCoverage::Unreadable`] blocks a close: the two
+    /// failure directions are not symmetric, and only one of them writes a duplicate PR.
+    fn needs_a_look(&self) -> bool {
+        !matches!(self, AlreadyFixed::Clear)
+    }
+
+    /// The one-word status a report row carries.
+    fn status(&self) -> &'static str {
+        match self {
+            AlreadyFixed::Unreadable => "unreadable",
+            AlreadyFixed::Clear => "clear",
+            AlreadyFixed::MergedSince(_) => "merged-since-filing",
+        }
+    }
+}
+
+/// PURE: the merged PRs referencing an issue that landed after it was filed, out of a
+/// [`MERGED_REFS_QUERY`] response.
+///
+/// Every uncertainty resolves to [`AlreadyFixed::Unreadable`] rather than to a shorter list,
+/// because a shorter list is indistinguishable from a complete one once it is just a `Vec` and the
+/// caller acts on the difference. That covers a failed query, a missing filing date, a TRUNCATED
+/// timeline page, a malformed node, and a merged date that cannot be ordered against the filing —
+/// the last because concluding `Clear` from a pair nothing can compare is the fail-OPEN direction.
+fn merged_fixes_since_filing(resp: Option<&Value>) -> AlreadyFixed {
+    let Some(issue) = resp.and_then(|v| v.pointer("/data/repository/issue")) else {
+        return AlreadyFixed::Unreadable;
+    };
+    let Some(filed) = issue.get("createdAt").and_then(|s| s.as_str()) else {
+        return AlreadyFixed::Unreadable;
+    };
+    let Some(items) = issue.get("timelineItems") else {
+        return AlreadyFixed::Unreadable;
+    };
+    // Only an explicit "there is no next page" is an answer. A `true` means references this never
+    // saw, and an absent/non-bool `pageInfo` means the same thing without saying so.
+    if items
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        return AlreadyFixed::Unreadable;
+    }
+    let Some(nodes) = items.get("nodes").and_then(|n| n.as_array()) else {
+        return AlreadyFixed::Unreadable;
+    };
+    let mut fixes: Vec<MergedFix> = Vec::new();
+    for n in nodes {
+        // A cross-reference whose source is an ISSUE matches no inline fragment here, so it
+        // arrives with no `mergedAt` at all. That is "not a merged PR", not a malformed node.
+        let Some(src) = n.get("source") else {
+            continue;
+        };
+        let Some(merged_at) = src.get("mergedAt").and_then(|s| s.as_str()) else {
+            continue;
+        };
+        match landed_after_filed(merged_at, filed) {
+            Some(true) => {}
+            Some(false) => continue,
+            None => return AlreadyFixed::Unreadable,
+        }
+        let (Some(slug), Some(num)) = (
+            src.pointer("/repository/nameWithOwner")
+                .and_then(|s| s.as_str()),
+            src.get("number").and_then(Value::as_u64),
+        ) else {
+            return AlreadyFixed::Unreadable;
+        };
+        fixes.push(MergedFix {
+            pr: format!("{slug}#{num}"),
+            merged_at: merged_at.to_string(),
+            title: src
+                .get("title")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            url: src
+                .get("url")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+        });
+    }
+    if fixes.is_empty() {
+        return AlreadyFixed::Clear;
+    }
+    // Newest merge first: the most recent landing is the one most likely to be the fix, and it is
+    // the one a reader should open.
+    fixes.sort_by(|a, b| b.merged_at.cmp(&a.merged_at));
+    AlreadyFixed::MergedSince(fixes)
+}
+
+/// Which population a checked reference is in.
+#[derive(Debug, PartialEq)]
+enum Subject {
+    Unreadable,
+    Issue,
+    /// A PR, and the `(owner/repo, number)` issues it claims to close — the SAME closing references
+    /// `uncovered-issues` computes coverage from, so a PR is checked against exactly the issues its
+    /// merge would close.
+    Pr(Vec<(String, u64)>),
+}
+
+/// PURE: the subject of a [`SUBJECT_KIND_QUERY`] response.
+fn subject_kind(resp: Option<&Value>) -> Subject {
+    let Some(s) = resp.and_then(|v| v.pointer("/data/repository/issueOrPullRequest")) else {
+        return Subject::Unreadable;
+    };
+    match s.get("__typename").and_then(|t| t.as_str()) {
+        Some("Issue") => Subject::Issue,
+        Some("PullRequest") => {
+            let Some(nodes) = s
+                .pointer("/closingIssuesReferences/nodes")
+                .and_then(|n| n.as_array())
+            else {
+                return Subject::Unreadable;
+            };
+            let mut closes = Vec::new();
+            for r in nodes {
+                let (Some(slug), Some(num)) = (
+                    r.pointer("/repository/nameWithOwner")
+                        .and_then(|s| s.as_str()),
+                    r.get("number").and_then(Value::as_u64),
+                ) else {
+                    return Subject::Unreadable;
+                };
+                closes.push((slug.to_string(), num));
+            }
+            Subject::Pr(closes)
+        }
+        _ => Subject::Unreadable,
+    }
+}
+
+/// PURE: `owner/repo#n` split into its three parts. The one accepted spelling, because it is the
+/// one every other typed reference in this tool uses (`--blocked-by`, the refs `covering_open_prs`
+/// emits, the `pr_context` argument).
+fn parse_subject_ref(r: &str) -> Option<(String, String, u64)> {
+    let (slug, num) = r.rsplit_once('#')?;
+    let (owner, repo) = slug.split_once('/')?;
+    if owner.is_empty() || repo.is_empty() || repo.contains('/') {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string(), num.parse().ok()?))
+}
+
+/// PURE: the argv of a per-subject GraphQL read, one flag per variable.
+///
+/// The flag is decided by the variable's DECLARED TYPE, exactly as in [`covering_prs_args`]:
+/// `gh api graphql` retypes a `-F` value that parses as an integer, so `-F o=<owner>` on an
+/// all-numeric owner or repo name sends an `Int` at a `String!` and GitHub refuses the whole query
+/// — which arrives here as `Unreadable`, a read failure on a repository that reads perfectly well.
+fn subject_query_args(query: &str, owner: &str, repo: &str, num: u64) -> Vec<String> {
+    vec![
+        "api".into(),
+        "graphql".into(),
+        "-f".into(),
+        format!("query={query}"),
+        "-f".into(),
+        format!("o={owner}"),
+        "-f".into(),
+        format!("r={repo}"),
+        "-F".into(),
+        format!("n={num}"),
+    ]
+}
+
+/// Live merged-side read for one issue.
+fn merged_fixes_fetch(owner: &str, repo: &str, num: u64) -> AlreadyFixed {
+    let args = subject_query_args(MERGED_REFS_QUERY, owner, repo, num);
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    merged_fixes_since_filing(gh_json(&argref).as_ref())
+}
+
+/// Live subject resolution for one reference.
+fn subject_kind_fetch(owner: &str, repo: &str, num: u64) -> Subject {
+    let args = subject_query_args(SUBJECT_KIND_QUERY, owner, repo, num);
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    subject_kind(gh_json(&argref).as_ref())
+}
+
+/// PURE: one report row, given a subject reference, the issue it is about and that issue's answer.
+///
+/// `supersededBy` is the SAME list under a name that says what it means for a PR: a merged PR that
+/// post-dates the issue an OPEN PR claims to close is a PR doing landed work again. The producer's
+/// step-3 route for that is a PR close-candidate naming which PR supersedes it, and this row names
+/// it — `S01-Issuer/st0x.deploy#250`, `rainlanguage/rain.dia#60` and `rainlanguage/rain.dia#63` are
+/// each in that state.
+fn already_fixed_row(subject: &str, kind: &str, issue: &str, answer: &AlreadyFixed) -> Value {
+    let fixes = match answer {
+        AlreadyFixed::MergedSince(f) => f.as_slice(),
+        _ => &[],
+    };
+    let key = if kind == "pr" {
+        "supersededBy"
+    } else {
+        "mergedSince"
+    };
+    serde_json::json!({
+        "subject": subject,
+        "kind": kind,
+        "issue": issue,
+        "status": answer.status(),
+        // The consumer's actual question is binary, and it is stated rather than left to be
+        // re-derived: a caller matching on `status` has to re-encode that `unreadable` counts, and
+        // the one that forgets fails in the direction that opens a duplicate PR.
+        "needsALook": answer.needs_a_look(),
+        key: fixes.iter().map(|f| serde_json::json!({
+            "pr": f.pr,
+            "mergedAt": f.merged_at,
+            "title": f.title,
+            "url": f.url,
+        })).collect::<Vec<Value>>(),
+    })
+}
+
+/// PURE: the exit code for a whole run of rows.
+///
+/// 4 when anything is `merged-since-filing`, 1 when nothing is but something could not be read, 0
+/// only when every subject is clear. A FINDING outranks a GAP because 4 names something a caller
+/// can act on and 1 names something it cannot; both are non-zero, so nothing reads either as clear.
+fn already_fixed_exit_code(rows: &[Value]) -> i32 {
+    let status = |s: &str| {
+        rows.iter()
+            .any(|r| r.get("status").and_then(|v| v.as_str()) == Some(s))
+    };
+    if status("merged-since-filing") {
+        4
+    } else if status("unreadable") {
+        1
+    } else {
+        0
+    }
+}
+
+/// `already-fixed <owner/repo#n>...`: for each reference, has a MERGED PR referencing the issue
+/// landed since the issue was filed?
+///
+/// An ISSUE reference is checked directly — the producer's candidate-selection question, asked of
+/// the handful of candidates a run actually takes rather than of the whole backlog. A PR reference
+/// is resolved to the issues it CLOSES and each of those is checked, which is the same question
+/// asked of work already in flight: a merged PR post-dating the issue an open PR closes is the
+/// SUPERSEDED-PR condition.
+fn already_fixed_mode(refs: &[String], json_out: bool) -> i32 {
+    let mut rows: Vec<Value> = Vec::new();
+    for r in refs {
+        let Some((owner, repo, num)) = parse_subject_ref(r) else {
+            eprintln!("error: {r:?} is not a reference — the form is `owner/repo#n`");
+            return 2;
+        };
+        match subject_kind_fetch(&owner, &repo, num) {
+            Subject::Unreadable => {
+                rows.push(already_fixed_row(
+                    r,
+                    "unknown",
+                    "",
+                    &AlreadyFixed::Unreadable,
+                ));
+            }
+            Subject::Issue => {
+                let answer = merged_fixes_fetch(&owner, &repo, num);
+                rows.push(already_fixed_row(r, "issue", r, &answer));
+            }
+            Subject::Pr(closes) if closes.is_empty() => {
+                // A PR closing nothing cannot be superseded on an issue it does not claim. That is
+                // an ANSWER, not a gap — a `Refs`-only PR is a deliberate, valid linkage.
+                rows.push(already_fixed_row(r, "pr", "", &AlreadyFixed::Clear));
+            }
+            Subject::Pr(closes) => {
+                for (slug, inum) in closes {
+                    let Some((io, ir)) = slug.split_once('/') else {
+                        rows.push(already_fixed_row(r, "pr", &slug, &AlreadyFixed::Unreadable));
+                        continue;
+                    };
+                    let answer = match merged_fixes_fetch(io, ir, inum) {
+                        // The PR being checked cannot supersede itself, and a merged one would
+                        // otherwise report that it had.
+                        AlreadyFixed::MergedSince(f) => {
+                            let kept: Vec<MergedFix> =
+                                f.into_iter().filter(|x| &x.pr != r).collect();
+                            if kept.is_empty() {
+                                AlreadyFixed::Clear
+                            } else {
+                                AlreadyFixed::MergedSince(kept)
+                            }
+                        }
+                        other => other,
+                    };
+                    rows.push(already_fixed_row(
+                        r,
+                        "pr",
+                        &format!("{slug}#{inum}"),
+                        &answer,
+                    ));
+                }
+            }
+        }
+    }
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_else(|_| "[]".into())
+        );
+        return already_fixed_exit_code(&rows);
+    }
+    for row in &rows {
+        let subject = row.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+        let issue = row.get("issue").and_then(|v| v.as_str()).unwrap_or("");
+        let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let about = if issue.is_empty() || issue == subject {
+            String::new()
+        } else {
+            format!(" (closes {issue})")
+        };
+        println!("{subject}{about}: {status}");
+        for f in row
+            .get("supersededBy")
+            .or_else(|| row.get("mergedSince"))
+            .and_then(|v| v.as_array())
+            .unwrap_or(&Vec::new())
+        {
+            println!(
+                "  {} merged {} — {}",
+                f.get("pr").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("mergedAt").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    already_fixed_exit_code(&rows)
+}
+
 fn main() {
     let code = match Cli::parse().command {
         Cmd::Queue { n } => {
@@ -24952,6 +25368,7 @@ fn main() {
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::AlreadyFixed { refs, json } => already_fixed_mode(&refs, json),
         Cmd::StateLoad { json, no_cache } => state_load_mode(json, !no_cache),
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
         Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
@@ -25065,6 +25482,454 @@ fn main() {
         },
     };
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod already_fixed_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A [`MERGED_REFS_QUERY`] response: the issue's filing date and its cross-reference nodes.
+    fn refs_response(filed: &str, has_next: Value, nodes: Value) -> Value {
+        json!({"data": {"repository": {"issue": {
+            "createdAt": filed,
+            "timelineItems": {"pageInfo": {"hasNextPage": has_next}, "nodes": nodes},
+        }}}})
+    }
+
+    fn merged_node(slug: &str, num: u64, merged_at: &str, title: &str) -> Value {
+        json!({"source": {
+            "number": num,
+            "title": title,
+            "url": format!("https://github.com/{slug}/pull/{num}"),
+            "mergedAt": merged_at,
+            "repository": {"nameWithOwner": slug},
+        }})
+    }
+
+    // The live case this exists for, as data. `rainlanguage/rain.dia#6` was filed 2026-07-15;
+    // PR #33 merged 2026-07-17; the producer opened rain.dia#60 re-implementing the same guard on
+    // 2026-07-18. The read has to say "look at #33" for that issue on 2026-07-18.
+    #[test]
+    fn a_merged_pr_that_post_dates_the_filing_is_reported_as_a_reason_to_look() {
+        let resp = refs_response(
+            "2026-07-15T15:07:10Z",
+            json!(false),
+            json!([merged_node(
+                "rainlanguage/rain.dia",
+                33,
+                "2026-07-17T09:00:51Z",
+                "Harden DIA price validation"
+            )]),
+        );
+        let answer = merged_fixes_since_filing(Some(&resp));
+        assert_eq!(
+            answer,
+            AlreadyFixed::MergedSince(vec![MergedFix {
+                pr: "rainlanguage/rain.dia#33".into(),
+                merged_at: "2026-07-17T09:00:51Z".into(),
+                title: "Harden DIA price validation".into(),
+                url: "https://github.com/rainlanguage/rain.dia/pull/33".into(),
+            }])
+        );
+        assert!(answer.needs_a_look());
+        assert_eq!(answer.status(), "merged-since-filing");
+    }
+
+    // The recency rule is the whole discriminator, and it is `landed_after_filed` — the SAME
+    // function `already_fixed_recency_gate` runs at flag time. A PR merged BEFORE the issue was
+    // filed cannot be its fix (that is how live issues got wrongly flagged), and one merged at the
+    // exact filing instant is not strictly after it either.
+    #[test]
+    fn a_merge_that_predates_or_equals_the_filing_is_not_a_fix() {
+        let filed = "2026-07-15T15:07:10Z";
+        for (merged, want_clear) in [
+            ("2026-07-14T00:00:00Z", true),
+            (filed, true),
+            ("2026-07-15T15:07:11Z", false),
+        ] {
+            let resp = refs_response(
+                filed,
+                json!(false),
+                json!([merged_node("o/r", 1, merged, "t")]),
+            );
+            let answer = merged_fixes_since_filing(Some(&resp));
+            assert_eq!(
+                answer == AlreadyFixed::Clear,
+                want_clear,
+                "merged {merged} vs filed {filed}"
+            );
+            assert_eq!(answer.needs_a_look(), !want_clear);
+        }
+    }
+
+    // An unmerged reference is not a landing. The producer's OWN open PR cross-references the issue
+    // it is about, so if an open PR counted here every worked issue would report itself.
+    #[test]
+    fn an_unmerged_or_non_pr_reference_is_not_a_landing() {
+        let resp = refs_response(
+            "2026-07-15T15:07:10Z",
+            json!(false),
+            json!([
+                // the producer's own open PR
+                {"source": {"number": 60, "title": "t", "url": "u", "mergedAt": null,
+                            "repository": {"nameWithOwner": "rainlanguage/rain.dia"}}},
+                // a cross-reference from an ISSUE matches no PullRequest fragment at all
+                {"source": {}},
+                // ...and an event with no source at all
+                {},
+            ]),
+        );
+        assert_eq!(merged_fixes_since_filing(Some(&resp)), AlreadyFixed::Clear);
+    }
+
+    // Newest merge first: the row a reader opens should be the most recent landing.
+    #[test]
+    fn merged_fixes_are_reported_newest_merge_first() {
+        let resp = refs_response(
+            "2026-05-20T06:49:48Z",
+            json!(false),
+            json!([
+                merged_node("o/r", 1, "2026-05-21T15:47:55Z", "older"),
+                merged_node("o/other", 2, "2026-06-09T15:11:55Z", "newest"),
+                merged_node("o/r", 3, "2026-05-29T20:53:02Z", "middle"),
+            ]),
+        );
+        let AlreadyFixed::MergedSince(fixes) = merged_fixes_since_filing(Some(&resp)) else {
+            panic!("three merges post-date the filing");
+        };
+        assert_eq!(
+            fixes.iter().map(|f| f.pr.as_str()).collect::<Vec<_>>(),
+            ["o/other#2", "o/r#3", "o/r#1"]
+        );
+        // A cross-repo merged PR keeps its OWN slug, so the ref addresses the right repository.
+        assert_eq!(fixes[0].pr, "o/other#2");
+    }
+
+    // Every uncertainty is `Unreadable`, never a shorter list: an unseen merged fix is what makes
+    // the producer duplicate landed work, so the unknown has to fail the way that costs a look.
+    #[test]
+    fn every_unreadable_shape_fails_toward_looking_not_toward_clear() {
+        let bad = [
+            None,
+            Some(json!({})),
+            Some(json!({"data": {"repository": null}})),
+            Some(json!({"errors": [{"message": "Something went wrong"}]})),
+            // no filing date to compare against
+            Some(json!({"data": {"repository": {"issue": {
+                "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []}}}}})),
+            // no timeline at all
+            Some(json!({"data": {"repository": {"issue": {"createdAt": "2026-07-15T15:07:10Z"}}}})),
+            // TRUNCATED: references this read never saw would read as "nothing merged".
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(true),
+                json!([]),
+            )),
+            // ...and pageInfo that does not answer at all is the same hazard unstated.
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(null),
+                json!([]),
+            )),
+            // nodes missing
+            Some(json!({"data": {"repository": {"issue": {
+                "createdAt": "2026-07-15T15:07:10Z",
+                "timelineItems": {"pageInfo": {"hasNextPage": false}}}}}})),
+            // a merged date nothing can order against the filing — `Clear` here is fail-OPEN
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(false),
+                json!([merged_node("o/r", 1, "yesterday", "t")]),
+            )),
+            // a merged node with no repository to address it by
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(false),
+                json!([{"source": {"number": 1, "mergedAt": "2026-07-17T09:00:51Z"}}]),
+            )),
+            // ...and one with no number
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(false),
+                json!([{"source": {"mergedAt": "2026-07-17T09:00:51Z",
+                                   "repository": {"nameWithOwner": "o/r"}}}]),
+            )),
+        ];
+        for b in bad {
+            let answer = merged_fixes_since_filing(b.as_ref());
+            assert_eq!(answer, AlreadyFixed::Unreadable, "{b:?}");
+            assert!(answer.needs_a_look(), "an unknown must fail toward looking");
+            assert_eq!(answer.status(), "unreadable");
+        }
+        // ...and the one shape that IS an answer.
+        let clear = refs_response("2026-07-15T15:07:10Z", json!(false), json!([]));
+        assert_eq!(merged_fixes_since_filing(Some(&clear)), AlreadyFixed::Clear);
+        assert!(!AlreadyFixed::Clear.needs_a_look());
+        assert_eq!(AlreadyFixed::Clear.status(), "clear");
+    }
+
+    // The query has to ask GitHub for the things the parse reads, or the parse above is exercised
+    // on a shape the live call never produces.
+    #[test]
+    fn the_merged_query_asks_for_the_fields_the_parse_reads() {
+        for needed in [
+            "CROSS_REFERENCED_EVENT",
+            "mergedAt",
+            "createdAt",
+            "hasNextPage",
+            "nameWithOwner",
+            "url",
+            "title",
+        ] {
+            assert!(MERGED_REFS_QUERY.contains(needed), "{needed}");
+        }
+        // NOT the field that looks like the answer: `closedByPullRequestsReferences` lists only PRs
+        // that declared a closing keyword, and the merged fixes for rain.dia#6, rain.dia#22 and
+        // st0x.deploy#248 declared none — reading it would reproduce the blind spot this closes.
+        assert!(!MERGED_REFS_QUERY.contains("closedByPullRequestsReferences"));
+        // The subject read resolves BOTH populations in one lookup, and asks a PR what it closes.
+        for needed in [
+            "issueOrPullRequest",
+            "__typename",
+            "closingIssuesReferences",
+        ] {
+            assert!(SUBJECT_KIND_QUERY.contains(needed), "{needed}");
+        }
+    }
+
+    // `gh api graphql` retypes a `-F` value that parses as a number, so an all-numeric owner or
+    // repo name sent with `-F` reaches a `String!` as an `Int` and GitHub refuses the whole query —
+    // arriving here as `Unreadable` on a repository that reads fine. The expectation is DERIVED
+    // from each query's own declarations, so adding a variable without a matching flag fails here.
+    #[test]
+    fn each_subject_query_variable_is_passed_with_the_flag_its_declared_type_needs() {
+        for query in [MERGED_REFS_QUERY, SUBJECT_KIND_QUERY] {
+            let decls = query
+                .split_once('{')
+                .expect("the query has a selection set")
+                .0
+                .trim()
+                .trim_start_matches("query")
+                .trim_matches(|c| c == '(' || c == ')');
+            let declared: Vec<(&str, &str)> = decls
+                .split(',')
+                .map(|d| {
+                    let (name, ty) = d.trim().split_once(':').expect("a declared type");
+                    (
+                        name.trim().trim_start_matches('$'),
+                        ty.trim().trim_end_matches('!'),
+                    )
+                })
+                .collect();
+            assert!(
+                declared.iter().any(|(_, ty)| *ty == "String")
+                    && declared.iter().any(|(_, ty)| *ty == "Int"),
+                "the query must mix both types for this test to be worth anything: {declared:?}"
+            );
+            // An owner and a repo that `-F` would silently retype. Both are legal name shapes.
+            let args = subject_query_args(query, "123", "456", 7);
+            assert_eq!(&args[..2], &["api".to_string(), "graphql".to_string()]);
+            let mut seen: Vec<&str> = Vec::new();
+            for pair in args[2..].chunks(2) {
+                let [flag, field] = pair else {
+                    panic!("every variable is a flag/value pair: {args:?}");
+                };
+                let name = field.split_once('=').expect("name=value").0;
+                if name == "query" {
+                    assert_eq!(flag, "-f");
+                    continue;
+                }
+                let ty = declared
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .unwrap_or_else(|| panic!("{name} is not declared by the query"))
+                    .1;
+                assert_eq!(
+                    flag,
+                    if ty == "Int" { "-F" } else { "-f" },
+                    "{name}:{ty} must take the flag its type needs"
+                );
+                seen.push(name);
+            }
+            for (name, _) in &declared {
+                assert!(seen.contains(name), "{name} is declared but never passed");
+            }
+        }
+    }
+
+    // A PR is checked against exactly the issues its MERGE would close — the same
+    // `closingIssuesReferences` set `uncovered-issues` computes coverage from.
+    #[test]
+    fn a_reference_resolves_to_its_own_population() {
+        let pr = json!({"data": {"repository": {"issueOrPullRequest": {
+            "__typename": "PullRequest",
+            "closingIssuesReferences": {"nodes": [
+                {"number": 6, "repository": {"nameWithOwner": "rainlanguage/rain.dia"}},
+                {"number": 9, "repository": {"nameWithOwner": "o/other"}},
+            ]},
+        }}}});
+        assert_eq!(
+            subject_kind(Some(&pr)),
+            Subject::Pr(vec![
+                ("rainlanguage/rain.dia".into(), 6),
+                ("o/other".into(), 9)
+            ])
+        );
+        let issue =
+            json!({"data": {"repository": {"issueOrPullRequest": {"__typename": "Issue"}}}});
+        assert_eq!(subject_kind(Some(&issue)), Subject::Issue);
+        // A PR closing nothing is an ANSWER (a `Refs`-only linkage), not a gap.
+        let bare = json!({"data": {"repository": {"issueOrPullRequest": {
+            "__typename": "PullRequest", "closingIssuesReferences": {"nodes": []}}}}});
+        assert_eq!(subject_kind(Some(&bare)), Subject::Pr(vec![]));
+        // An issue that carries a `__typename` of neither is not a subject this can check, and a
+        // PR whose closing references cannot be read is not a PR whose closes are empty.
+        for bad in [
+            None,
+            Some(json!({})),
+            Some(json!({"data": {"repository": {"issueOrPullRequest": null}}})),
+            Some(
+                json!({"data": {"repository": {"issueOrPullRequest": {"__typename": "Milestone"}}}}),
+            ),
+            Some(
+                json!({"data": {"repository": {"issueOrPullRequest": {"__typename": "PullRequest"}}}}),
+            ),
+            Some(json!({"data": {"repository": {"issueOrPullRequest": {
+                "__typename": "PullRequest",
+                "closingIssuesReferences": {"nodes": [{"number": 6}]}}}}})),
+            Some(json!({"data": {"repository": {"issueOrPullRequest": {
+                "__typename": "PullRequest",
+                "closingIssuesReferences": {"nodes": [
+                    {"repository": {"nameWithOwner": "o/r"}}]}}}}})),
+        ] {
+            assert_eq!(subject_kind(bad.as_ref()), Subject::Unreadable, "{bad:?}");
+        }
+    }
+
+    // `owner/repo#n` is the one accepted spelling — the addressing string every other typed
+    // reference in this tool takes. Anything else is a usage error, not a silent mis-read.
+    #[test]
+    fn only_a_well_formed_owner_repo_hash_number_is_a_reference() {
+        assert_eq!(
+            parse_subject_ref("rainlanguage/rain.dia#60"),
+            Some(("rainlanguage".into(), "rain.dia".into(), 60))
+        );
+        // Digit-only owners and repos are legal names and must survive the split.
+        assert_eq!(
+            parse_subject_ref("123/456#7"),
+            Some(("123".into(), "456".into(), 7))
+        );
+        for bad in [
+            "rain.dia#60",                     // no owner
+            "o/r",                             // no number
+            "o/r#",                            // empty number
+            "o/r#abc",                         // not a number
+            "o/r#-1",                          // not a u64
+            "/r#1",                            // empty owner
+            "o/#1",                            // empty repo
+            "o/r/extra#1",                     // a slug is exactly two parts
+            "https://github.com/o/r/issues/1", // a URL is not the accepted form
+            "",
+        ] {
+            assert_eq!(parse_subject_ref(bad), None, "{bad}");
+        }
+    }
+
+    // A row names WHICH issue it is about, and for a PR it names the finding as SUPERSESSION —
+    // the condition step 3's "log the narrower one as a PR close-candidate" route needs detected.
+    #[test]
+    fn a_pr_row_names_the_finding_as_supersession_and_an_issue_row_as_a_landing() {
+        let fixes = AlreadyFixed::MergedSince(vec![MergedFix {
+            pr: "rainlanguage/rain.dia#33".into(),
+            merged_at: "2026-07-17T09:00:51Z".into(),
+            title: "Harden DIA price validation".into(),
+            url: "u".into(),
+        }]);
+        let pr_row = already_fixed_row(
+            "rainlanguage/rain.dia#60",
+            "pr",
+            "rainlanguage/rain.dia#6",
+            &fixes,
+        );
+        assert_eq!(pr_row["subject"], json!("rainlanguage/rain.dia#60"));
+        assert_eq!(pr_row["issue"], json!("rainlanguage/rain.dia#6"));
+        assert_eq!(pr_row["status"], json!("merged-since-filing"));
+        assert_eq!(
+            pr_row["supersededBy"][0]["pr"],
+            json!("rainlanguage/rain.dia#33")
+        );
+        assert!(pr_row.get("mergedSince").is_none());
+
+        let issue_row = already_fixed_row(
+            "rainlanguage/rain.dia#6",
+            "issue",
+            "rainlanguage/rain.dia#6",
+            &fixes,
+        );
+        assert_eq!(
+            issue_row["mergedSince"][0]["mergedAt"],
+            json!("2026-07-17T09:00:51Z")
+        );
+        assert!(issue_row.get("supersededBy").is_none());
+        // A clear or unreadable row still carries the list key, empty — a consumer reading it
+        // never has to tell "no fixes" from "the key is missing".
+        for answer in [AlreadyFixed::Clear, AlreadyFixed::Unreadable] {
+            let row = already_fixed_row("o/r#1", "issue", "o/r#1", &answer);
+            assert_eq!(row["mergedSince"], json!([]));
+            assert_eq!(row["status"], json!(answer.status()));
+        }
+        // `needsALook` is STATED, so a consumer never re-derives it from the status string — and
+        // an UNREADABLE row is one of the two that need a look, which is the whole hazard.
+        assert_eq!(pr_row["needsALook"], json!(true));
+        for (answer, want) in [
+            (AlreadyFixed::Clear, false),
+            (AlreadyFixed::Unreadable, true),
+        ] {
+            let row = already_fixed_row("o/r#1", "issue", "o/r#1", &answer);
+            assert_eq!(row["needsALook"], json!(want), "{answer:?}");
+        }
+    }
+
+    // A FINDING outranks a GAP, and both outrank clear: 4 names something the caller can act on,
+    // 1 names something it cannot, and 0 must mean every subject was actually answered.
+    #[test]
+    fn a_finding_outranks_a_gap_and_only_all_clear_exits_zero() {
+        let row = |status: &str| json!({"status": status});
+        assert_eq!(already_fixed_exit_code(&[]), 0);
+        assert_eq!(already_fixed_exit_code(&[row("clear")]), 0);
+        assert_eq!(already_fixed_exit_code(&[row("clear"), row("clear")]), 0);
+        assert_eq!(already_fixed_exit_code(&[row("unreadable")]), 1);
+        assert_eq!(
+            already_fixed_exit_code(&[row("clear"), row("unreadable")]),
+            1
+        );
+        assert_eq!(already_fixed_exit_code(&[row("merged-since-filing")]), 4);
+        assert_eq!(
+            already_fixed_exit_code(&[row("unreadable"), row("merged-since-filing")]),
+            4
+        );
+        // A row whose status is unreadable-as-a-shape is not silently clear.
+        assert_eq!(already_fixed_exit_code(&[json!({})]), 0);
+    }
+
+    // The refs the CLI takes are the refs the tool emits, and it takes several — a run checks the
+    // handful of candidates it took, which is the whole reason this is per-subject.
+    #[test]
+    fn already_fixed_parses_one_or_many_refs_and_refuses_none() {
+        use clap::Parser;
+        let cmd = Cli::try_parse_from(["prr", "already-fixed", "o/r#1", "o/other#2", "--json"])
+            .expect("refs parse")
+            .command;
+        assert_eq!(
+            cmd,
+            Cmd::AlreadyFixed {
+                refs: vec!["o/r#1".to_string(), "o/other#2".to_string()],
+                json: true,
+            }
+        );
+        assert!(Cli::try_parse_from(["prr", "already-fixed"]).is_err());
+    }
 }
 
 #[cfg(test)]
@@ -28400,6 +29265,69 @@ mod settings_tests {
         assert!(
             prompt.contains("There is no `ai:relink` verdict any more"),
             "…and it must say so, so a producer that saw the old label knows it is dead"
+        );
+    }
+
+    /// TEST HELPER: the `SHELL SHAPES …` paragraph and its indented bullets, ending at the blank
+    /// line before the next top-level paragraph. Placement is the invariant being asserted — the
+    /// same sentence sitting in some other part of a 75 KB prompt is a different instruction, and
+    /// the paragraph is what #174 established as the one place these rules live.
+    fn shell_shapes_paragraph(prompt: &str) -> &str {
+        let start = prompt
+            .find("SHELL SHAPES THE PERMISSION LAYER REFUSES")
+            .expect("campaign-prompt.txt must carry the SHELL SHAPES paragraph (#174)");
+        let rest = &prompt[start..];
+        match rest.find("\n\n") {
+            Some(end) => &rest[..end],
+            None => rest,
+        }
+    }
+
+    /// #180: a chain of allow-listed commands came back as "This Bash command contains multiple
+    /// operations. The following parts require approval: pr-review-report worklist --json, head -5
+    /// /tmp/claude-1000/wl.err" — and the producer read that as its allow-list failing, reissued
+    /// the command bare, and paid the round trip. Probed against the harness, the chain is not the
+    /// trigger and neither is the allow-list: ONE part was refused for a `/tmp` path, and the
+    /// message prints the named part with its redirection stripped, so the disqualifier is invisible
+    /// in the only text the producer gets to read. The prompt has to say what that message means,
+    /// or the next run makes the same wrong inference from the same evidence.
+    #[test]
+    fn the_producer_prompt_reads_a_multi_part_refusal_as_a_path_problem() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let para = shell_shapes_paragraph(&prompt);
+
+        assert!(
+            para.contains("CHAINING IS NOT THE PROBLEM"),
+            "the paragraph must say chaining is not itself refused — 4,232 accepted calls carry \
+             `;`, `&&`, `|` and redirections, so a producer that stops chaining pays for nothing: \
+             {para}"
+        );
+        assert!(
+            para.contains("with its redirection stripped off"),
+            "the message hides the disqualifier; unless the prompt says so, a named part that is \
+             allow-listed reads as a broken allow-list, which is exactly what #180 concluded"
+        );
+        assert!(
+            para.contains("DO NOT reissue it bare"),
+            "reissuing bare is the recovery the traces show, and it fixes nothing a corrected \
+             path would not have fixed"
+        );
+        assert!(
+            para.contains("{{SCRATCH_DIR}}") && para.contains("`/tmp/…` is outside both"),
+            "every byte the producer writes goes to the scratch dir: `/tmp` is outside both \
+             `--add-dir` roots, which is what refused `2>/tmp/wl.err` and `head -5 /tmp/wl.err`"
+        );
+        assert!(
+            para.contains("**Read tool**"),
+            "the one `/tmp` path the harness itself hands back — a backgrounded command's output \
+             file — is reachable, but only with the Read tool; `head` on it is refused by path"
+        );
+        assert!(
+            para.contains("keep `cd` out of every call that writes"),
+            "a `cd` anywhere in a redirecting command is refused on the `cd`, absolute targets \
+             included — two of the four post-#174 occurrences were that shape"
         );
     }
 
