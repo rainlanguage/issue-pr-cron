@@ -23241,6 +23241,26 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Wait — in ONE turn, inside `Monitor` — until every named PR has SETTLED: its checks have all
+    /// reported, and (with `@<sha>`) a push has moved its head off `<sha>`. Replaces the per-turn
+    /// `gh pr view --json headRefOid` / `gh pr checks` probing that was 60% of the enumeration
+    /// cost #170 measured. Exit 3 = the deadline stopped it; the report still names every subject.
+    Await {
+        /// `owner/repo#n`, or `owner/repo#n@<sha>` to also wait for a push off `<sha>`. Repeatable
+        /// — the whole in-flight set is ONE wait, which is what makes it one turn.
+        #[arg(required = true)]
+        refs: Vec<String>,
+        /// Give up after this many seconds and REPORT where each subject got to. A wait always
+        /// polls once, so 0 is a snapshot.
+        #[arg(long, default_value_t = 900)]
+        timeout_secs: u64,
+        /// Seconds between passes. Refused below 1: a zero interval is an API hammer, and clamping
+        /// it silently would hide the caller's mistake.
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..))]
+        interval_secs: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Has a MERGED PR referencing this issue landed SINCE it was filed? The candidate-selection
     /// question `uncovered-issues` cannot answer, since that split is computed from OPEN PRs only.
     /// Takes ISSUE refs (should this be worked at all) and PR refs (is this open PR superseded —
@@ -24664,6 +24684,703 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
+// AWAIT — the fleet-side wait, in ONE turn (#170).
+//
+// #170 was filed as "worklist did not displace per-PR enumeration" and offered two causes: the
+// prompt is not binding, or the row is missing fields. Classifying all 1,124 `gh pr view` /
+// `gh pr checks` / `gh issue view` calls in `runs/*.jsonl` says it is NEITHER. Only 35 of them
+// (2.2% of the attributable cost) re-fetch a field the row already carries. The largest class —
+// 622 calls, $46 of $78, 60% — is the main loop SPIN-WAITING on GitHub: in 20260729T170004Z, 320
+// of 788 main-loop turns did nothing but probe `gh pr view --json headRefOid` and `gh pr checks`
+// on two to four PRs, and 317 of those 320 ran with three or more sub-agents live. The run was
+// waiting for delegates to push and for CI to report.
+//
+// SO THE COST IS TURNS, NOT PAYLOAD. Each of those probes returns ~46 bytes and costs a full
+// re-read of the main loop's context — $43.92 of the $46.28 is the turn, not the answer. Widening
+// the worklist row cannot touch it (the row is not what is missing) and neither can a firmer
+// instruction to call `worklist` (it had already been called). The only thing that helps is
+// collapsing the whole wait into ONE turn.
+//
+// `campaign-prompt.txt` already says waiting is `Monitor`, but the only idiom it gives is
+// `until grep -q '<done-marker>' <output-file>` — which needs a LOCAL FILE. There is no local file
+// for "cyclo.site#294's checks have reported", so the rule was unreachable for exactly the wait
+// the runs actually do, and they hand-rolled it one turn at a time instead. That is the gap this
+// closes: `await` is a bounded, in-process poll that a single `Monitor` call can hold.
+//
+// Two conditions, because the traces show two waits, usually together: 412 of the probes read
+// `headRefOid` (has the delegate's push landed?) and the rest read the check rollup (has CI
+// reported?). `owner/repo#n@<sha>` expresses the first, and it GATES the second — see
+// [`await_state`], where an unmoved head is reported as such no matter what the checks say,
+// because those checks belong to the old head.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// The `gh pr view --json` field list `await` polls with. Deliberately the SMALLEST list that
+/// answers both questions: a poll runs tens of times per wait, and unlike `worklist` it is not
+/// building a row anybody reads — only the FINAL states are reported. Pinned as a constant and
+/// conformance-tested against [`await_state`]'s reads for [`WORKLIST_DETAIL_FIELDS`]'s reason.
+const AWAIT_DETAIL_FIELDS: &str = "headRefOid,statusCheckRollup";
+
+/// One subject of an `await`: the PR to wait on, and — when the caller is waiting for a PUSH to
+/// land — the head sha it must move OFF.
+#[derive(Clone, Debug, PartialEq)]
+struct AwaitRef {
+    owner: String,
+    repo: String,
+    num: u64,
+    from_head: Option<String>,
+}
+
+impl AwaitRef {
+    fn label(&self) -> String {
+        format!("{}/{}#{}", self.owner, self.repo, self.num)
+    }
+}
+
+/// PURE: `owner/repo#n`, or `owner/repo#n@<sha>` to also wait for the head to move off `<sha>`.
+///
+/// The sha half is validated as HEX rather than taken as given. A baseline that cannot be a sha is
+/// a baseline nothing will ever equal, so [`head_moved`] would report "moved" on the first poll and
+/// the whole wait would silently do nothing — a typo that costs a phantom-green PR rather than an
+/// error message. Seven is git's own minimum abbreviation.
+fn parse_await_ref(r: &str) -> Option<AwaitRef> {
+    let (subject, from_head) = match r.split_once('@') {
+        Some((s, sha)) => {
+            if sha.len() < 7 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+                return None;
+            }
+            (s, Some(sha.to_string()))
+        }
+        None => (r, None),
+    };
+    let (owner, repo, num) = parse_subject_ref(subject)?;
+    Some(AwaitRef {
+        owner,
+        repo,
+        num,
+        from_head,
+    })
+}
+
+/// PURE: has `head` moved off `baseline`?
+///
+/// Compared as PREFIXES in both directions, so a short sha read out of a log matches the full one
+/// GitHub returns — the same equivalence [`deploy_confirmed_at_head`] already accepts, and the
+/// reason it exists there is the reason it is needed here. An EMPTY head is not a move: an
+/// unreadable head must never be mistaken for a push that landed.
+fn head_moved(head: &str, baseline: &str) -> bool {
+    !(head.starts_with(baseline) || baseline.starts_with(head))
+}
+
+/// Where one subject stands at the moment it was polled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AwaitState {
+    /// Nothing more is coming: the push (if one was awaited) landed, and every check has reported.
+    Settled,
+    /// Still at the sha the caller said it was waiting to move off — the push has not landed.
+    HeadUnchanged,
+    /// Checks are still in flight.
+    ChecksPending,
+    /// A push landed and the head carries NO checks yet. Not settled: see [`await_state`].
+    ChecksUnregistered,
+    /// The read failed, or the document did not carry what the poll asked for.
+    Unreadable,
+}
+
+impl AwaitState {
+    fn as_str(self) -> &'static str {
+        match self {
+            AwaitState::Settled => "settled",
+            AwaitState::HeadUnchanged => "head-unchanged",
+            AwaitState::ChecksPending => "checks-pending",
+            AwaitState::ChecksUnregistered => "checks-unregistered",
+            AwaitState::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// PURE: one subject's state, from the document one poll fetched.
+///
+/// Three things here are decisions rather than mechanics, and each one is a way this could report
+/// a wait as OVER when it is not — which is the only expensive direction. A wait that ends late
+/// costs one bounded timeout; a wait that ends early hands the run a PR it then treats as finished.
+///
+///  1. AN UNMOVED HEAD OUTRANKS THE CHECKS. When the caller named a baseline sha and the head is
+///     still on it, the rollup being green describes the PREVIOUS head — the phantom green the
+///     prompt's STALE-CI GUARD is about. So the checks are not even consulted.
+///  2. AN EMPTY ROLLUP ON A HEAD THAT JUST MOVED IS NOT GREEN. GitHub registers a push's checks
+///     seconds after the push, and a poll landing inside that window sees `[]`, which
+///     [`classify_ci`] correctly calls `NoChecks` — correct about the document, wrong as an answer
+///     to "is anything still coming". This is scoped to the case where a baseline was given,
+///     because that is exactly the case where a push is KNOWN to have just happened; without one,
+///     an empty rollup is a repo with no CI and waiting on it would never end.
+///  3. AN UNREADABLE SUBJECT IS NOT SETTLED. A failed read is not an answer, the same way
+///     [`count_unresolved_page`] returns `None` rather than a silent zero.
+fn await_state(detail: Option<&Value>, baseline: Option<&str>) -> AwaitState {
+    let Some(detail) = detail else {
+        return AwaitState::Unreadable;
+    };
+    let Some(head) = detail.get("headRefOid").and_then(|v| v.as_str()) else {
+        return AwaitState::Unreadable;
+    };
+    if let Some(b) = baseline {
+        if !head_moved(head, b) {
+            return AwaitState::HeadUnchanged;
+        }
+    }
+    // Key presence, not value shape: the poll ASKED for this field, so a document without it is a
+    // document that did not answer. `null` is an answer (no checks) and reaches `classify_ci`.
+    let Some(rollup) = detail.get("statusCheckRollup") else {
+        return AwaitState::Unreadable;
+    };
+    match classify_ci(rollup) {
+        Ci::Pending => AwaitState::ChecksPending,
+        Ci::NoChecks if baseline.is_some() => AwaitState::ChecksUnregistered,
+        _ => AwaitState::Settled,
+    }
+}
+
+/// What one `await` ended up with: every subject's last-polled state, and whether the deadline is
+/// what stopped it.
+#[derive(Debug, PartialEq)]
+struct AwaitOutcome {
+    rows: Vec<(AwaitRef, AwaitState)>,
+    polls: u32,
+    timed_out: bool,
+}
+
+/// The wait itself, with its clock, its reads and its sleeping injected — so every branch that
+/// decides WHEN A WAIT ENDS is testable without a network or a real second passing.
+///
+/// Two orderings carry the correctness:
+///
+///  * THE SETTLE CHECK COMES BEFORE THE DEADLINE CHECK, so a fleet that settles on the very poll
+///    that exhausts the budget is reported settled rather than timed out. The deadline exists to
+///    bound the wait, not to overrule an answer already in hand.
+///  * A FULL PASS ALWAYS HAPPENS FIRST, so `--timeout-secs 0` is a single snapshot rather than a
+///    report of nothing, and the sleep only ever happens between passes — never after the last one,
+///    where it would be pure latency.
+fn await_poll(
+    refs: &[AwaitRef],
+    timeout_secs: u64,
+    interval_secs: u64,
+    now: &mut dyn FnMut() -> u64,
+    fetch: &mut dyn FnMut(&AwaitRef) -> Option<Value>,
+    sleep: &mut dyn FnMut(u64),
+) -> AwaitOutcome {
+    let start = now();
+    let mut polls = 0u32;
+    loop {
+        let rows: Vec<(AwaitRef, AwaitState)> = refs
+            .iter()
+            .map(|r| {
+                (
+                    r.clone(),
+                    await_state(fetch(r).as_ref(), r.from_head.as_deref()),
+                )
+            })
+            .collect();
+        polls += 1;
+        if rows.iter().all(|(_, s)| *s == AwaitState::Settled) {
+            return AwaitOutcome {
+                rows,
+                polls,
+                timed_out: false,
+            };
+        }
+        if now().saturating_sub(start) >= timeout_secs {
+            return AwaitOutcome {
+                rows,
+                polls,
+                timed_out: true,
+            };
+        }
+        sleep(interval_secs);
+    }
+}
+
+/// PURE: the report. One line per subject plus one summary line, because the caller's next move is
+/// decided per PR — a bare "timed out" would send it straight back to the per-PR probing this
+/// subcommand exists to replace.
+fn await_report(out: &AwaitOutcome) -> String {
+    let mut s = String::new();
+    for (r, st) in &out.rows {
+        s.push_str(&format!("{} {}\n", r.label(), st.as_str()));
+    }
+    let unsettled = out
+        .rows
+        .iter()
+        .filter(|(_, st)| *st != AwaitState::Settled)
+        .count();
+    s.push_str(&format!(
+        "{} of {} settled after {} poll(s){}\n",
+        out.rows.len() - unsettled,
+        out.rows.len(),
+        out.polls,
+        if out.timed_out { " — TIMED OUT" } else { "" }
+    ));
+    s
+}
+
+/// PURE: the machine-readable form of the same answer.
+fn await_json(out: &AwaitOutcome) -> Value {
+    serde_json::json!({
+        "settled": !out.timed_out,
+        "timedOut": out.timed_out,
+        "polls": out.polls,
+        "subjects": out.rows.iter().map(|(r, st)| serde_json::json!({
+            "repo": format!("{}/{}", r.owner, r.repo),
+            "number": r.num,
+            "fromHead": r.from_head,
+            "state": st.as_str(),
+        })).collect::<Vec<Value>>(),
+    })
+}
+
+/// Exit code for an `await` the deadline stopped. Distinct from a usage error (2) because the
+/// caller acts on it: a timeout is a real answer about a fleet that is still moving, and the
+/// per-subject lines say which parts of it.
+const AWAIT_TIMED_OUT: i32 = 3;
+
+fn await_mode(refs: &[String], timeout_secs: u64, interval_secs: u64, json_out: bool) -> i32 {
+    let mut subjects = Vec::new();
+    for r in refs {
+        let Some(a) = parse_await_ref(r) else {
+            eprintln!(
+                "error: {r:?} is not an await reference — the form is `owner/repo#n`, or \
+                 `owner/repo#n@<sha>` to wait for a push off `<sha>` (sha: 7+ hex digits)"
+            );
+            return 2;
+        };
+        subjects.push(a);
+    }
+    let out = await_poll(
+        &subjects,
+        timeout_secs,
+        interval_secs,
+        &mut || now_unix() as u64,
+        &mut |r| {
+            gh_json(&[
+                "pr",
+                "view",
+                &r.num.to_string(),
+                "-R",
+                &format!("{}/{}", r.owner, r.repo),
+                "--json",
+                AWAIT_DETAIL_FIELDS,
+            ])
+        },
+        &mut |secs| std::thread::sleep(std::time::Duration::from_secs(secs)),
+    );
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&await_json(&out)).unwrap_or_else(|_| "{}".into())
+        );
+    } else {
+        print!("{}", await_report(&out));
+    }
+    if out.timed_out {
+        AWAIT_TIMED_OUT
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod await_tests {
+    use super::{
+        await_json, await_poll, await_report, await_state, head_moved, parse_await_ref, AwaitRef,
+        AwaitState, AWAIT_DETAIL_FIELDS,
+    };
+    use serde_json::{json, Value};
+
+    fn r(s: &str) -> AwaitRef {
+        parse_await_ref(s).unwrap_or_else(|| panic!("{s} should parse"))
+    }
+
+    /// A PR document as `AWAIT_DETAIL_FIELDS` returns it.
+    fn doc(head: &str, checks: Value) -> Value {
+        json!({"headRefOid": head, "statusCheckRollup": checks})
+    }
+    fn green() -> Value {
+        json!([{"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}])
+    }
+    fn pending() -> Value {
+        json!([{"name": "test", "status": "IN_PROGRESS"}])
+    }
+    fn red() -> Value {
+        json!([{"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}])
+    }
+
+    // --- parse_await_ref -------------------------------------------------------------------
+
+    #[test]
+    fn a_bare_ref_waits_on_checks_alone() {
+        assert_eq!(
+            r("o/repo#12"),
+            AwaitRef {
+                owner: "o".into(),
+                repo: "repo".into(),
+                num: 12,
+                from_head: None
+            }
+        );
+    }
+
+    #[test]
+    fn an_at_sha_ref_also_waits_for_the_push() {
+        assert_eq!(r("o/repo#12@abc1234").from_head.as_deref(), Some("abc1234"));
+    }
+
+    /// A baseline that cannot be a sha is a baseline nothing ever equals, so the wait would end on
+    /// its first poll having done nothing. Both malformed shapes are refused at parse time, where
+    /// the caller still gets told.
+    #[test]
+    fn a_baseline_that_is_not_a_sha_is_refused_rather_than_silently_never_matching() {
+        assert_eq!(
+            parse_await_ref("o/repo#12@abc123"),
+            None,
+            "6 hex is too short"
+        );
+        assert_eq!(parse_await_ref("o/repo#12@nothex1"), None, "not hex");
+        assert_eq!(
+            parse_await_ref("o/repo#12@"),
+            None,
+            "an empty sha names nothing"
+        );
+    }
+
+    #[test]
+    fn a_malformed_subject_is_refused() {
+        assert_eq!(parse_await_ref("no-slug#1"), None);
+        assert_eq!(parse_await_ref("o/repo"), None);
+        assert_eq!(parse_await_ref("o/repo#notanumber"), None);
+    }
+
+    // --- head_moved ------------------------------------------------------------------------
+
+    #[test]
+    fn a_head_matched_by_either_prefix_direction_has_not_moved() {
+        assert!(
+            !head_moved("abc1234def", "abc1234"),
+            "short baseline, full head"
+        );
+        assert!(
+            !head_moved("abc1234", "abc1234def"),
+            "full baseline, short head"
+        );
+        assert!(!head_moved("abc1234", "abc1234"), "exact");
+        assert!(head_moved("fff0000", "abc1234"));
+    }
+
+    /// An unreadable head must never read as a push that landed.
+    #[test]
+    fn an_empty_head_has_not_moved() {
+        assert!(!head_moved("", "abc1234"));
+    }
+
+    // --- await_state -----------------------------------------------------------------------
+
+    #[test]
+    fn checks_that_have_all_reported_are_settled_whether_green_or_red() {
+        assert_eq!(
+            await_state(Some(&doc("h", green())), None),
+            AwaitState::Settled
+        );
+        assert_eq!(
+            await_state(Some(&doc("h", red())), None),
+            AwaitState::Settled,
+            "a red IS the answer — the wait is for the checks to report, not to pass"
+        );
+    }
+
+    #[test]
+    fn checks_still_running_are_pending() {
+        assert_eq!(
+            await_state(Some(&doc("h", pending())), None),
+            AwaitState::ChecksPending
+        );
+    }
+
+    /// THE PHANTOM-GREEN GUARD. Until the push lands, the rollup describes the PREVIOUS head, so a
+    /// green one is not an answer about the work being waited for.
+    #[test]
+    fn an_unmoved_head_outranks_the_checks_however_they_read() {
+        for checks in [green(), red(), pending(), json!([])] {
+            assert_eq!(
+                await_state(Some(&doc("abc1234def", checks)), Some("abc1234")),
+                AwaitState::HeadUnchanged,
+                "checks on the old head can never settle a wait for a push"
+            );
+        }
+    }
+
+    #[test]
+    fn a_moved_head_lets_the_checks_decide() {
+        assert_eq!(
+            await_state(Some(&doc("fff0000", green())), Some("abc1234")),
+            AwaitState::Settled
+        );
+    }
+
+    /// GitHub registers a push's checks seconds after the push. An empty rollup in that window is
+    /// `NoChecks` about the document and "nothing has started yet" about the world.
+    #[test]
+    fn an_empty_rollup_right_after_an_awaited_push_is_not_settled() {
+        assert_eq!(
+            await_state(Some(&doc("fff0000", json!([]))), Some("abc1234")),
+            AwaitState::ChecksUnregistered
+        );
+    }
+
+    /// …and with no push awaited, an empty rollup is a repo with no CI. Waiting on that would never
+    /// end, so it settles — which is why the case above is scoped to a named baseline.
+    #[test]
+    fn an_empty_rollup_with_no_push_awaited_is_settled() {
+        assert_eq!(
+            await_state(Some(&doc("h", json!([]))), None),
+            AwaitState::Settled
+        );
+    }
+
+    #[test]
+    fn a_failed_read_is_unreadable_never_settled() {
+        assert_eq!(await_state(None, None), AwaitState::Unreadable);
+        assert_eq!(await_state(None, Some("abc1234")), AwaitState::Unreadable);
+    }
+
+    /// CONFORMANCE: every field `AWAIT_DETAIL_FIELDS` fetches is one `await_state` cannot answer
+    /// without. Asserted by REMOVAL from an otherwise-settled document, so a field that stopped
+    /// being load-bearing — or one that quietly started being read without being fetched — turns
+    /// this red instead of costing a poll per call forever.
+    #[test]
+    fn every_awaited_field_is_load_bearing_and_its_absence_is_unreadable() {
+        let fields: Vec<&str> = AWAIT_DETAIL_FIELDS.split(',').collect();
+        assert_eq!(fields, vec!["headRefOid", "statusCheckRollup"]);
+        assert_eq!(
+            await_state(Some(&doc("h", green())), None),
+            AwaitState::Settled,
+            "the full document settles, or the removals below prove nothing"
+        );
+        for f in fields {
+            let mut d = doc("h", green());
+            d.as_object_mut().expect("object").remove(f);
+            assert_eq!(
+                await_state(Some(&d), None),
+                AwaitState::Unreadable,
+                "a document missing {f} did not answer the poll"
+            );
+        }
+    }
+
+    /// `null` is GitHub ANSWERING "no checks", which is different from the key being absent.
+    #[test]
+    fn a_null_rollup_is_an_answer_not_a_malformed_document() {
+        assert_eq!(
+            await_state(Some(&doc("h", Value::Null)), None),
+            AwaitState::Settled
+        );
+    }
+
+    // --- await_poll ------------------------------------------------------------------------
+
+    /// A poll harness: canned documents per pass (the last pass repeats once exhausted), a clock
+    /// that advances ONLY when the loop sleeps — so elapsed time is a pure function of the sleeps
+    /// the code chose — and a record of every sleep.
+    struct Harness {
+        passes: Vec<Vec<Option<Value>>>,
+        slept: Vec<u64>,
+    }
+    impl Harness {
+        fn new(passes: Vec<Vec<Option<Value>>>) -> Self {
+            Harness {
+                passes,
+                slept: Vec::new(),
+            }
+        }
+    }
+
+    fn run(h: &mut Harness, refs: &[AwaitRef], timeout: u64, interval: u64) -> super::AwaitOutcome {
+        use std::cell::{Cell, RefCell};
+        let passes = std::mem::take(&mut h.passes);
+        let pass = Cell::new(0usize);
+        let idx = Cell::new(0usize);
+        let clock = Cell::new(0u64);
+        let slept = RefCell::new(Vec::new());
+        let out = await_poll(
+            refs,
+            timeout,
+            interval,
+            &mut || clock.get(),
+            &mut |_| {
+                let p = passes
+                    .get(pass.get().min(passes.len() - 1))
+                    .expect("a pass");
+                let v = p.get(idx.get()).cloned().flatten();
+                idx.set(idx.get() + 1);
+                if idx.get() == p.len() {
+                    idx.set(0);
+                    pass.set(pass.get() + 1);
+                }
+                v
+            },
+            &mut |secs| {
+                slept.borrow_mut().push(secs);
+                clock.set(clock.get() + secs);
+            },
+        );
+        h.slept = slept.into_inner();
+        out
+    }
+
+    #[test]
+    fn a_fleet_already_settled_polls_once_and_never_sleeps() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", green())),
+            Some(doc("h2", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert!(!out.timed_out);
+        assert_eq!(out.polls, 1);
+        assert!(h.slept.is_empty(), "no wait means no sleep: {:?}", h.slept);
+    }
+
+    #[test]
+    fn a_wait_keeps_polling_until_the_last_subject_settles() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h", pending())), Some(doc("h2", green()))],
+            vec![Some(doc("h", pending())), Some(doc("h2", green()))],
+            vec![Some(doc("h", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert!(!out.timed_out);
+        assert_eq!(out.polls, 3);
+        assert_eq!(
+            h.slept,
+            vec![20, 20],
+            "one sleep BETWEEN passes, none after the last"
+        );
+    }
+
+    #[test]
+    fn the_deadline_stops_a_wait_and_the_report_still_names_every_subject() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", pending())),
+            Some(doc("h2", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 40, 20);
+        assert!(out.timed_out);
+        assert_eq!(out.rows[0].1, AwaitState::ChecksPending);
+        assert_eq!(
+            out.rows[1].1,
+            AwaitState::Settled,
+            "a timeout still reports the settled ones"
+        );
+    }
+
+    /// The settle check runs BEFORE the deadline check, so an answer already in hand is not
+    /// overruled by the clock reaching the budget on the very same pass.
+    #[test]
+    fn settling_exactly_at_the_deadline_is_settled_not_timed_out() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h", pending()))],
+            vec![Some(doc("h", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1")], 20, 20);
+        assert!(
+            !out.timed_out,
+            "the clock hits the budget on the pass that settles; the answer wins"
+        );
+        assert_eq!(out.polls, 2);
+    }
+
+    /// A full pass always happens first, so a zero budget is a SNAPSHOT rather than a report of
+    /// nothing — and it never sleeps.
+    #[test]
+    fn a_zero_timeout_is_one_snapshot_pass() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let out = run(&mut h, &[r("o/a#1")], 0, 20);
+        assert!(out.timed_out);
+        assert_eq!(out.polls, 1);
+        assert!(h.slept.is_empty());
+    }
+
+    /// An unreadable subject holds the wait open rather than ending it, which is what makes a
+    /// transient API failure cost time instead of a false answer.
+    #[test]
+    fn an_unreadable_subject_does_not_end_the_wait() {
+        let mut h = Harness::new(vec![vec![None], vec![Some(doc("h", green()))]]);
+        let out = run(&mut h, &[r("o/a#1")], 900, 20);
+        assert!(!out.timed_out);
+        assert_eq!(out.polls, 2);
+    }
+
+    // --- reporting -------------------------------------------------------------------------
+
+    #[test]
+    fn the_report_names_each_subject_and_counts_the_settled() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", pending())),
+            Some(doc("h2", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 0, 20);
+        let text = await_report(&out);
+        assert!(text.contains("o/a#1 checks-pending"), "{text}");
+        assert!(text.contains("o/b#2 settled"), "{text}");
+        assert!(
+            text.contains("1 of 2 settled after 1 poll(s) — TIMED OUT"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_json_form_carries_the_same_answer() {
+        let mut h = Harness::new(vec![vec![Some(doc("fff0000", green()))]]);
+        let out = run(&mut h, &[r("o/a#1@abc1234")], 900, 20);
+        let v = await_json(&out);
+        assert_eq!(v["settled"], true);
+        assert_eq!(v["timedOut"], false);
+        assert_eq!(v["subjects"][0]["repo"], "o/a");
+        assert_eq!(v["subjects"][0]["number"], 1);
+        assert_eq!(v["subjects"][0]["fromHead"], "abc1234");
+        assert_eq!(v["subjects"][0]["state"], "settled");
+    }
+
+    #[test]
+    fn await_parses_many_refs_and_refuses_an_interval_of_zero() {
+        use clap::Parser;
+        let cmd = super::Cli::try_parse_from([
+            "prr",
+            "await",
+            "o/a#1",
+            "o/b#2@abc1234",
+            "--timeout-secs",
+            "60",
+            "--json",
+        ])
+        .expect("refs parse")
+        .command;
+        assert_eq!(
+            cmd,
+            super::Cmd::Await {
+                refs: vec!["o/a#1".to_string(), "o/b#2@abc1234".to_string()],
+                timeout_secs: 60,
+                interval_secs: 20,
+                json: true,
+            }
+        );
+        assert!(
+            super::Cli::try_parse_from(["prr", "await", "o/a#1", "--interval-secs", "0"]).is_err(),
+            "a zero interval hammers the API; clap refuses it rather than the code clamping silently"
+        );
+        assert!(
+            super::Cli::try_parse_from(["prr", "await"]).is_err(),
+            "a wait on nothing is a usage error"
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
 // Infrastructure down (#108) — END THE RUN, log an error. Nothing else.
 //
 // `ai:blocked-infra` used to be an FSM destination, and it was a trap. The prompt made the label a
@@ -25743,6 +26460,12 @@ fn main() {
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::Await {
+            refs,
+            timeout_secs,
+            interval_secs,
+            json,
+        } => await_mode(&refs, timeout_secs, interval_secs, json),
         Cmd::AlreadyFixed { refs, json } => already_fixed_mode(&refs, json),
         Cmd::StateLoad { json, no_cache } => state_load_mode(json, !no_cache),
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
@@ -29829,6 +30552,54 @@ mod settings_tests {
             para.contains("keep `cd` out of every call that writes"),
             "a `cd` anywhere in a redirecting command is refused on the `cd`, absolute targets \
              included — two of the four post-#174 occurrences were that shape"
+        );
+    }
+
+    /// #170: the waiting rule was already in this paragraph and the runs broke it anyway, because
+    /// the only idiom it gave — `until grep -q '<marker>' <output-file>` — needs a LOCAL FILE, and
+    /// the wait the runs actually do is on GitHub. So they probed one turn at a time: 320 of one
+    /// run's 788 main-loop turns were nothing but `gh pr view --json headRefOid` / `gh pr checks`,
+    /// 60% of that run's whole enumeration bill, with three or more sub-agents live for 317 of
+    /// them. The paragraph has to carry the GitHub-side idiom too, or the rule stays unreachable
+    /// for the case that costs the money.
+    #[test]
+    fn the_waiting_rule_covers_the_github_side_wait_and_not_only_a_local_file() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let para = shell_shapes_paragraph(&prompt);
+        assert!(
+            para.contains("pr-review-report await"),
+            "the waiting rule must name the subcommand that makes a GitHub-side wait one turn: \
+             {para}"
+        );
+        assert!(
+            para.contains("@<sha-before-the-push>") || para.contains("@<sha>"),
+            "the push half is what 412 of the measured probes were reading; an example that omits \
+             it teaches only half the wait: {para}"
+        );
+        // The anti-pattern has to be named as such. "Use await" alone leaves the per-turn probe a
+        // reasonable-looking alternative, and it is the one the runs reach for by default.
+        assert!(
+            para.contains("gh pr view --json headRefOid"),
+            "the paragraph must name the probe it is displacing, or the displacement is advice: \
+             {para}"
+        );
+        // ONE-SHOT's own CI sentence used to prescribe raw `gh pr checks` polling — the exact
+        // shape measured. A rule in one paragraph and its counter-example in the next is how the
+        // per-turn probe stayed defensible.
+        let one_shot = prompt
+            .split("\n\n")
+            .find(|p| p.contains("ONE-SHOT, NOT A LOOP"))
+            .expect("campaign-prompt.txt must carry the ONE-SHOT paragraph");
+        assert!(
+            one_shot.contains("pr-review-report await"),
+            "the one place the prompt tells a run to wait for CI must name the bounded wait: \
+             {one_shot}"
+        );
+        assert!(
+            !one_shot.contains("`gh pr checks` / `gh run watch`"),
+            "ONE-SHOT must not still offer the per-probe poll as the way to wait: {one_shot}"
         );
     }
 
