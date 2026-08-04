@@ -341,7 +341,7 @@ server is the vetter's **only** tool surface.
 | `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost — refused unless `covered` accounts for every changed file |
 | `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                                |
 | `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                                  |
-| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                        |
+| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels, the full flag body, any prior verdicts, and `citationEvidence` — the machine's read of the cited change's own diff                   |
 | `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                        |
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
@@ -487,6 +487,33 @@ same parse `flag-close-candidate` gates the write on, so the two cannot disagree
 about it. It is not a claim that the citation holds: whether the merged PR is
 really this issue's fix is `/ncc` step 5's check, and `pr_context` still carries
 no merged/state field for the human to confirm it with.
+
+**And a citation that cannot be what it claims is now on the record.** `grounds`
+says what a reason CITES; it never said the cited change bears on the claim, and
+that gap is `rain.dia#22`: the flag said merged PR #48 "landed
+`testRoundTripEmpty` (line 27) and `testRoundTrip31Bytes` (line 32)" when #48 is
+an import-path standardisation whose touch on that file is `+2/-2` — PR #33
+added those tests. The vetter upheld it by restating the citation, which on the
+record is indistinguishable from checking it. So `flag-close-candidate`,
+`close_candidate_context` and `record_close_candidate_verdict` all carry a
+**citation evidence** line, read from the cited change's own diff: how many
+files it touches, its `+a/-d` on every path the reason names, and which symbols
+the reason names its changed lines do not contain.
+
+**It gates nothing, and that is a measurement rather than a preference.** Over
+every `ai:close-candidate` flag in the live and closed queues carrying a
+fetchable anchor (21 of them, 2026-08-04), no threshold on any of these signals
+separates the sound citations from the one unsound one. Requiring a named symbol
+in the cited diff's changed lines would have passed `rain.dia#22` — its reason
+names `LibDia.t.sol`, and the import rewrite does touch `LibDia` — while
+refusing eleven sound flags, because an `already-fixed-on-main` reason argues
+about CURRENT MAIN as well as about the landing, and four of the seven live ones
+are fixed by DELETION, whose evidence is on the removed side. `rain.dia#22` was
+CLOSED on the merits with the correction recorded, since rejecting it would have
+cost a producer cycle to reach the same answer; a check that converted that into
+rework would be the wrong fix for it. So the tool computes the facts, writes
+them where the producer, the vetter and the human all see them, and refuses
+nothing.
 
 The one hole this opens is closed where it is opened: a reason whose anchor is
 **one of the covering PRs** is citing the thing in flight as the reason to

@@ -8808,13 +8808,25 @@ fn cc_vetted_at_flag(issue: &Value, flag_at: &str) -> bool {
 
 /// The sha-bound verdict comment's issue-side twin: pins the flag being judged, so the record says
 /// WHICH claim was reviewed rather than merely that a review happened.
-fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str) -> String {
+///
+/// `citation` is the machine's own read of the cited diff, appended the way [`lens_stamp`] is
+/// appended to a PR verdict and for the same reason: the vetter writes the NOTE, the tool writes
+/// what was READ, and the vetter cannot author or omit the second. #192 is the case this closes —
+/// a verdict that reproduced the producer's specifics in the producer's own words, which on the
+/// record is indistinguishable from one that opened the diff. It still is indistinguishable as
+/// PROSE; what changes is that the facts now sit beside it, so a restatement that contradicts them
+/// is visible without anyone re-deriving anything.
+fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str, citation: Option<&str>) -> String {
     let tail = if note.trim().is_empty() {
         String::new()
     } else {
         format!(" — {}", note.trim())
     };
-    format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict}{tail}")
+    let stamp = match citation {
+        Some(c) => format!("\n{c}"),
+        None => String::new(),
+    };
+    format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict}{tail}{stamp}")
 }
 
 /// The close-candidate recording decision, computed PURELY from the fetched issue JSON — the same
@@ -9027,6 +9039,351 @@ fn recency_exit_code(slug: &str, issue: &str, what: &str, landed: &str, filed: &
     }
 }
 
+/// Field names the PIPELINE ITSELF puts in a producer's mouth. `campaign-prompt.txt` step 7a tells
+/// the producer to weigh its evidence against the issue's `createdAt`, so reasons say
+/// "vs issue createdAt 2024-12-10" — an identifier by shape, prose by role, and never a thing a
+/// repository's diff contains. Excluded from [`reason_symbols`] so the evidence line does not open
+/// by reporting the pipeline's own vocabulary as missing from the code.
+const CITATION_FIELD_WORDS: [&str; 6] = [
+    "createdAt",
+    "mergedAt",
+    "closedAt",
+    "updatedAt",
+    "headRefOid",
+    "closingIssuesReferences",
+];
+
+/// How many reason-named paths / absent symbols one evidence line prints before it summarises. A
+/// close-candidate reason can name a dozen of each, and an evidence line longer than the claim it
+/// annotates is one nobody reads.
+const CITATION_MAX_LISTED: usize = 4;
+
+/// PURE: the repository paths a close-candidate reason names.
+///
+/// A path is a whitespace token with a `/` whose last segment carries an extension. The trailing
+/// `:27` / `:89-92,141-146` line anchors producers write are stripped (they address a line, not a
+/// file), URLs are skipped (a link cites a page, not a tree path), and a token carrying `*` is a
+/// SHELL GLOB out of a quoted grep command — `*.svelte/*.ts/*.html/*.js` is one token by this
+/// tokenizer and names no file at all.
+fn reason_paths(reason: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in reason.split_whitespace() {
+        if tok.contains("://") || tok.contains('*') {
+            continue;
+        }
+        // `file.ts:34-40` — a line anchor only when what follows the colon is a NUMBER. A
+        // `Closes:` or a bare `note: x` keeps its whole token and simply fails the tests below.
+        let head = match tok.split_once(':') {
+            Some((h, t)) if t.starts_with(|c: char| c.is_ascii_digit()) => h,
+            _ => tok,
+        };
+        let head = head
+            .trim_start_matches(['(', '[', '<', '"', '\'', '`'])
+            .trim_end_matches([',', ';', ':', ')', ']', '>', '"', '\'', '`', '.']);
+        if !head.contains('/') {
+            continue;
+        }
+        let base = head.rsplit('/').next().unwrap_or_default();
+        // A dotfile is not an extension, and a segment with no dot is a DIRECTORY — `script/` and
+        // `origin/main` are both real tokens in live reasons and neither addresses a file.
+        if base.starts_with('.') || !base.contains('.') {
+            continue;
+        }
+        let head = head.to_string();
+        if !out.contains(&head) {
+            out.push(head);
+        }
+    }
+    out
+}
+
+/// PURE: is this token shaped like a code identifier rather than a word of English?
+///
+/// An underscore, or a lower→upper transition. That admits `testRoundTripEmpty`,
+/// `STOX_PROD_AUTHORISER_V4_CLONE` and the mixed-case body of a checksummed address, and rejects
+/// prose, dates (`2026-07-20` tokenizes to three runs), and short commit shas (`70a76a0` is all
+/// lower). Four characters is the floor because `file`, `line` and `main` are words.
+fn identifier_shaped(tok: &str) -> bool {
+    if tok.len() < 4 {
+        return false;
+    }
+    if tok.contains('_') {
+        return tok.chars().any(|c| c.is_ascii_alphabetic());
+    }
+    tok.chars()
+        .zip(tok.chars().skip(1))
+        .any(|(a, b)| a.is_ascii_lowercase() && b.is_ascii_uppercase())
+}
+
+/// PURE: the code symbols a close-candidate reason names, minus everything a diff cannot be asked
+/// about.
+///
+/// **A symbol that occurs inside a reason-named PATH is dropped**, and that exclusion is what makes
+/// the check mean anything. A file's own name is not in its contents, so `TableRowLink` from
+/// `app/_components/TableRowLink.tsx` would read as "absent from the diff" for every correct flag
+/// ever written — while the churn on that path is reported directly, and better, beside it. It is
+/// also what keeps the check honest in the other direction: on `rain.dia#22` the reason names
+/// `LibDia.t.sol`, and counting `LibDia` (which the cited import-rewrite does touch) as a hit was
+/// enough to make that flag's citation look supported.
+fn reason_symbols(reason: &str, paths: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in reason.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+        if !identifier_shaped(tok)
+            || CITATION_FIELD_WORDS.contains(&tok)
+            || paths.iter().any(|p| p.contains(tok))
+            || out.iter().any(|s| s == tok)
+        {
+            continue;
+        }
+        out.push(tok.to_string());
+    }
+    out.sort();
+    out
+}
+
+/// PURE: per-file churn plus the changed-line bodies of a unified diff.
+///
+/// Hunk COUNTS drive the walk for the reason [`diff_new_lines`] gives: an added line whose own
+/// content starts with `++` renders as `+++…`, and a parser that sniffs the marker reads it as a
+/// file header.
+///
+/// Files are keyed off the `diff --git` header rather than `+++`, because a DELETION writes
+/// `+++ /dev/null` and deletions are most of what this is asked about — four of the seven live
+/// `already-fixed-on-main` flags are fixed-by-removal.
+///
+/// Both sides land in `changed`: the evidence a fix leaves behind is an ADDED line only when the fix
+/// added something. `h-full` (rain.webapp#243), `script/BuildPointers.sol` (rain.dia#43) and the
+/// whole `tauri-app/` tree (raindex#1039/#1042/#960) appear on the removed side and nowhere else.
+struct DiffChurn {
+    /// `(path, added, removed)` in the order the diff presents them.
+    files: Vec<(String, usize, usize)>,
+    /// Every added and removed line body, joined — what a named symbol is looked for in.
+    changed: String,
+}
+
+fn diff_churn(diff: &str) -> DiffChurn {
+    let mut files: Vec<(String, usize, usize)> = Vec::new();
+    let mut changed = String::new();
+    let (mut old_left, mut new_left) = (0u64, 0u64);
+    for raw in diff.lines() {
+        if old_left > 0 || new_left > 0 {
+            // Inside a hunk: byte 0 is the marker, so slicing at 1 is always on a char boundary.
+            match raw.as_bytes().first().copied() {
+                Some(b'+') if new_left > 0 => {
+                    if let Some(f) = files.last_mut() {
+                        f.1 += 1;
+                    }
+                    changed.push_str(&raw[1..]);
+                    changed.push('\n');
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'-') if old_left > 0 => {
+                    if let Some(f) = files.last_mut() {
+                        f.2 += 1;
+                    }
+                    changed.push_str(&raw[1..]);
+                    changed.push('\n');
+                    old_left -= 1;
+                    continue;
+                }
+                // A context line, and its degenerate form: git writes " " for an empty context
+                // line, but tools that strip trailing whitespace leave a bare "".
+                Some(b' ') | None if old_left > 0 && new_left > 0 => {
+                    old_left -= 1;
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'\\') => continue, // "\ No newline at end of file"
+                _ => {
+                    // Counts exhausted or the diff is malformed: leave hunk state and re-read this
+                    // line as a header.
+                    old_left = 0;
+                    new_left = 0;
+                }
+            }
+        }
+        if let Some(rest) = raw.strip_prefix("diff --git ") {
+            if let Some(p) = diff_git_new_path(rest) {
+                files.push((p, 0, 0));
+            }
+            continue;
+        }
+        if let Some((_, old_count, new_count)) = hunk_header(raw) {
+            old_left = old_count;
+            new_left = new_count;
+        }
+    }
+    DiffChurn { files, changed }
+}
+
+/// What the CITED change's own diff contains, next to what the reason says it contains.
+///
+/// Every field is a FACT about the diff. None of them is a verdict, and #192's measurement is why:
+/// across the 21 close-candidate flags in the live and closed queues that cite a fetchable anchor,
+/// no threshold on any of these separates the sound citations from the one unsound one. See
+/// [`citation_stamp`].
+#[derive(Debug, PartialEq)]
+struct CitationEvidence {
+    /// How the anchor reads to a human — `PR #48`, `commit 70a76a0`.
+    anchor: String,
+    /// How many files the cited change touches at all.
+    files: usize,
+    /// Each path the reason names, with the cited change's `(added, removed)` on it — `None` when
+    /// the cited change does not touch that path.
+    paths: Vec<(String, Option<(usize, usize)>)>,
+    /// How many reason-named symbols the cited change's changed lines DO contain.
+    present: usize,
+    /// The reason-named symbols they do not.
+    absent: Vec<String>,
+}
+
+/// PURE: [`CitationEvidence`] for one reason against one cited diff.
+fn citation_evidence(anchor: &str, reason: &str, diff: &str) -> CitationEvidence {
+    let churn = diff_churn(diff);
+    let named = reason_paths(reason);
+    let symbols = reason_symbols(reason, &named);
+    let absent: Vec<String> = symbols
+        .iter()
+        .filter(|s| !churn.changed.contains(s.as_str()))
+        .cloned()
+        .collect();
+    CitationEvidence {
+        anchor: anchor.to_string(),
+        files: churn.files.len(),
+        paths: named
+            .into_iter()
+            .map(|p| {
+                let hit = churn
+                    .files
+                    .iter()
+                    .find(|(f, _, _)| *f == p)
+                    .map(|(_, a, r)| (*a, *r));
+                (p, hit)
+            })
+            .collect(),
+        present: symbols.len() - absent.len(),
+        absent,
+    }
+}
+
+/// PURE: render [`CitationEvidence`] as the one line that goes on the record.
+///
+/// **This is EVIDENCE, never a gate, and the line says so in its own text.** #192 proposed gating a
+/// flag on whether a reason-named symbol appears as an added line in the cited diff, calling it
+/// decisive. Measured over every close-candidate flag in the live and closed queues carrying a
+/// fetchable anchor, it is not: `already-fixed-on-main` reasons routinely name symbols the cited
+/// change never touched, because the reason argues about CURRENT MAIN as well as about the landing
+/// — `raindex#1060` names the guard the cited PR removed AND the renamed file and test that carry
+/// the behaviour today, and only the first pair is in that PR. Refusing on a miss would have blocked
+/// eleven sound flags to catch the one unsound one, which is precisely the rework the ruling on
+/// `rain.dia#22` forbids. So the tool computes the facts, writes them where a reader cannot miss
+/// them, and refuses nothing.
+///
+/// What it buys is that a restatement stops being indistinguishable from a check. On `rain.dia#22`
+/// this line reads `test/src/lib/dia/LibDiaStringV3Test.t.sol +2/-2` and
+/// `0 of 3 named symbols in its changed lines; absent: testRoundTrip, testRoundTrip31Bytes,
+/// testRoundTripEmpty` — sitting directly beneath a note asserting that PR landed two functions
+/// occupying about ten lines of it. Nobody has to judge that; they only have to read it.
+fn citation_stamp(ev: &CitationEvidence) -> String {
+    let mut s = format!(
+        "Citation evidence (machine-read from the cited diff; NOT a verdict) — {} changes {} file{}.",
+        ev.anchor,
+        ev.files,
+        if ev.files == 1 { "" } else { "s" }
+    );
+    if !ev.paths.is_empty() {
+        let shown: Vec<String> = ev
+            .paths
+            .iter()
+            .take(CITATION_MAX_LISTED)
+            .map(|(p, hit)| match hit {
+                Some((a, r)) => format!("{p} +{a}/-{r}"),
+                None => format!("{p} NOT TOUCHED BY IT"),
+            })
+            .collect();
+        s.push_str(&format!(" Paths this reason names: {}", shown.join("; ")));
+        if ev.paths.len() > CITATION_MAX_LISTED {
+            s.push_str(&format!(" (+{} more)", ev.paths.len() - CITATION_MAX_LISTED));
+        }
+        s.push('.');
+    }
+    let total = ev.present + ev.absent.len();
+    if total > 0 {
+        s.push_str(&format!(
+            " Symbols this reason names: {} of {total} in its changed lines",
+            ev.present
+        ));
+        if !ev.absent.is_empty() {
+            let shown: Vec<&str> = ev
+                .absent
+                .iter()
+                .take(CITATION_MAX_LISTED)
+                .map(String::as_str)
+                .collect();
+            s.push_str(&format!("; absent: {}", shown.join(", ")));
+            if ev.absent.len() > CITATION_MAX_LISTED {
+                s.push_str(&format!(" (+{} more)", ev.absent.len() - CITATION_MAX_LISTED));
+            }
+        }
+        s.push('.');
+    }
+    if ev.paths.is_empty() && total == 0 {
+        s.push_str(" This reason names no path or symbol its diff can be checked against.");
+    }
+    s
+}
+
+/// The cited change's own unified diff, and how the anchor reads. The impure half of the citation
+/// check: ONE fetch, off the anchor [`already_fixed_recency_gate`] already made the flag carry.
+///
+/// A commit is read through the diff media type rather than the JSON `files` array for the reason
+/// the PR side is read with `gh pr diff`: the array is capped (100 entries on a PR, 300 on a
+/// commit) and `raindex#2420` alone is 188 files. Every fact this check reports comes out of the
+/// diff TEXT, so no cap can silently shrink the answer.
+fn citation_diff(slug: &str, anchor: &FixAnchor) -> Option<(String, String)> {
+    match anchor {
+        FixAnchor::Pr(n) => {
+            gh_text(&["pr", "diff", n, "-R", slug]).map(|d| (format!("PR #{n}"), d))
+        }
+        FixAnchor::Commit(sha) => gh_text(&[
+            "api",
+            &format!("repos/{slug}/commits/{sha}"),
+            "-H",
+            "Accept: application/vnd.github.diff",
+        ])
+        .map(|d| (format!("commit {sha}"), d)),
+        FixAnchor::Missing | FixAnchor::NotApplicable => None,
+    }
+}
+
+/// The citation evidence line for one reason, or `None` when the reason cites no anchor to read.
+///
+/// An anchor that will not fetch is NOT `None`: silence is the failure mode this whole check exists
+/// to end, so the line still lands and says the diff could not be read.
+fn citation_line(slug: &str, reason: &str) -> Option<String> {
+    let anchor = already_fixed_anchor(reason);
+    let (label, diff) = match citation_diff(slug, &anchor) {
+        Some(pair) => pair,
+        None => {
+            return match anchor {
+                FixAnchor::Pr(n) => Some(citation_unreadable(&format!("PR #{n}"))),
+                FixAnchor::Commit(sha) => Some(citation_unreadable(&format!("commit {sha}"))),
+                FixAnchor::Missing | FixAnchor::NotApplicable => None,
+            };
+        }
+    };
+    Some(citation_stamp(&citation_evidence(&label, reason, &diff)))
+}
+
+/// PURE: the line for an anchor whose diff would not fetch.
+fn citation_unreadable(anchor: &str) -> String {
+    format!(
+        "Citation evidence (machine-read from the cited diff; NOT a verdict) — {anchor}: its diff \
+         could not be read, so NOTHING about this citation was checked."
+    )
+}
+
 /// `--flag-close-candidate <owner/repo> <issue> "<reason>" [--dry-run]`: the SOLE sanctioned way the
 /// producer flags a closeable ISSUE — applies the `ai:close-candidate` label + a trusted
 /// `🤖 ai:producer` reason comment, replacing the old local close-candidates.jsonl. GitHub state is
@@ -9037,6 +9394,12 @@ fn recency_exit_code(slug: &str, issue: &str, what: &str, landed: &str, filed: &
 /// An `already-fixed-on-main` reason additionally must carry a commit sha or merged PR number whose
 /// date POST-DATES the issue (exit 4). "This code is on main today" is not the same claim as "this
 /// issue is fixed": evidence that predates the report cannot be the fix.
+///
+/// The flag it writes then CARRIES [`citation_line`] — what the cited change's own diff contains,
+/// beside what the reason says it contains. Written here rather than only at vet time because
+/// [`flag_grounds`] reads this comment back off the issue: a reason citing a merged PR sets
+/// `cites-a-landing`, which switches the `covered-by-open-pr` block OFF, so an unchecked citation
+/// does not merely mislead an audit trail — it suppresses a live gate on the human's queue.
 fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: bool) -> i32 {
     if reason.trim().is_empty() {
         eprintln!(
@@ -9101,7 +9464,13 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
             post_comment,
         } => (add_label, post_comment),
     };
-    let comment = format!("🤖 ai:producer\nClose-candidate: {reason}");
+    // Its own line, BELOW the claim: `flag_reason` reads the `Close-candidate:` line and nothing
+    // else, so the evidence travels with the flag without becoming part of what the producer
+    // asserted or of what the vetter is asked to judge.
+    let comment = match citation_line(slug, reason) {
+        Some(ev) => format!("🤖 ai:producer\nClose-candidate: {reason}\n{ev}"),
+        None => format!("🤖 ai:producer\nClose-candidate: {reason}"),
+    };
 
     if dry_run {
         println!("[dry-run] flag {slug}#{issue} ai:close-candidate");
@@ -14159,10 +14528,20 @@ fn unvetted_close_candidates_fetch(
 
 /// PURE: the judging bundle for ONE flagged issue — the claim, and everything needed to test it.
 /// The issue-side twin of [`pr_context_doc`]; comments are the TRUSTED ones only.
-fn close_candidate_context_doc(slug: &str, num: u64, detail: &Value) -> Value {
+///
+/// `citationEvidence` is [`citation_line`]'s read of the cited diff, handed in by the fetch. It is
+/// here rather than only on the verdict the vetter writes because the vetter has to SEE it to
+/// engage with it, and a flag posted before this check existed carries none in its own body.
+fn close_candidate_context_doc(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    citation: Option<&str>,
+) -> Value {
     let flag = last_close_candidate_flag(detail);
     let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
     serde_json::json!({
+        "citationEvidence": citation.unwrap_or(""),
         "issue": format!("{slug}#{num}"),
         "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
         "title": detail.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -14194,7 +14573,15 @@ fn close_candidate_context_fetch(slug: &str, num: u64) -> Result<Value, String> 
         "number,title,body,url,state,createdAt,labels,comments",
     ])
     .ok_or_else(|| format!("error: `gh issue view {slug}#{num}` failed"))?;
-    Ok(close_candidate_context_doc(slug, num, &detail))
+    let citation = last_close_candidate_flag(&detail)
+        .map(|(_, body)| flag_reason(&body))
+        .and_then(|reason| citation_line(slug, &reason));
+    Ok(close_candidate_context_doc(
+        slug,
+        num,
+        &detail,
+        citation.as_deref(),
+    ))
 }
 
 /// The close-candidate verdict write — the issue-side twin of [`record_verdict_apply`]. `uphold`
@@ -14283,7 +14670,13 @@ fn record_cc_verdict_apply(
             skip_comment,
         } => (flag_at, remove_label, skip_comment),
     };
-    let comment = cc_verdict_comment(&flag_at, verdict, note);
+    // Recomputed here rather than lifted off the flag body: a flag posted before this check existed
+    // carries no evidence line, and those are the whole existing queue. The read is of the SAME
+    // reason the vetter judged, so the two cannot be about different citations.
+    let citation = last_close_candidate_flag(&j)
+        .map(|(_, body)| flag_reason(&body))
+        .and_then(|reason| citation_line(slug, &reason));
+    let comment = cc_verdict_comment(&flag_at, verdict, note, citation.as_deref());
 
     if dry_run {
         return Ok(format!(
@@ -17045,7 +17438,7 @@ mod next_close_candidate_tests {
     fn vetter(flag_at: &str, verdict: &str, note: &str) -> Value {
         json!({
             "author": {"login": TRUSTED_AUTHOR},
-            "body": cc_verdict_comment(flag_at, verdict, note),
+            "body": cc_verdict_comment(flag_at, verdict, note, None),
         })
     }
 
@@ -17096,7 +17489,7 @@ mod next_close_candidate_tests {
             ("reject", ""),
             ("uphold", "—"),
         ] {
-            let body = cc_verdict_comment(at, verdict, note);
+            let body = cc_verdict_comment(at, verdict, note, None);
             assert_eq!(
                 cc_verdict_parts(&body),
                 Some((at.to_string(), verdict.to_string())),
@@ -25892,12 +26285,40 @@ mod queue_tests {
     #[test]
     fn cc_verdict_comment_pins_the_flag_it_judged() {
         assert_eq!(
-            cc_verdict_comment("2026-07-20T09:00:00Z", "reject", "evidence predates the issue"),
+            cc_verdict_comment(
+                "2026-07-20T09:00:00Z",
+                "reject",
+                "evidence predates the issue",
+                None
+            ),
             "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z: reject — evidence predates the issue"
         );
         assert_eq!(
-            cc_verdict_comment("T", "uphold", "   "),
+            cc_verdict_comment("T", "uphold", "   ", None),
             "🤖 ai:vetter\nReviewed close-candidate @T: uphold"
+        );
+    }
+
+    /// #192. The citation evidence is the TOOL'S line, on its own line BELOW the vetter's — the
+    /// issue-side twin of `lens_stamp`. The vetter authors the note and nothing else, so a verdict
+    /// that merely restates the producer still lands beside what the cited diff actually contains.
+    #[test]
+    fn a_cc_verdict_carries_the_machines_citation_read_under_the_vetters_note() {
+        let body = cc_verdict_comment("T", "uphold", "pins the two named cases", Some("EV"));
+        assert_eq!(
+            body,
+            "🤖 ai:vetter\nReviewed close-candidate @T: uphold — pins the two named cases\nEV"
+        );
+        // The pin parse must survive the extra line, or every verdict carrying evidence reads as
+        // NO verdict — the flag would look un-vetted and the human's queue would lose the row.
+        assert_eq!(
+            cc_verdict_parts(&body),
+            Some(("T".to_string(), "uphold".to_string()))
+        );
+        // And an empty note still leaves the stamp on its own line rather than glued to the verb.
+        assert_eq!(
+            cc_verdict_comment("T", "reject", "", Some("EV")),
+            "🤖 ai:vetter\nReviewed close-candidate @T: reject\nEV"
         );
     }
 
@@ -26282,6 +26703,278 @@ mod queue_tests {
             ),
             1
         );
+    }
+
+    /// `rain.dia#22`, byte-for-byte from the flag and from `gh pr diff 48`. It is the whole of #192
+    /// in one fixture: the reason names the file the cited PR really does touch, and the cited PR's
+    /// touch on it is an IMPORT REWRITE that contains neither function the reason says it landed.
+    const DIA22_REASON: &str = "already-fixed-on-main: merged PR #48 (commit 70a76a0, merged \
+         2026-07-20) split LibDia.t.sol and landed test/src/lib/dia/LibDiaStringV3Test.t.sol, which \
+         pins exactly the two cases this issue names — testRoundTripEmpty (line 27) and \
+         testRoundTrip31Bytes (line 32) — plus a fuzz testRoundTrip over every length 0..31";
+
+    /// PR #48's real shape on that file: two import lines swapped, nothing else.
+    const DIA22_CITED_DIFF: &str = "\
+diff --git a/test/src/lib/dia/LibDiaStringV3Test.t.sol b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+--- a/test/src/lib/dia/LibDiaStringV3Test.t.sol
++++ b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+@@ -4,8 +4,8 @@ pragma solidity =0.8.25;
+ import {Test} from \"forge-std/Test.sol\";
+-import {LibDia} from \"src/lib/LibDia.sol\";
+-import {IntOrAString} from \"rain.intorastring/lib/LibIntOrAString.sol\";
++import {LibDia} from \"../../../../src/lib/LibDia.sol\";
++import {IntOrAString} from \"../../../../lib/rain.intorastring/src/lib/LibIntOrAString.sol\";
+ contract LibDiaStringV3Test is Test {
+";
+
+    /// PR #33's real shape on the same file: the tests themselves.
+    const DIA22_REAL_FIX_DIFF: &str = "\
+diff --git a/test/src/lib/dia/LibDiaStringV3Test.t.sol b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+--- a/test/src/lib/dia/LibDiaStringV3Test.t.sol
++++ b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+@@ -25,3 +25,9 @@ contract LibDiaStringV3Test is Test {
+     }
++    function testRoundTripEmpty() external pure {
++        assertEq(LibDia.intOrAStringToString(LibDia.stringToIntOrAString(\"\")), \"\");
++    }
++    function testRoundTrip31Bytes() external pure {
++        assertEq(bytes(THIRTY_ONE).length, 31);
++    }
+";
+
+    /// #192's CORE. The same reason against the PR it cited and against the PR that really landed
+    /// the tests: the file is the same, the path churn and the symbols are not.
+    ///
+    /// This is the whole discriminator, and it is why the path alone was never enough — #48 DOES
+    /// touch the file the reason names.
+    #[test]
+    fn citation_evidence_separates_the_cited_pr_from_the_one_that_landed_the_change() {
+        let bad = citation_evidence("PR #48", DIA22_REASON, DIA22_CITED_DIFF);
+        assert_eq!(
+            bad.paths,
+            vec![(
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                Some((2, 2))
+            )],
+            "the cited PR's touch on the named file is an import rewrite, and the churn says so"
+        );
+        assert_eq!(bad.present, 0);
+        assert_eq!(
+            bad.absent,
+            vec!["testRoundTrip", "testRoundTrip31Bytes", "testRoundTripEmpty"],
+            "not one function the reason says PR #48 landed is in PR #48's changed lines"
+        );
+
+        let good = citation_evidence("PR #33", DIA22_REASON, DIA22_REAL_FIX_DIFF);
+        assert_eq!(
+            good.paths,
+            vec![(
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                Some((6, 0))
+            )]
+        );
+        assert!(
+            good.absent.is_empty() && good.present == 3,
+            "the PR that added the tests contains every symbol the reason names: {good:?}"
+        );
+    }
+
+    /// The rendered line is what a human and the vetter actually read, so the DAMNING facts have to
+    /// survive rendering — and the header has to say it is not a verdict, because nothing in this
+    /// check refuses anything.
+    #[test]
+    fn the_citation_stamp_prints_the_churn_and_names_the_absent_symbols() {
+        let s = citation_stamp(&citation_evidence("PR #48", DIA22_REASON, DIA22_CITED_DIFF));
+        assert!(s.contains("NOT a verdict"), "{s}");
+        assert!(s.contains("PR #48 changes 1 file."), "{s}");
+        assert!(
+            s.contains("test/src/lib/dia/LibDiaStringV3Test.t.sol +2/-2"),
+            "{s}"
+        );
+        assert!(s.contains("0 of 3 in its changed lines"), "{s}");
+        assert!(
+            s.contains("absent: testRoundTrip, testRoundTrip31Bytes, testRoundTripEmpty"),
+            "{s}"
+        );
+    }
+
+    /// **The hard constraint, as a test.** A fix by DELETION leaves its evidence on the REMOVED
+    /// side, and four of the seven live `already-fixed-on-main` flags are that shape
+    /// (`rain.webapp#243`'s `h-full`, `rain.dia#43`'s deleted `BuildPointers.sol`, raindex#1039 /
+    /// #1042 / #960's deleted `tauri-app/` tree). #192 proposed looking at ADDED lines; that would
+    /// have reported every one of them as unsupported.
+    #[test]
+    fn a_fix_by_removal_counts_as_evidence_because_the_diff_carries_it_on_the_removed_side() {
+        // rain.webapp#243, real: PR #244 removed `h-full` from the cell anchor.
+        let diff = "\
+diff --git a/app/_components/TableRowLink.tsx b/app/_components/TableRowLink.tsx
+--- a/app/_components/TableRowLink.tsx
++++ b/app/_components/TableRowLink.tsx
+@@ -35,7 +35,7 @@ export const TableCellLink = () => {
+ \t\t\t\t<a
+-\t\t\t\t\tclassName=\"flex items-center justify-start h-full w-full p-4 hasHover\"
++\t\t\t\t\tclassName=\"flex items-center justify-start w-full p-4 hasHover\"
+ \t\t\t\t>
+";
+        let ev = citation_evidence(
+            "PR #244",
+            "already-fixed-on-main: PR #244 removed h-full from app/_components/TableRowLink.tsx:38; \
+             the hasHover class is untouched",
+            diff,
+        );
+        assert_eq!(
+            ev.paths,
+            vec![(
+                "app/_components/TableRowLink.tsx".to_string(),
+                Some((1, 1))
+            )]
+        );
+        assert!(
+            ev.absent.is_empty() && ev.present == 1,
+            "`hasHover` is on both sides and `h-full` is not identifier-shaped; nothing may read \
+             as absent here: {ev:?}"
+        );
+
+        // rain.dia#43, real: PR #48 DELETED script/BuildPointers.sol outright. A deletion writes
+        // `+++ /dev/null`, so keying files off `+++` would drop the file entirely and report the
+        // path the reason names as never touched.
+        let deleted = "\
+diff --git a/script/BuildPointers.sol b/script/BuildPointers.sol
+deleted file mode 100644
+--- a/script/BuildPointers.sol
++++ /dev/null
+@@ -1,3 +0,0 @@
+-contract BuildPointers is Script {
+-    function run() external {}
+-}
+";
+        let ev = citation_evidence(
+            "PR #48",
+            "already-fixed-on-main: PR #48 consolidated the entrypoints — script/BuildPointers.sol \
+             no longer exists on main",
+            deleted,
+        );
+        assert_eq!(
+            ev.paths,
+            vec![("script/BuildPointers.sol".to_string(), Some((0, 3)))],
+            "a deleted file is still a file the cited change touched: {ev:?}"
+        );
+    }
+
+    /// A reason argues about CURRENT MAIN as well as about the landing, so a symbol the cited change
+    /// never touched is ORDINARY. `raindex#1060` is the live case: the cited PR removed the guard,
+    /// and the file that carries the behaviour today was renamed after it. Both halves are true and
+    /// both are load-bearing — which is exactly why the absent list is REPORTED and never gated on.
+    #[test]
+    fn a_sound_reason_may_name_symbols_the_cited_change_never_touched() {
+        let diff = "\
+diff --git a/src/concrete/ob/OrderBook.sol b/src/concrete/ob/OrderBook.sol
+--- a/src/concrete/ob/OrderBook.sol
++++ b/src/concrete/ob/OrderBook.sol
+@@ -260,9 +260,7 @@ contract OrderBook {
+-            if (withdrawAmount > 0) {
+-                LibOrderBook.doPost(post);
+-            }
++            LibOrderBook.doPost(post);
+";
+        let ev = citation_evidence(
+            "PR #1959",
+            "already-fixed-on-main: MERGED PR #1959 removed the `if (withdrawAmount > 0)` wrapper \
+             around LibOrderBook.doPost; RaindexV6.sol:291 now runs it unconditionally, proven by \
+             testRaindexWithdrawalEvalZeroAmountEvalNoop",
+            diff,
+        );
+        assert!(
+            ev.present >= 2 && ev.absent.contains(&"testRaindexWithdrawalEvalZeroAmountEvalNoop".to_string()),
+            "the guard symbols are in the cited diff and the current-main test is not — BOTH are \
+             honest, and neither may refuse the flag: {ev:?}"
+        );
+    }
+
+    /// The noise floor. Everything here reads as an identifier by SHAPE and is not a thing a diff
+    /// can be asked about, so an evidence line that reported it would train its readers to skip the
+    /// line — which is the same outcome as not writing one.
+    #[test]
+    fn the_symbol_scan_drops_paths_pipeline_field_names_and_prose() {
+        let paths = reason_paths(
+            "already-fixed-on-main: PR #7 fixed app/_components/TableRowLink.tsx:38 and \
+             packages/ui/src/Detail.svelte:89-92,141-146 vs issue createdAt 2024-12-10; grep over \
+             *.svelte/*.ts found nothing, see https://github.com/o/r/pull/7 and script/ and \
+             origin/main",
+        );
+        assert_eq!(
+            paths,
+            vec![
+                "app/_components/TableRowLink.tsx".to_string(),
+                "packages/ui/src/Detail.svelte".to_string()
+            ],
+            "line anchors are stripped; a glob, a URL, a bare directory and a ref are not paths"
+        );
+        let syms = reason_symbols(
+            "PR #7 landed TableRowLink and _components per createdAt/mergedAt; \
+             LibDiaStringV3Test in test/src/lib/dia/LibDiaStringV3Test.t.sol; the file:line is fine \
+             at 70a76a0 on 2026-07-20; doPost is real",
+            &[
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                "app/_components/TableRowLink.tsx".to_string(),
+            ],
+        );
+        assert_eq!(
+            syms,
+            vec!["doPost".to_string()],
+            "every symbol inside a named path is dropped, and so are the pipeline field words, a \
+             short sha, a date and prose: {syms:?}"
+        );
+        // `_components` is identifier-shaped but occurs in NO named path here, so it survives —
+        // the exclusion is about the paths this reason actually named, not a word list.
+        assert!(reason_symbols("_components moved", &[]).contains(&"_components".to_string()));
+    }
+
+    /// An anchor that will not fetch must still put a LINE on the record. Silence is the failure
+    /// #192 is about: a verdict with no evidence beside it is indistinguishable from one whose
+    /// evidence was checked and held.
+    #[test]
+    fn an_unreadable_citation_says_so_rather_than_printing_nothing() {
+        let s = citation_unreadable("PR #48");
+        assert!(s.contains("PR #48"), "{s}");
+        assert!(s.contains("NOT a verdict"), "{s}");
+        assert!(s.contains("NOTHING about this citation was checked"), "{s}");
+    }
+
+    /// A reason with nothing checkable in it must SAY that, for the same reason. The alternative is
+    /// a line that trails off after the file count and reads like a clean bill.
+    #[test]
+    fn a_reason_naming_nothing_checkable_says_that_too() {
+        let s = citation_stamp(&citation_evidence(
+            "PR #2420",
+            "already-fixed-on-main: PR #2420 deleted the desktop app",
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n",
+        ));
+        assert!(
+            s.contains("names no path or symbol its diff can be checked against"),
+            "{s}"
+        );
+    }
+
+    /// `diff_churn` walks by HUNK COUNTS, not by sniffing the first byte. An added line whose own
+    /// content begins `++` renders as `+++…`, and a sniffing parser reads it as a file header —
+    /// which would silently split one file's churn across two entries.
+    #[test]
+    fn diff_churn_counts_by_hunk_and_survives_a_line_that_looks_like_a_header() {
+        let d = "\
+diff --git a/a.c b/a.c
+--- a/a.c
++++ b/a.c
+@@ -1,2 +1,3 @@
+ ctx
+-old
+++++weird
++tail
+";
+        let c = diff_churn(d);
+        assert_eq!(c.files, vec![("a.c".to_string(), 2, 1)]);
+        assert!(c.changed.contains("++weird"), "{:?}", c.changed);
+        assert!(c.changed.contains("old"), "the removed side is searchable too");
     }
 
     #[test]
@@ -29422,6 +30115,99 @@ mod settings_tests {
         assert!(
             !prompt.contains("a screenshot or a stated why-not"),
             "`a stated why-not` is the loose bar #140 closed — it must not survive anywhere"
+        );
+    }
+
+    /// #192, the VETTER half — the deeper one. The flag on `rain.dia#22` was upheld by a note that
+    /// reproduced the producer's specifics in the producer's own words, and on the record that is
+    /// indistinguishable from a note whose author opened the cited diff. `citationEvidence` is what
+    /// the tool now hands the vetter; this pins the prompt that makes the vetter USE it.
+    ///
+    /// SCOPED to the bullet, on the pattern above: `citationEvidence` and `rain.dia#22` both appear
+    /// elsewhere in this prompt's neighbourhood, so a whole-file `contains` would keep passing over
+    /// a gutted bullet.
+    #[test]
+    fn the_vetter_prompt_makes_the_note_say_what_it_read() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let gate = vetter_bullet(&prompt, "PROVENANCE");
+        assert!(
+            gate.contains("citationEvidence"),
+            "the vetter must be told the field EXISTS by name, or it reads the flag and stops: \
+             {gate}"
+        );
+        // The instruction that actually changes the record. Without it the field is one more thing
+        // to skim past, and the note stays a restatement.
+        assert!(
+            gate.contains("**So OPEN the cited diff and make your note say what you found there**"),
+            "the bullet's whole point is the NOTE — a field nobody is told to write from changes \
+             nothing: {gate}"
+        );
+        assert!(
+            gate.contains("indistinguishable from one that never opened anything"),
+            "the vetter has to be told WHY restating fails, not merely that it is discouraged: \
+             {gate}"
+        );
+        // THE HARD CONSTRAINT, in the prompt. Handing the vetter a new machine-checkable signal
+        // without this sentence is exactly how a check that improves evidence turns into a check
+        // that rejects sound flags — which is the outcome the ruling on rain.dia#22 forbids.
+        assert!(
+            gate.contains("it is never on its own a reason to reject"),
+            "the evidence line is EVIDENCE; a bullet that let it stand as a ground would convert \
+             correct closes into rework: {gate}"
+        );
+        assert!(
+            gate.contains("that is `uphold` with the correction IN YOUR NOTE"),
+            "a wrong citation under a RIGHT outcome is a correction on the record, not a reject — \
+             this is the rain.dia#22 ruling stated to the actor that would otherwise re-litigate \
+             it: {gate}"
+        );
+        // The two false-alarm shapes, named. A vetter that does not know these are ordinary will
+        // read every one of them as a defect.
+        assert!(
+            gate.contains("argues about CURRENT MAIN as well as about the landing"),
+            "a sound reason names current-main symbols the cited change never touched: {gate}"
+        );
+        assert!(
+            gate.contains("a fix by DELETION leaves its evidence on the removed side"),
+            "four of the seven live already-fixed flags are fixed-by-removal — a vetter reading \
+             only the added side would call them all unsupported: {gate}"
+        );
+        assert!(
+            gate.contains("rain.dia#22"),
+            "the rule carries the incident it was written from: {gate}"
+        );
+    }
+
+    /// #192, the PRODUCER half. The evidence line is written onto the flag at flag time, which is
+    /// where a bad citation is cheapest to catch — and, since #191, where it does the most damage:
+    /// `flag_grounds` reads the reason back off this comment and a cited landing switches the
+    /// `covered-by-open-pr` block OFF.
+    #[test]
+    fn the_producer_prompt_says_the_flag_carries_its_citation_evidence() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step = producer_step(&prompt, "7a");
+        assert!(
+            step.contains("CITATION EVIDENCE IS APPENDED TO YOUR FLAG, AND YOU READ IT BACK"),
+            "the producer has to know the line exists AND that reading it is the point: {step}"
+        );
+        assert!(
+            step.contains("It never refuses on that"),
+            "the producer must not be led to expect a gate — a check that looks like one gets \
+             gamed into citing greppable tokens rather than the truth: {step}"
+        );
+        assert!(
+            step.contains("NOT TOUCHED BY IT"),
+            "the producer is told the exact phrase that means it cited the wrong change, because \
+             that phrase is what it will actually see: {step}"
+        );
+        assert!(
+            step.contains("re-flag with it"),
+            "naming the defect without naming the move leaves the producer with a finding and no \
+             transition: {step}"
         );
     }
 
@@ -36587,7 +37373,7 @@ mod human_rule_tests {
         let (anchor, ..) = record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
         assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
         // The same anchor string the vetter's own comment carries — one re-flag stales both.
-        assert!(cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x")
+        assert!(cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x", None)
             .contains("close-candidate @2026-07-17T21:23:11Z"));
     }
 
