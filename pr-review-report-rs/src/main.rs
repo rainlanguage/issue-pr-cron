@@ -9473,7 +9473,13 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
     // Its own line, BELOW the claim: `flag_reason` reads the `Close-candidate:` line and nothing
     // else, so the evidence travels with the flag without becoming part of what the producer
     // asserted or of what the vetter is asked to judge.
-    let comment = match citation_line(slug, reason) {
+    //
+    // Fetched only when a comment is going to be BUILT. A deduped flag posts nothing, so the diff
+    // would be read and thrown away — and this runs under a 3-item cap where that is a real cost.
+    // `dry_run` deliberately still pays it: the dry run's whole job is to show the comment that
+    // WOULD be posted, and one printing a different line from the live call would be worse than
+    // useless to the producer this line exists for.
+    let comment = match post_comment.then(|| citation_line(slug, reason)).flatten() {
         Some(ev) => format!("🤖 ai:producer\nClose-candidate: {reason}\n{ev}"),
         None => format!("🤖 ai:producer\nClose-candidate: {reason}"),
     };
@@ -14679,9 +14685,16 @@ fn record_cc_verdict_apply(
     // Recomputed here rather than lifted off the flag body: a flag posted before this check existed
     // carries no evidence line, and those are the whole existing queue. The read is of the SAME
     // reason the vetter judged, so the two cannot be about different citations.
-    let citation = last_close_candidate_flag(&j)
-        .map(|(_, body)| flag_reason(&body))
-        .and_then(|reason| citation_line(slug, &reason));
+    // Skipped when the comment is a dedup no-op, for the reason `flag_close_candidate_mode` skips
+    // it: nothing is written, so the diff read buys nothing. `dry_run` still pays, likewise — a
+    // dry run exists to show the comment that would be posted.
+    let citation = (!skip)
+        .then(|| {
+            last_close_candidate_flag(&j)
+                .map(|(_, body)| flag_reason(&body))
+                .and_then(|reason| citation_line(slug, &reason))
+        })
+        .flatten();
     let comment = cc_verdict_comment(&flag_at, verdict, note, citation.as_deref());
 
     if dry_run {
@@ -30190,6 +30203,31 @@ mod settings_tests {
         assert!(
             gate.contains("rain.dia#22"),
             "the rule carries the incident it was written from: {gate}"
+        );
+        // The vetter's surface is eight MCP tools with no Bash, no `gh` and no `git`, and NONE of
+        // them returns a commit diff. "Open the cited diff" is therefore executable for a PR anchor
+        // and impossible for a commit one — and an instruction a role cannot perform gets answered
+        // in prose, which is the exact defect this bullet exists to end. So it has to name which
+        // read reaches which anchor and require the note to SAY which one it made. (CLAUDE.md: a
+        // gate on one edge needs a transition on the other.)
+        assert!(
+            gate.contains("**AND NAME THE READ YOU MADE"),
+            "a note that does not say WHICH read it made cannot be told apart from one that made \
+             none: {gate}"
+        );
+        assert!(
+            gate.contains("call `pr_context` on the cited PR"),
+            "the PR anchor's read must be named as the typed tool that performs it: {gate}"
+        );
+        assert!(
+            gate.contains("no tool on this surface returns a commit diff"),
+            "a commit anchor is UNREACHABLE from this surface, and the bullet must say so rather \
+             than mandate a read the strict-MCP profile denies: {gate}"
+        );
+        assert!(
+            gate.contains("Claiming a read you could not perform"),
+            "the failure mode the commit case invites has to be named, or the vetter writes as \
+             though it opened something: {gate}"
         );
     }
 
