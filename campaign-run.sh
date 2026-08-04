@@ -276,10 +276,11 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 # human edits and a conformance test greps, and a hand-escaped JSON string literal is neither.
 # A brief that cannot be built ABORTS the run: dispatch would still work, which is the problem —
 # the workers would silently go back to improvised briefing and nothing in the trace would say so.
-# `-s` and not `-f`: an EMPTY brief passes `-f` and then builds perfectly valid JSON carrying an
-# empty prompt, which registers the type and briefs nobody — the silent degradation this guard
-# exists to prevent, one file-truncation away.
-if [ ! -s "$DIR/campaign-worker-prompt.txt" ]; then
+# The condition is CONTENT, not existence: an empty (or whitespace-only) brief builds perfectly
+# valid JSON carrying an empty prompt, which registers the type and briefs nobody — the silent
+# degradation this guard exists to prevent, one truncated file away. `-f` would pass it and so
+# would `-s`, so the test is a non-space byte.
+if ! grep -q '[^[:space:]]' "$DIR/campaign-worker-prompt.txt" 2>/dev/null; then
   echo "$(date -u +%FT%TZ) campaign run ABORT: no campaign-worker-prompt.txt in '$DIR'" >> "$LOG"
   exit 1
 fi

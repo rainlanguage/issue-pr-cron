@@ -30204,9 +30204,10 @@ mod settings_tests {
             "an absent brief must abort with a message naming the file, not fall through"
         );
         assert!(
-            sh.contains("if [ ! -s \"$DIR/campaign-worker-prompt.txt\" ]"),
-            "the guard must test `-s`, not `-f`: an EMPTY brief passes `-f` and builds valid JSON \
-             carrying an empty prompt, which registers the type and briefs nobody"
+            sh.contains("grep -q '[^[:space:]]' \"$DIR/campaign-worker-prompt.txt\""),
+            "the guard's condition must be CONTENT, not existence: an empty or whitespace-only \
+             brief passes both `-f` and `-s` and then builds valid JSON carrying an empty prompt, \
+             which registers the type and briefs nobody"
         );
         assert!(
             sh.contains("could not build the worker brief"),
