@@ -27786,6 +27786,76 @@ diff --git a/src/Only.sol b/src/Only.sol
         );
     }
 
+    /// **The gate REFUSES.** Everything else here checks what `citation_disconnected` DECIDES; this
+    /// is the only test that checks the decision reaches an exit code. Without it the whole gate
+    /// could be reduced to a bare `eprintln!` with the suite still green — a mutation returning `0`
+    /// in place of the refusal survived until this test existed.
+    ///
+    /// The code is asserted through [`CITATION_UNSUPPORTED_EXIT`] AND pinned to 5, because a caller
+    /// that has to tell this from the recency refusal (4) by reading the message is one that will
+    /// not.
+    #[test]
+    fn the_gate_refuses_a_disconnected_citation_with_its_own_exit_code() {
+        let ev = citation_evidence(
+            "commit bb83031",
+            "already-fixed-on-main: fixed in packages/ui/src/VaultDetail.svelte:55 at bb83031",
+            "diff --git a/foundry.toml b/foundry.toml\n--- a/foundry.toml\n+++ b/foundry.toml\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(citation_disconnected(&ev), "fixture must be disconnected");
+        assert_eq!(
+            citation_support_gate("o/r", "573", &CitationRead::Read(ev)),
+            CITATION_UNSUPPORTED_EXIT,
+            "a disconnected citation must REFUSE, not merely report"
+        );
+        assert_eq!(
+            CITATION_UNSUPPORTED_EXIT, 5,
+            "distinct from the recency refusal (4): different finding, different fix"
+        );
+        // …and a CONNECTED one passes the SAME call, or the gate is "always refuse" wearing a
+        // predicate.
+        let ok = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 fixed src/Only.sol",
+            "diff --git a/src/Only.sol b/src/Only.sol\n--- a/src/Only.sol\n+++ b/src/Only.sol\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert_eq!(
+            citation_support_gate("o/r", "1", &CitationRead::Read(ok)),
+            0
+        );
+    }
+
+    /// ONE named path being touched carries the citation, even beside others the cited change never
+    /// saw — so the path half is `all` untouched, never `any`.
+    ///
+    /// This is the commonest sound shape there is: the fix lands in the source file, and the reason
+    /// also names the test that covers the behaviour today, added by a different commit. Reading it
+    /// as `any` refuses that flag — a valid close turned into rework, the one thing this design is
+    /// forbidden to do. A mutation to `any` survived until this test existed, because no flag on
+    /// record happens to name two paths with a mix, so the live queue could not have caught it.
+    #[test]
+    fn one_touched_path_carries_the_citation_even_beside_untouched_ones() {
+        let ev = citation_evidence(
+            "commit abc1234",
+            "already-fixed-on-main: commit abc1234 fixed src/Fixed.sol; the behaviour is covered \
+             on main by test/Fixed.t.sol:12",
+            "diff --git a/src/Fixed.sol b/src/Fixed.sol\n--- a/src/Fixed.sol\n+++ b/src/Fixed.sol\n@@ -1 +1 @@\n-was\n+now\n",
+        );
+        assert_eq!(
+            ev.paths,
+            vec![
+                ("src/Fixed.sol".to_string(), Some((1, 1))),
+                ("test/Fixed.t.sol".to_string(), None)
+            ],
+            "one named path is touched and one is not: {ev:?}"
+        );
+        assert_eq!(ev.present, 0, "and no symbol carries it either: {ev:?}");
+        assert!(
+            !citation_disconnected(&ev),
+            "the cited change contains one of the things the reason names, so the two are about \
+             the same code — `any` here would refuse a sound flag: {ev:?}"
+        );
+    }
+
     /// The noise floor. Everything here reads as an identifier by SHAPE and is not a thing a diff
     /// can be asked about, so an evidence line that reported it would train its readers to skip the
     /// line — which is the same outcome as not writing one.
