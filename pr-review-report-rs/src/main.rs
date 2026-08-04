@@ -4244,41 +4244,206 @@ fn resolve_in(path: &std::ffi::OsStr, bin: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-/// `preflight`: resolve every [`HARNESS_TOOLS`] entry against the process's own `$PATH`, print
-/// what was found, exit non-zero when any is missing.
+// ---------------------------------------------------------------------------------------------
+// Capabilities: the half of the environment PATH cannot answer.
+//
+// [`HARNESS_TOOLS`] proves PRESENCE. A capability proves FUNCTION, which is a different question
+// about the same environment — `gh` resolves and is unauthenticated, `nix` resolves and cannot
+// realise the shell the Solidity work builds in. The distinction is the same one `closure-render`
+// draws against `closure-preflight`: a closure can carry `pdftoppm` and still fail on a missing
+// shared library.
+//
+// Each is OPT-IN per runner, because a capability is role-shaped where a read-time dependency is
+// not: the vetter reads PRs through the FSM tool surface and never builds anything, so making it
+// realise a Solidity shell would spend a nix evaluation on a capability it does not use — and a
+// gate that costs a runner something for nothing is a gate that gets switched off.
+//
+// Each probe is a fact about the moment, not about a PR (#108's line), so an unsatisfied one takes
+// the SAME exit the missing-dependency abort takes: no label, no comment, one run-metrics row
+// naming what was unsatisfied, `ToolingFailure`. It is never a skip — a skipped tick is a tick the
+// pipeline CHOSE not to run.
+// ---------------------------------------------------------------------------------------------
+
+/// The scopes `gh` must hold for the pipeline's writes — labels and comments are `repo`, and the
+/// producer's deploy path dispatches a workflow.
+const REQUIRED_GH_SCOPES: [&str; 2] = ["repo", "workflow"];
+
+/// Capability name for "`gh` is authenticated, with the scopes the pipeline writes through".
+const CAP_GH_AUTH: &str = "gh-auth";
+
+/// Capability name for "nix can realise rainix's `sol-shell` and run `forge` out of it".
+const CAP_SOL_SHELL: &str = "sol-shell";
+
+/// The flake shell every Solidity build in this pipeline happens inside. Unpinned, exactly as the
+/// work itself invokes it: a SHA here would prove a shell no clone ever enters.
+const SOL_SHELL_FLAKE: &str = "github:rainlanguage/rainix#sol-shell";
+
+/// PURE: what `gh auth status` says about the token this run would write through. `None` = the
+/// capability holds; `Some(reason)` is what the abort reports.
+///
+/// The scope read is deliberately one-directional. A `Token scopes:` line that LACKS a required
+/// scope is proof the write will fail, so it fails the gate. NO scopes line at all is not proof of
+/// anything — `gh` omits it for token kinds that do not carry classic scopes — and inferring a
+/// missing scope from a missing line would abort a run whose token is fine. Absence of evidence
+/// leaves the status quo: the operation itself fails later, where it always did.
+fn gh_auth_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
+    if code != Some(0) {
+        let first = out
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("no output");
+        return Some(match code {
+            Some(c) => format!("`gh auth status` exited {c}: {first}"),
+            None => format!("`gh auth status` did not run: {first}"),
+        });
+    }
+    let scopes = gh_token_scopes(out)?;
+    let lacking: Vec<&str> = REQUIRED_GH_SCOPES
+        .iter()
+        .copied()
+        .filter(|r| !scopes.iter().any(|s| s == r))
+        .collect();
+    if lacking.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "the gh token lacks scope(s) {} (has: {})",
+            lacking.join(", "),
+            if scopes.is_empty() {
+                "none".to_string()
+            } else {
+                scopes.join(", ")
+            }
+        ))
+    }
+}
+
+/// PURE: the scopes `gh auth status` reports, or `None` when it reports no scopes line at all.
+///
+/// `gh` prints them quoted and comma-separated (`Token scopes: 'gist', 'repo', 'workflow'`); the
+/// quotes are stripped rather than matched, so an unquoted rendering reads the same. Matching on
+/// the trimmed WHOLE entry and not on a substring is what keeps `public_repo` from satisfying
+/// `repo`.
+fn gh_token_scopes(out: &str) -> Option<Vec<String>> {
+    let line = out.lines().find(|l| l.contains("Token scopes:"))?;
+    let (_, rest) = line.split_once("Token scopes:")?;
+    Some(
+        rest.split(',')
+            .map(|s| s.trim().trim_matches(['\'', '"', '`']).to_string())
+            .filter(|s| !s.is_empty() && s != "none")
+            .collect(),
+    )
+}
+
+/// PURE: whether the rainix `sol-shell` probe proved the capability. The exit status is the whole
+/// signal — a shell that cannot be realised, and a `forge` that cannot run inside one, both fail
+/// non-zero, and asserting on the version banner's wording would fail a working forge that
+/// reworded it.
+fn sol_shell_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
+    if code == Some(0) {
+        return None;
+    }
+    let last = out
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or("no output");
+    Some(match code {
+        Some(c) => format!("`nix develop {SOL_SHELL_FLAKE} -c forge --version` exited {c}: {last}"),
+        None => format!("`nix develop {SOL_SHELL_FLAKE} -c forge --version` did not run: {last}"),
+    })
+}
+
+/// `preflight`: resolve every [`HARNESS_TOOLS`] entry against the process's own `$PATH`, probe each
+/// capability the caller asked for, print what was found, exit non-zero when any is unsatisfied.
 ///
 /// Exit [`CLOSURE_UNSATISFIED`] is its own code (like the usage gate's 10) so the runner can tell
 /// "a dependency is missing" from "the binary itself failed".
 ///
 /// The environment is a PARAMETER of [`preflight_report`], not a global read, which is what lets
 /// the CI closure gate ask the identical question of a runner's BAKED path — one implementation,
-/// so the declaration and the closure cannot answer differently.
-fn preflight_mode() -> i32 {
-    preflight_report(&std::env::var_os("PATH").unwrap_or_default())
+/// so the declaration and the closure cannot answer differently. The capability verdicts are
+/// parameters for the same reason: the probes are spawned here, at the one impure point, and the
+/// report is a pure function of what they said.
+fn preflight_mode(gh_auth: bool, sol_shell: bool) -> i32 {
+    let mut caps: Vec<(&str, Option<String>)> = Vec::new();
+    if gh_auth {
+        let (code, out) = run_probe("gh", &["auth", "status"]);
+        caps.push((CAP_GH_AUTH, gh_auth_unsatisfied(code, &out)));
+    }
+    if sol_shell {
+        let (code, out) = run_probe(
+            "nix",
+            &["develop", SOL_SHELL_FLAKE, "-c", "forge", "--version"],
+        );
+        caps.push((CAP_SOL_SHELL, sol_shell_unsatisfied(code, &out)));
+    }
+    preflight_report(&std::env::var_os("PATH").unwrap_or_default(), &caps)
 }
 
-fn preflight_report(path: &std::ffi::OsStr) -> i32 {
-    let mut missing = Vec::new();
+/// Run a capability probe, returning its exit code (`None` if it could not be spawned at all) and
+/// its combined output. Combined because `gh` and `nix` both report the interesting part on stderr.
+fn run_probe(bin: &str, args: &[&str]) -> (Option<i32>, String) {
+    match Command::new(bin).args(args).output() {
+        Ok(o) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
+            s.push_str(&String::from_utf8_lossy(&o.stderr));
+            (o.status.code(), s)
+        }
+        Err(e) => (None, e.to_string()),
+    }
+}
+
+fn preflight_report(path: &std::ffi::OsStr, caps: &[(&str, Option<String>)]) -> i32 {
+    let (code, lines, missing) = preflight_lines(path, caps);
+    for l in &lines {
+        println!("{l}");
+    }
+    if code != 0 {
+        eprintln!(
+            "error: {} harness dependency/dependencies unsatisfied: {}",
+            missing.len(),
+            missing.join(", ")
+        );
+    }
+    code
+}
+
+/// PURE: the exit code, the report stdout carries, and the unsatisfied names.
+///
+/// Everything the gate DECIDES lives here, over a PATH and a set of already-taken probe verdicts,
+/// so the decision is testable without a process and without a network.
+fn preflight_lines(
+    path: &std::ffi::OsStr,
+    caps: &[(&str, Option<String>)],
+) -> (i32, Vec<String>, Vec<String>) {
+    let mut missing: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
     for t in HARNESS_TOOLS {
         match resolve_in(path, t.bin) {
-            Some(p) => println!("ok      {:<10} {}", t.bin, p.display()),
+            Some(p) => lines.push(format!("ok      {:<10} {}", t.bin, p.display())),
             None => {
-                println!("MISSING {:<10} {}", t.bin, t.why);
-                missing.push(t.bin);
+                lines.push(format!("MISSING {:<10} {}", t.bin, t.why));
+                missing.push(t.bin.to_string());
+            }
+        }
+    }
+    for (name, unsatisfied) in caps {
+        match unsatisfied {
+            None => lines.push(format!("ok      {name:<10} capability holds")),
+            Some(why) => {
+                lines.push(format!("MISSING {name:<10} {why}"));
+                missing.push((*name).to_string());
             }
         }
     }
     if missing.is_empty() {
-        return 0;
+        return (0, lines, missing);
     }
     // stdout carries the machine-readable list; the runner passes it straight to `run-metrics`.
-    println!("missing={}", missing.join(","));
-    eprintln!(
-        "error: {} harness tool(s) missing from PATH: {}",
-        missing.len(),
-        missing.join(", ")
-    );
-    CLOSURE_UNSATISFIED
+    lines.push(format!("missing={}", missing.join(",")));
+    (CLOSURE_UNSATISFIED, lines, missing)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -21998,12 +22163,21 @@ enum Cmd {
         #[arg(long, requires = "skipped")]
         skip_reason: Option<String>,
     },
-    /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
+    /// Resolve every external binary the HARNESS needs at read time, plus each capability asked
+    /// for. Exit 12 if any is unsatisfied.
     ///
     /// Run before the model, by both runners. A dependency that is absent must stop the run, not
     /// degrade it: the failure that motivated this was a vetter that could not render an audit PDF,
-    /// vetted the PR on what was left, and reported success (#85).
-    Preflight,
+    /// vetted the PR on what was left, and reported success (#85). The capability flags carry the
+    /// same rule one layer out — a tool that resolves and cannot do the job stops the run too.
+    Preflight {
+        /// Require `gh` to be authenticated, holding the scopes the pipeline writes through.
+        #[arg(long)]
+        gh_auth: bool,
+        /// Require nix to realise rainix's `sol-shell` and run `forge` out of it.
+        #[arg(long)]
+        sol_shell: bool,
+    },
     /// CI gate: every `HARNESS_TOOLS` entry resolves from EACH model runner's own baked PATH.
     /// Exit 12 if a closure is missing one, 2 if a runner could not be built or read.
     ClosurePreflight {
@@ -22124,6 +22298,16 @@ enum Cmd {
     UncoveredIssues {
         #[arg(long)]
         json: bool,
+    },
+    /// The PRODUCER's state-load in ONE result: the fleet's `nextAction` histogram, the rows that
+    /// name work, the approved set, and the audit backlog by severity — pre-grouped, so a run opens
+    /// on a typed answer rather than on a blob it re-slices with `jq`.
+    StateLoad {
+        #[arg(long)]
+        json: bool,
+        /// Bypass the fleet's read-through cache entirely (always fetch fresh).
+        #[arg(long)]
+        no_cache: bool,
     },
     /// END THE RUN: the infrastructure the work depends on is down. Records the reason on the run
     /// record and exits 12. Writes NOTHING to any PR — no label, no comment (#108).
@@ -22962,11 +23146,249 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         },
         "stateLabel": state_label,
         "humanOverride": has_human_override,
+        // GitHub's native review state, carried because human approval IS that field (there is no
+        // ledger) and 2z works the approved set first. `WORKLIST_DETAIL_FIELDS` already fetched it;
+        // dropping it from the row is what left every run re-asking GitHub the same question with a
+        // separate `gh search prs --review approved`.
+        "reviewDecision": detail
+            .get("reviewDecision")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
         "nextAction": action.as_str(),
     })
 }
 
+/// The `nextAction` values that name WORK this run: a row carrying one is dispatched to its step.
+/// The rest — `green-ready` (the human's move), `wait` (CI's), `parked-skip` (a human-gated state)
+/// — are counted and not enumerated, which is the whole reason a digest is smaller than the fleet.
+const ACTIONABLE_ACTIONS: [&str; 5] = [
+    "deploy",
+    "needs-3b",
+    "conflict-3d",
+    "coderabbit-3e",
+    "screenshot-3c",
+];
+
+/// Every `nextAction` a row can carry, in dispatch order. The histogram reports ALL of them,
+/// including the zeroes: a class absent from a `group_by` has to be inferred, and "deploy is
+/// absent, so presumably zero" is a re-derivation the caller should never have to make.
+const ALL_ACTIONS: [&str; 8] = [
+    "deploy",
+    "needs-3b",
+    "conflict-3d",
+    "coderabbit-3e",
+    "screenshot-3c",
+    "green-ready",
+    "wait",
+    "parked-skip",
+];
+
+/// PURE: the fleet half of the producer's state-load.
+///
+/// The three things every producer run derived from the raw worklist before doing anything:
+/// the `nextAction` histogram, the rows that name work, and the approved set. Approved rows are
+/// repeated in full rather than referenced, because 2z works them FIRST and an approved row is
+/// usually also an actionable one — a reference would be a second lookup into the same result.
+fn fleet_digest(rows: &[Value]) -> Value {
+    let action_of = |r: &Value| {
+        r.get("nextAction")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut by_action = serde_json::Map::new();
+    for a in ALL_ACTIONS {
+        by_action.insert(
+            a.to_string(),
+            Value::from(rows.iter().filter(|r| action_of(r) == a).count()),
+        );
+    }
+    let actionable: Vec<Value> = rows
+        .iter()
+        .filter(|r| ACTIONABLE_ACTIONS.contains(&action_of(r).as_str()))
+        .cloned()
+        .collect();
+    let approved: Vec<Value> = rows
+        .iter()
+        .filter(|r| r.get("reviewDecision").and_then(|v| v.as_str()) == Some("APPROVED"))
+        .cloned()
+        .collect();
+    serde_json::json!({
+        "total": rows.len(),
+        "byAction": Value::Object(by_action),
+        "actionable": actionable,
+        "approved": approved,
+    })
+}
+
+/// The severity labels the audit skill puts on an issue, worst first. The order is the priority
+/// order the producer works the backlog in, so it is stated once here rather than re-sorted by
+/// each caller.
+const SEVERITY_LABELS: [&str; 5] = ["critical", "high", "medium", "low", "info"];
+
+/// The bucket for an audit-labelled issue carrying no severity label at all. A named bucket and
+/// not a dropped row: an audit finding whose severity nobody set is still work, and a histogram
+/// that silently omits it under-reports the backlog.
+const SEVERITY_NONE: &str = "none";
+
+/// PURE: an issue's label names, from either shape `gh` returns them in — objects (`gh search
+/// issues --json labels`) or bare strings. Both, because a reader that assumed one shape is
+/// exactly what made four separate runs re-run the same query until it parsed.
+fn issue_label_names(meta: &Value) -> Vec<String> {
+    meta.get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| match l {
+                    Value::String(s) => Some(s.clone()),
+                    _ => l
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .map(std::string::ToString::to_string),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// PURE: is this issue part of the AUDIT backlog — the set the producer drains before general work?
+///
+/// `passN` is matched as the prefix plus a digit run, not as the bare prefix: the audit skill emits
+/// `pass0`..`pass6` today and the count of passes is its business, but an ordinary label that merely
+/// starts with those four letters is not an audit finding.
+fn is_audit_labelled(labels: &[String]) -> bool {
+    labels.iter().any(|l| {
+        l == "audit"
+            || l == "mutation-test"
+            || l.strip_prefix("pass")
+                .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+/// PURE: an issue's severity, worst-first when it carries more than one.
+fn issue_severity(labels: &[String]) -> &'static str {
+    SEVERITY_LABELS
+        .into_iter()
+        .find(|s| labels.iter().any(|l| l == s))
+        .unwrap_or(SEVERITY_NONE)
+}
+
+/// PURE: the backlog half of the producer's state-load.
+///
+/// The audit set is enumerated and the general set is counted, which is the priority order the
+/// prompt already works in — audit-labelled first, by severity. Counting the general set rather
+/// than listing it is what keeps the digest bounded: the uncovered set runs to ~650 issues and the
+/// audit subset to ~50.
+fn backlog_digest(issues: &[Value]) -> Value {
+    let mut audit: Vec<Value> = Vec::new();
+    let mut by_severity = serde_json::Map::new();
+    for s in SEVERITY_LABELS
+        .iter()
+        .chain(std::iter::once(&SEVERITY_NONE))
+    {
+        by_severity.insert((*s).to_string(), Value::from(0u64));
+    }
+    for it in issues {
+        let labels = issue_label_names(it);
+        if !is_audit_labelled(&labels) {
+            continue;
+        }
+        let sev = issue_severity(&labels);
+        let n = by_severity
+            .get(sev)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        by_severity.insert(sev.to_string(), Value::from(n + 1));
+        audit.push(serde_json::json!({
+            "repo": issue_repo(it),
+            "number": it.get("number").and_then(serde_json::Value::as_u64).unwrap_or(0),
+            "url": it.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+            "title": it.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+            "severity": sev,
+            "labels": labels,
+        }));
+    }
+    // worst-first, so the row order IS the order the backlog is worked in.
+    audit.sort_by_key(|r| {
+        SEVERITY_LABELS
+            .iter()
+            .position(|s| Some(*s) == r.get("severity").and_then(|v| v.as_str()))
+            .unwrap_or(SEVERITY_LABELS.len())
+    });
+    serde_json::json!({
+        "uncovered": issues.len(),
+        "audit": {
+            "total": audit.len(),
+            "bySeverity": Value::Object(by_severity),
+            "issues": audit,
+        },
+        "general": issues.len() - audit.len(),
+    })
+}
+
+/// PURE: an issue's `owner/repo`, from either shape `gh` returns it in.
+fn issue_repo(meta: &Value) -> String {
+    match meta.get("repository") {
+        Some(Value::String(s)) => s.clone(),
+        Some(r) => r
+            .get("nameWithOwner")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        None => String::new(),
+    }
+}
+
 fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
+    let Some(rows) = worklist_rows(use_cache) else {
+        return 1;
+    };
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into())
+        );
+    } else {
+        println!("worklist: {} open PRs by {}\n", rows.len(), pr_assignee());
+        for r in &rows {
+            let fc = r
+                .get("failingChecks")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            println!(
+                "  [{:>12}] {}#{}  ci={} merge={} threads={}{}",
+                r.get("nextAction").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("number")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                r.get("ci").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("mergeState").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("unresolvedThreads")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                if fc.is_empty() {
+                    String::new()
+                } else {
+                    format!("  failing=[{fc}]")
+                },
+            );
+        }
+    }
+    0
+}
+
+/// The fleet rows themselves, action-ranked. Split out from [`worklist_mode`] so `state-load` can
+/// compose the same computation instead of re-deriving it — one fleet read, one classifier, so the
+/// digest and the raw list can never disagree about what a PR needs. `None` on a gh failure, which
+/// every caller must treat as an abort rather than as an empty fleet.
+fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
     let assignee = pr_assignee();
     let mut search: Vec<String> = vec!["search".into(), "prs".into()];
     search.extend(org_owner_args());
@@ -22987,7 +23409,7 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
     let sref: Vec<&str> = search.iter().map(String::as_str).collect();
     let Some(val) = gh_json(&sref) else {
         eprintln!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty worklist");
-        return 1;
+        return None;
     };
     let empty = Vec::new();
     let arr = val.as_array().unwrap_or(&empty);
@@ -23070,41 +23492,94 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
         })
     });
 
+    Some(rows)
+}
+
+/// `state-load`: the producer's WHOLE opening picture in ONE result.
+///
+/// It composes the two state-loads a run already made — the fleet and the uncovered backlog — and
+/// answers, in the result itself, the questions every run then re-derived in shell: the
+/// `nextAction` histogram, the rows that name work, the approved set, and the audit backlog by
+/// severity. Those four were measured across the producer traces, not chosen: each is deterministic
+/// given data the two subcommands already hold, so each round trip that computed one was buying an
+/// answer the tool could have handed over.
+///
+/// PRE-GROUPED, NOT QUERYABLE. A query interface would put the round trip back for the caller that
+/// wants one grouping, and the payload argument does not survive the counts: three of the four are
+/// wanted by every run and the fourth by most, so the inflation a general result pays is a fraction
+/// of one grouping's summary — against 6–31 shell calls whose results also sit in context for the
+/// rest of the run.
+///
+/// A FAILED half is an ABORT, never a partial digest: the two underlying reads each refuse to
+/// report a falsely-empty set, and a digest that quietly dropped one would launder exactly the
+/// emptiness they refuse.
+fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
+    let Some(rows) = worklist_rows(use_cache) else {
+        return 1;
+    };
+    let Some((open, meta)) = coverage_uncovered() else {
+        return 1;
+    };
+    let issues: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
+    let fleet = fleet_digest(&rows);
+    let backlog = backlog_digest(&issues);
     if json_out {
         println!(
             "{}",
-            serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into())
+            serde_json::to_string_pretty(&serde_json::json!({
+                "fleet": fleet,
+                "backlog": backlog,
+            }))
+            .unwrap_or_else(|_| "{}".into())
         );
-    } else {
-        println!("worklist: {} open PRs by {assignee}\n", rows.len());
-        for r in &rows {
-            let fc = r
-                .get("failingChecks")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                })
-                .unwrap_or_default();
-            println!(
-                "  [{:>12}] {}#{}  ci={} merge={} threads={}{}",
-                r.get("nextAction").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
-                r.get("ci").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("mergeState").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("unresolvedThreads")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-                if fc.is_empty() {
-                    String::new()
-                } else {
-                    format!("  failing=[{fc}]")
-                },
-            );
-        }
+        return 0;
+    }
+    println!(
+        "fleet: {} open PRs by {}",
+        fleet
+            .get("total")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        pr_assignee()
+    );
+    for a in ALL_ACTIONS {
+        println!(
+            "  {a:<14} {}",
+            fleet
+                .pointer(&format!("/byAction/{a}"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        );
+    }
+    println!(
+        "  approved       {}",
+        fleet
+            .get("approved")
+            .and_then(|v| v.as_array())
+            .map_or(0, Vec::len)
+    );
+    println!(
+        "\nbacklog: {} uncovered issues ({} audit-labelled)",
+        backlog
+            .get("uncovered")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        backlog
+            .pointer("/audit/total")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    );
+    for s in SEVERITY_LABELS
+        .iter()
+        .chain(std::iter::once(&SEVERITY_NONE))
+    {
+        println!(
+            "  {s:<14} {}",
+            backlog
+                .pointer(&format!("/audit/bySeverity/{s}"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        );
     }
     0
 }
@@ -23880,7 +24355,7 @@ fn main() {
             infra.as_deref(),
             skipped.as_deref().zip(skip_reason.as_deref()),
         ),
-        Cmd::Preflight => preflight_mode(),
+        Cmd::Preflight { gh_auth, sol_shell } => preflight_mode(gh_auth, sol_shell),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
         Cmd::ClosureRender { flake } => closure_render_mode(&flake),
         Cmd::ClosureSurface { flake } => closure_surface_mode(&flake),
@@ -23910,6 +24385,7 @@ fn main() {
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::StateLoad { json, no_cache } => state_load_mode(json, !no_cache),
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
         Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
         Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
@@ -31887,6 +32363,56 @@ mod cli_tests {
     }
 
     #[test]
+    fn preflight_capabilities_are_opt_in_per_runner() {
+        // Bare `preflight` is the vetter's call and must keep asking ONLY the PATH question: the
+        // vetter builds nothing, so realising a Solidity shell for it would spend a nix evaluation
+        // on a capability it never uses — and a gate that costs a runner something for nothing is
+        // the gate that gets switched off.
+        assert_eq!(
+            parse(&["prr", "preflight"]),
+            Cmd::Preflight {
+                gh_auth: false,
+                sol_shell: false
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "preflight", "--gh-auth", "--sol-shell"]),
+            Cmd::Preflight {
+                gh_auth: true,
+                sol_shell: true
+            },
+            "the producer's call — campaign-run.sh passes both"
+        );
+        assert_eq!(
+            parse(&["prr", "preflight", "--gh-auth"]),
+            Cmd::Preflight {
+                gh_auth: true,
+                sol_shell: false
+            },
+            "each capability is independently askable"
+        );
+    }
+
+    #[test]
+    fn state_load_cli() {
+        assert_eq!(
+            parse(&["prr", "state-load"]),
+            Cmd::StateLoad {
+                json: false,
+                no_cache: false
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "state-load", "--json", "--no-cache"]),
+            Cmd::StateLoad {
+                json: true,
+                no_cache: true
+            },
+            "the fleet half reads through worklist's cache, so it takes worklist's bypass too"
+        );
+    }
+
+    #[test]
     fn trace_outcome_cli() {
         assert_eq!(
             parse(&["prr", "trace-outcome", "/t.jsonl"]),
@@ -33026,6 +33552,258 @@ mod worklist_tests {
         assert!(!cache_fresh("t1", "nochecks", 100, "t1", 200, 10800));
         // past ttl -> MISS
         assert!(!cache_fresh("t1", "green", 100, "t1", 100 + 10800, 10800));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `state-load`: the groupings a producer run opens on.
+//
+// Every grouping here was derived from what the producer traces DO, not from what seemed useful:
+// the `nextAction` histogram and the actionable list appear in 7 of 7 runs, the approved set in 7
+// of 7 (as a separate `gh search prs --review approved` whose answer was empty every time), and
+// the audit backlog by severity in 4 of 7. Groupings asked for by 3 runs or fewer are deliberately
+// absent.
+//
+// The label/repository shape tests are not defensive padding. Four separate runs spent 2–4 calls
+// each failing to parse `uncovered-issues` output (`startswith() requires string inputs`;
+// `string ("") and object ({"color":"5...) cannot be added`), and one of them accepted
+// `audit-backlog total: 0` for a backlog that actually held 46 issues. A shell re-derivation can
+// be silently wrong; that is the argument for computing it here, so it is also the thing to pin.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod state_load_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A worklist row as `fleet_digest` reads it — only the fields the digest keys on.
+    fn row(action: &str, review: &str) -> Value {
+        json!({"repo": "o/r", "number": 1, "nextAction": action, "reviewDecision": review})
+    }
+
+    fn issue(labels: &[&str]) -> Value {
+        json!({
+            "number": 1,
+            "url": "u",
+            "title": "t",
+            "repository": {"name": "r", "nameWithOwner": "o/r"},
+            "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn the_histogram_states_every_action_including_the_zeroes() {
+        // `group_by` omits an empty class, so "deploy is absent, therefore zero" is an inference
+        // the caller had to make. Stating the zero is the difference between an answer and a hint.
+        let d = fleet_digest(&[row("needs-3b", ""), row("needs-3b", ""), row("wait", "")]);
+        assert_eq!(d["total"], 3);
+        assert_eq!(d["byAction"]["needs-3b"], 2);
+        assert_eq!(d["byAction"]["wait"], 1);
+        for a in ALL_ACTIONS {
+            assert!(
+                d["byAction"].get(a).is_some(),
+                "every action is named, {a} was not"
+            );
+        }
+        assert_eq!(d["byAction"]["deploy"], 0);
+        assert_eq!(d["byAction"]["parked-skip"], 0);
+    }
+
+    #[test]
+    fn only_the_actions_that_name_work_are_enumerated() {
+        // The bulk of the fleet is `parked-skip` + `green-ready` + `wait` — 70–95% of it across the
+        // measured runs — and no run ever acts on one. Enumerating them is what made the raw list
+        // 123 KB.
+        let rows: Vec<Value> = ALL_ACTIONS.iter().map(|a| row(a, "")).collect();
+        let d = fleet_digest(&rows);
+        let listed: Vec<String> = d["actionable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["nextAction"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(listed, ACTIONABLE_ACTIONS.map(String::from).to_vec());
+        for skipped in ["green-ready", "wait", "parked-skip"] {
+            assert!(
+                !listed.contains(&skipped.to_string()),
+                "{skipped} must be counted, not enumerated"
+            );
+        }
+    }
+
+    #[test]
+    fn the_approved_set_comes_off_the_row_and_not_off_a_second_search() {
+        // `reviewDecision` was already in `WORKLIST_DETAIL_FIELDS` and thrown away, so every run
+        // paid a `gh search prs --review approved` round trip for a field the tool held.
+        let d = fleet_digest(&[
+            row("green-ready", "APPROVED"),
+            row("needs-3b", "APPROVED"),
+            row("green-ready", "REVIEW_REQUIRED"),
+            row("green-ready", ""),
+        ]);
+        assert_eq!(d["approved"].as_array().unwrap().len(), 2);
+        // An approved row is repeated in full rather than referenced: 2z works it FIRST, and it is
+        // usually also actionable, so a reference would be a second lookup into the same result.
+        assert_eq!(d["approved"][1]["nextAction"], "needs-3b");
+        assert!(
+            d["actionable"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["nextAction"] == "needs-3b"),
+            "and it still appears under its action"
+        );
+        // Nothing but APPROVED is approved — CHANGES_REQUESTED is a review too.
+        for other in ["CHANGES_REQUESTED", "REVIEW_REQUIRED", "", "approved"] {
+            assert!(
+                fleet_digest(&[row("green-ready", other)])["approved"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty(),
+                "{other} is not APPROVED"
+            );
+        }
+    }
+
+    #[test]
+    fn the_audit_set_is_the_audit_labels_and_a_pass_number() {
+        assert!(is_audit_labelled(&["audit".to_string()]));
+        assert!(is_audit_labelled(&["mutation-test".to_string()]));
+        for n in ["pass0", "pass4", "pass6", "pass12"] {
+            assert!(is_audit_labelled(&[n.to_string()]), "{n}");
+        }
+        // `passN` is a prefix PLUS a digit run. A label that merely starts with those four letters
+        // is not an audit finding, and the shell reads that shipped said it was.
+        for not in ["pass", "passing", "password", "passN", "bug", "enhancement"] {
+            assert!(!is_audit_labelled(&[not.to_string()]), "{not}");
+        }
+        assert!(is_audit_labelled(&["bug".to_string(), "audit".to_string()]));
+        assert!(!is_audit_labelled(&[]));
+    }
+
+    #[test]
+    fn severity_is_worst_first_and_absent_is_a_bucket() {
+        assert_eq!(issue_severity(&["low".to_string()]), "low");
+        assert_eq!(
+            issue_severity(&["low".to_string(), "critical".to_string()]),
+            "critical",
+            "worst wins, whatever order GitHub returns the labels in"
+        );
+        assert_eq!(
+            issue_severity(&["medium".to_string(), "high".to_string()]),
+            "high"
+        );
+        assert_eq!(
+            issue_severity(&["audit".to_string()]),
+            SEVERITY_NONE,
+            "an audit finding nobody severity-rated is still work"
+        );
+    }
+
+    #[test]
+    fn the_backlog_counts_the_general_set_and_lists_the_audit_one() {
+        let issues = vec![
+            issue(&["audit", "medium"]),
+            issue(&["audit", "critical"]),
+            issue(&["pass3", "low"]),
+            issue(&["mutation-test"]),
+            issue(&["bug"]),
+            issue(&["enhancement"]),
+        ];
+        let b = backlog_digest(&issues);
+        assert_eq!(b["uncovered"], 6);
+        assert_eq!(b["general"], 2);
+        assert_eq!(b["audit"]["total"], 4);
+        assert_eq!(b["audit"]["bySeverity"]["critical"], 1);
+        assert_eq!(b["audit"]["bySeverity"]["medium"], 1);
+        assert_eq!(b["audit"]["bySeverity"]["low"], 1);
+        assert_eq!(b["audit"]["bySeverity"][SEVERITY_NONE], 1);
+        assert_eq!(b["audit"]["bySeverity"]["high"], 0);
+        // The listed rows are worst-first: the row ORDER is the order the backlog is worked in.
+        let sevs: Vec<&str> = b["audit"]["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["severity"].as_str().unwrap())
+            .collect();
+        assert_eq!(sevs, vec!["critical", "medium", "low", SEVERITY_NONE]);
+        // Only the audit set is listed — the general set is a number, because it runs to ~650.
+        assert_eq!(b["audit"]["issues"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn a_label_is_read_from_either_shape_gh_returns_it_in() {
+        // Objects (`gh search issues --json labels`) and bare strings both. Assuming one shape is
+        // what made four runs re-run the same query until it parsed.
+        assert_eq!(
+            issue_label_names(&json!({"labels": [{"name": "audit"}, {"name": "low"}]})),
+            vec!["audit".to_string(), "low".to_string()]
+        );
+        assert_eq!(
+            issue_label_names(&json!({"labels": ["audit", "low"]})),
+            vec!["audit".to_string(), "low".to_string()]
+        );
+        assert!(issue_label_names(&json!({})).is_empty());
+        assert!(issue_label_names(&json!({"labels": []})).is_empty());
+        // …and the digest agrees across both shapes, which is the property that matters.
+        assert_eq!(
+            backlog_digest(&[json!({"labels": ["audit", "high"]})])["audit"]["bySeverity"]["high"],
+            1
+        );
+    }
+
+    #[test]
+    fn a_repo_is_read_from_either_shape_gh_returns_it_in() {
+        assert_eq!(
+            issue_repo(&json!({"repository": {"nameWithOwner": "o/r"}})),
+            "o/r"
+        );
+        assert_eq!(issue_repo(&json!({"repository": "o/r"})), "o/r");
+        assert_eq!(issue_repo(&json!({})), "");
+        // The listed row carries the slug, so a caller never has to know which shape it came from.
+        let b = backlog_digest(&[issue(&["audit"])]);
+        assert_eq!(b["audit"]["issues"][0]["repo"], "o/r");
+    }
+
+    #[test]
+    fn an_empty_state_load_is_an_answer_not_a_gap() {
+        let d = fleet_digest(&[]);
+        assert_eq!(d["total"], 0);
+        assert!(d["actionable"].as_array().unwrap().is_empty());
+        assert!(d["approved"].as_array().unwrap().is_empty());
+        assert_eq!(d["byAction"]["needs-3b"], 0);
+        let b = backlog_digest(&[]);
+        assert_eq!(b["uncovered"], 0);
+        assert_eq!(b["general"], 0);
+        assert_eq!(b["audit"]["total"], 0);
+        assert_eq!(b["audit"]["bySeverity"]["critical"], 0);
+    }
+
+    #[test]
+    fn the_row_carries_the_review_decision_the_digest_keys_on() {
+        // The seam: `worklist_row` must emit what `fleet_digest` reads, or the approved set is
+        // silently empty for every fleet.
+        let detail = json!({
+            "number": 1, "headRefOid": "H", "reviewDecision": "APPROVED",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [], "comments": [],
+            "files": [], "changedFiles": 0
+        });
+        let r = worklist_row("o/r", &detail);
+        assert_eq!(r["reviewDecision"], "APPROVED");
+        assert_eq!(fleet_digest(&[r])["approved"].as_array().unwrap().len(), 1);
+        // A PR with no review at all reads as not approved, never as absent-and-therefore-anything.
+        let detail = json!({
+            "number": 1, "headRefOid": "H",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [], "comments": [],
+            "files": [], "changedFiles": 0
+        });
+        let r = worklist_row("o/r", &detail);
+        assert_eq!(r["reviewDecision"], "");
+        assert!(fleet_digest(&[r])["approved"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 }
 
@@ -38961,18 +39739,156 @@ mod closure_gate_tests {
         }
         let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
         assert_eq!(
-            preflight_report(&path),
+            preflight_report(&path, &[]),
             0,
             "a PATH carrying every declared tool satisfies preflight"
         );
         // Drop one and the same code says so — this is the exact question `closure-preflight`
         // asks of each runner's baked PATH, so the two cannot answer differently.
         std::fs::remove_file(bin.join(HARNESS_TOOLS[0].bin)).unwrap();
-        assert_eq!(preflight_report(&path), CLOSURE_UNSATISFIED);
+        assert_eq!(preflight_report(&path, &[]), CLOSURE_UNSATISFIED);
         assert_eq!(
-            preflight_report(&std::ffi::OsString::new()),
+            preflight_report(&std::ffi::OsString::new(), &[]),
             CLOSURE_UNSATISFIED,
             "an empty environment resolves nothing"
+        );
+    }
+
+    #[test]
+    fn an_unsatisfied_capability_fails_a_path_that_carries_every_tool() {
+        let s = Scratch::new("preflight-caps");
+        let bin = s.bindir("bin");
+        for t in HARNESS_TOOLS {
+            s.stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        assert_eq!(
+            preflight_report(&path, &[(CAP_GH_AUTH, None), (CAP_SOL_SHELL, None)]),
+            0,
+            "every tool present and every capability holding is the passing case"
+        );
+        // The capability is the POINT: `gh` resolving from PATH is exactly the state in which an
+        // expired token still ends the run, so a satisfied tool list must not carry the verdict.
+        assert_eq!(
+            preflight_report(
+                &path,
+                &[
+                    (CAP_GH_AUTH, Some("expired".to_string())),
+                    (CAP_SOL_SHELL, None)
+                ]
+            ),
+            CLOSURE_UNSATISFIED
+        );
+        assert_eq!(
+            preflight_report(&path, &[(CAP_SOL_SHELL, Some("no forge".to_string()))]),
+            CLOSURE_UNSATISFIED
+        );
+    }
+
+    #[test]
+    fn a_capability_reaches_the_runners_missing_list_by_name() {
+        // The runner scrapes `missing=` and passes it to `run-metrics --preflight-missing`, which
+        // is what makes the abort a recorded ToolingFailure rather than a silent exit. A capability
+        // that failed the gate but never reached that line would abort a run the record could not
+        // explain.
+        let s = Scratch::new("preflight-missing-line");
+        let bin = s.bindir("bin");
+        for t in HARNESS_TOOLS {
+            s.stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        let (code, lines, missing) =
+            preflight_lines(&path, &[(CAP_GH_AUTH, Some("expired".to_string()))]);
+        assert_eq!(code, CLOSURE_UNSATISFIED);
+        assert_eq!(missing, vec![CAP_GH_AUTH.to_string()]);
+        assert!(
+            lines.iter().any(|l| l == &format!("missing={CAP_GH_AUTH}")),
+            "the machine-readable line names the capability: {lines:?}"
+        );
+        assert_eq!(
+            classify_outcome(
+                "",
+                CLOSURE_UNSATISFIED,
+                false,
+                &[CAP_GH_AUTH.to_string()],
+                &InfraRecord::default()
+            ),
+            TraceOutcome::ToolingFailure,
+            "and a run aborted on one records as a tooling failure, never as ok or skipped"
+        );
+    }
+
+    // ---- capability verdicts, over the probe output they are given ----
+
+    #[test]
+    fn a_gh_that_cannot_answer_fails_the_gate() {
+        assert_eq!(
+            gh_auth_unsatisfied(Some(0), "  ✓ Logged in to github.com account x\n"),
+            None,
+            "logged in, and no scopes line to contradict it"
+        );
+        let why = gh_auth_unsatisfied(Some(1), "You are not logged into any GitHub hosts.\n")
+            .expect("a non-zero gh auth status is unsatisfied");
+        assert!(why.contains("exited 1"), "{why}");
+        assert!(
+            why.contains("not logged into"),
+            "the reason quotes gh: {why}"
+        );
+        let why = gh_auth_unsatisfied(None, "No such file or directory (os error 2)")
+            .expect("a gh that could not be spawned is unsatisfied");
+        assert!(why.contains("did not run"), "{why}");
+    }
+
+    #[test]
+    fn a_token_short_of_a_write_scope_fails_the_gate_and_names_the_scope() {
+        let ok = "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n";
+        assert_eq!(gh_auth_unsatisfied(Some(0), ok), None);
+        let why = gh_auth_unsatisfied(Some(0), "  - Token scopes: 'gist', 'repo'\n")
+            .expect("a token without `workflow` cannot dispatch the deploy workflow");
+        assert!(why.contains("workflow"), "{why}");
+        assert!(
+            !why.contains("repo,"),
+            "it names only what is LACKING: {why}"
+        );
+        // `public_repo` is not `repo`, and a substring read would have said it was.
+        let why = gh_auth_unsatisfied(Some(0), "  - Token scopes: 'public_repo', 'workflow'\n")
+            .expect("public_repo cannot write the pipeline's labels and comments");
+        assert!(why.contains("repo"), "{why}");
+    }
+
+    #[test]
+    fn no_scopes_line_is_not_evidence_of_a_missing_scope() {
+        // gh omits the line for token kinds that carry no classic scopes. Inferring a failure from
+        // its absence would abort a run whose token is fine, which is the one way this gate gets
+        // switched off.
+        assert_eq!(gh_token_scopes("  ✓ Logged in to github.com\n"), None);
+        assert_eq!(
+            gh_auth_unsatisfied(Some(0), "  ✓ Logged in to github.com\n"),
+            None
+        );
+        assert_eq!(
+            gh_token_scopes("  - Token scopes: none\n"),
+            Some(vec![]),
+            "a line that says `none` IS evidence, and reads as no scopes at all"
+        );
+        assert!(gh_auth_unsatisfied(Some(0), "  - Token scopes: none\n").is_some());
+    }
+
+    #[test]
+    fn the_sol_shell_probe_is_its_exit_status() {
+        assert_eq!(sol_shell_unsatisfied(Some(0), "forge Version: 1.3.0"), None);
+        assert_eq!(
+            sol_shell_unsatisfied(Some(0), "some other banner"),
+            None,
+            "a working forge that reworded its banner still works"
+        );
+        let why = sol_shell_unsatisfied(Some(1), "error: unable to download 'rainix'\n")
+            .expect("a shell that cannot be realised is unsatisfied");
+        assert!(why.contains("exited 1"), "{why}");
+        assert!(why.contains("unable to download"), "{why}");
+        assert!(
+            sol_shell_unsatisfied(None, "nix not found").is_some(),
+            "a nix that could not be spawned is unsatisfied"
         );
     }
 

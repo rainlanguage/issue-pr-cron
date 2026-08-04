@@ -2112,11 +2112,73 @@ The surface gate is deliberately the third and not the only one. A symmetry
 check cannot see a capability **both** runners lack, which is exactly #85's
 shape; the two presence gates are what hold that bug.
 
+### Capabilities: the half of the environment PATH cannot answer
+
+`HARNESS_TOOLS` proves **presence**. `preflight`'s capability flags prove
+**function**, which is a different question about the same environment: `gh`
+resolves and is unauthenticated, `nix` resolves and cannot realise the shell the
+Solidity work builds in. Each is opt-in per runner — `campaign-run.sh` passes
+`--gh-auth --sol-shell`, `review-run.sh` passes neither, because the vetter
+reads PRs through the MCP surface and builds nothing, and a gate that costs a
+runner a nix evaluation for a capability it never uses is the gate that gets
+switched off.
+
+They were the producer prompt's step 1 until they moved here. Every producer run
+opened with the identical two calls, `gh auth status` and
+`nix develop …#sol-shell -c forge --version`, and neither carried decision
+content: a model that read "not logged in" could do nothing about it and started
+work anyway. **Moving them is a behaviour change, deliberately taken.** A broken
+`gh` now ends the run before a token is spent, on the same edge a missing
+`pdftoppm` takes — exit 12, one `metrics/runs.jsonl` row naming the unsatisfied
+capability in `missingTools`, `"outcome": "tooling-failure"`. That is neither a
+success nor a skip: a skip is a tick the pipeline chose not to run
+(`usage-gate`), and reading a dead tick as either is #176's complaint one layer
+down.
+
+The gh check is also **stricter** than the read it replaces. It asserts the
+token's `repo` and `workflow` scopes — the ones the pipeline's labels, comments
+and deploy dispatch actually need — matching whole scope entries rather than
+substrings, so `public_repo` does not satisfy `repo`. Where `gh` reports no
+scopes line at all (token kinds that carry none), the gate passes: absence of
+evidence is not evidence, and a false abort here costs a whole tick.
+
+### The producer's state-load is one pre-grouped result
+
+`pr-review-report state-load --json` composes `worklist` and `uncovered-issues`
+and returns the groupings the producer traces show runs actually derive:
+
+| Grouping                                        | Runs asking for it |
+| ----------------------------------------------- | ------------------ |
+| `fleet.byAction` — the `nextAction` histogram   | 7 of 7             |
+| `fleet.actionable` — the rows that name work    | 7 of 7             |
+| `fleet.approved` — `reviewDecision == APPROVED` | 7 of 7             |
+| `backlog.audit` — the audit backlog by severity | 4 of 7             |
+
+Groupings three runs or fewer asked for are deliberately absent — a grouping one
+run improvised is not a requirement, and a result that answers everything is a
+result nobody can read.
+
+Pre-grouped rather than queryable, because the counts settle it: a query
+interface puts the round trip back for a caller that wants one grouping, and
+three of the four are wanted by every run. The payload argument runs the other
+way too — `green-ready`, `wait` and `parked-skip` rows are **counted, not
+listed**, because no step acts on one, and they were 70–95% of the ~123 KB raw
+fleet across the measured runs.
+
+Two of these are not merely round trips. `reviewDecision` was already in
+`WORKLIST_DETAIL_FIELDS` and thrown away, so every run re-asked GitHub for it
+with a separate `gh search prs --review approved` — a search that returned
+**empty in all seven runs measured**. And the shell re-derivation is not
+reliable: four runs spent 2–4 `jq` calls each fighting `uncovered-issues`'s
+label shape (`startswith() requires string inputs`), and one of them accepted
+`audit-backlog total: 0` for a backlog that actually held 46 issues. A grouping
+computed in the tool is a grouping that cannot be silently wrong.
+
 ## What a run does
 
-1. Auth + toolchain check (`gh auth status`, nix `forge --version`); stop loudly
-   if broken.
-2. Enumerate open issues org-wide.
+1. `campaign-run.sh` asserts the environment before the model starts
+   (`preflight --gh-auth --sol-shell`); unsatisfied ends the run.
+2. Load the whole opening state in one call (`state-load --json`).
 3. Cheaply dedup against open PRs (single `jq` pass; byte-grepping the PR JSON
    is forbidden).
 4. For each tractable, genuinely-uncovered issue: clone, branch, implement a
