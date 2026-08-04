@@ -4298,9 +4298,7 @@ fn gh_auth_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
             None => format!("`gh auth status` did not run: {first}"),
         });
     }
-    let Some(scopes) = gh_token_scopes(out) else {
-        return None;
-    };
+    let scopes = gh_token_scopes(out)?;
     let lacking: Vec<&str> = REQUIRED_GH_SCOPES
         .iter()
         .copied()
@@ -4349,8 +4347,7 @@ fn sol_shell_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
     let last = out
         .lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .next_back()
+        .rfind(|l| !l.is_empty())
         .unwrap_or("no output");
     Some(match code {
         Some(c) => format!("`nix develop {SOL_SHELL_FLAKE} -c forge --version` exited {c}: {last}"),
