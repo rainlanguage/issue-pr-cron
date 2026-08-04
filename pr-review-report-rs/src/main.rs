@@ -4727,7 +4727,9 @@ impl SolToolchain {
     fn describe(&self) -> String {
         match self {
             SolToolchain::Reusable(r) => format!("rainix reusable @{r}"),
-            SolToolchain::RepoFlake => "the repo's own flake (nix develop, no flake argument)".into(),
+            SolToolchain::RepoFlake => {
+                "the repo's own flake (nix develop, no flake argument)".into()
+            }
             SolToolchain::Explicit(f) => format!("explicit flake {f}"),
         }
     }
@@ -5102,13 +5104,17 @@ jobs:
     #[test]
     fn only_a_push_or_pr_triggered_workflow_gates_anything() {
         assert!(workflow_gates_a_push("on: [push]\njobs:\n"));
-        assert!(workflow_gates_a_push("on:\n  push:\n    branches: [main]\njobs:\n"));
+        assert!(workflow_gates_a_push(
+            "on:\n  push:\n    branches: [main]\njobs:\n"
+        ));
         assert!(workflow_gates_a_push("on:\n  pull_request:\njobs:\n"));
         assert!(!workflow_gates_a_push("on: workflow_dispatch:\njobs:\n"));
         assert!(!workflow_gates_a_push(
             "on:\n  workflow_dispatch:\n    inputs:\n      network:\njobs:\n  push-it:\n"
         ));
-        assert!(!workflow_gates_a_push("on:\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n"));
+        assert!(!workflow_gates_a_push(
+            "on:\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n"
+        ));
     }
 
     /// A `push` named OUTSIDE the `on:` block must not make a dispatch-only workflow look like a
@@ -5164,7 +5170,9 @@ jobs:
             Some((SolToolchain::RepoFlake, "rainix-sol-prelude".to_string()))
         );
         assert_eq!(
-            nix_develop_step("        run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt"),
+            nix_develop_step(
+                "        run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt"
+            ),
             Some((
                 SolToolchain::Explicit("github:rainlanguage/rainix#sol-shell".to_string()),
                 "forge fmt".to_string()
@@ -5217,7 +5225,10 @@ jobs:
     fn a_dispatch_only_workflow_contributes_no_toolchain() {
         let manual = "on: workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: nix develop -c rainix-sol-artifacts\n";
         assert_eq!(
-            sol_toolchains(&wfs(&[("rainix-sol.yaml", REUSABLE_WF), ("manual.yaml", manual)])),
+            sol_toolchains(&wfs(&[
+                ("rainix-sol.yaml", REUSABLE_WF),
+                ("manual.yaml", manual)
+            ])),
             vec![(
                 SolToolchain::Reusable("main".to_string()),
                 vec!["rainix-sol.yaml".to_string()]
@@ -5239,7 +5250,10 @@ jobs:
         assert_eq!(code, 3);
         assert!(out.contains("mode: conflict"), "{out}");
         assert!(out.contains("2 different Solidity toolchains"), "{out}");
-        assert!(!out.contains("verify:"), "a conflict must offer no command: {out}");
+        assert!(
+            !out.contains("verify:"),
+            "a conflict must offer no command: {out}"
+        );
     }
 
     #[test]
@@ -5248,7 +5262,10 @@ jobs:
             rainix_sha("name: x\nenv:\n  RAINIX_SHA: 53e96a7d0a97\njobs:\n"),
             Some("53e96a7d0a97".to_string())
         );
-        assert_eq!(rainix_sha("env:\n  RAINIX_SHA: \"abc\"\n"), Some("abc".to_string()));
+        assert_eq!(
+            rainix_sha("env:\n  RAINIX_SHA: \"abc\"\n"),
+            Some("abc".to_string())
+        );
         assert_eq!(rainix_sha("name: x\njobs:\n"), None);
         assert_eq!(rainix_sha("env:\n  RAINIX_SHA:\n"), None);
     }
@@ -5264,8 +5281,9 @@ jobs:
             agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", None)]),
             Ok("aaa".to_string())
         );
-        let err = agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", Some("bbb".into()))])
-            .unwrap_err();
+        let err =
+            agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", Some("bbb".into()))])
+                .unwrap_err();
         assert!(err.contains("disagree"), "{err}");
         assert!(agreed_rainix_sha(&[("static", None), ("test", None)]).is_err());
     }
@@ -5288,7 +5306,10 @@ jobs:
     #[test]
     fn the_reusable_verdict_carries_the_resolved_sha_into_the_command() {
         let (code, out) = report(
-            &[(SolToolchain::Reusable("main".into()), vec!["w.yaml".to_string()])],
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["w.yaml".to_string()],
+            )],
             true,
             Some(Ok("53e96a7d0a97d7c7c75c3b2412521324776fdac6".into())),
         );
@@ -5306,12 +5327,18 @@ jobs:
     #[test]
     fn an_unreadable_pin_offers_no_command_at_all() {
         let (code, out) = report(
-            &[(SolToolchain::Reusable("main".into()), vec!["w.yaml".to_string()])],
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["w.yaml".to_string()],
+            )],
             true,
             Some(Err("404".into())),
         );
         assert_eq!(code, 3);
-        assert!(out.contains("error: the pin at @main is unreadable: 404"), "{out}");
+        assert!(
+            out.contains("error: the pin at @main is unreadable: 404"),
+            "{out}"
+        );
         assert!(!out.contains("verify:"), "{out}");
     }
 
@@ -5344,7 +5371,10 @@ jobs:
     #[test]
     fn every_toolchain_is_reported_with_the_workflow_that_names_it() {
         let (_, out) = report(
-            &[(SolToolchain::Reusable("main".into()), vec!["rainix-sol.yaml".to_string()])],
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["rainix-sol.yaml".to_string()],
+            )],
             true,
             Some(Ok("abc".into())),
         );
