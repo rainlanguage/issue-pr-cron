@@ -1560,7 +1560,7 @@ command) is the one thing the reader never sees.
 
 Probed against the live harness — claude 2.1.221, `campaign-settings.json`,
 `--permission-mode default`, both `--add-dir` roots and the `Edit(//…/**)`
-rules, i.e. `campaign-run.sh`'s own invocation — over 60 commands in 13
+rules, i.e. `campaign-run.sh`'s own invocation — over 91 Bash calls in 14
 sessions. `<in>` is a path under `WORK_DIR`, `<out>` is `/tmp/…` or
 `/nix/store/…`:
 
