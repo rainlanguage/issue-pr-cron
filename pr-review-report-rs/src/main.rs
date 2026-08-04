@@ -5392,7 +5392,8 @@ fn queue_history_line_mode(path: Option<&str>, ts: &str) -> i32 {
     0
 }
 
-/// Render one trace event as the human-readable log line the runners tee into `$LOG`.
+/// Renders trace events as the human-readable log lines the runners tee into `$LOG`, each line
+/// attributed to the agent that produced it.
 ///
 /// This is the jq distiller from campaign-run.sh/review-run.sh, moved into the binary so both
 /// runners share one implementation and so the truncation widths are covered by tests rather than
@@ -5401,60 +5402,148 @@ fn queue_history_line_mode(path: Option<&str>, ts: &str) -> i32 {
 /// Widths and glyphs are preserved exactly: tool calls and assistant text clip to 200 characters,
 /// result lines to 800. Clipping is by CHARACTER, matching jq's `.[0:200]` (which slices
 /// codepoints), so a multi-byte glyph is never cut in half.
-fn distill_event(ev: &Value) -> Vec<String> {
-    fn flatten(s: &str, limit: usize) -> String {
-        s.replace('\n', " ").chars().take(limit).collect()
+///
+/// ATTRIBUTION IS WHY THIS HOLDS STATE. A trace is ONE stream carrying every agent at once, so a
+/// dispatching run's log is not a narrative — run `20260802T130003Z` put 2,676 tool lines in
+/// `campaign.log` from 19 different owners, 88% of consecutive pairs from a different owner than
+/// the line above and up to 14 owners inside a single 20-line window. Rendered without their
+/// owner those lines are unreadable in the specific way that matters: fourteen `git -C <clone>`
+/// calls in view and no way to tell which agent's work any one of them is. `parent_tool_use_id` is
+/// on every event and says exactly that, so the whole fix is to stop dropping it. Each dispatched
+/// agent gets a short tag (`a1`, `a2`, … in dispatch order); the `Agent` call that CREATES one
+/// carries the tag it is creating, which is the only place a reader can learn what `a7` was sent
+/// to do. A run that dispatches nothing renders byte-identically to a stateless distiller — the
+/// main loop is never tagged.
+#[derive(Default)]
+struct TraceDistiller {
+    /// Dispatching `Agent`/`Task` tool_use id → the tag its sub-agent's lines carry.
+    tags: std::collections::HashMap<String, String>,
+}
+
+impl TraceDistiller {
+    /// The tag for a dispatch id, minting one on first sight. Ids arrive dispatch-first (a
+    /// sub-agent cannot emit before the call that spawned it), so the numbering IS dispatch order.
+    fn tag_for(&mut self, id: &str) -> String {
+        if let Some(t) = self.tags.get(id) {
+            return t.clone();
+        }
+        let t = format!("a{}", self.tags.len() + 1);
+        self.tags.insert(id.to_string(), t.clone());
+        t
     }
-    let mut out = Vec::new();
-    match ev.get("type").and_then(|t| t.as_str()) {
-        Some("assistant") => {
-            let content = ev
-                .get("message")
-                .and_then(|m| m.get("content"))
-                .and_then(|c| c.as_array());
-            for item in content.into_iter().flatten() {
-                match item.get("type").and_then(|t| t.as_str()) {
-                    Some("tool_use") => {
-                        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                        // Same precedence as the jq: the command, else the description, else the
-                        // whole input rendered as JSON.
-                        let input = item.get("input");
-                        let detail = input
-                            .and_then(|i| i.get("command"))
-                            .and_then(|c| c.as_str())
-                            .map(|s| s.to_string())
-                            .or_else(|| {
-                                input
-                                    .and_then(|i| i.get("description"))
-                                    .and_then(|d| d.as_str())
-                                    .map(|s| s.to_string())
+
+    /// The `[tag] ` prefix for the agent that PRODUCED this event, empty for the main loop.
+    fn owner_prefix(&mut self, ev: &Value) -> String {
+        match ev
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .filter(|p| !p.is_empty())
+        {
+            Some(id) => format!("[{}] ", self.tag_for(id)),
+            None => String::new(),
+        }
+    }
+
+    fn distill(&mut self, ev: &Value) -> Vec<String> {
+        fn flatten(s: &str, limit: usize) -> String {
+            s.replace('\n', " ").chars().take(limit).collect()
+        }
+        let mut out = Vec::new();
+        match ev.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                // Renderable items are selected BEFORE a tag is minted. `parent_tool_use_id` is on
+                // more than sub-agent events — a `tool_progress` for a BACKGROUND BASH TASK carries
+                // one too and renders nothing, and minting there both burns a number no line ever
+                // wears and pushes the agents off dispatch order (it is what `a1` and `a17` were in
+                // run 20260802T130003Z, whose 18 dispatches then ran a2..a20).
+                let content: Vec<&Value> = ev
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter(|it| {
+                                matches!(
+                                    it.get("type").and_then(|t| t.as_str()),
+                                    Some("tool_use") | Some("text")
+                                )
                             })
-                            .unwrap_or_else(|| match input {
-                                Some(i) => serde_json::to_string(i).unwrap_or_default(),
-                                None => String::new(),
-                            });
-                        out.push(format!("  ▸ {}  {}", name, flatten(&detail, 200)));
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if content.is_empty() {
+                    return out;
+                }
+                let who = self.owner_prefix(ev);
+                for item in content {
+                    match item.get("type").and_then(|t| t.as_str()) {
+                        Some("tool_use") => {
+                            let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                            // Same precedence as the jq: the command, else the description, else
+                            // the whole input rendered as JSON.
+                            let input = item.get("input");
+                            let detail = input
+                                .and_then(|i| i.get("command"))
+                                .and_then(|c| c.as_str())
+                                .map(|s| s.to_string())
+                                .or_else(|| {
+                                    input
+                                        .and_then(|i| i.get("description"))
+                                        .and_then(|d| d.as_str())
+                                        .map(|s| s.to_string())
+                                })
+                                .unwrap_or_else(|| match input {
+                                    Some(i) => serde_json::to_string(i).unwrap_or_default(),
+                                    None => String::new(),
+                                });
+                            let mut detail = flatten(&detail, 200);
+                            // A dispatch NAMES the agent it creates. Minting here is what binds
+                            // `a7` to the prompt it was given; the clip is applied before the tag
+                            // so the widths above stay the widths of the DETAIL.
+                            if matches!(name, "Agent" | "Task") {
+                                if let Some(id) = item.get("id").and_then(|i| i.as_str()) {
+                                    detail = format!("[{}] {}", self.tag_for(id), detail);
+                                }
+                            }
+                            out.push(format!("  {}▸ {}  {}", who, name, detail));
+                        }
+                        Some("text") => {
+                            let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                            out.push(format!("  {}· {}", who, flatten(text, 200)));
+                        }
+                        _ => {}
                     }
-                    Some("text") => {
-                        let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                        out.push(format!("  · {}", flatten(text, 200)));
-                    }
-                    _ => {}
                 }
             }
+            Some("result") => {
+                let subtype = ev
+                    .get("subtype")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("done")
+                    .to_ascii_uppercase();
+                let result = ev.get("result").and_then(|r| r.as_str()).unwrap_or("");
+                // A dispatched task reports back as a result event of its own, with no
+                // `parent_tool_use_id` to attribute it by — only `origin.kind`. Untagged, the run's
+                // OWN answer is indistinguishable from the eleven task reports beside it, and the
+                // run summary is the one line a human reads.
+                let task = matches!(
+                    ev.get("origin")
+                        .and_then(|o| o.get("kind"))
+                        .and_then(|k| k.as_str()),
+                    Some("task-notification")
+                );
+                let who = if task {
+                    "[task] ".to_string()
+                } else {
+                    self.owner_prefix(ev)
+                };
+                out.push(format!("  {}⟹ {}: {}", who, subtype, flatten(result, 800)));
+            }
+            _ => {}
         }
-        Some("result") => {
-            let subtype = ev
-                .get("subtype")
-                .and_then(|s| s.as_str())
-                .unwrap_or("done")
-                .to_ascii_uppercase();
-            let result = ev.get("result").and_then(|r| r.as_str()).unwrap_or("");
-            out.push(format!("  ⟹ {}: {}", subtype, flatten(result, 800)));
-        }
-        _ => {}
+        out
     }
-    out
 }
 
 /// `distill-trace`: stream stream-json on stdin, write the human log lines on stdout.
@@ -5463,10 +5552,14 @@ fn distill_event(ev: &Value) -> Vec<String> {
 /// run is still going, and a human watching `tail -f` must see progress rather than a block at exit.
 /// Unparseable lines are skipped rather than fatal — the trace is written by another process and a
 /// torn final line must not lose the whole distillation.
+///
+/// ONE distiller for the whole stream: the tag map is what makes a fan-out run's interleaved lines
+/// readable, and it only holds while the same instance sees every event.
 fn distill_trace_mode() -> i32 {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
+    let mut distiller = TraceDistiller::default();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -5475,7 +5568,7 @@ fn distill_trace_mode() -> i32 {
         let Ok(ev) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        for out in distill_event(&ev) {
+        for out in distiller.distill(&ev) {
             if writeln!(stdout, "{out}").is_err() {
                 return 0; // downstream closed (the runner's `|| cat >/dev/null` path)
             }
@@ -27470,6 +27563,25 @@ fn producer_step(prompt: &str, step: &str) -> String {
     )
 }
 
+/// The PREAMBLE of `campaign-prompt.txt` — everything above the first blank line. The run budget,
+/// the shell shapes and the one-shot rule live there rather than in a numbered step, so
+/// [`producer_step`] cannot reach them.
+///
+/// PANICS on an empty first paragraph, for [`prompt_section`]'s reason: a section returned as `""`
+/// makes every NEGATIVE assertion against it pass vacuously.
+#[cfg(test)]
+fn producer_preamble(prompt: &str) -> String {
+    let out: Vec<&str> = prompt
+        .lines()
+        .take_while(|l| !l.trim().is_empty())
+        .collect();
+    assert!(
+        !out.is_empty(),
+        "campaign-prompt.txt has no preamble paragraph"
+    );
+    out.join("\n")
+}
+
 /// A `- **<NAME>…**` bullet of `review-prompt.txt` — the vetter's per-PR gates. A bullet ends at
 /// the next bullet OR at the end of the list, i.e. the next numbered step at column 0.
 #[cfg(test)]
@@ -27560,7 +27672,7 @@ mod prompt_section_tests {
 
 #[cfg(test)]
 mod settings_tests {
-    use super::{producer_step, repo_root_text, vetter_bullet};
+    use super::{producer_preamble, producer_step, repo_root_text, vetter_bullet};
     use serde_json::Value;
 
     // The producer AND vetter are one-shot crons that must never park themselves — ScheduleWakeup and
@@ -27811,6 +27923,73 @@ mod settings_tests {
         assert!(
             prompt.contains("There is no `ai:relink` verdict any more"),
             "…and it must say so, so a producer that saw the old label knows it is dead"
+        );
+    }
+
+    /// #183. The 3-item cap is a RISK bound, and the paragraph that states it also decides how the
+    /// run is SHAPED — so it has to say which shape is the default and why. Run `20260804T114433Z`
+    /// read the cap, dispatched nothing, and paid 264k cached tokens per tool call against the
+    /// dispatching run's 75k. The prompt named both options and gave the model no way to weigh
+    /// them: the cost asymmetry is a property of the harness, underivable from the work.
+    #[test]
+    fn the_producer_prompt_makes_fan_out_the_default_and_says_why() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let budget = producer_preamble(&prompt);
+
+        // THE CAP'S UNIT. "fan-out for the 3" numerically couples agents to the cap, and the
+        // disclaimer beside it contrasted items with EFFORT — never with AGENTS — so the question
+        // "may this item take two agents?" had no answer in the text.
+        assert!(
+            !prompt.contains("Use the Workflow/Task sub-agent fan-out for the 3"),
+            "the cap must not be phrased so that the fan-out is sized by the item count"
+        );
+        assert!(
+            budget.contains("THE CAP COUNTS ITEMS AND COUNTS NOTHING ELSE")
+                && budget.contains("not agents"),
+            "the cap must rule agents out of the count explicitly: {budget}"
+        );
+        assert!(
+            budget.contains("a sub-agent's own dispatches count for nothing"),
+            "a sub-agent that fans out further is the case that blurs the count: {budget}"
+        );
+
+        // THE DEFAULT, AND THE MECHANISM THAT JUSTIFIES IT. The reason has to be the mechanism, not
+        // the two examples, or it cannot be applied to a case this paragraph does not enumerate.
+        assert!(
+            budget.contains("FAN OUT BY DEFAULT"),
+            "the prompt must state a default rather than offer two equal options: {budget}"
+        );
+        assert!(
+            budget.contains("a sub-agent carries its OWN context")
+                && budget.contains("re-reads its entire history on every turn"),
+            "the REASON is the context asymmetry — state it, so it generalizes: {budget}"
+        );
+        for run in ["20260802T130003Z", "20260804T114433Z"] {
+            assert!(
+                budget.contains(run),
+                "the rule carries its measurement, like every other rule in this prompt: {run}"
+            );
+        }
+
+        // INLINE IS STILL CORRECT SOMEWHERE. A default that reads as a mandate would break the one
+        // pass the prompt has always run serially.
+        assert!(
+            budget.contains("WORK INLINE where an item is NOT independent"),
+            "dependence on the main loop's state is the case inline exists for: {budget}"
+        );
+        assert!(
+            producer_step(&prompt, "4")
+                .contains("Run it INLINE + serial in your per-issue clone (no Workflow fan-out)"),
+            "step 4's adversarial-mutation pass is named inline and must stay that way"
+        );
+
+        // DISPATCHING IS NOT FINISHING. The dispatching run closed its own turn intending to
+        // synthesize later, and the ONE-SHOT rule two paragraphs down says there is no later.
+        assert!(
+            budget.contains("DISPATCHING IS NOT FINISHING"),
+            "a default that fans out must still name the run summary as the run's own: {budget}"
         );
     }
 
@@ -32869,16 +33048,25 @@ mod cli_tests {
     fn distill_tool_use_prefers_command_then_description_then_input() {
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"tool_use","name":"Bash","input":{"command":"gh pr list","description":"ignored"}}]}});
-        assert_eq!(distill_event(&ev), vec!["  ▸ Bash  gh pr list"]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  ▸ Bash  gh pr list"]
+        );
 
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"tool_use","name":"Read","input":{"description":"read a file"}}]}});
-        assert_eq!(distill_event(&ev), vec!["  ▸ Read  read a file"]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  ▸ Read  read a file"]
+        );
 
         // Neither key: the whole input object, as jq's `(.input|tostring)` did.
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"tool_use","name":"X","input":{"a":1}}]}});
-        assert_eq!(distill_event(&ev), vec![r#"  ▸ X  {"a":1}"#]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec![r#"  ▸ X  {"a":1}"#]
+        );
     }
 
     #[test]
@@ -32886,7 +33074,7 @@ mod cli_tests {
         let long = "x".repeat(500);
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"text","text":long}]}});
-        let out = &distill_event(&ev)[0];
+        let out = &TraceDistiller::default().distill(&ev)[0];
         assert_eq!(
             out.chars().count(),
             4 + 200,
@@ -32895,14 +33083,14 @@ mod cli_tests {
 
         let long = "y".repeat(1000);
         let ev = serde_json::json!({"type":"result","subtype":"success","result":long});
-        let out = &distill_event(&ev)[0];
+        let out = &TraceDistiller::default().distill(&ev)[0];
         assert!(out.ends_with(&"y".repeat(800)));
         assert_eq!(out.chars().count(), "  ⟹ SUCCESS: ".chars().count() + 800);
 
         // Newlines become spaces so one event stays one log line.
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"text","text":"a\nb\nc"}]}});
-        assert_eq!(distill_event(&ev), vec!["  · a b c"]);
+        assert_eq!(TraceDistiller::default().distill(&ev), vec!["  · a b c"]);
     }
 
     // jq sliced CODEPOINTS (`.[0:200]`). Clipping bytes instead would split a multi-byte glyph
@@ -32911,16 +33099,22 @@ mod cli_tests {
     fn distill_clips_multibyte_text_by_character() {
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"text","text":"é".repeat(300)}]}});
-        let out = &distill_event(&ev)[0];
+        let out = &TraceDistiller::default().distill(&ev)[0];
         assert_eq!(out.chars().filter(|c| *c == 'é').count(), 200);
     }
 
     #[test]
     fn distill_result_defaults_subtype_and_uppercases_it() {
         let ev = serde_json::json!({"type":"result","result":"done"});
-        assert_eq!(distill_event(&ev), vec!["  ⟹ DONE: done"]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  ⟹ DONE: done"]
+        );
         let ev = serde_json::json!({"type":"result","subtype":"error_max_turns","result":""});
-        assert_eq!(distill_event(&ev), vec!["  ⟹ ERROR_MAX_TURNS: "]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  ⟹ ERROR_MAX_TURNS: "]
+        );
     }
 
     #[test]
@@ -32929,11 +33123,154 @@ mod cli_tests {
             {"type":"text","text":"thinking"},
             {"type":"tool_use","name":"Bash","input":{"command":"ls"}},
             {"type":"thinking","thinking":"hidden"}]}});
-        assert_eq!(distill_event(&ev), vec!["  · thinking", "  ▸ Bash  ls"]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  · thinking", "  ▸ Bash  ls"]
+        );
 
         // `user`/`system` events produced nothing under the jq filter either.
-        assert!(distill_event(&serde_json::json!({"type":"user"})).is_empty());
-        assert!(distill_event(&serde_json::json!({"type":"system","subtype":"init"})).is_empty());
+        assert!(TraceDistiller::default()
+            .distill(&serde_json::json!({"type":"user"}))
+            .is_empty());
+        assert!(TraceDistiller::default()
+            .distill(&serde_json::json!({"type":"system","subtype":"init"}))
+            .is_empty());
+    }
+
+    // ---- attribution: which agent produced the line ----
+
+    /// A trace interleaves every agent's events, so the log is only readable if each line says
+    /// whose it is. This is the shape run `20260802T130003Z` actually has: two dispatches, then
+    /// their calls arriving alternately.
+    #[test]
+    fn distill_tags_each_line_with_the_agent_that_produced_it() {
+        let mut d = TraceDistiller::default();
+        let dispatch = |id: &str, desc: &str| {
+            serde_json::json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":"Agent","id":id,"input":{"description":desc}}]}})
+        };
+        let call = |parent: Value, cmd: &str| {
+            serde_json::json!({"type":"assistant","parent_tool_use_id":parent,
+                "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":cmd}}]}})
+        };
+
+        // The dispatching line carries the tag it CREATES — the only place a reader can bind a tag
+        // to the work it was sent to do.
+        assert_eq!(
+            d.distill(&dispatch("toolu_1", "Rework cyclo.site 400")),
+            vec!["  ▸ Agent  [a1] Rework cyclo.site 400"]
+        );
+        assert_eq!(
+            d.distill(&dispatch("toolu_2", "Rework rain.flare 186")),
+            vec!["  ▸ Agent  [a2] Rework rain.flare 186"]
+        );
+        // …and the sub-agents' own calls carry it, however they interleave.
+        assert_eq!(
+            d.distill(&call(serde_json::json!("toolu_2"), "git -C /w/flare fetch")),
+            vec!["  [a2] ▸ Bash  git -C /w/flare fetch"]
+        );
+        assert_eq!(
+            d.distill(&call(serde_json::json!("toolu_1"), "git -C /w/cyclo fetch")),
+            vec!["  [a1] ▸ Bash  git -C /w/cyclo fetch"]
+        );
+        // A tag is stable across the whole stream, not re-minted per event.
+        assert_eq!(
+            d.distill(&call(serde_json::json!("toolu_2"), "git -C /w/flare push")),
+            vec!["  [a2] ▸ Bash  git -C /w/flare push"]
+        );
+        // Narration is attributed the same way — a sub-agent's reasoning is not the run's.
+        let text = serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_1",
+            "message":{"content":[{"type":"text","text":"regenerating"}]}});
+        assert_eq!(d.distill(&text), vec!["  [a1] · regenerating"]);
+        // The main loop is never tagged: a run that dispatches nothing reads exactly as before.
+        assert_eq!(
+            d.distill(&call(Value::Null, "gh pr list")),
+            vec!["  ▸ Bash  gh pr list"]
+        );
+    }
+
+    /// An id that never appeared as a dispatch (a trace joined mid-stream, or a `Task` spelling the
+    /// dispatch scan missed) still groups: an unnamed tag beats no tag.
+    #[test]
+    fn distill_tags_a_subagent_whose_dispatch_was_never_seen() {
+        let mut d = TraceDistiller::default();
+        let orphan = |cmd: &str| {
+            serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_x",
+                "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":cmd}}]}})
+        };
+        assert_eq!(d.distill(&orphan("ls")), vec!["  [a1] ▸ Bash  ls"]);
+        assert_eq!(d.distill(&orphan("pwd")), vec!["  [a1] ▸ Bash  pwd"]);
+        // An absent and an empty id are both the main loop — an empty string is not an agent.
+        let ev = serde_json::json!({"type":"assistant","parent_tool_use_id":"",
+            "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"id"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Bash  id"]);
+    }
+
+    /// A dispatched task reports back as a `result` event with NO `parent_tool_use_id` — only
+    /// `origin.kind` distinguishes it. Untagged, the run's own answer is one of a dozen
+    /// indistinguishable `⟹ SUCCESS` lines, and the run summary is the line a human reads.
+    #[test]
+    fn distill_marks_a_task_report_apart_from_the_runs_own_result() {
+        let mut d = TraceDistiller::default();
+        let task = serde_json::json!({"type":"result","subtype":"success",
+            "origin":{"kind":"task-notification"},"result":"threads resolved"});
+        assert_eq!(
+            d.distill(&task),
+            vec!["  [task] ⟹ SUCCESS: threads resolved"]
+        );
+
+        let own = serde_json::json!({"type":"result","subtype":"success","result":"run summary"});
+        assert_eq!(d.distill(&own), vec!["  ⟹ SUCCESS: run summary"]);
+
+        // An origin of some other kind is not a task report.
+        let other = serde_json::json!({"type":"result","subtype":"success",
+            "origin":{"kind":"something-else"},"result":"x"});
+        assert_eq!(d.distill(&other), vec!["  ⟹ SUCCESS: x"]);
+    }
+
+    /// `parent_tool_use_id` is on more than sub-agent events: a `tool_progress` for a BACKGROUND
+    /// BASH TASK carries one and renders nothing. Minting a tag there burns a number no line ever
+    /// wears and shifts every later agent off dispatch order — run `20260802T130003Z`'s 18
+    /// dispatches would read a2..a20.
+    #[test]
+    fn distill_mints_no_tag_for_an_event_that_renders_nothing() {
+        let mut d = TraceDistiller::default();
+        // A background task's progress, and an assistant turn of pure thinking: both parented,
+        // both silent.
+        assert!(d
+            .distill(&serde_json::json!({"type":"tool_progress","parent_tool_use_id":"toolu_bg"}))
+            .is_empty());
+        assert!(d
+            .distill(
+                &serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_bg",
+                "message":{"content":[{"type":"thinking","thinking":"hidden"}]}})
+            )
+            .is_empty());
+        // …so the first agent actually dispatched is still a1.
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_1","input":{"description":"first"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Agent  [a1] first"]);
+    }
+
+    /// The tag is added OUTSIDE the clip, so the widths above stay the widths of the content —
+    /// a tagged line must not be a shorter line.
+    #[test]
+    fn distill_tags_do_not_eat_into_the_clip_widths() {
+        let mut d = TraceDistiller::default();
+        let long = "x".repeat(500);
+        let ev = serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_1",
+            "message":{"content":[{"type":"text","text":long}]}});
+        let out = &d.distill(&ev)[0];
+        assert!(out.starts_with("  [a1] · "));
+        assert_eq!(out.chars().filter(|c| *c == 'x').count(), 200);
+
+        // Same for a dispatch line: the description clips to 200, then the tag goes on.
+        let long = "y".repeat(500);
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_2","input":{"description":long}}]}});
+        let out = &d.distill(&ev)[0];
+        assert!(out.starts_with("  ▸ Agent  [a2] "));
+        assert_eq!(out.chars().filter(|c| *c == 'y').count(), 200);
     }
 
     // The pre-conversion `--foo` dispatch forms are gone: clap must REJECT them as unknown args
