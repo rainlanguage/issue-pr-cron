@@ -25332,18 +25332,24 @@ mod await_tests {
 
     // --- reporting -------------------------------------------------------------------------
 
+    /// THREE subjects, not two, and the split is deliberately UNEVEN: with one settled and one not,
+    /// the settled count and the unsettled count are the same number, so a summary reporting the
+    /// wrong one of them would still read correctly. A mutation pass found exactly that — inverting
+    /// `rows.len() - unsettled` to `unsettled` survived the even fixture.
     #[test]
     fn the_report_names_each_subject_and_counts_the_settled() {
         let mut h = Harness::new(vec![vec![
             Some(doc("h", pending())),
             Some(doc("h2", green())),
+            Some(doc("h3", green())),
         ]]);
-        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 0, 20);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2"), r("o/c#3")], 0, 20);
         let text = await_report(&out);
         assert!(text.contains("o/a#1 checks-pending"), "{text}");
         assert!(text.contains("o/b#2 settled"), "{text}");
+        assert!(text.contains("o/c#3 settled"), "{text}");
         assert!(
-            text.contains("1 of 2 settled after 1 poll(s) — TIMED OUT"),
+            text.contains("2 of 3 settled after 1 poll(s) — TIMED OUT"),
             "{text}"
         );
     }
@@ -30583,9 +30589,13 @@ mod settings_tests {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         let para = shell_shapes_paragraph(&prompt);
+        // The RULE, not merely the token. A mutation pass found that asserting
+        // `contains("pr-review-report await")` survives deleting the instruction, because the
+        // worked example further down the paragraph carries the same string — so the assertion
+        // held while the sentence that tells a run what to do was gone.
         assert!(
-            para.contains("pr-review-report await"),
-            "the waiting rule must name the subcommand that makes a GitHub-side wait one turn: \
+            para.contains("WAITING ON GITHUB IS `pr-review-report await`"),
+            "the paragraph must STATE the rule, not merely mention the subcommand in an example: \
              {para}"
         );
         assert!(
