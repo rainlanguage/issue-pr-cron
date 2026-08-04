@@ -1538,6 +1538,85 @@ Bash rules (a denial reads "Permission to use Bash with command …"), so a deni
 makes `until <check>; do sleep …; done` the sanctioned wait even though the
 identical loop is refused as a Bash call.
 
+#### "The following parts require approval" is not an allow-list failure
+
+The refusal that reads as one:
+
+```
+This Bash command contains multiple operations. The following parts require approval:
+  pr-review-report worklist --json, head -5 /tmp/claude-1000/wl.err
+```
+
+Both named commands are allow-listed, nothing in the call is denied, and nothing
+is unlisted — which is how
+[#180](https://github.com/rainlanguage/issue-pr-cron/issues/180) came to be
+filed as a permission bug. It is not one. **Compounding is not refused**, and no
+part that should match its allow rule fails to: across the 21 producer traces
+4,232 accepted Bash calls include 2,460 carrying a pipe, 1,825 a `;`, 626 an
+`&&` and 481 a redirection. A chain is refused when ONE PART is refused — and
+the message prints that part **with its redirection stripped**, so the byte that
+actually disqualified it (`2>/tmp/claude-1000/wl.err`, hanging off the first
+command) is the one thing the reader never sees.
+
+Probed against the live harness — claude 2.1.221, `campaign-settings.json`,
+`--permission-mode default`, both `--add-dir` roots and the `Edit(//…/**)`
+rules, i.e. `campaign-run.sh`'s own invocation — over 60 commands in 13
+sessions. `<in>` is a path under `WORK_DIR`, `<out>` is `/tmp/…` or
+`/nix/store/…`:
+
+| Command                                                          | Result                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `echo a; echo b` / `echo a && echo b` / `echo a \| wc -c`        | allowed — chaining is not the trigger                                           |
+| `cmd > <in> 2> <in>; echo "exit=$?"; wc -c <in>; head -5 <in>`   | **allowed** — the reported command, with `/tmp` swapped for the scratch dir     |
+| `cmd > <in> 2> <out>; echo "exit=$?"; wc -c <in>; head -5 <out>` | refused: "parts require approval: `cmd`, `head -5 <out>`" — the `2> <out>` gone |
+| `cmd 2> <out>` alone                                             | refused, and here the message DOES name it: "Output redirection to … blocked"   |
+| `head -2 <out>` alone, and `head -2 <out>; echo b`               | refused, message names the path and the allowed root                            |
+| `head -2 <out> \| wc -l`, `ls -d <out> \| head -2`               | refused as "multiple operations" — a pipe re-reports the same path block        |
+| Read **tool** on `/tmp/claude-1000/…`                            | **allowed** — the tool is not path-scoped the way Bash's readers are            |
+| `cd <dir> && cmd >> <in>` (and `&& echo b`)                      | allowed                                                                         |
+| `cd <dir> && cmd >> <in> 2>&1`                                   | refused — a second redirection                                                  |
+| `cd <dir> && cmd > <in>; echo b`                                 | refused — a `;`                                                                 |
+| `echo a >> <in>; cd <dir> && echo b`                             | refused — the `cd` may sit anywhere                                             |
+| `cd <dir> && ls \| head -2; echo b`                              | allowed — a `cd` with no redirection anywhere is fine                           |
+| `mkdir -p <in> <in> && FOO=bar echo x`                           | refused: the bare assignment prefix (#174's rule, message accurate)             |
+| `pkill -f x 2>/dev/null; sleep 1; echo x`                        | refused: `pkill` is off-list (message accurate)                                 |
+
+So the rule, in the order it is worth knowing:
+
+1. A part is refused for its own disqualifier; the rest of the chain is
+   irrelevant. **Reissuing the offending command bare — what the producer does
+   today — fixes nothing that swapping the path would not have fixed, and costs
+   the round trip twice.**
+2. `/tmp/…` is outside both `--add-dir` roots, so a redirect into it is a
+   refused WRITE and a `head`/`cat`/`tail`/`ls` of it is a refused READ. The
+   `…/tasks/<id>.output` file the harness names when it backgrounds a command is
+   in exactly that position: readable with the **Read tool**, refused to `head`.
+3. A `cd` anywhere in a command that also REDIRECTS is refused on the `cd`
+   ("cannot automatically determine the final working directory"), whatever the
+   paths — absolute targets included. The tolerated form is narrow (an `&&`-only
+   chain with a single redirection), which is why the prompt says keep `cd` out
+   of every call that writes rather than teaching the boundary.
+4. The same disqualifier surfaces under three different messages depending on
+   the shape it sits in, and only the least useful one — the "multiple
+   operations" summary — is the one a compound normally gets.
+
+**Measured population: 15 occurrences in 4 of 21 runs.** Eleven of them predate
+#174 and are its classes, correctly named by their own messages: 4 `bash`/`sh`
+scripts, 3 `python3` heredocs or `-c`, 2 `pkill` (off-list), 1 bare
+`FONTCONFIG_FILE=` prefix, 1 `for` loop. The four in `20260804T114433Z`, the
+only run whose prompt carried #174's rules, are this class: an out-of-scope
+`2>/tmp` plus its `head` (the run's opening state load), two
+`cd <clone> && … >> <log>` provisioning calls, and an `ls /nix/store/*dejavu*`
+inside a pipeline.
+
+[#182](https://github.com/rainlanguage/issue-pr-cron/issues/182) removes the
+first one's OCCASION and not its cause: the opening state load is now one typed
+`state-load` result with no redirect at all, so the run no longer opens with
+that command — but `worklist --json > {{SCRATCH_DIR}}/worklist.json` survives as
+the documented fallback, and what was refused was the
+`2>/tmp/claude-1000/wl.err` the model added of its own accord, which nothing in
+#182 touches. Three of the four remain reachable as written.
+
 ### The retrofit: `repair-qa-block`
 
 The QA gate is on **open**, so it stopped the population of block-less PRs
