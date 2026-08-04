@@ -2025,7 +2025,13 @@ recording it provides.
 
 ## Runtime state (NOT tracked — see `.gitignore`)
 
-- `campaign.log` — distilled human-readable log (`tail -f` to watch).
+- `campaign.log` — distilled human-readable log (`tail -f` to watch). A trace is
+  ONE stream carrying the main loop and every dispatched sub-agent at once, so
+  each line names its owner: `[aN]` is the sub-agent the `▸ Agent  [aN] …` line
+  above it dispatched, `[task]` is one of those agents reporting back, and an
+  untagged line is the main loop's. Run `20260802T130003Z` interleaves 19 owners
+  across 2,676 tool lines, up to 14 of them inside one 20-line window; a run
+  that dispatches nothing is untagged throughout.
 - `runs/<ts>.jsonl` — full per-run stream-json traces (`KEEP_RUNS` most recent).
 - Issue close-candidates are NOT a local file — the cron applies the
   `ai:close-candidate` label and never closes anything itself. The human triage
