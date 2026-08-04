@@ -25200,11 +25200,19 @@ mod await_tests {
         }
     }
 
+    /// The clock advances ONLY when the loop sleeps, so elapsed time is a pure function of the
+    /// sleeps the code chose and a deadline assertion is exact rather than approximate. That makes
+    /// a wait that stops sleeping run forever, so the fetch counter is the harness's own
+    /// termination proof: it PANICS rather than hanging, which is how "this change removed the
+    /// only thing that advances the deadline" arrives as a red test instead of a stuck suite.
+    const RUNAWAY: usize = 10_000;
+
     fn run(h: &mut Harness, refs: &[AwaitRef], timeout: u64, interval: u64) -> super::AwaitOutcome {
         use std::cell::{Cell, RefCell};
         let passes = std::mem::take(&mut h.passes);
         let pass = Cell::new(0usize);
         let idx = Cell::new(0usize);
+        let fetches = Cell::new(0usize);
         let clock = Cell::new(0u64);
         let slept = RefCell::new(Vec::new());
         let out = await_poll(
@@ -25213,6 +25221,13 @@ mod await_tests {
             interval,
             &mut || clock.get(),
             &mut |_| {
+                fetches.set(fetches.get() + 1);
+                assert!(
+                    fetches.get() < RUNAWAY,
+                    "await_poll did not terminate: {} fetches without reaching the deadline or \
+                     settling — nothing is advancing the clock",
+                    fetches.get()
+                );
                 let p = passes
                     .get(pass.get().min(passes.len() - 1))
                     .expect("a pass");
