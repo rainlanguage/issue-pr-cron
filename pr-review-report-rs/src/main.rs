@@ -60,7 +60,7 @@ enum Merge {
 // REST body's own `status`. It reads no message anywhere. Where an invocation offers nothing typed
 // the answer is [`GhFailure::Unknown`], not the nearest plausible class: the same posture as
 // [`Merge::Unknown`] and `CodeRabbitCoverage::Unreadable`, and the reason `gh pr view`'s failure is
-// re-asked through [`gh_api_result`] rather than assumed (see [`classify_pr_fetch_failure`]).
+// re-asked through [`gh_api_result`] rather than assumed (see [`pr_fetch_failure`]).
 // ---------------------------------------------------------------------------------------------
 
 /// WHY a `gh` call produced no document — a TYPED discriminant, never a message substring.
@@ -787,6 +787,81 @@ mod gh_failure_tests {
         );
         assert_eq!(waits.len(), GH_RATE_LIMIT_ATTEMPTS - 1);
         assert_eq!(GH_RATE_LIMIT_ATTEMPTS, GH_RATE_LIMIT_BACKOFF_SECS.len() + 1);
+    }
+
+    // ── the re-ask that gives `gh pr view` a typed reason ─────────────────────────────────────
+
+    fn pr_probe(v: Value) -> impl FnOnce() -> Result<Value, GhFailure> {
+        move || Ok(v)
+    }
+
+    // A structureless `gh pr view` failure — the ONLY class it can produce — is resolved by the
+    // re-ask, and the re-ask's own typed failure IS the answer. This is the whole reason the queue
+    // spends an extra request: without it every one of these was `Unknown` and became a
+    // `fetch_error`.
+    #[test]
+    fn a_structureless_view_failure_takes_the_reasks_typed_answer() {
+        for f in [
+            GhFailure::RateLimited {
+                retry_after: Some(4),
+            },
+            GhFailure::Unauthorized,
+            GhFailure::NotFound,
+            GhFailure::Malformed,
+        ] {
+            assert_eq!(pr_fetch_failure(GhFailure::Unknown, || Err(f)), f);
+        }
+    }
+
+    // A PR the re-ask RESOLVES is not missing: the detail fetch failed for a reason nothing typed
+    // named, so the answer stays `Unknown`. Calling it `NotFound` here would be #129's lie with a
+    // type painted on it — a transient blip reported as a deleted PR.
+    #[test]
+    fn a_resolvable_pr_whose_detail_fetch_failed_stays_unknown() {
+        let found = json!({"data": {"repository": {"pullRequest": {"number": 12}}}});
+        assert_eq!(
+            pr_fetch_failure(GhFailure::Unknown, pr_probe(found)),
+            GhFailure::Unknown
+        );
+    }
+
+    // …and one the re-ask cannot resolve IS `NotFound`, whether GitHub said `null` or omitted the
+    // field entirely. Both are asserted, because a classifier that answered `NotFound`
+    // unconditionally would pass the missing case on its own.
+    #[test]
+    fn a_pr_the_reask_cannot_resolve_is_not_found() {
+        for doc in [
+            json!({"data": {"repository": {"pullRequest": null}}}),
+            json!({"data": {"repository": null}}),
+            json!({}),
+        ] {
+            assert_eq!(
+                pr_fetch_failure(GhFailure::Unknown, pr_probe(doc.clone())),
+                GhFailure::NotFound,
+                "{doc}"
+            );
+        }
+    }
+
+    // A failure that ALREADY came from somewhere typed is kept, and costs NO re-ask. Spending a
+    // request to re-learn a class we hold — while GitHub may be rate limiting us — is exactly the
+    // traffic the retry policy refuses everywhere else.
+    #[test]
+    fn an_already_typed_view_failure_is_kept_without_a_reask() {
+        for f in [
+            GhFailure::RateLimited { retry_after: None },
+            GhFailure::Unauthorized,
+            GhFailure::NotFound,
+            GhFailure::Malformed,
+        ] {
+            let asked = std::cell::Cell::new(false);
+            let got = pr_fetch_failure(f, || {
+                asked.set(true);
+                Ok(json!({}))
+            });
+            assert_eq!(got, f);
+            assert!(!asked.get(), "{f:?} must not cost a re-ask");
+        }
     }
 
     // The pagination walk keeps the PAGE's own failure, so a rate limit that stops the walk is
@@ -1609,18 +1684,44 @@ fn queue_pr_detail(slug: &str, num: u64) -> Result<Value, GhFailure> {
             "--json",
             "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments,title,body,baseRefName,labels,url,number",
         ])
-        .map_err(|f| match f {
-            // MEASURED: `gh pr view` writes NOTHING to stdout when it fails, for every class alike,
-            // so `gh_result` can only ever answer `Unknown` here. That is not a class to act on, so
-            // the question is re-asked through a channel that HAS a typed answer rather than
-            // guessed at. Any other class already came from somewhere typed and is kept.
-            GhFailure::Unknown => classify_pr_fetch_failure(slug, num),
-            other => other,
-        })
+        .map_err(|f| pr_fetch_failure(f, || pr_exists_probe(slug, num)))
     })
 }
 
-/// The GraphQL re-ask that gives a failed [`queue_pr_detail`] a typed reason.
+/// PURE given `reask`: the class a `gh pr view` failure resolves to.
+///
+/// MEASURED: `gh pr view` writes NOTHING to stdout when it fails, for every class alike, so
+/// [`gh_result`] can only ever hand this `Unknown`. That is not a class to act on, so the question
+/// is RE-ASKED down a channel that answers in types rather than guessed at. Any other class already
+/// came from somewhere typed and is kept — re-asking it would spend a request to learn nothing.
+///
+/// The four readings of the re-ask:
+///
+/// * it FAILED — that failure is the answer, and it is typed;
+/// * it resolved the PR — the PR exists, so the detail fetch failed for a reason nothing typed
+///   named, and `Unknown` stays `Unknown`. This is the honest arm: inventing a class for a network
+///   blip is the #129 lie with a type painted on it;
+/// * it answered `null`, or the field is absent — the PR does not resolve, which is `NotFound`.
+///
+/// Split from the call so the DECISION is unit-testable without a network, the same split
+/// [`candidate_outcome`] uses for its two fetchers.
+fn pr_fetch_failure(
+    view: GhFailure,
+    reask: impl FnOnce() -> Result<Value, GhFailure>,
+) -> GhFailure {
+    if view != GhFailure::Unknown {
+        return view;
+    }
+    match reask() {
+        Ok(v) => match v.pointer("/data/repository/pullRequest") {
+            Some(Value::Null) | None => GhFailure::NotFound,
+            Some(_) => GhFailure::Unknown,
+        },
+        Err(f) => f,
+    }
+}
+
+/// The GraphQL re-ask [`pr_fetch_failure`] reads: does this PR resolve?
 ///
 /// `gh pr view --json` is the queue's snapshot because gh normalises `statusCheckRollup` and the
 /// comment/label sets into the shape `classify_ci` and `vetted_at_head` read; hand-rolling that
@@ -1634,16 +1735,14 @@ fn queue_pr_detail(slug: &str, num: u64) -> Result<Value, GhFailure> {
 /// wrong in precisely the case #123/#126 made likelier. A probe that travels the same path as the
 /// failed call cannot miss a limit that call hit.
 ///
-/// It costs ONE extra request, only on the failure path. A resolvable PR whose detail fetch failed
-/// anyway stays `Unknown` — the honest answer, and the one that keeps this from inventing a class
-/// for a network blip.
-fn classify_pr_fetch_failure(slug: &str, num: u64) -> GhFailure {
+/// It costs ONE extra request, and only on the failure path.
+fn pr_exists_probe(slug: &str, num: u64) -> Result<Value, GhFailure> {
     let Some((owner, repo)) = slug.split_once('/') else {
-        return GhFailure::Malformed;
+        return Err(GhFailure::Malformed);
     };
     let query = "query($owner:String!,$repo:String!,$num:Int!){\
                  repository(owner:$owner,name:$repo){pullRequest(number:$num){number}}}";
-    match gh_api_result(&[
+    gh_api_result(&[
         "graphql",
         "-f",
         &format!("query={query}"),
@@ -1653,18 +1752,7 @@ fn classify_pr_fetch_failure(slug: &str, num: u64) -> GhFailure {
         &format!("repo={repo}"),
         "-F",
         &format!("num={num}"),
-    ]) {
-        Ok(v) => {
-            // The probe succeeded, so the token is fine and GitHub is answering. Either the PR is
-            // not there (`null` with no error) or it is — and a readable PR whose detail fetch
-            // failed is a failure this binary cannot name.
-            match v.pointer("/data/repository/pullRequest") {
-                Some(Value::Null) | None => GhFailure::NotFound,
-                Some(_) => GhFailure::Unknown,
-            }
-        }
-        Err(f) => f,
-    }
+    ])
 }
 
 /// The `ai:ready` PRs presentable for a human decision RIGHT NOW, ALREADY in the one cheapest-first
