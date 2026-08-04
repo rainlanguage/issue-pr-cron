@@ -163,6 +163,27 @@ fn gh_output_report(out: &std::process::Output) -> (bool, String) {
     (out.status.success(), text)
 }
 
+/// Run a `gh` WRITE whose STDOUT IS THE RESULT, and capture it. `Err` carries gh's whole output.
+///
+/// [`gh_run`] folds the child's stdout into stderr because on the MCP server our own stdout is the
+/// JSON-RPC stream — but `gh pr create` prints the new PR's URL there and nothing else in the reply
+/// carries the number, so for that one write the child's stdout is the only place the answer exists.
+/// Capturing it keeps both invariants at once: the protocol stream stays ours, and the URL is read
+/// rather than leaked into a log.
+fn gh_capture(args: &[&str]) -> Result<String, String> {
+    match Command::new("gh").args(args).output() {
+        Ok(out) => {
+            let (ok, text) = gh_output_report(&out);
+            if ok {
+                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+            } else {
+                Err(text)
+            }
+        }
+        Err(e) => Err(format!("could not run gh: {e}")),
+    }
+}
+
 /// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
 /// `--record-verdict`'s logic testable without network.
 fn gh_run(args: &[&str]) -> bool {
@@ -2227,6 +2248,1317 @@ fn run_metrics(content: &str) -> RunMetrics {
     m
 }
 
+/// USD per MILLION tokens for one model.
+///
+/// Cache writes are split by TTL because the two are priced differently (1h is 2x input, 5m is
+/// 1.25x) and the trace records which was used — pricing both at one rate was worth tens of
+/// dollars a run on the traces this was built against.
+struct Rates {
+    input: f64,
+    output: f64,
+    cache_read: f64,
+    cache_write_5m: f64,
+    cache_write_1h: f64,
+}
+
+/// PURE: per-million rates for a model id.
+///
+/// Matched on a PREFIX, not equality: the harness reports `claude-opus-5` today but has reported
+/// dated variants before, and a table that falls through on an unrecognised suffix prices an Opus
+/// run at Haiku rates without saying so. The fallback is the Opus tier on purpose — for a fleet
+/// that runs Opus and Fable, guessing the cheaper of the two understates, and an understated cost
+/// is a wrong answer nobody goes back to check.
+fn rates_for(model: &str) -> Rates {
+    let (input, output) =
+        if model.starts_with("claude-fable-5") || model.starts_with("claude-mythos") {
+            (10.0, 50.0)
+        } else if model.starts_with("claude-sonnet") {
+            (3.0, 15.0)
+        } else if model.starts_with("claude-haiku") {
+            (1.0, 5.0)
+        } else {
+            // claude-opus-* and anything unrecognised.
+            (5.0, 25.0)
+        };
+    Rates {
+        input,
+        output,
+        cache_read: input * 0.1,
+        cache_write_5m: input * 1.25,
+        cache_write_1h: input * 2.0,
+    }
+}
+
+/// What one agent — the main loop, or one dispatched subagent — spent.
+///
+/// There is deliberately no output-token field. `usage.output_tokens` on a streamed assistant
+/// event is a message-START snapshot that this trace never revises (the same `message.id` repeats
+/// it unchanged), so summing it yields 59,641 against the harness's true 1,107,017 — an 18x
+/// understatement. Output is real money (~19% of a run) but is only knowable whole-run, from
+/// `result.modelUsage`; see [`unattributable_output`]. A column that is wrong by 18x is worse than
+/// no column.
+#[derive(Debug, Default, PartialEq, Clone)]
+struct AgentSpend {
+    /// `__main__`, or the `tool_use` id of the `Agent` call that spawned it.
+    id: String,
+    /// The dispatching call's `description`, or `main loop`. Never the agent's own prompt: the
+    /// description is what the operator wrote to name the work, so it is the label that means
+    /// something in a cost table.
+    label: String,
+    messages: usize,
+    tokens_in: u64,
+    cache_read: u64,
+    cache_write_5m: u64,
+    cache_write_1h: u64,
+    usd: f64,
+}
+
+/// PURE: the run's output tokens and their cost, which no per-agent key can carry.
+///
+/// Read from `result.modelUsage`, the only place the real figure appears. Every `result` line
+/// repeats the same whole-run totals, so the last one is taken rather than summed — summing would
+/// multiply the run by its result count (twelve, on the trace this was built against).
+///
+/// Priced per model, because a fleet that runs the producer on Opus and the vetter on Fable pays
+/// $25 and $50 per million for the same field.
+fn unattributable_output(content: &str) -> (u64, f64) {
+    let mut tokens = 0u64;
+    let mut usd = 0.0;
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if ev.get("type").and_then(|t| t.as_str()) != Some("result") {
+            continue;
+        }
+        let Some(mu) = ev.get("modelUsage").and_then(|m| m.as_object()) else {
+            continue;
+        };
+        // Overwrite, never accumulate: these are whole-run totals, restated.
+        tokens = 0;
+        usd = 0.0;
+        for (model, u) in mu {
+            let out = u.get("outputTokens").and_then(|n| n.as_u64()).unwrap_or(0);
+            tokens += out;
+            usd += out as f64 * rates_for(model).output / 1e6;
+        }
+    }
+    (tokens, usd)
+}
+
+/// PURE: attribute a run's token spend to the agent that incurred it, dearest first.
+///
+/// No new instrumentation is needed for this: every assistant event already carries
+/// `parent_tool_use_id` — null on the main thread, and the id of the dispatching `Agent` tool_use
+/// on a subagent's own turns. [`UsageProbe`] discards exactly those non-null events, deliberately,
+/// because it reconciles against `result.usage`, which counts the main thread only. That is why a
+/// runs.jsonl record can carry a $136 `costUsd` beside token counts describing $5 of it: the cost
+/// field is whole-run, the token fields are main-thread. This groups by the same key instead of
+/// dropping it, so those two halves can be read against each other.
+///
+/// Dedupe is by `message.id` across ALL threads (the same message is re-emitted as it streams),
+/// which is [`UsageProbe`]'s rule applied one level wider.
+fn token_attribution(content: &str) -> Vec<AgentSpend> {
+    use std::collections::{HashMap, HashSet};
+    let mut agents: HashMap<String, AgentSpend> = HashMap::new();
+    let mut labels: HashMap<String, String> = HashMap::new();
+    let mut counted: HashSet<String> = HashSet::new();
+
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        // Only `assistant` events carry model usage, and only they issue tool calls. [`UsageProbe`]
+        // guards the same way ten lines from here, and two readers of one stream disagreeing about
+        // which events count is how a future event type silently doubles a run's cost. No trace on
+        // disk has usage on any other type — this is parity with the existing reader, not a fix for
+        // an observed defect.
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(msg) = ev.get("message") else {
+            continue;
+        };
+
+        // An `Agent` tool_use names the work its subagent is about to do. Recorded from whichever
+        // thread issues it, so a nested dispatch is labelled too.
+        if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
+            for b in blocks {
+                let is_dispatch = b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                    && matches!(
+                        b.get("name").and_then(|n| n.as_str()),
+                        Some("Agent") | Some("Task")
+                    );
+                if !is_dispatch {
+                    continue;
+                }
+                let (Some(id), Some(input)) =
+                    (b.get("id").and_then(|i| i.as_str()), b.get("input"))
+                else {
+                    continue;
+                };
+                if let Some(d) = input.get("description").and_then(|d| d.as_str()) {
+                    labels.insert(id.to_string(), d.to_string());
+                }
+            }
+        }
+
+        let Some(usage) = msg.get("usage") else {
+            continue;
+        };
+        // Dedupe on `message.id`, which repeats as a message streams. An ABSENT id and an EMPTY one
+        // are treated alike: neither identifies a message, so each such event is counted rather
+        // than deduped. Letting `""` into the set would make the first empty-id message swallow
+        // every later one — dropping real spend to avoid double-counting a case no trace exhibits.
+        match msg.get("id").and_then(|i| i.as_str()) {
+            Some(id) if !id.is_empty() => {
+                if !counted.insert(id.to_string()) {
+                    continue;
+                }
+            }
+            _ => {}
+        }
+
+        let owner = ev
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .unwrap_or("__main__")
+            .to_string();
+        let g = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+        let cc = usage.get("cache_creation");
+        let ttl = |k: &str| cc.and_then(|c| c.get(k)).and_then(|n| n.as_u64());
+        // Absent breakdown: charge the whole write at the 5m rate. The default TTL is the honest
+        // assumption when the trace does not say, and it is the cheaper of the two — this
+        // understates rather than inventing a premium the run may never have paid.
+        let (w5, w1) = match (
+            ttl("ephemeral_5m_input_tokens"),
+            ttl("ephemeral_1h_input_tokens"),
+        ) {
+            (None, None) => (g("cache_creation_input_tokens"), 0),
+            (a, b) => (a.unwrap_or(0), b.unwrap_or(0)),
+        };
+
+        let rates = rates_for(msg.get("model").and_then(|m| m.as_str()).unwrap_or(""));
+        let e = agents.entry(owner.clone()).or_insert_with(|| AgentSpend {
+            id: owner.clone(),
+            ..Default::default()
+        });
+        e.messages += 1;
+        e.tokens_in += g("input_tokens");
+        e.cache_read += g("cache_read_input_tokens");
+        e.cache_write_5m += w5;
+        e.cache_write_1h += w1;
+        // No output term — see [`AgentSpend`].
+        e.usd += (g("input_tokens") as f64 * rates.input
+            + g("cache_read_input_tokens") as f64 * rates.cache_read
+            + w5 as f64 * rates.cache_write_5m
+            + w1 as f64 * rates.cache_write_1h)
+            / 1e6;
+    }
+
+    let mut rows: Vec<AgentSpend> = agents.into_values().collect();
+    for r in &mut rows {
+        r.label = if r.id == "__main__" {
+            "main loop".to_string()
+        } else {
+            // An unlabelled id is a dispatch this trace never showed — a resumed run, or a stream
+            // that lost the dispatching turn. Naming the id beats printing an empty cell.
+            labels.get(&r.id).cloned().unwrap_or_else(|| r.id.clone())
+        };
+    }
+    rows.sort_by(|a, b| {
+        b.usd
+            .partial_cmp(&a.usd)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    rows
+}
+
+/// Round a dollar figure to the mils every cost field in the record already uses.
+fn round3(usd: f64) -> f64 {
+    (usd * 1000.0).round() / 1000.0
+}
+
+/// The whole-run spend block [`final_record`] carries beside its frozen legacy cost fields.
+///
+/// One struct rather than four parameters so a test that cares about `outcome` or `infraDown` can
+/// pass `&SpendRecord::default()` and say nothing about spend — and so the next field added here
+/// does not touch a single call site.
+#[derive(Default)]
+struct SpendRecord<'a> {
+    agents: &'a [AgentSpend],
+    output_tokens: u64,
+    output_usd: f64,
+    billed_usd: f64,
+}
+
+impl SpendRecord<'_> {
+    /// What the per-agent rows sum to — everything the trace can attribute to a dispatch.
+    fn attributed(&self) -> f64 {
+        self.agents.iter().map(|a| a.usd).sum()
+    }
+
+    /// Whole-run totals: every thread, not just the main one. These SUPERSEDE the same-named
+    /// fields on [`RunMetrics`], which read one result line's `usage` and so describe the main
+    /// thread alone.
+    fn tokens_in(&self) -> u64 {
+        self.agents.iter().map(|a| a.tokens_in).sum()
+    }
+    fn cache_read(&self) -> u64 {
+        self.agents.iter().map(|a| a.cache_read).sum()
+    }
+    fn cache_creation(&self) -> u64 {
+        self.agents
+            .iter()
+            .map(|a| a.cache_write_5m + a.cache_write_1h)
+            .sum()
+    }
+
+    /// True when the trace was readable and these numbers describe the whole run. A record built
+    /// without one keeps [`RunMetrics`]'s main-thread figures and says so in `accuracy`, rather
+    /// than passing them off as the run.
+    fn is_whole_run(&self) -> bool {
+        !self.agents.is_empty()
+    }
+}
+
+impl AgentSpend {
+    /// Every token this task moved: fresh input, cache reads, cache writes.
+    ///
+    /// The headline figure for a task. Cost is a function of this and of rates that change; the
+    /// token count is what the work actually did. Output is NOT included and cannot be —
+    /// `usage.output_tokens` is a message-start snapshot, so the only true output figure is
+    /// whole-run (see [`AgentSpend`]). Output runs ~0.5% of a dispatching run's tokens, so a task
+    /// total without it is within a rounding error of complete, but it is an exclusion rather than
+    /// an oversight.
+    fn tokens(&self) -> u64 {
+        self.tokens_in + self.cache_read + self.cache_write_5m + self.cache_write_1h
+    }
+}
+
+/// One task's row in a metrics record: what the work was, and what it moved.
+///
+/// One constructor, so the end-of-run record and the backfill cannot drift into describing a task
+/// differently.
+fn agent_row(a: &AgentSpend) -> Value {
+    serde_json::json!({
+        "label": a.label,
+        "tokens": a.tokens(),
+        "usd": round3(a.usd),
+        "messages": a.messages,
+        "cacheRead": a.cache_read,
+        "cacheWrite": a.cache_write_5m + a.cache_write_1h,
+    })
+}
+
+/// PURE: what the run was billed, as the harness reports it.
+///
+/// The MAXIMUM `total_cost_usd` across every `result` line, because those values are CUMULATIVE:
+/// a run with twelve results climbs 37.84 → 136.08, one line per completed agent. Not
+/// [`run_metrics`]'s figure, which selects the result with the most turns — that is the main
+/// loop's own line ($37.84 here), correct for a per-thread metric and a 3.6x understatement of the
+/// run. Not a sum either, which would report $990 for a $136 run.
+fn billed_cost(content: &str) -> f64 {
+    content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|ev| ev.get("type").and_then(|t| t.as_str()) == Some("result"))
+        .filter_map(|ev| ev.get("total_cost_usd").and_then(|c| c.as_f64()))
+        .fold(0.0, f64::max)
+}
+
+/// PURE: rewrite one metrics row against its trace, or label it if the trace is gone.
+///
+/// Returns `(row, recomputed)`. A row whose trace still exists gets whole-run numbers and
+/// `accuracy: "whole-run"`; one whose trace has been collected keeps every number it had and gets
+/// `accuracy: "main-thread-only"` — a label, not a guess.
+///
+/// Nothing is estimated. The error this corrects is BIMODAL, not a ratio: a run that dispatched no
+/// subagents was always recorded correctly (exactly 1.00x on every field), and one that did is
+/// wrong by 1.8–3.6x on cost and 5–76x on cache reads. Which of the two a traceless row is cannot
+/// be recovered from what the row carries, and a mean of the two describes neither — so the row
+/// says it is not comparable instead of pretending to a number.
+fn backfill_row(mut row: Value, trace_body: Option<&str>) -> (Value, bool) {
+    let Some(obj) = row.as_object_mut() else {
+        return (row, false);
+    };
+    // Live partials (boot/ttl/usage) are main-thread BY NATURE — the subagents have not finished,
+    // and often not started. They are left exactly as they are.
+    let stage = obj.get("stage").and_then(|s| s.as_str());
+    if !matches!(stage, None | Some(STAGE_FINAL)) {
+        return (row, false);
+    }
+    let Some(body) = trace_body else {
+        obj.insert("accuracy".into(), serde_json::json!("main-thread-only"));
+        return (row, false);
+    };
+    let agents = token_attribution(body);
+    // A trace carrying no usage at all is either a run that genuinely spent nothing — a usage-gate
+    // pause exits in milliseconds — or a truncated stream. The `result` line tells them apart: the
+    // harness writes it when a run REACHES an end, so its presence makes "zero on every thread" a
+    // measurement. Without one this is no better evidence than a missing trace, and the row is
+    // labelled rather than rewritten.
+    let completed = body
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .any(|ev| ev.get("type").and_then(|t| t.as_str()) == Some("result"));
+    if agents.is_empty() && !completed {
+        obj.insert("accuracy".into(), serde_json::json!("main-thread-only"));
+        return (row, false);
+    }
+    let (out_tokens, out_usd) = unattributable_output(body);
+    let spend = SpendRecord {
+        agents: &agents,
+        output_tokens: out_tokens,
+        output_usd: out_usd,
+        billed_usd: billed_cost(body),
+    };
+    obj.insert("tokensIn".into(), serde_json::json!(spend.tokens_in()));
+    obj.insert("tokensOut".into(), serde_json::json!(spend.output_tokens));
+    obj.insert("cacheRead".into(), serde_json::json!(spend.cache_read()));
+    obj.insert(
+        "cacheCreation".into(),
+        serde_json::json!(spend.cache_creation()),
+    );
+    obj.insert(
+        "costUsd".into(),
+        serde_json::json!(round3(spend.billed_usd)),
+    );
+    obj.insert(
+        "attributedUsd".into(),
+        serde_json::json!(round3(spend.attributed())),
+    );
+    obj.insert(
+        "outputUsd".into(),
+        serde_json::json!(round3(spend.output_usd)),
+    );
+    obj.insert(
+        "outputTokens".into(),
+        serde_json::json!(spend.output_tokens),
+    );
+    obj.insert(
+        "listUsd".into(),
+        serde_json::json!(round3(spend.attributed() + spend.output_usd)),
+    );
+    obj.insert(
+        "billedUsd".into(),
+        serde_json::json!(round3(spend.billed_usd)),
+    );
+    obj.insert(
+        "agents".into(),
+        serde_json::json!(agents.iter().map(agent_row).collect::<Vec<Value>>()),
+    );
+    obj.insert("accuracy".into(), serde_json::json!("whole-run"));
+    (row, true)
+}
+
+/// `backfill-metrics <runs.jsonl> [--write]`: correct historical rows against their traces.
+///
+/// Dry-run by default — it prints what would change and touches nothing. `--write` rewrites the
+/// file in place.
+fn backfill_metrics_mode(path: &str, write: bool) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read {path}: {e}");
+            return 2;
+        }
+    };
+    let (mut done, mut labelled, mut untouched) = (0usize, 0usize, 0usize);
+    let (mut before, mut after) = (0.0f64, 0.0f64);
+    let mut out = String::with_capacity(content.len());
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            out.push_str(line);
+            out.push('\n');
+            untouched += 1;
+            continue;
+        };
+        let old_cost = row.get("costUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
+        let body = row
+            .get("trace")
+            .and_then(|t| t.as_str())
+            .and_then(|t| std::fs::read_to_string(t).ok());
+        let (row, recomputed) = backfill_row(row, body.as_deref());
+        let new_cost = row.get("costUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
+        if recomputed {
+            done += 1;
+            before += old_cost;
+            after += new_cost;
+            if (new_cost - old_cost).abs() > 0.005 {
+                println!(
+                    "  {} {}  costUsd {old_cost:.2} -> {new_cost:.2}",
+                    row.get("runId").and_then(|r| r.as_str()).unwrap_or("?"),
+                    row.get("role").and_then(|r| r.as_str()).unwrap_or("?"),
+                );
+            }
+        } else if row.get("accuracy").is_some() {
+            labelled += 1;
+        } else {
+            untouched += 1;
+        }
+        out.push_str(&serde_json::to_string(&row).unwrap());
+        out.push('\n');
+    }
+    println!(
+        "\nrecomputed {done} rows (costUsd {before:.2} -> {after:.2}), \
+         labelled {labelled} as main-thread-only, left {untouched} untouched"
+    );
+    if !write {
+        println!("dry run — pass --write to apply");
+        return 0;
+    }
+    match std::fs::write(path, out) {
+        Ok(()) => {
+            println!("wrote {path}");
+            0
+        }
+        Err(e) => {
+            eprintln!("error: cannot write {path}: {e}");
+            2
+        }
+    }
+}
+
+/// `token-report <trace.jsonl> [--json]`: print what each dispatched agent cost, dearest first.
+///
+/// Three totals print together because they answer different questions and disagree by design:
+/// the per-agent sum (what this can attribute), plus whole-run output (real spend no agent key
+/// carries), reconstructs the harness's own `modelUsage.costUSD` — on the reference trace, to the
+/// cent. `result.total_cost_usd` is a FOURTH number, lower than all of them, and is what the
+/// account is actually billed; printing both is how a reader sees list price against billed.
+fn token_report_mode(path: &str, json: bool) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read trace {path}: {e}");
+            return 2;
+        }
+    };
+    let rows = token_attribution(&content);
+    let attributed: f64 = rows.iter().map(|r| r.usd).sum();
+    let (out_tokens, out_usd) = unattributable_output(&content);
+    let billed = billed_cost(&content);
+
+    if json {
+        let agents: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id,
+                    "label": r.label,
+                    "usd": r.usd,
+                    "messages": r.messages,
+                    "inputTokens": r.tokens_in,
+                    "cacheRead": r.cache_read,
+                    "cacheWrite5m": r.cache_write_5m,
+                    "cacheWrite1h": r.cache_write_1h,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "trace": path,
+                "attributedUsd": attributed,
+                "outputUsd": out_usd,
+                "outputTokens": out_tokens,
+                "listUsd": attributed + out_usd,
+                "billedUsd": billed,
+                "agents": agents,
+            }))
+            .unwrap()
+        );
+        return 0;
+    }
+
+    println!(
+        "{:>8}  {:>5}  {:>14}  {:>11}  task",
+        "cost", "msgs", "cache read", "cache write"
+    );
+    for r in &rows {
+        println!(
+            "{:>8}  {:>5}  {:>14}  {:>11}  {}",
+            format!("${:.2}", r.usd),
+            r.messages,
+            r.cache_read,
+            r.cache_write_5m + r.cache_write_1h,
+            r.label
+        );
+    }
+    println!("\nattributed to agents  ${attributed:>8.2}");
+    println!("output (whole-run)    ${out_usd:>8.2}   {out_tokens} tokens, not attributable");
+    println!("list price            ${:>8.2}", attributed + out_usd);
+    println!("billed                ${billed:>8.2}");
+    0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// work-tokens — TOKENS TO LAND WORK.
+//
+// WHY THIS METRIC AND NOT THE TWO OBVIOUS ONES. Cost per RUN rewards doing less: a run that
+// dispatches nothing is the cheapest run this pipeline can have and it produces nothing. Cost per
+// DISPATCHED TASK rewards cheap tasks that land nothing, which is the same failure one level down.
+// Only a denominator made of OUTPUT resists both, so the denominator is landed work items and the
+// numerator is everything the run spent to get them — the churn included, because churn is part of
+// what landing cost.
+//
+// THREE BUCKETS, AND ONLY ONE OF THEM IS WASTE. Merges here are human-gated BY DESIGN (`landing is
+// interactive-only`), so a PR sitting green and mergeable is not a failure of the pipeline — it is
+// the pipeline having finished. Reading that backlog as waste would measure the HUMAN's review
+// bandwidth and call it the producer's efficiency. So `delivered-awaiting-human` is its own bucket,
+// the landed:awaiting ratio is explicitly NOT an efficiency figure, and `churn` alone — reworked,
+// abandoned, or nothing produced at all — is unambiguous waste.
+//
+// THE JOIN IS TYPED OR IT DOES NOT EXIST. A dispatch label is free text: over 40 real labels a
+// regex invents eight work items that do not exist (`batch#1` out of "cyclo.site conflicts batch
+// 1", `A0#2` out of "rain.solmem A02 sentinel alignment PR"). A metric whose denominator is
+// hallucinated is worse than no metric, so there is no label parser here, not as a fallback and not
+// behind a flag. A task's work item is what `open_pr` RECORDED, and a task with none goes to churn.
+//
+// `clone_create` is typed too and is deliberately NOT used as a second source. Its `branch` names a
+// CLONE, not a deliverable, and resolving it through GitHub's head index invents items exactly the
+// way the regex does: on the 2026-07-29T17 run one task cloned `main` to read it, and
+// `gh pr list -R rainlanguage/raindex --head main` answers with a real, closed PR the task never
+// touched. Typed data joined on the wrong key is still a wrong join.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The tool whose RESULT names a work item, matched on the last `__`-segment of the tool name.
+///
+/// Matched that way for the reason [`AUDIT_SKILL_LEAF`] is matched on its last `:`-segment: the
+/// harness prefixes an MCP tool with its SERVER name (`mcp__fsm__open_pr`), which is configuration
+/// — `campaign-mcp.json` could name the server anything — while the transition's own name is what
+/// this pipeline defines. Keying on the whole string would make the metric silently empty the day
+/// the server is renamed.
+const OPEN_PR_TOOL_LEAF: &str = "open_pr";
+
+/// One TYPED work item a dispatched task produced: the PR the pipeline's own `open_pr` transition
+/// says it opened, and the issues that PR closes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkItem {
+    slug: String,
+    pr: u64,
+    closes: Vec<u64>,
+}
+
+/// PURE: the work item one `open_pr` RESULT describes, or `None` when the result is not one.
+///
+/// STRICT on both fields it joins on — a slug of the shape every other transition takes, and a
+/// positive number — because a work item that cannot be looked up is not a work item, and admitting
+/// one would put an unresolvable row in the denominator.
+fn work_item_from_result(v: &Value) -> Option<WorkItem> {
+    let slug = parse_repo_arg(v.get("repo")?.as_str()?).ok()?;
+    let pr = v.get("pr")?.as_u64().filter(|n| *n > 0)?;
+    let closes = v
+        .get("closes")
+        .and_then(|c| c.as_array())
+        .map(|a| a.iter().filter_map(|n| n.as_u64()).collect())
+        .unwrap_or_default();
+    Some(WorkItem { slug, pr, closes })
+}
+
+/// PURE: every typed work item each dispatched task produced, keyed by the task's
+/// `parent_tool_use_id` — the same key [`token_attribution`] groups spend by, which is what lets
+/// the two be joined at all.
+///
+/// The call and its result are matched by `tool_use_id`, not by the result event's own
+/// `parent_tool_use_id`: the id proves THIS result answers an `open_pr`, so a task's items can
+/// never pick up a neighbouring tool's output.
+///
+/// A REFUSED call (`is_error`) contributes nothing, and neither does a call whose result the trace
+/// never recorded. Both are the same fact — no PR was demonstrably opened — and counting either as
+/// a work item would put a PR that does not exist in the denominator.
+fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkItem>> {
+    use std::collections::HashMap;
+    let mut owner_of: HashMap<String, String> = HashMap::new();
+    let mut out: HashMap<String, Vec<WorkItem>> = HashMap::new();
+
+    let events: Vec<Value> = trace
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .collect();
+
+    for ev in &events {
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let task = ev
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .unwrap_or("__main__")
+            .to_string();
+        let Some(blocks) = ev.pointer("/message/content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for b in blocks {
+            if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                continue;
+            }
+            let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if name.rsplit("__").next() != Some(OPEN_PR_TOOL_LEAF) {
+                continue;
+            }
+            if let Some(id) = b.get("id").and_then(|i| i.as_str()) {
+                owner_of.insert(id.to_string(), task.clone());
+            }
+        }
+    }
+
+    for ev in &events {
+        let Some(blocks) = ev.pointer("/message/content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for b in blocks {
+            if b.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+                continue;
+            }
+            let Some(task) = b
+                .get("tool_use_id")
+                .and_then(|i| i.as_str())
+                .and_then(|id| owner_of.get(id))
+            else {
+                continue;
+            };
+            if b.get("is_error").and_then(|e| e.as_bool()) == Some(true) {
+                continue;
+            }
+            let Some(item) = serde_json::from_str::<Value>(tool_result_text(b).trim())
+                .ok()
+                .as_ref()
+                .and_then(work_item_from_result)
+            else {
+                continue;
+            };
+            let items = out.entry(task.clone()).or_default();
+            // A retried call can report the same PR twice; the PR is still one work item.
+            if !items.contains(&item) {
+                items.push(item);
+            }
+        }
+    }
+    out
+}
+
+/// What became of one work item, as GitHub reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrOutcome {
+    /// Merged. The work LANDED — the only outcome the headline denominator counts.
+    Merged,
+    /// Open and presentable (or already approved): DELIVERED, and waiting on the one actor this
+    /// pipeline deliberately cannot be: the human who merges.
+    AwaitingHuman,
+    /// Open but not presentable — red, pending, conflicting, or unconfirmed. Work in progress that
+    /// has been paid for and has not arrived.
+    Reworking,
+    /// Closed without merging. Paid for, abandoned.
+    ClosedUnmerged,
+    /// The PR could not be read. NOT a bucket: an unreadable PR is neither landed nor waste, and
+    /// folding it into either would let a transient `gh` failure move the headline number.
+    Unresolved,
+}
+
+/// The three buckets the report is about. Only [`WorkBucket::Churn`] is unambiguous waste.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkBucket {
+    Landed,
+    AwaitingHuman,
+    Churn,
+}
+
+impl WorkBucket {
+    /// The key this bucket is stored and printed under.
+    fn key(self) -> &'static str {
+        match self {
+            WorkBucket::Landed => "landed",
+            WorkBucket::AwaitingHuman => "delivered-awaiting-human",
+            WorkBucket::Churn => "churn",
+        }
+    }
+}
+
+impl PrOutcome {
+    fn bucket(self) -> Option<WorkBucket> {
+        match self {
+            PrOutcome::Merged => Some(WorkBucket::Landed),
+            PrOutcome::AwaitingHuman => Some(WorkBucket::AwaitingHuman),
+            PrOutcome::Reworking | PrOutcome::ClosedUnmerged => Some(WorkBucket::Churn),
+            PrOutcome::Unresolved => None,
+        }
+    }
+    /// How good an outcome this is, so a task holding several items can be ranked by its BEST one.
+    fn rank(self) -> u8 {
+        match self {
+            PrOutcome::Merged => 4,
+            PrOutcome::AwaitingHuman => 3,
+            PrOutcome::Reworking => 2,
+            PrOutcome::ClosedUnmerged => 1,
+            PrOutcome::Unresolved => 0,
+        }
+    }
+}
+
+/// PURE: what one `gh pr view` document says became of the work.
+///
+/// The open case is [`presentable_state`]'s answer, not a second opinion about what "green and
+/// mergeable" means: that function IS the queue's definition of a PR a human can act on now, so
+/// "delivered" here means exactly what "presentable" means there. `Approved` counts as delivered
+/// too — a human who approved and has not merged is still the actor being waited on.
+///
+/// An unrecognised `state` is [`PrOutcome::Unresolved`], never a default bucket, for the reason
+/// `Merge::Unknown` exists: a state that cannot be identified is not evidence of any outcome.
+fn pr_outcome(prj: &Value) -> PrOutcome {
+    match prj.get("state").and_then(|s| s.as_str()) {
+        Some("MERGED") => PrOutcome::Merged,
+        Some("CLOSED") => PrOutcome::ClosedUnmerged,
+        Some("OPEN") => {
+            let ci = classify_ci(prj.get("statusCheckRollup").unwrap_or(&Value::Null));
+            let merge = parse_merge(prj.get("mergeable").and_then(|m| m.as_str()));
+            let review = prj.get("reviewDecision").and_then(|r| r.as_str());
+            match presentable_state(ci, merge, review) {
+                PresentState::Presentable | PresentState::Approved => PrOutcome::AwaitingHuman,
+                _ => PrOutcome::Reworking,
+            }
+        }
+        _ => PrOutcome::Unresolved,
+    }
+}
+
+/// One dispatched task: what it cost, and what became of what it produced.
+#[derive(Debug, Clone, PartialEq)]
+struct TaskWork {
+    label: String,
+    usd: f64,
+    tokens: u64,
+    items: Vec<(WorkItem, PrOutcome)>,
+}
+
+impl TaskWork {
+    /// The bucket this task's SPEND is counted in: its BEST item's, or churn when it produced none.
+    ///
+    /// Best rather than first because a task that opened two PRs and had one merged did land work —
+    /// charging its whole spend to churn because the second is still open would understate landing
+    /// and overstate waste at the same time. `None` is the unresolved case, which is reported
+    /// separately and never bucketed.
+    fn bucket(&self) -> Option<WorkBucket> {
+        match self
+            .items
+            .iter()
+            .max_by_key(|(_, o)| o.rank())
+            .map(|(_, o)| *o)
+        {
+            None => Some(WorkBucket::Churn),
+            Some(o) => o.bucket(),
+        }
+    }
+}
+
+/// One run's contribution to the corpus: its dispatched tasks, plus the spend no task carries.
+#[derive(Debug, Clone, PartialEq)]
+struct RunWork {
+    run_id: String,
+    role: String,
+    tasks: Vec<TaskWork>,
+    /// The MAIN LOOP's own spend. Orchestration, not work — it dispatches, reads the worklist and
+    /// writes the summary — but it is spent to land the same items, so it is in the numerator.
+    main_usd: f64,
+    main_tokens: u64,
+    /// Whole-run output, which no per-agent key can carry ([`unattributable_output`]). Real money,
+    /// so it is in the numerator; unattributable, so it is in no bucket.
+    output_usd: f64,
+    output_tokens: u64,
+}
+
+/// The input-side tokens one agent's key can carry.
+///
+/// Every class is summed rather than reported apart because the question is "how many tokens did
+/// landing this cost", and a reader cannot add a cache read to a fresh input token themselves
+/// without knowing the 10x price gap — which is why the DOLLAR figure leads the report and this is
+/// the volume beside it. Output is absent for [`AgentSpend`]'s reason: it exists only whole-run.
+fn agent_tokens(a: &AgentSpend) -> u64 {
+    a.tokens_in + a.cache_read + a.cache_write_5m + a.cache_write_1h
+}
+
+/// PURE given `resolve`: one run's dispatched tasks, joined to their typed work items.
+///
+/// The main loop is excluded from `tasks` and carried separately: it is not a unit of work and
+/// putting it in a bucket would make every run look like one more churned task.
+fn run_work(
+    run_id: &str,
+    role: &str,
+    trace: &str,
+    resolve: &mut dyn FnMut(&WorkItem) -> PrOutcome,
+) -> RunWork {
+    let items = task_work_items(trace);
+    let (output_tokens, output_usd) = unattributable_output(trace);
+    let mut out = RunWork {
+        run_id: run_id.to_string(),
+        role: role.to_string(),
+        tasks: Vec::new(),
+        main_usd: 0.0,
+        main_tokens: 0,
+        output_usd,
+        output_tokens,
+    };
+    for a in token_attribution(trace) {
+        if a.id == "__main__" {
+            out.main_usd += a.usd;
+            out.main_tokens += agent_tokens(&a);
+            continue;
+        }
+        out.tasks.push(TaskWork {
+            label: a.label.clone(),
+            usd: a.usd,
+            tokens: agent_tokens(&a),
+            items: items
+                .get(&a.id)
+                .map(|v| v.iter().map(|i| (i.clone(), resolve(i))).collect())
+                .unwrap_or_default(),
+        });
+    }
+    out
+}
+
+/// What one bucket accumulates.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct BucketTotals {
+    tasks: usize,
+    items: usize,
+    usd: f64,
+    tokens: u64,
+}
+
+/// The caveats the number cannot carry, printed with it in BOTH renderings.
+///
+/// They are DATA rather than prose in the printer because a JSON consumer misreads this number in
+/// exactly the ways a human does — the backlog as waste, the corpus as a trend — and a caveat only
+/// one of the two outputs carries is a caveat that will be dropped by whichever reader matters.
+fn work_tokens_notes(landed: usize, awaiting: usize, typed: usize, tasks: usize) -> Vec<String> {
+    let mut notes = vec![
+        "Only CHURN is waste. Merges are human-gated by design, so the landed:awaiting ratio \
+         measures the human's review bandwidth, NOT the pipeline's efficiency."
+            .to_string(),
+        "Task-level rows exist only for runs that dispatched subagents AND whose trace survives. \
+         This is a snapshot of that corpus, not a trend — do not read it as one."
+            .to_string(),
+    ];
+    if typed < tasks {
+        notes.push(format!(
+            "{} of {tasks} tasks carry NO typed work item and are counted as churn. A task's work \
+             item is what `open_pr` recorded; nothing is inferred from a dispatch label. Where \
+             this fraction is large the churn figure is a CEILING on waste, not a measurement of \
+             it.",
+            tasks - typed
+        ));
+    }
+    if landed == 0 {
+        notes.push(
+            "No landed item in this corpus, so cost-per-landed-item has no value. That is the \
+             honest answer: the metric needs one merged work item to exist."
+                .to_string(),
+        );
+    } else if awaiting > 0 {
+        notes.push(
+            "Cost per DELIVERED item (landed + awaiting) is what the pipeline controls; cost per \
+             LANDED item additionally depends on how fast the human merges."
+                .to_string(),
+        );
+    }
+    notes
+}
+
+/// PURE: the whole `work-tokens` report as data — the one value both renderings are made of, so
+/// the table and the JSON can never disagree about a number or drop a caveat.
+///
+/// `skipped` is a COUNT PER REASON rather than a list of run ids: the metrics file holds 259 rows
+/// and the overwhelming majority are runs that predate per-agent attribution, so listing them would
+/// bury the report in the very rows it is telling you it cannot use. What a reader needs from that
+/// set is its SIZE and its REASONS, which is what makes the corpus line honest.
+fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
+    use std::collections::HashMap;
+    let mut buckets: HashMap<&'static str, BucketTotals> = HashMap::new();
+    for b in [
+        WorkBucket::Landed,
+        WorkBucket::AwaitingHuman,
+        WorkBucket::Churn,
+    ] {
+        buckets.insert(b.key(), BucketTotals::default());
+    }
+    let (mut churn_no_item, mut churn_reworking, mut churn_closed) = (0usize, 0usize, 0usize);
+    let (mut unresolved_tasks, mut unresolved_items) = (0usize, 0usize);
+    let (mut typed_tasks, mut tasks_total) = (0usize, 0usize);
+    let (mut orchestration_usd, mut orchestration_tokens) = (0.0f64, 0u64);
+    let (mut output_usd, mut output_tokens) = (0.0f64, 0u64);
+    let mut task_rows: Vec<Value> = Vec::new();
+    let mut run_rows: Vec<Value> = Vec::new();
+
+    for r in runs {
+        orchestration_usd += r.main_usd;
+        orchestration_tokens += r.main_tokens;
+        output_usd += r.output_usd;
+        output_tokens += r.output_tokens;
+        let mut run_landed = 0usize;
+        for t in &r.tasks {
+            tasks_total += 1;
+            if !t.items.is_empty() {
+                typed_tasks += 1;
+            }
+            // ITEMS are counted in their OWN bucket, independently of the task's. A task that
+            // landed one PR and abandoned another contributes one item to each — counting items
+            // only in the task's bucket would drop the abandoned one entirely, which is the
+            // denominator quietly disagreeing with the waste figure beside it.
+            for (_, o) in &t.items {
+                match o.bucket() {
+                    Some(b) => {
+                        buckets.get_mut(b.key()).expect("bucket seeded above").items += 1;
+                        if b == WorkBucket::Landed {
+                            run_landed += 1;
+                        }
+                    }
+                    None => unresolved_items += 1,
+                }
+            }
+            // SPEND is counted once, in the bucket of the task's BEST item: a task is one unit of
+            // work however many PRs it opened, and its dollars cannot be split between outcomes
+            // without inventing a split the trace does not record.
+            let bucket = t.bucket();
+            match bucket {
+                None => unresolved_tasks += 1,
+                Some(b) => {
+                    let e = buckets.get_mut(b.key()).expect("bucket seeded above");
+                    e.tasks += 1;
+                    e.usd += t.usd;
+                    e.tokens += t.tokens;
+                    if b == WorkBucket::Churn {
+                        if t.items.is_empty() {
+                            churn_no_item += 1;
+                        } else if t.items.iter().any(|(_, o)| *o == PrOutcome::Reworking) {
+                            churn_reworking += 1;
+                        } else {
+                            churn_closed += 1;
+                        }
+                    }
+                }
+            }
+            task_rows.push(serde_json::json!({
+                "runId": r.run_id,
+                "label": t.label,
+                "usd": round3(t.usd),
+                "tokens": t.tokens,
+                "bucket": bucket.map(|b| b.key()).unwrap_or("unresolved"),
+                "items": t.items.iter().map(|(i, o)| serde_json::json!({
+                    "pr": format!("{}#{}", i.slug, i.pr),
+                    "closes": i.closes,
+                    "outcome": format!("{o:?}"),
+                })).collect::<Vec<Value>>(),
+            }));
+        }
+        run_rows.push(serde_json::json!({
+            "runId": r.run_id,
+            "role": r.role,
+            "tasks": r.tasks.len(),
+            "landedItems": run_landed,
+            "mainLoopUsd": round3(r.main_usd),
+            "outputUsd": round3(r.output_usd),
+        }));
+    }
+
+    let landed = buckets[WorkBucket::Landed.key()];
+    let awaiting = buckets[WorkBucket::AwaitingHuman.key()];
+    let churn = buckets[WorkBucket::Churn.key()];
+    // EVERY dollar the corpus spent, including the churn and the orchestration — the whole point of
+    // the metric is that what a landed item cost includes what it cost to not land the others.
+    let total_usd = landed.usd + awaiting.usd + churn.usd + orchestration_usd + output_usd;
+    let total_tokens =
+        landed.tokens + awaiting.tokens + churn.tokens + orchestration_tokens + output_tokens;
+    let per = |n: usize| -> Value {
+        if n == 0 {
+            Value::Null
+        } else {
+            serde_json::json!(round3(total_usd / n as f64))
+        }
+    };
+    let bucket_json = |b: WorkBucket| {
+        let t = buckets[b.key()];
+        serde_json::json!({"tasks": t.tasks, "items": t.items, "usd": round3(t.usd), "tokens": t.tokens})
+    };
+
+    serde_json::json!({
+        "corpus": {
+            "runs": runs.len(),
+            "tasks": tasks_total,
+            "typedTasks": typed_tasks,
+            "typedCoveragePct": if tasks_total == 0 { Value::Null }
+                else { serde_json::json!(round3(100.0 * typed_tasks as f64 / tasks_total as f64)) },
+            "skippedRows": skipped.iter().map(|(why, rows)| serde_json::json!({"why": why, "rows": rows}))
+                .collect::<Vec<Value>>(),
+        },
+        "buckets": {
+            WorkBucket::Landed.key(): bucket_json(WorkBucket::Landed),
+            WorkBucket::AwaitingHuman.key(): bucket_json(WorkBucket::AwaitingHuman),
+            WorkBucket::Churn.key(): bucket_json(WorkBucket::Churn),
+        },
+        "churnBreakdown": {
+            "noTypedWorkItem": churn_no_item,
+            "openNotPresentable": churn_reworking,
+            "closedUnmerged": churn_closed,
+        },
+        "unresolved": {"tasks": unresolved_tasks, "items": unresolved_items},
+        "orchestrationUsd": round3(orchestration_usd),
+        "orchestrationTokens": orchestration_tokens,
+        "outputUsd": round3(output_usd),
+        "outputTokens": output_tokens,
+        "totalUsd": round3(total_usd),
+        "totalTokens": total_tokens,
+        "usdPerLandedItem": per(landed.items),
+        "usdPerDeliveredItem": per(landed.items + awaiting.items),
+        "notes": work_tokens_notes(landed.items, awaiting.items, typed_tasks, tasks_total),
+        "runs": run_rows,
+        "tasks": task_rows,
+    })
+}
+
+/// PURE: the table, rendered from the report VALUE rather than from the totals again — so a number
+/// printed here is the number `--json` emits, by construction.
+fn render_work_tokens(report: &Value) -> String {
+    let n = |p: &str| report.pointer(p).and_then(|v| v.as_u64()).unwrap_or(0);
+    let f = |p: &str| report.pointer(p).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let money = |p: &str| match report.pointer(p) {
+        Some(Value::Null) | None => "n/a".to_string(),
+        Some(v) => format!("${:.2}", v.as_f64().unwrap_or(0.0)),
+    };
+    let mut out = vec![
+        "tokens to land work".to_string(),
+        String::new(),
+        format!(
+            "corpus: {} runs, {} dispatched tasks; {} carry a typed work item ({:.0}% coverage)",
+            n("/corpus/runs"),
+            n("/corpus/tasks"),
+            n("/corpus/typedTasks"),
+            f("/corpus/typedCoveragePct"),
+        ),
+    ];
+    // The corpus is small enough to NAME. A reader who can see which three runs these are can
+    // check them; "3 runs" alone is a number they have to take on trust.
+    for r in report
+        .get("runs")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&Vec::new())
+    {
+        out.push(format!(
+            "  {} {} — {} tasks, {} landed",
+            r.get("runId").and_then(|v| v.as_str()).unwrap_or("?"),
+            r.get("role").and_then(|v| v.as_str()).unwrap_or("?"),
+            r.get("tasks").and_then(|v| v.as_u64()).unwrap_or(0),
+            r.get("landedItems").and_then(|v| v.as_u64()).unwrap_or(0),
+        ));
+    }
+    out.extend([
+        String::new(),
+        format!(
+            "{:<26}{:>6}{:>7}{:>11}{:>15}",
+            "bucket", "tasks", "items", "usd", "tokens"
+        ),
+    ]);
+    for b in [
+        WorkBucket::Landed,
+        WorkBucket::AwaitingHuman,
+        WorkBucket::Churn,
+    ] {
+        let p = format!("/buckets/{}", b.key());
+        out.push(format!(
+            "{:<26}{:>6}{:>7}{:>11}{:>15}",
+            b.key(),
+            n(&format!("{p}/tasks")),
+            n(&format!("{p}/items")),
+            money(&format!("{p}/usd")),
+            n(&format!("{p}/tokens")),
+        ));
+    }
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "  churn: no typed item",
+        n("/churnBreakdown/noTypedWorkItem"),
+        "",
+        "",
+        ""
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "  churn: open, not ready",
+        n("/churnBreakdown/openNotPresentable"),
+        "",
+        "",
+        ""
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "  churn: closed unmerged",
+        n("/churnBreakdown/closedUnmerged"),
+        "",
+        "",
+        ""
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        format!("orchestration ({} main)", n("/corpus/runs")),
+        "",
+        "",
+        money("/orchestrationUsd"),
+        n("/orchestrationTokens"),
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "output (whole-run)",
+        "",
+        "",
+        money("/outputUsd"),
+        n("/outputTokens"),
+    ));
+    out.push(format!(
+        "{:<26}{:>6}{:>7}{:>11}{:>15}",
+        "TOTAL",
+        n("/corpus/tasks"),
+        "",
+        money("/totalUsd"),
+        n("/totalTokens"),
+    ));
+    if n("/unresolved/tasks") > 0 || n("/unresolved/items") > 0 {
+        out.push(format!(
+            "\nunresolved (PR unreadable, in NO bucket): {} tasks, {} items",
+            n("/unresolved/tasks"),
+            n("/unresolved/items")
+        ));
+    }
+    out.extend([
+        String::new(),
+        format!("per LANDED item     {:>10}", money("/usdPerLandedItem")),
+        format!("per DELIVERED item  {:>10}", money("/usdPerDeliveredItem")),
+        String::new(),
+    ]);
+    for note in report
+        .get("notes")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&Vec::new())
+    {
+        out.push(format!("- {}", note.as_str().unwrap_or("")));
+    }
+    for row in report
+        .get("corpus")
+        .and_then(|c| c.get("skippedRows"))
+        .and_then(|v| v.as_array())
+        .unwrap_or(&Vec::new())
+    {
+        out.push(format!(
+            "- {} metrics rows skipped: {}",
+            row.get("rows").and_then(|v| v.as_u64()).unwrap_or(0),
+            row.get("why").and_then(|v| v.as_str()).unwrap_or("?"),
+        ));
+    }
+    // Trailing spaces are what a fixed-width table leaves behind on a row with empty cells.
+    for line in &mut out {
+        while line.ends_with(' ') {
+            line.pop();
+        }
+    }
+    out.join("\n")
+}
+
+/// Read one PR's outcome from GitHub. `Unresolved` on any read failure — never a bucket, so a flaky
+/// API call cannot move the headline number.
+fn fetch_pr_outcome(item: &WorkItem) -> PrOutcome {
+    match gh_json(&[
+        "pr",
+        "view",
+        &item.pr.to_string(),
+        "-R",
+        &item.slug,
+        "--json",
+        "state,mergeable,statusCheckRollup,reviewDecision",
+    ]) {
+        Some(j) => pr_outcome(&j),
+        None => PrOutcome::Unresolved,
+    }
+}
+
+/// `work-tokens <metrics/runs.jsonl> [--json]`: what it cost to LAND work, per landed item.
+fn work_tokens_mode(path: &str, json: bool) -> i32 {
+    use std::collections::{HashMap, HashSet};
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read {path}: {e}");
+            return 2;
+        }
+    };
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut cache: HashMap<(String, u64), PrOutcome> = HashMap::new();
+    let mut runs: Vec<RunWork> = Vec::new();
+    // Ordered so the reasons print in the order a row meets them, not in hash order.
+    let mut skipped: Vec<(String, usize)> = Vec::new();
+    fn skip(skipped: &mut Vec<(String, usize)>, why: &str) {
+        match skipped.iter_mut().find(|(w, _)| w == why) {
+            Some((_, n)) => *n += 1,
+            None => skipped.push((why.to_string(), 1)),
+        }
+    }
+    for line in content.lines() {
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        // Live partials (boot/ttl/usage) restate a run the final record also describes; counting
+        // both would double the run. Same rule [`backfill_row`] applies, for the same reason.
+        let stage = row.get("stage").and_then(|s| s.as_str());
+        if !matches!(stage, None | Some(STAGE_FINAL)) {
+            continue;
+        }
+        let run_id = row
+            .get("runId")
+            .and_then(|r| r.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let Some(trace_path) = row.get("trace").and_then(|t| t.as_str()) else {
+            skip(&mut skipped, "the record names no trace");
+            continue;
+        };
+        if !seen.insert(trace_path.to_string()) {
+            continue;
+        }
+        let Ok(trace) = std::fs::read_to_string(trace_path) else {
+            skip(&mut skipped, "the trace has been collected");
+            continue;
+        };
+        let role = row
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let run = run_work(&run_id, &role, &trace, &mut |item| {
+            *cache
+                .entry((item.slug.clone(), item.pr))
+                .or_insert_with(|| fetch_pr_outcome(item))
+        });
+        if run.tasks.is_empty() {
+            skip(
+                &mut skipped,
+                "the run dispatched no subagents — no task-level rows",
+            );
+            continue;
+        }
+        runs.push(run);
+    }
+    let report = work_tokens_report(&runs, &skipped);
+    if json {
+        println!("{report}");
+    } else {
+        println!("{}", render_work_tokens(&report));
+    }
+    0
+}
+
 /// Which run a record belongs to, as the runner knows it. Nothing here is derivable from the
 /// trace, which is why it arrives as flags.
 struct RunIdentity<'a> {
@@ -2690,6 +4022,7 @@ fn run_metrics_mode(
     let m = run_metrics(&content);
     let tooling = trace_tooling_report(&content);
     let infra = infra_record_at(infra_path);
+    let (out_tokens, out_usd) = unattributable_output(&content);
     let outcome = exit_code.map(|rc| {
         (
             rc,
@@ -2706,7 +4039,13 @@ fn run_metrics_mode(
             &tooling,
             preflight_missing,
             &infra,
-            skip
+            skip,
+            &SpendRecord {
+                agents: &token_attribution(&content),
+                output_tokens: out_tokens,
+                output_usd: out_usd,
+                billed_usd: billed_cost(&content),
+            }
         ))
         .unwrap()
     );
@@ -2727,6 +4066,7 @@ fn final_record(
     preflight_missing: &[String],
     infra: &InfraRecord,
     skip: Option<(&str, &str)>,
+    spend: &SpendRecord,
 ) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
@@ -2741,11 +4081,18 @@ fn final_record(
         "startupMs": m.startup_ms,
         "durationMs": m.duration_ms,
         "numTurns": m.num_turns,
-        "tokensIn": m.tokens_in,
-        "tokensOut": m.tokens_out,
-        "cacheRead": m.cache_read,
-        "cacheCreation": m.cache_creation,
-        "costUsd": (m.cost_usd * 1000.0).round() / 1000.0,
+        // WHOLE-RUN, superseding the main-thread figures these keys carried before. They are the
+        // same keys because the dashboard reads them and the question they answer — what did this
+        // run cost, how much context did it move — never changed; only the answer was wrong, by
+        // 3.6x on cost and 76x on cache reads for a run that dispatched 16 agents. A row is
+        // labelled `accuracy` so a consumer can tell a corrected row from a legacy one, and rows
+        // whose trace no longer exists keep their old numbers and say `main-thread-only`.
+        "tokensIn": if spend.is_whole_run() { spend.tokens_in() } else { m.tokens_in },
+        "tokensOut": if spend.is_whole_run() { spend.output_tokens } else { m.tokens_out },
+        "cacheRead": if spend.is_whole_run() { spend.cache_read() } else { m.cache_read },
+        "cacheCreation": if spend.is_whole_run() { spend.cache_creation() } else { m.cache_creation },
+        "costUsd": round3(if spend.is_whole_run() { spend.billed_usd } else { m.cost_usd }),
+        "accuracy": if spend.is_whole_run() { "whole-run" } else { "main-thread-only" },
         // Per-window rate-limit summary (#97). Coerced to an object here rather than trusted from
         // the caller so the "always an object" contract holds even for a `RunMetrics` built by
         // hand, whose `Default` for a `Value` is null.
@@ -2768,6 +4115,31 @@ fn final_record(
         "infraDown": infra.down,
         "infraReason": infra.reason,
         "infraRootCause": infra.root_cause,
+        // Per-agent spend (see [`token_attribution`]). Added rather than folded into the fields
+        // above because every one of those is frozen by the series already committed to
+        // metrics/runs.jsonl: `costUsd` is the result line with the most turns — the MAIN LOOP's
+        // cumulative total, not the run's — and `tokensIn`/`cacheRead`/`cacheCreation` count the
+        // main thread only, because [`UsageProbe`] reconciles against `result.usage`, which does.
+        // On a 16-agent run that is $37.84 beside a run that actually cost $136.08. Re-deriving
+        // those keys would put a step in the series no run experienced, so they stay as they are
+        // and the whole-run truth arrives in new keys beside them.
+        "agents": spend.agents.iter().map(|a| serde_json::json!({
+            "label": a.label,
+            "usd": round3(a.usd),
+            "messages": a.messages,
+            "cacheRead": a.cache_read,
+            "cacheWrite": a.cache_write_5m + a.cache_write_1h,
+        })).collect::<Vec<Value>>(),
+        // What the agent rows sum to. NOT the run: output tokens are real spend that no agent key
+        // can carry (`usage.output_tokens` is a message-start snapshot understating ~18x), so they
+        // arrive whole-run from `result.modelUsage`.
+        "attributedUsd": round3(spend.attributed()),
+        "outputUsd": round3(spend.output_usd),
+        "outputTokens": spend.output_tokens,
+        // List price and what the account was actually charged. `billedUsd` is the CUMULATIVE
+        // maximum across result lines and is the number `costUsd` should have been.
+        "listUsd": round3(spend.attributed() + spend.output_usd),
+        "billedUsd": round3(spend.billed_usd),
     });
     stamp_identity(&mut doc, id);
     if let (Some(obj), Some((rc, verdict))) = (doc.as_object_mut(), outcome) {
@@ -3494,9 +4866,20 @@ struct ToolingReport {
 }
 
 /// Read a `tool_result` block's content as text, whatever shape the harness used for it.
+///
+/// A LIST of content blocks is joined on its `text` fields rather than dumped as JSON, because
+/// every caller here reads this as TEXT: the tooling report splits a `Glob` result into lines, and
+/// [`task_work_items`] parses an MCP result as a document. A JSON dump satisfies neither — it
+/// escapes the newlines, so a multi-line result arrives as one line and a JSON payload arrives
+/// wrapped in a second layer of quoting.
 fn tool_result_text(item: &Value) -> String {
     match item.get("content") {
         Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<&str>>()
+            .join(""),
         Some(other) => other.to_string(),
         None => String::new(),
     }
@@ -12512,30 +13895,10 @@ fn unvetted_close_candidates_fetch(
     include_skipped: bool,
     limit: Option<usize>,
 ) -> Result<Value, String> {
-    let mut args: Vec<String> = vec!["search".into(), "issues".into()];
-    args.extend(org_owner_args());
-    args.extend(
-        [
-            "--state",
-            "open",
-            "--label",
-            "ai:close-candidate",
-            "--limit",
-            "1000",
-            "--json",
-            "url,number,repository,title",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
-    let found = gh_json(&argref)
-        .and_then(|v| v.as_array().cloned())
-        .ok_or_else(|| {
-            "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
-             aborting rather than report a falsely-empty close-candidate queue"
-                .to_string()
-        })?;
+    // The SAME search the human's `next_close_candidate` gate runs, shared rather than written
+    // twice: two spellings of "which issues are flagged" is how the vetter's inbox and the human's
+    // would come to answer differently.
+    let found = flagged_open_issues()?;
     // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
     // reported (see `fetchErrors` below), never dropped.
 
@@ -12546,14 +13909,7 @@ fn unvetted_close_candidates_fetch(
     for i in &found {
         let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
-        // `repository.nameWithOwner` is authoritative; the url parse is the fallback.
-        let slug = i
-            .get("repository")
-            .and_then(|r| r.get("nameWithOwner"))
-            .and_then(|s| s.as_str())
-            .map(String::from)
-            .or_else(|| issue_slug(url));
-        let (Some(slug), Some(num)) = (slug, i.get("number").and_then(|n| n.as_u64())) else {
+        let Some((slug, num)) = search_issue_ref(i) else {
             errors.push(
                 serde_json::json!({"url": url, "title": title, "error": "unparseable issue ref"}),
             );
@@ -13521,8 +14877,21 @@ const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 /// default is small rather than "everything that fits". The ceiling is what keeps the bound
 /// STRUCTURAL: at 25 rows a state-load cannot reach [`MCP_MAX_RESULT_BYTES`] even with GitHub's
 /// longest legal titles, so the size of the queue stops being able to break the state-load.
-const STATE_LOAD_PAGE_DEFAULT: usize = 10;
-const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=25;
+///
+/// RUN BUDGET (2026-08-03): a page is now an ALLOWANCE, not a window onto a longer queue. A vetter
+/// run spends at most 3 ITEMS — a PR vetted or a close-candidate flag ruled on, ONE budget shared
+/// across both state-loads. It is a RISK CONTROL, not a throughput preference: the FSM is not yet
+/// reliable or efficient, every item a run attempts is an item that can go wrong (a wrong verdict
+/// a human acts on, a sound flag stripped, tokens burnt for nothing), and 3 bounds how much damage
+/// ONE run can do while that is still true. So a state-load handing back 10 or 25 is handing back
+/// work the run must not do, and the per-tool half of "stop at 3" is a rule the surface enforces
+/// rather than one the prompt merely asserts. The SHARING is necessarily the prompt's to enforce:
+/// each tool call is bounded on its own, and neither can see what the other already spent. The
+/// bound is deliberately conservative and explicitly temporary — raising it is moving THIS number,
+/// gated on evidence from the run logs that runs have become reliable and efficient, never on a
+/// run having finished early with budget to spare.
+const STATE_LOAD_PAGE_DEFAULT: usize = 3;
+const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=3;
 
 /// The byte budget ONE tool result must fit in — the contract this server holds itself to, checked
 /// on every result before it is handed back (#78), and sized so that OUR error always arrives before
@@ -14676,6 +16045,1486 @@ mod next_ready_tests {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// next_close_candidate — the human's FLAG DECISION, as one typed result (#173).
+//
+// The PR lane has had a one-call entry point since #121; the flag lane had none.
+// The human could read a flag it already knew the number of and rule on it, but
+// nothing answered WHICH FLAG IS NEXT — so the queue that asks a human to
+// DESTROY work was the one worked by hand.
+//
+// This is the READ that precedes `human_close` / `human_rule_issue`. It is not
+// `next_ready` with the nouns changed: the ordering is argued below rather than
+// inherited, and the row carries a CLAIM (the producer's stated reason) rather
+// than a verdict on code.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Which side of the HUMAN's flag gate one `ai:close-candidate` issue is on.
+///
+/// A typed state rather than a bool, because "not presentable" covers four situations that need
+/// four different things done about them, and three of them are invisible unless named: the vetter
+/// owes a verdict, nobody can judge this at all, a human already ruled, or a write landed half-done.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CcGate {
+    /// The vetter UPHELD the current flag and no human has ruled: the human's to rule on.
+    Presentable,
+    /// A `human:*` label is already on the issue. Human decisions are sacred, and a ruling is not an
+    /// inbox item — whatever the flag still says.
+    HumanRuled,
+    /// The label is on the issue and NO trusted producer comment says why. There is no claim to
+    /// check, so there is nothing to rule on evidence — and no AI transition clears it either (the
+    /// vetter skips it as `skip-no-flag`), which is why it is reported rather than dropped.
+    NoFlag,
+    /// No trusted `🤖 ai:vetter` verdict pinned to the CURRENT flag. The vetter owes this one a
+    /// verdict; presenting it here would spend the human's judgement on the vetter's turn, and a
+    /// flag the vetter REJECTS never reaches the human at all (the reject strips the label).
+    Unvetted,
+    /// The verdict at the current flag is `reject` and the label is STILL here. A reject removes it,
+    /// so this is a half-applied write, not a state the machine produces — reported, never presented.
+    RejectedStillFlagged,
+}
+
+impl CcGate {
+    fn as_str(self) -> &'static str {
+        match self {
+            CcGate::Presentable => "presentable",
+            CcGate::HumanRuled => "human-ruled",
+            CcGate::NoFlag => "no-producer-flag",
+            CcGate::Unvetted => "unvetted-vetter-owes-a-verdict",
+            CcGate::RejectedStillFlagged => "vetter-rejected-but-still-flagged",
+        }
+    }
+    /// The two states no modelled transition will ever clear on its own — a human has to act, and
+    /// until this tool named them nothing said they existed.
+    fn is_stranded(self) -> bool {
+        matches!(self, CcGate::NoFlag | CcGate::RejectedStillFlagged)
+    }
+}
+
+/// PURE: the `(flag timestamp, verdict word)` a trusted `🤖 ai:vetter` close-candidate comment
+/// recorded, out of the body [`cc_verdict_comment`] writes.
+///
+/// The verdict WORD is parsed rather than inferred from the label still being present. Inference
+/// would be right in the ordinary case and silently wrong in the one that matters: a `reject` whose
+/// label removal failed looks exactly like an `uphold` to anything reading the label, and that is
+/// the case a human must never be handed as "the vetter agrees".
+///
+/// A word outside [`CC_VERDICTS`] is returned as it was written and treated as UNKNOWN by
+/// [`cc_gate`] — the same posture as [`VetProtocol::Unknown`]: a verdict that cannot be identified
+/// is not a verdict in force.
+fn cc_verdict_parts(body: &str) -> Option<(String, String)> {
+    let rest = body
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Reviewed close-candidate @"))?;
+    // The separator is a colon-SPACE, not a colon: the pin is an ISO-8601 timestamp and its own
+    // colons are the ones inside `09:00:00Z`, never followed by a space. Splitting on the first
+    // bare colon reads the pin as `2026-07-20T09` and the verdict as `00:00Z:` — which then fails
+    // the `atFlag` comparison, so a correct verdict would read as no verdict at all.
+    let (at, tail) = rest.split_once(": ")?;
+    let at = at.trim();
+    let verdict = tail.split_whitespace().next().unwrap_or("");
+    if at.is_empty() || verdict.is_empty() {
+        return None;
+    }
+    Some((at.to_string(), verdict.to_string()))
+}
+
+/// PURE: where one flagged issue stands, from the three facts that decide it.
+///
+/// Ordered as the vetter's own `cc_row` orders its skips, and for the same reason: a human ruling
+/// dominates everything (it is sacred and already made), then "nothing was claimed", then what the
+/// vetter did with the claim. Only the last arm can produce a row.
+fn cc_gate(human_ruled: bool, flag_at: &str, verdict: Option<(String, String)>) -> CcGate {
+    if human_ruled {
+        return CcGate::HumanRuled;
+    }
+    if flag_at.is_empty() {
+        return CcGate::NoFlag;
+    }
+    match verdict {
+        // The verdict has to pin THIS flag. A re-flag is new evidence, and a verdict written against
+        // the old one describes a claim nobody is making any more.
+        Some((at, word)) if at == flag_at => match word.as_str() {
+            "uphold" => CcGate::Presentable,
+            "reject" => CcGate::RejectedStillFlagged,
+            _ => CcGate::Unvetted,
+        },
+        _ => CcGate::Unvetted,
+    }
+}
+
+/// Whether an OPEN pull request already claims to close this issue — the `covered-by-open-pr` state,
+/// which is a KNOWN non-closeable one: an open PR is not a landed fix.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PrCoverage {
+    /// At least one open PR's native closing references name this issue.
+    Covered,
+    /// The query answered, and named none.
+    Uncovered,
+    /// The query failed or came back malformed. FAIL-SAFE: never read as `Uncovered`, because the
+    /// error direction matters here — an unseen covering PR is an issue closed out from under work
+    /// in flight, while a falsely-reported one only costs a second look.
+    Unreadable,
+}
+
+impl PrCoverage {
+    fn as_str(self) -> &'static str {
+        match self {
+            PrCoverage::Covered => "covered-by-open-pr",
+            PrCoverage::Uncovered => "no-open-pr",
+            PrCoverage::Unreadable => "unreadable",
+        }
+    }
+    /// Does this signal stand in the way of a close? `Unreadable` does, which is what makes the
+    /// failure fail SAFE rather than merely fail.
+    fn blocks_close(self) -> bool {
+        !matches!(self, PrCoverage::Uncovered)
+    }
+    /// What the signal MEANS for the ruling, in the shape [`ThreadMeaning`] uses: the raw state is
+    /// no use to a reader who has to remember which way round the hazard runs.
+    fn meaning(self) -> &'static str {
+        match self {
+            PrCoverage::Covered => "not-closeable-an-open-pr-is-not-a-landed-fix",
+            PrCoverage::Uncovered => "no-open-pr-claims-this-issue",
+            PrCoverage::Unreadable => "unknown-read-as-covered",
+        }
+    }
+}
+
+/// The ISSUE-side twin of [`CLOSING_REFS_QUERY`]: the open PRs GitHub itself resolves as closing
+/// THIS issue. `includeClosedPrs:false` is the whole point — a merged PR that closed something else,
+/// or a closed one that never landed, is not coverage.
+///
+/// Per-issue rather than the org-wide PR search `uncovered-issues` runs, because this tool returns
+/// at most [`NEXT_CC_MAX_ROWS`] rows: the cost is paid on the rows actually returned, exactly as
+/// [`next_ready_fetch`] pays for its CodeRabbit read.
+const COVERING_PRS_QUERY: &str = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){closedByPullRequestsReferences(first:10,includeClosedPrs:false){nodes{number state repository{nameWithOwner}}}}}}";
+
+/// PURE: the open PRs claiming to close an issue, out of a [`COVERING_PRS_QUERY`] response.
+///
+/// `None` — or a response missing the nodes array — is [`PrCoverage::Unreadable`], never an empty
+/// answer. Each PR is emitted as `owner/repo#n`, the same addressing string every other tool takes,
+/// so a caller can hand one straight to `pr_context` without reassembling a ref (#132).
+fn covering_open_prs(resp: Option<&Value>) -> (PrCoverage, Vec<String>) {
+    let Some(nodes) = resp
+        .and_then(|v| v.pointer("/data/repository/issue/closedByPullRequestsReferences/nodes"))
+        .and_then(|n| n.as_array())
+    else {
+        return (PrCoverage::Unreadable, Vec::new());
+    };
+    let prs: Vec<String> = nodes
+        .iter()
+        // The argument already asks GitHub to exclude closed PRs; the state is checked again here
+        // because a filter asserted at the far end of a network call is not one this function knows
+        // ran, and every non-OPEN state is silently dropped rather than counted as coverage.
+        .filter(|n| n.get("state").and_then(|s| s.as_str()) == Some("OPEN"))
+        .filter_map(|n| {
+            let slug = n
+                .pointer("/repository/nameWithOwner")
+                .and_then(|s| s.as_str())?;
+            let num = n.get("number").and_then(|x| x.as_u64())?;
+            Some(format!("{slug}#{num}"))
+        })
+        .collect();
+    let verdict = if prs.is_empty() {
+        PrCoverage::Uncovered
+    } else {
+        PrCoverage::Covered
+    };
+    (verdict, prs)
+}
+
+/// PURE: the argv of the per-issue covering-PR read, one flag per variable.
+///
+/// **The flag is decided by the variable's declared type, not by taste.** `gh api graphql` gives
+/// `-F` a magic type conversion: a value that parses as an integer, `true`, `false` or `null` is
+/// sent as that JSON type rather than as a string. So `-F o=<owner>` on a repository whose owner
+/// or name is all digits sends an `Int` at [`COVERING_PRS_QUERY`]'s `$o:String!`, and GitHub
+/// refuses the WHOLE query — `Could not coerce value 123 to String` — which arrives here as
+/// [`PrCoverage::Unreadable`], a query failure on a repository that reads perfectly well. `-f` is
+/// the raw-string flag and is what both `String!` variables take. `n` is the one variable GitHub
+/// genuinely types `Int!` and it keeps `-F`, because `-f n=7` sends `"7"` and fails the same query
+/// from the other side; blanket-converting the call site would trade one break for the other.
+///
+/// Separated from the fetch for the reason [`flagged_open_issues_args`] is: the flag/variable
+/// pairing is the thing that decides whether the read can answer at all, and inside a network call
+/// nothing asserts it.
+fn covering_prs_args(owner: &str, repo: &str, num: u64) -> Vec<String> {
+    vec![
+        "api".into(),
+        "graphql".into(),
+        "-f".into(),
+        format!("query={COVERING_PRS_QUERY}"),
+        "-f".into(),
+        format!("o={owner}"),
+        "-f".into(),
+        format!("r={repo}"),
+        "-F".into(),
+        format!("n={num}"),
+    ]
+}
+
+/// Live covering-PR read for one issue.
+fn covering_open_prs_fetch(slug: &str, num: u64) -> (PrCoverage, Vec<String>) {
+    let Some((owner, repo)) = slug.split_once('/') else {
+        return (PrCoverage::Unreadable, Vec::new());
+    };
+    let args = covering_prs_args(owner, repo, num);
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    covering_open_prs(gh_json(&argref).as_ref())
+}
+
+/// One flag that is the HUMAN's to rule on, as [`next_close_candidate_fetch`] produces it: the
+/// ordering key plus the `gh issue view` snapshot the row reads its fields out of. Carrying the JSON
+/// rather than a flattened row is what lets the ranking and the row answer off the SAME snapshot,
+/// for the reason [`PresentablePr`] does.
+struct PresentableFlag {
+    slug: String,
+    num: u64,
+    /// The CURRENT flag's timestamp — the ordering key, and the anchor every record on this issue
+    /// pins to (the vetter's verdict, and the human's ruling after it).
+    flag_at: String,
+    flag_body: String,
+    detail: Value,
+}
+
+/// PURE: the total order the human's flag queue is worked in — **OLDEST FLAG FIRST**, ties broken by
+/// the issue reference so the order is total and two runs a second apart name the same head.
+///
+/// This deliberately does NOT reuse [`queue_order`]'s cheapest-first rule. That rule exists because
+/// merges are the scarce resource on the PR side: a cheap merge is throughput, and clearing it frees
+/// the next one. Neither half of that transfers.
+///
+/// **There is no cost signal to sort by.** A flag's whole content is one line of stated reason, and
+/// its length says nothing about how hard the claim is to falsify — "already fixed on main" is
+/// twenty-two characters and needs a diff read against the path the ISSUE named (`raindex#1348`,
+/// where the merged PR touched `getAllDepositFields` rather than the `updateFields` path). Ordering
+/// by a number that does not measure the work is worse than not ordering by cost at all, because it
+/// looks like it does.
+///
+/// **The scarce resource is the human's judgement, so the hazard is starvation, not latency.** And a
+/// flag is not inert while it waits: [`is_producer_backlog`] excludes an `ai:close-candidate` issue
+/// from the producer's backlog, so a flagged issue is not being worked either. The flag PARKS the
+/// issue — not fixed, not closed, owned by nobody — and the time it spends in this queue is exactly
+/// that limbo. FIFO bounds the worst case of it; every order that is not FIFO leaves some flag at
+/// the back for ever.
+///
+/// **And the evidence decays in the same direction.** An "already fixed" claim is a claim about a
+/// main branch that keeps moving, and the oldest flag is the one whose reason describes the least of
+/// what is there now. Newest-first — the other order #173 offers — optimises the cost of each check
+/// by systematically never reaching the flags that have decayed most, which is the one ordering that
+/// makes the queue's accuracy worse the longer it runs.
+///
+/// What it is emphatically NOT sorted by is the vetter's verdict or its note. Ordering a
+/// second-opinion queue by the upstream opinion is the restatement failure `/nr` exists to avoid,
+/// one level up in the ranking instead of down in the prose.
+fn flag_order_key(f: &PresentableFlag) -> (&str, &str, u64) {
+    (&f.flag_at, &f.slug, f.num)
+}
+
+/// PURE: apply [`flag_order_key`] to the whole set. Separate from the paging below so the ORDER and
+/// the PREFIX are two testable facts rather than one `sort().take()` nobody can pin.
+fn rank_flags(flags: &mut [PresentableFlag]) {
+    flags.sort_by(|a, b| flag_order_key(a).cmp(&flag_order_key(b)));
+}
+
+/// PURE: the flags this call answers with — a PREFIX of the already-ranked set, and nothing else. It
+/// does not sort, for the reason [`next_ready_page`] does not: a second ordering is a second answer
+/// to "which flag is next".
+fn next_close_candidate_page(ordered: &[PresentableFlag], limit: usize) -> Vec<&PresentableFlag> {
+    ordered.iter().take(limit).collect()
+}
+
+/// Rows one call may return, and the default.
+///
+/// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, and the argument applies here with MORE force
+/// rather than merely also. There, a ruling may leave the PR in the queue — a human who reads a row
+/// and does not merge changes nothing. Here EVERY move retires the row: `human_close` closes the
+/// issue, `keep-open` clears the flag, and a `reject` back to the producer strips it too. So a page
+/// is stale past its head by construction, not just usually.
+///
+/// The second half carries over unchanged: the fields this tool exists for are the producer's stated
+/// reason and the vetter's note, and a page long enough to be worth having would have to clip both
+/// to fit — trading the two fields a caller cannot reconstruct for rows it can get from the
+/// dashboard.
+const NEXT_CC_MAX_ROWS: usize = 3;
+const NEXT_CC_DEFAULT_ROWS: usize = 1;
+
+// Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable to
+// exceed the budget rather than merely unlikely to.
+const NCC_REASON_BYTES: usize = 1_000;
+const NCC_NOTE_BYTES: usize = 1_000;
+const NCC_TITLE_BYTES: usize = 200;
+const NCC_URL_BYTES: usize = 200;
+const NCC_ISSUE_BYTES: usize = 160;
+const NCC_TIME_BYTES: usize = 40;
+const NCC_STATE_BYTES: usize = 32;
+const NCC_VERDICT_BYTES: usize = 32;
+const NCC_LABEL_BYTES: usize = 60;
+const NCC_MAX_LABELS: usize = 8;
+const NCC_PR_REF_BYTES: usize = 160;
+const NCC_MAX_PRS: usize = 3;
+const NCC_ERROR_BYTES: usize = 200;
+
+/// Every capped field in one row, summed. Three timestamps (the issue's `createdAt`, the flag's, and
+/// the one the vetter's verdict pinned) are counted at their own cap.
+const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
+    + NCC_NOTE_BYTES
+    + NCC_TITLE_BYTES
+    + NCC_URL_BYTES
+    + NCC_ISSUE_BYTES
+    + 3 * NCC_TIME_BYTES
+    + NCC_STATE_BYTES
+    + NCC_VERDICT_BYTES
+    + NCC_MAX_LABELS * NCC_LABEL_BYTES
+    + NCC_MAX_PRS * NCC_PR_REF_BYTES;
+
+/// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
+/// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
+const NCC_ROW_FIXED_BYTES: usize = 1_200;
+const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
+
+// The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded, because
+// they ride inside the same one budget the rows do — and an unbounded list of stranded flags is how
+// a document that must always be servable becomes one that is refused on a bad day.
+const NCC_MAX_STRANDED: usize = 3;
+const NCC_MAX_ERRORS: usize = 3;
+const NCC_WITHHELD_FIELD_BYTES: usize = NCC_ISSUE_BYTES + NCC_ERROR_BYTES;
+const NCC_WITHHELD_FIXED_BYTES: usize = 150;
+const NCC_WITHHELD_CEILING: usize =
+    NCC_WITHHELD_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_WITHHELD_FIXED_BYTES;
+
+/// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
+const NCC_ENVELOPE_BYTES: usize = 1_500;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — a full page of maximal rows PLUS both withheld
+/// lists at their caps cannot reach [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this
+/// crate does not build.
+const _: () = assert!(
+    NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
+        + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
+        + NCC_ENVELOPE_BYTES
+        <= MCP_MAX_RESULT_BYTES
+);
+
+/// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
+/// [`next_ready_limit`]'s is.
+fn next_close_candidate_limit(args: &Value) -> Result<usize, String> {
+    match args.get("limit") {
+        None | Some(Value::Null) => Ok(NEXT_CC_DEFAULT_ROWS),
+        Some(v) => match v.as_u64() {
+            Some(n) if n >= 1 && n <= NEXT_CC_MAX_ROWS as u64 => Ok(n as usize),
+            _ => Err(format!(
+                "limit must be an integer in 1..={NEXT_CC_MAX_ROWS}"
+            )),
+        },
+    }
+}
+
+/// Everything ONE row is built from, grouped so the row builder is PURE and testable without a
+/// network.
+struct NextCcFacts<'a> {
+    slug: &'a str,
+    num: u64,
+    /// The `gh issue view` JSON the queue classified this flag from.
+    detail: &'a Value,
+    /// The CURRENT producer flag: when it was posted, and its whole body.
+    flag_at: &'a str,
+    flag_body: &'a str,
+    coverage: PrCoverage,
+    /// The open PRs behind that verdict, as `owner/repo#n`.
+    covering: &'a [String],
+}
+
+/// PURE: the flag decision for ONE issue. Every string is clipped, so the row's size is bounded by
+/// [`NCC_ROW_CEILING`] whatever GitHub returns.
+///
+/// The row's centre is the pair a ruling turns on: `flag.reason` is the producer's CLAIM — the thing
+/// being checked, never a fact — and `verdict` is what the vetter made of that same claim, pinned to
+/// the flag it judged so a stale one is visibly stale. They are separate objects because collapsing
+/// them into one "reason" is the restatement `/nr` was built against, in the data instead of the
+/// prose.
+fn next_close_candidate_row(f: &NextCcFacts) -> Value {
+    let labels_all = label_names(f.detail);
+    let labels: Vec<String> = labels_all
+        .iter()
+        .take(NCC_MAX_LABELS)
+        .map(|l| clip_field(l, NCC_LABEL_BYTES))
+        .collect();
+    let reason_full = flag_reason(f.flag_body);
+    let note_full = last_cc_vetter_comment(f.detail).unwrap_or_default();
+    let parts = cc_verdict_parts(&note_full);
+    let prs: Vec<String> = f
+        .covering
+        .iter()
+        .take(NCC_MAX_PRS)
+        .map(|p| clip_field(p, NCC_PR_REF_BYTES))
+        .collect();
+    serde_json::json!({
+        "issue": clip_field(&format!("{}#{}", f.slug, f.num), NCC_ISSUE_BYTES),
+        "url": clip_field(f.detail.get("url").and_then(|v| v.as_str()).unwrap_or(""), NCC_URL_BYTES),
+        "title": clip_field(f.detail.get("title").and_then(|v| v.as_str()).unwrap_or(""), NCC_TITLE_BYTES),
+        // Stated even though every row here is an OPEN issue, for the reason `next_ready` states a
+        // verdict sha it already guarantees: a reader can see the flag is live rather than take the
+        // tool's word that it filtered.
+        "state": clip_field(f.detail.get("state").and_then(|v| v.as_str()).unwrap_or(""), NCC_STATE_BYTES),
+        // The issue's own creation time is the RECENCY BASELINE the flag's evidence is measured
+        // against: a fix that predates the report cannot be the fix for it.
+        "createdAt": clip_field(f.detail.get("createdAt").and_then(|v| v.as_str()).unwrap_or(""), NCC_TIME_BYTES),
+        "labels": labels,
+        "labelsTruncated": labels_all.len() > NCC_MAX_LABELS,
+        "flag": {
+            "at": clip_field(f.flag_at, NCC_TIME_BYTES),
+            // The CLAIM. `close_candidate_context` carries the flag body whole; this is the payload
+            // line, clipped, and `reasonTruncated` says when the whole one has to be read there.
+            "reason": clip_field(&reason_full, NCC_REASON_BYTES),
+            "reasonBytes": reason_full.len(),
+            "reasonTruncated": reason_full.len() > NCC_REASON_BYTES,
+        },
+        "verdict": {
+            // The flag the vetter PINNED its verdict to, and whether that is the flag above. Equal
+            // for every row this tool returns — the gate admits no other kind — and stated anyway,
+            // exactly as `next_ready` states `verdict.sha` beside `headRefOid`.
+            "flagAt": parts.as_ref().map(|(at, _)| clip_field(at, NCC_TIME_BYTES)),
+            "atFlag": parts.as_ref().is_some_and(|(at, _)| at == f.flag_at),
+            "verdict": parts.as_ref().map(|(_, v)| clip_field(v, NCC_VERDICT_BYTES)),
+            "note": clip_field(&note_full, NCC_NOTE_BYTES),
+            "noteBytes": note_full.len(),
+            "noteTruncated": note_full.len() > NCC_NOTE_BYTES,
+        },
+        "openPr": {
+            "coverage": f.coverage.as_str(),
+            "blocksClose": f.coverage.blocks_close(),
+            "meaning": f.coverage.meaning(),
+            // NAMED, not counted — the ref is what a reader hands to `pr_context` to see what the
+            // open PR actually does.
+            "prs": prs,
+            "prsTruncated": f.covering.len() > NCC_MAX_PRS,
+        },
+    })
+}
+
+/// The whole-queue breakdown. Every flag the search returned lands in exactly one of these, plus the
+/// fetch errors — so `flagged == presentable + unvetted + noProducerFlag + humanRuled +
+/// vetterRejectedStillFlagged + fetchErrors`, always, and a reader can see there is no sixth bucket
+/// quietly absorbing rows.
+#[derive(Default)]
+struct FlagQueueCounts {
+    flagged: usize,
+    presentable: usize,
+    unvetted: usize,
+    no_flag: usize,
+    human_ruled: usize,
+    rejected_still_flagged: usize,
+    fetch_errors: usize,
+}
+
+/// The document's non-row halves: the counts, and the two lists a reader must see even though this
+/// call will not act on them.
+struct FlagQueueWithheld {
+    counts: FlagQueueCounts,
+    /// The [`CcGate::is_stranded`] flags — capped, with the overflow in `more_stranded`.
+    stranded: Vec<Value>,
+    more_stranded: usize,
+    errors: Vec<Value>,
+    more_errors: usize,
+}
+
+/// PURE: the whole document.
+///
+/// `counts.unvetted` is the answer to "why is the flag I expected not here": the vetter has not
+/// judged it, and a flag the vetter would reject must never cost a human anything. `strandedFlags`
+/// is the answer to a question nothing else asks — those flags are in states no AI transition
+/// clears, so they sit until a human notices, and a queue that silently skipped them is how they
+/// stayed unnoticed.
+fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
+    let returned = rows.len();
+    let presentable = w.counts.presentable;
+    serde_json::json!({
+        "queue": {
+            "presentable": presentable,
+            "returned": returned,
+            "more": presentable.saturating_sub(returned),
+        },
+        "counts": {
+            "flagged": w.counts.flagged,
+            "presentable": presentable,
+            "unvetted": w.counts.unvetted,
+            "noProducerFlag": w.counts.no_flag,
+            "humanRuled": w.counts.human_ruled,
+            "vetterRejectedStillFlagged": w.counts.rejected_still_flagged,
+            "fetchErrors": w.counts.fetch_errors,
+        },
+        "strandedFlags": w.stranded,
+        "moreStrandedFlags": w.more_stranded,
+        "fetchErrors": w.errors,
+        "moreFetchErrors": w.more_errors,
+        "next": rows,
+    })
+}
+
+/// PURE: one entry of either withheld list — the ref, and one line saying what is wrong with it.
+fn withheld_entry(issue: &str, why: &str) -> Value {
+    serde_json::json!({
+        "issue": clip_field(issue, NCC_ISSUE_BYTES),
+        "why": clip_field(why, NCC_ERROR_BYTES),
+    })
+}
+
+/// PURE: the `(slug, number)` of one `gh search issues` hit. `repository.nameWithOwner` is
+/// authoritative and the url parse is the fallback — shared by both close-candidate state-loads so
+/// the vetter's inbox and the human's can never disagree about which issue a hit names.
+fn search_issue_ref(hit: &Value) -> Option<(String, u64)> {
+    let url = hit.get("url").and_then(|u| u.as_str()).unwrap_or("");
+    let slug = hit
+        .get("repository")
+        .and_then(|r| r.get("nameWithOwner"))
+        .and_then(|s| s.as_str())
+        .map(String::from)
+        .or_else(|| issue_slug(url))?;
+    let num = hit.get("number").and_then(|n| n.as_u64())?;
+    Some((slug, num))
+}
+
+/// PURE: the argv of the one search behind both close-candidate inboxes. Every qualifier is
+/// load-bearing and each is wrong in its own direction: without `--state open` a closed issue's
+/// leftover flag joins the queue, without the label the queue is the whole backlog, and the `--json`
+/// set is exactly what [`search_issue_ref`] needs to ADDRESS a hit — a field dropped here makes
+/// every row unaddressable at once.
+///
+/// Separated from the fetch so the one thing deciding which population both inboxes see is a value a
+/// test can read; the network call around it is asserted by nothing.
+fn flagged_open_issues_args() -> Vec<String> {
+    let mut args: Vec<String> = vec!["search".into(), "issues".into()];
+    args.extend(org_owner_args());
+    args.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            "ai:close-candidate",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,title",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    args
+}
+
+/// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
+/// `ai:close-candidate`. Shared rather than written twice, so the vetter's queue and the human's are
+/// populations of the same query — two spellings of "which issues are flagged" is how they would
+/// come to answer differently.
+///
+/// Errors rather than returning a falsely-empty set, for the reason the PR side does.
+fn flagged_open_issues() -> Result<Vec<Value>, String> {
+    let args = flagged_open_issues_args();
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    gh_json(&argref)
+        .and_then(|v| v.as_array().cloned())
+        .ok_or_else(|| {
+            "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
+             aborting rather than report a falsely-empty close-candidate queue"
+                .to_string()
+        })
+}
+
+/// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
+/// then pay for the covering-PR read only on the rows actually returned.
+fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
+    let found = flagged_open_issues()?;
+    let mut flags: Vec<PresentableFlag> = Vec::new();
+    let mut counts = FlagQueueCounts {
+        flagged: found.len(),
+        ..Default::default()
+    };
+    let mut stranded: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
+    for hit in &found {
+        let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        let Some((slug, num)) = search_issue_ref(hit) else {
+            counts.fetch_errors += 1;
+            errors.push(withheld_entry(title, "unparseable issue ref"));
+            continue;
+        };
+        // A dropped issue must be VISIBLE: silently skipping one shrinks the human's inbox with
+        // nothing to explain the gap, which is the same defect the vetter's state-load fixed.
+        let Some(detail) = gh_json(&[
+            "issue",
+            "view",
+            &num.to_string(),
+            "-R",
+            &slug,
+            "--json",
+            "number,title,url,state,createdAt,labels,comments",
+        ]) else {
+            counts.fetch_errors += 1;
+            errors.push(withheld_entry(
+                &format!("{slug}#{num}"),
+                "gh issue view failed — not classified this run",
+            ));
+            continue;
+        };
+        let flag = last_close_candidate_flag(&detail);
+        let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
+        let gate = cc_gate(
+            has_human_ruling(&label_names(&detail)),
+            &flag_at,
+            last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
+        );
+        // EXHAUSTIVE on purpose: a new gate state must be given its own count rather than folding
+        // silently into an existing one, which is what makes `flagged` provably the sum of its
+        // parts. The listing decision below is the STATE's (`is_stranded`), not a second list of
+        // variants here that could drift from it.
+        match gate {
+            CcGate::Presentable => counts.presentable += 1,
+            CcGate::HumanRuled => counts.human_ruled += 1,
+            CcGate::Unvetted => counts.unvetted += 1,
+            CcGate::NoFlag => counts.no_flag += 1,
+            CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
+        }
+        if gate.is_stranded() {
+            stranded.push(withheld_entry(&format!("{slug}#{num}"), gate.as_str()));
+        }
+        if gate == CcGate::Presentable {
+            flags.push(PresentableFlag {
+                slug,
+                num,
+                flag_at,
+                flag_body: flag.map(|(_, b)| b).unwrap_or_default(),
+                detail,
+            });
+        }
+    }
+    rank_flags(&mut flags);
+    let rows: Vec<Value> = next_close_candidate_page(&flags, limit)
+        .into_iter()
+        .map(|f| {
+            let (coverage, covering) = covering_open_prs_fetch(&f.slug, f.num);
+            next_close_candidate_row(&NextCcFacts {
+                slug: &f.slug,
+                num: f.num,
+                detail: &f.detail,
+                flag_at: &f.flag_at,
+                flag_body: &f.flag_body,
+                coverage,
+                covering: &covering,
+            })
+        })
+        .collect();
+    let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
+    let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
+    Ok(next_close_candidate_doc(
+        rows,
+        &FlagQueueWithheld {
+            counts,
+            stranded,
+            more_stranded,
+            errors,
+            more_errors,
+        },
+    ))
+}
+
+/// Digits reserved, per numeric field, in the fixed allowances above.
+#[cfg(test)]
+const NCC_MAX_DIGITS: usize = 20;
+
+#[cfg(test)]
+mod next_close_candidate_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Built by the REAL writer, so a fixture carries exactly the bytes a live verdict does.
+    fn vetter(flag_at: &str, verdict: &str, note: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": cc_verdict_comment(flag_at, verdict, note),
+        })
+    }
+
+    fn producer(flag_at: &str, reason: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "createdAt": flag_at,
+            "body": format!("🤖 ai:producer\nClose-candidate: {reason}"),
+        })
+    }
+
+    fn issue(labels: &[&str], comments: Vec<Value>) -> Value {
+        json!({
+            "number": 7,
+            "title": "the thing does not work",
+            "url": "https://github.com/o/r/issues/7",
+            "state": "OPEN",
+            "createdAt": "2026-07-01T00:00:00Z",
+            "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+            "comments": comments,
+        })
+    }
+
+    fn flag(slug: &str, num: u64, at: &str) -> PresentableFlag {
+        PresentableFlag {
+            slug: slug.to_string(),
+            num,
+            flag_at: at.to_string(),
+            flag_body: format!("🤖 ai:producer\nClose-candidate: already-fixed: o/r#{num}"),
+            detail: issue(&["ai:close-candidate"], vec![producer(at, "already-fixed")]),
+        }
+    }
+
+    fn refs(page: Vec<&PresentableFlag>) -> Vec<String> {
+        page.iter()
+            .map(|f| format!("{}#{}", f.slug, f.num))
+            .collect()
+    }
+
+    // --- the verdict the row reports is PARSED, not inferred ------------------------------------
+
+    // Round-tripped through the writer, so the reader cannot drift from what the vetter records.
+    #[test]
+    fn the_verdict_pin_and_word_are_read_off_the_comment_the_writer_wrote() {
+        let at = "2026-07-20T09:00:00Z";
+        for (verdict, note) in [
+            ("uphold", "evidence holds"),
+            ("reject", ""),
+            ("uphold", "—"),
+        ] {
+            let body = cc_verdict_comment(at, verdict, note);
+            assert_eq!(
+                cc_verdict_parts(&body),
+                Some((at.to_string(), verdict.to_string())),
+                "{body:?}"
+            );
+        }
+        // The pin's OWN colons must not be read as the separator: `09:00:00Z` would otherwise split
+        // the timestamp and hand back `00:00Z:` as the verdict, and a correct verdict would read as
+        // no verdict at all.
+        assert_eq!(
+            cc_verdict_parts(
+                "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z: uphold"
+            ),
+            Some(("2026-07-20T09:00:00Z".to_string(), "uphold".to_string()))
+        );
+        // Not a close-candidate verdict at all, or half of one.
+        for junk in [
+            "🤖 ai:vetter\nReviewed abc123: ready — note",
+            "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z",
+            "🤖 ai:vetter\nReviewed close-candidate @: uphold",
+            "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z:",
+            "",
+        ] {
+            assert_eq!(cc_verdict_parts(junk), None, "{junk:?}");
+        }
+    }
+
+    // THE reason the word is parsed rather than inferred from the label. A `reject` REMOVES
+    // `ai:close-candidate`, so an issue that still carries it looks upheld to anything reading
+    // labels — and a half-applied write would be handed to a human as "the vetter agrees".
+    #[test]
+    fn the_gate_reads_the_verdict_word_not_the_label_still_being_there() {
+        let at = "2026-07-20T09:00:00Z";
+        let parts = |w: &str| Some((at.to_string(), w.to_string()));
+        assert_eq!(cc_gate(false, at, parts("uphold")), CcGate::Presentable);
+        assert_eq!(
+            cc_gate(false, at, parts("reject")),
+            CcGate::RejectedStillFlagged
+        );
+        // A word this machine does not know is not a verdict in force — the vetter still owes one,
+        // exactly as an unstamped vet-protocol is never current.
+        for unknown in ["close", "ready", "UPHOLD"] {
+            assert_eq!(
+                cc_gate(false, at, parts(unknown)),
+                CcGate::Unvetted,
+                "{unknown}"
+            );
+        }
+        assert_eq!(cc_gate(false, at, None), CcGate::Unvetted);
+        assert!(CcGate::RejectedStillFlagged.is_stranded());
+        assert!(CcGate::NoFlag.is_stranded());
+        for live in [CcGate::Presentable, CcGate::Unvetted, CcGate::HumanRuled] {
+            assert!(!live.is_stranded(), "{live:?}");
+        }
+    }
+
+    // A RE-flag is new evidence: the verdict written against the old flag describes a claim nobody
+    // is making any more, so it does not present the issue to a human as vetted.
+    #[test]
+    fn a_verdict_pinned_to_an_earlier_flag_does_not_present_the_reflag() {
+        let first = "2026-07-20T09:00:00Z";
+        let second = "2026-07-25T09:00:00Z";
+        assert_eq!(
+            cc_gate(false, second, Some((first.to_string(), "uphold".into()))),
+            CcGate::Unvetted
+        );
+        assert_eq!(
+            cc_gate(false, first, Some((first.to_string(), "uphold".into()))),
+            CcGate::Presentable
+        );
+    }
+
+    // The precedence, in the one order that matters: a human ruling is sacred and already made, so
+    // it dominates a flag, a verdict, and the absence of either.
+    #[test]
+    fn a_human_ruling_dominates_and_a_flagless_label_is_stranded() {
+        let at = "2026-07-20T09:00:00Z";
+        assert_eq!(
+            cc_gate(true, at, Some((at.to_string(), "uphold".into()))),
+            CcGate::HumanRuled
+        );
+        assert_eq!(cc_gate(true, "", None), CcGate::HumanRuled);
+        // Labelled, with no trusted producer comment behind it: nothing was CLAIMED, so there is
+        // nothing to rule on evidence — and the vetter skips it too, which is why it is named.
+        assert_eq!(cc_gate(false, "", None), CcGate::NoFlag);
+        assert_eq!(
+            cc_gate(false, "", Some((at.to_string(), "uphold".into()))),
+            CcGate::NoFlag
+        );
+    }
+
+    // --- the ordering, which is this tool's own design decision ---------------------------------
+
+    // OLDEST FLAG FIRST. The flag parks the issue — `is_producer_backlog` excludes a flagged issue
+    // from the producer's queue — so the time a flag waits here is time nobody owns the issue, and
+    // FIFO is what bounds the worst case of that.
+    //
+    // The issue NUMBERS deliberately run AGAINST the flag times. With the two agreeing, dropping the
+    // timestamp out of the key altogether still produced the expected order and that mutation
+    // survived: the tie-break alone would have been standing in for the whole ranking, and a queue
+    // ordered by issue number is not a queue ordered by anything.
+    #[test]
+    fn the_queue_is_oldest_flag_first() {
+        let mut set = vec![
+            flag("o/r", 1, "2026-07-25T09:00:00Z"),
+            flag("o/r", 3, "2026-07-10T09:00:00Z"),
+            flag("o/r", 2, "2026-07-20T09:00:00Z"),
+        ];
+        rank_flags(&mut set);
+        assert_eq!(
+            refs(set.iter().collect()),
+            vec!["o/r#3", "o/r#2", "o/r#1"],
+            "the flag that has waited longest is the next decision"
+        );
+        // And NOT newest-first, the other order #173 offers: it optimises the cost of each check by
+        // never reaching the flags whose evidence has decayed most.
+        assert_ne!(refs(set.iter().collect())[0], "o/r#1");
+    }
+
+    // The order has to be TOTAL, or two runs a second apart name different heads and "which flag is
+    // next" stops being a question with one answer.
+    #[test]
+    fn flags_posted_at_the_same_instant_are_ordered_by_their_ref() {
+        let at = "2026-07-20T09:00:00Z";
+        let mut set = vec![
+            flag("o/z", 1, at),
+            flag("o/a", 9, at),
+            flag("o/a", 2, at),
+            flag("o/a", 10, at),
+        ];
+        rank_flags(&mut set);
+        assert_eq!(
+            refs(set.iter().collect()),
+            vec!["o/a#2", "o/a#9", "o/a#10", "o/z#1"],
+            "the number sorts NUMERICALLY: #10 after #9, which a string key would invert"
+        );
+    }
+
+    // The seam #121 named: paging must not be a second sort. A `take` that also ordered would let
+    // the head of this page disagree with the head of the ranked set for no reason a caller can see.
+    #[test]
+    fn the_page_is_a_prefix_and_never_a_second_ordering() {
+        let mut set = vec![
+            flag("o/r", 3, "2026-07-25T09:00:00Z"),
+            flag("o/r", 1, "2026-07-10T09:00:00Z"),
+            flag("o/r", 2, "2026-07-20T09:00:00Z"),
+        ];
+        rank_flags(&mut set);
+        assert_eq!(refs(next_close_candidate_page(&set, 1)), vec!["o/r#1"]);
+        assert_eq!(
+            refs(next_close_candidate_page(&set, NEXT_CC_MAX_ROWS)),
+            refs(set.iter().collect())
+        );
+        // Unranked in, unranked out: the function itself contributes no order.
+        let unranked = vec![
+            flag("o/r", 3, "2026-07-25T09:00:00Z"),
+            flag("o/r", 1, "2026-07-10T09:00:00Z"),
+        ];
+        assert_eq!(
+            refs(next_close_candidate_page(&unranked, 2)),
+            vec!["o/r#3", "o/r#1"]
+        );
+        assert_eq!(next_close_candidate_page(&set, 99).len(), set.len());
+    }
+
+    // The page size is a REAL argument with a REAL range, refused rather than clamped.
+    #[test]
+    fn the_page_size_defaults_to_one_and_is_refused_outside_its_range() {
+        assert_eq!(
+            next_close_candidate_limit(&json!({})).unwrap(),
+            NEXT_CC_DEFAULT_ROWS
+        );
+        assert_eq!(
+            next_close_candidate_limit(&json!({"limit": null})).unwrap(),
+            1
+        );
+        assert_eq!(
+            next_close_candidate_limit(&json!({"limit": NEXT_CC_MAX_ROWS})).unwrap(),
+            NEXT_CC_MAX_ROWS
+        );
+        for bad in [
+            json!(0),
+            json!(NEXT_CC_MAX_ROWS + 1),
+            json!(-1),
+            json!("2"),
+            json!(1.5),
+        ] {
+            let e = next_close_candidate_limit(&json!({"limit": bad})).unwrap_err();
+            assert!(e.contains(&format!("1..={NEXT_CC_MAX_ROWS}")), "{bad}: {e}");
+        }
+    }
+
+    // --- the covering-PR read -------------------------------------------------------------------
+
+    // `covered-by-open-pr` is a known NON-closeable state, so the failure direction is not
+    // symmetric: an unseen covering PR closes an issue out from under work in flight, while a
+    // falsely-reported one costs a second look. A failed query is `Unreadable` and BLOCKS.
+    #[test]
+    fn an_unreadable_coverage_query_is_never_read_as_uncovered() {
+        for bad in [
+            None,
+            Some(json!({})),
+            Some(json!({"data": {"repository": null}})),
+            Some(json!({"errors": [{"message": "Something went wrong"}]})),
+            Some(
+                json!({"data": {"repository": {"issue": {"closedByPullRequestsReferences": {}}}}}),
+            ),
+        ] {
+            let (v, prs) = covering_open_prs(bad.as_ref());
+            assert_eq!(v, PrCoverage::Unreadable, "{bad:?}");
+            assert!(prs.is_empty());
+            assert!(v.blocks_close(), "an unknown answer must fail SAFE");
+        }
+        assert!(PrCoverage::Covered.blocks_close());
+        assert!(!PrCoverage::Uncovered.blocks_close());
+    }
+
+    fn coverage_response(nodes: Value) -> Value {
+        json!({"data": {"repository": {"issue": {
+            "closedByPullRequestsReferences": {"nodes": nodes}
+        }}}})
+    }
+
+    // Only an OPEN PR is coverage, and the ref is emitted as `owner/repo#n` — the addressing string
+    // `pr_context` takes, so nothing downstream reassembles one (#132).
+    #[test]
+    fn only_open_prs_count_as_coverage_and_they_are_named_as_refs() {
+        let resp = coverage_response(json!([
+            {"number": 109, "state": "OPEN", "repository": {"nameWithOwner": "o/r"}},
+            {"number": 44, "state": "MERGED", "repository": {"nameWithOwner": "o/r"}},
+            {"number": 45, "state": "CLOSED", "repository": {"nameWithOwner": "o/r"}},
+            // A cross-repo PR closing this issue is still coverage, and its OWN slug is the ref.
+            {"number": 7, "state": "OPEN", "repository": {"nameWithOwner": "o/other"}},
+        ]));
+        let (v, prs) = covering_open_prs(Some(&resp));
+        assert_eq!(v, PrCoverage::Covered);
+        assert_eq!(prs, vec!["o/r#109".to_string(), "o/other#7".to_string()]);
+        assert_eq!(v.meaning(), "not-closeable-an-open-pr-is-not-a-landed-fix");
+
+        // An empty answer is an ANSWER — this is the one state that does not block a close.
+        let (v, prs) = covering_open_prs(Some(&coverage_response(json!([]))));
+        assert_eq!(v, PrCoverage::Uncovered);
+        assert!(prs.is_empty());
+        // …and so is one whose only references are landed or abandoned.
+        let (v, _) = covering_open_prs(Some(&coverage_response(json!([
+            {"number": 44, "state": "MERGED", "repository": {"nameWithOwner": "o/r"}}
+        ]))));
+        assert_eq!(v, PrCoverage::Uncovered);
+    }
+
+    // The query has to ask GitHub for the right thing, or the parse above is exercised on a
+    // population that was never restricted: closed PRs excluded at the source, and the fields the
+    // parse reads present.
+    #[test]
+    fn the_covering_query_asks_only_for_prs_that_would_close_this_issue() {
+        for needed in [
+            "closedByPullRequestsReferences",
+            "includeClosedPrs:false",
+            "state",
+            "nameWithOwner",
+        ] {
+            assert!(COVERING_PRS_QUERY.contains(needed), "{needed}");
+        }
+    }
+
+    // …and it has to ask in a form GitHub will accept. `gh api graphql` types a `-F` value by
+    // parsing it, so `-F o=<owner>` on an all-numeric owner or repo name sends an `Int` at a
+    // `String!` and GitHub refuses the whole query — reported here as `Unreadable`, which is
+    // indistinguishable from a network failure on a repository that reads fine.
+    //
+    // The expectation is DERIVED from the query's own declarations rather than written out, so
+    // this cannot drift from it: an `Int!` variable takes `-F` (a `-f` would send `"7"` and fail
+    // from the other side), and everything else takes `-f`. Adding a variable to
+    // `COVERING_PRS_QUERY` without a matching flag fails here too.
+    #[test]
+    fn each_covering_query_variable_is_passed_with_the_flag_its_declared_type_needs() {
+        // `query($o:String!,$r:String!,$n:Int!){…` → the declarations between the parentheses.
+        let decls = COVERING_PRS_QUERY
+            .split_once('{')
+            .expect("the query has a selection set")
+            .0
+            .trim()
+            .trim_start_matches("query")
+            .trim_matches(|c| c == '(' || c == ')');
+        let declared: Vec<(&str, &str)> = decls
+            .split(',')
+            .map(|d| {
+                let (name, ty) = d.trim().split_once(':').expect("a declared type");
+                (
+                    name.trim().trim_start_matches('$'),
+                    ty.trim().trim_end_matches('!'),
+                )
+            })
+            .collect();
+        assert!(
+            declared.iter().any(|(_, ty)| *ty == "String")
+                && declared.iter().any(|(_, ty)| *ty == "Int"),
+            "the query must still mix both types for this test to be worth anything: {declared:?}"
+        );
+
+        // An owner and a repo that `-F` would silently retype. Both are legal name shapes.
+        let args = covering_prs_args("123", "456", 7);
+        assert_eq!(&args[..2], &["api".to_string(), "graphql".to_string()]);
+        let mut seen: Vec<&str> = Vec::new();
+        for pair in args[2..].chunks(2) {
+            let [flag, field] = pair else {
+                panic!("every variable is a flag/value pair: {args:?}");
+            };
+            let (name, _) = field.split_once('=').expect("key=value");
+            // The query text itself is not a variable — it is always raw.
+            if name == "query" {
+                assert_eq!(flag, "-f", "the query body is passed raw");
+                continue;
+            }
+            let (_, ty) = declared
+                .iter()
+                .find(|(d, _)| *d == name)
+                .unwrap_or_else(|| panic!("`{name}` is passed but not declared by the query"));
+            let want = if *ty == "Int" { "-F" } else { "-f" };
+            assert_eq!(
+                flag, want,
+                "`${name}` is declared `{ty}` and must be passed with `{want}`, not `{flag}`"
+            );
+            seen.push(name);
+        }
+        // Every declared variable is actually supplied — an unbound one fails the query outright.
+        for (name, _) in &declared {
+            assert!(
+                seen.contains(name),
+                "`${name}` is declared but never passed"
+            );
+        }
+    }
+
+    // --- the row --------------------------------------------------------------------------------
+
+    // The row's centre: the producer's CLAIM and the vetter's judgement of that same claim are two
+    // objects, pinned to the flag, so a stale verdict is visibly stale rather than merged into one
+    // "reason" field a reader would take as settled.
+    #[test]
+    fn the_row_separates_the_producers_claim_from_the_vetters_verdict() {
+        let at = "2026-07-20T09:00:00Z";
+        let body = "🤖 ai:producer\nClose-candidate: already-fixed: merged in o/r#1348";
+        let detail = issue(
+            &["ai:close-candidate", "bug"],
+            vec![
+                producer(at, "already-fixed: merged in o/r#1348"),
+                vetter(at, "uphold", "diff matches the ask"),
+            ],
+        );
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 7,
+            detail: &detail,
+            flag_at: at,
+            flag_body: body,
+            coverage: PrCoverage::Uncovered,
+            covering: &[],
+        });
+        assert_eq!(row["issue"], json!("o/r#7"));
+        assert_eq!(row["url"], json!("https://github.com/o/r/issues/7"));
+        assert_eq!(row["title"], json!("the thing does not work"));
+        assert_eq!(row["state"], json!("OPEN"));
+        // The recency baseline the evidence is measured against.
+        assert_eq!(row["createdAt"], json!("2026-07-01T00:00:00Z"));
+        assert_eq!(row["labels"], json!(["ai:close-candidate", "bug"]));
+        assert_eq!(row["flag"]["at"], json!(at));
+        assert_eq!(
+            row["flag"]["reason"],
+            json!("already-fixed: merged in o/r#1348"),
+            "the CLAIM, without the marker line"
+        );
+        assert_eq!(row["verdict"]["verdict"], json!("uphold"));
+        assert_eq!(row["verdict"]["flagAt"], json!(at));
+        assert_eq!(row["verdict"]["atFlag"], json!(true));
+        assert!(row["verdict"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("diff matches the ask"));
+        assert_eq!(row["openPr"]["coverage"], json!("no-open-pr"));
+        assert_eq!(row["openPr"]["blocksClose"], json!(false));
+        assert_eq!(row["openPr"]["prs"], json!([]));
+    }
+
+    // A verdict against an EARLIER flag reaches the row (it is the vetter's most recent word) and
+    // must arrive marked stale — the same thing `verdict.atHead` does one lane over. A row that
+    // printed the note without the pin would present a judgement of a superseded claim.
+    #[test]
+    fn a_stale_verdict_arrives_visibly_stale_rather_than_omitted() {
+        let first = "2026-07-20T09:00:00Z";
+        let second = "2026-07-25T09:00:00Z";
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![
+                producer(first, "already-fixed: #10"),
+                vetter(first, "uphold", "held then"),
+                producer(second, "already-fixed: #11"),
+            ],
+        );
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 7,
+            detail: &detail,
+            flag_at: second,
+            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed: #11",
+            coverage: PrCoverage::Uncovered,
+            covering: &[],
+        });
+        assert_eq!(row["flag"]["at"], json!(second));
+        assert_eq!(row["verdict"]["flagAt"], json!(first));
+        assert_eq!(row["verdict"]["atFlag"], json!(false));
+        assert!(row["verdict"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("held then"));
+    }
+
+    // An open PR claiming the issue is the state the flag lane already knows is not closeable, and
+    // the row says so in the field AND in the meaning beside it — the raw enum is no use to a reader
+    // who has to remember which way round the hazard runs.
+    #[test]
+    fn an_open_pr_claiming_the_issue_blocks_the_close_and_is_named() {
+        let at = "2026-07-20T09:00:00Z";
+        let detail = issue(&["ai:close-candidate"], vec![producer(at, "already-fixed")]);
+        let covering = vec![
+            "o/r#109".to_string(),
+            "o/r#110".to_string(),
+            "o/r#111".to_string(),
+            "o/r#112".to_string(),
+        ];
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 7,
+            detail: &detail,
+            flag_at: at,
+            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed",
+            coverage: PrCoverage::Covered,
+            covering: &covering,
+        });
+        assert_eq!(row["openPr"]["coverage"], json!("covered-by-open-pr"));
+        assert_eq!(row["openPr"]["blocksClose"], json!(true));
+        assert_eq!(
+            row["openPr"]["meaning"],
+            json!("not-closeable-an-open-pr-is-not-a-landed-fix")
+        );
+        assert_eq!(
+            row["openPr"]["prs"],
+            json!(["o/r#109", "o/r#110", "o/r#111"])
+        );
+        assert_eq!(
+            row["openPr"]["prsTruncated"],
+            json!(true),
+            "the list is a PAGE, and a reader must not read three as all of them"
+        );
+    }
+
+    // The two fields a caller cannot reconstruct are the ones that get clipped, so each says so.
+    #[test]
+    fn a_clipped_claim_or_note_says_it_was_clipped() {
+        let at = "2026-07-20T09:00:00Z";
+        let long = "x".repeat(NCC_REASON_BYTES + 500);
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![vetter(at, "uphold", &"y".repeat(NCC_NOTE_BYTES + 500))],
+        );
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 7,
+            detail: &detail,
+            flag_at: at,
+            flag_body: &format!("🤖 ai:producer\nClose-candidate: {long}"),
+            coverage: PrCoverage::Uncovered,
+            covering: &[],
+        });
+        assert_eq!(
+            row["flag"]["reason"].as_str().unwrap().len(),
+            NCC_REASON_BYTES
+        );
+        assert_eq!(row["flag"]["reasonBytes"], json!(long.len()));
+        assert_eq!(row["flag"]["reasonTruncated"], json!(true));
+        assert_eq!(
+            row["verdict"]["note"].as_str().unwrap().len(),
+            NCC_NOTE_BYTES
+        );
+        assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+    }
+
+    // --- the document ---------------------------------------------------------------------------
+
+    fn withheld(counts: FlagQueueCounts) -> FlagQueueWithheld {
+        FlagQueueWithheld {
+            counts,
+            stranded: vec![],
+            more_stranded: 0,
+            errors: vec![],
+            more_errors: 0,
+        }
+    }
+
+    // `more` is derived, never passed: a caller that read `next.len()` as the whole queue is wrong
+    // by exactly this number, so the number is stated rather than inferable.
+    #[test]
+    fn the_envelope_states_what_the_page_left_behind() {
+        let w = withheld(FlagQueueCounts {
+            flagged: 9,
+            presentable: 5,
+            unvetted: 2,
+            no_flag: 1,
+            human_ruled: 1,
+            rejected_still_flagged: 0,
+            fetch_errors: 0,
+        });
+        let doc = next_close_candidate_doc(vec![json!({"issue": "o/r#7"})], &w);
+        assert_eq!(doc["queue"]["presentable"], json!(5));
+        assert_eq!(doc["queue"]["returned"], json!(1));
+        assert_eq!(doc["queue"]["more"], json!(4));
+        // The counts partition the search: nothing is in two buckets and nothing is in none.
+        let c = &doc["counts"];
+        let parts: u64 = [
+            "presentable",
+            "unvetted",
+            "noProducerFlag",
+            "humanRuled",
+            "vetterRejectedStillFlagged",
+            "fetchErrors",
+        ]
+        .iter()
+        .map(|k| c[k].as_u64().unwrap())
+        .sum();
+        assert_eq!(parts, c["flagged"].as_u64().unwrap());
+    }
+
+    // The flags no modelled transition will ever clear. Reporting them is the whole reason they are
+    // classified separately: the vetter skips a flagless label for ever, and a half-applied reject
+    // is not a state the machine produces — both sit until a human is told they exist.
+    #[test]
+    fn stranded_flags_are_named_rather_than_silently_skipped() {
+        let mut w = withheld(FlagQueueCounts {
+            flagged: 3,
+            no_flag: 2,
+            rejected_still_flagged: 1,
+            ..Default::default()
+        });
+        w.stranded = vec![
+            withheld_entry("o/r#1", CcGate::NoFlag.as_str()),
+            withheld_entry("o/r#2", CcGate::RejectedStillFlagged.as_str()),
+        ];
+        w.more_stranded = 1;
+        let doc = next_close_candidate_doc(vec![], &w);
+        assert_eq!(doc["strandedFlags"][0]["issue"], json!("o/r#1"));
+        assert_eq!(doc["strandedFlags"][0]["why"], json!("no-producer-flag"));
+        assert_eq!(
+            doc["strandedFlags"][1]["why"],
+            json!("vetter-rejected-but-still-flagged")
+        );
+        assert_eq!(doc["moreStrandedFlags"], json!(1));
+        assert_eq!(doc["queue"]["presentable"], json!(0));
+    }
+
+    // --- the budget -----------------------------------------------------------------------------
+
+    fn hostile(n: usize) -> String {
+        // The characters JSON escapes WORST: a quote and a backslash cost two bytes each, and a
+        // control character would cost six if `clip_field` did not neutralise it.
+        std::iter::repeat_n("\"\\\u{1}\n", n / 4).collect()
+    }
+
+    // THE GUARANTEE, exercised rather than asserted: a full page built from the worst input GitHub
+    // can hand us, with both withheld lists at their caps, must fit the ONE budget. Remove any
+    // `clip_field` in `next_close_candidate_row` and this fails.
+    #[test]
+    fn a_maximal_page_of_adversarial_rows_still_fits_the_budget() {
+        let h = hostile(20_000);
+        let at = hostile(400);
+        let detail = json!({
+            "url": h,
+            "title": h,
+            "state": h,
+            "createdAt": h,
+            "labels": (0..40).map(|_| json!({"name": h})).collect::<Vec<_>>(),
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": format!("🤖 ai:vetter\nReviewed close-candidate @{at}: {h}"),
+            }],
+        });
+        let covering: Vec<String> = (0..20).map(|_| h.clone()).collect();
+        let rows: Vec<Value> = (0..NEXT_CC_MAX_ROWS)
+            .map(|i| {
+                next_close_candidate_row(&NextCcFacts {
+                    slug: &h,
+                    num: u64::MAX - i as u64,
+                    detail: &detail,
+                    flag_at: &at,
+                    flag_body: &format!("🤖 ai:producer\nClose-candidate: {h}"),
+                    coverage: PrCoverage::Covered,
+                    covering: &covering,
+                })
+            })
+            .collect();
+        for (i, row) in rows.iter().enumerate() {
+            let len = row.to_string().len();
+            assert!(
+                len <= NCC_ROW_CEILING,
+                "row {i} is {len} bytes, over the {NCC_ROW_CEILING}-byte ceiling the compile-time \
+                 budget assertion is computed from"
+            );
+        }
+        let entry = withheld_entry(&h, &h);
+        let entry_len = entry.to_string().len();
+        assert!(
+            entry_len <= NCC_WITHHELD_CEILING,
+            "a withheld entry is {entry_len} bytes, over the {NCC_WITHHELD_CEILING}-byte ceiling"
+        );
+        let doc = next_close_candidate_doc(
+            rows,
+            &FlagQueueWithheld {
+                counts: FlagQueueCounts {
+                    flagged: usize::MAX,
+                    presentable: usize::MAX,
+                    unvetted: usize::MAX,
+                    no_flag: usize::MAX,
+                    human_ruled: usize::MAX,
+                    rejected_still_flagged: usize::MAX,
+                    fetch_errors: usize::MAX,
+                },
+                stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
+                more_stranded: usize::MAX,
+                errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
+                more_errors: usize::MAX,
+            },
+        );
+        let len = doc.to_string().len();
+        assert!(
+            len <= MCP_MAX_RESULT_BYTES,
+            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+        );
+    }
+
+    // The three fixed allowances the compile-time assertion rests on are MEASURED, not guessed. A
+    // field added without room for it lands here rather than at a caller's over-budget refusal.
+    #[test]
+    fn the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope() {
+        // Every enum at its longest spelling, every string empty.
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "",
+            num: 0,
+            detail: &json!({}),
+            flag_at: "",
+            flag_body: "",
+            coverage: PrCoverage::Covered,
+            covering: &[],
+        });
+        // Two numeric fields per row: reasonBytes and noteBytes.
+        let row_len = row.to_string().len() + 2 * NCC_MAX_DIGITS;
+        assert!(
+            row_len <= NCC_ROW_FIXED_BYTES,
+            "a row's fixed cost is {row_len} bytes, over the {NCC_ROW_FIXED_BYTES} allowed"
+        );
+
+        let entry_len = withheld_entry("", "").to_string().len();
+        assert!(
+            entry_len <= NCC_WITHHELD_FIXED_BYTES,
+            "a withheld entry's fixed cost is {entry_len} bytes, over the \
+             {NCC_WITHHELD_FIXED_BYTES} allowed"
+        );
+
+        // Twelve numeric fields in the envelope: seven counts, three queue figures, two overflows.
+        let env_len = next_close_candidate_doc(vec![], &withheld(FlagQueueCounts::default()))
+            .to_string()
+            .len()
+            + 12 * NCC_MAX_DIGITS;
+        assert!(
+            env_len <= NCC_ENVELOPE_BYTES,
+            "the envelope's fixed cost is {env_len} bytes, over the {NCC_ENVELOPE_BYTES} allowed"
+        );
+    }
+
+    // Both close-candidate inboxes must enumerate ONE population, or the vetter and the human come
+    // to disagree about which issues are flagged. The search is shared; this pins the QUERY they
+    // share, which is otherwise inside a network call nothing asserts.
+    #[test]
+    fn the_two_close_candidate_inboxes_search_one_population() {
+        let args = flagged_open_issues_args();
+        let pairs: Vec<(&str, &str)> = args
+            .windows(2)
+            .map(|w| (w[0].as_str(), w[1].as_str()))
+            .collect();
+        for want in [
+            // Open only: a closed issue's leftover flag is not the human's inbox.
+            ("--state", "open"),
+            // Flagged only: without it this is the whole backlog.
+            ("--label", "ai:close-candidate"),
+            // Exactly what `search_issue_ref` addresses a hit with, plus the title.
+            ("--json", "url,number,repository,title"),
+        ] {
+            assert!(pairs.contains(&want), "{want:?} missing from {args:?}");
+        }
+        assert_eq!(&args[..2], &["search".to_string(), "issues".to_string()]);
+        // The org scope comes from the ONE source every other search reads, never a literal here.
+        for owner in org_owner_args() {
+            assert!(args.contains(&owner), "{owner} missing from {args:?}");
+        }
+    }
+
+    // The parse the two of them read a hit with.
+    #[test]
+    fn a_search_hit_is_addressed_by_its_repository_and_falls_back_to_the_url() {
+        assert_eq!(
+            search_issue_ref(&json!({
+                "url": "https://github.com/o/other/issues/9",
+                "number": 7,
+                "repository": {"nameWithOwner": "o/r"}
+            })),
+            Some(("o/r".to_string(), 7)),
+            "nameWithOwner is authoritative"
+        );
+        assert_eq!(
+            search_issue_ref(&json!({"url": "https://github.com/o/r/issues/7", "number": 7})),
+            Some(("o/r".to_string(), 7))
+        );
+        // Unaddressable is `None` — a row nobody can name is a row nobody can rule on.
+        for bad in [
+            json!({"number": 7}),
+            json!({"url": "https://github.com/o/r/pull/7", "number": 7}),
+            json!({"url": "https://github.com/o/r/issues/7"}),
+        ] {
+            assert_eq!(search_issue_ref(&bad), None, "{bad}");
+        }
+    }
+}
+
 /// WHICH ROLE this server is serving. The two roles are different state machines that happen to
 /// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
 /// not a permission — `tools/list` returns only the profile's tools, so the producer never sees
@@ -14722,17 +17571,27 @@ impl McpProfile {
                 "close_candidate_context",
                 "record_close_candidate_verdict",
             ],
-            // The clone lifecycle, plus the two BODY REPAIRS (#136). Both are on the profile, and
-            // that is the settled answer to a split #136 names: `repair_qa_block` was reachable
-            // only as a CLI subcommand under the `Bash(pr-review-report:*)` allow rule, so the
-            // producer's ability to write a PR body was a prefix-matched permission rather than an
-            // enumerable transition. Two body repairs with two call shapes is what makes a future
-            // reader guess; both being tools means `tools/list` states what the producer may write.
+            // The clone lifecycle, the DELIVERY, plus the two BODY REPAIRS (#136). Both repairs are
+            // on the profile, and that is the settled answer to a split #136 names:
+            // `repair_qa_block` was reachable only as a CLI subcommand under the
+            // `Bash(pr-review-report:*)` allow rule, so the producer's ability to write a PR body
+            // was a prefix-matched permission rather than an enumerable transition. Two body
+            // repairs with two call shapes is what makes a future reader guess; both being tools
+            // means `tools/list` states what the producer may write.
+            //
+            // `open_pr` is the producer's OUTPUT edge, and it is here because the run's own record
+            // of what it produced was otherwise unreadable: a PR opened by `gh pr create` inside
+            // Bash leaves a shell string in the trace and nothing typed, so no reader can say which
+            // dispatched task produced which PR. On the reference producer run that is 1,986 Bash
+            // calls against 35 MCP ones — the same root cause as #170, a typed surface displaced by
+            // an untyped one. As a tool the whole `{agent, repo, issue, PR}` tuple is a typed
+            // argument list and a typed result, which is what `work-tokens` joins on.
             McpProfile::Producer => &[
                 "clone_create",
                 "clone_release",
                 "clone_list",
                 "clone_gc",
+                "open_pr",
                 "repair_qa_block",
                 "weaken_closes",
             ],
@@ -14772,6 +17631,16 @@ impl McpProfile {
                 // this box filled its disk, and a human-gate leak has no collector behind it.
                 "pr_checkout",
                 "clone_release",
+                // The FLAG lane's read chain, in the order it is walked (#173). `next_ready` gives
+                // the PR queue a one-call entry point; without this one the human's other inbox —
+                // the one that asks for work to be DESTROYED — started with a manual search, so the
+                // queue where being wrong is least recoverable was the queue worked by hand.
+                //
+                // It is the human's, not the vetter's inbox re-listed: `unvetted_close_candidates`
+                // answers "which flag needs a VERDICT" and this answers "which upheld flag needs a
+                // RULING". They are different sets, and a flag the vetter rejects never appears here
+                // at all because the reject strips the label.
+                "next_close_candidate",
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
@@ -14804,12 +17673,12 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — re-call after recording verdicts for the next page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why (digest rows: pr, action, unresolvedThreads)."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3) — a run's whole work budget is 3 items across both state-loads."}
                 }
             }
         },
@@ -14820,6 +17689,16 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "PRs to return, 1-3 (default 1). Each ruling changes the queue, so a page is stale past its head."}
+                }
+            }
+        },
+        {
+            "name": "next_close_candidate",
+            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact), the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue (`covered-by-open-pr` is NOT closeable — an open PR is not a landed fix; an unreadable answer blocks too). `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are the ones no AI transition will ever clear.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Flags to return, 1-3 (default 1). Every ruling retires its flag, so a page is stale past its head."}
                 }
             }
         },
@@ -14874,12 +17753,12 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "unvetted_close_candidates",
-            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — re-call after recording verdicts. Human-ruled and already-vetted-at-flag issues are excluded.",
+            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-25 (default 10)."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3) — a run's whole work budget is 3 items across both state-loads."}
                 }
             }
         },
@@ -14988,6 +17867,22 @@ fn mcp_all_tools() -> Value {
             }
         },
         {
+            "name": "open_pr",
+            "description": "OPEN THE PR for a branch you have already pushed, assigned to the pipeline's assignee. The body comes from a FILE and must carry QA-GUIDE section 8's evidence block — the same rule the `gh pr create` gate applies, checked here before anything is created, so a missing block costs one retry and no PR. `closes` is the issue this PR closes: it is written as a canonical `Closes #N` line when the body does not already close it, and the result reports every issue the body closes. Returns the new PR's number and url.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "owner/repo"},
+                    "head": {"type": "string", "description": "The branch holding the work, ALREADY PUSHED to that repo."},
+                    "title": {"type": "string", "description": "PR title."},
+                    "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "closes": {"type": "integer", "description": "The issue this PR closes. Omit for a partial fix — then say `Refs #N` in the body yourself."},
+                    "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
+                },
+                "required": ["repo", "head", "title", "body_file"]
+            }
+        },
+        {
             "name": "repair_qa_block",
             "description": "Retrofit QA-GUIDE section 8's evidence block onto an ALREADY-OPEN PR of ours: APPENDS the block, every byte outside the `## QA` section identical, validated with the PR-open gate's own predicate. Refuses a present-but-different block unless replace.",
             "inputSchema": {
@@ -15025,6 +17920,11 @@ enum McpCall {
     NextReady {
         /// Rows this call may return, always in `1..=NEXT_READY_MAX_ROWS`. A REAL narrowing
         /// argument: rows are independent, so dropping one strictly removes its bytes.
+        limit: usize,
+    },
+    /// The human's FLAG read: the next N upheld `ai:close-candidate` flags, oldest flag first.
+    NextCloseCandidate {
+        /// Always in `1..=NEXT_CC_MAX_ROWS`, and a REAL narrowing argument for the same reason.
         limit: usize,
     },
     Unvetted {
@@ -15105,6 +18005,20 @@ enum McpCall {
         max_age_days: u64,
         dry_run: bool,
     },
+    /// The producer's OUTPUT edge: open the PR for work already pushed.
+    ///
+    /// `closes` is a NUMBER for the same reason [`McpCall::WeakenCloses`]'s `issue` is — the only
+    /// thing a caller chooses is WHICH issue, and a free-text argument there is a linkage nobody
+    /// can join on afterwards. `body_file` is a path rather than the body itself so the exact bytes
+    /// stay on disk for the run trace, which is [`McpCall::RepairQaBlock`]'s rule as well.
+    OpenPr {
+        slug: String,
+        head: String,
+        title: String,
+        body_file: String,
+        closes: Option<u64>,
+        base: Option<String>,
+    },
     /// The producer's two BODY REPAIRS (#136). `issue` is a NUMBER, not a `#N` string: the tool
     /// weakens the linkage to exactly one issue, and a free-text argument there is the "edit
     /// whatever looked close enough" the refusal path exists to prevent.
@@ -15138,6 +18052,42 @@ fn parse_pr_ref(s: &str) -> Result<(String, u64), String> {
         return Err(bad());
     }
     Ok((format!("{owner}/{repo}"), num))
+}
+
+/// PURE: an `owner/repo` ARGUMENT → the same string, or the error a caller sees.
+///
+/// ONE definition, two callers (`clone_create` and `open_pr`), for the reason [`carries_qa_block`]
+/// has one: the two tools name the same population — a repo this pipeline works in — and a second
+/// spelling of "well-formed slug" is how they come to disagree about which strings are repos. A
+/// slug is exactly two non-empty segments: `owner/repo/extra` is refused rather than truncated,
+/// because a truncating parser would silently retarget a call.
+///
+/// Distinct from [`parse_repo_slug`], which EXTRACTS a slug from a git remote URL. That one reads a
+/// string git wrote; this one refuses a string a model wrote, and refusing is the whole of it.
+fn parse_repo_arg(s: &str) -> Result<String, String> {
+    let slug = s.trim().to_string();
+    let mut parts = slug.split('/');
+    let (Some(o), Some(r), None) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(format!("bad repo {slug:?} — want owner/repo"));
+    };
+    if o.is_empty() || r.is_empty() {
+        return Err(format!("bad repo {slug:?} — want owner/repo"));
+    }
+    Ok(slug)
+}
+
+/// PURE: a git branch name a tool may act on.
+///
+/// Whitespace and a leading `-` are the two shapes that stop being a branch by the time they reach
+/// a command line: the first splits into two arguments, the second reads as a flag. Everything else
+/// is git's business to accept or reject, and duplicating git's ref grammar here would only add a
+/// second opinion about what a branch is.
+fn parse_branch(s: &str) -> Result<String, String> {
+    let branch = s.trim().to_string();
+    if branch.is_empty() || branch.contains(char::is_whitespace) || branch.starts_with('-') {
+        return Err(format!("bad branch {branch:?}"));
+    }
+    Ok(branch)
 }
 
 /// PURE: a state-load's page size. Absent means [`STATE_LOAD_PAGE_DEFAULT`]; out of range is
@@ -15188,11 +18138,12 @@ fn call_result_budget(_call: &McpCall) -> usize {
 /// catch-all itself is #117's to fix (it advises `limit` to `clone_list`, which has none, making
 /// [`oversize_result_error`]'s truthful `None` branch unreachable); this arm keeps `next_ready` out
 /// of that blast radius. For this tool the refusal is doubly sound: `limit` is real AND lowering it
-/// strictly removes whole rows, against a budget the row caps already keep it under.
+/// strictly removes whole rows, against a budget the row caps already keep it under. Both human
+/// gates share the arm, because both are true of both.
 fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
     match call {
         McpCall::PrContext { .. } => Some("max_diff_bytes"),
-        McpCall::NextReady { .. } => Some("limit"),
+        McpCall::NextReady { .. } | McpCall::NextCloseCandidate { .. } => Some("limit"),
         _ => Some("limit"),
     }
 }
@@ -15268,6 +18219,9 @@ fn validate_call(
     match name {
         "next_ready" => Ok(McpCall::NextReady {
             limit: next_ready_limit(args)?,
+        }),
+        "next_close_candidate" => Ok(McpCall::NextCloseCandidate {
+            limit: next_close_candidate_limit(args)?,
         }),
         "unvetted" => Ok(McpCall::Unvetted {
             include_skipped: args
@@ -15403,24 +18357,14 @@ fn validate_call(
         // --- work-clone lifecycle. The path guard runs HERE, before any effect exists, which is why
         // a refused clone argument can be proven to have touched nothing.
         "clone_create" => {
-            let slug = req_str(args, "repo")?.trim().to_string();
-            let mut parts = slug.split('/');
-            let (Some(o), Some(r), None) = (parts.next(), parts.next(), parts.next()) else {
-                return Err(format!("bad repo {slug:?} — want owner/repo"));
-            };
-            if o.is_empty() || r.is_empty() {
-                return Err(format!("bad repo {slug:?} — want owner/repo"));
-            }
+            let slug = parse_repo_arg(req_str(args, "repo")?)?;
             // clone_create always builds in the FIRST root (WORK_DIR); the extra roots exist so
             // already-stranded clones can be listed/released, not so new ones can be placed there.
             let root = roots.first().ok_or_else(|| {
                 "no work-clone root is configured (WORK_DIR is unset)".to_string()
             })?;
             let name = clone_name_in_root(root, req_str(args, "name")?)?;
-            let branch = req_str(args, "branch")?.trim().to_string();
-            if branch.contains(char::is_whitespace) || branch.starts_with('-') {
-                return Err(format!("bad branch {branch:?}"));
-            }
+            let branch = parse_branch(req_str(args, "branch")?)?;
             let base = match args.get("base") {
                 None | Some(Value::Null) => None,
                 Some(_) => Some(req_str(args, "base")?.trim().to_string()),
@@ -15465,6 +18409,46 @@ fn validate_call(
                     .get("dry_run")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
+            })
+        }
+        // --- the producer's OUTPUT edge. An ARGUMENT guard only: whether the body may be POSTED is
+        // `carries_qa_block`'s answer, in the apply, because it is a property of bytes that only
+        // exist on disk.
+        "open_pr" => {
+            let slug = parse_repo_arg(req_str(args, "repo")?)?;
+            let head = parse_branch(req_str(args, "head")?)?;
+            let title = req_str(args, "title")?.trim().to_string();
+            // ABSOLUTE, and refused here rather than resolved. The MCP server runs in the CRON's
+            // working directory, never the model's clone, so a relative path resolves against a
+            // directory the caller never named — reading some other file, or none, with no way for
+            // either side to notice which happened.
+            let body_file = req_str(args, "body_file")?.trim().to_string();
+            if !body_file.starts_with('/') {
+                return Err(format!(
+                    "body_file {body_file:?} must be an ABSOLUTE path — this server's working \
+                     directory is the cron's, not your clone's"
+                ));
+            }
+            // Optional, and a positive integer when present — `closes: 0` is not an issue, the same
+            // ruling `parse_pr_ref` makes for `#0`.
+            let closes = match args.get("closes") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.as_u64().filter(|n| *n > 0).ok_or_else(|| {
+                    "closes must be a positive integer — the issue number this PR closes"
+                        .to_string()
+                })?),
+            };
+            let base = match args.get("base") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(parse_branch(req_str(args, "base")?)?),
+            };
+            Ok(McpCall::OpenPr {
+                slug,
+                head,
+                title,
+                body_file,
+                closes,
+                base,
             })
         }
         // --- the producer's body repairs. Both guards are ARGUMENT guards only: what may be
@@ -15606,6 +18590,9 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
     let roots = clone_roots();
     match call {
         McpCall::NextReady { limit } => next_ready_fetch(limit).map(|d| d.to_string()),
+        McpCall::NextCloseCandidate { limit } => {
+            next_close_candidate_fetch(limit).map(|d| d.to_string())
+        }
         McpCall::Unvetted {
             include_skipped,
             limit,
@@ -15686,6 +18673,15 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             max_age_days,
             dry_run,
         } => clone_gc_exec(&roots, max_age_days, dry_run).map(|d| d.to_string()),
+        McpCall::OpenPr {
+            slug,
+            head,
+            title,
+            body_file,
+            closes,
+            base,
+        } => open_pr_apply(&slug, &head, &title, &body_file, closes, base.as_deref())
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::RepairQaBlock {
             slug,
             num,
@@ -16944,6 +19940,265 @@ fn append_separator(body: &str) -> &'static str {
     } else {
         "\n\n"
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// open_pr — the producer's OUTPUT edge as a TYPED transition.
+//
+// WHY IT EXISTS AT ALL. Every other move the producer makes is a tool; opening the PR — the one
+// move that IS the run's output — was a `gh pr create` inside Bash. That leaves a shell string in
+// the run trace and nothing a reader can join on: which dispatched task produced which PR is a
+// question the trace of a 1,986-Bash-call run cannot answer, against 35 MCP calls in the same run.
+// So the run's cost could be attributed per task (`token-report`) and the run's OUTPUT could not,
+// which makes "what did it cost to land this" unanswerable from the record the pipeline keeps.
+// `open_pr` closes that: the arguments carry `{repo, head, closes}` and the result carries the PR
+// number, so one typed line of the trace holds the whole `{agent, repo, issue, PR}` tuple.
+//
+// It is NOT a second QA gate. `carries_qa_block` is THE predicate — one definition, now three
+// callers (the PR-open hook, the retrofit, and this) — so a body this tool accepts is a body
+// `require-qa-block` accepts, by construction rather than by two implementations agreeing. The
+// hook stays exactly as it is: it binds every session on the box, including the interactive ones
+// that have no MCP surface at all and are the population #83 was filed about. What changes is that
+// the CRON producer no longer needs it, because it no longer reaches for `gh pr create`.
+//
+// THE ONE THING THIS TOOL WRITES THAT THE FILE DID NOT. `closes` is typed because a linkage nobody
+// can join on is the defect this whole tool is about — and the closing keyword is what GitHub
+// resolves into `closingIssuesReferences`, which `uncovered-issues` reads as the producer's own
+// backlog. That is the same power `weaken-closes` is DIRECTION-LOCKED against, and the lock is not
+// weakened here: `weaken-closes` edits a PR a human may already have read, where adding a `Closes`
+// would retroactively mark work covered; `open_pr` states the linkage at the moment the work is
+// first published, which is exactly what the producer already declared in prose in every body it
+// wrote. Typing it changes who can read it, not what may be claimed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// WHY an `open_pr` was refused — a TYPED discriminant, like [`Refusal`] and [`RepairRefusal`], so
+/// the exit code and the message both derive from the variant and no caller re-classifies by prose.
+#[derive(Debug, PartialEq, Eq)]
+enum OpenPrRefusal {
+    /// The `body_file` could not be read when the call ran.
+    UnreadableBody { path: String, err: String },
+    /// The body does not carry a section-8 block. Carries the lines it does not name; EMPTY means
+    /// all four are named but not on four distinct lines — [`Refusal`]'s own distinction.
+    NoQaBlock { path: String, missing: Vec<QaLine> },
+    /// `gh pr create` failed. Carries gh's own output, which already names the cause (an unpushed
+    /// head, a PR that exists for this branch, no permission) far better than a re-classification
+    /// of it would.
+    GhFailed(String),
+    /// The PR WAS created and `gh` printed something no PR url could be read out of. Distinct from
+    /// every other variant because the effect happened: a caller that retried this as a failure
+    /// would open a second PR.
+    UnreadableUrl(String),
+}
+
+impl OpenPrRefusal {
+    /// Exit code, distinct per variant because they are four different things to do next: fix the
+    /// path, write the block, read gh's error, or go and look at what was created.
+    fn exit(&self) -> i32 {
+        match self {
+            OpenPrRefusal::UnreadableBody { .. } => 2,
+            OpenPrRefusal::NoQaBlock { .. } => 3,
+            OpenPrRefusal::GhFailed(_) => 1,
+            OpenPrRefusal::UnreadableUrl(_) => 6,
+        }
+    }
+
+    /// The whole refusal text. The QA case reuses [`QA_TEMPLATE`] and [`QaLine::name`], so it reads
+    /// like the PR-open gate's refusal and names the same lines — the retry is the same edit
+    /// whichever surface refused it.
+    fn render(&self, subject: &str) -> String {
+        let mut lines = vec![format!("REFUSED - open_pr {subject}"), String::new()];
+        match self {
+            OpenPrRefusal::UnreadableBody { path, err } => lines.extend([
+                format!("  could not read body_file {path}: {err}"),
+                "  Write the body to a file first, and pass its ABSOLUTE path.".to_string(),
+            ]),
+            OpenPrRefusal::NoQaBlock { path, missing } => {
+                lines.extend([
+                    format!("  {path} does not carry QA-GUIDE section 8's evidence block, so this"),
+                    "  PR would be opened into a reject the vetter has already written for you."
+                        .to_string(),
+                    String::new(),
+                ]);
+                if missing.is_empty() {
+                    lines.push(
+                        "  all four named, but not on four distinct lines - write one entry per line"
+                            .to_string(),
+                    );
+                } else {
+                    let names: Vec<&'static str> = missing.iter().map(|l| l.name()).collect();
+                    lines.push(format!("  still missing: {}", names.join(", ")));
+                }
+                lines.extend([
+                    String::new(),
+                    QA_TEMPLATE.to_string(),
+                    String::new(),
+                    "You ran the mutation testing to get here - transcribe what it produced."
+                        .to_string(),
+                    "`n/a` with a reason is a valid value for a line the change cannot have;"
+                        .to_string(),
+                    "an ABSENT line is not. NOTHING was created.".to_string(),
+                ]);
+            }
+            OpenPrRefusal::GhFailed(out) => lines.extend([
+                "  `gh pr create` failed and NO PR was created. gh said:".to_string(),
+                String::new(),
+                out.trim_end().to_string(),
+            ]),
+            OpenPrRefusal::UnreadableUrl(out) => lines.extend([
+                "  the PR WAS CREATED, but gh printed no url this could read a number out of."
+                    .to_string(),
+                "  Do NOT retry this call - that would open a second PR. gh said:".to_string(),
+                String::new(),
+                out.trim_end().to_string(),
+            ]),
+        }
+        lines.join("\n")
+    }
+}
+
+/// PURE: the body `open_pr` posts — the file's bytes, plus the canonical closing line when `closes`
+/// names an issue the body does not already close.
+///
+/// The line goes FIRST, which is where `campaign-prompt.txt` has always put it (`Closes #N`
+/// followed by the QA block) and is the only position that cannot land INSIDE the `## QA` section —
+/// a section runs to the next heading, so an appended line would be swallowed by it and read as
+/// part of the evidence.
+///
+/// Whether the body already closes the issue is [`closing_keywords`]'s answer, never a substring
+/// search: that is the one scanner `commit-closes` and `weaken-closes` both use, so what this
+/// writes and what those two read are the same notion of a closing reference.
+fn open_pr_body(body: &str, closes: Option<u64>) -> String {
+    match closes {
+        Some(n) if !closing_keywords(body).contains(&n) => format!("Closes #{n}\n\n{body}"),
+        _ => body.to_string(),
+    }
+}
+
+/// PURE: the whole open decision — the body this call would POST, or the refusal that stops it.
+///
+/// Everything a refusal can be decided from is here, which is what makes "a refused `open_pr`
+/// created nothing" a property of the ORDER rather than a claim: `gh` is not reachable until this
+/// has returned an `Ok`. [`qa_repair`] is the same shape for the same reason.
+///
+/// The gate runs on the COMPOSED body, not on the file, because the composed body is what GitHub
+/// will hold — and [`carries_qa_block`] is THE predicate, so a body this accepts is a body
+/// `require-qa-block` accepts, by construction rather than by two implementations agreeing.
+fn open_pr_plan(
+    file_body: &str,
+    body_file: &str,
+    closes: Option<u64>,
+) -> Result<String, OpenPrRefusal> {
+    let body = open_pr_body(file_body, closes);
+    if !carries_qa_block(&body) {
+        return Err(OpenPrRefusal::NoQaBlock {
+            path: body_file.to_string(),
+            missing: missing_lines(qa_section(&body)),
+        });
+    }
+    Ok(body)
+}
+
+/// PURE: the `owner/repo` and number a GitHub PR url names.
+///
+/// `gh pr create` prints the url of what it made and offers no `--json`, so this IS the read of the
+/// number. It is STRICT — `github.com/<owner>/<repo>/pull/<digits>` and nothing else — because the
+/// caller compares the slug against the one it asked for, and a lenient parse would let something
+/// that is not a slug past that comparison. Anchoring on the HOST is what makes that hold: taking
+/// the last two path segments instead reads `github.com/r/pull/12` as the repo `github.com/r`.
+fn pr_url_ref(url: &str) -> Option<(String, u64)> {
+    let (before, after) = url.trim().rsplit_once("/pull/")?;
+    let num: u64 = after.split('/').next()?.parse().ok().filter(|n| *n > 0)?;
+    let (_, path) = before.split_once("github.com/")?;
+    let mut segs = path.split('/');
+    let (Some(owner), Some(repo), None) = (segs.next(), segs.next(), segs.next()) else {
+        return None;
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((format!("{owner}/{repo}"), num))
+}
+
+/// PURE: the PR ref `gh pr create`'s output names, taking the FIRST url in it.
+///
+/// gh prints warnings and hints on the same stream, so the output is scanned word by word rather
+/// than read as a single line. FIRST rather than last: one `gh pr create` creates one PR, so a
+/// second url is something else gh had to say, not a second result.
+fn created_pr_ref(out: &str) -> Option<(String, u64)> {
+    out.split_whitespace().find_map(pr_url_ref)
+}
+
+/// The `open_pr` producer MCP tool: open the PR for a branch already pushed, assigned to the
+/// pipeline's assignee, with a body the PR-open gate's own predicate has already accepted.
+///
+/// ORDER IS THE GUARD, as it is in [`qa_repair`]: the body is read and checked BEFORE `gh` is
+/// invoked, so a refused call provably created nothing — which is what makes the QA refusal a
+/// one-edit retry inside the run rather than a PR that has to be repaired after the fact.
+///
+/// Returns the report text rather than printing it: on the MCP server STDOUT IS THE PROTOCOL.
+///
+/// Exit: 0 opened, 1 `gh pr create` failed (nothing created), 2 unreadable body file, 3 no QA
+/// block, 6 created but the url could not be read.
+fn open_pr_apply(
+    slug: &str,
+    head: &str,
+    title: &str,
+    body_file: &str,
+    closes: Option<u64>,
+    base: Option<&str>,
+) -> Result<String, (i32, String)> {
+    let subject = format!("{slug} {head}");
+    let refuse = |r: OpenPrRefusal| (r.exit(), r.render(&subject));
+
+    let file_body = std::fs::read_to_string(body_file).map_err(|e| {
+        refuse(OpenPrRefusal::UnreadableBody {
+            path: body_file.to_string(),
+            err: e.to_string(),
+        })
+    })?;
+    let body = open_pr_plan(&file_body, body_file, closes).map_err(refuse)?;
+
+    let assignee = pr_assignee();
+    let mut args: Vec<&str> = vec![
+        "pr",
+        "create",
+        "-R",
+        slug,
+        "--head",
+        head,
+        "--title",
+        title,
+        "--body",
+        &body,
+        "--assignee",
+        &assignee,
+    ];
+    if let Some(b) = base {
+        args.extend(["--base", b]);
+    }
+    let out = gh_capture(&args).map_err(|e| refuse(OpenPrRefusal::GhFailed(e)))?;
+
+    // The url is gh's own statement of what it created. A parse failure is NOT retried and NOT
+    // guessed at with a `gh pr list --head` lookup: the branch is now the head of a PR that exists,
+    // so any such read would return it and hide the fact that this tool could not tell.
+    let (found, num) =
+        created_pr_ref(&out).ok_or_else(|| refuse(OpenPrRefusal::UnreadableUrl(out.clone())))?;
+    if !found.eq_ignore_ascii_case(slug) {
+        return Err(refuse(OpenPrRefusal::UnreadableUrl(out)));
+    }
+    Ok(serde_json::json!({
+        "repo": found,
+        "pr": num,
+        "url": format!("https://github.com/{found}/pull/{num}"),
+        "head": head,
+        "base": base,
+        // Every issue the posted body closes, read back with the scanner GitHub's own
+        // `closingIssuesReferences` is compared against — so the typed record of what this PR
+        // covers is the whole set, not just the argument that was passed.
+        "closes": closing_keywords(&body),
+        "assignee": assignee,
+    })
+    .to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -18876,6 +22131,36 @@ enum Cmd {
     },
     /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
     DistillTrace,
+    /// Attribute a run's token spend to the agent that incurred it, dearest first. `run-metrics`
+    /// reports whole-run COST beside main-thread-only TOKENS; this splits the same trace by
+    /// `parent_tool_use_id` so a run's cost can be read per dispatched task.
+    TokenReport {
+        /// The run trace to read (runs/<id>.jsonl).
+        trace: String,
+        /// Emit one JSON object instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// What it cost to LAND work: per-task spend joined to the typed work items `open_pr` recorded,
+    /// bucketed landed / delivered-awaiting-human / churn. Only churn is waste — merges are
+    /// human-gated by design. A task with no typed work item is churn; nothing is inferred from a
+    /// dispatch label.
+    WorkTokens {
+        /// The metrics file to read (metrics/runs.jsonl).
+        path: String,
+        /// Emit the report object instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Correct historical metrics rows against their traces: whole-run numbers where the trace
+    /// survives, an `accuracy: main-thread-only` label where it does not. Estimates nothing.
+    BackfillMetrics {
+        /// The metrics file to correct (metrics/runs.jsonl).
+        path: String,
+        /// Apply the rewrite. Without it, prints what would change and touches nothing.
+        #[arg(long)]
+        write: bool,
+    },
     /// Weekly-budget pace gate. Prints one line; exits 0 to RUN this tick, 10 to PAUSE it, and
     /// 2 to REFUSE retired config (USAGE_SLACK_PCT, whose meaning inverted with the #158 pace
     /// flip — replace it with USAGE_HEADROOM_PCT). Config is env-only (USAGE_CEILING_PCT,
@@ -20712,6 +23997,9 @@ fn main() {
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
+        Cmd::TokenReport { trace, json } => token_report_mode(&trace, json),
+        Cmd::WorkTokens { path, json } => work_tokens_mode(&path, json),
+        Cmd::BackfillMetrics { path, write } => backfill_metrics_mode(&path, write),
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
@@ -22378,7 +25666,8 @@ mod run_metrics_tests {
 mod startup_split_tests {
     use super::{
         final_record, is_mutation_tool, partial_record, run_metrics, InfraRecord, RunIdentity,
-        RunMetrics, StartupPhase, StartupProbe, ToolingReport, TraceOutcome, STAGE_FINAL,
+        RunMetrics, SpendRecord, StartupPhase, StartupProbe, ToolingReport, TraceOutcome,
+        STAGE_FINAL,
     };
     use serde_json::{json, Value};
 
@@ -22696,6 +25985,7 @@ mod startup_split_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert_eq!(doc["stage"], STAGE_FINAL);
         assert_eq!(doc["bootMs"], 1125);
@@ -22733,6 +26023,7 @@ mod startup_split_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert!(doc.get("runId").is_none());
         assert!(doc.get("role").is_none());
@@ -22751,8 +26042,8 @@ mod startup_split_tests {
 #[cfg(test)]
 mod skip_row_tests {
     use super::{
-        classify_outcome, final_record, InfraRecord, RunIdentity, RunMetrics, ToolingReport,
-        TraceOutcome, STAGE_FINAL,
+        classify_outcome, final_record, InfraRecord, RunIdentity, RunMetrics, SpendRecord,
+        ToolingReport, TraceOutcome, STAGE_FINAL,
     };
 
     /// The gate's real ceiling-pause line, verbatim — em-dash, percent signs and all — because the
@@ -22781,6 +26072,7 @@ mod skip_row_tests {
             &[],
             &InfraRecord::default(),
             Some(("usage-gate", PAUSE_LINE)),
+            &SpendRecord::default(),
         );
         assert_eq!(doc["skipped"], "usage-gate");
         assert_eq!(doc["skipReason"], PAUSE_LINE, "the reason must be verbatim");
@@ -22808,6 +26100,7 @@ mod skip_row_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert!(
             doc.get("skipped").is_none(),
@@ -23091,6 +26384,290 @@ mod usage_probe_tests {
         assert_eq!(p.messages, 0);
     }
 
+    /// One assistant event with a full usage block, on `parent` (None = main thread).
+    fn spend_ev(id: &str, parent: Option<&str>, cache_read: u64, w5: u64, w1: u64) -> String {
+        let mut ev = serde_json::json!({"type":"assistant","message":{
+            "id": id, "model": "claude-opus-5",
+            "usage":{"input_tokens":0,"output_tokens":7,
+                     "cache_read_input_tokens":cache_read,
+                     "cache_creation_input_tokens": w5 + w1,
+                     "cache_creation":{"ephemeral_5m_input_tokens":w5,
+                                       "ephemeral_1h_input_tokens":w1}}}});
+        ev["parent_tool_use_id"] = match parent {
+            Some(p) => serde_json::json!(p),
+            None => Value::Null,
+        };
+        serde_json::to_string(&ev).unwrap()
+    }
+
+    /// The main-thread turn that dispatches a subagent, naming it.
+    fn dispatch_ev(tool_id: &str, description: &str) -> String {
+        serde_json::to_string(&serde_json::json!({"type":"assistant","message":{
+            "id": format!("msg_dispatch_{tool_id}"),
+            "content":[{"type":"tool_use","name":"Agent","id":tool_id,
+                        "input":{"description":description,"prompt":"…"}}]}}))
+        .unwrap()
+    }
+
+    /// The whole point: a subagent's spend lands on the subagent, not the main loop, and carries
+    /// the label the dispatching call gave it.
+    #[test]
+    fn spend_is_attributed_to_the_dispatched_agent() {
+        let trace = [
+            dispatch_ev("toolu_A", "rework pointers"),
+            spend_ev("m1", None, 1_000_000, 0, 0),
+            spend_ev("m2", Some("toolu_A"), 4_000_000, 0, 0),
+        ]
+        .join("\n");
+        let rows = token_attribution(&trace);
+        assert_eq!(rows.len(), 2, "one row per agent");
+        // Dearest first: the subagent read 4x what the main loop did.
+        assert_eq!(rows[0].label, "rework pointers");
+        assert_eq!(rows[0].cache_read, 4_000_000);
+        assert_eq!(rows[1].label, "main loop");
+        assert_eq!(rows[1].cache_read, 1_000_000);
+    }
+
+    /// Cache writes are priced by the TTL the trace records, not one blended guess. 1M tokens at
+    /// 5m is $6.25; the same 1M at 1h is $10.
+    #[test]
+    fn cache_writes_are_priced_by_ttl() {
+        let five = token_attribution(&spend_ev("m1", None, 0, 1_000_000, 0));
+        let hour = token_attribution(&spend_ev("m1", None, 0, 0, 1_000_000));
+        assert!((five[0].usd - 6.25).abs() < 1e-9, "5m: {}", five[0].usd);
+        assert!((hour[0].usd - 10.0).abs() < 1e-9, "1h: {}", hour[0].usd);
+    }
+
+    /// A repeated `message.id` is one message however many events stream it — the same rule
+    /// [`UsageProbe`] applies, one level wider so subagents are deduped too.
+    #[test]
+    fn a_repeated_message_is_counted_once_per_agent() {
+        let trace = [
+            spend_ev("m1", Some("toolu_A"), 500_000, 0, 0),
+            spend_ev("m1", Some("toolu_A"), 500_000, 0, 0),
+        ]
+        .join("\n");
+        let rows = token_attribution(&trace);
+        assert_eq!(rows[0].messages, 1);
+        assert_eq!(rows[0].cache_read, 500_000);
+    }
+
+    /// `output_tokens` is a message-start snapshot (7 per event in these fixtures). If it ever
+    /// reaches a cost, this fires — the real figure is whole-run only.
+    #[test]
+    fn output_tokens_never_reach_an_agents_cost() {
+        let rows = token_attribution(&spend_ev("m1", None, 0, 0, 0));
+        assert_eq!(rows[0].usd, 0.0, "a usage block of only output must cost 0");
+    }
+
+    /// Twelve `result` lines restate one whole-run total. Summing them would report the run
+    /// twelve times over.
+    #[test]
+    fn repeated_result_lines_do_not_multiply_output() {
+        let one = serde_json::to_string(&serde_json::json!({
+            "type":"result","modelUsage":{"claude-opus-5":{"outputTokens":1_000_000}}}))
+        .unwrap();
+        let (tokens, usd) = unattributable_output(&[one.clone(), one.clone(), one].join("\n"));
+        assert_eq!(tokens, 1_000_000, "restated, not accumulated");
+        assert!((usd - 25.0).abs() < 1e-9, "{usd}");
+    }
+
+    /// The vetter runs Fable, the producer Opus; the same field is $50 and $25 per million.
+    #[test]
+    fn output_is_priced_per_model() {
+        let fable = serde_json::to_string(&serde_json::json!({
+            "type":"result","modelUsage":{"claude-fable-5":{"outputTokens":1_000_000}}}))
+        .unwrap();
+        assert!((unattributable_output(&fable).1 - 50.0).abs() < 1e-9);
+    }
+
+    /// `total_cost_usd` is CUMULATIVE across result lines. Taking the first understates the run
+    /// (it is the main loop's own line); summing overstates it wildly. Only the last/max is the
+    /// run.
+    #[test]
+    fn billed_cost_is_the_cumulative_maximum() {
+        let line = |usd: f64| {
+            serde_json::to_string(&serde_json::json!({"type":"result","total_cost_usd":usd}))
+                .unwrap()
+        };
+        let trace = [line(37.84), line(106.42), line(136.08)].join("\n");
+        assert!((billed_cost(&trace) - 136.08).abs() < 1e-9);
+        assert_eq!(
+            billed_cost("{\"type\":\"assistant\"}"),
+            0.0,
+            "no result lines"
+        );
+    }
+
+    /// The spend block is ADDITIVE. A record built with no spend data still carries `agents` as an
+    /// empty array rather than omitting it — the same "always present" contract `unreadableFiles`
+    /// holds, so a consumer can tell "this run dispatched nobody" from "this row predates the
+    /// field". And the frozen fields keep their old meanings beside it: `costUsd` stays the
+    /// turn-selected figure every committed row was written under, while `billedUsd` carries the
+    /// run's actual total.
+    #[test]
+    fn the_spend_block_is_additive() {
+        let m = RunMetrics {
+            cost_usd: 37.84,
+            ..Default::default()
+        };
+        let empty = final_record(
+            "/t.jsonl",
+            &m,
+            &RunIdentity {
+                run_id: None,
+                role: None,
+                model: None,
+            },
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+            &SpendRecord::default(),
+        );
+        assert_eq!(
+            empty["agents"],
+            serde_json::json!([]),
+            "absent spend is an empty array, never a missing key"
+        );
+        // No trace to recompute from: the main-thread figures stand, and the row SAYS so rather
+        // than presenting them as the run.
+        assert_eq!(empty["costUsd"], 37.84);
+        assert_eq!(empty["accuracy"], "main-thread-only");
+
+        let agents = [AgentSpend {
+            label: "rework pointers".to_string(),
+            usd: 12.5,
+            messages: 3,
+            cache_read: 9,
+            ..Default::default()
+        }];
+        let full = final_record(
+            "/t.jsonl",
+            &m,
+            &RunIdentity {
+                run_id: None,
+                role: None,
+                model: None,
+            },
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+            &SpendRecord {
+                agents: &agents,
+                output_tokens: 1_000_000,
+                output_usd: 25.0,
+                billed_usd: 136.08,
+            },
+        );
+        assert_eq!(full["agents"][0]["label"], "rework pointers");
+        assert_eq!(full["attributedUsd"], 12.5);
+        assert_eq!(full["listUsd"], 37.5, "attributed + output");
+        assert_eq!(full["billedUsd"], 136.08);
+        // The correction: with a trace to recompute from, the legacy keys carry the WHOLE run.
+        // `costUsd` is the billed total rather than the main loop's $37.84 share, `cacheRead` and
+        // `tokensIn` sum every thread, and `tokensOut` is the harness's true figure.
+        assert_eq!(
+            full["costUsd"], 136.08,
+            "costUsd is the run now, not the main loop"
+        );
+        assert_eq!(full["cacheRead"], 9, "summed across agents");
+        assert_eq!(
+            full["tokensOut"], 1_000_000,
+            "from modelUsage, not the per-message snapshot"
+        );
+        assert_eq!(full["accuracy"], "whole-run");
+    }
+
+    /// Only `assistant` events carry usage. A `user` or `result` event that happens to hold a
+    /// `message.usage` must not be priced — [`UsageProbe`] has always guarded this way, and the two
+    /// readers of one stream must not disagree about what counts.
+    #[test]
+    fn only_assistant_events_are_priced() {
+        let mut ev: Value = serde_json::from_str(&spend_ev("m1", None, 1_000_000, 0, 0)).unwrap();
+        ev["type"] = serde_json::json!("user");
+        assert!(
+            token_attribution(&serde_json::to_string(&ev).unwrap()).is_empty(),
+            "a non-assistant event must contribute nothing"
+        );
+    }
+
+    /// An empty `message.id` identifies nothing. Two such events are two messages, not one — the
+    /// dedupe must not let the first swallow the second.
+    #[test]
+    fn empty_message_ids_are_not_deduped_together() {
+        let ev = |cr: u64| {
+            let mut v: Value = serde_json::from_str(&spend_ev("x", None, cr, 0, 0)).unwrap();
+            v["message"]["id"] = serde_json::json!("");
+            serde_json::to_string(&v).unwrap()
+        };
+        let rows = token_attribution(&[ev(1_000), ev(2_000)].join("\n"));
+        assert_eq!(rows[0].messages, 2, "both counted");
+        assert_eq!(rows[0].cache_read, 3_000, "neither dropped");
+    }
+
+    /// A traceless row is LABELLED, never estimated: every number it carries survives byte for
+    /// byte, and the only addition is the honesty flag. The error being corrected is bimodal
+    /// (1.00x when a run dispatched nobody, 1.8–3.6x when it did), so a mean would describe no
+    /// row that actually ran.
+    #[test]
+    fn a_traceless_row_is_labelled_not_estimated() {
+        let row = serde_json::json!({
+            "runId": "20260702T050001Z", "role": "producer",
+            "costUsd": 6.928, "cacheRead": 1234, "tokensOut": 99,
+        });
+        let (out, recomputed) = backfill_row(row.clone(), None);
+        assert!(!recomputed);
+        assert_eq!(out["accuracy"], "main-thread-only");
+        for k in ["costUsd", "cacheRead", "tokensOut"] {
+            assert_eq!(out[k], row[k], "{k} must be untouched");
+        }
+    }
+
+    /// A row WITH a trace is recomputed from it — the whole point of the backfill.
+    #[test]
+    fn a_traced_row_is_recomputed_whole_run() {
+        let trace = [
+            dispatch_ev("toolu_A", "some work"),
+            spend_ev("m1", None, 1_000_000, 0, 0),
+            spend_ev("m2", Some("toolu_A"), 4_000_000, 0, 0),
+            serde_json::to_string(&serde_json::json!({
+                "type":"result","total_cost_usd":9.0,
+                "modelUsage":{"claude-opus-5":{"outputTokens":200_000}}}))
+            .unwrap(),
+        ]
+        .join("\n");
+        let row = serde_json::json!({"runId":"x","role":"producer","costUsd":1.0,"cacheRead":7});
+        let (out, recomputed) = backfill_row(row, Some(&trace));
+        assert!(recomputed);
+        assert_eq!(out["accuracy"], "whole-run");
+        assert_eq!(out["cacheRead"], 5_000_000, "both threads, not just main");
+        assert_eq!(out["costUsd"], 9.0, "billed, not the stale 1.0");
+        assert_eq!(out["agents"].as_array().unwrap().len(), 2);
+    }
+
+    /// Live partial rows (boot/ttl/usage) are main-thread by nature — the subagents have not
+    /// finished. Rewriting them would invent a total the run had not yet reached.
+    #[test]
+    fn partial_stage_rows_are_left_alone() {
+        let row = serde_json::json!({"stage":"usage","costUsd":1.0,"trace":"/nope"});
+        let (out, recomputed) = backfill_row(row, Some("{}"));
+        assert!(!recomputed);
+        assert!(out.get("accuracy").is_none(), "not even labelled");
+        assert_eq!(out["costUsd"], 1.0);
+    }
+
+    /// An unrecognised model must not silently price as the cheapest tier.
+    #[test]
+    fn an_unknown_model_falls_back_to_opus_rates() {
+        assert_eq!(rates_for("claude-opus-9-future").input, 5.0);
+        assert_eq!(rates_for("").input, 5.0);
+        assert_eq!(rates_for("claude-haiku-4-5").input, 1.0);
+    }
+
     /// An explicit `null` is the main thread, exactly as an absent key is. The real traces spell it
     /// both ways and they must not diverge.
     #[test]
@@ -23358,6 +26935,7 @@ mod usage_probe_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert_eq!(doc["rateLimits"]["five_hour"]["status"], "allowed");
         // The terminal totals stay authoritative — including the output count the probe cannot
@@ -23375,6 +26953,7 @@ mod usage_probe_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert!(
             bare["rateLimits"].is_object(),
@@ -31901,7 +35480,14 @@ mod marketplace_tests {
         seen.sort();
         assert_eq!(
             seen,
-            vec!["close-candidate", "design", "keep-open", "nr", "reject"],
+            vec![
+                "close-candidate",
+                "design",
+                "keep-open",
+                "ncc",
+                "nr",
+                "reject"
+            ],
             "the shipped command set changed"
         );
     }
@@ -32319,6 +35905,35 @@ mod marketplace_tests {
         );
     }
 
+    // `/ncc` is the flag lane's gate (#173), and its grant is pinned for the same reason `/nr`'s is
+    // — plus one the sweep cannot see. The absence of `Skill` and `Read` here is a DECISION, argued
+    // in the file: a flag is a claim about an issue, the audit skill's vocabulary has no scope
+    // literal that names one, and a lens whose own rule is never to say "works correctly" cannot
+    // confirm a fix. Adding either back would pass the generic sweep, because a lens beside a typed
+    // read is a legal shape — so it is asserted here, where it has to be argued to change.
+    #[test]
+    fn ncc_grants_the_flag_queue_the_flag_itself_and_the_pr_its_reason_cites() {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/ncc.md") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let grantable = grantable_mcp_tools(
+            &read_json("plugins/human-fsm/.claude-plugin/plugin.json").expect("the manifest"),
+        )
+        .unwrap();
+        assert_eq!(
+            command_check(&text, &grantable),
+            typed_only(&[
+                &plugin_mcp_tool_name("human-fsm", "fsm", "next_close_candidate"),
+                &plugin_mcp_tool_name("human-fsm", "fsm", "close_candidate_context"),
+                // The instrument that falsifies an "already fixed" claim: the PR the reason names,
+                // read against the path the ISSUE named. raindex#1348 is the near-miss it is for.
+                &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+            ]),
+            "/ncc reads the flag queue, the flag it heads, and the PR its reason cites — and takes \
+             no audit lens, on purpose"
+        );
+    }
+
     // #154: the grant above buys an invocation, and the invocation is only worth what its SCOPE is.
     // `nr.md` used to carry the scope as a paragraph — correct, detailed, and overridden the moment
     // `Skill audit` loaded a document whose first rule is "whole-repo snapshot, never a diff". The
@@ -32715,13 +36330,14 @@ mod vetter_state_load_tests {
                 doc["prs"].as_array().unwrap().len(),
                 STATE_LOAD_PAGE_DEFAULT
             );
-            assert_eq!(doc["more"], json!(10));
+            // 20 vet-able minus the 3-row page; 150 skipped minus the same page.
+            assert_eq!(doc["more"], json!(17));
             if include_skipped {
                 assert_eq!(
                     doc["skipped"].as_array().unwrap().len(),
                     STATE_LOAD_PAGE_DEFAULT
                 );
-                assert_eq!(doc["moreSkipped"], json!(140));
+                assert_eq!(doc["moreSkipped"], json!(147));
             }
         }
 
@@ -33486,34 +37102,45 @@ mod mcp_tests {
         );
     }
 
-    // #78: a state-load handed to a token-budgeted caller is ALWAYS paged. An out-of-range page is
-    // refused rather than clamped — a clamp leaves the caller believing it got what it asked for.
+    // #78: a state-load handed to a token-budgeted caller is ALWAYS paged, and the page is the
+    // run's whole work budget (see STATE_LOAD_PAGE_RANGE). An out-of-range page is refused rather
+    // than clamped — a clamp leaves the caller believing it got what it asked for — and the
+    // refusal covers the sizes the pre-budget 1..=25 bound used to accept (4, the old default 10,
+    // the old ceiling 25): asking for them is asking for more work than a run may do.
     #[test]
     fn a_state_load_page_is_bounded_by_the_transition_guard() {
         let f = FakeExec::ok();
         for tool in ["unvetted", "unvetted_close_candidates"] {
-            for bad in [json!(0), json!(26), json!("10"), json!(-1), json!(1000)] {
+            for bad in [
+                json!(0),
+                json!(4),
+                json!(10),
+                json!(25),
+                json!("3"),
+                json!(-1),
+                json!(1000),
+            ] {
                 let resp = f.handle(&call(tool, json!({"limit": bad}))).unwrap();
                 assert!(is_error(&resp), "{tool} limit={bad} must be refused");
-                assert!(text(&resp).contains("limit must be an integer in 1..=25"));
+                assert!(text(&resp).contains("limit must be an integer in 1..=3"));
             }
         }
         assert!(f.calls().is_empty(), "no refused page reached a fetch");
 
         // …and an in-range page is carried through verbatim.
-        f.handle(&call("unvetted", json!({"limit": 3}))).unwrap();
-        f.handle(&call("unvetted_close_candidates", json!({"limit": 25})))
+        f.handle(&call("unvetted", json!({"limit": 1}))).unwrap();
+        f.handle(&call("unvetted_close_candidates", json!({"limit": 3})))
             .unwrap();
         assert_eq!(
             f.calls(),
             vec![
                 McpCall::Unvetted {
                     include_skipped: false,
-                    limit: 3
+                    limit: 1
                 },
                 McpCall::UnvettedCloseCandidates {
                     include_skipped: false,
-                    limit: 25
+                    limit: 3
                 },
             ]
         );
@@ -33851,7 +37478,7 @@ mod mcp_tests {
     // --- profiles -------------------------------------------------------------------------------
 
     #[test]
-    fn the_producer_surface_is_clone_lifecycle_and_the_two_body_repairs() {
+    fn the_producer_surface_is_clone_lifecycle_the_open_and_the_two_body_repairs() {
         let f = FakeExec::producer();
         let resp = f
             .handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
@@ -33865,6 +37492,10 @@ mod mcp_tests {
                 "clone_release",
                 "clone_list",
                 "clone_gc",
+                // The producer's OUTPUT edge. It is a tool so the run's own trace records WHICH
+                // task produced WHICH PR — a `gh pr create` inside Bash leaves a shell string that
+                // no reader can join a work item on.
+                "open_pr",
                 // #136: BOTH body repairs are tools, so what the producer may write to a PR body is
                 // something `tools/list` states rather than something a prefix-matched
                 // `Bash(pr-review-report:*)` allow rule happens to permit.
@@ -33900,13 +37531,16 @@ mod mcp_tests {
             "clone_create",
             "clone_gc",
             "clone_list",
+            // The vetter judging a PR must not be able to OPEN one either: an actor that can
+            // produce the thing it judges has no judgement left to make.
+            "open_pr",
             "repair_qa_block",
             "weaken_closes",
         ] {
             let resp = v
                 .handle(&call(
                     producer_only,
-                    json!({"repo": "o/r", "name": "x", "branch": "b", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
+                    json!({"repo": "o/r", "name": "x", "branch": "b", "head": "b", "title": "t", "body_file": "/b.md", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
                 ))
                 .unwrap();
             assert!(is_error(&resp), "{producer_only} must not exist for vetter");
@@ -33947,6 +37581,10 @@ mod mcp_tests {
                 // touches, and it would fail to exercise them silently.
                 "pr_checkout",
                 "clone_release",
+                // The FLAG lane's read chain (#173). The human's OTHER inbox — the one that asks
+                // for work to be destroyed — had no "which is next" call at all, so the queue where
+                // being wrong is least recoverable was the one worked by hand.
+                "next_close_candidate",
                 "close_candidate_context",
                 "human_rule",
                 "human_rule_issue",
@@ -33962,6 +37600,9 @@ mod mcp_tests {
             "record_verdict",
             "record_close_candidate_verdict",
             "clone_create",
+            // The human RULES on PRs; opening one is the producer's edge, and a human surface that
+            // could open a PR would be a human ruling on their own work.
+            "open_pr",
         ] {
             let resp = f
                 .handle(&call(not_ours, json!({"pr": "o/r#1", "issue": "o/r#1"})))
@@ -34436,6 +38077,170 @@ mod mcp_tests {
                 base: None,
             }]
         );
+    }
+
+    // --- open_pr: the producer's OUTPUT edge ------------------------------------------------------
+
+    #[test]
+    fn open_pr_refuses_every_argument_it_could_not_act_on() {
+        let f = FakeExec::producer();
+        for bad in [
+            json!({"repo": "raindex", "head": "b", "title": "t", "body_file": "/b.md"}), // no owner
+            json!({"repo": "a/b/c", "head": "b", "title": "t", "body_file": "/b.md"}),
+            json!({"repo": "o/r", "head": "two words", "title": "t", "body_file": "/b.md"}),
+            json!({"repo": "o/r", "head": "--upload-pack=evil", "title": "t", "body_file": "/b.md"}),
+            json!({"repo": "o/r", "head": "b", "title": "", "body_file": "/b.md"}),
+            json!({"repo": "o/r", "head": "b", "title": "t"}), // no body at all
+            // RELATIVE: this server's cwd is the cron's, not the caller's clone, so a relative
+            // path names a file neither side can identify.
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "body.md"}),
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "closes": 0}),
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "closes": "12"}),
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "base": "two words"}),
+        ] {
+            let resp = f.handle(&call("open_pr", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(
+            f.calls().is_empty(),
+            "no refused argument reached an effect"
+        );
+
+        f.handle(&call(
+            "open_pr",
+            json!({"repo": "rainlanguage/rain.solmem", "head": "2026-08-02-issue-63",
+                   "title": "Guard the empty inner position", "body_file": "/scratch/pr-63.md",
+                   "closes": 63}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::OpenPr {
+                slug: "rainlanguage/rain.solmem".to_string(),
+                head: "2026-08-02-issue-63".to_string(),
+                title: "Guard the empty inner position".to_string(),
+                body_file: "/scratch/pr-63.md".to_string(),
+                closes: Some(63),
+                base: None,
+            }]
+        );
+    }
+
+    /// A minimal section-8 block, so a body fixture says what it is about rather than restating
+    /// the gate's vocabulary at every call site.
+    fn qa_block() -> &'static str {
+        "## QA\n- Discriminating tests: t_one - fails on base\n- Mutations applied: l1 -> x -> t_one\n- Oracle: the spec\n- Category check: asks A; covered A\n"
+    }
+
+    #[test]
+    fn open_pr_refuses_a_body_the_pr_open_gate_would_refuse_and_creates_nothing() {
+        // The SAME predicate, so what one accepts the other accepts. Asserted as the relation
+        // rather than as two literals: a body is refused here exactly when `carries_qa_block` is
+        // false for it.
+        for body in [
+            "Closes #63\n\nno evidence here\n",
+            "## QA\n- Discriminating tests: t_one\n", // a heading is not the block
+            "## QA\n- discriminating mutation oracle category on ONE line\n",
+        ] {
+            assert!(!carries_qa_block(body));
+            let e = open_pr_plan(body, "/scratch/pr-63.md", Some(63)).unwrap_err();
+            assert!(matches!(e, OpenPrRefusal::NoQaBlock { .. }), "{e:?}");
+            assert_eq!(e.exit(), 3);
+            let rendered = e.render("o/r branch");
+            assert!(
+                rendered.contains("NOTHING was created"),
+                "the refusal must say the effect did not happen: {rendered}"
+            );
+            assert!(
+                rendered.contains("## QA") && rendered.contains("Category check"),
+                "the refusal carries section 8's own template: {rendered}"
+            );
+        }
+        // …and a body that passes the gate is planned, unchanged apart from the linkage.
+        let ok = open_pr_plan(qa_block(), "/scratch/pr-63.md", None).unwrap();
+        assert_eq!(ok, qa_block());
+        assert!(carries_qa_block(&ok));
+    }
+
+    #[test]
+    fn open_pr_writes_the_closing_line_only_when_the_body_does_not_already_close_it() {
+        let plain = format!("Some prose.\n\n{}", qa_block());
+        // Absent linkage: the canonical line is written, and it leads — anywhere after the `## QA`
+        // heading would land INSIDE the evidence section.
+        let composed = open_pr_body(&plain, Some(63));
+        assert!(composed.starts_with("Closes #63\n\n"));
+        assert!(composed.ends_with(&plain));
+        assert_eq!(closing_keywords(&composed), vec![63]);
+
+        // Already closing it: nothing is written twice.
+        let already = format!("Closes #63\n\n{}", qa_block());
+        assert_eq!(open_pr_body(&already, Some(63)), already);
+        // A DIFFERENT keyword for the same issue is still a closing reference to it.
+        let fixes = format!("Fixes #63\n\n{}", qa_block());
+        assert_eq!(open_pr_body(&fixes, Some(63)), fixes);
+        // A bare mention is NOT a closing reference, so the linkage is still written.
+        let refs = format!("Refs #63\n\n{}", qa_block());
+        assert!(open_pr_body(&refs, Some(63)).starts_with("Closes #63"));
+        // No argument, no line: a partial fix says `Refs` and stays that way.
+        assert_eq!(open_pr_body(&refs, None), refs);
+        // And composing never breaks the block it prefixes.
+        assert!(carries_qa_block(&composed));
+    }
+
+    #[test]
+    fn the_created_pr_is_read_out_of_ghs_own_url() {
+        assert_eq!(
+            created_pr_ref("https://github.com/rainlanguage/rain.solmem/pull/76\n"),
+            Some(("rainlanguage/rain.solmem".to_string(), 76))
+        );
+        // gh prints hints on the same stream; the FIRST url is the one it created.
+        assert_eq!(
+            created_pr_ref(
+                "Warning: 3 uncommitted changes\nhttps://github.com/o/r/pull/12\nsee https://github.com/o/r/pull/99\n"
+            ),
+            Some(("o/r".to_string(), 12))
+        );
+        // A dotted repo name survives, because the number is read off `/pull/`, never off dots.
+        assert_eq!(
+            created_pr_ref("https://github.com/cyclofinance/cyclo.site/pull/431"),
+            Some(("cyclofinance/cyclo.site".to_string(), 431))
+        );
+        for not_a_pr in [
+            "",
+            "https://github.com/o/r/pull/0",
+            "https://github.com/o/r/pull/abc",
+            "https://github.com/o/r/issues/12",
+            "https://github.com/r/pull/12", // no owner segment
+        ] {
+            assert_eq!(created_pr_ref(not_a_pr), None, "{not_a_pr}");
+        }
+    }
+
+    #[test]
+    fn the_open_pr_refusals_are_four_distinct_things_to_do_next() {
+        // A created-but-unreadable PR must never look like a failure: retrying it opens a SECOND PR.
+        let created = OpenPrRefusal::UnreadableUrl("(no url)".to_string());
+        let failed = OpenPrRefusal::GhFailed("pull request already exists".to_string());
+        assert_ne!(created.exit(), failed.exit());
+        assert!(created.render("o/r b").contains("Do NOT retry"));
+        assert!(failed.render("o/r b").contains("NO PR was created"));
+        // The exits are distinct across every variant — each names a different next move.
+        let all = [
+            OpenPrRefusal::UnreadableBody {
+                path: "/b.md".to_string(),
+                err: "no such file".to_string(),
+            },
+            OpenPrRefusal::NoQaBlock {
+                path: "/b.md".to_string(),
+                missing: vec![QaLine::Oracle],
+            },
+            failed,
+            created,
+        ];
+        let mut exits: Vec<i32> = all.iter().map(|r| r.exit()).collect();
+        exits.sort_unstable();
+        exits.dedup();
+        assert_eq!(exits.len(), all.len(), "two refusals share an exit code");
     }
 
     #[test]
@@ -36160,6 +39965,7 @@ mod infra_down_tests {
             &[],
             &InfraRecord::default(),
             None,
+            &SpendRecord::default(),
         );
         assert_eq!(clean["infraDown"], false);
         assert_eq!(clean["infraReason"], "");
@@ -36180,6 +39986,7 @@ mod infra_down_tests {
             &[],
             &down,
             None,
+            &SpendRecord::default(),
         );
         assert_eq!(doc["infraDown"], true);
         assert_eq!(doc["infraReason"], "fork RPCs erroring org-wide");
@@ -37116,5 +40923,435 @@ mod weaken_closes_tests {
         // flag that selects a keyword — the direction is not something a caller can ask about.
         assert!(Cli::try_parse_from(["prr", "weaken-closes", "o/r", "1", "#88"]).is_err());
         assert!(Cli::try_parse_from(["prr", "weaken-closes", "o/r", "1"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod work_tokens_tests {
+    use super::{
+        agent_tokens, pr_outcome, render_work_tokens, run_work, task_work_items,
+        work_tokens_report, AgentSpend, PrOutcome, RunWork, TaskWork, WorkItem,
+    };
+    use serde_json::{json, Value};
+
+    /// The main-thread turn that dispatches a task, naming it — the label a cost table shows.
+    fn dispatch(tool_id: &str, description: &str) -> String {
+        json!({"type":"assistant","parent_tool_use_id":Value::Null,"message":{
+            "id": format!("d_{tool_id}"),
+            "content":[{"type":"tool_use","name":"Agent","id":tool_id,
+                        "input":{"description":description}}]}})
+        .to_string()
+    }
+
+    /// One assistant event that SPENDS, on `parent` (None = the main loop).
+    fn spend(id: &str, parent: Option<&str>, cache_read: u64) -> String {
+        json!({"type":"assistant","parent_tool_use_id":parent,"message":{
+            "id": id, "model":"claude-opus-5",
+            "usage":{"input_tokens":0,"cache_read_input_tokens":cache_read,
+                     "cache_creation_input_tokens":0}}})
+        .to_string()
+    }
+
+    /// An `open_pr` CALL issued by `parent`, and the RESULT the server answered it with.
+    fn open_pr_call(tool_id: &str, parent: Option<&str>) -> String {
+        json!({"type":"assistant","parent_tool_use_id":parent,"message":{
+            "id": format!("c_{tool_id}"),
+            "content":[{"type":"tool_use","name":"mcp__fsm__open_pr","id":tool_id,
+                        "input":{"repo":"o/r","head":"b","title":"t","body_file":"/b.md"}}]}})
+        .to_string()
+    }
+    fn open_pr_result(tool_id: &str, body: Value, is_error: bool) -> String {
+        json!({"type":"user","message":{"content":[
+            {"type":"tool_result","tool_use_id":tool_id,"is_error":is_error,
+             "content": body.to_string()}]}})
+        .to_string()
+    }
+    fn pr_result(slug: &str, pr: u64, closes: Vec<u64>) -> Value {
+        json!({"repo":slug,"pr":pr,"url":"u","closes":closes})
+    }
+
+    /// THE JOIN: an `open_pr` call lands its work item on the TASK that issued it, keyed by the
+    /// same `parent_tool_use_id` the spend is grouped by. Without that the metric has no
+    /// denominator at all.
+    #[test]
+    fn a_work_item_belongs_to_the_task_that_opened_it() {
+        let trace = [
+            dispatch("toolu_A", "rain.solmem 63 audit PR"),
+            open_pr_call("toolu_call1", Some("toolu_A")),
+            open_pr_result(
+                "toolu_call1",
+                pr_result("rainlanguage/rain.solmem", 76, vec![63]),
+                false,
+            ),
+        ]
+        .join("\n");
+        let items = task_work_items(&trace);
+        assert_eq!(
+            items.get("toolu_A"),
+            Some(&vec![WorkItem {
+                slug: "rainlanguage/rain.solmem".to_string(),
+                pr: 76,
+                closes: vec![63],
+            }])
+        );
+        assert_eq!(items.len(), 1, "nothing lands on the main loop");
+    }
+
+    /// A call the trace never answered, and a call the server REFUSED, are the same fact: no PR was
+    /// demonstrably opened. Counting either would put a PR that does not exist in the denominator.
+    #[test]
+    fn a_refused_or_unanswered_open_is_not_a_work_item() {
+        let refused = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", json!("REFUSED - open_pr o/r b"), true),
+        ]
+        .join("\n");
+        assert!(task_work_items(&refused).is_empty());
+
+        // The FLAG is the authority, not the payload's shape: a result marked `is_error` is not a
+        // work item even when it carries a PR-shaped object.
+        let error_flag_wins = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 5, vec![]), true),
+        ]
+        .join("\n");
+        assert!(task_work_items(&error_flag_wins).is_empty());
+
+        let unanswered = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+        ]
+        .join("\n");
+        assert!(task_work_items(&unanswered).is_empty());
+
+        // …and a result whose payload names no PR number is not one either.
+        let malformed = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", json!({"repo":"o/r"}), false),
+        ]
+        .join("\n");
+        assert!(task_work_items(&malformed).is_empty());
+    }
+
+    /// A result is matched to its call by `tool_use_id`, so a task cannot pick up the output of a
+    /// tool that is not `open_pr` — including one that happens to answer with a PR-shaped object.
+    #[test]
+    fn only_an_open_pr_result_names_a_work_item() {
+        let trace = [
+            dispatch("toolu_A", "t"),
+            json!({"type":"assistant","parent_tool_use_id":"toolu_A","message":{"id":"c1",
+                "content":[{"type":"tool_use","name":"mcp__fsm__clone_create","id":"toolu_other",
+                            "input":{"repo":"o/r","name":"n","branch":"b"}}]}})
+            .to_string(),
+            open_pr_result("toolu_other", pr_result("o/r", 9, vec![]), false),
+        ]
+        .join("\n");
+        assert!(task_work_items(&trace).is_empty());
+    }
+
+    /// The tool is found by its own NAME, not by the server prefix the harness happens to use —
+    /// `campaign-mcp.json` could name the server anything and the metric must not go silently empty.
+    #[test]
+    fn the_open_pr_tool_is_matched_past_its_server_prefix() {
+        for name in ["mcp__fsm__open_pr", "mcp__producer__open_pr", "open_pr"] {
+            let trace = [
+                dispatch("toolu_A", "t"),
+                json!({"type":"assistant","parent_tool_use_id":"toolu_A","message":{"id":"c1",
+                    "content":[{"type":"tool_use","name":name,"id":"toolu_c","input":{}}]}})
+                .to_string(),
+                open_pr_result("toolu_c", pr_result("o/r", 5, vec![]), false),
+            ]
+            .join("\n");
+            assert_eq!(task_work_items(&trace).len(), 1, "{name}");
+        }
+        // A different tool whose name merely ENDS in something else is not it.
+        let trace = [
+            dispatch("toolu_A", "t"),
+            json!({"type":"assistant","parent_tool_use_id":"toolu_A","message":{"id":"c1",
+                "content":[{"type":"tool_use","name":"mcp__fsm__reopen_pr","id":"toolu_c","input":{}}]}})
+            .to_string(),
+            open_pr_result("toolu_c", pr_result("o/r", 5, vec![]), false),
+        ]
+        .join("\n");
+        assert!(task_work_items(&trace).is_empty());
+    }
+
+    /// The three buckets' input. `Unresolved` is deliberately NOT a bucket — an unreadable PR must
+    /// not be able to move the headline number in either direction.
+    #[test]
+    fn a_prs_outcome_is_read_off_github_never_guessed() {
+        let green = json!({"state":"OPEN","mergeable":"MERGEABLE",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]});
+        assert_eq!(pr_outcome(&green), PrOutcome::AwaitingHuman);
+        // An APPROVED PR is still waiting on the human to merge it.
+        let mut approved = green.clone();
+        approved["reviewDecision"] = json!("APPROVED");
+        assert_eq!(pr_outcome(&approved), PrOutcome::AwaitingHuman);
+
+        let red = json!({"state":"OPEN","mergeable":"MERGEABLE",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]});
+        assert_eq!(pr_outcome(&red), PrOutcome::Reworking);
+        let conflicting = json!({"state":"OPEN","mergeable":"CONFLICTING",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]});
+        assert_eq!(pr_outcome(&conflicting), PrOutcome::Reworking);
+        // Unconfirmed mergeability is not clean, so it is not delivered.
+        let unknown_merge = json!({"state":"OPEN","mergeable":"UNKNOWN",
+            "statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]});
+        assert_eq!(pr_outcome(&unknown_merge), PrOutcome::Reworking);
+
+        assert_eq!(pr_outcome(&json!({"state":"MERGED"})), PrOutcome::Merged);
+        assert_eq!(
+            pr_outcome(&json!({"state":"CLOSED"})),
+            PrOutcome::ClosedUnmerged
+        );
+        for unreadable in [json!({}), json!({"state":"WAT"}), json!({"state":null})] {
+            assert_eq!(
+                pr_outcome(&unreadable),
+                PrOutcome::Unresolved,
+                "{unreadable}"
+            );
+        }
+    }
+
+    fn task(label: &str, usd: f64, items: Vec<(WorkItem, PrOutcome)>) -> TaskWork {
+        TaskWork {
+            label: label.to_string(),
+            usd,
+            tokens: 1_000,
+            items,
+        }
+    }
+    fn item(pr: u64) -> WorkItem {
+        WorkItem {
+            slug: "o/r".to_string(),
+            pr,
+            closes: vec![],
+        }
+    }
+    fn one_run(tasks: Vec<TaskWork>) -> RunWork {
+        RunWork {
+            run_id: "20260802T130003Z".to_string(),
+            role: "producer".to_string(),
+            tasks,
+            main_usd: 10.0,
+            main_tokens: 100,
+            output_usd: 5.0,
+            output_tokens: 50,
+        }
+    }
+
+    /// THE METRIC. The denominator is landed ITEMS; the numerator is EVERY dollar the corpus spent,
+    /// churn and orchestration included — what a landed item cost includes what it cost not to land
+    /// the others. Anything else rewards doing less.
+    #[test]
+    fn cost_per_landed_item_charges_the_churn_to_the_landing() {
+        let runs = [one_run(vec![
+            task("landed one", 20.0, vec![(item(1), PrOutcome::Merged)]),
+            task(
+                "still open",
+                30.0,
+                vec![(item(2), PrOutcome::AwaitingHuman)],
+            ),
+            task(
+                "abandoned",
+                35.0,
+                vec![(item(3), PrOutcome::ClosedUnmerged)],
+            ),
+        ])];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(r["buckets"]["landed"]["items"], json!(1));
+        assert_eq!(r["buckets"]["landed"]["usd"], json!(20.0));
+        assert_eq!(r["buckets"]["delivered-awaiting-human"]["items"], json!(1));
+        assert_eq!(r["buckets"]["churn"]["usd"], json!(35.0));
+        // 20 + 30 + 35 tasks, + 10 main loop, + 5 whole-run output.
+        assert_eq!(r["totalUsd"], json!(100.0));
+        assert_eq!(r["usdPerLandedItem"], json!(100.0), "ALL of it, over one");
+        assert_eq!(
+            r["usdPerDeliveredItem"],
+            json!(50.0),
+            "over landed+awaiting"
+        );
+    }
+
+    /// The veto, as a test: a task with no typed work item is CHURN, whatever its label says. The
+    /// naive regex over 40 real labels invents eight items that do not exist, so a label is never
+    /// read as one.
+    #[test]
+    fn a_task_with_no_typed_item_is_churn_however_its_label_reads() {
+        let runs = [one_run(vec![
+            task("rain.solmem A02 sentinel alignment PR", 7.0, vec![]),
+            task("cyclo.site conflicts batch 1", 3.0, vec![]),
+        ])];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(r["buckets"]["churn"]["tasks"], json!(2));
+        assert_eq!(r["buckets"]["churn"]["items"], json!(0));
+        assert_eq!(r["churnBreakdown"]["noTypedWorkItem"], json!(2));
+        assert_eq!(r["corpus"]["typedTasks"], json!(0));
+        assert_eq!(r["corpus"]["typedCoveragePct"], json!(0.0));
+        assert_eq!(
+            r["usdPerLandedItem"],
+            Value::Null,
+            "no landed item means no number, not a zero"
+        );
+        // And the report SAYS the churn figure is a ceiling rather than a measurement.
+        let notes = r["notes"].as_array().unwrap();
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.as_str().unwrap().contains("CEILING")),
+            "{notes:?}"
+        );
+    }
+
+    /// A task that opened two PRs and had one merged DID land work. Charging its whole spend to
+    /// churn because the second is still open would understate landing and overstate waste at once.
+    #[test]
+    fn a_task_is_bucketed_by_its_best_item() {
+        let runs = [one_run(vec![task(
+            "two PRs",
+            40.0,
+            vec![
+                (item(1), PrOutcome::ClosedUnmerged),
+                (item(2), PrOutcome::Merged),
+            ],
+        )])];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(r["buckets"]["landed"]["tasks"], json!(1));
+        assert_eq!(r["buckets"]["landed"]["usd"], json!(40.0));
+        assert_eq!(r["buckets"]["churn"]["tasks"], json!(0));
+        // The ITEM counts stay per-item: one landed, one churned, in the bucket each belongs to.
+        assert_eq!(r["buckets"]["landed"]["items"], json!(1));
+        assert_eq!(r["buckets"]["churn"]["items"], json!(1));
+    }
+
+    /// An unreadable PR is in NO bucket. Folding it into churn would let a transient `gh` failure
+    /// print a worse waste figure; folding it into landed would print a better one.
+    #[test]
+    fn an_unresolved_pr_is_reported_apart_from_every_bucket() {
+        let runs = [one_run(vec![task(
+            "unreadable",
+            9.0,
+            vec![(item(1), PrOutcome::Unresolved)],
+        )])];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(r["unresolved"]["tasks"], json!(1));
+        assert_eq!(r["unresolved"]["items"], json!(1));
+        for b in ["landed", "delivered-awaiting-human", "churn"] {
+            assert_eq!(r["buckets"][b]["tasks"], json!(0), "{b}");
+            assert_eq!(r["buckets"][b]["usd"], json!(0.0), "{b}");
+        }
+        // Its spend is therefore in no bucket either — but the run's orchestration and output are
+        // still real money and still counted.
+        assert_eq!(r["totalUsd"], json!(15.0));
+    }
+
+    /// The two readings the number invites are both wrong, so BOTH outputs carry the caveats: a
+    /// green backlog is not waste, and three runs are not a trend.
+    #[test]
+    fn both_renderings_carry_the_caveats_and_the_same_numbers() {
+        let runs = [one_run(vec![
+            task("landed", 20.0, vec![(item(1), PrOutcome::Merged)]),
+            task("waiting", 5.0, vec![(item(2), PrOutcome::AwaitingHuman)]),
+        ])];
+        let r = work_tokens_report(&runs, &[("the trace has been collected".to_string(), 200)]);
+        let text = render_work_tokens(&r);
+        assert!(text.contains("Only CHURN is waste"), "{text}");
+        assert!(text.contains("not a trend"), "{text}");
+        assert!(
+            text.contains("200 metrics rows skipped: the trace has been collected"),
+            "the corpus's own gaps are printed, not hidden: {text}"
+        );
+        // The table prints the report's own numbers rather than recomputing them.
+        assert!(text.contains("$40.00"), "per landed item: {text}");
+        assert!(text.contains("$20.00"), "per delivered item: {text}");
+        assert!(text.contains("delivered-awaiting-human"), "{text}");
+    }
+
+    /// With nothing landed the headline is `n/a`, printed as such. A zero would read as free.
+    #[test]
+    fn nothing_landed_prints_no_number_at_all() {
+        let runs = [one_run(vec![task("churn", 1.0, vec![])])];
+        let text = render_work_tokens(&work_tokens_report(&runs, &[]));
+        assert!(text.contains("per LANDED item"), "{text}");
+        assert!(text.contains("n/a"), "{text}");
+        assert!(
+            text.contains("needs one merged work item"),
+            "the note says why: {text}"
+        );
+    }
+
+    /// The two halves of the join meet on one key: [`run_work`] groups spend by
+    /// `parent_tool_use_id` and attaches the items [`task_work_items`] filed under the same id. The
+    /// main loop is carried apart — it is not a unit of work, and bucketing it would make every run
+    /// look like one more churned task.
+    #[test]
+    fn spend_and_work_items_join_on_the_same_task_key() {
+        let trace = [
+            dispatch("toolu_A", "rain.solmem 63 audit PR"),
+            dispatch("toolu_B", "verify stale issues"),
+            spend("m_main", None, 1_000_000),
+            spend("m_a", Some("toolu_A"), 4_000_000),
+            spend("m_b", Some("toolu_B"), 2_000_000),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 76, vec![63]), false),
+        ]
+        .join("\n");
+        let run = run_work("run1", "producer", &trace, &mut |_| PrOutcome::Merged);
+        assert_eq!(run.tasks.len(), 2, "the main loop is not a task");
+        assert_eq!(run.main_tokens, 1_000_000);
+        let opened = run
+            .tasks
+            .iter()
+            .find(|t| t.label == "rain.solmem 63 audit PR")
+            .unwrap();
+        assert_eq!(opened.items.len(), 1);
+        assert_eq!(opened.items[0].0.pr, 76);
+        assert_eq!(opened.tokens, 4_000_000);
+        let verified = run
+            .tasks
+            .iter()
+            .find(|t| t.label == "verify stale issues")
+            .unwrap();
+        assert!(
+            verified.items.is_empty(),
+            "a task that opened nothing carries nothing"
+        );
+    }
+
+    /// A PR is resolved ONCE however many tasks name it — and the resolver is a seam, so the join
+    /// is testable without a network at all.
+    #[test]
+    fn every_item_is_resolved_through_the_one_seam() {
+        let trace = [
+            dispatch("toolu_A", "t"),
+            spend("m_a", Some("toolu_A"), 1),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 76, vec![]), false),
+        ]
+        .join("\n");
+        let mut asked: Vec<String> = Vec::new();
+        let run = run_work("run1", "producer", &trace, &mut |i| {
+            asked.push(format!("{}#{}", i.slug, i.pr));
+            PrOutcome::AwaitingHuman
+        });
+        assert_eq!(asked, vec!["o/r#76".to_string()]);
+        assert_eq!(run.tasks[0].items[0].1, PrOutcome::AwaitingHuman);
+    }
+
+    /// Every input-side class is summed, because the question is what landing COST — and a reader
+    /// cannot add a cache read to a fresh token without knowing the 10x price gap.
+    #[test]
+    fn a_tasks_tokens_are_every_input_side_class() {
+        let a = AgentSpend {
+            tokens_in: 1,
+            cache_read: 20,
+            cache_write_5m: 300,
+            cache_write_1h: 4_000,
+            ..Default::default()
+        };
+        assert_eq!(agent_tokens(&a), 4_321);
     }
 }
