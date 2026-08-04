@@ -24640,8 +24640,7 @@ fn already_fixed_mode(refs: &[String], json_out: bool) -> i32 {
     if json_out {
         println!(
             "{}",
-            serde_json::to_string_pretty(&Value::Array(rows.clone()))
-                .unwrap_or_else(|_| "[]".into())
+            serde_json::to_string_pretty(&rows).unwrap_or_else(|_| "[]".into())
         );
         return already_fixed_exit_code(&rows);
     }
