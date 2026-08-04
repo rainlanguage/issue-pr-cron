@@ -482,12 +482,17 @@ does not un-land what landed, and disposing of it is a decision in the PR lane.
 Mergeability is deliberately **not** the discriminator. `rain.dia#60` happened
 to be `CONFLICTING`, but any PR can assert `Closes #N` and the assertion is not
 evidence; `rain.dia#63` blocks a sibling flag today and is perfectly mergeable.
-And `grounds` is a fact about the reason's TEXT — read off
-`already_fixed_anchor`, the same parse `flag-close-candidate` gates the write
-on, so the two cannot disagree about what a reason cites. It is not a claim that
-the citation holds: whether the merged PR is really this issue's fix is `/ncc`
-step 5's check, and `pr_context` still carries no merged/state field for the
-human to confirm it with.
+And `grounds` says what the reason CITES — read off `already_fixed_anchor`, the
+same parse `flag-close-candidate` gates the write on, so the two cannot disagree
+about it. It is not a claim that the citation holds: whether the merged PR is
+really this issue's fix is `/ncc` step 5's check, and `pr_context` still carries
+no merged/state field for the human to confirm it with.
+
+The one hole this opens is closed where it is opened: a reason whose anchor is
+**one of the covering PRs** is citing the thing in flight as the reason to
+ignore it, so it reads as `cites-no-landing` and blocks. That is rule 7a
+literally — an open PR is never sufficient evidence — rather than an exception
+to the pairing.
 
 **The ranking is not the PR queue's.** Cheapest-first is right there because
 merges are the scarce resource and a cheap merge is throughput. Here the scarce

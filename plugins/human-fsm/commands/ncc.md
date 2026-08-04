@@ -117,13 +117,15 @@ ruling depends on the flag's grounds, and `openPr.blocksClose` is that pairing:
   have been written. `unreadable` means the query failed, and here it blocks too
   — say the query failed rather than reading a failure as an absence.
 - **`flag.grounds: cites-a-landing`** — an `already-fixed-on-main` claim naming
-  a commit or a PR. It does not block. Rule 7a's other half says an open PR is
-  never sufficient **evidence**, which governs what may be cited FOR a close,
-  not what may veto one, and a redundant PR in flight does not un-land what
-  landed. Disposing of that PR is a decision in the PR lane; it is not this
-  issue's blocker. `rain.dia#6` sat blocked behind a PR that was itself queued
-  for closure, each queue holding half the picture and neither reading the
-  other.
+  a commit, or a PR that is **not** one of the covering ones. It does not block.
+  Rule 7a's other half says an open PR is never sufficient **evidence**, which
+  governs what may be cited FOR a close, not what may veto one, and a redundant
+  PR in flight does not un-land what landed. Disposing of that PR is a decision
+  in the PR lane; it is not this issue's blocker. `rain.dia#6` sat blocked
+  behind a PR that was itself queued for closure, each queue holding half the
+  picture and neither reading the other. A reason citing one of the covering PRs
+  **as** its landing reads as `cites-no-landing` and blocks — that is rule 7a
+  applied literally, not an exception to it.
 
 `blocksClose: false` is not "close it", and the tool is not claiming the fix is
 real: `grounds` is a fact about the reason's TEXT — what it cites — and step 5

@@ -16296,10 +16296,9 @@ impl PrCoverage {
 /// What the producer's flag OFFERS as grounds — the second input to [`coverage_blocks_close`], and
 /// the distinction rule 7a's "**merely** COVERED BY AN OPEN PR" turns on.
 ///
-/// This is a fact about the flag's TEXT, never about the world. It says which of the two shapes the
-/// reason has, not that the reason is true, and nothing on this surface can check the latter: the
-/// claim "this is fixed" is settled by reading the code the issue named, which is the human's job at
-/// `/ncc` step 5 and the whole reason that step exists.
+/// This says what the reason CITES, never that the citation is true. Nothing on this surface can
+/// check the latter: "this is fixed" is settled by reading the code the issue named, which is the
+/// human's job at `/ncc` step 5 and the whole reason that step exists.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FlagGrounds {
     /// An `already-fixed-on-main` claim citing a commit or a PR number — a LANDING, offered as
@@ -16308,24 +16307,43 @@ enum FlagGrounds {
     /// issue's own, so a PR anchor here is one that was merged when the flag was posted.
     CitedLanding,
     /// Everything else. `invalid` / `duplicate` / `wont-fix` are judgements that name no landing at
-    /// all, and an `already-fixed-on-main` claim with no datable anchor names one nobody can find.
+    /// all, an `already-fixed-on-main` claim with no datable anchor names one nobody can find, and
+    /// one whose anchor is a PR already covering this issue names something still in flight.
     NoLanding,
 }
 
 impl FlagGrounds {
-    /// PURE: read the grounds off a [`flag_reason`] payload, reusing the parse the write side gates
-    /// on so the two cannot disagree about what a reason cites.
-    fn of(reason: &str) -> Self {
-        match already_fixed_anchor(reason) {
-            FixAnchor::Commit(_) | FixAnchor::Pr(_) => FlagGrounds::CitedLanding,
-            FixAnchor::Missing | FixAnchor::NotApplicable => FlagGrounds::NoLanding,
-        }
-    }
     fn as_str(self) -> &'static str {
         match self {
             FlagGrounds::CitedLanding => "cites-a-landing",
             FlagGrounds::NoLanding => "cites-no-landing",
         }
+    }
+}
+
+/// PURE: the grounds one flag offers, read off its [`flag_reason`] payload and what is in flight
+/// against the same issue.
+///
+/// The anchor parse is [`already_fixed_anchor`] — the one the write side gates on, so the two cannot
+/// disagree about what a reason cites.
+///
+/// **A citation that is ITSELF one of the covering PRs is not a landing**, and that is rule 7a
+/// stated outright: an OPEN PR is never sufficient evidence. Without this, a reason naming the very
+/// PR in flight would launder it into grounds for ignoring it. `already_fixed_anchor` keeps only the
+/// anchor's digits, so the match is against the issue's OWN repo — a covering PR in another repo
+/// that happens to share a number is a different PR from the one this reason cites.
+fn flag_grounds(reason: &str, slug: &str, covering: &[String]) -> FlagGrounds {
+    match already_fixed_anchor(reason) {
+        FixAnchor::Commit(_) => FlagGrounds::CitedLanding,
+        FixAnchor::Pr(n) => {
+            let cited = format!("{slug}#{n}");
+            if covering.contains(&cited) {
+                FlagGrounds::NoLanding
+            } else {
+                FlagGrounds::CitedLanding
+            }
+        }
+        FixAnchor::Missing | FixAnchor::NotApplicable => FlagGrounds::NoLanding,
     }
 }
 
@@ -16629,7 +16647,7 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
         .map(|l| clip_field(l, NCC_LABEL_BYTES))
         .collect();
     let reason_full = flag_reason(f.flag_body);
-    let grounds = FlagGrounds::of(&reason_full);
+    let grounds = flag_grounds(&reason_full, f.slug, f.covering);
     let note_full = last_cc_vetter_comment(f.detail).unwrap_or_default();
     let parts = cc_verdict_parts(&note_full);
     let prs: Vec<String> = f
@@ -17268,7 +17286,11 @@ mod next_close_candidate_tests {
             "already-fixed-on-main: 2a319034 removed the tauri app",
             "already-fixed-on-main: merged PR #48 (commit 8e6bcd6, merged 2026-07-20)",
         ] {
-            assert_eq!(FlagGrounds::of(cites), FlagGrounds::CitedLanding, "{cites}");
+            assert_eq!(
+                flag_grounds(cites, "o/r", &[]),
+                FlagGrounds::CitedLanding,
+                "{cites}"
+            );
         }
         for none in [
             // A judgement names no landing at all, whatever numbers it happens to contain.
@@ -17282,8 +17304,46 @@ mod next_close_candidate_tests {
             "already-fixed: merged in o/r#1348",
             "",
         ] {
-            assert_eq!(FlagGrounds::of(none), FlagGrounds::NoLanding, "{none}");
+            assert_eq!(
+                flag_grounds(none, "o/r", &[]),
+                FlagGrounds::NoLanding,
+                "{none}"
+            );
         }
+    }
+
+    // The one hole pairing the grounds with the coverage opens: a reason naming the very PR in
+    // flight would launder that PR into grounds for ignoring it. Rule 7a covers this literally — an
+    // OPEN PR is never sufficient evidence — so a citation that is itself covering the issue is no
+    // landing. `already_fixed_anchor` keeps only the digits, so the match is scoped to the issue's
+    // OWN repo: a same-numbered PR elsewhere is a different PR from the one the reason cites.
+    #[test]
+    fn a_reason_citing_the_covering_pr_itself_is_not_citing_a_landing() {
+        let reason = "already-fixed-on-main: fixed by PR #60";
+        assert_eq!(
+            flag_grounds(reason, "o/r", &["o/r#60".to_string()]),
+            FlagGrounds::NoLanding,
+            "the citation IS the thing in flight"
+        );
+        assert_eq!(
+            flag_grounds(reason, "o/r", &["o/r#59".to_string(), "o/r#61".to_string()]),
+            FlagGrounds::CitedLanding,
+            "a different PR in flight says nothing about what #60 did"
+        );
+        assert_eq!(
+            flag_grounds(reason, "o/r", &["o/other#60".to_string()]),
+            FlagGrounds::CitedLanding,
+            "another repo's #60 is not the PR this reason names"
+        );
+        // A commit anchor is not a PR number and cannot collide with one.
+        assert_eq!(
+            flag_grounds(
+                "already-fixed-on-main: 2a319034 removed it",
+                "o/r",
+                &["o/r#60".to_string()]
+            ),
+            FlagGrounds::CitedLanding
+        );
     }
 
     fn coverage_response(nodes: Value) -> Value {
