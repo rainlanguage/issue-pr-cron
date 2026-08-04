@@ -161,11 +161,19 @@ rm -f "$INFRAREC"
 # first, and those issues cite `audit/protofire/*.pdf` as their source (raindex#2619 names the file
 # outright) — a producer that cannot open the report it is implementing against writes a PR body
 # asserting something it never read. A missing dependency ends the run rather than degrading it.
-_pf="$(pr-review-report preflight)"; _pfrc=$?
+#
+# The two CAPABILITY flags are the run's environment preconditions, asserted here rather than by the
+# model. `gh auth status` and a `nix develop …#sol-shell -c forge --version` opened every producer
+# run byte-identically and carried no decision content — the model read two answers it could do
+# nothing about and then started work anyway. Asserted here they ABORT: no tokens, one run-metrics
+# row naming what was unsatisfied, `ToolingFailure`, which is neither a success nor a skip. The gate
+# is also stricter than the read it replaces, because it checks the token's SCOPES rather than
+# eyeballing the word "Logged".
+_pf="$(pr-review-report preflight --gh-auth --sol-shell)"; _pfrc=$?
 printf '%s\n' "$_pf" | sed 's/^/  /' >> "$LOG"
 if [ "$_pfrc" -ne 0 ]; then
   _missing="$(printf '%s\n' "$_pf" | sed -n 's/^missing=//p')"
-  echo "$(date -u +%FT%TZ) campaign run ABORT: harness tools missing from PATH: $_missing" >> "$LOG"
+  echo "$(date -u +%FT%TZ) campaign run ABORT: harness dependencies unsatisfied: $_missing" >> "$LOG"
   : > "$RUNLOG"
   mkdir -p "$DIR/metrics"
   pr-review-report run-metrics "$RUNLOG" \
