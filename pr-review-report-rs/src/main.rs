@@ -24978,7 +24978,8 @@ fn await_poll(
         for (r, p) in refs.iter().zip(progress.iter_mut()) {
             let detail = fetch(r);
             let baseline = r.from_head.as_deref();
-            if await_head_ready(detail.as_ref(), baseline) == Some(true) && p.eligible_since.is_none()
+            if await_head_ready(detail.as_ref(), baseline) == Some(true)
+                && p.eligible_since.is_none()
             {
                 p.eligible_since = Some(at);
             }
@@ -25299,7 +25300,10 @@ mod await_tests {
     #[test]
     fn a_failed_read_is_unreadable_never_settled() {
         assert_eq!(await_state(None, None, false), AwaitState::Unreadable);
-        assert_eq!(await_state(None, Some("abc1234"), false), AwaitState::Unreadable);
+        assert_eq!(
+            await_state(None, Some("abc1234"), false),
+            AwaitState::Unreadable
+        );
     }
 
     /// CONFORMANCE: every field `AWAIT_DETAIL_FIELDS` fetches is one `await_state` cannot answer
@@ -25326,11 +25330,17 @@ mod await_tests {
         }
     }
 
-    /// `null` is GitHub ANSWERING "no checks", which is different from the key being absent.
+    /// `null` is GitHub ANSWERING "no checks", which is different from the key being absent — so it
+    /// takes the empty-rollup grace like any other no-checks answer, and never `Unreadable`, which
+    /// is what an absent key gets.
     #[test]
     fn a_null_rollup_is_an_answer_not_a_malformed_document() {
         assert_eq!(
             await_state(Some(&doc("h", Value::Null)), None, false),
+            AwaitState::ChecksUnregistered
+        );
+        assert_eq!(
+            await_state(Some(&doc("h", Value::Null)), None, true),
             AwaitState::Settled
         );
     }
@@ -25343,12 +25353,16 @@ mod await_tests {
     struct Harness {
         passes: Vec<Vec<Option<Value>>>,
         slept: Vec<u64>,
+        /// Total document reads. The only way to pin "every subject, every pass" — no assertion
+        /// about STATES can tell a re-fetch from a cached settled subject.
+        fetches: usize,
     }
     impl Harness {
         fn new(passes: Vec<Vec<Option<Value>>>) -> Self {
             Harness {
                 passes,
                 slept: Vec::new(),
+                fetches: 0,
             }
         }
     }
@@ -25398,6 +25412,7 @@ mod await_tests {
             },
         );
         h.slept = slept.into_inner();
+        h.fetches = fetches.get();
         out
     }
 
@@ -25408,7 +25423,7 @@ mod await_tests {
             Some(doc("h2", green())),
         ]]);
         let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
-        assert!(!out.timed_out);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
         assert_eq!(out.polls, 1);
         assert!(h.slept.is_empty(), "no wait means no sleep: {:?}", h.slept);
     }
@@ -25421,7 +25436,7 @@ mod await_tests {
             vec![Some(doc("h", green())), Some(doc("h2", green()))],
         ]);
         let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
-        assert!(!out.timed_out);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
         assert_eq!(out.polls, 3);
         assert_eq!(
             h.slept,
@@ -25437,7 +25452,7 @@ mod await_tests {
             Some(doc("h2", green())),
         ]]);
         let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 40, 20);
-        assert!(out.timed_out);
+        assert_eq!(out.stop, AwaitStop::Deadline);
         assert_eq!(out.rows[0].1, AwaitState::ChecksPending);
         assert_eq!(
             out.rows[1].1,
@@ -25456,7 +25471,7 @@ mod await_tests {
         ]);
         let out = run(&mut h, &[r("o/a#1")], 20, 20);
         assert!(
-            !out.timed_out,
+            out.settled(),
             "the clock hits the budget on the pass that settles; the answer wins"
         );
         assert_eq!(out.polls, 2);
@@ -25468,7 +25483,7 @@ mod await_tests {
     fn a_zero_timeout_is_one_snapshot_pass() {
         let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
         let out = run(&mut h, &[r("o/a#1")], 0, 20);
-        assert!(out.timed_out);
+        assert_eq!(out.stop, AwaitStop::Deadline);
         assert_eq!(out.polls, 1);
         assert!(h.slept.is_empty());
     }
@@ -25479,8 +25494,124 @@ mod await_tests {
     fn an_unreadable_subject_does_not_end_the_wait() {
         let mut h = Harness::new(vec![vec![None], vec![Some(doc("h", green()))]]);
         let out = run(&mut h, &[r("o/a#1")], 900, 20);
-        assert!(!out.timed_out);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
         assert_eq!(out.polls, 2);
+    }
+
+    /// …but only for as long as it could still be transient. Without this the wait runs the whole
+    /// deadline making calls, which for the case that produces most unreadables — a rate limit —
+    /// means answering the limit by spending more of it.
+    #[test]
+    fn a_subject_that_stays_unreadable_ends_the_wait_early() {
+        let mut h = Harness::new(vec![vec![None]]);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, 20);
+        assert_eq!(out.stop, AwaitStop::Unreadable);
+        assert_eq!(
+            out.polls, AWAIT_UNREADABLE_LIMIT,
+            "it gives up ON the poll that hits the budget, not a poll later"
+        );
+        assert_eq!(out.rows[0].1, AwaitState::Unreadable);
+    }
+
+    /// The streak is CONSECUTIVE, so a subject that reads once between failures has not stalled —
+    /// otherwise a flaky-but-working API would be indistinguishable from a dead one.
+    #[test]
+    fn a_readable_poll_resets_the_unreadable_streak() {
+        let mut passes: Vec<Vec<Option<Value>>> = Vec::new();
+        for _ in 0..(AWAIT_UNREADABLE_LIMIT - 1) {
+            passes.push(vec![None]);
+        }
+        passes.push(vec![Some(doc("h", pending()))]); // one good read resets it
+        for _ in 0..(AWAIT_UNREADABLE_LIMIT - 1) {
+            passes.push(vec![None]);
+        }
+        passes.push(vec![Some(doc("h", green()))]);
+        let mut h = Harness::new(passes);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, 20);
+        assert_eq!(
+            out.stop,
+            AwaitStop::AllSettled,
+            "two sub-budget runs of failures either side of a good read must not add up"
+        );
+    }
+
+    /// THE EXIT CONDITION IS "ALL SETTLED AT ONCE", NOT "EACH SETTLED ONCE". A subject that has
+    /// already gone green is polled again on every pass, so another push puts it back to
+    /// `checks-pending` and the wait continues.
+    ///
+    /// This is measured behaviour, not a preference: in `20260729T170004Z`, `cyclo.site#294` was
+    /// pushed at 17:42:40Z and again at 18:01:08Z inside ONE wait, and `#409` at 17:33:37Z and
+    /// 17:43:05Z. Settle-once would have reported both finished on the first green and never looked
+    /// at the second push's CI.
+    #[test]
+    fn a_settled_subject_that_is_pushed_again_re_opens_the_wait() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            // #1 has been pushed again — its checks restart while #2 is still going
+            vec![Some(doc("h1b", pending())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1b", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 3,
+            "the wait did not stop when the first subject went green on pass 1"
+        );
+    }
+
+    /// …and the mechanism that makes the above possible: EVERY subject is fetched on EVERY pass.
+    /// Counting the fetches is what pins it — an implementation that cached settled subjects to
+    /// save API calls would still satisfy every state assertion in this module.
+    #[test]
+    fn every_subject_is_fetched_on_every_poll_including_settled_ones() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.polls, 3);
+        assert_eq!(
+            h.fetches, 6,
+            "3 passes x 2 subjects: the already-green subject is re-read every time, because a \
+             verdict from a stale MOMENT is the same defect as one from a stale HEAD"
+        );
+    }
+
+    /// The empty-rollup grace is timed from ELIGIBILITY, not from the start of the wait: a head
+    /// that moves late must still get its full grace, or the push that just landed is exactly the
+    /// one handed a phantom green.
+    #[test]
+    fn the_checks_grace_starts_when_the_head_moves_not_when_the_wait_does() {
+        let interval = AWAIT_CHECKS_GRACE_SECS; // one sleep is a whole grace period
+        let mut h = Harness::new(vec![
+            // long enough that a grace timed from the START would already be spent
+            vec![Some(doc("abc1234", json!([])))],
+            vec![Some(doc("abc1234", json!([])))],
+            // the push lands, with no checks registered yet
+            vec![Some(doc("fff0000", json!([])))],
+            vec![Some(doc("fff0000", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1@abc1234")], 100_000, interval);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 4,
+            "pass 3 saw the moved head with an empty rollup and must NOT have settled it"
+        );
+    }
+
+    /// …and the other half: with nothing left to wait for, the grace expires and a repo that simply
+    /// has no CI stops the wait instead of running the deadline.
+    #[test]
+    fn an_empty_rollup_settles_once_the_grace_is_spent() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", json!([])))]]);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, AWAIT_CHECKS_GRACE_SECS);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 2,
+            "pass 1 is inside the grace, pass 2 is past it — a no-CI repo costs one grace, \
+             not one deadline"
+        );
     }
 
     // --- reporting -------------------------------------------------------------------------
@@ -25513,11 +25644,48 @@ mod await_tests {
         let out = run(&mut h, &[r("o/a#1@abc1234")], 900, 20);
         let v = await_json(&out);
         assert_eq!(v["settled"], true);
-        assert_eq!(v["timedOut"], false);
+        assert_eq!(v["stop"], "all-settled");
         assert_eq!(v["subjects"][0]["repo"], "o/a");
         assert_eq!(v["subjects"][0]["number"], 1);
         assert_eq!(v["subjects"][0]["fromHead"], "abc1234");
         assert_eq!(v["subjects"][0]["state"], "settled");
+    }
+
+    /// The stop reason is on the machine-readable form as a NAME, so a caller distinguishes "the
+    /// fleet is still working" from "the tool could not see it" without re-deriving either from
+    /// the per-subject rows.
+    #[test]
+    fn the_json_form_names_each_way_a_wait_can_stop() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let v = await_json(&run(&mut h, &[r("o/a#1")], 0, 20));
+        assert_eq!(v["settled"], false);
+        assert_eq!(v["stop"], "deadline");
+
+        let mut h = Harness::new(vec![vec![None]]);
+        let v = await_json(&run(&mut h, &[r("o/a#1")], 100_000, 20));
+        assert_eq!(v["settled"], false);
+        assert_eq!(v["stop"], "unreadable");
+    }
+
+    /// …and the human-readable form says which one too, because "TIMED OUT" on a wait that gave up
+    /// after five failed reads would send the reader looking for slow CI that is not there.
+    #[test]
+    fn the_report_distinguishes_a_deadline_from_giving_up_on_a_read() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let text = await_report(&run(&mut h, &[r("o/a#1")], 0, 20));
+        assert!(text.contains("— TIMED OUT"), "{text}");
+
+        let mut h = Harness::new(vec![vec![None]]);
+        let text = await_report(&run(&mut h, &[r("o/a#1")], 100_000, 20));
+        assert!(text.contains("o/a#1 unreadable"), "{text}");
+        assert!(
+            text.contains("— GAVE UP: a subject stayed unreadable"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("TIMED OUT"),
+            "a read the tool gave up on is not a deadline: {text}"
+        );
     }
 
     #[test]
