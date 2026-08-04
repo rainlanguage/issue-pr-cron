@@ -2818,39 +2818,93 @@ fn token_report_mode(path: &str, json: bool) -> i32 {
 // regex invents eight work items that do not exist (`batch#1` out of "cyclo.site conflicts batch
 // 1", `A0#2` out of "rain.solmem A02 sentinel alignment PR"). A metric whose denominator is
 // hallucinated is worse than no metric, so there is no label parser here, not as a fallback and not
-// behind a flag. A task's work item is what `open_pr` RECORDED, and a task with none goes to churn.
+// behind a flag. An actor's work item is what a WORK-ITEM TRANSITION recorded, and an actor with
+// none goes to churn.
 //
 // `clone_create` is typed too and is deliberately NOT used as a second source. Its `branch` names a
 // CLONE, not a deliverable, and resolving it through GitHub's head index invents items exactly the
 // way the regex does: on the 2026-07-29T17 run one task cloned `main` to read it, and
 // `gh pr list -R rainlanguage/raindex --head main` answers with a real, closed PR the task never
 // touched. Typed data joined on the wrong key is still a wrong join.
+//
+// THE FOUR KINDS OF WORK, AND WHICH ONES ARE TYPED. `campaign-prompt.txt`'s RUN BUDGET counts "an
+// issue you PR, a rework you push, a conflict you resolve, a deploy you dispatch". The first is
+// `open_pr`. The middle two are the SAME typed effect — a moved head on an existing PR — and that
+// is `push`, which names a PR only when the head it just moved IS that PR's head. The deploy is
+// dispatched by the `deploy` SUBCOMMAND, whose result reaches the trace as Bash text, so it carries
+// no typed record and its work is invisible here; the report says so rather than guessing at it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The tool whose RESULT names a work item, matched on the last `__`-segment of the tool name.
+/// The tools whose RESULT names a work item, matched on the last `__`-segment of the tool name, and
+/// the KIND of work each one is the record of.
 ///
 /// Matched that way for the reason [`AUDIT_SKILL_LEAF`] is matched on its last `:`-segment: the
 /// harness prefixes an MCP tool with its SERVER name (`mcp__fsm__open_pr`), which is configuration
 /// — `campaign-mcp.json` could name the server anything — while the transition's own name is what
 /// this pipeline defines. Keying on the whole string would make the metric silently empty the day
 /// the server is renamed.
-const OPEN_PR_TOOL_LEAF: &str = "open_pr";
+///
+/// The kind comes from the TRANSITION, never from the payload: a result cannot claim to be a kind
+/// of work it is not the record of, and a third emitter is one row here.
+const WORK_ITEM_TOOL_LEAVES: &[(&str, WorkItemKind)] = &[
+    ("open_pr", WorkItemKind::Opened),
+    ("push", WorkItemKind::Reworked),
+];
 
-/// One TYPED work item a dispatched task produced: the PR the pipeline's own `open_pr` transition
-/// says it opened, and the issues that PR closes.
+/// Which of the cap's kinds of work one record is the evidence of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkItemKind {
+    /// A PR that did not exist before this transition ran.
+    Opened,
+    /// A moved head on a PR that did. Both "a rework you push" and "a conflict you resolve" land
+    /// here: they are one typed effect, and the transition cannot see which motive produced it.
+    Reworked,
+}
+
+impl WorkItemKind {
+    fn key(self) -> &'static str {
+        match self {
+            WorkItemKind::Opened => "opened",
+            WorkItemKind::Reworked => "reworked",
+        }
+    }
+    /// How strong a claim this kind is, so one PR touched by several transitions keeps the
+    /// strongest. Opening a PR is a claim on the whole PR; moving its head is a claim on one push.
+    fn rank(self) -> u8 {
+        match self {
+            WorkItemKind::Opened => 2,
+            WorkItemKind::Reworked => 1,
+        }
+    }
+}
+
+/// One TYPED work item an actor produced: the PR a work-item transition says it acted on, what kind
+/// of work that was, and the issues the PR closes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkItem {
     slug: String,
     pr: u64,
     closes: Vec<u64>,
+    kind: WorkItemKind,
 }
 
-/// PURE: the work item one `open_pr` RESULT describes, or `None` when the result is not one.
+impl WorkItem {
+    /// WHICH PR this is about, which is what makes two records one item. A PR opened and then
+    /// pushed to in the same run is one work item, not two — the identity is the subject, never the
+    /// number of transitions that touched it.
+    fn identity(&self) -> (&str, u64) {
+        (&self.slug, self.pr)
+    }
+}
+
+/// PURE: the work item one work-item transition's RESULT describes, or `None` when the result
+/// names no PR.
 ///
 /// STRICT on both fields it joins on — a slug of the shape every other transition takes, and a
 /// positive number — because a work item that cannot be looked up is not a work item, and admitting
-/// one would put an unresolvable row in the denominator.
-fn work_item_from_result(v: &Value) -> Option<WorkItem> {
+/// one would put an unresolvable row in the denominator. `push` answers with a null `pr` for every
+/// push it could not tie to a PR head, which is exactly this refusal.
+fn work_item_from_result(v: &Value, kind: WorkItemKind) -> Option<WorkItem> {
     let slug = parse_repo_arg(v.get("repo")?.as_str()?).ok()?;
     let pr = v.get("pr")?.as_u64().filter(|n| *n > 0)?;
     let closes = v
@@ -2858,23 +2912,32 @@ fn work_item_from_result(v: &Value) -> Option<WorkItem> {
         .and_then(|c| c.as_array())
         .map(|a| a.iter().filter_map(|n| n.as_u64()).collect())
         .unwrap_or_default();
-    Some(WorkItem { slug, pr, closes })
+    Some(WorkItem {
+        slug,
+        pr,
+        closes,
+        kind,
+    })
 }
 
-/// PURE: every typed work item each dispatched task produced, keyed by the task's
-/// `parent_tool_use_id` — the same key [`token_attribution`] groups spend by, which is what lets
-/// the two be joined at all.
+/// PURE: every typed work item each ACTOR produced, keyed by that actor's `parent_tool_use_id` —
+/// the same key [`token_attribution`] groups spend by, which is what lets the two be joined at all.
+///
+/// An actor is a dispatched task OR the main loop, which is keyed `__main__` here exactly as it is
+/// there. Inline work has no subagent to attribute to and it is not going away — the prompt makes
+/// fan-out the default for INDEPENDENT items and inline correct for the rest — so the main loop is
+/// an actor that can carry work items, not a thread whose output is dropped.
 ///
 /// The call and its result are matched by `tool_use_id`, not by the result event's own
-/// `parent_tool_use_id`: the id proves THIS result answers an `open_pr`, so a task's items can
-/// never pick up a neighbouring tool's output.
+/// `parent_tool_use_id`: the id proves THIS result answers a work-item transition, so an actor's
+/// items can never pick up a neighbouring tool's output.
 ///
 /// A REFUSED call (`is_error`) contributes nothing, and neither does a call whose result the trace
-/// never recorded. Both are the same fact — no PR was demonstrably opened — and counting either as
+/// never recorded. Both are the same fact — no work was demonstrably done — and counting either as
 /// a work item would put a PR that does not exist in the denominator.
 fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkItem>> {
     use std::collections::HashMap;
-    let mut owner_of: HashMap<String, String> = HashMap::new();
+    let mut owner_of: HashMap<String, (String, WorkItemKind)> = HashMap::new();
     let mut out: HashMap<String, Vec<WorkItem>> = HashMap::new();
 
     let events: Vec<Value> = trace
@@ -2899,11 +2962,12 @@ fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkIte
                 continue;
             }
             let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            if name.rsplit("__").next() != Some(OPEN_PR_TOOL_LEAF) {
+            let leaf = name.rsplit("__").next().unwrap_or("");
+            let Some((_, kind)) = WORK_ITEM_TOOL_LEAVES.iter().find(|(l, _)| *l == leaf) else {
                 continue;
-            }
+            };
             if let Some(id) = b.get("id").and_then(|i| i.as_str()) {
-                owner_of.insert(id.to_string(), task.clone());
+                owner_of.insert(id.to_string(), (task.clone(), *kind));
             }
         }
     }
@@ -2916,7 +2980,7 @@ fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkIte
             if b.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
                 continue;
             }
-            let Some(task) = b
+            let Some((task, kind)) = b
                 .get("tool_use_id")
                 .and_then(|i| i.as_str())
                 .and_then(|id| owner_of.get(id))
@@ -2929,14 +2993,26 @@ fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkIte
             let Some(item) = serde_json::from_str::<Value>(tool_result_text(b).trim())
                 .ok()
                 .as_ref()
-                .and_then(work_item_from_result)
+                .and_then(|v| work_item_from_result(v, *kind))
             else {
                 continue;
             };
             let items = out.entry(task.clone()).or_default();
-            // A retried call can report the same PR twice; the PR is still one work item.
-            if !items.contains(&item) {
-                items.push(item);
+            // ONE PR IS ONE ITEM. A retried call reports the same PR twice, and a PR this actor
+            // opened and then pushed to reports it under two kinds — neither is a second unit of
+            // work, so the identity is the SUBJECT and the strongest kind wins.
+            match items.iter_mut().find(|i| i.identity() == item.identity()) {
+                Some(seen) => {
+                    if item.kind.rank() > seen.kind.rank() {
+                        seen.kind = item.kind;
+                    }
+                    for n in item.closes {
+                        if !seen.closes.contains(&n) {
+                            seen.closes.push(n);
+                        }
+                    }
+                }
+                None => items.push(item),
             }
         }
     }
@@ -3062,14 +3138,35 @@ struct RunWork {
     run_id: String,
     role: String,
     tasks: Vec<TaskWork>,
-    /// The MAIN LOOP's own spend. Orchestration, not work — it dispatches, reads the worklist and
-    /// writes the summary — but it is spent to land the same items, so it is in the numerator.
+    /// The MAIN LOOP's own spend: orchestration — dispatching, reading the worklist, writing the
+    /// summary — PLUS whatever work it did inline. One number holds both, and the trace offers no
+    /// way to split it: `parent_tool_use_id` separates one subagent's turns from another's, and
+    /// every inline turn carries the same absent value. So this is in the numerator, where it is
+    /// real money, and in no bucket, because charging it to one of `main_items` would be inventing
+    /// a per-item cost the record does not contain.
     main_usd: f64,
     main_tokens: u64,
+    /// The typed work items the MAIN LOOP produced. They count in the denominator like any other
+    /// actor's — the work was done and the transition recorded it — while the spend above stays
+    /// unsplit.
+    main_items: Vec<(WorkItem, PrOutcome)>,
     /// Whole-run output, which no per-agent key can carry ([`unattributable_output`]). Real money,
     /// so it is in the numerator; unattributable, so it is in no bucket.
     output_usd: f64,
     output_tokens: u64,
+}
+
+impl RunWork {
+    /// Is there an ACTOR here whose work this report can speak about? A dispatched task is one; so
+    /// is a main loop that carried a typed work item.
+    ///
+    /// This is the corpus's entry condition, and it is deliberately not "the run spent tokens". A
+    /// run that dispatched nothing and recorded nothing is a run about which the trace says only
+    /// that it happened — admitting it would put its whole spend in churn on the strength of an
+    /// absence, which is the inference this metric refuses everywhere else.
+    fn has_actor(&self) -> bool {
+        !self.tasks.is_empty() || !self.main_items.is_empty()
+    }
 }
 
 /// The input-side tokens one agent's key can carry.
@@ -3082,10 +3179,14 @@ fn agent_tokens(a: &AgentSpend) -> u64 {
     a.tokens_in + a.cache_read + a.cache_write_5m + a.cache_write_1h
 }
 
-/// PURE given `resolve`: one run's dispatched tasks, joined to their typed work items.
+/// PURE given `resolve`: one run's actors, joined to their typed work items.
 ///
-/// The main loop is excluded from `tasks` and carried separately: it is not a unit of work and
-/// putting it in a bucket would make every run look like one more churned task.
+/// The main loop stays out of `tasks` and carries its items separately, because its spend and a
+/// task's spend do not mean the same thing: a task's dollars bought that task's items and nothing
+/// else, while the main loop's dollars bought its items AND the orchestration around them, with no
+/// boundary in the trace between the two. Merging it into `tasks` would put that mixture in a
+/// bucket and print it as the cost of the work; dropping its items leaves a run that worked
+/// inline producing nothing at all.
 fn run_work(
     run_id: &str,
     role: &str,
@@ -3094,12 +3195,19 @@ fn run_work(
 ) -> RunWork {
     let items = task_work_items(trace);
     let (output_tokens, output_usd) = unattributable_output(trace);
+    let mut resolved = |id: &str| -> Vec<(WorkItem, PrOutcome)> {
+        items
+            .get(id)
+            .map(|v| v.iter().map(|i| (i.clone(), resolve(i))).collect())
+            .unwrap_or_default()
+    };
     let mut out = RunWork {
         run_id: run_id.to_string(),
         role: role.to_string(),
         tasks: Vec::new(),
         main_usd: 0.0,
         main_tokens: 0,
+        main_items: resolved("__main__"),
         output_usd,
         output_tokens,
     };
@@ -3113,10 +3221,7 @@ fn run_work(
             label: a.label.clone(),
             usd: a.usd,
             tokens: agent_tokens(&a),
-            items: items
-                .get(&a.id)
-                .map(|v| v.iter().map(|i| (i.clone(), resolve(i))).collect())
-                .unwrap_or_default(),
+            items: resolved(&a.id),
         });
     }
     out
@@ -3136,21 +3241,36 @@ struct BucketTotals {
 /// They are DATA rather than prose in the printer because a JSON consumer misreads this number in
 /// exactly the ways a human does — the backlog as waste, the corpus as a trend — and a caveat only
 /// one of the two outputs carries is a caveat that will be dropped by whichever reader matters.
-fn work_tokens_notes(landed: usize, awaiting: usize, typed: usize, tasks: usize) -> Vec<String> {
+fn work_tokens_notes(
+    landed: usize,
+    awaiting: usize,
+    typed: usize,
+    tasks: usize,
+    inline_items: usize,
+) -> Vec<String> {
     let mut notes = vec![
         "Only CHURN is waste. Merges are human-gated by design, so the landed:awaiting ratio \
          measures the human's review bandwidth, NOT the pipeline's efficiency."
             .to_string(),
-        "Task-level rows exist only for runs that dispatched subagents AND whose trace survives. \
-         This is a snapshot of that corpus, not a trend — do not read it as one."
+        "A run enters this corpus when it dispatched a task or recorded an inline work item, AND \
+         its trace survives. This is a snapshot of that corpus, not a trend — do not read it as \
+         one."
             .to_string(),
     ];
+    if inline_items > 0 {
+        notes.push(format!(
+            "{inline_items} item(s) were done INLINE by a main loop. They count in the \
+             denominator, but there is NO per-item cost for them: a main loop's spend is its \
+             orchestration and its inline work in one number, and the trace holds no boundary \
+             between them. Their dollars are in the `main loop` row, not in a bucket."
+        ));
+    }
     if typed < tasks {
         notes.push(format!(
-            "{} of {tasks} tasks carry NO typed work item and are counted as churn. A task's work \
-             item is what `open_pr` recorded; nothing is inferred from a dispatch label. Where \
-             this fraction is large the churn figure is a CEILING on waste, not a measurement of \
-             it.",
+            "{} of {tasks} dispatched tasks carry NO typed work item and are counted as churn. A \
+             work item is what a work-item transition (`open_pr`, `push`) recorded; nothing is \
+             inferred from a dispatch label, a branch name or a label. Where this fraction is \
+             large the churn figure is a CEILING on waste, not a measurement of it.",
             tasks - typed
         ));
     }
@@ -3190,17 +3310,64 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
     let (mut churn_no_item, mut churn_reworking, mut churn_closed) = (0usize, 0usize, 0usize);
     let (mut unresolved_tasks, mut unresolved_items) = (0usize, 0usize);
     let (mut typed_tasks, mut tasks_total) = (0usize, 0usize);
-    let (mut orchestration_usd, mut orchestration_tokens) = (0.0f64, 0u64);
+    let (mut main_usd, mut main_tokens) = (0.0f64, 0u64);
     let (mut output_usd, mut output_tokens) = (0.0f64, 0u64);
+    let (mut inline_items, mut inline_runs) = (0usize, 0usize);
+    let (mut opened_items, mut reworked_items) = (0usize, 0usize);
     let mut task_rows: Vec<Value> = Vec::new();
     let mut run_rows: Vec<Value> = Vec::new();
 
+    /// Count ONE item in the bucket its own outcome names. Written once and called for every
+    /// actor's items, so an item the main loop produced is counted by the same rule as a
+    /// dispatched task's — the denominator must not depend on who did the work.
+    fn count_item(
+        item: &WorkItem,
+        outcome: PrOutcome,
+        buckets: &mut std::collections::HashMap<&'static str, BucketTotals>,
+        unresolved_items: &mut usize,
+        run_landed: &mut usize,
+        opened: &mut usize,
+        reworked: &mut usize,
+    ) {
+        match item.kind {
+            WorkItemKind::Opened => *opened += 1,
+            WorkItemKind::Reworked => *reworked += 1,
+        }
+        match outcome.bucket() {
+            Some(b) => {
+                buckets.get_mut(b.key()).expect("bucket seeded above").items += 1;
+                if b == WorkBucket::Landed {
+                    *run_landed += 1;
+                }
+            }
+            None => *unresolved_items += 1,
+        }
+    }
+
     for r in runs {
-        orchestration_usd += r.main_usd;
-        orchestration_tokens += r.main_tokens;
+        main_usd += r.main_usd;
+        main_tokens += r.main_tokens;
         output_usd += r.output_usd;
         output_tokens += r.output_tokens;
         let mut run_landed = 0usize;
+        // The MAIN LOOP's items, counted in the denominator exactly like a task's. Its SPEND is
+        // not bucketed with them: one number holds the orchestration and the inline work, so
+        // charging it to these items would be printing a per-item cost the trace does not have.
+        inline_items += r.main_items.len();
+        if !r.main_items.is_empty() {
+            inline_runs += 1;
+        }
+        for (i, o) in &r.main_items {
+            count_item(
+                i,
+                *o,
+                &mut buckets,
+                &mut unresolved_items,
+                &mut run_landed,
+                &mut opened_items,
+                &mut reworked_items,
+            );
+        }
         for t in &r.tasks {
             tasks_total += 1;
             if !t.items.is_empty() {
@@ -3210,16 +3377,16 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
             // landed one PR and abandoned another contributes one item to each — counting items
             // only in the task's bucket would drop the abandoned one entirely, which is the
             // denominator quietly disagreeing with the waste figure beside it.
-            for (_, o) in &t.items {
-                match o.bucket() {
-                    Some(b) => {
-                        buckets.get_mut(b.key()).expect("bucket seeded above").items += 1;
-                        if b == WorkBucket::Landed {
-                            run_landed += 1;
-                        }
-                    }
-                    None => unresolved_items += 1,
-                }
+            for (i, o) in &t.items {
+                count_item(
+                    i,
+                    *o,
+                    &mut buckets,
+                    &mut unresolved_items,
+                    &mut run_landed,
+                    &mut opened_items,
+                    &mut reworked_items,
+                );
             }
             // SPEND is counted once, in the bucket of the task's BEST item: a task is one unit of
             // work however many PRs it opened, and its dollars cannot be split between outcomes
@@ -3249,11 +3416,7 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
                 "usd": round3(t.usd),
                 "tokens": t.tokens,
                 "bucket": bucket.map(|b| b.key()).unwrap_or("unresolved"),
-                "items": t.items.iter().map(|(i, o)| serde_json::json!({
-                    "pr": format!("{}#{}", i.slug, i.pr),
-                    "closes": i.closes,
-                    "outcome": format!("{o:?}"),
-                })).collect::<Vec<Value>>(),
+                "items": item_rows(&t.items),
             }));
         }
         run_rows.push(serde_json::json!({
@@ -3263,17 +3426,19 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
             "landedItems": run_landed,
             "mainLoopUsd": round3(r.main_usd),
             "outputUsd": round3(r.output_usd),
+            // The main loop's items are named, not just counted: they are the only items in the
+            // report with no per-item cost beside them, so a reader must be able to see WHICH.
+            "inlineItems": item_rows(&r.main_items),
         }));
     }
 
     let landed = buckets[WorkBucket::Landed.key()];
     let awaiting = buckets[WorkBucket::AwaitingHuman.key()];
     let churn = buckets[WorkBucket::Churn.key()];
-    // EVERY dollar the corpus spent, including the churn and the orchestration — the whole point of
+    // EVERY dollar the corpus spent, including the churn and the main loops — the whole point of
     // the metric is that what a landed item cost includes what it cost to not land the others.
-    let total_usd = landed.usd + awaiting.usd + churn.usd + orchestration_usd + output_usd;
-    let total_tokens =
-        landed.tokens + awaiting.tokens + churn.tokens + orchestration_tokens + output_tokens;
+    let total_usd = landed.usd + awaiting.usd + churn.usd + main_usd + output_usd;
+    let total_tokens = landed.tokens + awaiting.tokens + churn.tokens + main_tokens + output_tokens;
     let per = |n: usize| -> Value {
         if n == 0 {
             Value::Null
@@ -3293,6 +3458,14 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
             "typedTasks": typed_tasks,
             "typedCoveragePct": if tasks_total == 0 { Value::Null }
                 else { serde_json::json!(round3(100.0 * typed_tasks as f64 / tasks_total as f64)) },
+            // Work done by a main loop rather than a dispatched task. Counted apart because it is
+            // the part of the denominator that carries no per-item cost.
+            "inlineItems": inline_items,
+            "inlineRuns": inline_runs,
+            "itemsByKind": {
+                WorkItemKind::Opened.key(): opened_items,
+                WorkItemKind::Reworked.key(): reworked_items,
+            },
             "skippedRows": skipped.iter().map(|(why, rows)| serde_json::json!({"why": why, "rows": rows}))
                 .collect::<Vec<Value>>(),
         },
@@ -3301,24 +3474,47 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
             WorkBucket::AwaitingHuman.key(): bucket_json(WorkBucket::AwaitingHuman),
             WorkBucket::Churn.key(): bucket_json(WorkBucket::Churn),
         },
+        // Why each churned DISPATCHED TASK is in that bucket. Per task, because it explains where
+        // a task's SPEND went — and inline items have no spend of their own to explain, so they
+        // are counted in the bucket above and named on their run's row, never here.
         "churnBreakdown": {
             "noTypedWorkItem": churn_no_item,
             "openNotPresentable": churn_reworking,
             "closedUnmerged": churn_closed,
         },
         "unresolved": {"tasks": unresolved_tasks, "items": unresolved_items},
-        "orchestrationUsd": round3(orchestration_usd),
-        "orchestrationTokens": orchestration_tokens,
+        // The main loops' whole spend: orchestration, plus any work they did inline. Named for the
+        // ACTOR rather than for one of the two things it paid for, because the two are not
+        // separable — a key called `orchestration` would assert a split that does not exist.
+        "mainLoopUsd": round3(main_usd),
+        "mainLoopTokens": main_tokens,
         "outputUsd": round3(output_usd),
         "outputTokens": output_tokens,
         "totalUsd": round3(total_usd),
         "totalTokens": total_tokens,
         "usdPerLandedItem": per(landed.items),
         "usdPerDeliveredItem": per(landed.items + awaiting.items),
-        "notes": work_tokens_notes(landed.items, awaiting.items, typed_tasks, tasks_total),
+        "notes": work_tokens_notes(landed.items, awaiting.items, typed_tasks, tasks_total, inline_items),
         "runs": run_rows,
         "tasks": task_rows,
     })
+}
+
+/// PURE: how one actor's items are reported — the PR they are about, the KIND of work that was,
+/// what became of it. One function so an inline item and a dispatched task's item are described
+/// identically; only their cost differs.
+fn item_rows(items: &[(WorkItem, PrOutcome)]) -> Vec<Value> {
+    items
+        .iter()
+        .map(|(i, o)| {
+            serde_json::json!({
+                "pr": format!("{}#{}", i.slug, i.pr),
+                "kind": i.kind.key(),
+                "closes": i.closes,
+                "outcome": format!("{o:?}"),
+            })
+        })
+        .collect()
 }
 
 /// PURE: the table, rendered from the report VALUE rather than from the totals again — so a number
@@ -3334,11 +3530,23 @@ fn render_work_tokens(report: &Value) -> String {
         "tokens to land work".to_string(),
         String::new(),
         format!(
-            "corpus: {} runs, {} dispatched tasks; {} carry a typed work item ({:.0}% coverage)",
+            "corpus: {} runs, {} dispatched tasks; {} carry a typed work item ({} coverage)",
             n("/corpus/runs"),
             n("/corpus/tasks"),
             n("/corpus/typedTasks"),
-            f("/corpus/typedCoveragePct"),
+            // `n/a`, never 0%, when the corpus dispatched nothing: a coverage figure over no
+            // tasks is not a low score, it is a fraction with no denominator.
+            match report.pointer("/corpus/typedCoveragePct") {
+                Some(Value::Null) | None => "n/a".to_string(),
+                Some(_) => format!("{:.0}%", f("/corpus/typedCoveragePct")),
+            },
+        ),
+        format!(
+            "items: {} opened, {} reworked; {} of them done inline by a main loop ({} runs)",
+            n("/corpus/itemsByKind/opened"),
+            n("/corpus/itemsByKind/reworked"),
+            n("/corpus/inlineItems"),
+            n("/corpus/inlineRuns"),
         ),
     ];
     // The corpus is small enough to NAME. A reader who can see which three runs these are can
@@ -3349,10 +3557,14 @@ fn render_work_tokens(report: &Value) -> String {
         .unwrap_or(&Vec::new())
     {
         out.push(format!(
-            "  {} {} — {} tasks, {} landed",
+            "  {} {} — {} tasks, {} inline items, {} landed",
             r.get("runId").and_then(|v| v.as_str()).unwrap_or("?"),
             r.get("role").and_then(|v| v.as_str()).unwrap_or("?"),
             r.get("tasks").and_then(|v| v.as_u64()).unwrap_or(0),
+            r.get("inlineItems")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
             r.get("landedItems").and_then(|v| v.as_u64()).unwrap_or(0),
         ));
     }
@@ -3380,7 +3592,7 @@ fn render_work_tokens(report: &Value) -> String {
     }
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
-        "  churn: no typed item",
+        "  churn tasks: no item",
         n("/churnBreakdown/noTypedWorkItem"),
         "",
         "",
@@ -3388,7 +3600,7 @@ fn render_work_tokens(report: &Value) -> String {
     ));
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
-        "  churn: open, not ready",
+        "  churn tasks: not ready",
         n("/churnBreakdown/openNotPresentable"),
         "",
         "",
@@ -3396,7 +3608,7 @@ fn render_work_tokens(report: &Value) -> String {
     ));
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
-        "  churn: closed unmerged",
+        "  churn tasks: closed",
         n("/churnBreakdown/closedUnmerged"),
         "",
         "",
@@ -3404,11 +3616,13 @@ fn render_work_tokens(report: &Value) -> String {
     ));
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
-        format!("orchestration ({} main)", n("/corpus/runs")),
+        format!("main loop ({} runs)", n("/corpus/runs")),
         "",
+        // Blank, though inline items exist: an item is counted in the BUCKET its outcome names,
+        // and repeating it beside the spend that is not attributed to it would print it twice.
         "",
-        money("/orchestrationUsd"),
-        n("/orchestrationTokens"),
+        money("/mainLoopUsd"),
+        n("/mainLoopTokens"),
     ));
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
@@ -3541,10 +3755,10 @@ fn work_tokens_mode(path: &str, json: bool) -> i32 {
                 .entry((item.slug.clone(), item.pr))
                 .or_insert_with(|| fetch_pr_outcome(item))
         });
-        if run.tasks.is_empty() {
+        if !run.has_actor() {
             skip(
                 &mut skipped,
-                "the run dispatched no subagents — no task-level rows",
+                "the run dispatched no subagent and recorded no work item",
             );
             continue;
         }
@@ -18484,11 +18698,19 @@ impl McpProfile {
             // calls against 35 MCP ones — the same root cause as #170, a typed surface displaced by
             // an untyped one. As a tool the whole `{agent, repo, issue, PR}` tuple is a typed
             // argument list and a typed result, which is what `work-tokens` joins on.
+            //
+            // `push` is the OTHER output edge, and it is here for the same reason one level along:
+            // opening a PR is one of the four kinds of work the RUN BUDGET counts, and two more —
+            // a rework and a conflict resolution — end in a moved head on a PR that already exists.
+            // Those went out as a bare `git push`, so the whole of the first capped run's work was
+            // invisible to `work-tokens`. As a tool the push reports the sha it created and the PR
+            // whose head that sha IS, which is the join, and it cannot spell a force-push at all.
             McpProfile::Producer => &[
                 "clone_create",
                 "clone_release",
                 "clone_list",
                 "clone_gc",
+                "push",
                 "open_pr",
                 "repair_qa_block",
                 "weaken_closes",
@@ -18781,6 +19003,18 @@ fn mcp_all_tools() -> Value {
             }
         },
         {
+            "name": "push",
+            "description": "PUSH THE WORK in a clone to origin — the rework, the conflict resolution, the branch a PR is about to be opened for. Plain fast-forward of the clone's branch: there is no force spelling this tool can express, and a non-fast-forward is git's own refusal. It reports whether the remote ref actually MOVED, and names the PR whose head it moved — only when an open PR on that branch is at exactly the commit just pushed, else `pr` is null with the reason. That result is this run's record that the rework happened; a `git push` in Bash leaves nothing any reader can join to a PR.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "clone": {"type": "string", "description": "Clone dir name (or its full path under the work root)."},
+                    "branch": {"type": "string", "description": "Remote branch to fast-forward; defaults to the clone's checked-out branch. Name it when the local branch is called something else."}
+                },
+                "required": ["clone"]
+            }
+        },
+        {
             "name": "repair_qa_block",
             "description": "Retrofit QA-GUIDE section 8's evidence block onto an ALREADY-OPEN PR of ours: APPENDS the block, every byte outside the `## QA` section identical, validated with the PR-open gate's own predicate. Refuses a present-but-different block unless replace.",
             "inputSchema": {
@@ -18916,6 +19150,13 @@ enum McpCall {
         body_file: String,
         closes: Option<u64>,
         base: Option<String>,
+    },
+    /// The producer's REWORK edge. `root`/`name` are the path guard's OUTPUT, like the clone
+    /// lifecycle's; `branch` is absent when the clone's own checked-out branch is the one to move.
+    Push {
+        root: String,
+        name: String,
+        branch: Option<String>,
     },
     /// The producer's two BODY REPAIRS (#136). `issue` is a NUMBER, not a `#N` string: the tool
     /// weakens the linkage to exactly one issue, and a free-text argument there is the "edit
@@ -19286,6 +19527,18 @@ fn validate_call(
                     .unwrap_or(false),
             })
         }
+        // The REWORK edge takes a CLONE, never a directory and never a remote: the same path guard
+        // the lifecycle tools run, so "push from somewhere that is not a work clone" is not
+        // expressible. `branch` is the REMOTE branch to fast-forward, for the corpus's real case
+        // where the local branch is named something else.
+        "push" => {
+            let (root, name) = clone_in_roots(roots, req_str(args, "clone")?)?;
+            let branch = match args.get("branch") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(push_branch(req_str(args, "branch")?)?),
+            };
+            Ok(McpCall::Push { root, name, branch })
+        }
         "clone_list" => Ok(McpCall::CloneList),
         "clone_gc" => {
             let max_age_days = match args.get("max_age_days") {
@@ -19579,6 +19832,8 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             closes,
             base,
         } => open_pr_apply(&slug, &head, &title, &body_file, closes, base.as_deref())
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::Push { root, name, branch } => push_apply(&root, &name, branch.as_deref())
             .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::RepairQaBlock {
             slug,
@@ -21097,6 +21352,318 @@ fn open_pr_apply(
         "assignee": assignee,
     })
     .to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// push — the REWORK as a TYPED transition.
+//
+// WHY IT EXISTS. `open_pr` records a PR that did not exist before. Three of the four kinds of work
+// the RUN BUDGET counts are not that: "a rework you push", "a conflict you resolve" and "a deploy
+// you dispatch". The first two have ONE outcome between them — the head of an existing PR moves —
+// and the producer performed it with a bare `git push` inside Bash, which leaves a shell string in
+// the trace and nothing to join on. On the first capped run all THREE items were of that shape, so
+// the run recorded no work at all and `work-tokens` reported `n/a` for a run that did three things.
+//
+// WHY THE COMMAND STRING IS NOT A SUBSTITUTE. Reading the pushes out of the Bash calls was measured
+// against the seven producer traces and it does not work: 76 command strings contain a `git … push`
+// and they are not one shape (`git -C <dir> push`, `push origin <branch>`, `push -u origin
+// <branch>`, `push origin HEAD:<branch>`, `push origin <local>:<remote>` where the two names
+// differ), several are chained behind `;` into unrelated commands, and at least two are not pushes
+// at all — one is a `for c in "git push" …` grep list, one is a diff argument. A parser over that
+// invents work items, which is the defect #175 rejected a label regex for.
+//
+// THE JOIN IS CAUSAL, NOT NOMINAL. A branch name resolved through GitHub's head index is exactly
+// the join #175 rejected `clone_create` for: `gh pr list --head main` answers with a real PR the
+// task never touched. This names a PR only when the remote ref MOVED and the open PR's `headRefOid`
+// IS the commit this call pushed — so the record says "the head this transition created is that
+// PR's head", which is a fact about a sha rather than a guess about a name. Nothing moved, or no
+// PR at that head, and the result carries `pr: null` and the reason: an unattributable push is a
+// defensible `n/a`, and a plausible-looking wrong PR is not.
+//
+// IT CANNOT FORCE-PUSH. The argv is [`push_args`]: `push origin HEAD:refs/heads/<branch>`, no flags
+// at all, and the branch may carry no `:` or leading `+`. So "the producer never force-pushes"
+// stops being a prompt rule this path can violate — there is no argument that spells one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// WHY a `push` was refused — a TYPED discriminant, like [`OpenPrRefusal`], so the exit code and the
+/// message both derive from the variant and no caller re-classifies by prose.
+#[derive(Debug, PartialEq, Eq)]
+enum PushRefusal {
+    /// The `clone` argument named nothing this tool may touch. Carries the path guard's own words.
+    CloneUnusable(String),
+    /// The clone is not on a branch, so there is no head to move.
+    DetachedHead,
+    /// `origin` names no GitHub repo, so no result could say WHICH repo was pushed to.
+    NoOriginSlug(String),
+    /// git could not say what the local head or the remote ref is. Distinct from a failed push
+    /// because NOTHING was attempted: the tool refuses rather than pushing blind.
+    StateUnreadable(String),
+    /// `git push` itself failed. Carries git's own output, which already names the cause (a
+    /// non-fast-forward, no permission, a hook) better than a re-classification would.
+    PushFailed(String),
+    /// The push reported success and the remote ref is NOT at the commit that was pushed. The
+    /// effect may have happened; what is certain is that this tool cannot say what the head is, so
+    /// it records no work item rather than one it cannot stand behind.
+    HeadUnconfirmed { want: String, got: String },
+}
+
+impl PushRefusal {
+    /// Exit code, distinct per variant because they are six different things to do next: fix the
+    /// clone name, check the branch out, fix the remote, look at git's error, read the push output,
+    /// go and look at what the remote actually holds.
+    fn exit(&self) -> i32 {
+        match self {
+            PushRefusal::PushFailed(_) => 1,
+            PushRefusal::CloneUnusable(_) => 2,
+            PushRefusal::DetachedHead => 3,
+            PushRefusal::NoOriginSlug(_) => 4,
+            PushRefusal::StateUnreadable(_) => 5,
+            PushRefusal::HeadUnconfirmed { .. } => 6,
+        }
+    }
+
+    fn render(&self, subject: &str) -> String {
+        let mut lines = vec![format!("REFUSED - push {subject}"), String::new()];
+        match self {
+            PushRefusal::CloneUnusable(why) => lines.push(format!("  {why}")),
+            PushRefusal::DetachedHead => lines.extend([
+                "  this clone is not on a branch, so there is no head to move.".to_string(),
+                "  Check the work branch out, or name it with `branch`.".to_string(),
+            ]),
+            PushRefusal::NoOriginSlug(url) => lines.extend([
+                format!("  origin is {url:?}, which names no owner/repo on github.com."),
+                "  A push there could not be recorded against any repo.".to_string(),
+            ]),
+            PushRefusal::StateUnreadable(why) => lines.extend([
+                format!("  {why}"),
+                "  NOTHING was pushed - this refuses rather than pushing blind.".to_string(),
+            ]),
+            PushRefusal::PushFailed(out) => lines.extend([
+                "  `git push` failed and the remote is UNCHANGED. git said:".to_string(),
+                String::new(),
+                out.trim_end().to_string(),
+            ]),
+            PushRefusal::HeadUnconfirmed { want, got } => lines.extend([
+                format!("  the push reported success, but the remote ref reads {got} and this"),
+                format!("  call pushed {want}. Go and look at the branch before doing anything"),
+                "  else - do NOT re-push, and treat NO work item as recorded.".to_string(),
+            ]),
+        }
+        lines.join("\n")
+    }
+}
+
+/// PURE: the branch a `push` may write. [`parse_branch`]'s rules, plus the two spellings that would
+/// turn the refspec into something other than a plain fast-forward of one branch.
+fn push_branch(s: &str) -> Result<String, String> {
+    let branch = parse_branch(s)?;
+    if branch.starts_with('+') {
+        return Err(format!(
+            "refusing branch {branch:?}: a leading `+` is the force spelling of a refspec"
+        ));
+    }
+    if branch.contains(':') {
+        return Err(format!(
+            "refusing branch {branch:?}: a `:` would make this a refspec rather than a branch"
+        ));
+    }
+    Ok(branch)
+}
+
+/// PURE: the argv `push` runs — the destination named in full, and no flags at all.
+///
+/// Every force spelling (`--force`, `-f`, `--force-with-lease`, a leading `+`) is absent BY
+/// CONSTRUCTION rather than by a rule someone keeps: there is no argument that reaches this vector,
+/// and [`push_branch`] has already refused the one string that could smuggle one in.
+fn push_args(branch: &str) -> Vec<String> {
+    vec![
+        "push".to_string(),
+        "origin".to_string(),
+        format!("HEAD:refs/heads/{branch}"),
+    ]
+}
+
+/// PURE: the sha `git ls-remote` reports for a ref, or `None` when the ref does not exist there.
+///
+/// `ls-remote` prints `<sha>\t<ref>` per line and nothing for a ref that is absent, so an empty
+/// answer is the ref not existing — which is a NEW branch, not a failure.
+///
+/// The FIRST field of the FIRST line that has one: `split_whitespace` never yields an empty
+/// string, so a blank line contributes nothing and no emptiness check is needed here.
+fn ls_remote_sha(out: &str) -> Option<String> {
+    out.lines()
+        .find_map(|l| l.split_whitespace().next())
+        .map(|s| s.to_string())
+}
+
+/// The PR a push moved, or the reason there is none. Not an error either way: a push with no PR
+/// behind it is ordinary — it is how a branch reaches GitHub before `open_pr` runs.
+#[derive(Debug, PartialEq, Eq)]
+enum PushedPr {
+    Moved { pr: u64, url: String },
+    None(String),
+}
+
+/// PURE: which PR this push MOVED, decided from the pushed sha and GitHub's own answer for that
+/// head branch.
+///
+/// An answer that could not be READ is its own nothing, never "no PR has this branch": a producer
+/// told there is no PR on the branch it just reworked would open a second one.
+///
+/// The sha equality is the whole guard. `gh pr list --head <branch>` answers on a NAME, and a name
+/// is what attributed a read-only clone of `main` a real closed PR in #175; requiring the PR's
+/// `headRefOid` to BE the commit this call pushed makes the record a statement about the effect
+/// that just happened. More than one match names none of them: two PRs at one head is a real shape
+/// (a branch opened against two bases), and picking one would be a guess.
+fn pushed_pr(pushed_sha: &str, resp: Option<&Value>) -> PushedPr {
+    let Some(prs) = resp.and_then(|v| v.as_array()) else {
+        return PushedPr::None(
+            "GitHub could not be read, so this push names no PR — the push itself succeeded"
+                .to_string(),
+        );
+    };
+    let at_head: Vec<&Value> = prs
+        .iter()
+        .filter(|p| {
+            p.get("headRefOid")
+                .and_then(|s| s.as_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case(pushed_sha))
+        })
+        .collect();
+    match at_head.len() {
+        1 => {
+            let p = at_head[0];
+            match p.get("number").and_then(|n| n.as_u64()).filter(|n| *n > 0) {
+                Some(pr) => PushedPr::Moved {
+                    pr,
+                    url: p
+                        .get("url")
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                },
+                None => PushedPr::None(
+                    "an open PR sits at this head but names no number — recording nothing"
+                        .to_string(),
+                ),
+            }
+        }
+        0 if prs.is_empty() => PushedPr::None("no open PR has this branch as its head".to_string()),
+        0 => PushedPr::None(
+            "an open PR has this branch, but its head is not the commit this call pushed"
+                .to_string(),
+        ),
+        n => PushedPr::None(format!(
+            "{n} open PRs sit at this head — naming one of them would be a guess"
+        )),
+    }
+}
+
+/// The `push` producer MCP tool: fast-forward one work clone's branch onto `origin`, and record the
+/// PR whose head it moved.
+///
+/// Returns the report text rather than printing it: on the MCP server STDOUT IS THE PROTOCOL.
+///
+/// Exit: 0 pushed (or already up to date), 1 the push failed, 2 unusable clone, 3 detached HEAD,
+/// 4 origin names no repo, 5 local/remote state unreadable, 6 the remote head could not be
+/// confirmed.
+fn push_apply(root: &str, name: &str, branch: Option<&str>) -> Result<String, (i32, String)> {
+    let subject = format!(
+        "{name}{}",
+        branch.map(|b| format!(" {b}")).unwrap_or_default()
+    );
+    let refuse = |r: PushRefusal| (r.exit(), r.render(&subject));
+
+    let dir =
+        resolve_existing_clone(root, name).map_err(|e| refuse(PushRefusal::CloneUnusable(e)))?;
+    let state = local_clone_state(&dir);
+    let branch = match branch {
+        Some(b) => b.to_string(),
+        None => {
+            if state.branch.is_empty() || state.branch == "HEAD" {
+                return Err(refuse(PushRefusal::DetachedHead));
+            }
+            state.branch.clone()
+        }
+    };
+    let origin = git_out(&dir, &["remote", "get-url", "origin"]).ok_or_else(|| {
+        refuse(PushRefusal::StateUnreadable(
+            "this clone has no `origin` remote".to_string(),
+        ))
+    })?;
+    let slug = parse_repo_slug(&origin).ok_or_else(|| refuse(PushRefusal::NoOriginSlug(origin)))?;
+    let head = git_out(&dir, &["rev-parse", "HEAD"]).ok_or_else(|| {
+        refuse(PushRefusal::StateUnreadable(
+            "`git rev-parse HEAD` could not name a commit to push".to_string(),
+        ))
+    })?;
+
+    // BEFORE, so "this call moved the head" is a comparison rather than a reading of git's prose.
+    let remote_ref = format!("refs/heads/{branch}");
+    let read_remote = |dir: &std::path::Path| {
+        git_out(dir, &["ls-remote", "origin", &remote_ref])
+            .ok_or_else(|| format!("`git ls-remote origin {remote_ref}` failed"))
+            .map(|o| ls_remote_sha(&o))
+    };
+    let before = read_remote(&dir).map_err(|e| refuse(PushRefusal::StateUnreadable(e)))?;
+
+    let moved = before.as_deref() != Some(head.as_str());
+    if moved {
+        let args = push_args(&branch);
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        git_run(&dir, &argv).map_err(|e| refuse(PushRefusal::PushFailed(e)))?;
+        let after = read_remote(&dir).map_err(|e| refuse(PushRefusal::StateUnreadable(e)))?;
+        if after.as_deref() != Some(head.as_str()) {
+            return Err(refuse(PushRefusal::HeadUnconfirmed {
+                want: head.clone(),
+                got: after.unwrap_or_else(|| "no such ref".to_string()),
+            }));
+        }
+    }
+
+    // A push that moved NOTHING is not this transition's work item, whatever the PR's head says:
+    // the head it would name was put there by something else, and crediting it here is how a
+    // read-only call comes to own a real PR.
+    let pr = if moved {
+        let prs = gh_json(&[
+            "pr",
+            "list",
+            "-R",
+            &slug,
+            "--head",
+            &branch,
+            "--state",
+            "open",
+            "--json",
+            "number,headRefOid,url",
+            "--limit",
+            "10",
+        ]);
+        pushed_pr(&head, prs.as_ref())
+    } else {
+        PushedPr::None("the remote ref was already at this commit — nothing moved".to_string())
+    };
+
+    let mut out = serde_json::json!({
+        "repo": slug,
+        "clone": name,
+        "branch": branch,
+        "head": head,
+        "moved": moved,
+        "before": before,
+        "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
+    });
+    match pr {
+        PushedPr::Moved { pr, url } => {
+            out["pr"] = serde_json::json!(pr);
+            out["url"] = serde_json::json!(url);
+        }
+        PushedPr::None(why) => {
+            out["pr"] = Value::Null;
+            out["prNote"] = serde_json::json!(why);
+        }
+    }
+    Ok(out.to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29795,6 +30362,28 @@ mod settings_tests {
             prompt.contains("Do NOT hand-roll this with `git clone`"),
             "clone CREATION must be the tool's, said as a prohibition and not merely omitted"
         );
+    }
+
+    // The rework is the producer's most common output and its record: a `git push` in Bash moves
+    // a PR head and leaves nothing any reader can join to a PR, so the prompt has to name the tool
+    // at every place it tells the producer to push to one of its own PR branches.
+    #[test]
+    fn the_producer_prompt_pushes_to_its_prs_through_the_tool() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("`mcp__fsm__push` TOOL"),
+            "the prompt must name the push tool: without it the rework — the producer's most \
+             common item — records nothing at all"
+        );
+        assert!(
+            prompt.contains("PUSHING IS A TOOL"),
+            "step 7's permitted-mutation list must say the push is a tool, not a bare `git push`"
+        );
+        // The force-push ban is NOT what this replaces, and the prompt must keep stating it: the
+        // tool covers the producer's own PR branches, and Bash git is still reachable.
+        assert!(prompt.contains("NEVER force-push in ANY form or spelling"));
     }
 
     /// #135/#136: retiring `ai:relink` only works if the work it named became something the
@@ -40547,6 +41136,10 @@ mod mcp_tests {
                 "clone_release",
                 "clone_list",
                 "clone_gc",
+                // The REWORK edge. A moved head on an existing PR is the outcome of two of the
+                // four kinds of work the run budget counts, and a `git push` in Bash records
+                // none of it — the first capped run's three items were all this shape.
+                "push",
                 // The producer's OUTPUT edge. It is a tool so the run's own trace records WHICH
                 // task produced WHICH PR — a `gh pr create` inside Bash leaves a shell string that
                 // no reader can join a work item on.
@@ -40586,16 +41179,18 @@ mod mcp_tests {
             "clone_create",
             "clone_gc",
             "clone_list",
-            // The vetter judging a PR must not be able to OPEN one either: an actor that can
-            // produce the thing it judges has no judgement left to make.
+            // The vetter judging a PR must not be able to OPEN one either — nor to MOVE ITS HEAD,
+            // which would un-vet the very PR it is judging: an actor that can produce the thing it
+            // judges has no judgement left to make.
             "open_pr",
+            "push",
             "repair_qa_block",
             "weaken_closes",
         ] {
             let resp = v
                 .handle(&call(
                     producer_only,
-                    json!({"repo": "o/r", "name": "x", "branch": "b", "head": "b", "title": "t", "body_file": "/b.md", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
+                    json!({"repo": "o/r", "name": "x", "clone": "x", "branch": "b", "head": "b", "title": "t", "body_file": "/b.md", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
                 ))
                 .unwrap();
             assert!(is_error(&resp), "{producer_only} must not exist for vetter");
@@ -41296,6 +41891,177 @@ mod mcp_tests {
         exits.sort_unstable();
         exits.dedup();
         assert_eq!(exits.len(), all.len(), "two refusals share an exit code");
+    }
+
+    // --- push: the REWORK edge ------------------------------------------------------------------
+
+    /// THE JOIN, and the whole reason this tool exists rather than a parser over `git push` command
+    /// strings: a PR is named ONLY when its head IS the commit this call pushed. `--head <branch>`
+    /// answers on a NAME, and a name is what handed a read-only clone of `main` a real closed PR in
+    /// #175; the sha is what makes the record a statement about the effect that just happened.
+    #[test]
+    fn a_push_names_a_pr_only_when_that_prs_head_is_the_commit_it_pushed() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let other = "fedcba9876543210fedcba9876543210fedcba98";
+        let pr = |n: u64, head: &str| json!({"number": n, "headRefOid": head, "url": format!("https://github.com/o/r/pull/{n}")});
+
+        let moved = PushedPr::Moved {
+            pr: 369,
+            url: "https://github.com/o/r/pull/369".to_string(),
+        };
+        assert_eq!(pushed_pr(sha, Some(&json!([pr(369, sha)]))), moved);
+        // Same branch, different head: something else moved it, so this call owns nothing.
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([pr(369, other)]))) else {
+            panic!("a PR at another head must not be claimed");
+        };
+        assert!(why.contains("not the commit this call pushed"), "{why}");
+        // No PR on the branch at all — the ordinary shape of a branch pushed before `open_pr`.
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([]))) else {
+            panic!("no PR means no item");
+        };
+        assert!(why.contains("no open PR"), "{why}");
+        // An UNREADABLE answer is NOT "no PR": a producer told its reworked branch has no PR
+        // would open a second one. Distinct reason, distinct next move.
+        for unreadable in [None, Some(json!({"message": "Bad credentials"}))] {
+            let PushedPr::None(why) = pushed_pr(sha, unreadable.as_ref()) else {
+                panic!("an unreadable answer must claim nothing");
+            };
+            assert!(why.contains("could not be read"), "{why}");
+        }
+        // Two PRs at one head is a real shape (one branch, two bases). Picking one is a guess.
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([pr(369, sha), pr(370, sha)]))) else {
+            panic!("an ambiguous head must not be resolved");
+        };
+        assert!(why.contains("2 open PRs"), "{why}");
+        // A row that names no usable number is not a PR reference.
+        for malformed in [
+            json!({"headRefOid": sha}),
+            json!({"number": 0, "headRefOid": sha}),
+        ] {
+            assert!(
+                matches!(pushed_pr(sha, Some(&json!([malformed]))), PushedPr::None(_)),
+                "{malformed}"
+            );
+        }
+        // Sha comparison is case-insensitive: git and the API differ on hex casing, and a case
+        // mismatch would silently drop every work item.
+        assert_eq!(
+            pushed_pr(&sha.to_uppercase(), Some(&json!([pr(369, sha)]))),
+            moved
+        );
+    }
+
+    /// The force-push ban stops being a rule this path can break: the argv is a constant shape with
+    /// no flags, and the one argument that could smuggle a force spelling in is refused.
+    #[test]
+    fn the_push_transition_cannot_spell_a_force_push() {
+        assert_eq!(
+            push_args("2026-08-04-issue-184"),
+            vec![
+                "push".to_string(),
+                "origin".to_string(),
+                "HEAD:refs/heads/2026-08-04-issue-184".to_string()
+            ]
+        );
+        for arg in push_args("b") {
+            for force in ["--force", "-f", "--force-with-lease", "--force-if-includes"] {
+                assert!(!arg.contains(force), "{arg} carries {force}");
+            }
+        }
+        // A leading `+` IS the force spelling of a refspec, and a `:` would make the argument a
+        // refspec rather than a branch — both refused before any push exists.
+        for bad in ["+b", "b:c", "refs/heads/b:refs/heads/c", "-b", "", "a b"] {
+            assert!(push_branch(bad).is_err(), "{bad:?} must be refused");
+        }
+        assert_eq!(push_branch("  b  ").as_deref(), Ok("b"));
+    }
+
+    /// The remote ref BEFORE, so "this call moved the head" is a comparison. An absent ref is a new
+    /// branch, not a failure.
+    #[test]
+    fn the_remote_ref_is_read_as_a_sha_or_as_absent() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            ls_remote_sha(&format!("{sha}\trefs/heads/b\n")).as_deref(),
+            Some(sha)
+        );
+        assert_eq!(ls_remote_sha(""), None);
+        assert_eq!(ls_remote_sha("\n\n"), None);
+    }
+
+    /// The path guard is the clone lifecycle's, so "push from somewhere that is not a work clone"
+    /// is not expressible — and a refused argument reaches no effect.
+    #[test]
+    fn push_refuses_every_argument_it_could_not_act_on() {
+        let f = FakeExec::producer().with_roots(&["/work"]);
+        for bad in [
+            json!({}),                              // no clone named
+            json!({"clone": "../etc"}),             // traversal
+            json!({"clone": "/elsewhere/repo"}),    // outside every root
+            json!({"clone": "/work"}),              // the root itself
+            json!({"clone": "a/b"}),                // not a direct child
+            json!({"clone": "c", "branch": "+b"}),  // the force spelling
+            json!({"clone": "c", "branch": "a:b"}), // a refspec, not a branch
+            json!({"clone": "c", "branch": ""}),    // no branch at all
+        ] {
+            let resp = f.handle(&call("push", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(f.calls().is_empty(), "no refusal reached an effect");
+
+        // The accepted shapes: a bare name, and a name plus the remote branch to move.
+        f.handle(&call("push", json!({"clone": "cyclo.site-pr369"})))
+            .unwrap();
+        f.handle(&call(
+            "push",
+            json!({"clone": "/work/issue-pr-cron-pr168", "branch": "2026-07-31-issue-162"}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::Push {
+                    root: "/work".to_string(),
+                    name: "cyclo.site-pr369".to_string(),
+                    branch: None
+                },
+                McpCall::Push {
+                    root: "/work".to_string(),
+                    name: "issue-pr-cron-pr168".to_string(),
+                    branch: Some("2026-07-31-issue-162".to_string())
+                },
+            ]
+        );
+    }
+
+    /// Six refusals, six different things to do next — and the one where the effect MAY have
+    /// happened says so, because a caller that retried it would push again against a remote it
+    /// cannot describe.
+    #[test]
+    fn the_push_refusals_are_six_distinct_things_to_do_next() {
+        let all = [
+            PushRefusal::CloneUnusable("no work clone \"x\" under /work".to_string()),
+            PushRefusal::DetachedHead,
+            PushRefusal::NoOriginSlug("/srv/git/bare.git".to_string()),
+            PushRefusal::StateUnreadable("`git ls-remote origin` failed".to_string()),
+            PushRefusal::PushFailed("! [rejected] non-fast-forward".to_string()),
+            PushRefusal::HeadUnconfirmed {
+                want: "aaa".to_string(),
+                got: "bbb".to_string(),
+            },
+        ];
+        let mut exits: Vec<i32> = all.iter().map(|r| r.exit()).collect();
+        exits.sort_unstable();
+        exits.dedup();
+        assert_eq!(exits.len(), all.len(), "two refusals share an exit code");
+
+        // A failed push left the remote alone; an unreadable state pushed nothing at all; an
+        // unconfirmed head is neither, and must not be retried.
+        assert!(all[4].render("c").contains("remote is UNCHANGED"));
+        assert!(all[3].render("c").contains("NOTHING was pushed"));
+        let unconfirmed = all[5].render("c");
+        assert!(unconfirmed.contains("do NOT re-push"), "{unconfirmed}");
+        assert!(unconfirmed.contains("NO work item"), "{unconfirmed}");
     }
 
     #[test]
@@ -44005,7 +44771,7 @@ mod weaken_closes_tests {
 mod work_tokens_tests {
     use super::{
         agent_tokens, pr_outcome, render_work_tokens, run_work, task_work_items,
-        work_tokens_report, AgentSpend, PrOutcome, RunWork, TaskWork, WorkItem,
+        work_tokens_report, AgentSpend, PrOutcome, RunWork, TaskWork, WorkItem, WorkItemKind,
     };
     use serde_json::{json, Value};
 
@@ -44045,6 +44811,24 @@ mod work_tokens_tests {
         json!({"repo":slug,"pr":pr,"url":"u","closes":closes})
     }
 
+    /// A `push` CALL issued by `parent` — the REWORK edge, which the main loop issues as often as
+    /// a subagent does.
+    fn push_call(tool_id: &str, parent: Option<&str>) -> String {
+        json!({"type":"assistant","parent_tool_use_id":parent,"message":{
+            "id": format!("c_{tool_id}"),
+            "content":[{"type":"tool_use","name":"mcp__fsm__push","id":tool_id,
+                        "input":{"clone":"cyclo.site-pr369"}}]}})
+        .to_string()
+    }
+    /// What `push_apply` answers with: the PR whose head it moved, or a null `pr` and the reason.
+    fn push_result_body(slug: &str, pr: Option<u64>) -> Value {
+        match pr {
+            Some(n) => json!({"repo":slug,"pr":n,"url":"u","branch":"b","head":"abc","moved":true}),
+            None => json!({"repo":slug,"pr":Value::Null,"branch":"b","head":"abc","moved":false,
+                           "prNote":"the remote ref was already at this commit"}),
+        }
+    }
+
     /// THE JOIN: an `open_pr` call lands its work item on the TASK that issued it, keyed by the
     /// same `parent_tool_use_id` the spend is grouped by. Without that the metric has no
     /// denominator at all.
@@ -44067,6 +44851,7 @@ mod work_tokens_tests {
                 slug: "rainlanguage/rain.solmem".to_string(),
                 pr: 76,
                 closes: vec![63],
+                kind: WorkItemKind::Opened,
             }])
         );
         assert_eq!(items.len(), 1, "nothing lands on the main loop");
@@ -44200,10 +44985,14 @@ mod work_tokens_tests {
         }
     }
     fn item(pr: u64) -> WorkItem {
+        item_of(pr, WorkItemKind::Opened)
+    }
+    fn item_of(pr: u64, kind: WorkItemKind) -> WorkItem {
         WorkItem {
             slug: "o/r".to_string(),
             pr,
             closes: vec![],
+            kind,
         }
     }
     fn one_run(tasks: Vec<TaskWork>) -> RunWork {
@@ -44213,6 +45002,7 @@ mod work_tokens_tests {
             tasks,
             main_usd: 10.0,
             main_tokens: 100,
+            main_items: Vec::new(),
             output_usd: 5.0,
             output_tokens: 50,
         }
@@ -44414,6 +45204,196 @@ mod work_tokens_tests {
         });
         assert_eq!(asked, vec!["o/r#76".to_string()]);
         assert_eq!(run.tasks[0].items[0].1, PrOutcome::AwaitingHuman);
+    }
+
+    /// THE SECOND EMITTER. A rework's outcome is a moved head on a PR that already exists, so its
+    /// record is the `push` that moved it — and it is a work item of its own KIND, not an `open_pr`
+    /// with a different shape.
+    #[test]
+    fn a_push_that_moved_a_prs_head_is_a_typed_rework_item() {
+        let trace = [
+            dispatch("toolu_A", "cyclo.site 369 rework"),
+            push_call("toolu_p", Some("toolu_A")),
+            open_pr_result(
+                "toolu_p",
+                push_result_body("cyclofinance/cyclo.site", Some(369)),
+                false,
+            ),
+        ]
+        .join("\n");
+        assert_eq!(
+            task_work_items(&trace).get("toolu_A"),
+            Some(&vec![WorkItem {
+                slug: "cyclofinance/cyclo.site".to_string(),
+                pr: 369,
+                closes: vec![],
+                kind: WorkItemKind::Reworked,
+            }])
+        );
+
+        // A push that names NO PR is not a work item. `push` answers with a null `pr` for every
+        // push it could not tie to a head — nothing moved, no PR on the branch, two PRs at that
+        // head — and each of those is a defensible nothing rather than a guess.
+        let unattributed = [
+            dispatch("toolu_A", "t"),
+            push_call("toolu_p", Some("toolu_A")),
+            open_pr_result(
+                "toolu_p",
+                push_result_body("cyclofinance/cyclo.site", None),
+                false,
+            ),
+        ]
+        .join("\n");
+        assert!(task_work_items(&unattributed).is_empty());
+    }
+
+    /// The KIND is the TRANSITION's, never the payload's: a result cannot claim to be a kind of
+    /// work it is not the record of. And it is matched past the server prefix, like `open_pr`.
+    #[test]
+    fn the_kind_of_work_comes_from_the_transition_that_recorded_it() {
+        for name in ["mcp__fsm__push", "mcp__producer__push", "push"] {
+            let mut body = push_result_body("o/r", Some(9));
+            body["kind"] = json!("opened");
+            let trace = [
+                dispatch("toolu_A", "t"),
+                json!({"type":"assistant","parent_tool_use_id":"toolu_A","message":{"id":"c1",
+                    "content":[{"type":"tool_use","name":name,"id":"toolu_p","input":{}}]}})
+                .to_string(),
+                open_pr_result("toolu_p", body, false),
+            ]
+            .join("\n");
+            assert_eq!(
+                task_work_items(&trace).get("toolu_A").unwrap()[0].kind,
+                WorkItemKind::Reworked,
+                "{name}"
+            );
+        }
+    }
+
+    /// ONE PR IS ONE ITEM. A PR opened and then pushed to is one unit of work under two
+    /// transitions; counting the transitions would inflate the denominator and make the metric
+    /// look better the more times a PR was touched.
+    #[test]
+    fn one_pr_is_one_work_item_however_many_transitions_touched_it() {
+        let opened_then_pushed = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 76, vec![63]), false),
+            push_call("toolu_p", Some("toolu_A")),
+            open_pr_result("toolu_p", push_result_body("o/r", Some(76)), false),
+        ]
+        .join("\n");
+        let items = task_work_items(&opened_then_pushed);
+        let one = items.get("toolu_A").unwrap();
+        assert_eq!(one.len(), 1, "{one:?}");
+        assert_eq!(one[0].kind, WorkItemKind::Opened, "the stronger claim wins");
+        assert_eq!(one[0].closes, vec![63], "the linkage survives the merge");
+
+        // …in either order, and a DIFFERENT PR is still a second item.
+        let pushed_then_opened = [
+            dispatch("toolu_A", "t"),
+            push_call("toolu_p", Some("toolu_A")),
+            open_pr_result("toolu_p", push_result_body("o/r", Some(76)), false),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 76, vec![63]), false),
+            push_call("toolu_p2", Some("toolu_A")),
+            open_pr_result("toolu_p2", push_result_body("o/r", Some(77)), false),
+        ]
+        .join("\n");
+        let two = task_work_items(&pushed_then_opened);
+        let two = two.get("toolu_A").unwrap();
+        assert_eq!(two.len(), 2, "{two:?}");
+        assert_eq!(two[0].kind, WorkItemKind::Opened);
+        assert_eq!(two[1].pr, 77);
+        assert_eq!(two[1].kind, WorkItemKind::Reworked);
+    }
+
+    /// BLIND SPOT 1. The main loop is an ACTOR: a run that dispatched nothing and did its work
+    /// inline produced work items, and dropping them made the whole run invisible — which is
+    /// exactly what happened to the first capped run, whose 3 items were all inline reworks.
+    #[test]
+    fn the_main_loop_carries_the_work_items_it_produced_inline() {
+        let inline = [
+            spend("m_main", None, 1_000_000),
+            push_call("toolu_p", None),
+            open_pr_result(
+                "toolu_p",
+                push_result_body("cyclofinance/cyclo.site", Some(369)),
+                false,
+            ),
+        ]
+        .join("\n");
+        let run = run_work("20260804T114433Z", "producer", &inline, &mut |_| {
+            PrOutcome::AwaitingHuman
+        });
+        assert!(run.tasks.is_empty(), "it dispatched nothing");
+        assert_eq!(run.main_items.len(), 1);
+        assert_eq!(run.main_items[0].0.pr, 369);
+        assert_eq!(run.main_tokens, 1_000_000, "its spend is still its own");
+        assert!(run.has_actor(), "a run that worked inline is in the corpus");
+
+        // A run with spend and NO record is NOT in the corpus. Admitting it would charge its whole
+        // spend to churn on the strength of an absence — the inference this metric refuses.
+        let silent = [spend("m_main", None, 1_000_000)].join("\n");
+        let quiet = run_work("r", "producer", &silent, &mut |_| PrOutcome::Merged);
+        assert!(!quiet.has_actor());
+    }
+
+    /// BLIND SPOT 1, at the report. An inline item counts in the DENOMINATOR like any other; its
+    /// cost is NOT charged to a bucket, because the main loop's spend is orchestration and inline
+    /// work in one number and the trace holds no boundary between them. The report says so.
+    #[test]
+    fn an_inline_item_is_in_the_denominator_and_carries_no_per_item_cost() {
+        let runs = [RunWork {
+            run_id: "20260804T114433Z".to_string(),
+            role: "producer".to_string(),
+            tasks: Vec::new(),
+            main_usd: 60.0,
+            main_tokens: 109_000_000,
+            main_items: vec![
+                (item_of(369, WorkItemKind::Reworked), PrOutcome::Merged),
+                (
+                    item_of(400, WorkItemKind::Reworked),
+                    PrOutcome::AwaitingHuman,
+                ),
+            ],
+            output_usd: 2.9,
+            output_tokens: 160_556,
+        }];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(
+            r["buckets"]["landed"]["items"],
+            json!(1),
+            "in the denominator"
+        );
+        assert_eq!(r["buckets"]["delivered-awaiting-human"]["items"], json!(1));
+        // …and NOT in the bucket's cost: every dollar of it is the main loop's.
+        assert_eq!(r["buckets"]["landed"]["usd"], json!(0.0));
+        assert_eq!(r["buckets"]["landed"]["tasks"], json!(0));
+        assert_eq!(r["mainLoopUsd"], json!(60.0));
+        assert_eq!(r["corpus"]["inlineItems"], json!(2));
+        assert_eq!(r["corpus"]["inlineRuns"], json!(1));
+        assert_eq!(r["corpus"]["itemsByKind"]["reworked"], json!(2));
+        // The headline still works, because it was always TOTAL over items: 60 + 2.9 over one.
+        assert_eq!(r["totalUsd"], json!(62.9));
+        assert_eq!(r["usdPerLandedItem"], json!(62.9));
+        assert_eq!(r["usdPerDeliveredItem"], json!(31.45));
+        // The run names its inline items rather than only counting them.
+        assert_eq!(r["runs"][0]["inlineItems"][0]["pr"], json!("o/r#369"));
+        assert_eq!(r["runs"][0]["inlineItems"][0]["kind"], json!("reworked"));
+
+        let text = render_work_tokens(&r);
+        assert!(text.contains("0 tasks, 2 inline items"), "{text}");
+        assert!(text.contains("2 reworked"), "{text}");
+        // THE CAVEAT #184 asks for: a whole-run number must not be presented as a per-item one.
+        let notes = r["notes"].as_array().unwrap();
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.as_str().unwrap().contains("NO per-item cost")),
+            "{notes:?}"
+        );
+        assert!(text.contains("NO per-item cost"), "in both renderings");
     }
 
     /// Every input-side class is summed, because the question is what landing COST — and a reader

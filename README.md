@@ -1134,8 +1134,10 @@ with `^`, and one `abstract contract` pinned with `=`.
 ### Work-clone lifecycle as an MCP surface (always on)
 
 `pr-review-report mcp --profile producer` serves the **producer's** clone
-lifecycle — `clone_create`, `clone_release`, `clone_list`, `clone_gc` — plus
-**`open_pr`**, the output edge (see
+lifecycle — `clone_create`, `clone_release`, `clone_list`, `clone_gc` — plus the
+two output edges, **`push`** (see
+[pushing a rework is a transition](#pushing-a-rework-is-a-transition-push)) and
+**`open_pr`** (see
 [opening a PR is a transition](#opening-a-pr-is-a-transition-open_pr)), and the
 two **body repairs**, `repair_qa_block` and `weaken_closes` (see
 [the linkage repair](#the-linkage-repair-weaken-closes)). Unlike the vetter's
@@ -1265,14 +1267,13 @@ are **not** in `lanes`, which groups PRs.
 
 ### Opening a PR is a transition: `open_pr`
 
-Every other move the producer makes is a tool. Opening the PR — the one move
-that **is** the run's output — was a `gh pr create` inside Bash, which leaves a
-shell string in the trace and nothing a reader can join on. On the reference
-producer run that is **1,986 Bash calls against 35 MCP calls**, so the question
-"which dispatched task produced which PR" had no answer in the record the
-pipeline keeps. The cost side already had one (`token-report` splits a run by
-`parent_tool_use_id`); the output side did not, which made _what did it cost to
-land this_ unanswerable.
+Opening the PR — the one move that **is** a new PR's output — was a
+`gh pr create` inside Bash, which leaves a shell string in the trace and nothing
+a reader can join on. On the reference producer run that is **1,986 Bash calls
+against 35 MCP calls**, so the question "which dispatched task produced which
+PR" had no answer in the record the pipeline keeps. The cost side already had
+one (`token-report` splits a run by `parent_tool_use_id`); the output side did
+not, which made _what did it cost to land this_ unanswerable.
 
 `open_pr` is that edge as a tool:
 
@@ -1316,6 +1317,72 @@ The `require-qa-block` PreToolUse hook stays exactly as it is. It binds every
 session on the box, including the interactive ones with no MCP surface at all,
 which are the population it was filed about; it is simply redundant on the cron
 producer's path now.
+
+### Pushing a rework is a transition: `push`
+
+`open_pr` records a PR that did not exist before. The RUN BUDGET counts three
+other kinds of work — "a rework you push", "a conflict you resolve", "a deploy
+you dispatch" — and the first two have **one outcome between them**: the head of
+an existing PR moves. That went out as a bare `git push` inside Bash, so on the
+first capped producer run (`20260804T114433Z`) **all three** of the run's items
+were reworks, none of them left a typed record, and `work-tokens` reported
+nothing at all for a run that spent $62.90 doing three things.
+
+```json
+{ "clone": "cyclo.site-pr369", "branch": "2026-05-04-lock-price-gate-slippage" }
+```
+
+`branch` is the **remote** branch and defaults to the clone's checked-out one;
+it exists because the corpus really does push a local branch to a differently
+named remote one (`push origin pr168-work:2026-07-31-issue-162-…`).
+
+The result is the record:
+
+```json
+{
+  "repo": "cyclofinance/cyclo.site",
+  "branch": "2026-05-04-lock-price-gate-slippage",
+  "head": "9c1f…",
+  "moved": true,
+  "pr": 369
+}
+```
+
+Four properties are deliberate:
+
+- **The join is CAUSAL, not nominal.** A PR is named only when the remote ref
+  actually **moved** and an open PR on that branch has `headRefOid` **equal to
+  the commit this call pushed**. Resolving a branch name through GitHub's head
+  index is exactly the join
+  [`work-tokens` rejected `clone_create` for](#tokens-to-land-work-work-tokens):
+  `gh pr list --head main` answers with a real PR the caller never touched. Here
+  the sha is the evidence, so the record says _the head this transition created
+  is that PR's head_. Nothing moved, no PR at that head, or **two** PRs at that
+  head (one branch, two bases — a real shape), and the result carries
+  `"pr": null` plus the reason. An unattributable push is a defensible nothing;
+  a plausible-looking wrong PR is not.
+- **It cannot spell a force-push.** The argv is
+  `push origin HEAD:refs/heads/<branch>` — no flags at all — and the `branch`
+  argument is refused if it starts with `+` or contains `:`. So "the producer
+  never force-pushes" stops being a prompt rule this path could violate.
+- **The command string is not a substitute**, and that is measured rather than
+  asserted. Across the seven producer traces **76** command strings contain a
+  `git … push`; they are not one shape (`git -C <dir> push`,
+  `push origin <branch>`, `push -u origin <branch>`,
+  `push origin HEAD:<branch>`, `push origin <local>:<remote>`), several are
+  chained behind `;` into unrelated commands, and two are not pushes at all — a
+  `for c in "git push" …` loop counting occurrences in a prompt file, and a
+  `grep -c -- "git push" <file>`. A parser over that invents work items, which
+  is what a label regex was rejected for.
+- **A push that moved nothing records nothing.** Being up to date is not this
+  transition's work item, whatever the PR's head says: the head it would name
+  was put there by something else, and crediting it here is how a read-only call
+  comes to own a real PR.
+
+The screenshot push (`shots/<repo>-<n>.png` onto the `pr-screenshots` branch) is
+deliberately **not** routed through this tool: it happens in a scratch clone
+rather than a work clone, and it moves no PR head, so it records nothing either
+way.
 
 ### The subject-reference shape
 
@@ -1470,8 +1537,8 @@ The three crons are **staggered by 2 h** so work flows downstream within each
   opens drives its OWN red PRs green FIRST (existing in-flight work, non-force
   commits), THEN opens one fix PR per tractable, uncovered issue (audit-backlog
   first). Org-mutating actions: `open_pr` (a tool, not `gh pr create`),
-  `gh pr comment` (screenshots), and non-force `git push` to its own PR
-  branches. Never merges/closes/deploys/force-pushes. Skips issues with a
+  `gh pr comment` (screenshots), and `push` (a tool, not `git push`) to its own
+  PR branches. Never merges/closes/deploys/force-pushes. Skips issues with a
   `reject` verdict (parked for a human, so a rejected fix isn't re-attempted
   into dead PRs).
 - **Vetter** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) —
@@ -1487,7 +1554,8 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 
 **The org-mutating actions this routine takes are `open_pr` (the producer MCP
 tool that opens a PR, replacing `gh pr create`), `gh pr comment` (UI
-screenshots), and a non-force `git push` of fix commits to its OWN open red PR
+screenshots), and `push` (the producer MCP tool that fast-forwards a work
+clone's branch, replacing `git push`) of fix commits to its OWN open red PR
 branches (to drive them green).** It **never** merges, deploys, force-pushes, or
 closes/edits/comments-on issues. If it believes an issue should be closed
 (already fixed, invalid, duplicate) it records a _close-candidate_ — it never
@@ -2112,27 +2180,57 @@ controls; `per LANDED item` additionally depends on how fast the human merges.
 40 real labels a regex invents **eight** work items that do not exist (`batch#1`
 out of "cyclo.site conflicts batch 1", `A0#2` out of "rain.solmem A02 sentinel
 alignment PR"). A denominator that is partly hallucinated is worse than no
-metric, so there is no label parser — a task's work item is what
-[`open_pr`](#opening-a-pr-is-a-transition-open_pr) recorded, and a task with
-none is churn.
+metric, so there is no label parser — an actor's work item is what a **work-item
+transition** recorded, and an actor with none is churn.
 
-`clone_create` is typed too and is deliberately **not** a second source. Its
-`branch` names a CLONE, not a deliverable, and resolving it through GitHub's
-head index invents items exactly the way the regex does: on the 2026-07-29T17
-run one task cloned `main` to read it, and
-`gh pr list -R rainlanguage/raindex --head main` answers with a real, closed PR
-that task never touched. Typed data joined on the wrong key is still a wrong
-join.
+`clone_create` is typed too and is deliberately **not** a source. Its `branch`
+names a CLONE, not a deliverable, and resolving it through GitHub's head index
+invents items exactly the way the regex does: on the 2026-07-29T17 run one task
+cloned `main` to read it, and `gh pr list -R rainlanguage/raindex --head main`
+answers with a real, closed PR that task never touched. Typed data joined on the
+wrong key is still a wrong join.
 
-The corpus is **small and stated**: task-level rows exist only for runs that
-dispatched subagents AND whose trace survives — 3 runs, 40 tasks as of
-2026-08-03. It is a snapshot, not a trend. Every run that could not be used is
-counted with its reason, and typed coverage is printed as a fraction, so a
-reader can see how much the number rests on. Every one of those 40 tasks
-predates `open_pr`, so today coverage is 0/40, everything is churn, and the
-headline is `n/a` rather than a zero — the metric needs one merged work item to
-exist, and it starts acquiring them on the first producer run after `open_pr`
-ships.
+**Four kinds of work, and which of them are typed.** The RUN BUDGET counts "an
+issue you PR, a rework you push, a conflict you resolve, a deploy you dispatch".
+The kind comes from the TRANSITION, never from the payload:
+
+| kind of work                               | typed by                                           | item `kind` |
+| ------------------------------------------ | -------------------------------------------------- | ----------- |
+| an issue you PR                            | [`open_pr`](#opening-a-pr-is-a-transition-open_pr) | `opened`    |
+| a rework you push / a conflict you resolve | [`push`](#pushing-a-rework-is-a-transition-push)   | `reworked`  |
+| a deploy you dispatch                      | **nothing** — see below                            | —           |
+
+The middle two are one row because they are one typed effect: a moved head on an
+existing PR, which the transition cannot tell a motive apart within. The deploy
+is dispatched by the `deploy` **subcommand**, whose result reaches the trace as
+Bash text, so it carries no typed record and its work is invisible here. That is
+stated rather than patched: no producer run in the corpus has dispatched one, so
+the coverage cost today is zero, and typing it means deciding whether a
+long-running dispatch-and-watch belongs on the MCP surface at all.
+
+**One PR is one item** however many transitions touched it: a PR opened and then
+pushed to is one unit of work, and the stronger claim (`opened`) is the one
+kept. Counting the transitions would make the metric look better the more times
+a PR was reworked.
+
+**The main loop is an actor.** Attribution keys on `parent_tool_use_id`, which
+is absent for every turn the main loop takes — so inline work used to land
+nowhere, and a run that dispatched nothing was dropped from the corpus entirely.
+It carries its items now, because inline runs are permanent rather than
+transitional: fan-out is the default for INDEPENDENT items, and inline is
+correct for the rest. What is **not** available is per-item cost for that work.
+A main loop's spend is its orchestration and its inline work in one number and
+the trace holds no boundary between them, so those dollars sit in the
+`main loop` row, in no bucket, and both renderings say so. Dividing them by the
+item count would be printing a number the record does not contain.
+
+The corpus is **small and stated**: a run enters it when it dispatched a task or
+recorded an inline work item, AND its trace survives. It is a snapshot, not a
+trend. Every run that could not be used is counted with its reason, and typed
+coverage is printed as a fraction, so a reader can see how much the number rests
+on. A run that dispatched nothing and recorded nothing stays out: charging its
+whole spend to churn on the strength of an absence is the same inference this
+metric refuses everywhere else.
 
 A PR that cannot be read is `unresolved` and sits in **no** bucket: folding it
 into churn would let a transient `gh` failure print a worse waste figure, and
@@ -2377,10 +2475,10 @@ direction that matters is the one that opens a duplicate PR.
 3. Cheaply dedup against open PRs (single `jq` pass; byte-grepping the PR JSON
    is forbidden).
 4. For each tractable, genuinely-uncovered issue: clone, branch, implement a
-   minimal fix with mutation-validated tests, build + test, open ONE PR per
-   issue (the `open_pr` tool: it assigns `$PR_ASSIGNEE` and writes the
-   `Closes #N` linkage from a typed `closes` argument). If already fixed on main
-   → no PR, log a close-candidate.
+   minimal fix with mutation-validated tests, build + test, `push` the branch
+   (the tool, not `git push`), open ONE PR per issue (the `open_pr` tool: it
+   assigns `$PR_ASSIGNEE` and writes the `Closes #N` linkage from a typed
+   `closes` argument). If already fixed on main → no PR, log a close-candidate.
 5. UI PRs require a screenshot (headless chromium harness → `pr-screenshots`
    branch).
 6. End with a summary: PRs opened, issues skipped, close-candidates logged.
