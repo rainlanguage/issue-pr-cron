@@ -2174,6 +2174,55 @@ label shape (`startswith() requires string inputs`), and one of them accepted
 `audit-backlog total: 0` for a backlog that actually held 46 issues. A grouping
 computed in the tool is a grouping that cannot be silently wrong.
 
+### Covered is not fixed — `already-fixed`
+
+`uncovered-issues` splits covered from uncovered using **open** PRs' closing
+references. That is the right denominator for "is anyone already working on
+this" and the wrong one for "is this still broken": an issue whose fix has
+landed on `main` with no open PR pointing at it is `uncovered` by that
+definition, so it enters the candidate set and gets worked.
+`rainlanguage/rain.dia#60` is the shape — a producer PR opened 2026-07-18
+re-implementing an arity guard merged PR `#33` had landed on 2026-07-17, 25
+hours earlier.
+
+`pr-review-report already-fixed <owner/repo#n>...` is the missing question, and
+it is deliberately **not** part of `uncovered-issues`. It answers, per subject:
+has a MERGED PR referencing this issue landed since the issue was filed? Exit 4
+= yes, 1 = it could not tell, 0 = clear. Exit 4 is a reason to **read** that
+merged PR, never a finding that the issue is fixed — establishing that is
+`flag-close-candidate`'s job, and the recency rule both ends apply is the same
+`landed_after_filed`, so a run cannot disagree with itself about what
+"post-dates" means.
+
+Per-subject is a **cost** decision, measured: the uncovered set is 617 issues
+and the read is one GraphQL round trip each (~0.65 s over a 40-issue sample, so
+~6.7 minutes of network per run), against a producer budget of 3 work items.
+Folding it into the backlog buys ~614 answers per run that nothing reads.
+
+It reads `timelineItems(CROSS_REFERENCED_EVENT)` and **not**
+`closedByPullRequestsReferences(includeClosedPrs: true)`, which is the field
+that looks like the answer. Measured against the three cases it exists for, that
+field returns only the producer's own open PR for all three and none of the
+merged fixes — a PR appears there only when it declared a closing keyword, and
+`rain.dia#33`, `rain.dia#48` and `st0x.deploy#252` each declared none for the
+issue they fixed. A merged fix that never wrote `Closes` is exactly the fix
+`uncovered-issues` is blind to, so reading a field that requires one reproduces
+the blind spot. In a 40-issue sample of the live uncovered set, 5 issues (12.5%)
+carry such a merged reference — a look-first rate, not a skip rate, which is why
+the tool reports evidence rather than a verdict.
+
+A **PR** reference is resolved to the issues it closes and each is checked, so
+the same predicate detects the superseded-PR condition step 3 already has a
+route for ("log the narrower one as a PR close-candidate noting which PR
+supersedes it") and nothing detected. The PR being checked is excluded from its
+own result.
+
+Every uncertainty reports `unreadable` rather than a shorter list — a failed
+query, a missing filing date, a truncated timeline page, a malformed node, or a
+merge date that cannot be ordered against the filing. A shorter list is
+indistinguishable from a complete one once it is just an array, and the
+direction that matters is the one that opens a duplicate PR.
+
 ## What a run does
 
 1. `campaign-run.sh` asserts the environment before the model starts
