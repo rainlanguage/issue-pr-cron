@@ -1350,9 +1350,10 @@ because the ruling above depends on all of them working:
   On 2026-08-04 `rain-org-health#155` and `#156` each carried
   `shots/rain-org-health-<n>.png` and `worklist` reported both as having no
   screenshot — re-routing them to `screenshot-3c` every run, which is also what
-  held them out of `green-ready`. `screenshot_settled` now accepts what the
-  vetter's SCREENSHOT GATE accepts, so the two ends of the convention agree by
-  construction rather than by two spellings happening to match.
+  held them out of `green-ready`. `screenshot_settled` matches the subject the
+  vetter's SCREENSHOT GATE names — a `pr-screenshots/…png` in a trusted comment
+  — so the two ends of the convention are answering one question instead of one
+  of them matching a filename the other never mentions.
 
 The other half of #142 — moving the evidence channel so the artifact is keyed to
 branch + head sha and the shot rides in the BODY at open — is what a gate would

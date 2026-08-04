@@ -24097,9 +24097,11 @@ const SCREENSHOT_BRANCH_SEGMENT: &str = "pr-screenshots/";
 /// step 5 names a raindex shot `shots/<pr>.png` and every other repo's `shots/<repo>-<pr>.png`, and
 /// the branch also holds per-view suffixes (`shots/cyclo.site-403-after.png`) and shots carrying no
 /// PR number at all (`shots/roh-remove-overview.png`). A trusted comment ON THIS PR embedding a
-/// shot from that branch is this PR's shot — which is also exactly what the vetter's SCREENSHOT
-/// GATE accepts, so the producer's routing and the vetter's verdict cannot disagree about whether a
-/// PR has one. Matching `shots/<number>.png` instead agrees only for raindex: on 2026-08-04
+/// shot from that branch is this PR's shot — which is the subject the vetter's SCREENSHOT GATE
+/// names as well (`pr-screenshots/…png` in a trusted comment), so the producer's routing and the
+/// vetter's verdict are answering one question rather than one of them matching a filename the
+/// other never mentions. Matching `shots/<number>.png` instead agrees only for raindex: on
+/// 2026-08-04
 /// `rain-org-health#155` and `#156` each carried `shots/rain-org-health-<n>.png` and every run
 /// re-routed them to `screenshot-3c`, which is also what kept them out of `green-ready` (#142).
 fn screenshot_settled(trusted: &[String]) -> bool {
