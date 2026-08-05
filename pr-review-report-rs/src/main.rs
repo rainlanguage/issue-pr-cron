@@ -1356,6 +1356,10 @@ struct QueueCounts {
     /// `fetch_error` (#129): those rows are un-read, not unreadable, and the operator's move is to
     /// re-run rather than to go looking for broken PRs.
     rate_limited: usize,
+    /// `ai:ready` PRs an ARCHIVED repo froze (#206). SEPARATE from `excluded`, which counts rows a
+    /// human or a draft flag deliberately held back: these were never held back by anyone, and
+    /// nothing anybody does to the PR will make them mergeable again.
+    archived_repo: usize,
 }
 
 /// Render the queue: a header with the true ai:ready -> presentable / conflicting / red / pending /
@@ -1389,14 +1393,21 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
     } else {
         String::new()
     };
+    // Stated, never silent: a frozen row is one nobody can act on, and a queue that just got
+    // smaller with no reason given is what left these unnoticed in the first place (#206).
+    let archived = if c.archived_repo > 0 {
+        format!(", {} archived-repo", c.archived_repo)
+    } else {
+        String::new()
+    };
     let shown = if top == 0 {
         rows.len()
     } else {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, limited, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{}{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, limited, excl, archived, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -1509,6 +1520,429 @@ mod org_tests {
             super::org_search_query("a, b\tc"),
             "is:pr is:open org:a org:b org:c"
         );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// ARCHIVED REPOS — the blind spot every org-wide enumeration shared (#206).
+//
+// An archived repo is READ-ONLY. Its issues and PRs keep answering `gh search`, so every
+// enumeration in this binary kept offering them; but `gh issue edit`, `gh issue close`,
+// `gh pr merge` and `gh pr comment` all refuse against one, which means EVERY transition this
+// FSM owns is unavailable on those rows. `next_close_candidate` is where it bit: `rain.webapp`
+// was archived on 2026-08-05 and, minutes later, `rain.webapp#139` was served as the HEAD of the
+// human's queue — a sound flag, a completed read, and no ruling that could be written. The flag
+// queue is ordered OLDEST FIRST, so a frozen row does not merely appear, it sorts to the front
+// and stays there.
+//
+// THE FILTER BELONGS IN THE TOOL, NOT IN A PROMPT. Archived repos have been skipped by prompt
+// instruction before, and that works for the producer, which reads a list and chooses what to
+// work. It cannot work for a tool whose contract is "here is the next thing to rule on, ranked,
+// one at a time": a row the caller cannot act on is not something to skip past, it is the head of
+// the queue until something removes it.
+//
+// AND THE ROWS ARE WITHHELD WITH A COUNT, NEVER SILENTLY. Silence is what let the flags in
+// `rain.webapp` sit unnoticed in the first place, and a caller who sees a queue shrink with
+// nothing to explain the gap has to re-derive the reason from outside the tool — the same defect
+// the vetter's state-load fixed by counting every skip. So each surface reports how many rows an
+// archived repo froze, in the same place it reports its other withheld sets.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Every archived `owner/repo` in the [`org_names`] scope, ASCII-lowercased.
+///
+/// Lowercased because the two sides come from different GitHub APIs — the repository connection
+/// spells the slug as the repo is named, `gh search` echoes what the URL carried — and GitHub
+/// treats owner and name case-insensitively. Comparing raw would let a case difference read as
+/// "not archived", which is the one direction of error this whole section exists to prevent.
+struct ArchivedRepos(std::collections::BTreeSet<String>);
+
+impl ArchivedRepos {
+    fn contains(&self, slug: &str) -> bool {
+        self.0.contains(&slug.to_ascii_lowercase())
+    }
+
+    #[cfg(test)]
+    fn from_slugs<I: IntoIterator<Item = S>, S: AsRef<str>>(slugs: I) -> Self {
+        ArchivedRepos(
+            slugs
+                .into_iter()
+                .map(|s| s.as_ref().to_ascii_lowercase())
+                .collect(),
+        )
+    }
+}
+
+/// The GraphQL page behind [`archived_repos`], one owner at a time.
+///
+/// `repositoryOwner` rather than `organization` because [`org_names`] is a list of OWNERS and a
+/// user account is a legal one; the interface resolves either, and `isArchived:` is a filter on
+/// the connection itself so the server returns only the archived set rather than the whole one.
+///
+/// NOT `gh search repos --archived=true`, which is the cheap-looking alternative and is WRONG.
+/// Search is an INDEX, and the index is incomplete: measured on 2026-08-05, the repository
+/// connection reported 38 archived repos across the three configured orgs and the search reported
+/// 37 — it had no row for `rainlanguage/assemblyscript-cbor-fork`, which `gh repo view` confirms
+/// is archived. The same staleness applies to the `--archived=false` qualifier on the issue and PR
+/// searches, so filtering server-side inside each existing search would inherit the gap. It is
+/// also the WORST staleness to inherit here: the defect is a repo archived MINUTES before the
+/// read, which is exactly when an index has not caught up.
+const ARCHIVED_REPOS_QUERY: &str = "query($org: String!, $cursor: String) {
+  repositoryOwner(login: $org) {
+    repositories(first: 100, isArchived: true, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { nameWithOwner }
+    }
+  }
+}";
+
+/// PURE: one page of [`ARCHIVED_REPOS_QUERY`] — the slugs it names, and the cursor of the page
+/// after it (`None` when this was the last).
+///
+/// A response whose shape cannot be read is [`GhFailure::Malformed`] and NEVER an empty page: an
+/// empty page reads as "nothing here is archived", which is precisely the false negative that puts
+/// a frozen row back at the head of the queue.
+///
+/// `hasNextPage` with no `endCursor` is malformed too, rather than treated as the end. GitHub does
+/// not produce it, and reading it as "done" would silently truncate the set — under-reporting
+/// archived repos in the one direction that fails open.
+fn archived_repos_page(v: &Value) -> Result<(Vec<String>, Option<String>), GhFailure> {
+    let Some(conn) = v.pointer("/data/repositoryOwner/repositories") else {
+        return Err(GhFailure::Malformed);
+    };
+    let Some(nodes) = conn.get("nodes").and_then(|n| n.as_array()) else {
+        return Err(GhFailure::Malformed);
+    };
+    let mut slugs = Vec::with_capacity(nodes.len());
+    for n in nodes {
+        let Some(slug) = n.get("nameWithOwner").and_then(|s| s.as_str()) else {
+            return Err(GhFailure::Malformed);
+        };
+        slugs.push(slug.to_ascii_lowercase());
+    }
+    let has_next = conn
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !has_next {
+        return Ok((slugs, None));
+    }
+    let Some(cursor) = conn
+        .pointer("/pageInfo/endCursor")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty())
+    else {
+        return Err(GhFailure::Malformed);
+    };
+    Ok((slugs, Some(cursor.to_string())))
+}
+
+/// PURE: the `gh api graphql` argv for one owner's page.
+fn archived_repos_args(org: &str, cursor: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "graphql".to_string(),
+        "-f".to_string(),
+        format!("query={ARCHIVED_REPOS_QUERY}"),
+        "-f".to_string(),
+        format!("org={org}"),
+    ];
+    if let Some(c) = cursor {
+        args.push("-f".to_string());
+        args.push(format!("cursor={c}"));
+    }
+    args
+}
+
+/// LIVE: every archived repo in the configured org scope.
+///
+/// DELIBERATELY NOT MEMOISED ACROSS CALLS. The whole defect is a repo that became read-only
+/// UNDERNEATH a live queue — four minutes elapsed between `rain.webapp` being archived and the
+/// queue serving a flag from it — and `mcp` is a long-lived process, so a set cached at server
+/// start would answer with the world as it was whenever the human last restarted it. Each
+/// enumeration reads it ONCE, at the top, and shares that one answer across its whole loop:
+/// measured 1.8s for the three configured orgs (one page each, 38 repos), against 0.5s per
+/// DISTINCT repo for the per-repo `gh repo view --json isArchived` alternative — which is the
+/// lookup-inside-a-loop that would not be affordable, since the enumerations span 40–60 distinct
+/// repos.
+fn archived_repos() -> Result<ArchivedRepos, GhFailure> {
+    let mut set = std::collections::BTreeSet::new();
+    for org in org_names(&std::env::var("ORGS").unwrap_or_default()) {
+        let mut cursor: Option<String> = None;
+        loop {
+            let args = archived_repos_args(&org, cursor.as_deref());
+            let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+            let v = gh_retrying(|| gh_api_result(&argref))?;
+            let (slugs, next) = archived_repos_page(&v)?;
+            set.extend(slugs);
+            let Some(next) = next else { break };
+            cursor = Some(next);
+        }
+    }
+    Ok(ArchivedRepos(set))
+}
+
+/// The one message every surface refuses with when the archived set cannot be read.
+///
+/// An UNREADABLE archived-state must never collapse to "not archived" (#199 gave the failure a
+/// type precisely so it could not). Both fail-open and fail-closed are wrong here and in opposite
+/// directions: treating everything as live re-creates the defect, and treating everything as
+/// archived empties the queue and hides all the real work. So the enumeration ABORTS, which is
+/// what every other read in this binary already does when it cannot answer honestly — the caller
+/// gets a refusal it can retry rather than a queue it cannot trust.
+fn archived_read_error(f: GhFailure) -> String {
+    format!(
+        "error: could not read which repos are archived ({f:?}) — aborting rather than offer \
+         rows from a repo that refuses every transition"
+    )
+}
+
+/// PURE: the one-line note a plain-text surface appends when an archived repo froze rows out of
+/// it. EMPTY at zero, so an operator never reads a count that says nothing happened — and never
+/// silent above zero, which is the whole point.
+fn archived_note(n: usize) -> String {
+    if n == 0 {
+        String::new()
+    } else {
+        format!(" ({n} withheld: archived repo, unactionable)")
+    }
+}
+
+/// PURE: split search hits into the ones a transition can still act on and the ones an archived
+/// repo has frozen, preserving order in both.
+///
+/// A hit whose slug will not PARSE is KEPT, never counted as archived. Every caller already has an
+/// error path for an unaddressable row, and answering "is this archived?" with a guess about a
+/// reference nobody could resolve would replace a reported error with a silent drop.
+fn withhold_archived(
+    hits: Vec<Value>,
+    archived: &ArchivedRepos,
+    slug_of: impl Fn(&Value) -> Option<String>,
+) -> (Vec<Value>, Vec<Value>) {
+    let mut live = Vec::with_capacity(hits.len());
+    let mut frozen = Vec::new();
+    for hit in hits {
+        match slug_of(&hit) {
+            Some(slug) if archived.contains(&slug) => frozen.push(hit),
+            _ => live.push(hit),
+        }
+    }
+    (live, frozen)
+}
+
+/// PURE: the `owner/repo` a `gh search issues` / `gh search prs` hit names, from the
+/// `repository.nameWithOwner` the searches all ask for, falling back to the URL. The one slug
+/// reader [`withhold_archived`] is handed, so no surface can disagree with another about which
+/// repo a hit belongs to.
+fn hit_slug(hit: &Value) -> Option<String> {
+    hit.get("repository")
+        .and_then(|r| r.get("nameWithOwner"))
+        .and_then(|s| s.as_str())
+        .map(String::from)
+        .or_else(|| {
+            hit.get("url")
+                .and_then(|u| u.as_str())
+                .and_then(|u| pr_slug(u).or_else(|| issue_slug(u)))
+        })
+}
+
+#[cfg(test)]
+mod archived_repos_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn page(nodes: Value, has_next: bool, end: Value) -> Value {
+        json!({"data": {"repositoryOwner": {"repositories": {
+            "pageInfo": {"hasNextPage": has_next, "endCursor": end},
+            "nodes": nodes,
+        }}}})
+    }
+
+    /// The live shape, copied from `gh api graphql` against `cyclofinance` on 2026-08-05.
+    #[test]
+    fn a_page_yields_its_slugs_lowercased_and_no_cursor_when_it_is_the_last() {
+        let v = page(
+            json!([
+                {"nameWithOwner": "cyclofinance/cyclo.rewardsold"},
+                {"nameWithOwner": "cyclofinance/rflr-nix"},
+            ]),
+            false,
+            json!("Y3Vyc29yOnYyOpHONxZ8-g=="),
+        );
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((
+                vec![
+                    "cyclofinance/cyclo.rewardsold".to_string(),
+                    "cyclofinance/rflr-nix".to_string(),
+                ],
+                None
+            ))
+        );
+    }
+
+    /// Casing is normalised on the way IN, so a slug spelled differently by the two APIs still
+    /// matches. GitHub owners and names are case-insensitive; a raw compare would read a case
+    /// difference as "not archived" — the one direction that fails open.
+    #[test]
+    fn slugs_are_lowercased_so_the_two_apis_spellings_agree() {
+        let v = page(
+            json!([{"nameWithOwner": "RainLanguage/Rain.Webapp"}]),
+            false,
+            json!(null),
+        );
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((vec!["rainlanguage/rain.webapp".to_string()], None))
+        );
+        let set = ArchivedRepos::from_slugs(["RainLanguage/Rain.Webapp"]);
+        assert!(set.contains("rainlanguage/rain.webapp"));
+        assert!(set.contains("RAINLANGUAGE/RAIN.WEBAPP"));
+    }
+
+    #[test]
+    fn a_page_with_more_after_it_yields_the_cursor() {
+        let v = page(json!([{"nameWithOwner": "o/r"}]), true, json!("CUR"));
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((vec!["o/r".to_string()], Some("CUR".to_string())))
+        );
+    }
+
+    /// Every unreadable shape is `Malformed`, never an empty page. An empty page reads as
+    /// "nothing is archived", which puts every frozen row straight back at the head of the queue.
+    #[test]
+    fn an_unreadable_response_is_malformed_never_an_empty_set() {
+        for bad in [
+            json!({}),
+            json!({"data": {}}),
+            json!({"data": {"repositoryOwner": null}}),
+            // The connection is there but the node list is not.
+            json!({"data": {"repositoryOwner": {"repositories": {"pageInfo": {"hasNextPage": false}}}}}),
+            // A node with no slug — one unaddressable repo must not silently shrink the set.
+            page(
+                json!([{"nameWithOwner": "o/r"}, {"id": "x"}]),
+                false,
+                json!(null),
+            ),
+            // `hasNextPage` with nothing to page WITH would silently truncate the set.
+            page(json!([{"nameWithOwner": "o/r"}]), true, json!(null)),
+            page(json!([{"nameWithOwner": "o/r"}]), true, json!("")),
+        ] {
+            assert_eq!(
+                archived_repos_page(&bad),
+                Err(GhFailure::Malformed),
+                "{bad} must not read as an empty archived set"
+            );
+        }
+    }
+
+    /// The cursor is threaded into the NEXT page's argv, and the first page carries none.
+    #[test]
+    fn the_argv_names_the_owner_and_pages_with_the_cursor() {
+        let first = archived_repos_args("rainlanguage", None);
+        assert_eq!(first[0], "graphql");
+        assert!(first.contains(&format!("query={ARCHIVED_REPOS_QUERY}")));
+        assert!(first.contains(&"org=rainlanguage".to_string()));
+        assert!(
+            !first.iter().any(|a| a.starts_with("cursor=")),
+            "the first page has nothing to page from: {first:?}"
+        );
+        let next = archived_repos_args("rainlanguage", Some("CUR"));
+        assert!(next.contains(&"cursor=CUR".to_string()));
+    }
+
+    /// The query asks the REPOSITORY CONNECTION, not the search index — the index was measured
+    /// incomplete (37 of 38 archived repos on 2026-08-05), and a repo archived minutes ago is
+    /// exactly the row an index has not caught up with.
+    #[test]
+    fn the_query_reads_the_repository_connection_filtered_to_archived() {
+        assert!(ARCHIVED_REPOS_QUERY.contains("repositoryOwner"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("isArchived: true"));
+        // Paged, so an owner with more than one page of archived repos is not truncated.
+        assert!(ARCHIVED_REPOS_QUERY.contains("hasNextPage"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("endCursor"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("$cursor"));
+    }
+
+    #[test]
+    fn hits_in_archived_repos_are_withheld_and_the_rest_keep_their_order() {
+        let hits = vec![
+            json!({"number": 1, "repository": {"nameWithOwner": "rainlanguage/raindex"}}),
+            json!({"number": 139, "repository": {"nameWithOwner": "rainlanguage/rain.webapp"}}),
+            json!({"number": 2, "repository": {"nameWithOwner": "rainlanguage/rain.erc4626.words"}}),
+        ];
+        let (live, frozen) = withhold_archived(
+            hits,
+            &ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]),
+            hit_slug,
+        );
+        assert_eq!(
+            live.iter()
+                .map(|h| h["number"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
+        assert_eq!(frozen.len(), 1);
+        assert_eq!(frozen[0]["number"], 139);
+    }
+
+    /// An EMPTY archived set withholds nothing — the filter must be inert where it has no answer
+    /// to give, or a queue would shrink for a reason that is not archiving.
+    #[test]
+    fn an_empty_archived_set_withholds_nothing() {
+        let hits = vec![json!({"number": 1, "repository": {"nameWithOwner": "o/r"}})];
+        let (live, frozen) = withhold_archived(
+            hits.clone(),
+            &ArchivedRepos::from_slugs::<[&str; 0], _>([]),
+            hit_slug,
+        );
+        assert_eq!(live, hits);
+        assert!(frozen.is_empty());
+    }
+
+    /// An unaddressable hit is KEPT, so the caller's own error path still reports it. Counting it
+    /// as archived would swap a reported error for a silent drop.
+    #[test]
+    fn an_unparseable_hit_is_kept_rather_than_counted_as_archived() {
+        let hits = vec![json!({"number": 1, "title": "no repo, no url"})];
+        let (live, frozen) = withhold_archived(
+            hits.clone(),
+            &ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]),
+            hit_slug,
+        );
+        assert_eq!(live, hits);
+        assert!(frozen.is_empty());
+    }
+
+    /// `nameWithOwner` is authoritative; the URL is the fallback, for issues and PRs alike.
+    #[test]
+    fn a_hit_is_addressed_by_its_repository_and_falls_back_to_the_url() {
+        assert_eq!(
+            hit_slug(&json!({"repository": {"nameWithOwner": "o/r"}})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(
+            hit_slug(&json!({"url": "https://github.com/o/r/issues/7"})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(
+            hit_slug(&json!({"url": "https://github.com/o/r/pull/7"})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(hit_slug(&json!({"number": 1})), None);
+    }
+
+    /// The refusal names the TYPED failure, and says which way it refused — an unreadable
+    /// archived-state is never allowed to read as "not archived".
+    #[test]
+    fn an_unreadable_archived_set_aborts_rather_than_reading_as_not_archived() {
+        let msg = archived_read_error(GhFailure::Unauthorized);
+        assert!(msg.starts_with("error:"), "{msg}");
+        assert!(msg.contains("Unauthorized"), "{msg}");
+        assert!(msg.contains("aborting"), "{msg}");
+        assert!(archived_read_error(GhFailure::RateLimited {
+            retry_after: Some(3)
+        })
+        .contains("RateLimited"),);
     }
 }
 
@@ -1897,6 +2331,12 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     let Some(arr) = val.as_array() else {
         return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
     };
+    // An `ai:ready` PR in an ARCHIVED repo cannot be merged, relabelled or commented on, so it is
+    // not presentable however green it is (#206). Withheld BEFORE the per-PR fetch below, which
+    // costs a `gh pr view` + a threads query per candidate — paying that for a row no ruling can
+    // reach is the second cost of the same bug.
+    let archived_set = archived_repos().map_err(archived_read_error)?;
+    let (arr, frozen) = withhold_archived(arr.clone(), &archived_set, hit_slug);
 
     // Candidate filter (from the search JSON, no extra call): drop drafts and any PR whose ai:ready
     // is overridden by a human:* label (the human's verdict wins).
@@ -1920,7 +2360,10 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     // whole point, so each candidate's real CI rollup + mergeable + reviewDecision is fetched.
     let mut rows: Vec<PresentablePr> = Vec::new();
     let mut counts = QueueCounts {
-        raw: arr.len(),
+        // `raw` stays the WHOLE `ai:ready` population, frozen rows included, so the header's
+        // "N ai:ready -> M presentable" still accounts for every row the search returned and the
+        // archived count explains part of the difference rather than vanishing from both sides.
+        raw: arr.len() + frozen.len(),
         excluded: arr.len() - candidates.len(),
         conflict: 0,
         red: 0,
@@ -1931,6 +2374,7 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         open_threads: 0,
         fetch_error: 0,
         rate_limited: 0,
+        archived_repo: frozen.len(),
     };
     // The fetches run concurrently; the COUNTING does not. `map_bounded` hands back one outcome
     // per candidate in candidate order, and `apply_outcome` folds them serially, so the counts and
@@ -2109,6 +2553,7 @@ mod parallel_queue_tests {
             open_threads: 0,
             fetch_error: 0,
             rate_limited: 0,
+            archived_repo: 0,
         }
     }
 
@@ -16094,6 +16539,7 @@ fn human_queue_doc(
     open: Option<&[OpenIssue]>,
     leaks: &[(SubjectRef, String)],
     total_producer_prs: usize,
+    archived_prs: &[SubjectRef],
     now_ms: i64,
 ) -> Value {
     let bmap: serde_json::Map<String, Value> = buckets
@@ -16109,6 +16555,11 @@ fn human_queue_doc(
         "closeCandidateUnvetted": cc_unvetted,
         "closeCandidateUpheld": cc_upheld,
         "uncoveredIssues": SubjectRef::array(backlog),
+        // The producer PRs an ARCHIVED repo froze (#206). A top-level array beside the lanes, not a
+        // lane of its own: a lane names a state the machine can move out of, and this one names a
+        // repo that will never accept another write. The dashboard's lane totals therefore stay
+        // "PRs the machine can still act on", with the frozen ones accounted for right here.
+        "archivedRepoPrs": SubjectRef::array(archived_prs),
         "leaks": leaks
             .iter()
             .map(|(s, reason)| s.to_json_with(&[("reason", Value::from(reason.as_str()))]))
@@ -16131,6 +16582,7 @@ fn human_queue_doc(
             "closeCandidateUpheld": cc_upheld_n,
             "leaks": leaks.len(),
             "totalProducerPrs": total_producer_prs,
+            "archivedRepoPrs": archived_prs.len(),
             // Producer untouched backlog — open issues with no covering open PR, excluding
             // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
             "uncoveredIssues": backlog.len(),
@@ -16206,6 +16658,36 @@ fn human_queue_mode(json_out: bool) -> i32 {
         eprintln!("error: `gh search prs --author {assignee}` failed — aborting rather than print a false-empty queue");
         return 1;
     };
+    // A PR in an ARCHIVED repo belongs in no lane (#206): every lane names a transition, and an
+    // archived repo refuses all of them. Withheld from the buckets and REPORTED as its own
+    // top-level count — this document is the dashboard's source, so a row that silently vanished
+    // from a lane would show as a lane that quietly shrank.
+    let archived_set = match archived_repos() {
+        Ok(s) => s,
+        Err(f) => {
+            eprintln!("{}", archived_read_error(f));
+            return 1;
+        }
+    };
+    let (prs, frozen) = withhold_archived(prs, &archived_set, hit_slug);
+    let archived_prs: Vec<SubjectRef> = frozen
+        .iter()
+        .filter_map(|p| {
+            let url = p
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string();
+            let slug = pr_slug(&url)?;
+            let num = p.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+            let title = p
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(SubjectRef::new(slug, num, url, title))
+        })
+        .collect();
 
     // One pass: the legacy label bucket (`states`, unchanged) + a per-PR `(SubjectRef, labels)`
     // record the lane classifier consumes. `unlabeled` = PRs with no `ai:*` label (leak candidates).
@@ -16337,10 +16819,17 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .map(|s| s.to_string()),
     );
     let iref: Vec<&str> = iargs.iter().map(String::as_str).collect();
+    // Filtered through the SAME archived set the lanes above use, so this legacy count and the
+    // vetted close-candidate figures below cannot disagree about which flags are actionable.
     let close_issues = close_candidate_issue_refs(
-        &gh_json(&iref)
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default(),
+        &withhold_archived(
+            gh_json(&iref)
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default(),
+            &archived_set,
+            hit_slug,
+        )
+        .0,
     );
 
     // Close-candidate vet state, as `(unvetted, upheld)`. Computed from the same state-load the
@@ -16402,6 +16891,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
             open.as_deref(),
             &leaks,
             prs.len(),
+            &archived_prs,
             // The one impure input to the age arithmetic: "now", taken once so every emitted
             // age in this snapshot measures against the same instant.
             now_unix() * 1000,
@@ -16431,8 +16921,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
     };
     println!(
-        "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs) ===",
-        prs.len()
+        "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs{}) ===",
+        prs.len(),
+        archived_note(archived_prs.len())
     );
     println!(
         "▓▓ Producer backlog — untouched issues, no open PR (excl. human-gated / close-candidate): {}",
@@ -18159,6 +18650,11 @@ enum VetAction {
     /// flag), a malformed `blocked-by` line, an unresolvable ref, or a clearance write that
     /// failed. Never auto-cleared, never vetted, never silent: the row names every reason (#161).
     SkipBlockedOnManual,
+    /// The repo is ARCHIVED (#206). Not a property of the PR at all: `record_verdict` applies a
+    /// label and posts a comment, and a read-only repo refuses both, so no verdict this tool can
+    /// form is writable. Its own action rather than a fold into `SkipHuman`, because nobody
+    /// decided anything — and unlike every other skip here, no future push clears it.
+    SkipArchivedRepo,
 }
 
 impl VetAction {
@@ -18171,6 +18667,7 @@ impl VetAction {
             VetAction::SkipOpenThreads => "skip-open-threads",
             VetAction::SkipBlockedOn => "skip-blocked-on",
             VetAction::SkipBlockedOnManual => "blocked-on-manual-review",
+            VetAction::SkipArchivedRepo => "skip-archived-repo",
         }
     }
 }
@@ -18378,6 +18875,7 @@ fn unvetted_doc(
     let mut open_threads: Vec<Value> = Vec::new();
     let mut blocked_on: Vec<Value> = Vec::new();
     let mut blocked_manual: Vec<Value> = Vec::new();
+    let mut archived: Vec<Value> = Vec::new();
     let (mut n_draft, mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize, 0usize);
     for (action, prio, row) in rows {
         match action {
@@ -18425,6 +18923,16 @@ fn unvetted_doc(
                             "reasons": row.get("blockedOnReasons").cloned().unwrap_or(Value::Null),
                         }));
                     }
+                    // UNCONDITIONAL, like `openThreads` and manual-review, and for the stronger
+                    // version of their reason: this PR is not merely un-vetted this run, it can
+                    // never be vetted again, and no push will change that (#206).
+                    VetAction::SkipArchivedRepo => {
+                        archived.push(serde_json::json!({
+                            "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+                            "url": row.get("url").cloned().unwrap_or(Value::Null),
+                            "why": row.get("why").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
                     // `Vet` is taken by the arm above; the only action left here is vetted-at-head.
                     VetAction::SkipVetted | VetAction::Vet => n_vetted += 1,
                 }
@@ -18438,8 +18946,10 @@ fn unvetted_doc(
     let prs: Vec<Value> = page_rows.into_iter().map(|(_, _, r)| r).collect();
     let (open_threads, more_threads) = page(open_threads, limit);
     let (n_blocked, n_blocked_manual) = (blocked_on.len(), blocked_manual.len());
+    let n_archived = archived.len();
     let (blocked_on, more_blocked) = page(blocked_on, limit);
     let (blocked_manual, more_blocked_manual) = page(blocked_manual, limit);
+    let (archived, more_archived) = page(archived, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "open": rows.len(),
@@ -18450,6 +18960,7 @@ fn unvetted_doc(
             "skipOpenThreads": n_threads,
             "skipBlockedOn": n_blocked,
             "blockedOnManualReview": n_blocked_manual,
+            "skipArchivedRepo": n_archived,
         },
         "prs": prs,
         // How many vet-able PRs this page LEFT BEHIND. A caller that reads `prs.len()` as the whole
@@ -18461,6 +18972,8 @@ fn unvetted_doc(
         "moreBlockedOn": more_blocked,
         "blockedOnManualReview": blocked_manual,
         "moreBlockedOnManualReview": more_blocked_manual,
+        "archivedRepo": archived,
+        "moreArchivedRepo": more_archived,
     });
     if include_skipped {
         let (rows, more_skipped) = page(skipped, limit);
@@ -18481,6 +18994,11 @@ const CC_CLEAR_NO_FLAG: &str = "clear-stranded-no-flag";
 /// The action a [`CcGate::RejectedStillFlagged`] issue asks for: the recorded verdict on the live
 /// flag is `reject`, and the label is on the issue anyway.
 const CC_CLEAR_REJECTED: &str = "clear-stranded-rejected";
+
+/// The action a [`CcGate::RepoArchived`] issue asks for: NOTHING. It is the one state here that
+/// names no move at all — the repo refuses every write, so the row exists to be COUNTED and named,
+/// never to be worked (#206).
+const CC_SKIP_ARCHIVED: &str = "skip-archived-repo";
 
 /// PURE: the trusted `🤖 ai:vetter` comment that RECORDS a stranded-label clearance, or `None` for
 /// any state that is not stranded — so a live flag cannot be cleared by construction rather than by
@@ -18528,7 +19046,14 @@ fn cc_stranded_cleared_comment(gate: CcGate, flag_at: &str) -> Option<String> {
              and no AI actor clears them."
                 .to_string(),
         ),
-        CcGate::Presentable | CcGate::HumanRuled | CcGate::Unvetted => None,
+        // NEVER `RepoArchived`: the clearance is a `--remove-label` plus a comment, and an
+        // archived repo refuses both — a clearance attempted there fails on every run and reports
+        // `clearanceFailed` for ever. Total over the enum on purpose, so a new state is
+        // non-clearable until somebody decides otherwise.
+        CcGate::Presentable
+        | CcGate::HumanRuled
+        | CcGate::Unvetted
+        | CcGate::RepoArchived => None,
     }
 }
 
@@ -18546,20 +19071,28 @@ fn cc_stranded_cleared_comment(gate: CcGate, flag_at: &str) -> Option<String> {
 /// while the label kept the issue out of the producer's backlog. They now ask for a CLEARANCE,
 /// which the live fetch performs — see [`cc_stranded_cleared_comment`] for what it may and may not
 /// do.
-fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (CcGate, &'static str, Value) {
+fn cc_row(
+    slug: &str,
+    num: u64,
+    title: &str,
+    detail: &Value,
+    repo_archived: bool,
+) -> (CcGate, &'static str, Value) {
     let labels = label_names(detail);
     let human = has_human_ruling(&labels);
     let flag = last_close_candidate_flag(detail);
     let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
     let vetted = cc_vetted_at_flag(detail, &flag_at);
     let gate = cc_gate(
+        repo_archived,
         human,
         &flag_at,
         last_cc_vetter_comment(detail).and_then(|b| cc_verdict_parts(&b)),
     );
-    // Precedence is `cc_gate`'s, which is the PR side's: a human ruling dominates, then "nothing
-    // was claimed", then what the vetter did with the claim.
+    // Precedence is `cc_gate`'s, which is the PR side's: writability first, then a human ruling,
+    // then "nothing was claimed", then what the vetter did with the claim.
     let action = match gate {
+        CcGate::RepoArchived => CC_SKIP_ARCHIVED,
         CcGate::HumanRuled => "skip-human-decided",
         CcGate::NoFlag => CC_CLEAR_NO_FLAG,
         CcGate::RejectedStillFlagged => CC_CLEAR_REJECTED,
@@ -18717,9 +19250,17 @@ fn unvetted_close_candidates_fetch(
     // The SAME search the human's `next_close_candidate` gate runs, shared rather than written
     // twice: two spellings of "which issues are flagged" is how the vetter's inbox and the human's
     // would come to answer differently.
-    let found = flagged_open_issues()?;
+    let FlaggedIssues {
+        hits: found,
+        archived: archived_repos,
+    } = flagged_open_issues()?;
     // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
     // reported (see `fetchErrors` below), never dropped.
+    // A flag in an ARCHIVED repo is not vettable either (#206): `record_close_candidate_verdict`
+    // writes a comment and, on reject, strips a label — both refused by a read-only repo. It is
+    // classified as such by `cc_row`, which is the SAME classifier the human's inbox reads, and
+    // counted here for the same reason every other skip is.
+    let mut archived_flags: Vec<Value> = Vec::new();
 
     let mut rows: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
@@ -18758,7 +19299,14 @@ fn unvetted_close_candidates_fetch(
             }));
             continue;
         };
-        let (gate, action, mut row) = cc_row(&slug, num, title, &detail);
+        let (gate, action, mut row) =
+            cc_row(&slug, num, title, &detail, archived_repos.contains(&slug));
+        // Filed and counted, never vetted and never CLEARED: an archived repo refuses the label
+        // removal a clearance is, so attempting one would fail on every run for ever (#206).
+        if gate == CcGate::RepoArchived {
+            archived_flags.push(row);
+            continue;
+        }
         // The CLEARANCE, run every state-load exactly as the `ai:blocked-on` one is (#161): a
         // stranded label is machine-detectable from typed data, so it is repaired by machinery
         // rather than found by a human building a tool. Attempted BEFORE the row is filed, so the
@@ -18779,7 +19327,10 @@ fn unvetted_close_candidates_fetch(
                     match gate {
                         CcGate::NoFlag => n_cleared_no_flag += 1,
                         CcGate::RejectedStillFlagged => n_cleared_rejected += 1,
-                        CcGate::Presentable | CcGate::HumanRuled | CcGate::Unvetted => {
+                        CcGate::Presentable
+                        | CcGate::HumanRuled
+                        | CcGate::Unvetted
+                        | CcGate::RepoArchived => {
                             unreachable!(
                             "{gate:?} is not stranded — cc_stranded_cleared_comment returned None"
                         )
@@ -18817,10 +19368,11 @@ fn unvetted_close_candidates_fetch(
     let (clear_failures_page, more_clear_failures) = page(clear_failures, limit);
     let mut doc = serde_json::json!({
         "counts": {
-            "flagged": found.len(),
+            "flagged": found.len() + archived_flags.len(),
             "vet": n_vet,
             "skipHumanDecided": n_human,
             "skipVettedAtFlag": n_vetted,
+            "skipArchivedRepo": archived_flags.len(),
             // THE NUMBERS THAT GROW (#179). A stranded flag used to be visible only when a human
             // typed `/ncc` and read `strandedFlags` — detection in a tool nobody runs on a
             // schedule. These are emitted by the VETTER's own state-load, every run, so a
@@ -18842,6 +19394,10 @@ fn unvetted_close_candidates_fetch(
         "moreClearanceFailures": more_clear_failures,
         "issues": issues,
         "more": more,
+        // UNBOUNDED like `cleared` / `clearanceFailures`, and for the strongest version of their
+        // reason: these flags will never be judged by anything, so a page that hid some of them
+        // would hide a permanent state rather than defer a transient one.
+        "archivedRepoFlags": archived_flags,
         "fetchErrors": errors,
     });
     if include_skipped {
@@ -19203,8 +19759,31 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         .ok_or_else(|| {
             format!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty vet queue")
         })?;
+    // A PR in an ARCHIVED repo cannot be vetted (#206): `record_verdict` applies a label and posts
+    // a comment, and a read-only repo refuses both. Withheld before the per-PR fetch — paying a
+    // `gh pr view` per frozen PR buys a verdict nothing can record — and carried as a row with its
+    // OWN action, so the state-load counts it where it counts every other skip.
+    let archived_set = archived_repos().map_err(archived_read_error)?;
+    let (prs, frozen) = withhold_archived(prs, &archived_set, hit_slug);
 
     let mut rows: Vec<(VetAction, u8, Value)> = Vec::new();
+    for p in &frozen {
+        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        rows.push((
+            VetAction::SkipArchivedRepo,
+            4,
+            serde_json::json!({
+                "pr": pr_slug(url)
+                    .zip(p.get("number").and_then(|n| n.as_u64()))
+                    .map_or_else(String::new, |(slug, num)| format!("{slug}#{num}")),
+                "url": url,
+                "title": p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+                "labels": label_names(p),
+                "action": VetAction::SkipArchivedRepo.as_str(),
+                "why": ARCHIVED_REPO_WHY,
+            }),
+        ));
+    }
     for p in &prs {
         let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let (Some(slug), Some(num)) = (pr_slug(url), p.get("number").and_then(|n| n.as_u64()))
@@ -19279,7 +19858,7 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     }
     let c = &doc["counts"];
     println!(
-        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review)",
+        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
         c["vet"],
         c["open"],
         c["skipDraft"],
@@ -19287,7 +19866,8 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
         c["skipVettedAtHead"],
         c["skipOpenThreads"],
         c["skipBlockedOn"],
-        c["blockedOnManualReview"]
+        c["blockedOnManualReview"],
+        c["skipArchivedRepo"]
     );
     for p in doc["prs"].as_array().into_iter().flatten() {
         println!(
@@ -19328,6 +19908,16 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
             "  {}  [blocked-on MANUAL REVIEW · {}]",
             b["pr"].as_str().unwrap_or(""),
             b["reasons"]
+        );
+    }
+    // Also unconditional (#206): a frozen PR is one the vetter will never be able to judge, and
+    // the only reason it is not in the queue is a fact about the REPO that nothing here reports
+    // otherwise.
+    for a in doc["archivedRepo"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [withheld · {}]",
+            a["pr"].as_str().unwrap_or(""),
+            a["why"].as_str().unwrap_or(ARCHIVED_REPO_WHY)
         );
     }
     0
@@ -20232,6 +20822,10 @@ fn next_ready_doc(rows: Vec<Value>, counts: &QueueCounts, presentable: usize) ->
             // Its OWN key, for the same reason it is its own header segment: a caller reading
             // `fetchError` must not have a rate-limited row folded into it (#129).
             "rateLimited": counts.rate_limited,
+            // `ai:ready` PRs an ARCHIVED repo froze (#206). Reported for the reason every other
+            // withheld count here is: this tool hands the human ONE PR at a time, so a row it
+            // drops is a row the human has no other way to learn about.
+            "archivedRepo": counts.archived_repo,
         },
         "next": rows,
     })
@@ -20699,6 +21293,7 @@ mod next_ready_tests {
             unvetted: usize::MAX,
             open_threads: usize::MAX,
             fetch_error: usize::MAX,
+            archived_repo: usize::MAX,
         };
         let len = next_ready_doc(rows, &counts, usize::MAX).to_string().len();
         assert!(
@@ -20747,9 +21342,10 @@ mod next_ready_tests {
             open_threads: 0,
             fetch_error: 0,
             rate_limited: 0,
+            archived_repo: 0,
         };
-        // Fourteen numeric fields in the envelope: eleven counts plus the three queue figures.
-        let env_len = next_ready_doc(vec![], &counts, 0).to_string().len() + 14 * NR_MAX_DIGITS;
+        // Fifteen numeric fields in the envelope: twelve counts plus the three queue figures.
+        let env_len = next_ready_doc(vec![], &counts, 0).to_string().len() + 15 * NR_MAX_DIGITS;
         assert!(
             env_len <= NR_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NR_ENVELOPE_BYTES} allowed"
@@ -20950,6 +21546,7 @@ mod next_ready_tests {
             unvetted: 4,
             open_threads: 1,
             fetch_error: 0,
+            archived_repo: 0,
         };
         let doc = next_ready_doc(vec![json!({"pr": "o/r#1"})], &counts, 3);
         assert_eq!(doc["counts"]["unvetted"], json!(4));
@@ -21013,6 +21610,15 @@ mod next_ready_tests {
 enum CcGate {
     /// The vetter UPHELD the current flag and no human has ruled: the human's to rule on.
     Presentable,
+    /// The REPO is archived (#206). Read-only: no label moves, no comment posts, no issue closes,
+    /// so not one transition this FSM owns can be applied — including the stranded-flag clearance
+    /// below, which is why this arm is FIRST in [`cc_gate`] and dominates every other state.
+    ///
+    /// `rain.webapp` was archived on 2026-08-05 and `rain.webapp#139` was served as the head of the
+    /// human's queue four minutes later: a sound flag, a completed read, and no ruling that could
+    /// be written. The ordering is oldest-flag-first, so a frozen flag sorts to the FRONT and stays
+    /// there.
+    RepoArchived,
     /// A `human:*` label is already on the issue. Human decisions are sacred, and a ruling is not an
     /// inbox item — whatever the flag still says.
     HumanRuled,
@@ -21044,6 +21650,7 @@ impl CcGate {
     fn as_str(self) -> &'static str {
         match self {
             CcGate::Presentable => "presentable",
+            CcGate::RepoArchived => "repo-archived",
             CcGate::HumanRuled => "human-ruled",
             CcGate::NoFlag => "no-producer-flag",
             CcGate::Unvetted => "unvetted-vetter-owes-a-verdict",
@@ -21097,7 +21704,20 @@ fn cc_verdict_parts(body: &str) -> Option<(String, String)> {
 /// Ordered as the vetter's own `cc_row` orders its skips, and for the same reason: a human ruling
 /// dominates everything (it is sacred and already made), then "nothing was claimed", then what the
 /// vetter did with the claim. Only the last arm can produce a row.
-fn cc_gate(human_ruled: bool, flag_at: &str, verdict: Option<(String, String)>) -> CcGate {
+fn cc_gate(
+    repo_archived: bool,
+    human_ruled: bool,
+    flag_at: &str,
+    verdict: Option<(String, String)>,
+) -> CcGate {
+    // FIRST, ahead of every other arm including the sacred one (#206). Every state below names
+    // something a transition would DO — present it to a human, clear the label, ask the vetter for
+    // a verdict — and an archived repo refuses all of them. Deciding writability before deciding
+    // what to write is what stops the #179 clearance firing against a repo that would reject it on
+    // every run, for ever, and it is structural rather than a comment asking a reader to remember.
+    if repo_archived {
+        return CcGate::RepoArchived;
+    }
     if human_ruled {
         return CcGate::HumanRuled;
     }
@@ -21431,10 +22051,11 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
 const NCC_ROW_FIXED_BYTES: usize = 1_200;
 const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
 
-// The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded, because
-// they ride inside the same one budget the rows do — and an unbounded list of stranded flags is how
-// a document that must always be servable becomes one that is refused on a bad day.
+// The three withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded,
+// because they ride inside the same one budget the rows do — and an unbounded list of stranded
+// flags is how a document that must always be servable becomes one that is refused on a bad day.
 const NCC_MAX_STRANDED: usize = 3;
+const NCC_MAX_ARCHIVED: usize = 3;
 const NCC_MAX_ERRORS: usize = 3;
 const NCC_WITHHELD_FIELD_BYTES: usize = NCC_ISSUE_BYTES + NCC_ERROR_BYTES;
 const NCC_WITHHELD_FIXED_BYTES: usize = 150;
@@ -21449,7 +22070,7 @@ const NCC_ENVELOPE_BYTES: usize = 1_500;
 /// crate does not build.
 const _: () = assert!(
     NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
-        + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
+        + (NCC_MAX_STRANDED + NCC_MAX_ARCHIVED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
         + NCC_ENVELOPE_BYTES
         <= MCP_MAX_RESULT_BYTES
 );
@@ -21560,8 +22181,12 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
 
 /// The whole-queue breakdown. Every flag the search returned lands in exactly one of these, plus the
 /// fetch errors — so `flagged == presentable + unvetted + noProducerFlag + humanRuled +
-/// vetterRejectedStillFlagged + fetchErrors`, always, and a reader can see there is no sixth bucket
-/// quietly absorbing rows.
+/// vetterRejectedStillFlagged + archivedRepo + fetchErrors`, always, and a reader can see there is
+/// no further bucket quietly absorbing rows.
+///
+/// `archived_repo` is counted BEFORE the gate rather than as a gate state: a frozen flag is not
+/// classified at all, because classifying it would cost a `gh issue view` to answer a question no
+/// ruling can act on.
 #[derive(Default)]
 struct FlagQueueCounts {
     flagged: usize,
@@ -21570,16 +22195,27 @@ struct FlagQueueCounts {
     no_flag: usize,
     human_ruled: usize,
     rejected_still_flagged: usize,
+    archived_repo: usize,
     fetch_errors: usize,
 }
 
-/// The document's non-row halves: the counts, and the two lists a reader must see even though this
+/// The one line every surface gives for a row an archived repo froze.
+const ARCHIVED_REPO_WHY: &str = "repo is archived — no label, comment or close can be written";
+
+/// The document's non-row halves: the counts, and the three lists a reader must see even though this
 /// call will not act on them.
 struct FlagQueueWithheld {
     counts: FlagQueueCounts,
     /// The [`CcGate::is_stranded`] flags — capped, with the overflow in `more_stranded`.
     stranded: Vec<Value>,
     more_stranded: usize,
+    /// The flags frozen by an ARCHIVED repo — a separate list from `stranded` on purpose. Both are
+    /// flags no transition can consume, but the causes are different and so are the answers: a
+    /// stranded flag is a label/verdict state some future transition could clear, while an
+    /// archived repo will never accept a write again. Folding them together would hide which is
+    /// which behind one number.
+    archived: Vec<Value>,
+    more_archived: usize,
     errors: Vec<Value>,
     more_errors: usize,
 }
@@ -21591,6 +22227,11 @@ struct FlagQueueWithheld {
 /// is the answer to a question nothing else asks — those flags are in states no AI transition
 /// clears, so they sit until a human notices, and a queue that silently skipped them is how they
 /// stayed unnoticed.
+///
+/// `archivedRepoFlags` is the same argument for a different cause (#206). Those flags CANNOT be
+/// ruled on at all — every write this FSM owns is refused by an archived repo — so offering one is
+/// offering work nobody can do; but dropping them silently would shrink the human's inbox with
+/// nothing to explain the gap, which is the defect that let them sit in the queue unnoticed.
 fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
     let returned = rows.len();
     let presentable = w.counts.presentable;
@@ -21607,10 +22248,13 @@ fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
             "noProducerFlag": w.counts.no_flag,
             "humanRuled": w.counts.human_ruled,
             "vetterRejectedStillFlagged": w.counts.rejected_still_flagged,
+            "archivedRepo": w.counts.archived_repo,
             "fetchErrors": w.counts.fetch_errors,
         },
         "strandedFlags": w.stranded,
         "moreStrandedFlags": w.more_stranded,
+        "archivedRepoFlags": w.archived,
+        "moreArchivedRepoFlags": w.more_archived,
         "fetchErrors": w.errors,
         "moreFetchErrors": w.more_errors,
         "next": rows,
@@ -21668,34 +22312,59 @@ fn flagged_open_issues_args() -> Vec<String> {
     args
 }
 
+/// The flagged population and the archived-repo set to classify it against (#206).
+///
+/// Both come from ONE read, here, for the same reason the search itself is shared: two surfaces
+/// reading archived state separately is how the vetter's queue and the human's would come to
+/// disagree about which flags are actionable. The CLASSIFICATION is [`cc_gate`]'s, not this
+/// struct's — [`CcGate::RepoArchived`] is a state both inboxes get from the one classifier.
+struct FlaggedIssues {
+    hits: Vec<Value>,
+    archived: ArchivedRepos,
+}
+
 /// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
 /// `ai:close-candidate`. Shared rather than written twice, so the vetter's queue and the human's are
 /// populations of the same query — two spellings of "which issues are flagged" is how they would
 /// come to answer differently.
 ///
-/// Errors rather than returning a falsely-empty set, for the reason the PR side does.
-fn flagged_open_issues() -> Result<Vec<Value>, String> {
+/// Errors rather than returning a falsely-empty set, for the reason the PR side does — including
+/// when the ARCHIVED set is unreadable, since a flag whose repo's state is unknown cannot be
+/// asserted to be actionable.
+fn flagged_open_issues() -> Result<FlaggedIssues, String> {
     let args = flagged_open_issues_args();
     let argref: Vec<&str> = args.iter().map(String::as_str).collect();
-    gh_json(&argref)
+    let found = gh_json(&argref)
         .and_then(|v| v.as_array().cloned())
         .ok_or_else(|| {
             "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
              aborting rather than report a falsely-empty close-candidate queue"
                 .to_string()
-        })
+        })?;
+    let archived = archived_repos().map_err(archived_read_error)?;
+    Ok(FlaggedIssues {
+        hits: found,
+        archived,
+    })
 }
 
 /// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
 /// then pay for the covering-PR read only on the rows actually returned.
 fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
-    let found = flagged_open_issues()?;
+    let FlaggedIssues {
+        hits: found,
+        archived: archived_repos,
+    } = flagged_open_issues()?;
     let mut flags: Vec<PresentableFlag> = Vec::new();
     let mut counts = FlagQueueCounts {
         flagged: found.len(),
         ..Default::default()
     };
     let mut stranded: Vec<Value> = Vec::new();
+    // The archived rows are named, not merely counted: this tool's contract is "here is the next
+    // thing to rule on, and here is everything you are NOT being shown", and a human who knows a
+    // flag exists somewhere unreachable can decide what to do about the repo.
+    let mut archived: Vec<Value> = Vec::new();
     let mut errors: Vec<Value> = Vec::new();
     for hit in &found {
         let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -21725,6 +22394,7 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         let flag = last_close_candidate_flag(&detail);
         let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
         let gate = cc_gate(
+            archived_repos.contains(&slug),
             has_human_ruling(&label_names(&detail)),
             &flag_at,
             last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
@@ -21739,9 +22409,13 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
             CcGate::Unvetted => counts.unvetted += 1,
             CcGate::NoFlag => counts.no_flag += 1,
             CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
+            CcGate::RepoArchived => counts.archived_repo += 1,
         }
         if gate.is_stranded() {
             stranded.push(withheld_entry(&format!("{slug}#{num}"), gate.as_str()));
+        }
+        if gate == CcGate::RepoArchived {
+            archived.push(withheld_entry(&format!("{slug}#{num}"), ARCHIVED_REPO_WHY));
         }
         if gate == CcGate::Presentable {
             flags.push(PresentableFlag {
@@ -21770,6 +22444,7 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         })
         .collect();
     let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
+    let (archived, more_archived) = page(archived, Some(NCC_MAX_ARCHIVED));
     let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
     Ok(next_close_candidate_doc(
         rows,
@@ -21777,6 +22452,8 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
             counts,
             stranded,
             more_stranded,
+            archived,
+            more_archived,
             errors,
             more_errors,
         },
@@ -21882,21 +22559,24 @@ mod next_close_candidate_tests {
     fn the_gate_reads_the_verdict_word_not_the_label_still_being_there() {
         let at = "2026-07-20T09:00:00Z";
         let parts = |w: &str| Some((at.to_string(), w.to_string()));
-        assert_eq!(cc_gate(false, at, parts("uphold")), CcGate::Presentable);
         assert_eq!(
-            cc_gate(false, at, parts("reject")),
+            cc_gate(false, false, at, parts("uphold")),
+            CcGate::Presentable
+        );
+        assert_eq!(
+            cc_gate(false, false, at, parts("reject")),
             CcGate::RejectedStillFlagged
         );
         // A word this machine does not know is not a verdict in force — the vetter still owes one,
         // exactly as an unstamped vet-protocol is never current.
         for unknown in ["close", "ready", "UPHOLD"] {
             assert_eq!(
-                cc_gate(false, at, parts(unknown)),
+                cc_gate(false, false, at, parts(unknown)),
                 CcGate::Unvetted,
                 "{unknown}"
             );
         }
-        assert_eq!(cc_gate(false, at, None), CcGate::Unvetted);
+        assert_eq!(cc_gate(false, false, at, None), CcGate::Unvetted);
         assert!(CcGate::RejectedStillFlagged.is_stranded());
         assert!(CcGate::NoFlag.is_stranded());
         for live in [CcGate::Presentable, CcGate::Unvetted, CcGate::HumanRuled] {
@@ -21911,11 +22591,21 @@ mod next_close_candidate_tests {
         let first = "2026-07-20T09:00:00Z";
         let second = "2026-07-25T09:00:00Z";
         assert_eq!(
-            cc_gate(false, second, Some((first.to_string(), "uphold".into()))),
+            cc_gate(
+                false,
+                false,
+                second,
+                Some((first.to_string(), "uphold".into()))
+            ),
             CcGate::Unvetted
         );
         assert_eq!(
-            cc_gate(false, first, Some((first.to_string(), "uphold".into()))),
+            cc_gate(
+                false,
+                false,
+                first,
+                Some((first.to_string(), "uphold".into()))
+            ),
             CcGate::Presentable
         );
     }
@@ -21926,17 +22616,90 @@ mod next_close_candidate_tests {
     fn a_human_ruling_dominates_and_a_flagless_label_is_stranded() {
         let at = "2026-07-20T09:00:00Z";
         assert_eq!(
-            cc_gate(true, at, Some((at.to_string(), "uphold".into()))),
+            cc_gate(false, true, at, Some((at.to_string(), "uphold".into()))),
             CcGate::HumanRuled
         );
-        assert_eq!(cc_gate(true, "", None), CcGate::HumanRuled);
+        assert_eq!(cc_gate(false, true, "", None), CcGate::HumanRuled);
         // Labelled, with no trusted producer comment behind it: nothing was CLAIMED, so there is
         // nothing to rule on evidence — and the vetter skips it too, which is why it is named.
-        assert_eq!(cc_gate(false, "", None), CcGate::NoFlag);
+        assert_eq!(cc_gate(false, false, "", None), CcGate::NoFlag);
         assert_eq!(
-            cc_gate(false, "", Some((at.to_string(), "uphold".into()))),
+            cc_gate(false, false, "", Some((at.to_string(), "uphold".into()))),
             CcGate::NoFlag
         );
+    }
+
+    /// #206: an ARCHIVED repo dominates EVERY other state, including the sacred one. Every state
+    /// below it names something a transition would do — present, clear, ask for a verdict — and a
+    /// read-only repo refuses all of them, so writability is decided before anything decides what
+    /// to write.
+    ///
+    /// The precedence is the behaviour, not a tidiness: if `RepoArchived` sat after the stranded
+    /// arms, #179's clearance would fire against a repo that rejects the `--remove-label` it is
+    /// made of, and would report `clearanceFailed` on every run for ever.
+    #[test]
+    fn an_archived_repo_dominates_every_other_gate_state() {
+        let at = "2026-07-20T09:00:00Z";
+        // Each of these is a DIFFERENT state when the repo is live. Archived, all of them are the
+        // same one — which is what "dominates" means and what a reordering would break.
+        for (human, flag_at, verdict) in [
+            (false, at, Some((at.to_string(), "uphold".to_string()))),
+            (false, at, Some((at.to_string(), "reject".to_string()))),
+            (false, at, None),
+            (false, "", None),
+            (true, at, Some((at.to_string(), "uphold".to_string()))),
+        ] {
+            assert_ne!(
+                cc_gate(false, human, flag_at, verdict.clone()),
+                CcGate::RepoArchived,
+                "a LIVE repo never produces RepoArchived"
+            );
+            assert_eq!(
+                cc_gate(true, human, flag_at, verdict),
+                CcGate::RepoArchived,
+                "archived must dominate (human_ruled={human}, flag_at={flag_at:?})"
+            );
+        }
+        // NOT stranded: `strandedFlags` names label states a transition could still clear, and
+        // this one names a repo that will never accept a write.
+        assert!(!CcGate::RepoArchived.is_stranded());
+        // …and therefore NOT clearable. The clearance is a label removal plus a comment; both are
+        // refused, so attempting one fails every run.
+        assert_eq!(cc_stranded_cleared_comment(CcGate::RepoArchived, at), None);
+        assert_eq!(CcGate::RepoArchived.as_str(), "repo-archived");
+    }
+
+    /// The vetter's row for a frozen flag: its own action, naming no move — never `vet` (nothing
+    /// can record a verdict) and never a clearance (nothing can remove the label).
+    #[test]
+    fn the_vetter_row_for_an_archived_repo_asks_for_no_move() {
+        let at = "2026-07-29T13:19:24Z";
+        let detail = json!({
+            "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
+            "labels": [{"name": "ai:close-candidate"}],
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": format!("🤖 ai:producer\nClose-candidate: already fixed on main\n\nflag @{at}"),
+            }],
+        });
+        let (gate, action, row) = cc_row(
+            "rainlanguage/rain.webapp",
+            139,
+            "i was asked to infinite approve quick on deposit",
+            &detail,
+            true,
+        );
+        assert_eq!(gate, CcGate::RepoArchived);
+        assert_eq!(action, CC_SKIP_ARCHIVED);
+        assert_eq!(row["action"], json!("skip-archived-repo"));
+        assert_ne!(action, CC_CLEAR_NO_FLAG);
+        assert_ne!(action, CC_CLEAR_REJECTED);
+        assert_ne!(action, "vet");
+        // The same issue in a LIVE repo is a different row entirely — the flag itself is fine.
+        let (live_gate, live_action, _) =
+            cc_row("rainlanguage/rain.webapp", 139, "t", &detail, false);
+        assert_ne!(live_gate, CcGate::RepoArchived);
+        assert_ne!(live_action, CC_SKIP_ARCHIVED);
     }
 
     // --- the ordering, which is this tool's own design decision ---------------------------------
@@ -22525,6 +23288,8 @@ mod next_close_candidate_tests {
             counts,
             stranded: vec![],
             more_stranded: 0,
+            archived: vec![],
+            more_archived: 0,
             errors: vec![],
             more_errors: 0,
         }
@@ -22535,12 +23300,13 @@ mod next_close_candidate_tests {
     #[test]
     fn the_envelope_states_what_the_page_left_behind() {
         let w = withheld(FlagQueueCounts {
-            flagged: 9,
+            flagged: 10,
             presentable: 5,
             unvetted: 2,
             no_flag: 1,
             human_ruled: 1,
             rejected_still_flagged: 0,
+            archived_repo: 1,
             fetch_errors: 0,
         });
         let doc = next_close_candidate_doc(vec![json!({"issue": "o/r#7"})], &w);
@@ -22548,6 +23314,8 @@ mod next_close_candidate_tests {
         assert_eq!(doc["queue"]["returned"], json!(1));
         assert_eq!(doc["queue"]["more"], json!(4));
         // The counts partition the search: nothing is in two buckets and nothing is in none.
+        // `archivedRepo` is one of the parts (#206) — a flag withheld for a reason that is not in
+        // this list is a flag the sum cannot account for, which is how a silent drop would look.
         let c = &doc["counts"];
         let parts: u64 = [
             "presentable",
@@ -22555,6 +23323,7 @@ mod next_close_candidate_tests {
             "noProducerFlag",
             "humanRuled",
             "vetterRejectedStillFlagged",
+            "archivedRepo",
             "fetchErrors",
         ]
         .iter()
@@ -22588,6 +23357,66 @@ mod next_close_candidate_tests {
         );
         assert_eq!(doc["moreStrandedFlags"], json!(1));
         assert_eq!(doc["queue"]["presentable"], json!(0));
+    }
+
+    // #206, as the live case that produced it. `rain.webapp` was archived on 2026-08-05 and this
+    // queue served `rain.webapp#139` as its HEAD four minutes later — a flag whose ruling could
+    // not be written, sorted to the front by an oldest-first order and staying there.
+    //
+    // The row must be GONE from `next` and PRESENT in the withheld list. Silence would leave a
+    // human unable to tell an archived-repo flag from one that was never filed, and this tool is
+    // the only place that inventory exists.
+    #[test]
+    fn a_flag_in_an_archived_repo_is_named_rather_than_offered_or_dropped() {
+        let mut w = withheld(FlagQueueCounts {
+            flagged: 7,
+            presentable: 6,
+            archived_repo: 1,
+            ..Default::default()
+        });
+        w.archived = vec![withheld_entry(
+            "rainlanguage/rain.webapp#139",
+            ARCHIVED_REPO_WHY,
+        )];
+        let doc = next_close_candidate_doc(vec![json!({"issue": "rainlanguage/raindex#960"})], &w);
+        // Not offered: the head of the queue is the live flag, not the frozen one.
+        assert_eq!(doc["next"][0]["issue"], json!("rainlanguage/raindex#960"));
+        assert_eq!(doc["next"].as_array().unwrap().len(), 1);
+        // Not dropped: named, with the reason no ruling can be written.
+        assert_eq!(
+            doc["archivedRepoFlags"][0]["issue"],
+            json!("rainlanguage/rain.webapp#139")
+        );
+        assert_eq!(doc["archivedRepoFlags"][0]["why"], json!(ARCHIVED_REPO_WHY));
+        assert_eq!(doc["counts"]["archivedRepo"], json!(1));
+        // A DIFFERENT list from `strandedFlags`: both hold flags nothing can consume, but one
+        // names a label state a transition could still clear and the other names a repo that will
+        // never accept a write. Folding them together would hide which is which.
+        assert_eq!(doc["strandedFlags"], json!([]));
+    }
+
+    /// The overflow is stated, so a scope with more frozen flags than the cap does not silently
+    /// report only the first few.
+    #[test]
+    fn frozen_flags_past_the_cap_are_counted_rather_than_lost() {
+        let mut w = withheld(FlagQueueCounts {
+            flagged: 9,
+            archived_repo: 9,
+            ..Default::default()
+        });
+        let all: Vec<Value> = (0..9)
+            .map(|i| withheld_entry(&format!("o/r#{i}"), ARCHIVED_REPO_WHY))
+            .collect();
+        let (paged, more) = page(all, Some(NCC_MAX_ARCHIVED));
+        w.archived = paged;
+        w.more_archived = more;
+        let doc = next_close_candidate_doc(vec![], &w);
+        assert_eq!(
+            doc["archivedRepoFlags"].as_array().unwrap().len(),
+            NCC_MAX_ARCHIVED
+        );
+        assert_eq!(doc["moreArchivedRepoFlags"], json!(9 - NCC_MAX_ARCHIVED));
+        assert_eq!(doc["counts"]["archivedRepo"], json!(9));
     }
 
     // --- the budget -----------------------------------------------------------------------------
@@ -22654,10 +23483,13 @@ mod next_close_candidate_tests {
                     no_flag: usize::MAX,
                     human_ruled: usize::MAX,
                     rejected_still_flagged: usize::MAX,
+                    archived_repo: usize::MAX,
                     fetch_errors: usize::MAX,
                 },
                 stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
                 more_stranded: usize::MAX,
+                archived: (0..NCC_MAX_ARCHIVED).map(|_| entry.clone()).collect(),
+                more_archived: usize::MAX,
                 errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
                 more_errors: usize::MAX,
             },
@@ -22697,11 +23529,12 @@ mod next_close_candidate_tests {
              {NCC_WITHHELD_FIXED_BYTES} allowed"
         );
 
-        // Twelve numeric fields in the envelope: seven counts, three queue figures, two overflows.
+        // Fifteen numeric fields in the envelope: eight counts, three queue figures, three
+        // overflows.
         let env_len = next_close_candidate_doc(vec![], &withheld(FlagQueueCounts::default()))
             .to_string()
             .len()
-            + 12 * NCC_MAX_DIGITS;
+            + 15 * NCC_MAX_DIGITS;
         assert!(
             env_len <= NCC_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NCC_ENVELOPE_BYTES} allowed"
@@ -29019,7 +29852,7 @@ fn issue_repo(meta: &Value) -> String {
 }
 
 fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
-    let Some(rows) = worklist_rows(use_cache) else {
+    let Some((rows, n_archived)) = worklist_rows(use_cache) else {
         return 1;
     };
     if json_out {
@@ -29028,7 +29861,12 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
             serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into())
         );
     } else {
-        println!("worklist: {} open PRs by {}\n", rows.len(), pr_assignee());
+        println!(
+            "worklist: {} open PRs by {}{}\n",
+            rows.len(),
+            pr_assignee(),
+            archived_note(n_archived)
+        );
         for r in &rows {
             let fc = r
                 .get("failingChecks")
@@ -29063,11 +29901,13 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
     0
 }
 
-/// The fleet rows themselves, action-ranked. Split out from [`worklist_mode`] so `state-load` can
-/// compose the same computation instead of re-deriving it — one fleet read, one classifier, so the
-/// digest and the raw list can never disagree about what a PR needs. `None` on a gh failure, which
-/// every caller must treat as an abort rather than as an empty fleet.
-fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
+/// The fleet rows themselves, action-ranked, plus how many open PRs an ARCHIVED repo froze out of
+/// the fleet (#206). Split out from [`worklist_mode`] so `state-load` can compose the same
+/// computation instead of re-deriving it — one fleet read, one classifier, so the digest and the
+/// raw list can never disagree about what a PR needs. `None` on a gh failure, which every caller
+/// must treat as an abort rather than as an empty fleet — INCLUDING an unreadable archived set,
+/// since a fleet that cannot tell which repos accept writes cannot say what work is possible.
+fn worklist_rows(use_cache: bool) -> Option<(Vec<Value>, usize)> {
     let assignee = pr_assignee();
     let mut search: Vec<String> = vec!["search".into(), "prs".into()];
     search.extend(org_owner_args());
@@ -29091,7 +29931,22 @@ fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
         return None;
     };
     let empty = Vec::new();
-    let arr = val.as_array().unwrap_or(&empty);
+    // An archived repo's PR has no `nextAction` this fleet can take — every one of them
+    // (`push`, a thread resolution, a merge) is a write the repo refuses — so it is withheld
+    // rather than ranked into the producer's work (#206). Stated at the render, never silent.
+    let archived_set = archived_repos().map_err(|f| {
+        eprintln!("{}", archived_read_error(f));
+    });
+    let Ok(archived_set) = archived_set else {
+        return None;
+    };
+    let (arr, frozen) = withhold_archived(
+        val.as_array().unwrap_or(&empty).clone(),
+        &archived_set,
+        hit_slug,
+    );
+    let n_archived = frozen.len();
+    let arr = &arr;
 
     let mut cache = if use_cache {
         load_cache()
@@ -29171,7 +30026,7 @@ fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
         })
     });
 
-    Some(rows)
+    Some((rows, n_archived))
 }
 
 /// `state-load`: the producer's WHOLE opening picture in ONE result.
@@ -29193,20 +30048,32 @@ fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
 /// report a falsely-empty set, and a digest that quietly dropped one would launder exactly the
 /// emptiness they refuse.
 fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
-    let Some(rows) = worklist_rows(use_cache) else {
+    let Some((rows, fleet_archived)) = worklist_rows(use_cache) else {
         return 1;
     };
     let Some(OrgIssues {
         uncovered: open,
         meta,
+        archived_repo: backlog_archived,
         ..
     }) = coverage_uncovered()
     else {
         return 1;
     };
     let issues: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
-    let fleet = fleet_digest(&rows);
-    let backlog = backlog_digest(&issues);
+    let mut fleet = fleet_digest(&rows);
+    let mut backlog = backlog_digest(&issues);
+    // Both halves report what an archived repo froze out of them, in the digest itself: this is
+    // the producer's WHOLE opening picture, and a picture that silently omits rows is one the run
+    // then re-derives from outside the tool (#206).
+    for (doc, n) in [
+        (&mut fleet, fleet_archived),
+        (&mut backlog, backlog_archived),
+    ] {
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert("archivedRepo".into(), Value::from(n));
+        }
+    }
     if json_out {
         println!(
             "{}",
@@ -29219,12 +30086,13 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
         return 0;
     }
     println!(
-        "fleet: {} open PRs by {}",
+        "fleet: {} open PRs by {}{}",
         fleet
             .get("total")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0),
-        pr_assignee()
+        pr_assignee(),
+        archived_note(fleet_archived)
     );
     for a in ALL_ACTIONS {
         println!(
@@ -29243,7 +30111,7 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
             .map_or(0, Vec::len)
     );
     println!(
-        "\nbacklog: {} uncovered issues ({} audit-labelled)",
+        "\nbacklog: {} uncovered issues ({} audit-labelled){}",
         backlog
             .get("uncovered")
             .and_then(serde_json::Value::as_u64)
@@ -29251,7 +30119,8 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
         backlog
             .pointer("/audit/total")
             .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0)
+            .unwrap_or(0),
+        archived_note(backlog_archived)
     );
     for s in SEVERITY_LABELS
         .iter()
@@ -29299,6 +30168,11 @@ struct OrgIssues {
     /// The raw `gh search issues` row for every member of `all` — so for every member of
     /// `uncovered` too, since `uncovered` is a subset. Keyed the way both lists are.
     meta: std::collections::HashMap<(String, u64), Value>,
+    /// How many open issues an ARCHIVED repo withheld from `all` — and therefore from `uncovered`
+    /// and from the ages too (#206). A repo that refuses every write holds no work for anybody, so
+    /// its issues are not backlog and their age is not a fact about the org's responsiveness; the
+    /// count says they exist without offering them.
+    archived_repo: usize,
 }
 
 impl OrgIssues {
@@ -29346,6 +30220,23 @@ fn coverage_uncovered() -> Option<OrgIssues> {
         eprintln!("error: `gh search issues` failed — aborting rather than report a falsely-empty issue set");
         return None;
     };
+    // The BACKLOG's version of the same defect (#206), and the largest instance of it: measured on
+    // 2026-08-05, 29 of the 802 open issues in scope were in archived repos. The producer cannot
+    // work one — it cannot push a branch or open a PR against a read-only repo — so an issue there
+    // is not backlog, it is a row that would be picked up and abandoned. Withheld and counted.
+    let archived_set = match archived_repos() {
+        Ok(s) => s,
+        Err(f) => {
+            eprintln!("{}", archived_read_error(f));
+            return None;
+        }
+    };
+    let (ival, frozen) = withhold_archived(
+        ival.as_array().cloned().unwrap_or_default(),
+        &archived_set,
+        hit_slug,
+    );
+    let n_archived = frozen.len();
     // open PRs + their NATIVE closing references (GraphQL). The REST `gh search prs` cannot
     // return `closingIssuesReferences`, and regexing title+body missed the URL and cross-repo
     // reference forms GitHub honors while over-counting title keywords GitHub ignores — the
@@ -29361,7 +30252,7 @@ fn coverage_uncovered() -> Option<OrgIssues> {
     let mut issues: Vec<(String, u64)> = Vec::new();
     let mut meta: std::collections::HashMap<(String, u64), Value> =
         std::collections::HashMap::new();
-    for it in ival.as_array().unwrap_or(&Vec::new()) {
+    for it in &ival {
         let Some(repo) = it
             .get("repository")
             .and_then(|r| r.get("nameWithOwner"))
@@ -29382,6 +30273,7 @@ fn coverage_uncovered() -> Option<OrgIssues> {
         all: issues,
         uncovered: no_open_pr,
         meta,
+        archived_repo: n_archived,
     })
 }
 
@@ -29406,6 +30298,7 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
     let Some(OrgIssues {
         uncovered: open,
         meta,
+        archived_repo: n_archived,
         ..
     }) = coverage_uncovered()
     else {
@@ -29418,7 +30311,11 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
             serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_else(|_| "[]".into())
         );
     } else {
-        println!("uncovered issues (no open PR): {}\n", open.len());
+        println!(
+            "uncovered issues (no open PR): {}{}\n",
+            open.len(),
+            archived_note(n_archived)
+        );
         for (repo, num) in &open {
             let title = meta
                 .get(&(repo.clone(), *num))
@@ -32190,7 +33087,7 @@ mod queue_tests {
             vec![vetter_cc_comment(first, "uphold")],
         );
         assert!(cc_vetted_at_flag(&vetted, first));
-        let (_, action, _) = cc_row("o/r", 1, "t", &vetted);
+        let (_, action, _) = cc_row("o/r", 1, "t", &vetted, false);
         assert_eq!(action, "skip-vetted-at-flag");
 
         // The producer re-flags with new evidence: the old verdict no longer covers it.
@@ -32201,7 +33098,7 @@ mod queue_tests {
             vec![vetter_cc_comment(first, "uphold")],
         );
         assert!(!cc_vetted_at_flag(&reflagged, second));
-        let (gate, action, row) = cc_row("o/r", 1, "t", &reflagged);
+        let (gate, action, row) = cc_row("o/r", 1, "t", &reflagged, false);
         assert_eq!(gate, CcGate::Unvetted);
         assert_eq!(action, "vet");
         assert_eq!(row["flagAt"], json!(second));
@@ -32223,7 +33120,7 @@ mod queue_tests {
         );
         // Vetted at its flag — which is exactly why the old check called this upheld and skipped it.
         assert!(cc_vetted_at_flag(&rejected, at));
-        let (gate, action, _) = cc_row("o/r", 93, "t", &rejected);
+        let (gate, action, _) = cc_row("o/r", 93, "t", &rejected, false);
         assert_eq!(gate, CcGate::RejectedStillFlagged);
         assert_eq!(action, CC_CLEAR_REJECTED);
 
@@ -32235,7 +33132,7 @@ mod queue_tests {
             "already-fixed-on-main: #181",
             vec![vetter_cc_comment(at, "uphold")],
         );
-        let (gate, action, _) = cc_row("o/r", 93, "t", &upheld);
+        let (gate, action, _) = cc_row("o/r", 93, "t", &upheld, false);
         assert_eq!(gate, CcGate::Presentable);
         assert_eq!(action, "skip-vetted-at-flag");
         assert_eq!(cc_stranded_cleared_comment(gate, at), None);
@@ -32255,7 +33152,7 @@ mod queue_tests {
                 "already-fixed-on-main: #181",
                 vec![vetter_cc_comment(at, "reject")],
             );
-            let (gate, action, _) = cc_row("o/r", 93, "t", &rejected);
+            let (gate, action, _) = cc_row("o/r", 93, "t", &rejected, false);
             assert_eq!(gate, CcGate::HumanRuled, "{ruling}");
             assert_eq!(action, "skip-human-decided", "{ruling}");
             assert_eq!(cc_stranded_cleared_comment(gate, at), None, "{ruling}");
@@ -32352,7 +33249,7 @@ mod queue_tests {
         assert_eq!(cc_verdict_plan(&spoofed, "uphold"), CcVerdictPlan::NoFlag);
         // A label with only an untrusted "flag" under it IS state A: no claim, and the label parks
         // the issue. The state-load clears it rather than skipping it for ever.
-        let (gate, action, _) = cc_row("o/r", 1, "t", &spoofed);
+        let (gate, action, _) = cc_row("o/r", 1, "t", &spoofed, false);
         assert_eq!(gate, CcGate::NoFlag);
         assert_eq!(action, CC_CLEAR_NO_FLAG);
     }
@@ -33624,6 +34521,7 @@ diff --git a/a.c b/a.c
             open_threads: 0,
             fetch_error: 0,
             rate_limited: 0,
+            archived_repo: 0,
         }
     }
 
@@ -33646,6 +34544,45 @@ diff --git a/a.c b/a.c
         );
         assert!(out
             .contains("\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1"));
+    }
+
+    /// #206: an `ai:ready` PR an archived repo froze is not presentable — nothing can merge,
+    /// relabel or comment on it — and the header SAYS SO. Absent from the header, the difference
+    /// between `raw` and `presentable` would have no explanation and a reader would go looking for
+    /// a PR that was never withheld by anybody.
+    #[test]
+    fn the_header_names_the_rows_an_archived_repo_froze() {
+        let mut c = qc(5, 0, 0, 0, 0);
+        c.archived_repo = 2;
+        let out = render_queue(&[], &c, 0);
+        assert!(
+            out.contains(", 2 archived-repo"),
+            "the archived count is missing from:\n{out}"
+        );
+        // …and it is its OWN segment: an archived row is not a draft and not a human override,
+        // which is what `excluded` counts.
+        assert!(!out.contains("excluded"), "header:\n{out}");
+        // Zero is silent — a count of nothing is noise, and every other segment here is written
+        // the same way.
+        assert!(
+            !render_queue(&[], &qc(5, 0, 0, 0, 0), 0).contains("archived-repo"),
+            "an empty archived set must add nothing to the header"
+        );
+    }
+
+    /// The plain-text surfaces share one note, and it is EMPTY at zero for the same reason the
+    /// header segment is absent at zero.
+    #[test]
+    fn the_archived_note_is_silent_at_zero_and_states_the_count_above_it() {
+        assert_eq!(archived_note(0), "");
+        assert_eq!(
+            archived_note(1),
+            " (1 withheld: archived repo, unactionable)"
+        );
+        assert_eq!(
+            archived_note(29),
+            " (29 withheld: archived repo, unactionable)"
+        );
     }
 
     // The vetted-at-head gate: green+mergeable is NOT enough — an ai:vetter comment must pin the
@@ -35947,6 +36884,92 @@ mod repo_root_tests {
              the literal names: {offenders:?}. A repo-root file goes through `repo_root_text` / \
              `repo_root_path`; every other path in this crate is built from a value"
         );
+    }
+
+    /// #206 IS A CLASS, NOT AN INSTANCE, and this is what makes the class hold.
+    ///
+    /// The bug was found in `next_close_candidate` and fixing only that would have left the same
+    /// hole in every other org-wide enumeration — measured on 2026-08-05, `worklist`/`human-queue`
+    /// were carrying 4 frozen PRs and the producer's backlog 29 frozen issues. So the rule is
+    /// stated over the SOURCE: every item that builds an org-scoped search must also withhold
+    /// archived repos, and an item that does not must be named here with its reason.
+    ///
+    /// This is the gate a future enumeration trips. Adding a search and forgetting the filter
+    /// fails it; DELETING a filter from one that has it fails it too, which is what makes it a
+    /// mutation-killing test rather than a list somebody has to remember to update.
+    #[test]
+    fn every_org_wide_enumeration_withholds_archived_repos() {
+        // Assembled, so this test's own source is not a hit for the shape it hunts — the same
+        // move the filesystem gate above makes, for the same reason.
+        let scope = format!("org_owner{}", "_args()");
+        let filter = format!("withhold_arch{}", "ived(");
+
+        // The enumerations that FEED a queue, a state-load or a dashboard. Every one of these
+        // hands rows to something that then tries to transition them.
+        let filtered = [
+            "coverage_uncovered",
+            "human_queue_mode",
+            "presentable_queue",
+            "unvetted_fetch",
+            "worklist_rows",
+        ];
+        // …and every other item that names the org scope, each with the reason it is not here.
+        let exempt = [
+            // The accessor itself.
+            "org_owner_args",
+            // PURE argv builders. Their live callers — `flagged_open_issues` for the first — do
+            // the withholding, which is why the filter is not visible in the builder.
+            "flagged_open_issues_args",
+            // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
+            // both populations are empty in scope, and neither OFFERS work: a per-PR edit that
+            // fails is already reported as a failed edit rather than queued as a task.
+            "migrate_reject_mode",
+            "retire_blocked_infra_mode",
+            // A test.
+            "next_close_candidate_tests",
+        ];
+        let mut want: Vec<&str> = filtered.iter().chain(exempt.iter()).copied().collect();
+        want.sort_unstable();
+        let mut got = items_whose_code_contains(&scope);
+        got.sort_unstable();
+        assert_eq!(
+            got, want,
+            "an item names the org search scope and is neither filtered nor exempted. Every \
+             org-wide enumeration either withholds archived repos or says here why it need not — \
+             #206 is the bug where one of them did neither"
+        );
+
+        let withholds = items_whose_code_contains(&filter);
+        for item in filtered {
+            assert!(
+                withholds.contains(&item.to_string()),
+                "`{item}` enumerates org-wide but does not withhold archived repos — its rows can \
+                 include a repo that refuses every transition this FSM owns (#206). \
+                 Withholding items: {withholds:?}"
+            );
+        }
+
+        // The close-candidate pair takes the OTHER route, and it is a route rather than an
+        // exception: the two inboxes do not drop frozen rows at the search, they classify them
+        // through `cc_gate` as `RepoArchived` — one variant, one classifier, both surfaces. That
+        // is only sound if the set actually reaches the classifier, so the read is pinned here.
+        let reads = items_whose_code_contains(&format!("archived_re{}", "pos()"));
+        assert!(
+            reads.contains(&"flagged_open_issues".to_string()),
+            "`flagged_open_issues` is the ONE search behind both close-candidate inboxes; if it \
+             stops reading the archived set, `cc_gate` is handed `false` for every issue and the \
+             `RepoArchived` state becomes unreachable. Reading items: {reads:?}"
+        );
+        // …and the classifier is where the decision is made, in both of them.
+        let classifies = items_whose_code_contains(&format!("cc_ga{}", "te("));
+        for item in ["cc_row", "next_close_candidate_fetch"] {
+            assert!(
+                classifies.contains(&item.to_string()),
+                "`{item}` must classify through `cc_gate`, or the vetter's close-candidate inbox \
+                 and the human's can disagree about which flags are actionable. Classifying \
+                 items: {classifies:?}"
+            );
+        }
     }
 }
 
@@ -43989,6 +45012,7 @@ mod subject_ref_tests {
                 "blocked on a deploy".to_string(),
             )],
             2,
+            &[sref("rainlanguage/rain.webapp", 354, "pull", "frozen pr")],
             DOC_NOW_MS,
         )
     }
@@ -44005,6 +45029,7 @@ mod subject_ref_tests {
         "/closeCandidateUnvetted",
         "/closeCandidateUpheld",
         "/uncoveredIssues",
+        "/archivedRepoPrs",
         "/leaks",
     ];
 
@@ -44262,7 +45287,12 @@ mod subject_ref_tests {
                 ("rainlanguage/rain.math.float".to_string(), 3),
             ],
             meta,
+            // #206: the archived count rides ON the population struct rather than beside it, so
+            // "how many issues" and "how many were withheld" can never come from two reads that
+            // disagree — the same argument that put `all` and `uncovered` in one struct.
+            archived_repo: 4,
         };
+        assert_eq!(org.archived_repo, 4);
         let (backlog, open) = org.populations();
         assert_eq!(
             open.iter().map(|i| i.subject.number).collect::<Vec<_>>(),
@@ -44601,6 +45631,7 @@ mod subject_ref_tests {
             open,
             &[],
             0,
+            &[],
             DOC_NOW_MS,
         )
     }
@@ -46789,6 +47820,50 @@ mod vetter_state_load_tests {
         assert_eq!(doc["skipped"].as_array().unwrap().len(), 3);
     }
 
+    /// #206: a PR in an archived repo is not vettable — `record_verdict` writes a label and a
+    /// comment and a read-only repo refuses both — so it never reaches `prs`, and it is reported
+    /// under its own name rather than folded into an existing skip that means something else.
+    #[test]
+    fn a_pr_in_an_archived_repo_is_withheld_from_the_vet_queue_and_named() {
+        let rows = vec![
+            (
+                VetAction::Vet,
+                0,
+                json!({"pr": "rainlanguage/raindex#1", "action": "vet"}),
+            ),
+            (
+                VetAction::SkipArchivedRepo,
+                4,
+                json!({
+                    "pr": "rainlanguage/rain.webapp#354",
+                    "url": "https://github.com/rainlanguage/rain.webapp/pull/354",
+                    "action": VetAction::SkipArchivedRepo.as_str(),
+                    "why": ARCHIVED_REPO_WHY,
+                }),
+            ),
+        ];
+        let doc = unvetted_doc(&rows, false, None);
+        // Not offered.
+        assert_eq!(doc["counts"]["vet"], json!(1));
+        assert_eq!(doc["prs"][0]["pr"], json!("rainlanguage/raindex#1"));
+        assert_eq!(doc["prs"].as_array().unwrap().len(), 1);
+        // Counted, under its own key — never folded into `skipHumanDecided` (nobody decided) or
+        // `skipVettedAtHead` (nothing was vetted).
+        assert_eq!(doc["counts"]["skipArchivedRepo"], json!(1));
+        assert_eq!(doc["counts"]["skipHumanDecided"], json!(0));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(0));
+        // …and named, UNCONDITIONALLY: `include_skipped` is false here and the row is still there,
+        // because this skip says the machine can never move the PR at all.
+        assert_eq!(
+            doc["archivedRepo"][0]["pr"],
+            json!("rainlanguage/rain.webapp#354")
+        );
+        assert_eq!(doc["archivedRepo"][0]["why"], json!(ARCHIVED_REPO_WHY));
+        assert!(doc.get("skipped").is_none());
+        // `open` still counts it: the population the state-load read is the whole population.
+        assert_eq!(doc["counts"]["open"], json!(2));
+    }
+
     #[test]
     fn empty_state_load_is_a_well_formed_empty_doc() {
         let doc = unvetted_doc(&[], false, None);
@@ -46797,6 +47872,8 @@ mod vetter_state_load_tests {
         assert_eq!(doc["prs"], json!([]));
         // Present-and-empty, not absent: "nothing was withheld for threads" is an answer.
         assert_eq!(doc["openThreads"], json!([]));
+        assert_eq!(doc["counts"]["skipArchivedRepo"], json!(0));
+        assert_eq!(doc["archivedRepo"], json!([]));
         assert_eq!(doc["more"], json!(0));
     }
 

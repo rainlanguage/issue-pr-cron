@@ -574,6 +574,15 @@ state-load is what CLEARS them** (#179), so a flag still listed here is a
 clearance that has not run yet or could not write. See
 [the stranded-flag clearance](#the-stranded-flag-clearance).
 
+`archivedRepoFlags` is the third withheld list and the only one naming a state
+nothing will ever consume. An archived repo is **read-only**: `human-close` and
+`record-close-candidate-verdict` both write labels and comments, so a flag there
+cannot be ruled on however sound it is. `rain.webapp` was archived on 2026-08-05
+and `rain.webapp#139` was served as the head of this queue four minutes later —
+a completed read, a sound flag, and no ruling that could be written. Ordering is
+oldest-first, so a frozen flag sorts to the **front** and stays there. See
+[archived repos](#archived-repos-206).
+
 The cap is 3 for `next_ready`'s reason and the argument is stronger: there, a
 human who reads a row and does not merge leaves the PR in the queue, whereas
 **every** ruling here retires its flag — uphold-and-close, keep-open and
@@ -1355,6 +1364,14 @@ SIZE is, and `counts.openIssues` is it, read from the same one list
 (`open_issues` is the only site that builds it) so the number of issues and the
 age of those issues can never describe different sets.
 
+The population is every open issue in a repo that can still be worked. An
+ARCHIVED repo's issues are withheld from it (#206) — 29 of 802, measured
+2026-08-05 — because a repo that refuses every write holds no work for anybody,
+so a frozen issue is not backlog and its age is not a fact about how fast the
+org answers. `counts.archivedRepo` on `state-load` says how many were withheld,
+so the population's edge is stated rather than inferred from a number that
+quietly dropped.
+
 Three absences, all deliberate:
 
 - a member whose `createdAt` is missing or unparseable still **counts**; it just
@@ -1718,6 +1735,83 @@ vetter's inbox, and it also fixed a projection: a rejected-still-flagged issue
 used to render on the dashboard as `closeCandidateUpheld`, i.e. as the vetter
 agreeing the issue should close. That is the worst direction for the error,
 because the human's next move on an upheld flag is to destroy work.
+
+### Archived repos (#206)
+
+An archived GitHub repo is **read-only**, and its issues and PRs keep answering
+`gh search` exactly as before. So every org-wide enumeration in this binary kept
+offering rows that not one transition could touch: a label will not move, a
+comment will not post, a PR will not merge, an issue will not close.
+
+`next_close_candidate` is where it bit. `rainlanguage/rain.webapp` was archived
+on 2026-08-05 and, minutes later, `rain.webapp#139` was served as the **head**
+of the human's queue — a completed read and a sound flag, with no ruling that
+could be written. The queue is ordered oldest-flag-first, so a frozen flag does
+not merely appear in it, it sorts to the front and stays.
+
+**The filter belongs in the tool, not in a prompt.** Archived repos had been
+handled by an instruction telling the model to skip them. That works for the
+producer, which reads a list and chooses what to work; it cannot work for a tool
+whose contract is "here is the next thing to rule on, ranked, one at a time",
+because a row the caller cannot act on is not something to skip past — it is the
+head of the queue until something removes it.
+
+**It is a class, not an instance**, and the numbers say so. Measured across the
+three configured orgs on 2026-08-05: 1 of 7 close-candidate flags, 4 of 164 open
+producer PRs, and **29 of 802** open issues in the producer's backlog. Fixing
+`next_close_candidate` alone would have left the largest hole untouched, so the
+rule is enforced over the crate's own source —
+`every_org_wide_enumeration_withholds_archived_repos` requires every item that
+builds an org-scoped search either to withhold archived repos or to name itself
+with a reason it need not.
+
+**Where `isArchived` comes from.** One `gh api graphql` call per configured
+owner against the `repositories(isArchived: true)` connection — 1.8s for all
+three orgs, one page each, 38 repos — read ONCE per enumeration and shared
+across its whole loop. Deliberately **not** `gh search repos --archived=true`,
+nor the `--archived=false` qualifier on the issue and PR searches: search is an
+index and the index is incomplete. Measured the same day, it reported 37
+archived repos where the connection reported 38, missing
+`rainlanguage/assemblyscript-cbor-fork`. That is also the worst staleness to
+inherit here, since the defect is a repo archived _minutes_ before the read. The
+per-repo alternative (`gh repo view --json isArchived`, 0.5s each) is the
+lookup-inside-a-loop that does not scale — these enumerations span 40–60
+distinct repos. And the set is **not cached across calls**: `mcp` is long-lived,
+so a set read at server start would answer with the world as it was when the
+human last restarted it.
+
+**A count, never a silent drop.** Every affected surface reports how many rows
+an archived repo froze, in the same place it reports its other withheld sets:
+`counts.archivedRepo` and `archivedRepoFlags` on `next_close_candidate`,
+`counts.skipArchivedRepo` and `archivedRepoFlags` on the vetter's
+close-candidate inbox, `counts.skipArchivedRepo` and `archivedRepo` on
+`unvetted`, `counts.archivedRepo` on `next_ready`, an `archived-repo` segment in
+the `--queue` header, `archivedRepoPrs` on `human-queue`, and a
+`(N withheld: archived repo, unactionable)` note on `worklist`,
+`uncovered-issues` and `state-load`. Silence is what let these sit unnoticed; a
+stated count says the flags exist without offering work nobody can do.
+
+**The classification is `cc_gate`'s**, for both close-candidate inboxes at once
+(#207 made `cc_row` consume it, which is what let one variant serve both).
+`CcGate::RepoArchived` is the **first** arm, ahead of the sacred one: every
+state below it names something a transition would DO, and a read-only repo
+refuses all of them. That ordering is behaviour rather than tidiness — with it
+later, the stranded-flag clearance above would fire against a repo that rejects
+the `--remove-label` it is made of, and report `clearanceFailed` on every run
+for ever. `cc_stranded_cleared_comment` is total over the enum and returns
+`None` here, so the state is non-clearable by construction.
+
+**An unreadable archived state ABORTS.** It never collapses to "not archived"
+(#199 gave the failure a type so it could not). Fail-open re-creates the defect;
+fail-closed empties the queue and hides all the real work; so the enumeration
+refuses, naming the typed `GhFailure`, exactly as every other read here refuses
+rather than answer falsely.
+
+**Nothing unarchives, edits or closes anything.** The repo was archived
+deliberately. The frozen flags stay where they are: they are inert — nothing
+reads them once out of scope and nothing can clear them — and any attempt to
+drain them would have to write to a repo that refuses writes. Counting them is
+the whole remedy.
 
 ### Infrastructure down ends the run (#108)
 

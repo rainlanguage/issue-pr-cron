@@ -267,6 +267,13 @@ or could not write — the label is still parking the issue either way. It is no
 yours to rule on: leave it and let the next vetter run take it, or look at
 `clearanceFailed` on that state-load if it persists.
 
+`archivedRepoFlags` is a separate list and a harder state: the flag's REPO is
+archived, so no ruling can be written on it at all — a label will not move, a
+comment will not post, the issue will not close. It is not a clearance waiting
+to happen and there is nothing to retry; the flag is frozen where it is. Do not
+try to rule on one, and do not treat it as a defect in the flag — the repo was
+archived deliberately and the flag simply outlived its repo.
+
 ## Present the result, do not summarise it away
 
 Print every field of the row. Then give the independent read — what the issue
