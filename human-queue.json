@@ -1110,25 +1110,13 @@
         ]
       },
       "un-vetted": {
-        "count": 27,
+        "count": 25,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 204,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/204",
-            "title": "Refuse a body/block path that is not this caller's own: absolute AND named for its subject"
-          },
           {
             "repo": "rainlanguage/claude-audit-skills",
             "number": 82,
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/82",
             "title": "feat(audit): hot-key custody rule — the deploy key deploys and holds NOTHING (#81)"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 166,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/166",
-            "title": "human-rule delegates in one call, and human:* protects authorship only — rulings are inputs the machine executes"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -5551,23 +5539,23 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 5,
     "leaks": 5,
-    "totalProducerPrs": 151,
+    "totalProducerPrs": 149,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 599,
-    "unvetted": 27,
+    "unvetted": 25,
     "reject": 65,
     "relink": 0,
     "closeCandidatePrs": 4,
     "humanReject": 0,
     "humanDesign": 6,
     "humanCloseCandidate": 0,
-    "openIssues": 767
+    "openIssues": 765
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.0,
+      "meanDays": 317.9,
       "medianDays": 99.1,
-      "oldestDays": 1654.6
+      "oldestDays": 1654.7
     }
   }
 }
