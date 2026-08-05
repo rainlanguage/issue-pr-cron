@@ -18553,9 +18553,19 @@ fn unvetted_close_candidates_fetch(
             let obj = row.as_object_mut().expect("row is an object");
             match outcome {
                 Ok(()) => {
+                    // EXHAUSTIVE, for the reason the gate histogram above it is: a new stranded
+                    // state must be given its own count rather than folding silently into an
+                    // existing one. A `_` arm here would have quietly reported some future state's
+                    // clearances as `clearedRejectedStillFlagged`, which is the same class of
+                    // silent accumulation this whole change is about.
                     match gate {
                         CcGate::NoFlag => n_cleared_no_flag += 1,
-                        _ => n_cleared_rejected += 1,
+                        CcGate::RejectedStillFlagged => n_cleared_rejected += 1,
+                        CcGate::Presentable | CcGate::HumanRuled | CcGate::Unvetted => {
+                            unreachable!(
+                            "{gate:?} is not stranded — cc_stranded_cleared_comment returned None"
+                        )
+                        }
                     }
                     obj.insert("cleared".into(), Value::from(true));
                     cleared.push(row);
