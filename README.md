@@ -112,8 +112,8 @@ was also the only one improvising raw `gh issue edit --add-label`.
 
 | Transition                                                                  | The move it makes                                                                                                       |
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>" [--rework …\|--park]`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111) |
-| `human-rule-issue <owner/repo> <issue> <ruling> "<…>" [--rework …\|--park]` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed**                   |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`                             | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111), and the flags that choose it are `reject`'s and `design`'s alone: `reject` REQUIRES `--rework "<order>"`, `design` takes exactly one of `--rework` / `--park` |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"`                       | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` carry the same disposition flags, `close-candidate` / `keep-open` refuse them                                                                              |
 | `human-close <owner/repo> <n> "<note>"`                                     | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition                         |
 | `record-close-candidate-verdict <owner/repo> <issue>`                       | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)                               |
 
@@ -131,6 +131,10 @@ the order (a reject IS a send-back; one not worth reworking is a
 close-candidate, not a park); `design` takes exactly one of `--rework` /
 `--park`; and a bare call to either **refuses** rather than parking by accident
 — pure parking is an explicit spelling, never the default meaning of a ruling.
+The other two verbs take neither flag and say so: `close-candidate` is a decided
+close whose refusal names `human-close` as its consumer, and `keep-open` is a
+standing constraint — the verb is its own disposition, so a second spelling of
+it would only be a way to mean something else by accident.
 What the human namespace protects is **authorship only**: no AI actor writes a
 `human:*` label, and none removes one as an override — but a ruling is an input
 the machine executes, so the producer's state-load picks a delegated
@@ -174,11 +178,15 @@ that has already happened:
   no state left to move out of, so nothing is written and the exit is 0;
 - **re-ruling supersedes** rather than refuses. The human owns this namespace
   and may correct a mis-click, so the old `human:*` is removed and the new one
-  added — one of exactly **two** sanctioned removals of a `human:*` label,
-  sanctioned because the actor removing it wrote it. The other is #111's
+  added — one of the **two RUNTIME** removals of a `human:*` label, sanctioned
+  because the actor removing it wrote it. The other is #111's
   clearing-by-execution: the verdict that re-judges an **executed** delegation
   clears the spent `human:design`, sanctioned because it completes what the
-  human asked rather than overriding it;
+  human asked rather than overriding it. There is a third remover, and it is a
+  MIGRATION rather than a transition of the running FSM: `migrate-reject` moves
+  the PRs still carrying the `human:reject` #133 retired onto `ai:reject` — a
+  one-shot over a fixed, shrinking population, which is why it is not one of the
+  two paths a live ruling can take;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:reject` sat on an issue whose producer close-candidate flag had not
