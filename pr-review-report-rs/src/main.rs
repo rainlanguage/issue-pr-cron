@@ -19947,7 +19947,7 @@ fn cc_complete_torn_close(slug: &str, num: u64, detail: &Value) -> Result<(), St
 fn sweep_stale_closed_flags(archived_repos: &ArchivedRepos) -> (usize, usize, usize, Vec<Value>) {
     let (mut n_cleared, mut n_failed, mut n_archived) = (0usize, 0usize, 0usize);
     let mut failures: Vec<Value> = Vec::new();
-    for noun in ["issues", "prs"] {
+    for noun in FLAG_SEARCH_NOUNS {
         let args = flagged_subjects_args(noun, "closed");
         let argref: Vec<&str> = args.iter().map(String::as_str).collect();
         // A failed search is skipped, not fatal: this sweep is a repair pass riding a state-load
@@ -23160,6 +23160,13 @@ fn flagged_open_subjects_args(noun: &str) -> Vec<String> {
     flagged_subjects_args(noun, "open")
 }
 
+/// The two `gh search` nouns that together cover the whole flagged population (#211). ONE
+/// spelling, used by every enumerator — the open-side fetch and the closed-side sweep — so a
+/// subject type cannot silently drop out of one of them: `gh search issues` scopes to
+/// `type:issue` and `gh search prs` to `type:pr`, and the defect #211 names is exactly the `prs`
+/// half missing.
+const FLAG_SEARCH_NOUNS: [&str; 2] = ["issues", "prs"];
+
 /// PURE: the argv shared by the open-side inboxes and the CLOSED-side stale-flag sweep — the one
 /// place the label query is spelled, parameterised on the ONE qualifier that differs. The closed
 /// spelling exists because `human-close`'s own order (comment → close → retire flag) can tear
@@ -23208,7 +23215,7 @@ struct FlaggedSubjects {
 /// partial one's clothes, and an unseen flag is a subject parked with nobody owning it.
 fn flagged_open_subjects() -> Result<FlaggedSubjects, String> {
     let mut found: Vec<Value> = Vec::new();
-    for noun in ["issues", "prs"] {
+    for noun in FLAG_SEARCH_NOUNS {
         let args = flagged_open_subjects_args(noun);
         let argref: Vec<&str> = args.iter().map(String::as_str).collect();
         let half = gh_json(&argref)
@@ -24581,7 +24588,10 @@ mod next_close_candidate_tests {
     // `prs` spelling (#211: the defect was exactly this half missing).
     #[test]
     fn the_two_close_candidate_inboxes_search_one_population() {
-        for noun in ["issues", "prs"] {
+        // Iterating the CONST the live fetchers iterate — with the noun pinned per pass — is what
+        // makes "the prs half went missing" a test failure instead of a silent scope shrink.
+        assert_eq!(FLAG_SEARCH_NOUNS, ["issues", "prs"]);
+        for noun in FLAG_SEARCH_NOUNS {
             let args = flagged_open_subjects_args(noun);
             let pairs: Vec<(&str, &str)> = args
                 .windows(2)
@@ -48627,7 +48637,7 @@ mod human_rule_tests {
         let mut closed = torn.clone();
         closed["state"] = json!("CLOSED");
         assert_eq!(human_close_plan(&closed, false), HumanClosePlan::StaleFlag);
-        for noun in ["issues", "prs"] {
+        for noun in FLAG_SEARCH_NOUNS {
             let args = flagged_subjects_args(noun, "closed");
             let pairs: Vec<(&str, &str)> = args
                 .windows(2)
@@ -48646,6 +48656,24 @@ mod human_rule_tests {
         let mut done = issue(&[], "2026-01-01T00:00:00Z", None, vec![ruled(at)]);
         done["state"] = json!("CLOSED");
         assert_eq!(human_close_plan(&done, false), HumanClosePlan::Settled);
+        // The detector reads the RULING WORD, not the marker: any other recorded ruling — here a
+        // keep-open, whose anchor also spells "close-candidate @" — must not read as a torn
+        // close, or the completion would close subjects a human ruled to keep open.
+        let kept = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some(at),
+            vec![json!({
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": human_rule_comment(&format!("close-candidate @{at}"), "keep-open", "still live"),
+            })],
+        );
+        assert!(
+            !human_close_ruled(&kept),
+            "a keep-open ruling is not a close"
+        );
+        let (gate, ..) = cc_row("o/r", 93, "t", &kept, false);
+        assert_ne!(gate, CcGate::TornHumanClose);
     }
 
     // WHICH GitHub operation each step performs. A `Close` spelled as an `edit`, or an
