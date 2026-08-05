@@ -22452,9 +22452,11 @@ struct PrSignals {
 }
 
 /// PURE FSM classifier: given a PR's derived signals, what should the producer do with it this run?
-/// Priority is deliberate: a deploy-shaped signal means the repo has not migrated to the split
-/// release lifecycle (#162) — no code fix can green a prod-pin there, and the flag-blocked-on
-/// hand-off is cheap and terminal, so it leads. Then red PRs (fix, or if parked skip). A pending
+/// Priority is deliberate. A human decision and a modeled `ai:*` state are STATES, not derivations,
+/// so they park FIRST and nothing below them re-derives a state from CI. Of the derived cases a
+/// deploy-shaped signal leads: it means the repo has not migrated to the split release lifecycle
+/// (#162) — no code fix can green a prod-pin there, and the flag-blocked-on hand-off is cheap and
+/// terminal, so it beats every CI route. Then red PRs (fix, or if parked skip). A pending
 /// CI just waits. Clean-CI PRs route conflict > open-threads > missing-screenshot, else they are
 /// green-ready for the human. A `parked` flag only suppresses re-touching a STILL-RED PR — a PR
 /// that has since gone green surfaces as green-ready regardless of past parking.
@@ -22568,8 +22570,9 @@ fn deploy_pin_red(ci: Ci, failing: &[String]) -> bool {
 /// Still HEAD-SCOPED on purpose. A bare `deploy-confirmed` from a PRIOR head must NOT count: a PR
 /// confirmed at head A, then pushed new bytecode (head B), is back to carrying a live legacy
 /// signal, and a head-blind match would silently swallow it. The producer's note embeds the head
-/// SHA precisely so this match works; a note that embedded the SHORT sha still counts, and an
-/// empty head can never read as confirmed.
+/// SHA precisely so this match works; a note that embedded a 12-char SHORT sha still counts (the
+/// prefix is fixed at 12, so a shorter abbreviation does not), and an empty head can never read as
+/// confirmed.
 fn deploy_confirmed_at_head(detail: &Value, head: &str) -> bool {
     if head.is_empty() {
         return false;
@@ -22606,11 +22609,11 @@ impl LegacyDeploySignal {
 }
 
 /// PURE: the legacy deploy signal, composed from the two shape signals above. The producer's
-/// `next_action` reads the same two, so "the producer flags this blocked on the migration" and
-/// "the human sees a repo that needs migrating" can never be answered differently. Deliberately
-/// head-BLIND (no [`deploy_confirmed_at_head`] input): a deploy-confirmed note resolved one head's
-/// pins under the old choreography, but the REPO is still legacy-shaped, and repo shape is what
-/// this reports.
+/// `next_action` reads the SAME two, so the two sides can never disagree about the question this
+/// one answers: whether the REPO is legacy-SHAPED. They diverge on exactly one further input, and
+/// deliberately — `next_action` also consults [`deploy_confirmed_at_head`] and declines to flag a
+/// head the old choreography already resolved, while this stays head-BLIND: that note resolved one
+/// head's pins, the repo is legacy-shaped either way, and repo shape is what this reports.
 fn legacy_deploy_signal(detail: &Value, ci: Ci, failing: &[String]) -> LegacyDeploySignal {
     if requires_redeploy(detail) || deploy_pin_red(ci, failing) {
         LegacyDeploySignal::RepoNotMigrated
@@ -22960,8 +22963,10 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
 
     // markers — best-effort triage signals (the producer re-confirms from the log when it acts).
     // The deploy-shaped signals are the SHARED ones the human's `next_ready` legacy signal is
-    // composed from, so the producer's "flag this blocked on the migration" and the human's "this
-    // repo needs migrating" cannot disagree (#162).
+    // composed from, so the producer and the human cannot disagree about whether the repo is
+    // legacy-SHAPED (#162). `deployDoneAtHead` is the producer's own EXTRA input, not a shape
+    // signal: it suppresses this run's flag at a head the old choreography already resolved, and
+    // the human's shape signal deliberately does not read it.
     let requires_redeploy = requires_redeploy(detail);
     // the legacy marker, OR a red prod-pin check: the repo has not migrated (the MIGRATION case)
     let has_deploy_trigger = requires_redeploy || deploy_pin_red(ci, &failing);
@@ -32955,6 +32960,67 @@ mod worklist_tests {
             "mergeStateStatus": "CLEAN", "labels": [], "comments": []
         });
         assert_eq!(worklist_row("o/r", &detail)["nextAction"], "flag-migration");
+    }
+
+    /// The relationship [`legacy_deploy_signal`] documents, PINNED rather than only argued in
+    /// prose: the human's shape signal and the producer's migration flag are composed from the
+    /// SAME two shape inputs, so they can never disagree about whether the repo is legacy-shaped —
+    /// and they diverge on EXACTLY one further input, the deploy-confirmed head, which only the
+    /// producer consults. A future edit that adds a third input to one side breaks this.
+    #[test]
+    fn the_shape_signal_and_the_migration_flag_diverge_only_at_a_confirmed_head() {
+        let head_owned = "b".repeat(40);
+        let head = head_owned.as_str();
+        let fixture = |body: &str, rollup: serde_json::Value| {
+            json!({
+                "number": 1, "url": "", "title": "t", "headRefOid": head,
+                "body": body, "statusCheckRollup": rollup,
+                "mergeStateStatus": "CLEAN", "labels": [],
+                // A COMPLETE, empty file list: the screenshot gate reads "no UI" rather than "not
+                // known", so no fixture here can route to 3c instead of the case under test.
+                "files": [], "changedFiles": 0, "comments": []
+            })
+        };
+        let green = json!([{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}]);
+        let red_pin = json!([{"name":"rainix-sol / test / testProdDeployArbitrum",
+                              "conclusion":"FAILURE","status":"COMPLETED"}]);
+        let red_other = json!([{"name":"unit","conclusion":"FAILURE","status":"COMPLETED"}]);
+
+        // (fixture, does this repo read as legacy-SHAPED?) — both spellings of the shape evidence,
+        // and both ways of not being it (a plain green PR, and a red PR whose red is not a pin).
+        for (detail, shaped) in [
+            (fixture("a plain change", green.clone()), false),
+            (fixture(REDEPLOY_MARKER, green.clone()), true),
+            (fixture("a plain change", red_pin), true),
+            (fixture("a plain change", red_other.clone()), false),
+            (fixture(REDEPLOY_MARKER, red_other), true),
+        ] {
+            let rollup = detail.get("statusCheckRollup").unwrap();
+            let ci = classify_ci(rollup);
+            let failing = failing_check_names(rollup);
+            assert_eq!(
+                legacy_deploy_signal(&detail, ci, &failing) == LegacyDeploySignal::RepoNotMigrated,
+                shaped,
+                "the human's shape signal reads the wrong shape on {detail}"
+            );
+            assert_eq!(
+                worklist_row("o/r", &detail)["nextAction"] == "flag-migration",
+                shaped,
+                "the producer's flag disagrees with the shape signal on {detail}"
+            );
+        }
+
+        // The ONE deliberate divergence. A trusted deploy-confirmed note at THIS head resolved this
+        // head's pins, so the producer has nothing left to flag the PR blocked on — while the REPO
+        // is still legacy-shaped, and the human's row still says so.
+        let mut confirmed = fixture(REDEPLOY_MARKER, green);
+        confirmed["comments"] = json!([{"author":{"login":"thedavidmeister"},
+                                        "body": format!("🤖 ai:producer deploy-confirmed at {head}")}]);
+        assert_eq!(worklist_row("o/r", &confirmed)["nextAction"], "green-ready");
+        assert_eq!(
+            legacy_deploy_signal(&confirmed, Ci::Green, &[]),
+            LegacyDeploySignal::RepoNotMigrated
+        );
     }
 
     #[test]
