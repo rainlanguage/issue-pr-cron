@@ -1356,6 +1356,10 @@ struct QueueCounts {
     /// `fetch_error` (#129): those rows are un-read, not unreadable, and the operator's move is to
     /// re-run rather than to go looking for broken PRs.
     rate_limited: usize,
+    /// `ai:ready` PRs an ARCHIVED repo froze (#206). SEPARATE from `excluded`, which counts rows a
+    /// human or a draft flag deliberately held back: these were never held back by anyone, and
+    /// nothing anybody does to the PR will make them mergeable again.
+    archived_repo: usize,
 }
 
 /// Render the queue: a header with the true ai:ready -> presentable / conflicting / red / pending /
@@ -1389,14 +1393,21 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
     } else {
         String::new()
     };
+    // Stated, never silent: a frozen row is one nobody can act on, and a queue that just got
+    // smaller with no reason given is what left these unnoticed in the first place (#206).
+    let archived = if c.archived_repo > 0 {
+        format!(", {} archived-repo", c.archived_repo)
+    } else {
+        String::new()
+    };
     let shown = if top == 0 {
         rows.len()
     } else {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, limited, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{}{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, limited, excl, archived, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -1550,10 +1561,6 @@ impl ArchivedRepos {
         self.0.contains(&slug.to_ascii_lowercase())
     }
 
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
     #[cfg(test)]
     fn from_slugs<I: IntoIterator<Item = S>, S: AsRef<str>>(slugs: I) -> Self {
         ArchivedRepos(
@@ -1686,6 +1693,17 @@ fn archived_read_error(f: GhFailure) -> String {
         "error: could not read which repos are archived ({f:?}) — aborting rather than offer \
          rows from a repo that refuses every transition"
     )
+}
+
+/// PURE: the one-line note a plain-text surface appends when an archived repo froze rows out of
+/// it. EMPTY at zero, so an operator never reads a count that says nothing happened — and never
+/// silent above zero, which is the whole point.
+fn archived_note(n: usize) -> String {
+    if n == 0 {
+        String::new()
+    } else {
+        format!(" ({n} withheld: archived repo, unactionable)")
+    }
 }
 
 /// PURE: split search hits into the ones a transition can still act on and the ones an archived
@@ -2300,6 +2318,12 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     let Some(arr) = val.as_array() else {
         return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
     };
+    // An `ai:ready` PR in an ARCHIVED repo cannot be merged, relabelled or commented on, so it is
+    // not presentable however green it is (#206). Withheld BEFORE the per-PR fetch below, which
+    // costs a `gh pr view` + a threads query per candidate — paying that for a row no ruling can
+    // reach is the second cost of the same bug.
+    let archived_set = archived_repos().map_err(archived_read_error)?;
+    let (arr, frozen) = withhold_archived(arr.clone(), &archived_set, hit_slug);
 
     // Candidate filter (from the search JSON, no extra call): drop drafts and any PR whose ai:ready
     // is overridden by a human:* label (the human's verdict wins).
@@ -2323,7 +2347,10 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     // whole point, so each candidate's real CI rollup + mergeable + reviewDecision is fetched.
     let mut rows: Vec<PresentablePr> = Vec::new();
     let mut counts = QueueCounts {
-        raw: arr.len(),
+        // `raw` stays the WHOLE `ai:ready` population, frozen rows included, so the header's
+        // "N ai:ready -> M presentable" still accounts for every row the search returned and the
+        // archived count explains part of the difference rather than vanishing from both sides.
+        raw: arr.len() + frozen.len(),
         excluded: arr.len() - candidates.len(),
         conflict: 0,
         red: 0,
@@ -2334,6 +2361,7 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         open_threads: 0,
         fetch_error: 0,
         rate_limited: 0,
+        archived_repo: frozen.len(),
     };
     // The fetches run concurrently; the COUNTING does not. `map_bounded` hands back one outcome
     // per candidate in candidate order, and `apply_outcome` folds them serially, so the counts and
@@ -16291,6 +16319,7 @@ fn human_queue_doc(
     backlog: &[SubjectRef],
     leaks: &[(SubjectRef, String)],
     total_producer_prs: usize,
+    archived_prs: &[SubjectRef],
 ) -> Value {
     let bmap: serde_json::Map<String, Value> = buckets
         .iter()
@@ -16305,6 +16334,11 @@ fn human_queue_doc(
         "closeCandidateUnvetted": cc_unvetted,
         "closeCandidateUpheld": cc_upheld,
         "uncoveredIssues": SubjectRef::array(backlog),
+        // The producer PRs an ARCHIVED repo froze (#206). A top-level array beside the lanes, not a
+        // lane of its own: a lane names a state the machine can move out of, and this one names a
+        // repo that will never accept another write. The dashboard's lane totals therefore stay
+        // "PRs the machine can still act on", with the frozen ones accounted for right here.
+        "archivedRepoPrs": SubjectRef::array(archived_prs),
         "leaks": leaks
             .iter()
             .map(|(s, reason)| s.to_json_with(&[("reason", Value::from(reason.as_str()))]))
@@ -16327,6 +16361,7 @@ fn human_queue_doc(
             "closeCandidateUpheld": cc_upheld_n,
             "leaks": leaks.len(),
             "totalProducerPrs": total_producer_prs,
+            "archivedRepoPrs": archived_prs.len(),
             // Producer untouched backlog — open issues with no covering open PR, excluding
             // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
             "uncoveredIssues": backlog.len(),
@@ -16381,6 +16416,36 @@ fn human_queue_mode(json_out: bool) -> i32 {
         eprintln!("error: `gh search prs --author {assignee}` failed — aborting rather than print a false-empty queue");
         return 1;
     };
+    // A PR in an ARCHIVED repo belongs in no lane (#206): every lane names a transition, and an
+    // archived repo refuses all of them. Withheld from the buckets and REPORTED as its own
+    // top-level count — this document is the dashboard's source, so a row that silently vanished
+    // from a lane would show as a lane that quietly shrank.
+    let archived_set = match archived_repos() {
+        Ok(s) => s,
+        Err(f) => {
+            eprintln!("{}", archived_read_error(f));
+            return 1;
+        }
+    };
+    let (prs, frozen) = withhold_archived(prs, &archived_set, hit_slug);
+    let archived_prs: Vec<SubjectRef> = frozen
+        .iter()
+        .filter_map(|p| {
+            let url = p
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string();
+            let slug = pr_slug(&url)?;
+            let num = p.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+            let title = p
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(SubjectRef::new(slug, num, url, title))
+        })
+        .collect();
 
     // One pass: the legacy label bucket (`states`, unchanged) + a per-PR `(SubjectRef, labels)`
     // record the lane classifier consumes. `unlabeled` = PRs with no `ai:*` label (leak candidates).
@@ -16512,10 +16577,17 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .map(|s| s.to_string()),
     );
     let iref: Vec<&str> = iargs.iter().map(String::as_str).collect();
+    // Filtered through the SAME archived set the lanes above use, so this legacy count and the
+    // vetted close-candidate figures below cannot disagree about which flags are actionable.
     let close_issues = close_candidate_issue_refs(
-        &gh_json(&iref)
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default(),
+        &withhold_archived(
+            gh_json(&iref)
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default(),
+            &archived_set,
+            hit_slug,
+        )
+        .0,
     );
 
     // Close-candidate vet state, as `(unvetted, upheld)`. Computed from the same state-load the
@@ -16548,7 +16620,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // (via `coverage_uncovered`); `is_producer_backlog` narrows it to the producer's share. A gh
     // failure leaves it empty rather than aborting the whole queue render — it is additive.
     let backlog: Vec<SubjectRef> = coverage_uncovered()
-        .map(|(open, meta)| producer_backlog_refs(&open, &meta))
+        .map(|(open, meta, _archived)| producer_backlog_refs(&open, &meta))
         .unwrap_or_default();
 
     if json_out {
@@ -16563,6 +16635,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
             &backlog,
             &leaks,
             prs.len(),
+            &archived_prs,
         );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
@@ -16589,8 +16662,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
     };
     println!(
-        "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs) ===",
-        prs.len()
+        "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs{}) ===",
+        prs.len(),
+        archived_note(archived_prs.len())
     );
     println!(
         "▓▓ Producer backlog — untouched issues, no open PR (excl. human-gated / close-candidate): {}",
@@ -18309,6 +18383,11 @@ enum VetAction {
     /// flag), a malformed `blocked-by` line, an unresolvable ref, or a clearance write that
     /// failed. Never auto-cleared, never vetted, never silent: the row names every reason (#161).
     SkipBlockedOnManual,
+    /// The repo is ARCHIVED (#206). Not a property of the PR at all: `record_verdict` applies a
+    /// label and posts a comment, and a read-only repo refuses both, so no verdict this tool can
+    /// form is writable. Its own action rather than a fold into `SkipHuman`, because nobody
+    /// decided anything — and unlike every other skip here, no future push clears it.
+    SkipArchivedRepo,
 }
 
 impl VetAction {
@@ -18321,6 +18400,7 @@ impl VetAction {
             VetAction::SkipOpenThreads => "skip-open-threads",
             VetAction::SkipBlockedOn => "skip-blocked-on",
             VetAction::SkipBlockedOnManual => "blocked-on-manual-review",
+            VetAction::SkipArchivedRepo => "skip-archived-repo",
         }
     }
 }
@@ -18528,6 +18608,7 @@ fn unvetted_doc(
     let mut open_threads: Vec<Value> = Vec::new();
     let mut blocked_on: Vec<Value> = Vec::new();
     let mut blocked_manual: Vec<Value> = Vec::new();
+    let mut archived: Vec<Value> = Vec::new();
     let (mut n_draft, mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize, 0usize);
     for (action, prio, row) in rows {
         match action {
@@ -18575,6 +18656,16 @@ fn unvetted_doc(
                             "reasons": row.get("blockedOnReasons").cloned().unwrap_or(Value::Null),
                         }));
                     }
+                    // UNCONDITIONAL, like `openThreads` and manual-review, and for the stronger
+                    // version of their reason: this PR is not merely un-vetted this run, it can
+                    // never be vetted again, and no push will change that (#206).
+                    VetAction::SkipArchivedRepo => {
+                        archived.push(serde_json::json!({
+                            "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+                            "url": row.get("url").cloned().unwrap_or(Value::Null),
+                            "why": row.get("why").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
                     // `Vet` is taken by the arm above; the only action left here is vetted-at-head.
                     VetAction::SkipVetted | VetAction::Vet => n_vetted += 1,
                 }
@@ -18588,8 +18679,10 @@ fn unvetted_doc(
     let prs: Vec<Value> = page_rows.into_iter().map(|(_, _, r)| r).collect();
     let (open_threads, more_threads) = page(open_threads, limit);
     let (n_blocked, n_blocked_manual) = (blocked_on.len(), blocked_manual.len());
+    let n_archived = archived.len();
     let (blocked_on, more_blocked) = page(blocked_on, limit);
     let (blocked_manual, more_blocked_manual) = page(blocked_manual, limit);
+    let (archived, more_archived) = page(archived, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "open": rows.len(),
@@ -18600,6 +18693,7 @@ fn unvetted_doc(
             "skipOpenThreads": n_threads,
             "skipBlockedOn": n_blocked,
             "blockedOnManualReview": n_blocked_manual,
+            "skipArchivedRepo": n_archived,
         },
         "prs": prs,
         // How many vet-able PRs this page LEFT BEHIND. A caller that reads `prs.len()` as the whole
@@ -18611,6 +18705,8 @@ fn unvetted_doc(
         "moreBlockedOn": more_blocked,
         "blockedOnManualReview": blocked_manual,
         "moreBlockedOnManualReview": more_blocked_manual,
+        "archivedRepo": archived,
+        "moreArchivedRepo": more_archived,
     });
     if include_skipped {
         let (rows, more_skipped) = page(skipped, limit);
@@ -18741,9 +18837,27 @@ fn unvetted_close_candidates_fetch(
     // The SAME search the human's `next_close_candidate` gate runs, shared rather than written
     // twice: two spellings of "which issues are flagged" is how the vetter's inbox and the human's
     // would come to answer differently.
-    let found = flagged_open_issues()?;
+    let FlaggedIssues {
+        live: found,
+        archived: frozen,
+    } = flagged_open_issues()?;
     // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
     // reported (see `fetchErrors` below), never dropped.
+    // A flag in an ARCHIVED repo is not vettable either (#206): `record_close_candidate_verdict`
+    // writes a comment and, on reject, strips a label — both refused by a read-only repo. So it is
+    // withheld here for the same reason it is withheld from the human's inbox, and counted for the
+    // same reason every other skip is.
+    let archived_flags: Vec<Value> = frozen
+        .iter()
+        .map(|hit| {
+            serde_json::json!({
+                "issue": search_issue_ref(hit)
+                    .map_or_else(String::new, |(slug, num)| format!("{slug}#{num}")),
+                "title": hit.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+                "why": ARCHIVED_REPO_WHY,
+            })
+        })
+        .collect();
 
     let mut rows: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
@@ -18793,17 +18907,19 @@ fn unvetted_close_candidates_fetch(
     let (issues, more) = page(rows, limit);
     let mut doc = serde_json::json!({
         "counts": {
-            "flagged": found.len(),
+            "flagged": found.len() + archived_flags.len(),
             "vet": n_vet,
             "skipHumanDecided": n_human,
             "skipNoFlag": n_noflag,
             "skipVettedAtFlag": n_vetted,
+            "skipArchivedRepo": archived_flags.len(),
             // flagged == vet + skip* + fetchErrors, always. A non-zero value here is the ONLY
             // reason the parts may not sum to the whole.
             "fetchErrors": errors.len(),
         },
         "issues": issues,
         "more": more,
+        "archivedRepoFlags": archived_flags,
         "fetchErrors": errors,
     });
     if include_skipped {
@@ -19165,8 +19281,31 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         .ok_or_else(|| {
             format!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty vet queue")
         })?;
+    // A PR in an ARCHIVED repo cannot be vetted (#206): `record_verdict` applies a label and posts
+    // a comment, and a read-only repo refuses both. Withheld before the per-PR fetch — paying a
+    // `gh pr view` per frozen PR buys a verdict nothing can record — and carried as a row with its
+    // OWN action, so the state-load counts it where it counts every other skip.
+    let archived_set = archived_repos().map_err(archived_read_error)?;
+    let (prs, frozen) = withhold_archived(prs, &archived_set, hit_slug);
 
     let mut rows: Vec<(VetAction, u8, Value)> = Vec::new();
+    for p in &frozen {
+        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        rows.push((
+            VetAction::SkipArchivedRepo,
+            4,
+            serde_json::json!({
+                "pr": pr_slug(url)
+                    .zip(p.get("number").and_then(|n| n.as_u64()))
+                    .map_or_else(String::new, |(slug, num)| format!("{slug}#{num}")),
+                "url": url,
+                "title": p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+                "labels": label_names(p),
+                "action": VetAction::SkipArchivedRepo.as_str(),
+                "why": ARCHIVED_REPO_WHY,
+            }),
+        ));
+    }
     for p in &prs {
         let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let (Some(slug), Some(num)) = (pr_slug(url), p.get("number").and_then(|n| n.as_u64()))
@@ -19241,7 +19380,7 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     }
     let c = &doc["counts"];
     println!(
-        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review)",
+        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
         c["vet"],
         c["open"],
         c["skipDraft"],
@@ -19249,7 +19388,8 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
         c["skipVettedAtHead"],
         c["skipOpenThreads"],
         c["skipBlockedOn"],
-        c["blockedOnManualReview"]
+        c["blockedOnManualReview"],
+        c["skipArchivedRepo"]
     );
     for p in doc["prs"].as_array().into_iter().flatten() {
         println!(
@@ -19290,6 +19430,16 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
             "  {}  [blocked-on MANUAL REVIEW · {}]",
             b["pr"].as_str().unwrap_or(""),
             b["reasons"]
+        );
+    }
+    // Also unconditional (#206): a frozen PR is one the vetter will never be able to judge, and
+    // the only reason it is not in the queue is a fact about the REPO that nothing here reports
+    // otherwise.
+    for a in doc["archivedRepo"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [withheld · {}]",
+            a["pr"].as_str().unwrap_or(""),
+            a["why"].as_str().unwrap_or(ARCHIVED_REPO_WHY)
         );
     }
     0
@@ -21375,10 +21525,11 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
 const NCC_ROW_FIXED_BYTES: usize = 1_200;
 const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
 
-// The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded, because
-// they ride inside the same one budget the rows do — and an unbounded list of stranded flags is how
-// a document that must always be servable becomes one that is refused on a bad day.
+// The three withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded,
+// because they ride inside the same one budget the rows do — and an unbounded list of stranded
+// flags is how a document that must always be servable becomes one that is refused on a bad day.
 const NCC_MAX_STRANDED: usize = 3;
+const NCC_MAX_ARCHIVED: usize = 3;
 const NCC_MAX_ERRORS: usize = 3;
 const NCC_WITHHELD_FIELD_BYTES: usize = NCC_ISSUE_BYTES + NCC_ERROR_BYTES;
 const NCC_WITHHELD_FIXED_BYTES: usize = 150;
@@ -21393,7 +21544,7 @@ const NCC_ENVELOPE_BYTES: usize = 1_500;
 /// crate does not build.
 const _: () = assert!(
     NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
-        + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
+        + (NCC_MAX_STRANDED + NCC_MAX_ARCHIVED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
         + NCC_ENVELOPE_BYTES
         <= MCP_MAX_RESULT_BYTES
 );
@@ -21504,8 +21655,12 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
 
 /// The whole-queue breakdown. Every flag the search returned lands in exactly one of these, plus the
 /// fetch errors — so `flagged == presentable + unvetted + noProducerFlag + humanRuled +
-/// vetterRejectedStillFlagged + fetchErrors`, always, and a reader can see there is no sixth bucket
-/// quietly absorbing rows.
+/// vetterRejectedStillFlagged + archivedRepo + fetchErrors`, always, and a reader can see there is
+/// no further bucket quietly absorbing rows.
+///
+/// `archived_repo` is counted BEFORE the gate rather than as a gate state: a frozen flag is not
+/// classified at all, because classifying it would cost a `gh issue view` to answer a question no
+/// ruling can act on.
 #[derive(Default)]
 struct FlagQueueCounts {
     flagged: usize,
@@ -21514,16 +21669,27 @@ struct FlagQueueCounts {
     no_flag: usize,
     human_ruled: usize,
     rejected_still_flagged: usize,
+    archived_repo: usize,
     fetch_errors: usize,
 }
 
-/// The document's non-row halves: the counts, and the two lists a reader must see even though this
+/// The one line every surface gives for a row an archived repo froze.
+const ARCHIVED_REPO_WHY: &str = "repo is archived — no label, comment or close can be written";
+
+/// The document's non-row halves: the counts, and the three lists a reader must see even though this
 /// call will not act on them.
 struct FlagQueueWithheld {
     counts: FlagQueueCounts,
     /// The [`CcGate::is_stranded`] flags — capped, with the overflow in `more_stranded`.
     stranded: Vec<Value>,
     more_stranded: usize,
+    /// The flags frozen by an ARCHIVED repo — a separate list from `stranded` on purpose. Both are
+    /// flags no transition can consume, but the causes are different and so are the answers: a
+    /// stranded flag is a label/verdict state some future transition could clear, while an
+    /// archived repo will never accept a write again. Folding them together would hide which is
+    /// which behind one number.
+    archived: Vec<Value>,
+    more_archived: usize,
     errors: Vec<Value>,
     more_errors: usize,
 }
@@ -21535,6 +21701,11 @@ struct FlagQueueWithheld {
 /// is the answer to a question nothing else asks — those flags are in states no AI transition
 /// clears, so they sit until a human notices, and a queue that silently skipped them is how they
 /// stayed unnoticed.
+///
+/// `archivedRepoFlags` is the same argument for a different cause (#206). Those flags CANNOT be
+/// ruled on at all — every write this FSM owns is refused by an archived repo — so offering one is
+/// offering work nobody can do; but dropping them silently would shrink the human's inbox with
+/// nothing to explain the gap, which is the defect that let them sit in the queue unnoticed.
 fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
     let returned = rows.len();
     let presentable = w.counts.presentable;
@@ -21551,10 +21722,13 @@ fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
             "noProducerFlag": w.counts.no_flag,
             "humanRuled": w.counts.human_ruled,
             "vetterRejectedStillFlagged": w.counts.rejected_still_flagged,
+            "archivedRepo": w.counts.archived_repo,
             "fetchErrors": w.counts.fetch_errors,
         },
         "strandedFlags": w.stranded,
         "moreStrandedFlags": w.more_stranded,
+        "archivedRepoFlags": w.archived,
+        "moreArchivedRepoFlags": w.more_archived,
         "fetchErrors": w.errors,
         "moreFetchErrors": w.more_errors,
         "next": rows,
@@ -21612,35 +21786,69 @@ fn flagged_open_issues_args() -> Vec<String> {
     args
 }
 
+/// The flagged population, split by whether any transition can still reach it (#206).
+///
+/// The split is made HERE, in the one search both inboxes share, for the same reason the search is
+/// shared: two surfaces filtering separately is how the vetter's queue and the human's would come
+/// to disagree about which flags are actionable.
+struct FlaggedIssues {
+    /// Flags a verdict or a ruling can still be written on.
+    live: Vec<Value>,
+    /// Flags an archived repo has FROZEN. Not dropped: every consumer counts them, because a
+    /// queue that shrinks with nothing to explain the gap is how these went unnoticed.
+    archived: Vec<Value>,
+}
+
 /// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
 /// `ai:close-candidate`. Shared rather than written twice, so the vetter's queue and the human's are
 /// populations of the same query — two spellings of "which issues are flagged" is how they would
 /// come to answer differently.
 ///
-/// Errors rather than returning a falsely-empty set, for the reason the PR side does.
-fn flagged_open_issues() -> Result<Vec<Value>, String> {
+/// Errors rather than returning a falsely-empty set, for the reason the PR side does — including
+/// when the ARCHIVED set is unreadable, since a flag whose repo's state is unknown cannot be
+/// asserted to be actionable.
+fn flagged_open_issues() -> Result<FlaggedIssues, String> {
     let args = flagged_open_issues_args();
     let argref: Vec<&str> = args.iter().map(String::as_str).collect();
-    gh_json(&argref)
+    let found = gh_json(&argref)
         .and_then(|v| v.as_array().cloned())
         .ok_or_else(|| {
             "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
              aborting rather than report a falsely-empty close-candidate queue"
                 .to_string()
-        })
+        })?;
+    let archived_set = archived_repos().map_err(archived_read_error)?;
+    let (live, archived) = withhold_archived(found, &archived_set, hit_slug);
+    Ok(FlaggedIssues { live, archived })
 }
 
 /// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
 /// then pay for the covering-PR read only on the rows actually returned.
 fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
-    let found = flagged_open_issues()?;
+    let FlaggedIssues {
+        live: found,
+        archived: frozen,
+    } = flagged_open_issues()?;
     let mut flags: Vec<PresentableFlag> = Vec::new();
     let mut counts = FlagQueueCounts {
-        flagged: found.len(),
+        flagged: found.len() + frozen.len(),
+        archived_repo: frozen.len(),
         ..Default::default()
     };
     let mut stranded: Vec<Value> = Vec::new();
     let mut errors: Vec<Value> = Vec::new();
+    // The archived rows are named, not merely counted: this tool's contract is "here is the next
+    // thing to rule on, and here is everything you are NOT being shown", and a human who knows a
+    // flag exists somewhere unreachable can decide what to do about the repo.
+    let archived: Vec<Value> = frozen
+        .iter()
+        .map(|hit| {
+            let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
+            let issue = search_issue_ref(hit)
+                .map_or_else(|| title.to_string(), |(slug, num)| format!("{slug}#{num}"));
+            withheld_entry(&issue, ARCHIVED_REPO_WHY)
+        })
+        .collect();
     for hit in &found {
         let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let Some((slug, num)) = search_issue_ref(hit) else {
@@ -21714,6 +21922,7 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         })
         .collect();
     let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
+    let (archived, more_archived) = page(archived, Some(NCC_MAX_ARCHIVED));
     let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
     Ok(next_close_candidate_doc(
         rows,
@@ -21721,6 +21930,8 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
             counts,
             stranded,
             more_stranded,
+            archived,
+            more_archived,
             errors,
             more_errors,
         },
@@ -28963,7 +29174,7 @@ fn issue_repo(meta: &Value) -> String {
 }
 
 fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
-    let Some(rows) = worklist_rows(use_cache) else {
+    let Some((rows, n_archived)) = worklist_rows(use_cache) else {
         return 1;
     };
     if json_out {
@@ -28972,7 +29183,12 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
             serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into())
         );
     } else {
-        println!("worklist: {} open PRs by {}\n", rows.len(), pr_assignee());
+        println!(
+            "worklist: {} open PRs by {}{}\n",
+            rows.len(),
+            pr_assignee(),
+            archived_note(n_archived)
+        );
         for r in &rows {
             let fc = r
                 .get("failingChecks")
@@ -29007,11 +29223,13 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
     0
 }
 
-/// The fleet rows themselves, action-ranked. Split out from [`worklist_mode`] so `state-load` can
-/// compose the same computation instead of re-deriving it — one fleet read, one classifier, so the
-/// digest and the raw list can never disagree about what a PR needs. `None` on a gh failure, which
-/// every caller must treat as an abort rather than as an empty fleet.
-fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
+/// The fleet rows themselves, action-ranked, plus how many open PRs an ARCHIVED repo froze out of
+/// the fleet (#206). Split out from [`worklist_mode`] so `state-load` can compose the same
+/// computation instead of re-deriving it — one fleet read, one classifier, so the digest and the
+/// raw list can never disagree about what a PR needs. `None` on a gh failure, which every caller
+/// must treat as an abort rather than as an empty fleet — INCLUDING an unreadable archived set,
+/// since a fleet that cannot tell which repos accept writes cannot say what work is possible.
+fn worklist_rows(use_cache: bool) -> Option<(Vec<Value>, usize)> {
     let assignee = pr_assignee();
     let mut search: Vec<String> = vec!["search".into(), "prs".into()];
     search.extend(org_owner_args());
@@ -29035,7 +29253,22 @@ fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
         return None;
     };
     let empty = Vec::new();
-    let arr = val.as_array().unwrap_or(&empty);
+    // An archived repo's PR has no `nextAction` this fleet can take — every one of them
+    // (`push`, a thread resolution, a merge) is a write the repo refuses — so it is withheld
+    // rather than ranked into the producer's work (#206). Stated at the render, never silent.
+    let archived_set = archived_repos().map_err(|f| {
+        eprintln!("{}", archived_read_error(f));
+    });
+    let Ok(archived_set) = archived_set else {
+        return None;
+    };
+    let (arr, frozen) = withhold_archived(
+        val.as_array().unwrap_or(&empty).clone(),
+        &archived_set,
+        hit_slug,
+    );
+    let n_archived = frozen.len();
+    let arr = &arr;
 
     let mut cache = if use_cache {
         load_cache()
@@ -29115,7 +29348,7 @@ fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
         })
     });
 
-    Some(rows)
+    Some((rows, n_archived))
 }
 
 /// `state-load`: the producer's WHOLE opening picture in ONE result.
@@ -29137,15 +29370,26 @@ fn worklist_rows(use_cache: bool) -> Option<Vec<Value>> {
 /// report a falsely-empty set, and a digest that quietly dropped one would launder exactly the
 /// emptiness they refuse.
 fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
-    let Some(rows) = worklist_rows(use_cache) else {
+    let Some((rows, fleet_archived)) = worklist_rows(use_cache) else {
         return 1;
     };
-    let Some((open, meta)) = coverage_uncovered() else {
+    let Some((open, meta, backlog_archived)) = coverage_uncovered() else {
         return 1;
     };
     let issues: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
-    let fleet = fleet_digest(&rows);
-    let backlog = backlog_digest(&issues);
+    let mut fleet = fleet_digest(&rows);
+    let mut backlog = backlog_digest(&issues);
+    // Both halves report what an archived repo froze out of them, in the digest itself: this is
+    // the producer's WHOLE opening picture, and a picture that silently omits rows is one the run
+    // then re-derives from outside the tool (#206).
+    for (doc, n) in [
+        (&mut fleet, fleet_archived),
+        (&mut backlog, backlog_archived),
+    ] {
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert("archivedRepo".into(), Value::from(n));
+        }
+    }
     if json_out {
         println!(
             "{}",
@@ -29158,12 +29402,13 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
         return 0;
     }
     println!(
-        "fleet: {} open PRs by {}",
+        "fleet: {} open PRs by {}{}",
         fleet
             .get("total")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0),
-        pr_assignee()
+        pr_assignee(),
+        archived_note(fleet_archived)
     );
     for a in ALL_ACTIONS {
         println!(
@@ -29182,7 +29427,7 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
             .map_or(0, Vec::len)
     );
     println!(
-        "\nbacklog: {} uncovered issues ({} audit-labelled)",
+        "\nbacklog: {} uncovered issues ({} audit-labelled){}",
         backlog
             .get("uncovered")
             .and_then(serde_json::Value::as_u64)
@@ -29190,7 +29435,8 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
         backlog
             .pointer("/audit/total")
             .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0)
+            .unwrap_or(0),
+        archived_note(backlog_archived)
     );
     for s in SEVERITY_LABELS
         .iter()
@@ -29221,11 +29467,13 @@ fn action_rank(a: &str) -> u8 {
     }
 }
 
-/// The uncovered-coverage result: the uncovered issues (repo, number) paired with a lookup from
-/// (repo, number) to each issue's meta.
+/// The uncovered-coverage result: the uncovered issues (repo, number), a lookup from
+/// (repo, number) to each issue's meta, and how many open issues an ARCHIVED repo withheld from
+/// the set (#206).
 type UncoveredCoverage = (
     Vec<(String, u64)>,
     std::collections::HashMap<(String, u64), Value>,
+    usize,
 );
 
 /// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter)
@@ -29254,6 +29502,23 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
         eprintln!("error: `gh search issues` failed — aborting rather than report a falsely-empty issue set");
         return None;
     };
+    // The BACKLOG's version of the same defect (#206), and the largest instance of it: measured on
+    // 2026-08-05, 29 of the 802 open issues in scope were in archived repos. The producer cannot
+    // work one — it cannot push a branch or open a PR against a read-only repo — so an issue there
+    // is not backlog, it is a row that would be picked up and abandoned. Withheld and counted.
+    let archived_set = match archived_repos() {
+        Ok(s) => s,
+        Err(f) => {
+            eprintln!("{}", archived_read_error(f));
+            return None;
+        }
+    };
+    let (ival, frozen) = withhold_archived(
+        ival.as_array().cloned().unwrap_or_default(),
+        &archived_set,
+        hit_slug,
+    );
+    let n_archived = frozen.len();
     // open PRs + their NATIVE closing references (GraphQL). The REST `gh search prs` cannot
     // return `closingIssuesReferences`, and regexing title+body missed the URL and cross-repo
     // reference forms GitHub honors while over-counting title keywords GitHub ignores — the
@@ -29269,7 +29534,7 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
     let mut issues: Vec<(String, u64)> = Vec::new();
     let mut meta: std::collections::HashMap<(String, u64), Value> =
         std::collections::HashMap::new();
-    for it in ival.as_array().unwrap_or(&Vec::new()) {
+    for it in &ival {
         let Some(repo) = it
             .get("repository")
             .and_then(|r| r.get("nameWithOwner"))
@@ -29285,7 +29550,7 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
         meta.insert(k, it.clone());
     }
 
-    Some((uncovered(&issues, &covered), meta))
+    Some((uncovered(&issues, &covered), meta, n_archived))
 }
 
 /// True when an uncovered issue belongs to the PRODUCER's untouched backlog: NOT already flagged
@@ -29306,7 +29571,7 @@ fn is_producer_backlog(meta: &Value) -> bool {
 }
 
 fn uncovered_issues_mode(json_out: bool) -> i32 {
-    let Some((open, meta)) = coverage_uncovered() else {
+    let Some((open, meta, n_archived)) = coverage_uncovered() else {
         return 1;
     };
     if json_out {
@@ -29316,7 +29581,11 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
             serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_else(|_| "[]".into())
         );
     } else {
-        println!("uncovered issues (no open PR): {}\n", open.len());
+        println!(
+            "uncovered issues (no open PR): {}{}\n",
+            open.len(),
+            archived_note(n_archived)
+        );
         for (repo, num) in &open {
             let title = meta
                 .get(&(repo.clone(), *num))
