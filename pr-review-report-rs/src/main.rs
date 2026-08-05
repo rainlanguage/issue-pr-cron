@@ -7172,6 +7172,787 @@ jobs:
 }
 
 // ---------------------------------------------------------------------------------------------
+// `sol-toolchain-audit` (#203): did the run VERIFY in the toolchain `sol-toolchain` named?
+//
+// #195 gave the producer a way to ASK which toolchain a checkout's own CI judges it with. Nothing
+// read the answer back, and a rule with no check cannot report its own violation — which is how
+// #116 was found: a parked PR whose one permitted back-off attempt had gone on a diff that could
+// never pass. The next wrong rule would be found the same way.
+//
+// This reads the run's OWN trace, and that choice is the design. The answer is already recorded
+// there, in the `sol-toolchain` call's output, next to the `nix develop` lines that came after it,
+// so the comparison is between what the run was TOLD and what the run then RAN: no network read
+// per Bash call, no clone still on disk, and nothing that can stop a run mid-flight on a blip. The
+// price is that it cannot prevent the wasted attempt inside the run it audits — it makes the next
+// wrong rule announce itself at the end of the run that obeyed it, instead of waiting for a parked
+// PR to say so weeks later.
+//
+// MEASURED, over the 21 retained traces at the time of writing (all of which predate #195, so all
+// of their Solidity verification ran the hardcoded shell the old prompt named): 241 Solidity `nix
+// develop` invocations, 159 of them CHECKS whose verdict depends on the shell, run against 17
+// distinct work clones in 3 runs, every one in a shell those checkouts' CI does not run. That is
+// the size of one wrong rule, and it is why the count is worth reporting rather than assumed small.
+
+/// Exit code for "this run ran a Solidity check in a shell that checkout's own CI does not run".
+const SOL_AUDIT_SKEW: i32 = 3;
+
+/// PURE: a path or flake reference as this audit compares them — unquoted, with any trailing slash
+/// removed, so `"/w/clone"` and `/w/clone/` name the same checkout.
+fn audit_ref(raw: &str) -> String {
+    let trimmed = raw.trim().trim_matches(['\'', '"']);
+    let stripped = trimmed.trim_end_matches('/');
+    // A lone `/` is not a checkout, but stripping it to nothing would silently drop the reference.
+    if stripped.is_empty() {
+        trimmed
+    } else {
+        stripped
+    }
+    .to_string()
+}
+
+/// PURE: the checkout a `pr-review-report sol-toolchain <dir>` command asks about.
+///
+/// The subcommand is matched as a whole WORD, so `sol-toolchain-audit` — which a run may also
+/// invoke, and whose argument is a trace rather than a checkout — is never read as a question.
+fn sol_toolchain_question(cmd: &str) -> Option<String> {
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let at = words.iter().position(|w| *w == "sol-toolchain")?;
+    let dir = words[at + 1..].iter().find(|w| !w.starts_with('-'))?;
+    Some(audit_ref(dir))
+}
+
+/// PURE: the flake reference a `nix develop` invocation names, or `None` when it names none —
+/// `nix develop -c …` enters whatever flake the WORKING DIRECTORY holds, which is a different
+/// thing from naming no shell.
+fn nix_develop_flake(seg: &str) -> Option<String> {
+    let (_, rest) = seg.split_once("nix develop")?;
+    for w in rest.split_whitespace() {
+        if w == "-c" || w == "--command" {
+            return None;
+        }
+        if !w.starts_with('-') {
+            return Some(audit_ref(w));
+        }
+    }
+    None
+}
+
+/// PURE: the command a `nix develop … -c` invocation runs INSIDE the shell, `""` when it runs none.
+///
+/// The earlier of the two flag spellings wins by POSITION. Keyed on the first match of either
+/// pattern instead, `nix develop --command bash -c '…'` would take the inner `-c` and report the
+/// wrapper's argument as the command.
+fn nix_develop_inner(seg: &str) -> &str {
+    let Some((_, rest)) = seg.split_once("nix develop") else {
+        return "";
+    };
+    [" -c ", " --command "]
+        .iter()
+        .filter_map(|f| rest.find(f).map(|at| (at, at + f.len())))
+        .min_by_key(|(at, _)| *at)
+        .map(|(_, end)| &rest[end..])
+        .unwrap_or("")
+}
+
+/// PURE: `line` with any leading `env` and `VAR=VALUE` assignments removed, so what gets classified
+/// is the command being run. `env CI=true forge fmt` is a `forge fmt`.
+fn strip_env_prefix(line: &str) -> &str {
+    let mut rest = line.trim();
+    rest = rest.strip_prefix("env ").unwrap_or(rest).trim_start();
+    while let Some(w) = rest.split_whitespace().next() {
+        if w.starts_with('-') || !w.contains('=') {
+            break;
+        }
+        rest = rest[w.len()..].trim_start();
+    }
+    rest
+}
+
+/// PURE: whether a shell command line runs a Solidity CHECK.
+///
+/// [`is_sol_check`] decides what counts as one; this is what finds the commands to ask it about in
+/// a line a RUN writes rather than a line a workflow writes. A workflow step is one command; a run
+/// writes `&&` chains, pipelines, and the `bash -c '…'` and `env VAR=V …` wrappers — 9 of the 241
+/// Solidity invocations in the retained traces are `bash -c` wrapped, and reading only the first
+/// word after `-c` classifies every one of them as not-a-check.
+fn runs_sol_check(inner: &str) -> bool {
+    let mut text = inner.trim();
+    for w in ["bash -c ", "sh -c "] {
+        if let Some(rest) = text.strip_prefix(w) {
+            text = rest.trim();
+        }
+    }
+    text.split(['\n', ';', '|'])
+        .flat_map(|l| l.split("&&"))
+        .any(|stage| {
+            let s = stage
+                .trim()
+                .trim_start_matches(['\'', '"', '('])
+                .trim_start();
+            is_sol_check(strip_env_prefix(s))
+        })
+}
+
+/// PURE: the value of `flag` in a command line, if it is present with one.
+fn flag_value(cmd: &str, flag: &str) -> Option<String> {
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let at = words.iter().position(|w| *w == flag)?;
+    words.get(at + 1).map(|v| audit_ref(v))
+}
+
+/// PURE: the working directory a command line moves to before running — `cd <dir>` or `env -C
+/// <dir>`. The LAST one wins, because that is the one in force. Only an ABSOLUTE directory counts:
+/// a relative `cd` resolves against a working directory the trace does not record, so reading it as
+/// a checkout would name the wrong one rather than admit it does not know.
+fn shell_cwd(text: &str) -> Option<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut found = None;
+    for (i, w) in words.iter().enumerate() {
+        let names_dir = w.trim_start_matches('(') == "cd"
+            || (*w == "-C" && i > 0 && words[i - 1].trim_start_matches('(') == "env");
+        if !names_dir {
+            continue;
+        }
+        if let Some(d) = words.get(i + 1).map(|d| audit_ref(d)) {
+            if d.starts_with('/') {
+                found = Some(d);
+            }
+        }
+    }
+    found
+}
+
+/// PURE: the checkout a Solidity invocation acts on, read off the command line itself.
+///
+/// In order: `forge --root <dir>`, which overrides the working directory and so overrides
+/// everything else here; then a `cd <dir>` / `env -C <dir>` the line performs; then a `nix develop
+/// <path>` naming a LOCAL flake, which is a checkout by construction. `None` when the line names
+/// none — a Bash call's working directory is not in the trace, so the audit cannot say which
+/// checkout that invocation meant and reports that rather than guessing.
+///
+/// `prefix` is the command text BEFORE this invocation, which is where a `cd` that governs it
+/// lives when one line runs several: `cd /w/clone && nix develop … && nix develop …`.
+fn sol_verify_target(prefix: &str, seg: &str) -> Option<String> {
+    if let Some(d) = flag_value(seg, "--root") {
+        return Some(d);
+    }
+    if let Some(d) = shell_cwd(&format!("{prefix}{seg}")) {
+        return Some(d);
+    }
+    match nix_develop_flake(seg) {
+        Some(f) if f.starts_with('/') || f.starts_with('.') => Some(f),
+        _ => None,
+    }
+}
+
+/// What a run's own record says about the shell one Solidity check ran in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SolAudit {
+    /// It ran in the shell `sol-toolchain` named for that checkout.
+    Matched,
+    /// It ran in a DIFFERENT shell from the one named. This is #116, caught in the run that did it.
+    Skew {
+        dir: String,
+        used: String,
+        named: String,
+    },
+    /// A Solidity check in a checkout `sol-toolchain` was never asked about. Not a lesser finding
+    /// than [`SolAudit::Skew`]: an answer never sought is the shape all 159 of #116's mismatched
+    /// checks had, and a rule that is obeyed by not asking is not obeyed.
+    Unasked { dir: String, used: String },
+    /// Asked, and the answer carried no command — every exit-3 shape (`foreign`, `absent`,
+    /// `conflict`, `unreadable`, a `repo-flake` with no flake.nix). There is no prefix to match, so
+    /// this is a fact to RECORD and not a violation; a `foreign` checkout in particular cannot be
+    /// matched by any shell that exists, which is why it is outside this audit's judgment.
+    Unmatchable { dir: String, mode: String },
+    /// The line names no checkout, so the audit cannot say which one it meant. A blind spot of the
+    /// AUDIT, not a fault of the run.
+    Untargeted,
+    /// The line entered the working directory's flake without naming that directory, so the audit
+    /// cannot say which flake that was. A blind spot, same as [`SolAudit::Untargeted`].
+    UnknownShell { dir: String },
+}
+
+/// PURE: what a recorded `sol-toolchain` run answered — `Ok(flake reference)` off its `verify:`
+/// line, `Err(mode)` when it printed none, which is every exit-3 shape.
+///
+/// The `mode:` is carried rather than dropped because the four exit-3 modes want different things
+/// from a reader: `foreign` says no shell can match, `conflict` says pick one and say which,
+/// `absent` says say what you used instead. Collapsing them to "unresolved" here would undo the
+/// discrimination the subcommand exists for.
+fn sol_toolchain_answer(out: &str) -> Result<String, String> {
+    let mut mode = "unknown".to_string();
+    for line in out.lines() {
+        let line = line.trim();
+        if let Some(m) = line.strip_prefix("mode:") {
+            mode = m.trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("verify:") {
+            if let Some(f) = nix_develop_flake(v) {
+                return Ok(f);
+            }
+        }
+    }
+    Err(mode)
+}
+
+/// PURE: classify one `nix develop` invocation against the answers recorded BEFORE it.
+fn classify_sol_verify(
+    answers: &std::collections::HashMap<String, Result<String, String>>,
+    prefix: &str,
+    seg: &str,
+) -> SolAudit {
+    let used = match nix_develop_flake(seg) {
+        Some(f) => Some(f),
+        // `nix develop -c` enters the working directory's flake. That is a real answer only when
+        // the line says what the working directory is.
+        None => shell_cwd(&format!("{prefix}{seg}")),
+    };
+    let Some(dir) = sol_verify_target(prefix, seg) else {
+        return SolAudit::Untargeted;
+    };
+    let Some(used) = used else {
+        return SolAudit::UnknownShell { dir };
+    };
+    match answers.get(&dir) {
+        None => SolAudit::Unasked { dir, used },
+        Some(Err(mode)) => SolAudit::Unmatchable {
+            dir,
+            mode: mode.clone(),
+        },
+        Some(Ok(named)) if *named == used => SolAudit::Matched,
+        // A `repo-flake` answer prints the CANONICALISED checkout path, which need not be the path
+        // the question was asked with. The same checkout named the way the question named it is the
+        // same shell, and calling that skew would report the audit's own normalisation as a fault.
+        Some(Ok(named)) if named.starts_with('/') && used == dir => SolAudit::Matched,
+        Some(Ok(named)) => SolAudit::Skew {
+            dir,
+            used,
+            named: named.clone(),
+        },
+    }
+}
+
+/// PURE: the audit of one run, over the Bash commands it issued IN ORDER and what each printed.
+///
+/// Order is the contract: an answer counts only for the checks that came after it, so a run that
+/// verifies first and asks afterwards is not credited with having used the answer it did not have.
+///
+/// One command line can hold several invocations (12 of the retained traces' 241 do), so each
+/// `nix develop` is classified separately, with the text before it as its context.
+fn sol_audit(calls: &[(String, String)]) -> Vec<(SolAudit, String)> {
+    let mut answers: std::collections::HashMap<String, Result<String, String>> =
+        std::collections::HashMap::new();
+    let mut out: Vec<(SolAudit, String)> = Vec::new();
+    for (cmd, output) in calls {
+        // Recorded BEFORE the scan, not instead of it: one line may both ask and then verify.
+        if let Some(dir) = sol_toolchain_question(cmd) {
+            answers.insert(dir, sol_toolchain_answer(output));
+        }
+        let offsets: Vec<usize> = cmd.match_indices("nix develop").map(|(i, _)| i).collect();
+        for (i, at) in offsets.iter().enumerate() {
+            let end = offsets.get(i + 1).copied().unwrap_or(cmd.len());
+            let seg = &cmd[*at..end];
+            if !runs_sol_check(nix_develop_inner(seg)) {
+                continue;
+            }
+            out.push((classify_sol_verify(&answers, &cmd[..*at], seg), cmd.clone()));
+        }
+    }
+    out
+}
+
+/// PURE: `cmd` on one line, short enough to read in a run log.
+fn audit_cmd_excerpt(cmd: &str) -> String {
+    let flat = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 160 {
+        return flat;
+    }
+    format!("{}…", flat.chars().take(160).collect::<String>())
+}
+
+/// PURE: the audit's report and its exit code.
+///
+/// The exit code turns on `skew` and `unasked` and on nothing else. The two blind spots — a line
+/// that names no checkout, and one that enters the working directory's flake without naming it —
+/// are printed WITH their counts and change no exit code: failing a run on what the checker cannot
+/// see is the fail-closed direction, and a checker that stops a run on its own ignorance is worse
+/// than the skew it looks for. `unmatchable` is reported the same way for a different reason: the
+/// checkout has a toolchain and it is one no `nix develop` enters, so there was never a shell to
+/// match and the run did nothing wrong by not matching it.
+fn sol_audit_lines(findings: &[(SolAudit, String)]) -> (i32, Vec<String>) {
+    let count = |p: &dyn Fn(&SolAudit) -> bool| findings.iter().filter(|(f, _)| p(f)).count();
+    let skew = count(&|f| matches!(f, SolAudit::Skew { .. }));
+    let unasked = count(&|f| matches!(f, SolAudit::Unasked { .. }));
+    let mut lines = vec![format!(
+        "sol-toolchain audit: {} Solidity checks — {} matched, {} skew, {} unasked, {} unmatchable, \
+         {} named no checkout, {} named no shell",
+        findings.len(),
+        count(&|f| matches!(f, SolAudit::Matched)),
+        skew,
+        unasked,
+        count(&|f| matches!(f, SolAudit::Unmatchable { .. })),
+        count(&|f| matches!(f, SolAudit::Untargeted)),
+        count(&|f| matches!(f, SolAudit::UnknownShell { .. })),
+    )];
+    for (finding, cmd) in findings {
+        let detail = match finding {
+            SolAudit::Matched => continue,
+            SolAudit::Skew { dir, used, named } => format!(
+                "skew: {dir} was verified in {used}, but its own CI runs {named} — a check that \
+                 passes here can red there, which is #116"
+            ),
+            SolAudit::Unasked { dir, used } => format!(
+                "unasked: {dir} was verified in {used} with no `sol-toolchain {dir}` answer on the \
+                 record — nothing in this run knows whether that is the shell its CI runs"
+            ),
+            SolAudit::Unmatchable { dir, mode } => format!(
+                "unmatchable: {dir} answered `mode: {mode}`, so there is no prefix to match — say \
+                 in the run summary which shell you used and why"
+            ),
+            SolAudit::Untargeted => {
+                "untargeted: this invocation names no checkout, so the audit cannot say which one \
+                 it verified"
+                    .to_string()
+            }
+            SolAudit::UnknownShell { dir } => format!(
+                "unknown-shell: this invocation entered the working directory's flake without \
+                 naming that directory, so the audit cannot say what shell {dir} was verified in"
+            ),
+        };
+        lines.push(detail);
+        lines.push(format!("  cmd: {}", audit_cmd_excerpt(cmd)));
+    }
+    (
+        if skew + unasked > 0 {
+            SOL_AUDIT_SKEW
+        } else {
+            0
+        },
+        lines,
+    )
+}
+
+/// PURE: every Bash command a stream-json trace issued, in order, paired with what it printed.
+///
+/// A `tool_result` arrives later in the stream than the `tool_use` it answers, so the pairing is by
+/// id and the ORDER is the order the commands were issued — which is what [`sol_audit`] needs, and
+/// is not the order the results arrive in.
+fn sol_audit_calls(trace: &str) -> Vec<(String, String)> {
+    let mut issued: Vec<(String, String)> = Vec::new();
+    let mut results: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for line in trace.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let blocks = ev
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array());
+        for b in blocks.into_iter().flatten() {
+            match b.get("type").and_then(|t| t.as_str()) {
+                Some("tool_use") if b.get("name").and_then(|n| n.as_str()) == Some("Bash") => {
+                    let (Some(id), Some(cmd)) = (
+                        b.get("id").and_then(|i| i.as_str()),
+                        b.get("input")
+                            .and_then(|i| i.get("command"))
+                            .and_then(|c| c.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    issued.push((id.to_string(), cmd.to_string()));
+                }
+                Some("tool_result") => {
+                    if let Some(id) = b.get("tool_use_id").and_then(|i| i.as_str()) {
+                        results.insert(id.to_string(), tool_result_text(b));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    issued
+        .into_iter()
+        .map(|(id, cmd)| {
+            let out = results.remove(&id).unwrap_or_default();
+            (cmd, out)
+        })
+        .collect()
+}
+
+/// `sol-toolchain-audit`: read a run's trace back and report every Solidity check it ran against
+/// the toolchain `sol-toolchain` named for that checkout.
+fn sol_toolchain_audit_mode(trace: &str) -> i32 {
+    let text = match std::fs::read_to_string(trace) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{trace}: {e}");
+            return 2;
+        }
+    };
+    let (code, lines) = sol_audit_lines(&sol_audit(&sol_audit_calls(&text)));
+    for l in &lines {
+        println!("{l}");
+    }
+    code
+}
+
+#[cfg(test)]
+mod sol_audit_tests {
+    use super::{
+        nix_develop_flake, nix_develop_inner, runs_sol_check, shell_cwd, sol_audit,
+        sol_audit_calls, sol_audit_lines, sol_toolchain_answer, sol_toolchain_question,
+        sol_verify_target, SolAudit, SOL_AUDIT_SKEW,
+    };
+
+    /// The answer `sol-toolchain` prints for a repo whose CI runs the rainix reusables.
+    const PINNED: &str = "mode: rainix-pin\ncheck: .github/workflows/rainix-sol.yaml  rainix \
+                          reusable @main\nflake: present\nverify: nix develop \
+                          github:rainlanguage/rainix/deadbeef#sol-shell -c\n";
+
+    fn call(cmd: &str) -> (String, String) {
+        (cmd.to_string(), String::new())
+    }
+    fn asked(dir: &str, out: &str) -> (String, String) {
+        (
+            format!("pr-review-report sol-toolchain {dir}"),
+            out.to_string(),
+        )
+    }
+    fn findings(calls: &[(String, String)]) -> Vec<SolAudit> {
+        sol_audit(calls).into_iter().map(|(f, _)| f).collect()
+    }
+
+    #[test]
+    fn a_check_run_in_the_named_shell_matches() {
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", PINNED),
+                call(
+                    "nix develop github:rainlanguage/rainix/deadbeef#sol-shell -c forge test \
+                     --root /w/clone"
+                ),
+            ]),
+            vec![SolAudit::Matched]
+        );
+    }
+
+    /// The whole point. #116's shell is `github:rainlanguage/rainix#sol-shell`, which is not the
+    /// pinned one however similar it reads.
+    #[test]
+    fn a_check_run_in_a_different_shell_is_skew() {
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", PINNED),
+                call(
+                    "nix develop github:rainlanguage/rainix#sol-shell -c forge fmt --root /w/clone"
+                ),
+            ]),
+            vec![SolAudit::Skew {
+                dir: "/w/clone".into(),
+                used: "github:rainlanguage/rainix#sol-shell".into(),
+                named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+            }]
+        );
+    }
+
+    /// An answer counts for what comes AFTER it. Crediting a check with an answer the run had not
+    /// received yet would pass exactly the runs that verified first and asked to justify it.
+    #[test]
+    fn an_answer_does_not_reach_backwards_to_a_check_that_preceded_it() {
+        let before = findings(&[
+            call("nix develop github:rainlanguage/rainix#sol-shell -c forge test --root /w/clone"),
+            asked("/w/clone", PINNED),
+        ]);
+        assert_eq!(
+            before,
+            vec![SolAudit::Unasked {
+                dir: "/w/clone".into(),
+                used: "github:rainlanguage/rainix#sol-shell".into(),
+            }],
+            "the check ran before the answer existed"
+        );
+    }
+
+    /// Verifying without asking at all is the shape every one of #116's invocations had.
+    #[test]
+    fn a_check_in_a_checkout_never_asked_about_is_unasked() {
+        assert_eq!(
+            findings(&[call(
+                "cd /w/other && nix develop github:rainlanguage/rainix#sol-shell -c forge test"
+            )]),
+            vec![SolAudit::Unasked {
+                dir: "/w/other".into(),
+                used: "github:rainlanguage/rainix#sol-shell".into(),
+            }]
+        );
+    }
+
+    /// A `foreign` checkout has a toolchain no `nix develop` enters, so there is nothing to match
+    /// and the run did nothing wrong. Reporting it as skew would spend attention on the one case
+    /// #195's own text tells the producer to expect.
+    #[test]
+    fn a_foreign_checkout_is_recorded_not_judged() {
+        let out = "mode: foreign\nflake: present\nerror: this checkout's Solidity checks run on \
+                   foundry-rs/foundry-toolchain@v1, which is NOT a nix shell\n";
+        let calls = [
+            asked("/w/foreign", out),
+            call("nix develop github:rainlanguage/rainix#sol-shell -c forge fmt --root /w/foreign"),
+        ];
+        assert_eq!(
+            findings(&calls),
+            vec![SolAudit::Unmatchable {
+                dir: "/w/foreign".into(),
+                mode: "foreign".into(),
+            }]
+        );
+        let (code, _) = sol_audit_lines(&sol_audit(&calls));
+        assert_eq!(code, 0, "an unmatchable checkout is not a failing audit");
+    }
+
+    /// `forge soldeer install` fetches the versions the lock names and produces the same tree out
+    /// of any forge, so which shell ran it says nothing. 31 of the retained traces' mismatched
+    /// invocations are this command; counting them would inflate the finding with non-findings.
+    #[test]
+    fn a_dependency_fetch_is_not_a_check() {
+        assert!(findings(&[call(
+            "cd /w/clone && nix develop github:rainlanguage/rainix#sol-shell -c forge soldeer \
+             install"
+        )])
+        .is_empty());
+    }
+
+    /// The check is inside the quotes. Reading only the first word after `-c` sees `bash`.
+    #[test]
+    fn a_check_wrapped_in_bash_c_is_still_a_check() {
+        // A wrapped command with NO shell operator in it. This is what the unwrapping is FOR:
+        // splitting on `&&`/`|` already reaches inside the quotes of a chained one, so a test that
+        // only uses a chained command passes with the unwrapping deleted.
+        assert!(runs_sol_check("bash -c 'forge fmt --check'"));
+        assert!(runs_sol_check("sh -c \"forge test\""));
+        assert!(runs_sol_check(
+            "bash -c 'cd /w/clone && forge test 2>&1 | tail -3'"
+        ));
+        assert!(runs_sol_check(
+            "env CI=true FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge fmt --check"
+        ));
+        assert!(!runs_sol_check(
+            "bash -c 'cd /w/clone && forge soldeer install'"
+        ));
+        assert!(!runs_sol_check("npm ci"));
+    }
+
+    /// A line that runs two shells is two findings, and the `cd` before the first governs both.
+    #[test]
+    fn each_invocation_on_one_line_is_classified_separately() {
+        let out = findings(&[
+            asked("/w/clone", PINNED),
+            call(
+                "cd /w/clone && nix develop github:rainlanguage/rainix/deadbeef#sol-shell -c \
+                 forge fmt && nix develop github:rainlanguage/rainix#sol-shell -c forge fmt \
+                 --check",
+            ),
+        ]);
+        assert_eq!(
+            out,
+            vec![
+                SolAudit::Matched,
+                SolAudit::Skew {
+                    dir: "/w/clone".into(),
+                    used: "github:rainlanguage/rainix#sol-shell".into(),
+                    named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+                }
+            ]
+        );
+    }
+
+    /// `--root` is what forge acts on, so it wins over the directory the line cd'd to.
+    #[test]
+    fn root_names_the_checkout_over_the_working_directory() {
+        assert_eq!(
+            sol_verify_target(
+                "cd /w/elsewhere && ",
+                "nix develop github:x#sol-shell -c forge test --root /w/clone"
+            ),
+            Some("/w/clone".to_string())
+        );
+    }
+
+    /// A repo whose CI runs its own flake, entered by cd-ing into the checkout. The answer's
+    /// canonical path and the question's path name the same checkout.
+    #[test]
+    fn the_repo_own_flake_entered_by_cd_matches_its_repo_flake_answer() {
+        let out = "mode: repo-flake\nflake: present\nverify: nix develop /w/clone -c\n";
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", out),
+                call("cd /w/clone && nix develop -c forge test"),
+            ]),
+            vec![SolAudit::Matched]
+        );
+    }
+
+    /// `sol-toolchain` CANONICALISES the checkout before printing it, so a question asked with a
+    /// path that resolves through a symlink gets an answer that does not spell it the same way.
+    /// Both name the same directory and therefore the same flake, and reporting that as skew would
+    /// be the audit's own normalisation showing up as a fault in the run.
+    #[test]
+    fn a_repo_flake_answer_matches_the_checkout_however_the_question_spelled_it() {
+        let out = "mode: repo-flake\nflake: present\nverify: nix develop /canonical/clone -c\n";
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", out),
+                call("cd /w/clone && nix develop -c forge test"),
+            ]),
+            vec![SolAudit::Matched]
+        );
+        // The equivalence is for a PATH answer only. A checkout that enters its own flake when its
+        // CI runs a pinned rainix is the mirrored mistake #195's text names, and must still report.
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", PINNED),
+                call("cd /w/clone && nix develop -c forge test"),
+            ]),
+            vec![SolAudit::Skew {
+                dir: "/w/clone".into(),
+                used: "/w/clone".into(),
+                named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+            }]
+        );
+    }
+
+    /// The audit's own blind spots, reported as such. A `nix develop -c` whose working directory
+    /// the line never names could be any flake on the box; an invocation that names no checkout
+    /// could be about any of them.
+    #[test]
+    fn the_audits_blind_spots_are_named_and_do_not_fail_the_run() {
+        let calls = [
+            call("nix develop -c forge test --root /w/clone"),
+            call("nix develop github:rainlanguage/rainix#sol-shell -c forge --version"),
+        ];
+        assert_eq!(
+            findings(&calls),
+            vec![
+                SolAudit::UnknownShell {
+                    dir: "/w/clone".into()
+                },
+                SolAudit::Untargeted,
+            ]
+        );
+        let (code, lines) = sol_audit_lines(&sol_audit(&calls));
+        assert_eq!(
+            code, 0,
+            "a run must not fail on what the audit cannot see: fail-closed on the checker's own \
+             ignorance is worse than the skew it hunts"
+        );
+        assert!(lines[0].contains("1 named no checkout"), "{lines:?}");
+        assert!(lines[0].contains("1 named no shell"), "{lines:?}");
+    }
+
+    /// Skew and unasked are what the exit code is for, and it is ONE code for both: a rule obeyed
+    /// by not asking is not obeyed.
+    #[test]
+    fn skew_and_unasked_both_fail_the_audit() {
+        for calls in [
+            vec![
+                asked("/w/clone", PINNED),
+                call("nix develop github:rainlanguage/rainix#sol-shell -c forge test --root /w/clone"),
+            ],
+            vec![call(
+                "nix develop github:rainlanguage/rainix#sol-shell -c forge test --root /w/clone",
+            )],
+        ] {
+            let (code, lines) = sol_audit_lines(&sol_audit(&calls));
+            assert_eq!(code, SOL_AUDIT_SKEW, "{lines:?}");
+            assert!(lines.iter().any(|l| l.contains("  cmd: ")), "{lines:?}");
+        }
+    }
+
+    /// The subcommand's own name must not be read as a question about a trace file. It is invoked
+    /// with a path argument exactly where `sol-toolchain` takes a checkout.
+    #[test]
+    fn the_audits_own_invocation_is_not_a_toolchain_question() {
+        assert_eq!(
+            sol_toolchain_question("pr-review-report sol-toolchain-audit /runs/x.jsonl"),
+            None
+        );
+        assert_eq!(
+            sol_toolchain_question("pr-review-report sol-toolchain /w/clone"),
+            Some("/w/clone".to_string())
+        );
+    }
+
+    #[test]
+    fn an_answer_with_no_verify_line_carries_its_mode() {
+        assert_eq!(
+            sol_toolchain_answer("mode: conflict\nerror: two toolchains\n"),
+            Err("conflict".to_string())
+        );
+        assert_eq!(
+            sol_toolchain_answer("mode: repo-flake\nverify: nix develop /w/c -c\n"),
+            Ok("/w/c".to_string())
+        );
+        // Nothing recorded at all is not an answer either, and must not read as one.
+        assert_eq!(sol_toolchain_answer(""), Err("unknown".to_string()));
+    }
+
+    /// `--command` and `-c` are the same flag, and the EARLIER one is the wrapper's.
+    #[test]
+    fn the_outer_command_flag_wins_over_a_wrapped_one() {
+        assert_eq!(
+            nix_develop_inner("nix develop --command bash -c 'forge fmt'").trim(),
+            "bash -c 'forge fmt'"
+        );
+        assert_eq!(nix_develop_flake("nix develop -c forge test"), None);
+        assert_eq!(
+            nix_develop_flake("nix develop '/w/clone' -c forge test"),
+            Some("/w/clone".to_string())
+        );
+    }
+
+    /// A relative `cd` resolves against a working directory the trace does not record.
+    #[test]
+    fn only_an_absolute_working_directory_names_a_checkout() {
+        assert_eq!(shell_cwd("cd sub && nix develop -c forge test"), None);
+        assert_eq!(
+            shell_cwd("cd /a && cd /b && nix develop -c forge test"),
+            Some("/b".to_string()),
+            "the last cd is the one in force"
+        );
+        assert_eq!(
+            shell_cwd("env -C /w/clone nix develop -c forge test"),
+            Some("/w/clone".to_string())
+        );
+    }
+
+    /// The trace pairing: results arrive after the calls, and the ORDER the audit reads is the
+    /// order the commands were issued.
+    #[test]
+    fn a_trace_yields_its_bash_calls_in_issue_order_with_their_output() {
+        let trace = "\
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\",\"input\":{\"command\":\"pr-review-report sol-toolchain /w/clone\"}}]}}
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"Bash\",\"input\":{\"command\":\"nix develop github:rainlanguage/rainix#sol-shell -c forge test --root /w/clone\"}}]}}
+not json at all
+{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":\"mode: rainix-pin\\nverify: nix develop github:rainlanguage/rainix/deadbeef#sol-shell -c\\n\"}]}}
+";
+        let calls = sol_audit_calls(trace);
+        assert_eq!(calls.len(), 2, "a corrupt line does not stop the read");
+        assert!(calls[0].0.contains("sol-toolchain /w/clone"));
+        assert!(calls[0].1.contains("verify:"), "the ANSWER is paired on");
+        assert_eq!(calls[1].1, "", "a call with no recorded result reads empty");
+        assert_eq!(
+            findings(&calls),
+            vec![SolAudit::Skew {
+                dir: "/w/clone".into(),
+                used: "github:rainlanguage/rainix#sol-shell".into(),
+                named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+            }],
+            "the result that arrived LATER still answers the call that came first"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The closure gates (#85).
 //
 // [`HARNESS_TOOLS`] is a DECLARATION. These three subcommands are what make it true of the thing
@@ -26502,6 +27283,18 @@ enum Cmd {
         /// The work clone to resolve. Absolute: it lands verbatim in the printed command.
         dir: String,
     },
+    /// Read a run's trace back: every Solidity check it ran, against the toolchain `sol-toolchain`
+    /// named for that checkout. Exit 3 when one ran in a shell that checkout's CI does not run, or
+    /// with no answer on the record at all.
+    ///
+    /// `sol-toolchain` gave the producer a way to ASK. This is what reads the answer back, and it
+    /// reads it out of the run's OWN record — the answer and the `nix develop` that followed it are
+    /// both in the trace — so there is no network read per Bash call and nothing that can stop a
+    /// run on a blip.
+    SolToolchainAudit {
+        /// The run trace to read (runs/<id>.jsonl).
+        trace: String,
+    },
     /// CI gate: every `HARNESS_TOOLS` entry resolves from EACH model runner's own baked PATH.
     /// Exit 12 if a closure is missing one, 2 if a runner could not be built or read.
     ClosurePreflight {
@@ -30227,6 +31020,7 @@ fn main() {
         ),
         Cmd::Preflight { gh_auth, sol_shell } => preflight_mode(gh_auth, sol_shell),
         Cmd::SolToolchain { dir } => sol_toolchain_mode(&dir),
+        Cmd::SolToolchainAudit { trace } => sol_toolchain_audit_mode(&trace),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
         Cmd::ClosureRender { flake } => closure_render_mode(&flake),
         Cmd::ClosureSurface { flake } => closure_surface_mode(&flake),
@@ -40212,6 +41006,14 @@ mod cli_tests {
     #[test]
     fn distill_trace_cli() {
         assert_eq!(parse(&["prr", "distill-trace"]), Cmd::DistillTrace);
+        assert_eq!(
+            parse(&["prr", "sol-toolchain-audit", "/runs/x.jsonl"]),
+            Cmd::SolToolchainAudit {
+                trace: "/runs/x.jsonl".to_string()
+            },
+            "the audit is a SEPARATE subcommand from `sol-toolchain`; a spelling clap resolves to \
+             the lookup would ask a trace file which toolchain it is checked with"
+        );
     }
 
     // The name the user settings.json wires as a PreToolUse hook. It takes no arguments — the whole

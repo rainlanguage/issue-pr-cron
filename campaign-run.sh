@@ -390,6 +390,18 @@ if [ -s "$RUNLOG" ]; then
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
 fi
 
+# --- did this run VERIFY Solidity where its CI will judge it? (#203) --------------------------
+# `sol-toolchain` (#195) gave the producer a way to ASK which toolchain a checkout's own CI runs.
+# Nothing read the answer back, and a rule with no check cannot report its own violation — which is
+# how #116 was found, by a parked PR whose one back-off attempt had gone on a diff that could never
+# pass. This reads the run's own trace: the answer and the `nix develop` that followed it are both
+# recorded there, so the comparison costs no network read and cannot stop a run mid-flight.
+# The exit code goes in the LOG and nowhere else — a skew is something to READ at the end of a run,
+# not a reason to fail a run whose PRs are already open. Best-effort, like every line around it.
+if [ -s "$RUNLOG" ]; then
+  pr-review-report sol-toolchain-audit "$RUNLOG" >> "$LOG" 2>&1 || true
+fi
+
 # The scratch dir is reclaimed by the EXIT trap installed where the dir is created — including on
 # the `exit 12` below. A failed run's scratch is no more informative than a successful one's: the
 # trace records the content of both identically.
