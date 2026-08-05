@@ -260,9 +260,12 @@ Each field of the row is one read a human otherwise does by hand:
 `queue.more` and `counts` frame the row. A flag you expected and did not get is
 usually in `counts.unvetted` — the vetter has not judged it, and under the
 3-item run cap it may wait; a flag the vetter would REJECT never arrives here at
-all. `strandedFlags` is the list nothing else surfaces: a label with no producer
-comment behind it, or a reject whose label removal did not land. No AI
-transition clears either, so they sit until a human is told they exist.
+all. `strandedFlags` is a label parking an issue with nothing consuming it: no
+producer comment behind it, or a reject whose label is live anyway. The vetter's
+state-load clears both, so one listed here is a clearance that has not run yet
+or could not write — the label is still parking the issue either way. It is not
+yours to rule on: leave it and let the next vetter run take it, or look at
+`clearanceFailed` on that state-load if it persists.
 
 ## Present the result, do not summarise it away
 

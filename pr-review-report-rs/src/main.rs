@@ -12771,16 +12771,40 @@ fn has_human_ruling(labels: &[String]) -> bool {
 
 /// A human ruling is sacred (refuse); a CLOSED issue is moot; otherwise flag it, adding the label /
 /// posting the note only when not already present.
-fn close_candidate_plan(state: &str, labels: &[String], already_noted: bool) -> CloseFlagPlan {
+///
+/// **The comment dedup is scoped to the flag EPISODE, not to the issue's lifetime — and that is
+/// #179's State B.** `already_noted` asks only whether a `Close-candidate:` line has ever been
+/// posted here, so once the vetter REJECTED a flag (which strips the label but leaves the comment on
+/// the record), a later re-flag added the label back and skipped the comment as a duplicate. The
+/// flag's timestamp never moved, the vetter's existing `reject` still pinned it, and the issue
+/// landed in `vetter-rejected-but-still-flagged` — where the vetter skips it every run and
+/// `is_producer_backlog` keeps it out of the producer's queue. `rain.erc4626.words#93` is that
+/// exact sequence: rejected 2026-07-28T06:18, label re-applied 2026-07-29T17:18 with no comment.
+///
+/// So a flag the vetter has already JUDGED cannot be re-raised by re-applying the label alone: it
+/// takes a fresh claim, at a fresh timestamp, which un-vets the flag and gets it judged again. This
+/// restores the invariant the label and the comment were always meant to hold — they are written by
+/// the same call, so the label never asserts a claim that no comment states.
+///
+/// `flag_judged` is only consulted while ADDING the label. An issue that still CARRIES the label is
+/// a no-op re-run (and cannot reach here anyway — `is_producer_backlog` excludes it), so an upheld
+/// flag awaiting a human is never re-noted out from under them.
+fn close_candidate_plan(
+    state: &str,
+    labels: &[String],
+    already_noted: bool,
+    flag_judged: bool,
+) -> CloseFlagPlan {
     if state == "CLOSED" {
         return CloseFlagPlan::AlreadyClosed;
     }
     if has_human_ruling(labels) {
         return CloseFlagPlan::RefuseHuman;
     }
+    let has_label = labels.iter().any(|l| l == "ai:close-candidate");
     CloseFlagPlan::Flag {
-        add_label: !labels.iter().any(|l| l == "ai:close-candidate"),
-        post_comment: !already_noted,
+        add_label: !has_label,
+        post_comment: !already_noted || (!has_label && flag_judged),
     }
 }
 
@@ -13595,7 +13619,18 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         })
         .unwrap_or(false);
 
-    let (add_label, post_comment) = match close_candidate_plan(state, &labels, already_noted) {
+    // Has the vetter already ruled on the flag `already_noted` is about? Read off the SAME issue
+    // JSON, so the dedup and the judgement it defers to cannot be about different fetches.
+    let flag_judged = last_close_candidate_flag(&j)
+        .map(|(at, _)| cc_vetted_at_flag(&j, &at))
+        .unwrap_or(false);
+
+    let (add_label, post_comment) = match close_candidate_plan(
+        state,
+        &labels,
+        already_noted,
+        flag_judged,
+    ) {
         CloseFlagPlan::AlreadyClosed => {
             println!("{slug}#{issue} already closed — nothing to flag");
             return 0;
@@ -18721,28 +18756,120 @@ fn unvetted_doc(
     doc
 }
 
-/// PURE: one row of the close-candidate vet queue, plus whether it is to be vetted and why not.
-/// Split out so the skip reasons are unit-testable without the network — the same shape the PR-side
-/// state-load uses.
-fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static str, Value) {
+/// The action a [`CcGate::NoFlag`] issue asks for: the label is live and no trusted producer
+/// comment states a claim.
+const CC_CLEAR_NO_FLAG: &str = "clear-stranded-no-flag";
+
+/// The action a [`CcGate::RejectedStillFlagged`] issue asks for: the recorded verdict on the live
+/// flag is `reject`, and the label is on the issue anyway.
+const CC_CLEAR_REJECTED: &str = "clear-stranded-rejected";
+
+/// The action a [`CcGate::RepoArchived`] issue asks for: NOTHING. It is the one state here that
+/// names no move at all — the repo refuses every write, so the row exists to be COUNTED and named,
+/// never to be worked (#206).
+const CC_SKIP_ARCHIVED: &str = "skip-archived-repo";
+
+/// PURE: the trusted `🤖 ai:vetter` comment that RECORDS a stranded-label clearance, or `None` for
+/// any state that is not stranded — so a live flag cannot be cleared by construction rather than by
+/// the caller remembering not to.
+///
+/// **This clears a stuck LABEL. It does not rule on the issue.** Nothing here closes, rejects,
+/// re-flags or upholds anything: the label comes off, the issue goes back to the producer's
+/// backlog, and whatever the issue actually asks stays open for the producer or a human to answer.
+/// That distinction is the whole licence for doing this automatically — a wrong clearance costs one
+/// producer look at an issue, where a wrong RULING costs real work.
+///
+/// It is posted BEFORE the label is removed, the same order and for the same reason as every other
+/// write here: a label that vanishes with no record is indistinguishable from a human de-flagging
+/// it by hand.
+///
+/// The body deliberately contains neither `Close-candidate:` nor `Reviewed close-candidate @`, so
+/// it cannot be read back as a producer flag by [`last_close_candidate_flag`], as a verdict by
+/// [`cc_verdict_parts`], or as a prior note by `flag_close_candidate_mode`'s dedup. A clearance that
+/// re-entered the machine as one of the things it clears is the failure this whole issue is about.
+fn cc_stranded_cleared_comment(gate: CcGate, flag_at: &str) -> Option<String> {
+    match gate {
+        // State B. The vetter already concluded this flag is wrong and its own write took the label
+        // off; the label being back means something re-applied it without raising a new claim. This
+        // re-asserts the recorded verdict — it does not form a new one.
+        CcGate::RejectedStillFlagged => Some(format!(
+            "🤖 ai:vetter\nStranded flag cleared @{flag_at}: the recorded verdict on this flag is \
+             `reject`, and the label was live anyway — a state no transition consumed, so the issue \
+             was in neither the producer's backlog nor a human's queue. Removing the label completes \
+             the change that verdict already called for and returns the issue to the producer. The \
+             reject stands; NO new ruling is made here, and the issue itself is untouched."
+        )),
+        // State A. There is no claim, so there is nothing to judge and nothing to rework — but the
+        // label parks the issue regardless. What is GIVEN UP by dropping it is whatever intent
+        // applied it, which is unrecoverable because it was never written down; so the comment says
+        // so, and names the two rulings that DO survive an AI, rather than pretending nothing was
+        // lost.
+        CcGate::NoFlag => Some(
+            "🤖 ai:vetter\nStranded flag cleared: the ai:close-candidate label was live with no \
+             trusted producer comment stating a claim. Nothing could judge it (there is no claim) \
+             and nothing could clear it, while the label kept the issue out of the producer's \
+             backlog. Removing the label returns the issue to the producer. NO ruling is made on \
+             the issue.\n\nThis discards whatever intent applied the label, which was never \
+             recorded. To park an issue durably, rule it: `human-rule-issue <repo> <n> keep-open \
+             \"…\"` or `human-close <repo> <n> \"…\"`. Those are the human's namespace — sacred, \
+             and no AI actor clears them."
+                .to_string(),
+        ),
+        // NEVER `RepoArchived`: the clearance is a `--remove-label` plus a comment, and an
+        // archived repo refuses both — a clearance attempted there fails on every run and reports
+        // `clearanceFailed` for ever. Total over the enum on purpose, so a new state is
+        // non-clearable until somebody decides otherwise.
+        CcGate::Presentable
+        | CcGate::HumanRuled
+        | CcGate::Unvetted
+        | CcGate::RepoArchived => None,
+    }
+}
+
+/// PURE: one row of the close-candidate vet queue, plus the STATE it is in and the action that
+/// state asks for. Split out so the reasons are unit-testable without the network — the same shape
+/// the PR-side state-load uses.
+///
+/// The state comes from [`cc_gate`], which is also what the human's `next_close_candidate` reads.
+/// Sharing it is the point rather than a tidy-up: the vetter's inbox and the human's used to
+/// classify the same issue independently, so `/ncc` could report a flag as
+/// `vetter-rejected-but-still-flagged` while the vetter's own state-load called it
+/// `skip-vetted-at-flag` and moved on — one tool DETECTING what the other could not see (#179).
+///
+/// Two of the five states are STRANDED: no transition consumed them, so they sat here for ever
+/// while the label kept the issue out of the producer's backlog. They now ask for a CLEARANCE,
+/// which the live fetch performs — see [`cc_stranded_cleared_comment`] for what it may and may not
+/// do.
+fn cc_row(
+    slug: &str,
+    num: u64,
+    title: &str,
+    detail: &Value,
+    repo_archived: bool,
+) -> (CcGate, &'static str, Value) {
     let labels = label_names(detail);
     let human = has_human_ruling(&labels);
     let flag = last_close_candidate_flag(detail);
     let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
     let vetted = cc_vetted_at_flag(detail, &flag_at);
-    // Precedence mirrors the PR side: a human ruling dominates, then "nothing to judge", then a
-    // verdict already recorded against THIS flag.
-    let (vet, action) = if human {
-        (false, "skip-human-decided")
-    } else if flag.is_none() {
-        (false, "skip-no-flag")
-    } else if vetted {
-        (false, "skip-vetted-at-flag")
-    } else {
-        (true, "vet")
+    let gate = cc_gate(
+        repo_archived,
+        human,
+        &flag_at,
+        last_cc_vetter_comment(detail).and_then(|b| cc_verdict_parts(&b)),
+    );
+    // Precedence is `cc_gate`'s, which is the PR side's: writability first, then a human ruling,
+    // then "nothing was claimed", then what the vetter did with the claim.
+    let action = match gate {
+        CcGate::RepoArchived => CC_SKIP_ARCHIVED,
+        CcGate::HumanRuled => "skip-human-decided",
+        CcGate::NoFlag => CC_CLEAR_NO_FLAG,
+        CcGate::RejectedStillFlagged => CC_CLEAR_REJECTED,
+        CcGate::Presentable => "skip-vetted-at-flag",
+        CcGate::Unvetted => "vet",
     };
     (
-        vet,
+        gate,
         action,
         serde_json::json!({
             "issue": format!("{slug}#{num}"),
@@ -18777,9 +18904,15 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
 /// array/count mismatch unrepresentable: a box that renders "5" and then lists three issues when
 /// clicked is the drift this shape rules out.
 ///
-/// `upheld` is the skipped rows whose action is `skip-vetted-at-flag`: a REJECTED flag has its
-/// label stripped, so it cannot appear in this search at all — an issue still carrying the label
-/// AND vetted at its current flag was necessarily upheld.
+/// `upheld` is the skipped rows whose action is `skip-vetted-at-flag`, and that action now means
+/// UPHELD specifically, because [`cc_row`] reads the verdict WORD off [`cc_gate`] rather than
+/// inferring it from the flag being vetted at all.
+///
+/// It used to be inferred, on the argument that a rejected flag has its label stripped so it cannot
+/// appear in this search — and `rain.erc4626.words#93` disproved it: rejected 2026-07-28, label
+/// re-applied a day later, and from then on projected here as UPHELD. A verdict of `reject`
+/// rendered to a human as the vetter agreeing the issue should close is the worst direction for
+/// this particular error, since the human's next move on an upheld flag is to destroy work.
 fn cc_item_arrays(doc: &Value) -> (Vec<Value>, Vec<Value>) {
     let item = |r: &Value| SubjectRef::from_row(r).to_json();
     let unvetted: Vec<Value> = doc
@@ -18823,6 +18956,54 @@ fn flag_reason(body: &str) -> String {
         .to_string()
 }
 
+/// The stranded-label CLEARANCE write: record it, then remove `ai:close-candidate`.
+///
+/// Comment BEFORE the label, the order every write here uses — if the removal fails, the next
+/// state-load dedups the comment and retries the removal, and the record of WHY the label was going
+/// to move already exists. The reverse order can leave a label gone with nothing saying who moved
+/// it, which is indistinguishable from a human de-flagging by hand.
+///
+/// `Err` is the reason, for the row: a failed clearance is REPORTED and retried, never swallowed.
+/// The caller must not count it as cleared — the label is still on the issue.
+fn cc_clear_stranded_flag(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    comment: &str,
+) -> Result<(), String> {
+    let n = num.to_string();
+    // Dedup against the exact body, over TRUSTED comments only: a previous run that posted the
+    // comment and then failed to remove the label must not post it a second time. Matched on the
+    // whole body rather than on "most recent", because the clearance may not be the newest vetter
+    // comment — state B always has the reject comment sitting beside it.
+    let already = trusted_comments(detail, Some("🤖 ai:vetter"))
+        .iter()
+        .any(|b| b == comment);
+    if !already && !gh_run(&["issue", "comment", &n, "-R", slug, "--body", comment]) {
+        return Err(
+            "posting the clearance comment FAILED — nothing was cleared; the next state-load retries"
+                .to_string(),
+        );
+    }
+    if !gh_run(&[
+        "issue",
+        "edit",
+        &n,
+        "-R",
+        slug,
+        "--remove-label",
+        "ai:close-candidate",
+    ]) {
+        return Err(
+            "clearance comment posted but removing ai:close-candidate FAILED — the label is still \
+             live and the issue is still parked; the next state-load dedups the comment and retries \
+             the removal"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Live `unvetted-close-candidates` state-load: ONE org-wide search for open `ai:close-candidate`
 /// issues + one `gh issue view` each. Errors rather than returning a falsely-empty set, for the same
 /// reason the PR side does — an empty queue must never be an API failure in disguise.
@@ -18839,31 +19020,27 @@ fn unvetted_close_candidates_fetch(
     // twice: two spellings of "which issues are flagged" is how the vetter's inbox and the human's
     // would come to answer differently.
     let FlaggedIssues {
-        live: found,
-        archived: frozen,
+        hits: found,
+        archived: archived_repos,
     } = flagged_open_issues()?;
     // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
     // reported (see `fetchErrors` below), never dropped.
     // A flag in an ARCHIVED repo is not vettable either (#206): `record_close_candidate_verdict`
-    // writes a comment and, on reject, strips a label — both refused by a read-only repo. So it is
-    // withheld here for the same reason it is withheld from the human's inbox, and counted for the
-    // same reason every other skip is.
-    let archived_flags: Vec<Value> = frozen
-        .iter()
-        .map(|hit| {
-            serde_json::json!({
-                "issue": search_issue_ref(hit)
-                    .map_or_else(String::new, |(slug, num)| format!("{slug}#{num}")),
-                "title": hit.get("title").and_then(|t| t.as_str()).unwrap_or(""),
-                "why": ARCHIVED_REPO_WHY,
-            })
-        })
-        .collect();
+    // writes a comment and, on reject, strips a label — both refused by a read-only repo. It is
+    // classified as such by `cc_row`, which is the SAME classifier the human's inbox reads, and
+    // counted here for the same reason every other skip is.
+    let mut archived_flags: Vec<Value> = Vec::new();
 
     let mut rows: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
     let mut errors: Vec<Value> = Vec::new();
-    let (mut n_human, mut n_noflag, mut n_vetted) = (0usize, 0usize, 0usize);
+    // The stranded states, split by outcome. Kept apart from `skipped` because they are not skips:
+    // a skip is a state something else owns, and these were owned by nobody.
+    let mut cleared: Vec<Value> = Vec::new();
+    let mut clear_failures: Vec<Value> = Vec::new();
+    let (mut n_human, mut n_vetted) = (0usize, 0usize);
+    let (mut n_cleared_no_flag, mut n_cleared_rejected, mut n_clear_failed) =
+        (0usize, 0usize, 0usize);
     for i in &found {
         let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -18891,13 +19068,68 @@ fn unvetted_close_candidates_fetch(
             }));
             continue;
         };
-        let (vet, action, row) = cc_row(&slug, num, title, &detail);
-        if vet {
+        let (gate, action, mut row) = cc_row(
+            &slug,
+            num,
+            title,
+            &detail,
+            archived_repos.contains(&slug),
+        );
+        // Filed and counted, never vetted and never CLEARED: an archived repo refuses the label
+        // removal a clearance is, so attempting one would fail on every run for ever (#206).
+        if gate == CcGate::RepoArchived {
+            archived_flags.push(row);
+            continue;
+        }
+        // The CLEARANCE, run every state-load exactly as the `ai:blocked-on` one is (#161): a
+        // stranded label is machine-detectable from typed data, so it is repaired by machinery
+        // rather than found by a human building a tool. Attempted BEFORE the row is filed, so the
+        // row reports what became of the state rather than only that it was in it.
+        let flag_at = last_close_candidate_flag(&detail)
+            .map(|(a, _)| a)
+            .unwrap_or_default();
+        if let Some(comment) = cc_stranded_cleared_comment(gate, &flag_at) {
+            let outcome = cc_clear_stranded_flag(&slug, num, &detail, &comment);
+            let obj = row.as_object_mut().expect("row is an object");
+            match outcome {
+                Ok(()) => {
+                    // EXHAUSTIVE, for the reason the gate histogram above it is: a new stranded
+                    // state must be given its own count rather than folding silently into an
+                    // existing one. A `_` arm here would have quietly reported some future state's
+                    // clearances as `clearedRejectedStillFlagged`, which is the same class of
+                    // silent accumulation this whole change is about.
+                    match gate {
+                        CcGate::NoFlag => n_cleared_no_flag += 1,
+                        CcGate::RejectedStillFlagged => n_cleared_rejected += 1,
+                        CcGate::Presentable
+                        | CcGate::HumanRuled
+                        | CcGate::Unvetted
+                        | CcGate::RepoArchived => {
+                            unreachable!(
+                            "{gate:?} is not stranded — cc_stranded_cleared_comment returned None"
+                        )
+                        }
+                    }
+                    obj.insert("cleared".into(), Value::from(true));
+                    cleared.push(row);
+                }
+                Err(why) => {
+                    n_clear_failed += 1;
+                    obj.insert("cleared".into(), Value::from(false));
+                    obj.insert("clearanceError".into(), Value::from(why));
+                    // Filed as a FAILURE, never as a clearance: the label is still on the issue, so
+                    // the state is exactly the one this run set out to consume, and the next
+                    // state-load retries it.
+                    clear_failures.push(row);
+                }
+            }
+            continue;
+        }
+        if gate == CcGate::Unvetted {
             rows.push(row);
         } else {
             match action {
                 "skip-human-decided" => n_human += 1,
-                "skip-no-flag" => n_noflag += 1,
                 _ => n_vetted += 1,
             }
             skipped.push(row);
@@ -18906,20 +19138,39 @@ fn unvetted_close_candidates_fetch(
 
     let n_vet = rows.len();
     let (issues, more) = page(rows, limit);
+    let (cleared_page, more_cleared) = page(cleared, limit);
+    let (clear_failures_page, more_clear_failures) = page(clear_failures, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "flagged": found.len() + archived_flags.len(),
             "vet": n_vet,
             "skipHumanDecided": n_human,
-            "skipNoFlag": n_noflag,
             "skipVettedAtFlag": n_vetted,
             "skipArchivedRepo": archived_flags.len(),
-            // flagged == vet + skip* + fetchErrors, always. A non-zero value here is the ONLY
-            // reason the parts may not sum to the whole.
+            // THE NUMBERS THAT GROW (#179). A stranded flag used to be visible only when a human
+            // typed `/ncc` and read `strandedFlags` — detection in a tool nobody runs on a
+            // schedule. These are emitted by the VETTER's own state-load, every run, so a
+            // recurrence is a count in the run log rather than something rediscovered later.
+            // `clearedNoFlag` is state A (a label with no claim under it), `clearedRejected...` is
+            // state B (a flag the vetter rejected, still labelled).
+            "clearedNoFlag": n_cleared_no_flag,
+            "clearedRejectedStillFlagged": n_cleared_rejected,
+            // A clearance that could not be written. This is the one that must never be quietly
+            // zero: the label is still live, so the issue is still parked.
+            "clearanceFailed": n_clear_failed,
+            // flagged == vet + skip* + cleared* + clearanceFailed + fetchErrors, always. A non-zero
+            // value here is the ONLY reason the parts may not sum to the whole.
             "fetchErrors": errors.len(),
         },
+        "cleared": cleared_page,
+        "moreCleared": more_cleared,
+        "clearanceFailures": clear_failures_page,
+        "moreClearanceFailures": more_clear_failures,
         "issues": issues,
         "more": more,
+        // UNBOUNDED like `cleared` / `clearanceFailures`, and for the strongest version of their
+        // reason: these flags will never be judged by anything, so a page that hid some of them
+        // would hide a permanent state rather than defer a transient one.
         "archivedRepoFlags": archived_flags,
         "fetchErrors": errors,
     });
@@ -21133,19 +21384,39 @@ mod next_ready_tests {
 enum CcGate {
     /// The vetter UPHELD the current flag and no human has ruled: the human's to rule on.
     Presentable,
+    /// The REPO is archived (#206). Read-only: no label moves, no comment posts, no issue closes,
+    /// so not one transition this FSM owns can be applied — including the stranded-flag clearance
+    /// below, which is why this arm is FIRST in [`cc_gate`] and dominates every other state.
+    ///
+    /// `rain.webapp` was archived on 2026-08-05 and `rain.webapp#139` was served as the head of the
+    /// human's queue four minutes later: a sound flag, a completed read, and no ruling that could
+    /// be written. The ordering is oldest-flag-first, so a frozen flag sorts to the FRONT and stays
+    /// there.
+    RepoArchived,
     /// A `human:*` label is already on the issue. Human decisions are sacred, and a ruling is not an
     /// inbox item — whatever the flag still says.
     HumanRuled,
     /// The label is on the issue and NO trusted producer comment says why. There is no claim to
-    /// check, so there is nothing to rule on evidence — and no AI transition clears it either (the
-    /// vetter skips it as `skip-no-flag`), which is why it is reported rather than dropped.
+    /// check, so there is nothing here to rule on evidence.
+    ///
+    /// The vetter's state-load CLEARS this (#179): it drops the label, records why, and the issue
+    /// returns to the producer's backlog. Reaching this state at all means something applied the
+    /// label outside `flag-close-candidate`, which writes the label and the claim together.
     NoFlag,
     /// No trusted `🤖 ai:vetter` verdict pinned to the CURRENT flag. The vetter owes this one a
     /// verdict; presenting it here would spend the human's judgement on the vetter's turn, and a
     /// flag the vetter REJECTS never reaches the human at all (the reject strips the label).
     Unvetted,
-    /// The verdict at the current flag is `reject` and the label is STILL here. A reject removes it,
-    /// so this is a half-applied write, not a state the machine produces — reported, never presented.
+    /// The verdict at the current flag is `reject` and the label is STILL here — the verdict says
+    /// "not closeable" while the label says "awaiting a human's close ruling", and the label is what
+    /// every downstream filter reads. Never presented.
+    ///
+    /// This was read as a half-applied write, and `rain.erc4626.words#93` shows it is not: the
+    /// vetter's removal LANDED (2026-07-28T06:18:29Z, one second after its comment), and the
+    /// producer put the label back on 2026-07-29T17:18:30Z with no new claim, because the flag
+    /// comment dedup matched the already-rejected flag. See [`close_candidate_plan`], which is where
+    /// that is now prevented. A failed `--remove-label` still reaches this state, so the vetter's
+    /// state-load also CLEARS it (#179) rather than only reporting it.
     RejectedStillFlagged,
 }
 
@@ -21153,14 +21424,22 @@ impl CcGate {
     fn as_str(self) -> &'static str {
         match self {
             CcGate::Presentable => "presentable",
+            CcGate::RepoArchived => "repo-archived",
             CcGate::HumanRuled => "human-ruled",
             CcGate::NoFlag => "no-producer-flag",
             CcGate::Unvetted => "unvetted-vetter-owes-a-verdict",
             CcGate::RejectedStillFlagged => "vetter-rejected-but-still-flagged",
         }
     }
-    /// The two states no modelled transition will ever clear on its own — a human has to act, and
-    /// until this tool named them nothing said they existed.
+    /// The two states that had no transition consuming them, which is what made them accumulate
+    /// silently: the vetter skipped them every run while the label kept the issue out of the
+    /// producer's backlog.
+    ///
+    /// The vetter's state-load now CLEARS both (#179), so seeing one HERE means the clearance has
+    /// not run yet or could not write — `counts.clearanceFailed` on that state-load is the same
+    /// fact from the other side. The classification stays because the states stay REACHABLE (a
+    /// hand-applied label; a `--remove-label` that fails), and a state that can be reached is a
+    /// state worth naming.
     fn is_stranded(self) -> bool {
         matches!(self, CcGate::NoFlag | CcGate::RejectedStillFlagged)
     }
@@ -21199,7 +21478,20 @@ fn cc_verdict_parts(body: &str) -> Option<(String, String)> {
 /// Ordered as the vetter's own `cc_row` orders its skips, and for the same reason: a human ruling
 /// dominates everything (it is sacred and already made), then "nothing was claimed", then what the
 /// vetter did with the claim. Only the last arm can produce a row.
-fn cc_gate(human_ruled: bool, flag_at: &str, verdict: Option<(String, String)>) -> CcGate {
+fn cc_gate(
+    repo_archived: bool,
+    human_ruled: bool,
+    flag_at: &str,
+    verdict: Option<(String, String)>,
+) -> CcGate {
+    // FIRST, ahead of every other arm including the sacred one (#206). Every state below names
+    // something a transition would DO — present it to a human, clear the label, ask the vetter for
+    // a verdict — and an archived repo refuses all of them. Deciding writability before deciding
+    // what to write is what stops the #179 clearance firing against a repo that would reject it on
+    // every run, for ever, and it is structural rather than a comment asking a reader to remember.
+    if repo_archived {
+        return CcGate::RepoArchived;
+    }
     if human_ruled {
         return CcGate::HumanRuled;
     }
@@ -21794,17 +22086,15 @@ fn flagged_open_issues_args() -> Vec<String> {
     args
 }
 
-/// The flagged population, split by whether any transition can still reach it (#206).
+/// The flagged population and the archived-repo set to classify it against (#206).
 ///
-/// The split is made HERE, in the one search both inboxes share, for the same reason the search is
-/// shared: two surfaces filtering separately is how the vetter's queue and the human's would come
-/// to disagree about which flags are actionable.
+/// Both come from ONE read, here, for the same reason the search itself is shared: two surfaces
+/// reading archived state separately is how the vetter's queue and the human's would come to
+/// disagree about which flags are actionable. The CLASSIFICATION is [`cc_gate`]'s, not this
+/// struct's — [`CcGate::RepoArchived`] is a state both inboxes get from the one classifier.
 struct FlaggedIssues {
-    /// Flags a verdict or a ruling can still be written on.
-    live: Vec<Value>,
-    /// Flags an archived repo has FROZEN. Not dropped: every consumer counts them, because a
-    /// queue that shrinks with nothing to explain the gap is how these went unnoticed.
-    archived: Vec<Value>,
+    hits: Vec<Value>,
+    archived: ArchivedRepos,
 }
 
 /// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
@@ -21825,38 +22115,31 @@ fn flagged_open_issues() -> Result<FlaggedIssues, String> {
              aborting rather than report a falsely-empty close-candidate queue"
                 .to_string()
         })?;
-    let archived_set = archived_repos().map_err(archived_read_error)?;
-    let (live, archived) = withhold_archived(found, &archived_set, hit_slug);
-    Ok(FlaggedIssues { live, archived })
+    let archived = archived_repos().map_err(archived_read_error)?;
+    Ok(FlaggedIssues {
+        hits: found,
+        archived,
+    })
 }
 
 /// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
 /// then pay for the covering-PR read only on the rows actually returned.
 fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
     let FlaggedIssues {
-        live: found,
-        archived: frozen,
+        hits: found,
+        archived: archived_repos,
     } = flagged_open_issues()?;
     let mut flags: Vec<PresentableFlag> = Vec::new();
     let mut counts = FlagQueueCounts {
-        flagged: found.len() + frozen.len(),
-        archived_repo: frozen.len(),
+        flagged: found.len(),
         ..Default::default()
     };
     let mut stranded: Vec<Value> = Vec::new();
-    let mut errors: Vec<Value> = Vec::new();
     // The archived rows are named, not merely counted: this tool's contract is "here is the next
     // thing to rule on, and here is everything you are NOT being shown", and a human who knows a
     // flag exists somewhere unreachable can decide what to do about the repo.
-    let archived: Vec<Value> = frozen
-        .iter()
-        .map(|hit| {
-            let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
-            let issue = search_issue_ref(hit)
-                .map_or_else(|| title.to_string(), |(slug, num)| format!("{slug}#{num}"));
-            withheld_entry(&issue, ARCHIVED_REPO_WHY)
-        })
-        .collect();
+    let mut archived: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
     for hit in &found {
         let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let Some((slug, num)) = search_issue_ref(hit) else {
@@ -21885,6 +22168,7 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         let flag = last_close_candidate_flag(&detail);
         let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
         let gate = cc_gate(
+            archived_repos.contains(&slug),
             has_human_ruling(&label_names(&detail)),
             &flag_at,
             last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
@@ -21899,9 +22183,13 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
             CcGate::Unvetted => counts.unvetted += 1,
             CcGate::NoFlag => counts.no_flag += 1,
             CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
+            CcGate::RepoArchived => counts.archived_repo += 1,
         }
         if gate.is_stranded() {
             stranded.push(withheld_entry(&format!("{slug}#{num}"), gate.as_str()));
+        }
+        if gate == CcGate::RepoArchived {
+            archived.push(withheld_entry(&format!("{slug}#{num}"), ARCHIVED_REPO_WHY));
         }
         if gate == CcGate::Presentable {
             flags.push(PresentableFlag {
@@ -22045,21 +22333,21 @@ mod next_close_candidate_tests {
     fn the_gate_reads_the_verdict_word_not_the_label_still_being_there() {
         let at = "2026-07-20T09:00:00Z";
         let parts = |w: &str| Some((at.to_string(), w.to_string()));
-        assert_eq!(cc_gate(false, at, parts("uphold")), CcGate::Presentable);
+        assert_eq!(cc_gate(false, false, at, parts("uphold")), CcGate::Presentable);
         assert_eq!(
-            cc_gate(false, at, parts("reject")),
+            cc_gate(false, false, at, parts("reject")),
             CcGate::RejectedStillFlagged
         );
         // A word this machine does not know is not a verdict in force — the vetter still owes one,
         // exactly as an unstamped vet-protocol is never current.
         for unknown in ["close", "ready", "UPHOLD"] {
             assert_eq!(
-                cc_gate(false, at, parts(unknown)),
+                cc_gate(false, false, at, parts(unknown)),
                 CcGate::Unvetted,
                 "{unknown}"
             );
         }
-        assert_eq!(cc_gate(false, at, None), CcGate::Unvetted);
+        assert_eq!(cc_gate(false, false, at, None), CcGate::Unvetted);
         assert!(CcGate::RejectedStillFlagged.is_stranded());
         assert!(CcGate::NoFlag.is_stranded());
         for live in [CcGate::Presentable, CcGate::Unvetted, CcGate::HumanRuled] {
@@ -22074,11 +22362,11 @@ mod next_close_candidate_tests {
         let first = "2026-07-20T09:00:00Z";
         let second = "2026-07-25T09:00:00Z";
         assert_eq!(
-            cc_gate(false, second, Some((first.to_string(), "uphold".into()))),
+            cc_gate(false, false, second, Some((first.to_string(), "uphold".into()))),
             CcGate::Unvetted
         );
         assert_eq!(
-            cc_gate(false, first, Some((first.to_string(), "uphold".into()))),
+            cc_gate(false, false, first, Some((first.to_string(), "uphold".into()))),
             CcGate::Presentable
         );
     }
@@ -22089,17 +22377,95 @@ mod next_close_candidate_tests {
     fn a_human_ruling_dominates_and_a_flagless_label_is_stranded() {
         let at = "2026-07-20T09:00:00Z";
         assert_eq!(
-            cc_gate(true, at, Some((at.to_string(), "uphold".into()))),
+            cc_gate(false, true, at, Some((at.to_string(), "uphold".into()))),
             CcGate::HumanRuled
         );
-        assert_eq!(cc_gate(true, "", None), CcGate::HumanRuled);
+        assert_eq!(cc_gate(false, true, "", None), CcGate::HumanRuled);
         // Labelled, with no trusted producer comment behind it: nothing was CLAIMED, so there is
         // nothing to rule on evidence — and the vetter skips it too, which is why it is named.
-        assert_eq!(cc_gate(false, "", None), CcGate::NoFlag);
+        assert_eq!(cc_gate(false, false, "", None), CcGate::NoFlag);
         assert_eq!(
-            cc_gate(false, "", Some((at.to_string(), "uphold".into()))),
+            cc_gate(false, false, "", Some((at.to_string(), "uphold".into()))),
             CcGate::NoFlag
         );
+    }
+
+    /// #206: an ARCHIVED repo dominates EVERY other state, including the sacred one. Every state
+    /// below it names something a transition would do — present, clear, ask for a verdict — and a
+    /// read-only repo refuses all of them, so writability is decided before anything decides what
+    /// to write.
+    ///
+    /// The precedence is the behaviour, not a tidiness: if `RepoArchived` sat after the stranded
+    /// arms, #179's clearance would fire against a repo that rejects the `--remove-label` it is
+    /// made of, and would report `clearanceFailed` on every run for ever.
+    #[test]
+    fn an_archived_repo_dominates_every_other_gate_state() {
+        let at = "2026-07-20T09:00:00Z";
+        // Each of these is a DIFFERENT state when the repo is live. Archived, all of them are the
+        // same one — which is what "dominates" means and what a reordering would break.
+        for (human, flag_at, verdict) in [
+            (false, at, Some((at.to_string(), "uphold".to_string()))),
+            (false, at, Some((at.to_string(), "reject".to_string()))),
+            (false, at, None),
+            (false, "", None),
+            (true, at, Some((at.to_string(), "uphold".to_string()))),
+        ] {
+            assert_ne!(
+                cc_gate(false, human, flag_at, verdict.clone()),
+                CcGate::RepoArchived,
+                "a LIVE repo never produces RepoArchived"
+            );
+            assert_eq!(
+                cc_gate(true, human, flag_at, verdict),
+                CcGate::RepoArchived,
+                "archived must dominate (human_ruled={human}, flag_at={flag_at:?})"
+            );
+        }
+        // NOT stranded: `strandedFlags` names label states a transition could still clear, and
+        // this one names a repo that will never accept a write.
+        assert!(!CcGate::RepoArchived.is_stranded());
+        // …and therefore NOT clearable. The clearance is a label removal plus a comment; both are
+        // refused, so attempting one fails every run.
+        assert_eq!(cc_stranded_cleared_comment(CcGate::RepoArchived, at), None);
+        assert_eq!(CcGate::RepoArchived.as_str(), "repo-archived");
+    }
+
+    /// The vetter's row for a frozen flag: its own action, naming no move — never `vet` (nothing
+    /// can record a verdict) and never a clearance (nothing can remove the label).
+    #[test]
+    fn the_vetter_row_for_an_archived_repo_asks_for_no_move() {
+        let at = "2026-07-29T13:19:24Z";
+        let detail = json!({
+            "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
+            "labels": [{"name": "ai:close-candidate"}],
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": format!("🤖 ai:producer\nClose-candidate: already fixed on main\n\nflag @{at}"),
+            }],
+        });
+        let (gate, action, row) = cc_row(
+            "rainlanguage/rain.webapp",
+            139,
+            "i was asked to infinite approve quick on deposit",
+            &detail,
+            true,
+        );
+        assert_eq!(gate, CcGate::RepoArchived);
+        assert_eq!(action, CC_SKIP_ARCHIVED);
+        assert_eq!(row["action"], json!("skip-archived-repo"));
+        assert_ne!(action, CC_CLEAR_NO_FLAG);
+        assert_ne!(action, CC_CLEAR_REJECTED);
+        assert_ne!(action, "vet");
+        // The same issue in a LIVE repo is a different row entirely — the flag itself is fine.
+        let (live_gate, live_action, _) = cc_row(
+            "rainlanguage/rain.webapp",
+            139,
+            "t",
+            &detail,
+            false,
+        );
+        assert_ne!(live_gate, CcGate::RepoArchived);
+        assert_ne!(live_action, CC_SKIP_ARCHIVED);
     }
 
     // --- the ordering, which is this tool's own design decision ---------------------------------
@@ -22732,9 +23098,9 @@ mod next_close_candidate_tests {
         assert_eq!(parts, c["flagged"].as_u64().unwrap());
     }
 
-    // The flags no modelled transition will ever clear. Reporting them is the whole reason they are
-    // classified separately: the vetter skips a flagless label for ever, and a half-applied reject
-    // is not a state the machine produces — both sit until a human is told they exist.
+    // The two stranded states, named rather than folded into a skip. The vetter's state-load clears
+    // both (#179), so a flag reported here is one the clearance has not reached or could not write —
+    // which is the case a human most needs named, because the label is still parking the issue.
     #[test]
     fn stranded_flags_are_named_rather_than_silently_skipped() {
         let mut w = withheld(FlagQueueCounts {
@@ -23187,7 +23553,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_close_candidate",
             "narrows": "limit",
-            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue. Coverage is always reported; `openPr.blocksClose` pairs it with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are the ones no AI transition will ever clear.",
+            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue. Coverage is always reported; `openPr.blocksClose` pairs it with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are labels parking an issue with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -32406,7 +32772,7 @@ mod queue_tests {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         for l in ["human:reject", "human:design", "human:close-candidate"] {
             assert_eq!(
-                close_candidate_plan("OPEN", &s(&[l]), false),
+                close_candidate_plan("OPEN", &s(&[l]), false, false),
                 CloseFlagPlan::RefuseHuman,
                 "{l} must block a producer flag"
             );
@@ -32435,7 +32801,7 @@ mod queue_tests {
             vec![vetter_cc_comment(first, "uphold")],
         );
         assert!(cc_vetted_at_flag(&vetted, first));
-        let (_, action, _) = cc_row("o/r", 1, "t", &vetted);
+        let (_, action, _) = cc_row("o/r", 1, "t", &vetted, false);
         assert_eq!(action, "skip-vetted-at-flag");
 
         // The producer re-flags with new evidence: the old verdict no longer covers it.
@@ -32446,10 +32812,139 @@ mod queue_tests {
             vec![vetter_cc_comment(first, "uphold")],
         );
         assert!(!cc_vetted_at_flag(&reflagged, second));
-        let (vet, action, row) = cc_row("o/r", 1, "t", &reflagged);
-        assert!(vet);
+        let (gate, action, row) = cc_row("o/r", 1, "t", &reflagged, false);
+        assert_eq!(gate, CcGate::Unvetted);
         assert_eq!(action, "vet");
         assert_eq!(row["flagAt"], json!(second));
+    }
+
+    /// #179 state B, from the vetter's own inbox. `cc_row` used to ask only "is there a verdict
+    /// pinned to this flag", so a `reject` and an `uphold` were the same row — `skip-vetted-at-flag`
+    /// — and the vetter walked past `rain.erc4626.words#93` on every run for six days. Reading the
+    /// verdict WORD is what separates the state that is waiting on a human from the one that is
+    /// waiting on nobody.
+    #[test]
+    fn a_rejected_flag_still_wearing_its_label_asks_to_be_cleared_not_skipped() {
+        let at = "2026-07-17T21:23:11Z";
+        let rejected = flagged_issue(
+            &["ai:close-candidate"],
+            at,
+            "already-fixed-on-main: #181",
+            vec![vetter_cc_comment(at, "reject")],
+        );
+        // Vetted at its flag — which is exactly why the old check called this upheld and skipped it.
+        assert!(cc_vetted_at_flag(&rejected, at));
+        let (gate, action, _) = cc_row("o/r", 93, "t", &rejected, false);
+        assert_eq!(gate, CcGate::RejectedStillFlagged);
+        assert_eq!(action, CC_CLEAR_REJECTED);
+
+        // The SAME shape with `uphold` is the live queue's ordinary case and must stay a skip: it
+        // is waiting on a human, and clearing it would silently drop a real inbox item.
+        let upheld = flagged_issue(
+            &["ai:close-candidate"],
+            at,
+            "already-fixed-on-main: #181",
+            vec![vetter_cc_comment(at, "uphold")],
+        );
+        let (gate, action, _) = cc_row("o/r", 93, "t", &upheld, false);
+        assert_eq!(gate, CcGate::Presentable);
+        assert_eq!(action, "skip-vetted-at-flag");
+        assert_eq!(cc_stranded_cleared_comment(gate, at), None);
+    }
+
+    /// A human ruling dominates a stranded label. `human:*` is sacred with no carve-out, and
+    /// "the label looks stuck" is not one — the clearance is an AI write, so it must not fire on an
+    /// issue a human has already parked, whatever the flag underneath still says.
+    #[test]
+    fn a_human_ruling_beats_a_stranded_label_and_nothing_is_cleared() {
+        let at = "2026-07-17T21:23:11Z";
+        for ruling in HUMAN_RULING_LABELS {
+            // Both stranded shapes, under a human ruling: a rejected flag, and no flag at all.
+            let rejected = flagged_issue(
+                &[ruling, "ai:close-candidate"],
+                at,
+                "already-fixed-on-main: #181",
+                vec![vetter_cc_comment(at, "reject")],
+            );
+            let (gate, action, _) = cc_row("o/r", 93, "t", &rejected, false);
+            assert_eq!(gate, CcGate::HumanRuled, "{ruling}");
+            assert_eq!(action, "skip-human-decided", "{ruling}");
+            assert_eq!(cc_stranded_cleared_comment(gate, at), None, "{ruling}");
+        }
+    }
+
+    /// The clearance is a LABEL move and must not re-enter the machine as any of the things it
+    /// clears. Its body is read back by three different parsers, and matching any of them would be
+    /// the same class of bug one level up: the flag reader (a clearance read as a producer claim),
+    /// the verdict reader (read as a vetter ruling), and the producer's own dedup (which would then
+    /// suppress the fresh claim a re-flag owes).
+    #[test]
+    fn a_clearance_comment_is_not_a_flag_a_verdict_or_a_prior_note() {
+        for gate in [CcGate::NoFlag, CcGate::RejectedStillFlagged] {
+            let body =
+                cc_stranded_cleared_comment(gate, "2026-07-17T21:23:11Z").unwrap_or_else(|| {
+                    panic!("{gate:?} is stranded and must have a clearance comment")
+                });
+
+            // Authored as the vetter, so `trusted_comments` can dedup it — but never parsed as one
+            // of the vetter's VERDICTS.
+            assert!(body.starts_with("🤖 ai:vetter"), "{gate:?}");
+            assert_eq!(
+                cc_verdict_parts(&body),
+                None,
+                "{gate:?}: reads as a verdict"
+            );
+            assert!(
+                !body.contains("Reviewed close-candidate @"),
+                "{gate:?}: would shadow the real verdict in last_cc_vetter_comment"
+            );
+
+            // Not a producer flag, by author AND by marker.
+            assert!(!body.starts_with("🤖 ai:producer"), "{gate:?}");
+            let posted = json!({
+                "state": "OPEN",
+                "labels": [{"name": "ai:close-candidate"}],
+                "comments": [{
+                    "author": {"login": TRUSTED_AUTHOR},
+                    "createdAt": "2026-07-30T09:00:00Z",
+                    "body": body,
+                }],
+            });
+            assert_eq!(last_close_candidate_flag(&posted), None, "{gate:?}");
+
+            // And not a `Close-candidate:` note, which `flag_close_candidate_mode` dedups on: a
+            // clearance that set `already_noted` would suppress the very comment the re-flag owes.
+            assert!(
+                !body.contains("Close-candidate:"),
+                "{gate:?}: would set already_noted and re-strand the issue"
+            );
+        }
+        // A live state has no clearance at all — the guard is the type, not the caller.
+        for gate in [CcGate::Presentable, CcGate::HumanRuled, CcGate::Unvetted] {
+            assert_eq!(cc_stranded_cleared_comment(gate, "T"), None, "{gate:?}");
+        }
+    }
+
+    /// State A's comment must say what the clearance COSTS. A bare label carries no claim, so
+    /// dropping it discards whatever intent applied it, and that intent is unrecoverable because it
+    /// was never written down. The record has to name the durable alternative rather than let the
+    /// label look like it merely expired.
+    #[test]
+    fn the_no_flag_clearance_names_what_it_discards_and_the_ruling_that_survives() {
+        let body = cc_stranded_cleared_comment(CcGate::NoFlag, "").expect("stranded");
+        assert!(body.contains("no trusted producer comment"));
+        assert!(body.contains("discards whatever intent applied the label"));
+        assert!(body.contains("NO ruling is made"));
+        // The two human transitions that DO survive an AI actor, named by the command a reader runs.
+        assert!(body.contains("human-rule-issue"));
+        assert!(body.contains("human-close"));
+
+        // State B's pins the flag it completes, the way every other record here pins its subject.
+        let b = cc_stranded_cleared_comment(CcGate::RejectedStillFlagged, "2026-07-17T21:23:11Z")
+            .expect("stranded");
+        assert!(b.contains("@2026-07-17T21:23:11Z"));
+        assert!(b.contains("`reject`"));
+        assert!(b.contains("NO new ruling is made"));
     }
 
     // A marker is public body text: a flag from an untrusted author is not a flag.
@@ -32466,9 +32961,11 @@ mod queue_tests {
         });
         assert_eq!(last_close_candidate_flag(&spoofed), None);
         assert_eq!(cc_verdict_plan(&spoofed, "uphold"), CcVerdictPlan::NoFlag);
-        let (vet, action, _) = cc_row("o/r", 1, "t", &spoofed);
-        assert!(!vet);
-        assert_eq!(action, "skip-no-flag");
+        // A label with only an untrusted "flag" under it IS state A: no claim, and the label parks
+        // the issue. The state-load clears it rather than skipping it for ever.
+        let (gate, action, _) = cc_row("o/r", 1, "t", &spoofed, false);
+        assert_eq!(gate, CcGate::NoFlag);
+        assert_eq!(action, CC_CLEAR_NO_FLAG);
     }
 
     // The three failure classes from the hand-triage (#72). The vetter's REJECT is what keeps a
@@ -32603,9 +33100,15 @@ mod queue_tests {
             ],
             "skipped": [
                 row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag", "issues"),
-                // Neither of these is UPHELD: one is a human ruling, one has no flag to judge.
+                // None of these is UPHELD: one is a human ruling, one has no flag to judge, and one
+                // is `rain.erc4626.words#93`'s state — a flag the vetter REJECTED, still labelled.
+                // The last used to land in `upheld`, because "vetted at its flag" was read as
+                // upheld on the argument that a rejected flag cannot still carry the label. It can,
+                // and rendering a `reject` to a human as the vetter agreeing to close is the worst
+                // direction for the error: the human's next move on an upheld flag destroys work.
                 row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided", "issues"),
-                row("rainlanguage/raindex", 999, "no flag", "skip-no-flag", "issues"),
+                row("rainlanguage/raindex", 999, "no flag", CC_CLEAR_NO_FLAG, "issues"),
+                row("rainlanguage/raindex", 93, "rejected, still flagged", CC_CLEAR_REJECTED, "issues"),
             ],
         });
         let (unvetted, upheld) = cc_item_arrays(&doc);
@@ -32631,10 +33134,16 @@ mod queue_tests {
                    "url": "https://github.com/rainlanguage/raindex/issues/523",
                    "title": "nothing visual happens"})
         );
-        // Only `skip-vetted-at-flag` is upheld — a human ruling or a missing flag is neither.
+        // Only `skip-vetted-at-flag` is upheld — a human ruling, a missing flag, and a REJECTED
+        // flag still wearing its label are none of them.
         for r in &upheld {
             assert_ne!(r["number"], json!(184));
             assert_ne!(r["number"], json!(999));
+            assert_ne!(
+                r["number"],
+                json!(93),
+                "a vetter REJECT must never render to a human as an upheld flag"
+            );
         }
 
         // A doc with no skipped rows (include_skipped omitted) yields an EMPTY upheld array, never
@@ -32676,31 +33185,78 @@ mod queue_tests {
     fn close_candidate_plan_respects_state_human_and_dedup() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            close_candidate_plan("CLOSED", &s(&[]), false),
+            close_candidate_plan("CLOSED", &s(&[]), false, false),
             CloseFlagPlan::AlreadyClosed
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&["human:keep-open"]), false),
+            close_candidate_plan("OPEN", &s(&["human:keep-open"]), false, false),
             CloseFlagPlan::RefuseHuman
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&["human:close-candidate"]), false),
+            close_candidate_plan("OPEN", &s(&["human:close-candidate"]), false, false),
             CloseFlagPlan::RefuseHuman
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&[]), false),
+            close_candidate_plan("OPEN", &s(&[]), false, false),
             CloseFlagPlan::Flag {
                 add_label: true,
                 post_comment: true
             }
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&["ai:close-candidate"]), true),
+            close_candidate_plan("OPEN", &s(&["ai:close-candidate"]), true, false),
             CloseFlagPlan::Flag {
                 add_label: false,
                 post_comment: false
             }
         );
+    }
+
+    /// #179 state B, as `rain.erc4626.words#93` actually reached it — and the reason this is a fix
+    /// to a WRITE rather than only a transition that mops up after one.
+    ///
+    /// The vetter rejected the 2026-07-17 flag and its `--remove-label` LANDED (the timeline shows
+    /// the label gone at 06:18:29Z, one second after the verdict comment at 06:18:28Z). The producer
+    /// then re-flagged on 2026-07-29: `already_noted` matched the rejected flag's own comment, so
+    /// the label went back on with no comment beside it. The flag's timestamp never moved, the
+    /// vetter's `reject` still pinned it, and the issue was stranded from that moment.
+    #[test]
+    fn a_reflag_over_a_judged_flag_must_state_a_fresh_claim() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+
+        // #93 exactly: label absent (the reject took it off), a `Close-candidate:` comment already
+        // on the record, and that flag already judged. The label may go back only WITH a new claim.
+        assert_eq!(
+            close_candidate_plan("OPEN", &s(&[]), true, true),
+            CloseFlagPlan::Flag {
+                add_label: true,
+                post_comment: true
+            },
+            "re-labelling a judged flag without a fresh comment is what stranded #93"
+        );
+
+        // The dedup still holds where it was right: a flag NOT yet judged is a half-written flag,
+        // and completing the label without re-noting it is the correct repair.
+        assert_eq!(
+            close_candidate_plan("OPEN", &s(&[]), true, false),
+            CloseFlagPlan::Flag {
+                add_label: true,
+                post_comment: false
+            }
+        );
+
+        // And an issue still CARRYING the label is a no-op re-run either way — an upheld flag
+        // waiting on a human is never re-noted out from under them.
+        for judged in [true, false] {
+            assert_eq!(
+                close_candidate_plan("OPEN", &s(&["ai:close-candidate"]), true, judged),
+                CloseFlagPlan::Flag {
+                    add_label: false,
+                    post_comment: false
+                },
+                "judged={judged}"
+            );
+        }
     }
 
     #[test]
@@ -36083,10 +36639,8 @@ mod repo_root_tests {
             // fails is already reported as a failed edit rather than queued as a task.
             "migrate_reject_mode",
             "retire_blocked_infra_mode",
-            // Tests.
+            // A test.
             "next_close_candidate_tests",
-            "org_tests",
-            "repo_root_tests",
         ];
         let mut want: Vec<&str> = filtered.iter().chain(exempt.iter()).copied().collect();
         want.sort_unstable();
@@ -36106,6 +36660,28 @@ mod repo_root_tests {
                 "`{item}` enumerates org-wide but does not withhold archived repos — its rows can \
                  include a repo that refuses every transition this FSM owns (#206). \
                  Withholding items: {withholds:?}"
+            );
+        }
+
+        // The close-candidate pair takes the OTHER route, and it is a route rather than an
+        // exception: the two inboxes do not drop frozen rows at the search, they classify them
+        // through `cc_gate` as `RepoArchived` — one variant, one classifier, both surfaces. That
+        // is only sound if the set actually reaches the classifier, so the read is pinned here.
+        let reads = items_whose_code_contains(&format!("archived_re{}", "pos()"));
+        assert!(
+            reads.contains(&"flagged_open_issues".to_string()),
+            "`flagged_open_issues` is the ONE search behind both close-candidate inboxes; if it \
+             stops reading the archived set, `cc_gate` is handed `false` for every issue and the \
+             `RepoArchived` state becomes unreachable. Reading items: {reads:?}"
+        );
+        // …and the classifier is where the decision is made, in both of them.
+        let classifies = items_whose_code_contains(&format!("cc_ga{}", "te("));
+        for item in ["cc_row", "next_close_candidate_fetch"] {
+            assert!(
+                classifies.contains(&item.to_string()),
+                "`{item}` must classify through `cc_gate`, or the vetter's close-candidate inbox \
+                 and the human's can disagree about which flags are actionable. Classifying \
+                 items: {classifies:?}"
             );
         }
     }
