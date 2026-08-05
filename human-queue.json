@@ -1110,20 +1110,8 @@
         ]
       },
       "un-vetted": {
-        "count": 26,
+        "count": 24,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 215,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/215",
-            "title": "Close-candidate flags cover both subject types, one upheld inbox, close is decide+do"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 160,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/160",
-            "title": "Close-candidate renders as two states: one mixed upheld inbox"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 104,
@@ -1272,35 +1260,6 @@
       }
     },
     "vetter-verdicts": {
-      "ai:close-candidate": {
-        "count": 4,
-        "prs": [
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 63,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/63",
-            "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 410,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
-            "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 402,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/402",
-            "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 401,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/401",
-            "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
-          }
-        ]
-      },
       "ai:design": {
         "count": 18,
         "prs": [
@@ -1826,6 +1785,30 @@
       "number": 248,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 63,
+      "url": "https://github.com/rainlanguage/rain.dia/pull/63",
+      "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 410,
+      "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
+      "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 402,
+      "url": "https://github.com/cyclofinance/cyclo.site/pull/402",
+      "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 401,
+      "url": "https://github.com/cyclofinance/cyclo.site/pull/401",
+      "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
     }
   ],
   "uncoveredIssues": [
@@ -5513,24 +5496,22 @@
     "blockedOn": 17,
     "closeCandidateIssues": 1,
     "closeCandidateUnvetted": 0,
-    "closeCandidateUpheld": 1,
+    "closeCandidateUpheld": 5,
     "leaks": 5,
-    "totalProducerPrs": 150,
+    "totalProducerPrs": 148,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 602,
-    "unvetted": 26,
+    "unvetted": 24,
     "reject": 65,
     "relink": 0,
-    "closeCandidatePrs": 4,
     "humanReject": 0,
     "humanDesign": 6,
-    "humanCloseCandidate": 0,
-    "openIssues": 768
+    "openIssues": 763
   },
   "ages": {
     "openIssues": {
-      "meanDays": 313.6,
-      "medianDays": 99.3,
+      "meanDays": 315.7,
+      "medianDays": 99.4,
       "oldestDays": 1654.9
     }
   }
