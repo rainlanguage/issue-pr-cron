@@ -1843,12 +1843,6 @@
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
-      "repo": "rainlanguage/rain.erc4626.words",
-      "number": 93,
-      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/93",
-      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 1060,
       "url": "https://github.com/rainlanguage/raindex/issues/1060",
@@ -5585,7 +5579,7 @@
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
-    "closeCandidateIssues": 6,
+    "closeCandidateIssues": 5,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 5,
     "leaks": 7,
