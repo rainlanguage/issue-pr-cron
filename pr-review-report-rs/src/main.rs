@@ -28,13 +28,941 @@ enum Merge {
     Conflicting,
     Unknown,
 }
-/// Run gh and parse stdout as JSON; None on non-zero exit, spawn failure, or unparseable output.
-fn gh_json(args: &[&str]) -> Option<Value> {
-    let out = Command::new("gh").args(args).output().ok()?;
-    if !out.status.success() {
+// ---------------------------------------------------------------------------------------------
+// WHY a `gh` call produced no document (#129).
+//
+// Every failure used to collapse into one `None`, so a rate limit, a deleted PR and a dead network
+// were the same fact — and `--queue` turned all three into `fetch_error`, dropping a candidate
+// GitHub had merely asked it to re-ask for. Concurrency made that more likely, not less: #123/#126
+// put the per-candidate fetches on a bounded pool, and a burst from one token is exactly what draws
+// a SECONDARY limit.
+//
+// The discriminant is not available from every invocation, and this module says so instead of
+// guessing. MEASURED against gh 2.93.0 (nixpkgs):
+//
+//   gh pr view 9999999 -R <real repo>     exit 1, stdout 0 bytes  (message on stderr only)
+//   gh pr view 1 -R <no such repo>        exit 1, stdout 0 bytes
+//   gh api user, unroutable proxy         exit 1, stdout 0 bytes
+//   gh api <no such repo>                 exit 1, stdout {"message":…,"status":"404"}
+//   gh api user, bad credentials          exit 1, stdout {"message":…,"status":"401"}
+//   gh api graphql <no such repo>         exit 1, stdout {"errors":[{"type":"NOT_FOUND",…}]}
+//   gh api graphql <no such PR>           exit 1, stdout {"errors":[{"type":"NOT_FOUND",…}]}
+//   gh api graphql <malformed query>      exit 1, stdout {"errors":[{"message":…}]} — and NO `type`
+//   gh api --include …                    the HTTP status line and headers precede that body
+//
+// Two readings decide the whole design. `gh pr view` has NO structured failure at all: exit 1 and
+// an empty stdout for a missing PR, a missing repo and a dead network alike, so nothing but the
+// stderr prose tells them apart and this codebase does not classify prose. `gh api` DOES hand back
+// the response body it received, and `--include` hands back the status line and the headers too.
+//
+// So the classification reads only typed fields — the HTTP status integer, the `Retry-After` and
+// `X-RateLimit-Remaining` header fields, GitHub's documented GraphQL `errors[].type` enum, and the
+// REST body's own `status`. It reads no message anywhere. Where an invocation offers nothing typed
+// the answer is [`GhFailure::Unknown`], not the nearest plausible class: the same posture as
+// [`Merge::Unknown`] and `CodeRabbitCoverage::Unreadable`, and the reason `gh pr view`'s failure is
+// re-asked through [`gh_api_result`] rather than assumed (see [`pr_fetch_failure`]).
+// ---------------------------------------------------------------------------------------------
+
+/// WHY a `gh` call produced no document — a TYPED discriminant, never a message substring.
+///
+/// `Copy`, and every variant is deliberately kept so: a failure that had to carry a borrowed
+/// message would be a message this codebase then had to resist classifying on. `retry_after` is a
+/// NUMBER out of a header field, which is the only payload any of these needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GhFailure {
+    /// GitHub asked us to slow down. The ONLY class a retry answers, and it carries GitHub's own
+    /// `Retry-After` when the response named one.
+    RateLimited { retry_after: Option<u64> },
+    /// The subject genuinely does not resolve. A retry re-asks a question already answered.
+    NotFound,
+    /// The token may not read this — bad credentials, missing scope, suspended actor. Not a
+    /// property of one subject: the same token serves every call, so one of these means the next
+    /// call is unreadable too.
+    Unauthorized,
+    /// A response arrived and could not be read as the document asked for — including a GraphQL
+    /// query this binary got wrong, which is a bug here and never a reason to retry.
+    Malformed,
+    /// Nothing typed was available to classify on. HONEST, not a catch-all excuse: it is what a
+    /// `gh pr view` failure and a spawn failure both are, and treating it as anything narrower
+    /// would be the lie #129 is about.
+    Unknown,
+}
+
+/// How urgently a failure has to be acted on — the DECLARATION ORDER is the precedence, and the
+/// order is the behaviour. A GraphQL response can carry several errors at once (one field rate
+/// limited while another is merely absent), and reading such a response as `NotFound` is #129's
+/// bug in miniature: the most actionable class wins.
+fn failure_rank(f: &GhFailure) -> u8 {
+    match f {
+        GhFailure::RateLimited { .. } => 0,
+        GhFailure::Unauthorized => 1,
+        GhFailure::NotFound => 2,
+        GhFailure::Malformed => 3,
+        GhFailure::Unknown => 4,
+    }
+}
+
+/// The head of an HTTP response as `gh api --include` prints it: the status CODE — a typed integer,
+/// never the reason phrase beside it — and the header fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HttpHead {
+    status: u16,
+    headers: Vec<(String, String)>,
+}
+
+impl HttpHead {
+    /// Case-insensitive field lookup: HTTP field names are case-insensitive, `gh` prints them
+    /// canonicalised (`X-Ratelimit-Remaining`) and GitHub documents them lowercase, so a
+    /// case-sensitive read would silently find nothing.
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// First index at which `needle` occurs in `hay`.
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
         return None;
     }
-    serde_json::from_slice(&out.stdout).ok()
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// PURE: the status CODE out of an HTTP status line (`HTTP/2.0 404 Not Found` → 404).
+///
+/// The reason phrase is deliberately discarded. It is prose the server may reword at any time and
+/// the code is the typed field that says the same thing — reading "Not Found" instead of 404 would
+/// be exactly the message-matching this classifier exists to avoid.
+fn parse_status_line(line: &str) -> Option<u16> {
+    let rest = line.strip_prefix("HTTP/")?;
+    let (_version, rest) = rest.split_once(' ')?;
+    let code = rest.split(' ').next()?;
+    if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    code.parse().ok()
+}
+
+/// PURE: split `gh api --include` output into the response head and the body it precedes.
+///
+/// Answers `(None, whole)` for output that is not an HTTP dump — which is what EVERY invocation
+/// without `--include` produces — so ONE reader serves both and no caller has to remember which
+/// flag it passed. The guard is structural rather than a search: the output must BEGIN with a
+/// well-formed status line AND the head must be terminated by the CRLFCRLF the protocol requires,
+/// so a JSON document containing a blank line cannot be mistaken for a response head (and no JSON
+/// document begins `HTTP/` in any case).
+///
+/// `gh` terminates the status line with a bare LF and each header with CRLF, so lines are split on
+/// LF and the CR is trimmed rather than relied on. The CRLFCRLF terminator is required as written:
+/// every GitHub response carries headers, so it is always there, and a hypothetical headerless one
+/// would fall through to `(None, whole)` — the body then fails to parse and the call is `Malformed`,
+/// which is fail-closed rather than a head silently read as a document.
+fn split_http_head(out: &[u8]) -> (Option<HttpHead>, &[u8]) {
+    let Some(end) = find_subslice(out, b"\r\n\r\n") else {
+        return (None, out);
+    };
+    let Ok(head) = std::str::from_utf8(&out[..end]) else {
+        return (None, out);
+    };
+    let mut lines = head.split('\n').map(|l| l.trim_end_matches('\r'));
+    let Some(status) = lines.next().and_then(parse_status_line) else {
+        return (None, out);
+    };
+    let headers = lines
+        .filter_map(|l| l.split_once(':'))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect();
+    (Some(HttpHead { status, headers }), &out[end + 4..])
+}
+
+/// PURE: does the response head itself say we are being rate limited, and for how long?
+///
+/// TWO typed signals, both protocol fields rather than prose:
+///
+/// * `429`, the status code whose entire meaning is this;
+/// * `403` TOGETHER WITH `Retry-After` or an exhausted `X-RateLimit-Remaining` — how GitHub spells
+///   both its primary limit and the SECONDARY one a concurrent burst draws.
+///
+/// The pairing is what makes 403 readable at all. A plain permission denial carries neither field,
+/// so "slow down" and "you may not read this" stay apart without anyone reading the English
+/// sentence that distinguishes them. Requiring a companion field also means a 403 this binary
+/// cannot explain is NOT retried, which is the safe direction: a blind retry under a limit is the
+/// traffic GitHub is objecting to.
+fn head_rate_limit(head: &HttpHead) -> Option<GhFailure> {
+    let retry_after = head
+        .header("Retry-After")
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    let exhausted = head
+        .header("X-RateLimit-Remaining")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .is_some_and(|n| n == 0);
+    if head.status == 429 || (head.status == 403 && (retry_after.is_some() || exhausted)) {
+        return Some(GhFailure::RateLimited { retry_after });
+    }
+    None
+}
+
+/// PURE: the failure an HTTP status CODE names on its own, once [`head_rate_limit`] has ruled out
+/// the rate-limited readings of 403 and 429.
+///
+/// 401 and 404 are measured above; 403 (permission) and 410 (the resource is gone) are GitHub's
+/// documented refusals for the same two facts. Every other code is `Unknown` — a status this
+/// binary has no rule for is not folded into whichever rule looks closest.
+fn status_failure(status: u16) -> GhFailure {
+    match status {
+        401 | 403 => GhFailure::Unauthorized,
+        404 | 410 => GhFailure::NotFound,
+        429 => GhFailure::RateLimited { retry_after: None },
+        _ => GhFailure::Unknown,
+    }
+}
+
+/// PURE: the failure ONE GitHub GraphQL `errors[].type` word names.
+///
+/// The words are GitHub's own documented enum, matched WHOLE and never by substring, so a future
+/// `NOT_FOUND_IN_ORG` cannot be read as `NOT_FOUND` — the same rule `RateLimitWindow::from_wire`
+/// follows for the five-hour window. A word this binary has no rule for is `Unknown`: an
+/// unrecognised type is not evidence for the nearest recognised one.
+fn graphql_error_failure(ty: &str) -> GhFailure {
+    match ty {
+        "RATE_LIMITED" => GhFailure::RateLimited { retry_after: None },
+        "FORBIDDEN" | "INSUFFICIENT_SCOPES" | "ACTOR_SUSPENDED" => GhFailure::Unauthorized,
+        "NOT_FOUND" => GhFailure::NotFound,
+        _ => GhFailure::Unknown,
+    }
+}
+
+/// PURE: the failure a GraphQL `errors` array names, or `None` when the document carries no such
+/// array to read.
+///
+/// An array whose every entry lacks `type` is `Malformed`: that is the measured shape of a query
+/// GitHub could not parse, which is this binary's own bug and never a reason to retry.
+fn graphql_failure(body: &Value) -> Option<GhFailure> {
+    let errors = body.get("errors")?.as_array()?;
+    if errors.is_empty() {
+        return None;
+    }
+    let typed: Vec<GhFailure> = errors
+        .iter()
+        .filter_map(|e| e.get("type").and_then(|t| t.as_str()))
+        .map(graphql_error_failure)
+        .collect();
+    if typed.is_empty() {
+        return Some(GhFailure::Malformed);
+    }
+    typed.into_iter().min_by_key(failure_rank)
+}
+
+/// PURE: the failure a REST error body's OWN `status` field names. GitHub echoes the HTTP status
+/// back inside the document (measured: `"status":"404"`, `"status":"401"`), which is the one typed
+/// field still available when the head was not asked for.
+fn rest_body_failure(body: &Value) -> Option<GhFailure> {
+    let code = match body.get("status")? {
+        Value::String(s) => s.trim().parse::<u16>().ok()?,
+        Value::Number(n) => u16::try_from(n.as_u64()?).ok()?,
+        _ => return None,
+    };
+    Some(status_failure(code))
+}
+
+/// PURE: WHY a failed `gh` call produced no document, from the response head (when `--include` was
+/// asked for) and whatever body `gh` printed.
+///
+/// ORDER IS THE BEHAVIOUR, and each step earns its place:
+///
+/// 1. the head's rate-limit reading first, because it is the ONLY signal that survives a secondary
+///    limit — GitHub answers those with a plain 403 and a `Retry-After`, carrying no GraphQL type
+///    at all;
+/// 2. then `errors[].type`, because a PRIMARY GraphQL rate limit arrives as HTTP **200** with
+///    `RATE_LIMITED` in the body — trusting the status code there would read a rate limit as a
+///    success;
+/// 3. then the bare status code, and only then the REST body's own copy of it.
+fn classify_gh_failure(head: Option<&HttpHead>, body: &[u8]) -> GhFailure {
+    if let Some(f) = head.and_then(head_rate_limit) {
+        return f;
+    }
+    let doc: Option<Value> = serde_json::from_slice(body).ok();
+    if let Some(f) = doc.as_ref().and_then(graphql_failure) {
+        return f;
+    }
+    if let Some(f) = head.map(|h| status_failure(h.status)) {
+        if f != GhFailure::Unknown {
+            return f;
+        }
+    }
+    doc.as_ref()
+        .and_then(rest_body_failure)
+        .unwrap_or(GhFailure::Unknown)
+}
+
+/// Run `gh` and parse stdout as JSON, with a TYPED failure.
+///
+/// The classes are only as good as the structure the invocation returns: a `gh pr view` failure is
+/// [`GhFailure::Unknown`] and can be nothing else, because an empty stdout supports nothing else.
+/// Use [`gh_api_result`] where the class has to be known.
+fn gh_result(args: &[&str]) -> Result<Value, GhFailure> {
+    let Ok(out) = Command::new("gh").args(args).output() else {
+        // `gh` never ran: there is no response, so there is nothing typed to read.
+        return Err(GhFailure::Unknown);
+    };
+    let (head, body) = split_http_head(&out.stdout);
+    if !out.status.success() {
+        return Err(classify_gh_failure(head.as_ref(), body));
+    }
+    serde_json::from_slice(body).map_err(|_| GhFailure::Malformed)
+}
+
+/// [`gh_result`] for `gh api`, asking for the response head as well.
+///
+/// `--include` is what puts the status line and the `Retry-After` / `X-RateLimit-Remaining` fields
+/// in reach; without it a secondary rate limit is indistinguishable from a permission denial, since
+/// GitHub spells that one as a plain 403 whose only distinguishing mark is an English sentence.
+/// [`split_http_head`] takes the head back off, so a caller sees the same document it would have
+/// received without the flag.
+fn gh_api_result(args: &[&str]) -> Result<Value, GhFailure> {
+    let mut full: Vec<&str> = Vec::with_capacity(args.len() + 2);
+    full.push("api");
+    full.push("--include");
+    full.extend_from_slice(args);
+    gh_result(&full)
+}
+
+/// The wait before each retry when the response named no `Retry-After`, in seconds. The LENGTH of
+/// this table is the retry budget.
+const GH_RATE_LIMIT_BACKOFF_SECS: [u64; 2] = [2, 8];
+
+/// Attempts a rate-limited `gh` call gets in total, the first included. Derived from the backoff
+/// table rather than stated beside it, because two constants that must agree are two constants that
+/// can disagree.
+const GH_RATE_LIMIT_ATTEMPTS: usize = GH_RATE_LIMIT_BACKOFF_SECS.len() + 1;
+
+/// The longest this process will EVER sleep waiting out a rate limit. A window longer than this is
+/// not something a queue render sits through: the candidate is reported rate-limited — a state the
+/// header now names — and the run stays responsive.
+const GH_RATE_LIMIT_MAX_SLEEP_SECS: u64 = 30;
+
+/// The fallback table can never exceed the ceiling, asserted at COMPILE time rather than clamped at
+/// run time. A clamp would silently shorten a wait somebody deliberately lengthened; this fails the
+/// build instead, and it is what lets [`rate_limit_backoff`] treat "over the ceiling" as a fact
+/// about GitHub's `Retry-After` alone.
+const _: () = {
+    let mut i = 0;
+    while i < GH_RATE_LIMIT_BACKOFF_SECS.len() {
+        assert!(GH_RATE_LIMIT_BACKOFF_SECS[i] <= GH_RATE_LIMIT_MAX_SLEEP_SECS);
+        i += 1;
+    }
+};
+
+/// PURE: how long to wait before the retry that FOLLOWS `attempt` (0-based), or `None` for "do not
+/// retry at all" — the budget is spent, or GitHub named a window this process will not sit through.
+///
+/// GitHub's own `Retry-After` wins wherever it gave one: it knows when the window opens, and a
+/// guess can only be too short (more of the traffic being objected to) or too long (a stalled run).
+///
+/// SO A WINDOW OVER [`GH_RATE_LIMIT_MAX_SLEEP_SECS`] STOPS THE RETRIES — it is NOT clamped and
+/// retried anyway. Clamping produces exactly the too-short guess named above: `Retry-After: 60`
+/// would wait 30s and then send a request that CANNOT succeed, because the window has not opened,
+/// adding traffic to the limit that caused it. Against a SECONDARY limit — the one a concurrent
+/// burst draws, and the whole reason #129 exists — an early retry deepens the limit it is answering.
+/// The ceiling therefore protects the run by REPORTING, never by waiting less and asking again.
+fn rate_limit_backoff(attempt: usize, retry_after: Option<u64>) -> Option<std::time::Duration> {
+    let fallback = *GH_RATE_LIMIT_BACKOFF_SECS.get(attempt)?;
+    let Some(asked) = retry_after else {
+        // Nothing was named, so there is no window to respect — only this binary's own guess, which
+        // the compile-time assertion above holds under the ceiling.
+        return Some(std::time::Duration::from_secs(fallback));
+    };
+    if asked > GH_RATE_LIMIT_MAX_SLEEP_SECS {
+        return None;
+    }
+    Some(std::time::Duration::from_secs(asked))
+}
+
+/// Retry `call` for as long as it fails with [`GhFailure::RateLimited`], waiting as
+/// [`rate_limit_backoff`] says.
+///
+/// EVERY OTHER FAILURE RETURNS AT ONCE. That restraint is the point: a retry is the answer to "slow
+/// down" and to nothing else, and re-asking for a PR that does not exist is the blind retry #129
+/// rejects — it retries hardest exactly when GitHub is asking for less traffic. A budget that runs
+/// out yields the rate-limited failure itself, never a laundered one, so the caller still knows why.
+///
+/// `sleep` is a parameter so the policy is testable without one, the same split
+/// [`total_unresolved`] uses for its pages.
+fn retrying_rate_limit<T>(
+    mut call: impl FnMut() -> Result<T, GhFailure>,
+    mut sleep: impl FnMut(std::time::Duration),
+) -> Result<T, GhFailure> {
+    // What comes back when the budget runs out is the LAST failure seen, never a substitute class:
+    // "we gave up waiting" is still a rate limit, and reporting it as anything else re-creates the
+    // laundering #129 is about one layer up. The seed is only reachable if the budget were zero,
+    // which [`GH_RATE_LIMIT_ATTEMPTS`] forbids by construction.
+    let mut last = GhFailure::RateLimited { retry_after: None };
+    for attempt in 0..GH_RATE_LIMIT_ATTEMPTS {
+        match call() {
+            Ok(v) => return Ok(v),
+            Err(e) => last = e,
+        }
+        let GhFailure::RateLimited { retry_after } = last else {
+            return Err(last);
+        };
+        // Both bounds are the backoff table: the loop's, and this index running off its end. They
+        // are derived from the one constant, so they cannot disagree about the budget.
+        let Some(wait) = rate_limit_backoff(attempt, retry_after) else {
+            break;
+        };
+        sleep(wait);
+    }
+    Err(last)
+}
+
+/// [`retrying_rate_limit`] on the real clock.
+fn gh_retrying<T>(call: impl FnMut() -> Result<T, GhFailure>) -> Result<T, GhFailure> {
+    retrying_rate_limit(call, std::thread::sleep)
+}
+
+/// Run gh and parse stdout as JSON; None on non-zero exit, spawn failure, or unparseable output.
+///
+/// The COLLAPSED shim over [`gh_result`], serving the call sites #129 has not converted. `None`
+/// here means "no document" and specifically NOT "not found": a caller that must tell a rate limit
+/// from a missing subject calls [`gh_result`] or [`gh_api_result`] and reads the [`GhFailure`].
+fn gh_json(args: &[&str]) -> Option<Value> {
+    gh_result(args).ok()
+}
+
+#[cfg(test)]
+mod gh_failure_tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
+
+    /// A response head as `gh api --include` actually prints one: the status line terminated with a
+    /// BARE LF, every header with CRLF, and CRLFCRLF before the body. Copied from a live
+    /// `gh api --include repos/<owner>/<no-such-repo>` (gh 2.93.0), because a hand-guessed line
+    /// ending is exactly the detail a fixture gets wrong and the parser then gets wrong with it.
+    fn dump(status_line: &str, headers: &[(&str, &str)], body: &str) -> Vec<u8> {
+        let mut s = String::from(status_line);
+        s.push('\n');
+        for (k, v) in headers {
+            s.push_str(&format!("{k}: {v}\r\n"));
+        }
+        s.push_str("\r\n");
+        s.push_str(body);
+        s.into_bytes()
+    }
+
+    /// The GraphQL error body a missing subject produces, MEASURED (`gh api graphql` against a
+    /// repository that does not exist, and against PR 9999999 of one that does).
+    const GRAPHQL_NOT_FOUND: &str = r#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"locations":[{"line":1,"column":2}],"message":"Could not resolve to a Repository with the name 'rainlanguage/definitely-no-such-repo-xyz'."}]}"#;
+
+    /// The GraphQL error body a query GitHub could not PARSE produces, MEASURED
+    /// (`gh api graphql -f query=notvalidgraphql`). Note what it does NOT have: a `type`.
+    const GRAPHQL_SYNTAX_ERROR: &str = r#"{"errors":[{"message":"Expected one of SCHEMA, SCALAR, TYPE, ENUM, INPUT, UNION, INTERFACE, actual: IDENTIFIER (\"notvalidgraphql\") at [1, 1]","locations":[{"line":1,"column":1}]}]}"#;
+
+    /// The REST error bodies MEASURED for a missing repository and for bad credentials. Both echo
+    /// the HTTP status back INSIDE the document, which is the typed field read here.
+    const REST_404: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/repos#get-a-repository","status":"404"}"#;
+    const REST_401: &str = r#"{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}"#;
+
+    fn classify(out: &[u8]) -> GhFailure {
+        let (head, body) = split_http_head(out);
+        classify_gh_failure(head.as_ref(), body)
+    }
+
+    // ── the head parser ───────────────────────────────────────────────────────────────────────
+
+    // A real `--include` dump splits into a typed status + headers and a body that still parses as
+    // the document the caller asked for. Both halves matter: a splitter that ate one byte too many
+    // would leave unparseable JSON, and one that ate too few would leave the head in it.
+    #[test]
+    fn an_include_dump_splits_into_a_typed_head_and_an_intact_body() {
+        let out = dump(
+            "HTTP/2.0 404 Not Found",
+            &[
+                ("Content-Type", "application/json; charset=utf-8"),
+                ("X-Ratelimit-Remaining", "4959"),
+            ],
+            REST_404,
+        );
+        let (head, body) = split_http_head(&out);
+        let head = head.expect("an --include dump has a head");
+        assert_eq!(head.status, 404);
+        assert_eq!(head.header("x-ratelimit-remaining"), Some("4959"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(body).unwrap()["status"],
+            json!("404")
+        );
+    }
+
+    // Output from an invocation WITHOUT `--include` is all body. This is what lets one reader serve
+    // both call shapes, so no caller has to remember which flag it passed.
+    #[test]
+    fn plain_json_output_is_all_body_and_has_no_head() {
+        let out = REST_404.as_bytes();
+        let (head, body) = split_http_head(out);
+        assert_eq!(head, None);
+        assert_eq!(body, out);
+    }
+
+    // The guard is STRUCTURAL: output that merely CONTAINS CRLFCRLF is not a response head,
+    // because it does not begin with a status line. A splitter that searched for the blank line
+    // alone would eat everything before it and report `Malformed` for a perfectly good response.
+    #[test]
+    fn output_containing_a_blank_line_is_not_mistaken_for_a_head() {
+        let doc: &[u8] = b"{\"a\":1}\r\n\r\n{\"b\":2}";
+        let (head, body) = split_http_head(doc);
+        assert_eq!(head, None);
+        assert_eq!(body, doc);
+        // …and a head-shaped first line IS taken, so the assertion above is not passing because
+        // the splitter never splits anything.
+        let (head, body) = split_http_head(b"HTTP/2.0 200 OK\nX-A: 1\r\n\r\n{\"b\":2}");
+        assert_eq!(head.map(|h| h.status), Some(200));
+        assert_eq!(body, b"{\"b\":2}");
+    }
+
+    // Only the CODE is read. The reason phrase beside it is prose the server may reword, and this
+    // classifier reads no prose.
+    #[test]
+    fn only_the_status_code_is_read_never_the_reason_phrase() {
+        assert_eq!(parse_status_line("HTTP/2.0 403 Forbidden"), Some(403));
+        assert_eq!(
+            parse_status_line("HTTP/1.1 403 Something Else Entirely"),
+            Some(403)
+        );
+        // The reason phrase is OPTIONAL in the protocol, so its absence is not a parse failure.
+        assert_eq!(parse_status_line("HTTP/2.0 403"), Some(403));
+        // What IS refused: anything that is not three digits where the code belongs, and anything
+        // that is not a status line at all — the guard that keeps a JSON body out of the head.
+        assert_eq!(parse_status_line("HTTP/2.0 40x Weird"), None);
+        assert_eq!(parse_status_line("HTTP/2.0 4030 Weird"), None);
+        assert_eq!(parse_status_line("HTTP/2.0"), None);
+        assert_eq!(parse_status_line("{\"a\":1}"), None);
+    }
+
+    // ── the discriminant matrix ───────────────────────────────────────────────────────────────
+
+    // A PRIMARY GraphQL rate limit arrives as HTTP **200** with `RATE_LIMITED` in the body. This is
+    // the case that decides the classifier's ORDER: read the status code first and a rate limit
+    // reads as a success, which is worse than the bug #129 filed.
+    #[test]
+    fn a_graphql_rate_limit_is_read_from_the_body_even_at_http_200() {
+        let body = r#"{"data":null,"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}"#;
+        let out = dump(
+            "HTTP/2.0 200 OK",
+            &[("Content-Type", "application/json")],
+            body,
+        );
+        assert_eq!(classify(&out), GhFailure::RateLimited { retry_after: None });
+        // …and with no head at all (a plain `gh api graphql`), the body still answers.
+        assert_eq!(
+            classify(body.as_bytes()),
+            GhFailure::RateLimited { retry_after: None }
+        );
+    }
+
+    // The SECONDARY limit — the one a concurrent burst draws, and the reason #123/#126 made this
+    // matter — carries no GraphQL type at all: a plain 403 whose only other mark is an English
+    // sentence. `Retry-After` is what makes it readable without touching that sentence.
+    #[test]
+    fn a_secondary_rate_limit_is_read_from_the_retry_after_header() {
+        let out = dump(
+            "HTTP/2.0 403 Forbidden",
+            &[("Retry-After", "60"), ("X-Ratelimit-Remaining", "4821")],
+            r#"{"message":"You have exceeded a secondary rate limit.","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api"}"#,
+        );
+        assert_eq!(
+            classify(&out),
+            GhFailure::RateLimited {
+                retry_after: Some(60)
+            }
+        );
+    }
+
+    // A 403 with an EXHAUSTED budget is the primary limit on the REST side. The remaining count is
+    // a number, not a sentence.
+    #[test]
+    fn a_403_with_an_exhausted_budget_is_a_rate_limit() {
+        let out = dump(
+            "HTTP/2.0 403 Forbidden",
+            &[("X-Ratelimit-Remaining", "0")],
+            r#"{"message":"API rate limit exceeded"}"#,
+        );
+        assert_eq!(classify(&out), GhFailure::RateLimited { retry_after: None });
+    }
+
+    // …and a 403 with NEITHER companion field is a permission denial, which must NOT be retried.
+    // This is the pair that makes 403 readable at all: collapse it either way and the classifier
+    // either hammers GitHub over a scope error or sits out a real limit.
+    #[test]
+    fn a_bare_403_is_a_permission_denial_and_not_a_rate_limit() {
+        let out = dump(
+            "HTTP/2.0 403 Forbidden",
+            &[("X-Ratelimit-Remaining", "4900")],
+            r#"{"message":"Resource not accessible by personal access token"}"#,
+        );
+        assert_eq!(classify(&out), GhFailure::Unauthorized);
+    }
+
+    #[test]
+    fn a_429_is_a_rate_limit_on_the_status_code_alone() {
+        let out = dump(
+            "HTTP/2.0 429 Too Many Requests",
+            &[("Retry-After", "12")],
+            "",
+        );
+        assert_eq!(
+            classify(&out),
+            GhFailure::RateLimited {
+                retry_after: Some(12)
+            }
+        );
+    }
+
+    // The measured bodies, each landing on the class it names — and each on a DIFFERENT class, so
+    // one mapping collapsed into another fails here.
+    #[test]
+    fn the_measured_failure_bodies_each_land_on_their_own_class() {
+        let cases = [
+            (GRAPHQL_NOT_FOUND, GhFailure::NotFound),
+            (GRAPHQL_SYNTAX_ERROR, GhFailure::Malformed),
+            (REST_404, GhFailure::NotFound),
+            (REST_401, GhFailure::Unauthorized),
+        ];
+        for (body, want) in cases {
+            assert_eq!(classify(body.as_bytes()), want, "{body}");
+        }
+    }
+
+    // MEASURED: `gh pr view` writes nothing to stdout however it fails, and so does a transport
+    // error. `Unknown` is the honest answer — and asserting it is what stops a later reader
+    // "improving" the empty case into `NotFound`, which would be the #129 lie with a type on it.
+    #[test]
+    fn no_output_at_all_is_unknown_never_a_guess() {
+        assert_eq!(classify(b""), GhFailure::Unknown);
+        assert_eq!(classify(b"not json at all"), GhFailure::Unknown);
+    }
+
+    // The GraphQL type words are matched WHOLE. A near-miss is `Unknown`, never the type it
+    // resembles: a `contains` test would read a future `NOT_FOUND_IN_ORG` as `NOT_FOUND` and a
+    // future `RATE_LIMITED_SECONDARY` as a limit this code already knows how to wait out.
+    #[test]
+    fn an_unrecognised_graphql_type_is_unknown_not_the_one_it_resembles() {
+        for word in ["NOT_FOUND_IN_ORG", "RATE_LIMITED_SECONDARY", "FORBIDDEN_X"] {
+            let body = json!({"errors": [{"type": word, "message": "…"}]}).to_string();
+            assert_eq!(classify(body.as_bytes()), GhFailure::Unknown, "{word}");
+        }
+        // The exact words still resolve, so the test above is not passing by matching nothing.
+        assert_eq!(graphql_error_failure("NOT_FOUND"), GhFailure::NotFound);
+        assert_eq!(graphql_error_failure("FORBIDDEN"), GhFailure::Unauthorized);
+        assert_eq!(
+            graphql_error_failure("INSUFFICIENT_SCOPES"),
+            GhFailure::Unauthorized
+        );
+        assert_eq!(
+            graphql_error_failure("ACTOR_SUSPENDED"),
+            GhFailure::Unauthorized
+        );
+    }
+
+    // A GraphQL response may carry SEVERAL errors: one field rate limited while another is merely
+    // absent. Reading such a response as `NotFound` would drop the candidate and never retry it —
+    // #129's bug, arriving through the typed path. The most actionable class wins, whatever order
+    // GitHub listed them in.
+    #[test]
+    fn the_most_actionable_error_wins_a_mixed_array() {
+        let orders = [
+            json!([{"type": "NOT_FOUND"}, {"type": "RATE_LIMITED"}]),
+            json!([{"type": "RATE_LIMITED"}, {"type": "NOT_FOUND"}]),
+        ];
+        for errors in orders {
+            let body = json!({ "errors": errors }).to_string();
+            assert_eq!(
+                classify(body.as_bytes()),
+                GhFailure::RateLimited { retry_after: None },
+                "{body}"
+            );
+        }
+        let body = json!({"errors": [{"type": "NOT_FOUND"}, {"type": "FORBIDDEN"}]}).to_string();
+        assert_eq!(classify(body.as_bytes()), GhFailure::Unauthorized);
+    }
+
+    // An `errors` array is what a GraphQL FAILURE has; a successful document has none, and a
+    // present-but-empty one says nothing. Neither may be read as an error class.
+    #[test]
+    fn a_document_with_no_errors_array_yields_no_graphql_class() {
+        assert_eq!(graphql_failure(&json!({"data": {"x": 1}})), None);
+        assert_eq!(graphql_failure(&json!({"errors": []})), None);
+        assert_eq!(graphql_failure(&json!({"errors": "nope"})), None);
+    }
+
+    // The REST body's own `status`, whether GitHub sent it as a string (measured) or a number.
+    #[test]
+    fn the_rest_body_status_field_is_read_as_a_status_code() {
+        assert_eq!(
+            rest_body_failure(&json!({"status": "404"})),
+            Some(GhFailure::NotFound)
+        );
+        assert_eq!(
+            rest_body_failure(&json!({"status": 401})),
+            Some(GhFailure::Unauthorized)
+        );
+        assert_eq!(rest_body_failure(&json!({"status": "teapot"})), None);
+        assert_eq!(rest_body_failure(&json!({"message": "hi"})), None);
+    }
+
+    // A code with no rule is `Unknown` — never folded into whichever rule looks nearest.
+    #[test]
+    fn a_status_code_with_no_rule_is_unknown() {
+        assert_eq!(status_failure(401), GhFailure::Unauthorized);
+        assert_eq!(status_failure(404), GhFailure::NotFound);
+        assert_eq!(status_failure(410), GhFailure::NotFound);
+        assert_eq!(status_failure(422), GhFailure::Unknown);
+        assert_eq!(status_failure(500), GhFailure::Unknown);
+        assert_eq!(status_failure(200), GhFailure::Unknown);
+    }
+
+    // ── the retry policy ──────────────────────────────────────────────────────────────────────
+
+    // GitHub's own `Retry-After` wins where it gave one, EXACTLY — never rounded down. The budget
+    // is the backoff table's length, and a `Retry-After` does not extend it.
+    #[test]
+    fn the_backoff_honours_retry_after_exactly_and_runs_out() {
+        assert_eq!(
+            rate_limit_backoff(0, None),
+            Some(Duration::from_secs(GH_RATE_LIMIT_BACKOFF_SECS[0]))
+        );
+        assert_eq!(rate_limit_backoff(0, Some(5)), Some(Duration::from_secs(5)));
+        // Exactly at the ceiling still waits — the boundary is inclusive, so the give-up rule below
+        // cannot be read as "at or over".
+        assert_eq!(
+            rate_limit_backoff(0, Some(GH_RATE_LIMIT_MAX_SLEEP_SECS)),
+            Some(Duration::from_secs(GH_RATE_LIMIT_MAX_SLEEP_SECS))
+        );
+        assert_eq!(
+            rate_limit_backoff(GH_RATE_LIMIT_BACKOFF_SECS.len(), Some(1)),
+            None,
+            "the budget is spent, and a Retry-After does not extend it"
+        );
+    }
+
+    // A window LONGER than this process will sit through stops the retries — it is NOT clamped and
+    // retried anyway. Clamping would send a request into a window GitHub said has not opened: it
+    // cannot succeed, and it adds traffic to the very limit that produced the header. Against a
+    // secondary limit that deepens the limit being answered.
+    #[test]
+    fn a_window_over_the_ceiling_stops_retrying_rather_than_waiting_less() {
+        let over = GH_RATE_LIMIT_MAX_SLEEP_SECS + 1;
+        assert_eq!(rate_limit_backoff(0, Some(over)), None);
+        assert_eq!(rate_limit_backoff(0, Some(86_400)), None);
+        // …at EVERY attempt, not just the first: a later attempt must not become the retry the
+        // first one refused.
+        for attempt in 0..GH_RATE_LIMIT_BACKOFF_SECS.len() {
+            assert_eq!(rate_limit_backoff(attempt, Some(over)), None, "{attempt}");
+        }
+    }
+
+    // The same fact through the driver, which is where it costs a request: ONE call, NO sleep, and
+    // the rate limit reported with GitHub's own window intact so the caller can say why.
+    #[test]
+    fn a_long_window_costs_exactly_one_call_and_no_sleep() {
+        let asked = GH_RATE_LIMIT_MAX_SLEEP_SECS * 2;
+        let calls = std::cell::Cell::new(0usize);
+        let waits = std::cell::RefCell::new(Vec::new());
+        let got: Result<u8, GhFailure> = retrying_rate_limit(
+            || {
+                calls.set(calls.get() + 1);
+                Err(GhFailure::RateLimited {
+                    retry_after: Some(asked),
+                })
+            },
+            |d| waits.borrow_mut().push(d),
+        );
+        assert_eq!(
+            calls.get(),
+            1,
+            "the window is not open; asking again cannot help"
+        );
+        assert!(waits.borrow().is_empty(), "nothing is slept off");
+        assert_eq!(
+            got,
+            Err(GhFailure::RateLimited {
+                retry_after: Some(asked)
+            }),
+            "the window GitHub named survives to the caller"
+        );
+    }
+
+    // The fallback table is held under the ceiling at COMPILE time, so the `None` above is a fact
+    // about GitHub's header alone and never about this binary's own guess. Restated here because a
+    // const assertion is invisible in a test report.
+    #[test]
+    fn every_fallback_wait_is_under_the_ceiling() {
+        for (i, secs) in GH_RATE_LIMIT_BACKOFF_SECS.iter().enumerate() {
+            assert!(*secs <= GH_RATE_LIMIT_MAX_SLEEP_SECS, "entry {i} is {secs}");
+            assert_eq!(
+                rate_limit_backoff(i, None),
+                Some(Duration::from_secs(*secs)),
+                "a fallback wait is never refused"
+            );
+        }
+    }
+
+    /// Run `outcomes` through the retry driver, recording every wait instead of taking it.
+    fn drive(outcomes: Vec<Result<u8, GhFailure>>) -> (Result<u8, GhFailure>, Vec<Duration>) {
+        let waits = std::cell::RefCell::new(Vec::new());
+        let mut it = outcomes.into_iter();
+        let got = retrying_rate_limit(
+            || {
+                it.next()
+                    .expect("the driver asked for more calls than the budget allows")
+            },
+            |d| waits.borrow_mut().push(d),
+        );
+        (got, waits.into_inner())
+    }
+
+    // A rate limit is waited out and the call succeeds on the retry — the queue absorbs a soft
+    // limit instead of counting it.
+    #[test]
+    fn a_rate_limited_call_is_retried_after_a_wait_and_can_then_succeed() {
+        let (got, waits) = drive(vec![
+            Err(GhFailure::RateLimited {
+                retry_after: Some(3),
+            }),
+            Ok(7),
+        ]);
+        assert_eq!(got, Ok(7));
+        assert_eq!(waits, vec![Duration::from_secs(3)]);
+    }
+
+    // EVERY OTHER CLASS RETURNS AT ONCE, with no wait. Retrying a missing PR is the blind retry
+    // #129 rejects: it re-asks a question already answered, and it does it hardest exactly when
+    // GitHub is asking for less traffic.
+    #[test]
+    fn only_a_rate_limit_is_retried() {
+        for f in [
+            GhFailure::NotFound,
+            GhFailure::Unauthorized,
+            GhFailure::Malformed,
+            GhFailure::Unknown,
+        ] {
+            let (got, waits) = drive(vec![Err(f)]);
+            assert_eq!(got, Err(f));
+            assert!(waits.is_empty(), "{f:?} must not be waited on");
+        }
+    }
+
+    // A budget that runs out yields the RATE LIMIT, not a laundered class — the caller still knows
+    // the row is un-read rather than unreadable. The call count is the budget exactly: one more
+    // would panic in `drive`, one fewer fails the wait assertion.
+    #[test]
+    fn an_exhausted_budget_still_reports_the_rate_limit_it_gave_up_on() {
+        let limited = || {
+            Err(GhFailure::RateLimited {
+                retry_after: Some(1),
+            })
+        };
+        let (got, waits) = drive((0..GH_RATE_LIMIT_ATTEMPTS).map(|_| limited()).collect());
+        assert_eq!(
+            got,
+            Err(GhFailure::RateLimited {
+                retry_after: Some(1)
+            })
+        );
+        assert_eq!(waits.len(), GH_RATE_LIMIT_ATTEMPTS - 1);
+        assert_eq!(GH_RATE_LIMIT_ATTEMPTS, GH_RATE_LIMIT_BACKOFF_SECS.len() + 1);
+    }
+
+    // ── the re-ask that gives `gh pr view` a typed reason ─────────────────────────────────────
+
+    fn pr_probe(v: Value) -> impl FnOnce() -> Result<Value, GhFailure> {
+        move || Ok(v)
+    }
+
+    // A structureless `gh pr view` failure — the ONLY class it can produce — is resolved by the
+    // re-ask, and the re-ask's own typed failure IS the answer. This is the whole reason the queue
+    // spends an extra request: without it every one of these was `Unknown` and became a
+    // `fetch_error`.
+    #[test]
+    fn a_structureless_view_failure_takes_the_reasks_typed_answer() {
+        for f in [
+            GhFailure::RateLimited {
+                retry_after: Some(4),
+            },
+            GhFailure::Unauthorized,
+            GhFailure::NotFound,
+            GhFailure::Malformed,
+        ] {
+            assert_eq!(pr_fetch_failure(GhFailure::Unknown, || Err(f)), f);
+        }
+    }
+
+    // A PR the re-ask RESOLVES is not missing: the detail fetch failed for a reason nothing typed
+    // named, so the answer stays `Unknown`. Calling it `NotFound` here would be #129's lie with a
+    // type painted on it — a transient blip reported as a deleted PR.
+    #[test]
+    fn a_resolvable_pr_whose_detail_fetch_failed_stays_unknown() {
+        let found = json!({"data": {"repository": {"pullRequest": {"number": 12}}}});
+        assert_eq!(
+            pr_fetch_failure(GhFailure::Unknown, pr_probe(found)),
+            GhFailure::Unknown
+        );
+    }
+
+    // …and one the re-ask cannot resolve IS `NotFound`, whether GitHub said `null` or omitted the
+    // field entirely. Both are asserted, because a classifier that answered `NotFound`
+    // unconditionally would pass the missing case on its own.
+    #[test]
+    fn a_pr_the_reask_cannot_resolve_is_not_found() {
+        for doc in [
+            json!({"data": {"repository": {"pullRequest": null}}}),
+            json!({"data": {"repository": null}}),
+            json!({}),
+        ] {
+            assert_eq!(
+                pr_fetch_failure(GhFailure::Unknown, pr_probe(doc.clone())),
+                GhFailure::NotFound,
+                "{doc}"
+            );
+        }
+    }
+
+    // A failure that ALREADY came from somewhere typed is kept, and costs NO re-ask. Spending a
+    // request to re-learn a class we hold — while GitHub may be rate limiting us — is exactly the
+    // traffic the retry policy refuses everywhere else.
+    #[test]
+    fn an_already_typed_view_failure_is_kept_without_a_reask() {
+        for f in [
+            GhFailure::RateLimited { retry_after: None },
+            GhFailure::Unauthorized,
+            GhFailure::NotFound,
+            GhFailure::Malformed,
+        ] {
+            let asked = std::cell::Cell::new(false);
+            let got = pr_fetch_failure(f, || {
+                asked.set(true);
+                Ok(json!({}))
+            });
+            assert_eq!(got, f);
+            assert!(!asked.get(), "{f:?} must not cost a re-ask");
+        }
+    }
+
+    // The pagination walk keeps the PAGE's own failure, so a rate limit that stops the walk is
+    // still a rate limit at the queue — and a page that fetched but did not carry the shape is
+    // `Malformed`, which is a different fact and must not be retried.
+    #[test]
+    fn the_page_walk_carries_the_pages_own_failure_out() {
+        assert_eq!(
+            total_unresolved(|_| Err(GhFailure::RateLimited { retry_after: None })),
+            Err(GhFailure::RateLimited { retry_after: None })
+        );
+        assert_eq!(
+            total_unresolved(|_| Ok(json!({"data": {"repository": null}}))),
+            Err(GhFailure::Malformed)
+        );
+    }
 }
 
 /// One page of the reviewThreads GraphQL response → (unresolved count, end cursor if more pages).
@@ -71,26 +999,39 @@ const MAX_THREAD_PAGES: usize = 100;
 
 /// PURE given `fetch_page`: fold every reviewThreads page into one unresolved total. `fetch_page`
 /// receives the cursor to resume from (`None` for the first page) and returns that page's raw JSON.
-/// Paging stops at the first page whose `hasNextPage` is false. Returns None the moment ANY page is
+/// Paging stops at the first page whose `hasNextPage` is false. Fails the moment ANY page is
 /// unfetchable, unparseable, or the page cap is hit — a partial read is never reported as a total,
 /// so a long review history can never silently truncate into a false clean.
-fn total_unresolved(mut fetch_page: impl FnMut(Option<&str>) -> Option<Value>) -> Option<u64> {
+///
+/// The failure is the page's own [`GhFailure`] where the fetch had one, so a rate limit that stops
+/// the walk stays a rate limit all the way out to the queue instead of arriving as "unreadable"
+/// (#129). A page that FETCHED but did not carry the expected shape is `Malformed`; exhausting
+/// [`MAX_THREAD_PAGES`] or overflowing the total is `Unknown`, since neither is anything GitHub
+/// said.
+fn total_unresolved(
+    mut fetch_page: impl FnMut(Option<&str>) -> Result<Value, GhFailure>,
+) -> Result<u64, GhFailure> {
     let mut total = 0u64;
     let mut cursor: Option<String> = None;
     for _ in 0..MAX_THREAD_PAGES {
-        let (page, next) = count_unresolved_page(&fetch_page(cursor.as_deref())?)?;
-        total = total.checked_add(page)?;
+        let doc = fetch_page(cursor.as_deref())?;
+        let (page, next) = count_unresolved_page(&doc).ok_or(GhFailure::Malformed)?;
+        total = total.checked_add(page).ok_or(GhFailure::Unknown)?;
         match next {
             Some(cur) => cursor = Some(cur),
-            None => return Some(total),
+            None => return Ok(total),
         }
     }
-    None
+    Err(GhFailure::Unknown)
 }
 
 /// Total unresolved review threads on a PR (CodeRabbit or human), paginated so a long review
-/// history is never silently truncated. None on any fetch/parse failure.
-fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Option<u64> {
+/// history is never silently truncated, with a TYPED failure.
+///
+/// The one hot-path fetch that already spoke GraphQL, so the structure #129 needs was always on the
+/// wire and only `gh_json` was throwing it away. Each page is retried while GitHub says
+/// `RATE_LIMITED`, so the concurrent queue absorbs a soft limit instead of counting it.
+fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Result<u64, GhFailure> {
     let query = "query($owner:String!,$repo:String!,$num:Int!,$cursor:String){\
                  repository(owner:$owner,name:$repo){pullRequest(number:$num){\
                  reviewThreads(first:100,after:$cursor){nodes{isResolved}\
@@ -113,7 +1054,9 @@ fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Option<u64> {
             args.push(format!("cursor={cur}"));
         }
         let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
-        gh_json(&argrefs)
+        // `args` already begins "api graphql"; `gh_api_result` supplies `api --include`, so the
+        // leading "api" is dropped rather than repeated.
+        gh_retrying(|| gh_api_result(&argrefs[1..]))
     })
 }
 
@@ -128,19 +1071,23 @@ enum ThreadRoute {
     Present,
     /// At least one unresolved thread — the producer's step-3e work.
     OpenThreads,
-    /// The thread state could not be read. FAIL-CLOSED: not presented, and counted as a fetch
-    /// error rather than silently as clean or as dirty, so a transient API failure is visible in
-    /// the report instead of being laundered into either verdict.
-    FetchError,
+    /// The thread state could not be read, and WHY. FAIL-CLOSED: not presented, and reported as
+    /// the failure it was rather than silently as clean or as dirty, so a transient API failure is
+    /// visible in the report instead of being laundered into either verdict.
+    ///
+    /// It carries the [`GhFailure`] because "GitHub asked us to slow down" and "this PR is
+    /// unreadable" want different handling one level up, and a bare `FetchError` could not say
+    /// which had happened (#129).
+    Failed(GhFailure),
 }
 
 /// PURE: route a thread count. Only a verified zero passes (fail-closed, matching the queue's
 /// existing mergeable check — an unverifiable PR is never presented to the human).
-fn thread_route(threads: Option<u64>) -> ThreadRoute {
+fn thread_route(threads: Result<u64, GhFailure>) -> ThreadRoute {
     match threads {
-        Some(0) => ThreadRoute::Present,
-        Some(_) => ThreadRoute::OpenThreads,
-        None => ThreadRoute::FetchError,
+        Ok(0) => ThreadRoute::Present,
+        Ok(_) => ThreadRoute::OpenThreads,
+        Err(f) => ThreadRoute::Failed(f),
     }
 }
 
@@ -405,6 +1352,10 @@ struct QueueCounts {
     unvetted: usize, // green+mergeable but no current ai:vetter verdict at head — the vetter owes it one
     open_threads: usize, // otherwise-presentable but unresolved review threads — producer thread-resolution work
     fetch_error: usize,
+    /// Candidates GitHub was still rate-limiting after the retry budget. SEPARATE from
+    /// `fetch_error` (#129): those rows are un-read, not unreadable, and the operator's move is to
+    /// re-run rather than to go looking for broken PRs.
+    rate_limited: usize,
 }
 
 /// Render the queue: a header with the true ai:ready -> presentable / conflicting / red / pending /
@@ -426,6 +1377,13 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
     } else {
         String::new()
     };
+    // Reported under its own name, never folded into fetch-error: the two ask the reader for
+    // different things (re-run vs. investigate), which is the whole of #129 at the render layer.
+    let limited = if c.rate_limited > 0 {
+        format!(", {} rate-limited", c.rate_limited)
+    } else {
+        String::new()
+    };
     let excl = if c.excluded > 0 {
         format!(", {} excluded (draft/human-override)", c.excluded)
     } else {
@@ -437,8 +1395,8 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, limited, excl, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -578,9 +1536,17 @@ enum CandidateOutcome {
     Present(Box<PresentablePr>),
     /// Otherwise-presentable but unresolved review threads — the producer's work.
     OpenThreads,
-    /// The `gh pr view` or the thread count could not be read. Fail-closed: counted, never
-    /// laundered into a verdict.
+    /// The `gh pr view` or the thread count could not be read, and the reason was NOT one this
+    /// queue has a move for. Fail-closed: counted, never laundered into a verdict.
     FetchError,
+    /// GitHub asked us to slow down, and it was still asking after the retry budget ran out
+    /// ([`retrying_rate_limit`]). SEPARATE from `FetchError` on purpose (#129): the candidate is
+    /// not unreadable, it is un-read, and a header that says so tells an operator to re-run rather
+    /// than to go looking for a broken PR.
+    RateLimited,
+    /// The token may not read this candidate. Not a per-candidate fact — the same token serves
+    /// every fetch — so the enumeration ABORTS on it rather than counting it (see [`queue_abort`]).
+    Unauthorized,
     /// Green + mergeable, but no CURRENT `ai:vetter` verdict at the current head — none at all,
     /// one pinned to an earlier head, or one stamped with a superseded vet protocol. The vetter
     /// owes this PR a verdict, which is the same thing being said of a PR it has never seen.
@@ -602,11 +1568,12 @@ fn candidate_outcome(
     slug: &str,
     num: u64,
     url: &str,
-    fetch_pr: impl FnOnce(&str, u64) -> Option<Value>,
-    fetch_threads: impl FnOnce(&str, &str, u64) -> Option<u64>,
+    fetch_pr: impl FnOnce(&str, u64) -> Result<Value, GhFailure>,
+    fetch_threads: impl FnOnce(&str, &str, u64) -> Result<u64, GhFailure>,
 ) -> CandidateOutcome {
-    let Some(j) = fetch_pr(slug, num) else {
-        return CandidateOutcome::FetchError;
+    let j = match fetch_pr(slug, num) {
+        Ok(j) => j,
+        Err(f) => return failure_outcome(f),
     };
     let merge = match j.get("mergeable").and_then(|x| x.as_str()) {
         Some("MERGEABLE") => Merge::Mergeable,
@@ -636,8 +1603,10 @@ fn candidate_outcome(
             // (CodeRabbit or human) is the producer's thread-resolution work, not
             // human-presentable. Only a VERIFIED zero passes (fail-closed): an unknown thread
             // state counts as a fetch error, never a maybe-dirty row.
+            // A slug with no `/` came out of this binary's own URL parse, not out of GitHub, so
+            // there is nothing typed to classify: `Malformed` is what it is.
             let Some((owner, repo)) = slug.split_once('/') else {
-                return CandidateOutcome::FetchError;
+                return failure_outcome(GhFailure::Malformed);
             };
             match thread_route(fetch_threads(owner, repo, num)) {
                 ThreadRoute::Present => {
@@ -653,7 +1622,7 @@ fn candidate_outcome(
                     }))
                 }
                 ThreadRoute::OpenThreads => CandidateOutcome::OpenThreads,
-                ThreadRoute::FetchError => CandidateOutcome::FetchError,
+                ThreadRoute::Failed(f) => failure_outcome(f),
             }
         }
         PresentState::Red => CandidateOutcome::Red,
@@ -677,6 +1646,11 @@ fn apply_outcome(out: CandidateOutcome, rows: &mut Vec<PresentablePr>, counts: &
         CandidateOutcome::Present(p) => rows.push(*p),
         CandidateOutcome::OpenThreads => counts.open_threads += 1,
         CandidateOutcome::FetchError => counts.fetch_error += 1,
+        CandidateOutcome::RateLimited => counts.rate_limited += 1,
+        // Never counted: `queue_abort` turns this one into an `Err` before the fold is reached.
+        // Bumping `fetch_error` here would be the #129 laundering in the one arm that must not do
+        // it, so the arm is a no-op rather than a plausible-looking counter.
+        CandidateOutcome::Unauthorized => {}
         CandidateOutcome::Unvetted => counts.unvetted += 1,
         CandidateOutcome::Red => counts.red += 1,
         CandidateOutcome::Pending => counts.pending += 1,
@@ -686,15 +1660,72 @@ fn apply_outcome(out: CandidateOutcome, rows: &mut Vec<PresentablePr>, counts: &
     }
 }
 
+/// PURE: the message this outcome ABORTS the whole enumeration with, if it does.
+///
+/// An auth failure is not a property of one candidate: the same token serves every fetch, so one
+/// `Unauthorized` means the rest of the queue is unreadable too. Counting it would print a short
+/// queue that reads as complete — the falsely-empty queue the search-layer abort already refuses,
+/// arriving one layer lower down.
+///
+/// WHY ONE UNREADABLE REPO DOES NOT KILL THE RUN. The obvious objection is that a bare 403 might be
+/// a PER-REPO permission denial — a repo transferred out, access revoked, a private repo the token
+/// no longer sees — and aborting on one of those would turn a single inaccessible repo into a dead
+/// run. MEASURED: it does not reach here. GitHub masks a repository the token cannot see as **404 /
+/// `NOT_FOUND`**, not 403, and deliberately so — a 403 would leak the repo's existence. `gh api
+/// repos/github/github` (a repository that certainly exists and this token certainly cannot read)
+/// answers `{"message":"Not Found",…,"status":"404"}`, and the same query through `gh api graphql`
+/// answers `errors[].type == "NOT_FOUND"`. Both land on [`GhFailure::NotFound`], which
+/// [`failure_outcome`] routes to `FetchError`: the candidate is DROPPED AND COUNTED and the
+/// enumeration continues. That path is pinned by
+/// `a_repo_the_token_cannot_read_is_counted_not_aborted`.
+///
+/// What is left producing a bare 403 is token-wide or org-wide by nature — bad credentials, a scope
+/// the token lacks for this endpoint, SAML SSO or an IP allow list — and every one of them fails the
+/// next candidate identically. Aborting is right for those, and #129's own Check asks for it: a loud
+/// abort naming the cause beats a queue silently missing every row it could not read.
+fn queue_abort(out: &CandidateOutcome) -> Option<String> {
+    match out {
+        CandidateOutcome::Unauthorized => Some(
+            "error: `gh` is not authorised to read the ai:ready candidates (bad credentials / \
+             insufficient scopes / suspended actor) — aborting rather than report a falsely-short \
+             queue"
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+/// PURE: the queue outcome ONE typed `gh` failure routes to — the whole of #129 in one function.
+///
+/// `RateLimited` and `Unauthorized` are the two the queue has a MOVE for (report it as un-read;
+/// abort). Everything else is a genuine `fetch_error`: `NotFound` is a candidate the search
+/// returned and the detail fetch cannot resolve, `Malformed` is a response this binary could not
+/// read, and `Unknown` is a failure with nothing typed to read at all. The three are one counter
+/// because the queue's answer to all three is the same — say the row is missing — not because they
+/// are the same fact.
+fn failure_outcome(f: GhFailure) -> CandidateOutcome {
+    match f {
+        GhFailure::RateLimited { .. } => CandidateOutcome::RateLimited,
+        GhFailure::Unauthorized => CandidateOutcome::Unauthorized,
+        GhFailure::NotFound | GhFailure::Malformed | GhFailure::Unknown => {
+            CandidateOutcome::FetchError
+        }
+    }
+}
+
 /// Per-candidate fetches in flight at once.
 ///
 /// The bound is GitHub's, not this machine's: a burst of concurrent requests from one token trips
-/// the SECONDARY rate limit, and a rate-limited fetch is indistinguishable from a genuine failure
-/// here (`gh` exits 1 for every error class), so it would silently become a `fetch_error` and
-/// render a queue that looks complete while missing rows. The value therefore does NOT scale with
-/// `available_parallelism` — the work is two blocking `gh` subprocesses per candidate and the
-/// process is idle on the network the whole time. 8 keeps a ~36-candidate queue under ten seconds
-/// while staying far below the burst rates that draw a 403.
+/// the SECONDARY rate limit. The value therefore does NOT scale with `available_parallelism` — the
+/// work is two blocking `gh` subprocesses per candidate and the process is idle on the network the
+/// whole time. 8 keeps a ~36-candidate queue under ten seconds while staying far below the burst
+/// rates that draw a 403.
+///
+/// A limit that IS drawn is now named rather than guessed at: the fetches classify it from GitHub's
+/// own typed fields, retry it under [`retrying_rate_limit`], and report a candidate that outlasts
+/// the budget as `RateLimited` instead of `fetch_error` (#129). That makes the cap a
+/// throughput/politeness trade-off rather than the only thing standing between the queue and a
+/// silently short render.
 const QUEUE_FETCH_CONCURRENCY: usize = 8;
 
 /// Map `f` over `items` on at most [`QUEUE_FETCH_CONCURRENCY`] threads, returning the results in
@@ -744,15 +1775,85 @@ fn map_bounded<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec
 /// labels to answer the base branch and the deploy gate. Asking for them here rather than in a
 /// second fetch is what keeps the decision and the ranking on the same snapshot — and costs one
 /// request either way.
-fn queue_pr_detail(slug: &str, num: u64) -> Option<Value> {
-    gh_json(&[
-        "pr",
-        "view",
-        &num.to_string(),
-        "-R",
-        slug,
-        "--json",
-        "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments,title,body,baseRefName,labels,url,number",
+fn queue_pr_detail(slug: &str, num: u64) -> Result<Value, GhFailure> {
+    gh_retrying(|| {
+        gh_result(&[
+            "pr",
+            "view",
+            &num.to_string(),
+            "-R",
+            slug,
+            "--json",
+            "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments,title,body,baseRefName,labels,url,number",
+        ])
+        .map_err(|f| pr_fetch_failure(f, || pr_exists_probe(slug, num)))
+    })
+}
+
+/// PURE given `reask`: the class a `gh pr view` failure resolves to.
+///
+/// MEASURED: `gh pr view` writes NOTHING to stdout when it fails, for every class alike, so
+/// [`gh_result`] can only ever hand this `Unknown`. That is not a class to act on, so the question
+/// is RE-ASKED down a channel that answers in types rather than guessed at. Any other class already
+/// came from somewhere typed and is kept — re-asking it would spend a request to learn nothing.
+///
+/// The four readings of the re-ask:
+///
+/// * it FAILED — that failure is the answer, and it is typed;
+/// * it resolved the PR — the PR exists, so the detail fetch failed for a reason nothing typed
+///   named, and `Unknown` stays `Unknown`. This is the honest arm: inventing a class for a network
+///   blip is the #129 lie with a type painted on it;
+/// * it answered `null`, or the field is absent — the PR does not resolve, which is `NotFound`.
+///
+/// Split from the call so the DECISION is unit-testable without a network, the same split
+/// [`candidate_outcome`] uses for its two fetchers.
+fn pr_fetch_failure(
+    view: GhFailure,
+    reask: impl FnOnce() -> Result<Value, GhFailure>,
+) -> GhFailure {
+    if view != GhFailure::Unknown {
+        return view;
+    }
+    match reask() {
+        Ok(v) => match v.pointer("/data/repository/pullRequest") {
+            Some(Value::Null) | None => GhFailure::NotFound,
+            Some(_) => GhFailure::Unknown,
+        },
+        Err(f) => f,
+    }
+}
+
+/// The GraphQL re-ask [`pr_fetch_failure`] reads: does this PR resolve?
+///
+/// `gh pr view --json` is the queue's snapshot because gh normalises `statusCheckRollup` and the
+/// comment/label sets into the shape `classify_ci` and `vetted_at_head` read; hand-rolling that
+/// query is a separate change. But its failure is structureless, so #129 asks the SAME question —
+/// does this PR resolve? — down a channel that answers in types: `errors[].type` is GitHub's own
+/// enum, and `--include` adds the status line and `Retry-After` a secondary limit rides on.
+///
+/// Re-asking the same question is what makes this sound where a `gh api rate_limit` probe is not.
+/// That endpoint reports the PRIMARY limits only, so under the SECONDARY limit a concurrent burst
+/// actually draws it would answer "thousands remaining" and the classification would come back
+/// wrong in precisely the case #123/#126 made likelier. A probe that travels the same path as the
+/// failed call cannot miss a limit that call hit.
+///
+/// It costs ONE extra request, and only on the failure path.
+fn pr_exists_probe(slug: &str, num: u64) -> Result<Value, GhFailure> {
+    let Some((owner, repo)) = slug.split_once('/') else {
+        return Err(GhFailure::Malformed);
+    };
+    let query = "query($owner:String!,$repo:String!,$num:Int!){\
+                 repository(owner:$owner,name:$repo){pullRequest(number:$num){number}}}";
+    gh_api_result(&[
+        "graphql",
+        "-f",
+        &format!("query={query}"),
+        "-f",
+        &format!("owner={owner}"),
+        "-f",
+        &format!("repo={repo}"),
+        "-F",
+        &format!("num={num}"),
     ])
 }
 
@@ -829,6 +1930,7 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         unvetted: 0,
         open_threads: 0,
         fetch_error: 0,
+        rate_limited: 0,
     };
     // The fetches run concurrently; the COUNTING does not. `map_bounded` hands back one outcome
     // per candidate in candidate order, and `apply_outcome` folds them serially, so the counts and
@@ -837,6 +1939,11 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         candidate_outcome(slug, *num, url, queue_pr_detail, unresolved_threads)
     });
     for out in outcomes {
+        // Checked BEFORE the fold, in candidate order, so an unauthorised token aborts the whole
+        // enumeration on the first candidate that proves it rather than being counted (#129).
+        if let Some(err) = queue_abort(&out) {
+            return Err(err);
+        }
         apply_outcome(out, &mut rows, &mut counts);
     }
     // The ONE ordering, applied ONCE, here — before either consumer sees the set.
@@ -1001,12 +2108,15 @@ mod parallel_queue_tests {
             unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
+            rate_limited: 0,
         }
     }
 
     /// Every per-candidate counter as one vector, so an assertion pins the counter that moved AND
-    /// the seven that did not — a swapped increment is not a passing test.
-    fn counters(c: &QueueCounts) -> [usize; 8] {
+    /// the eight that did not — a swapped increment is not a passing test. `rate_limited` is in
+    /// here for exactly that reason: #129 split it OUT of `fetch_error`, and a vector assertion is
+    /// what makes a regression that folds it back in fail.
+    fn counters(c: &QueueCounts) -> [usize; 9] {
         [
             c.conflict,
             c.red,
@@ -1016,6 +2126,7 @@ mod parallel_queue_tests {
             c.unvetted,
             c.open_threads,
             c.fetch_error,
+            c.rate_limited,
         ]
     }
 
@@ -1039,15 +2150,17 @@ mod parallel_queue_tests {
     #[test]
     fn each_outcome_bumps_exactly_one_counter() {
         let cases = [
-            (CandidateOutcome::Conflicting, [1, 0, 0, 0, 0, 0, 0, 0]),
-            (CandidateOutcome::Red, [0, 1, 0, 0, 0, 0, 0, 0]),
-            (CandidateOutcome::Pending, [0, 0, 1, 0, 0, 0, 0, 0]),
-            (CandidateOutcome::MergeUnknown, [0, 0, 0, 1, 0, 0, 0, 0]),
-            (CandidateOutcome::Approved, [0, 0, 0, 0, 1, 0, 0, 0]),
-            (CandidateOutcome::Unvetted, [0, 0, 0, 0, 0, 1, 0, 0]),
-            (CandidateOutcome::OpenThreads, [0, 0, 0, 0, 0, 0, 1, 0]),
+            (CandidateOutcome::Conflicting, [1, 0, 0, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::Red, [0, 1, 0, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::Pending, [0, 0, 1, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::MergeUnknown, [0, 0, 0, 1, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::Approved, [0, 0, 0, 0, 1, 0, 0, 0, 0]),
+            (CandidateOutcome::Unvetted, [0, 0, 0, 0, 0, 1, 0, 0, 0]),
+            (CandidateOutcome::OpenThreads, [0, 0, 0, 0, 0, 0, 1, 0, 0]),
             // A failed fetch is COUNTED, never dropped: a queue short one row must say so.
-            (CandidateOutcome::FetchError, [0, 0, 0, 0, 0, 0, 0, 1]),
+            (CandidateOutcome::FetchError, [0, 0, 0, 0, 0, 0, 0, 1, 0]),
+            // …and a rate-limited one lands in its OWN counter, never `fetch_error` (#129).
+            (CandidateOutcome::RateLimited, [0, 0, 0, 0, 0, 0, 0, 0, 1]),
         ];
         for (out, want) in cases {
             let mut rows = Vec::new();
@@ -1067,9 +2180,129 @@ mod parallel_queue_tests {
             &mut rows,
             &mut counts,
         );
-        assert_eq!(counters(&counts), [0; 8]);
+        assert_eq!(counters(&counts), [0; 9]);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].slug, "rainlanguage/foo");
+    }
+
+    // ── the typed failure, routed (#129) ──────────────────────────────────────────────────────
+
+    // The whole of #129 in one assertion: the five classes do NOT all land in `fetch_error`.
+    // Before this, every one of them did, so a rate-limited candidate was reported as an
+    // unreadable PR and dropped. A regression that folds `RateLimited` or `Unauthorized` back into
+    // `FetchError` fails here.
+    #[test]
+    fn each_typed_failure_routes_to_its_own_queue_outcome() {
+        let cases = [
+            (
+                GhFailure::RateLimited {
+                    retry_after: Some(30),
+                },
+                CandidateOutcome::RateLimited,
+            ),
+            (GhFailure::Unauthorized, CandidateOutcome::Unauthorized),
+            (GhFailure::NotFound, CandidateOutcome::FetchError),
+            (GhFailure::Malformed, CandidateOutcome::FetchError),
+            (GhFailure::Unknown, CandidateOutcome::FetchError),
+        ];
+        for (f, want) in cases {
+            assert_eq!(
+                std::mem::discriminant(&failure_outcome(f)),
+                std::mem::discriminant(&want),
+                "{f:?}"
+            );
+        }
+    }
+
+    // A rate-limited candidate is reported as rate-limited and NOT as a fetch error. Both halves
+    // are asserted, because a change that bumped BOTH counters would look correct in a test that
+    // only checked the new one.
+    #[test]
+    fn a_rate_limited_candidate_is_counted_apart_from_a_fetch_error() {
+        let limit = GhFailure::RateLimited { retry_after: None };
+        let (rows, c) = folded_one(outcome_typed(Err(limit), Ok(0)));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 0, 1]);
+
+        // …and from the OTHER fetch, so both hot-path calls carry the class out.
+        let (rows, c) = folded_one(outcome_typed(Ok(clean_detail()), Err(limit)));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    // A genuinely missing PR stays a fetch error. This is the other side of the split: making
+    // `RateLimited` visible must not turn every failure into it.
+    #[test]
+    fn a_missing_pr_is_still_a_counted_fetch_error() {
+        let (rows, c) = folded_one(outcome_typed(Err(GhFailure::NotFound), Ok(0)));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0]);
+    }
+
+    // An auth failure ABORTS the enumeration instead of being counted. The same token serves every
+    // fetch, so counting it would print a queue short by every remaining row while reading as
+    // complete — the falsely-empty queue the search-layer abort already refuses.
+    #[test]
+    fn an_auth_failure_aborts_the_enumeration_and_is_never_counted() {
+        assert!(queue_abort(&CandidateOutcome::Unauthorized).is_some());
+        for out in [
+            CandidateOutcome::RateLimited,
+            CandidateOutcome::FetchError,
+            CandidateOutcome::OpenThreads,
+            CandidateOutcome::Red,
+        ] {
+            assert!(queue_abort(&out).is_none(), "only auth aborts");
+        }
+        // It bumps NOTHING if it ever reaches the fold — no counter is a plausible home for it.
+        let (rows, c) = folded_one(CandidateOutcome::Unauthorized);
+        assert!(rows.is_empty());
+        assert_eq!(c, [0; 9]);
+    }
+
+    // ONE UNREADABLE REPO MUST NOT KILL THE RUN. GitHub masks a repository the token cannot see as
+    // 404 / NOT_FOUND rather than 403 — deliberately, since a 403 would leak that the repo exists.
+    // MEASURED against the live API: `gh api repos/github/github` (exists, unreadable by this
+    // token) answers `"status":"404"`, and the same subject through `gh api graphql` answers
+    // `errors[].type == "NOT_FOUND"`. So a per-repo denial arrives as `NotFound`, is counted as a
+    // fetch error, and the enumeration CONTINUES.
+    //
+    // This is asserted from the classifier inward — the real response bodies, not a hand-made
+    // `GhFailure` — because the whole question is which class those bodies produce. Reclassify
+    // either of them as `Unauthorized` and one inaccessible repo becomes a dead run: the
+    // falsely-short queue in a different costume.
+    #[test]
+    fn a_repo_the_token_cannot_read_is_counted_not_aborted() {
+        let masked_rest = br#"{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/repos#get-a-repository","status":"404"}"#;
+        let masked_graphql = br#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"Could not resolve to a Repository with the name 'github/github'."}]}"#;
+        for body in [masked_rest.as_slice(), masked_graphql.as_slice()] {
+            let (head, rest) = split_http_head(body);
+            let failure = classify_gh_failure(head.as_ref(), rest);
+            assert_eq!(failure, GhFailure::NotFound, "{:?}", body);
+            let out = failure_outcome(failure);
+            assert!(
+                queue_abort(&out).is_none(),
+                "an unreadable repo must not abort the enumeration"
+            );
+            let (rows, c) = folded_one(out);
+            assert!(rows.is_empty());
+            assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0], "counted as a fetch error");
+        }
+    }
+
+    // The header names the two apart. An operator reading "rate-limited" re-runs; one reading
+    // "fetch-error" goes looking for a broken PR, and #129 is that they used to read the same word.
+    #[test]
+    fn the_header_reports_rate_limited_rows_apart_from_fetch_errors() {
+        let mut c = zero_counts();
+        c.raw = 3;
+        c.fetch_error = 1;
+        c.rate_limited = 2;
+        let out = render_queue(&[], &c, 0);
+        assert!(out.contains("1 fetch-error"), "{out}");
+        assert!(out.contains("2 rate-limited"), "{out}");
+        // Silent when there is nothing to say, like every other optional segment.
+        let quiet = render_queue(&[], &zero_counts(), 0);
+        assert!(!quiet.contains("rate-limited"), "{quiet}");
     }
 
     // ── the determinism the concurrency must not cost ─────────────────────────────────────────
@@ -1178,6 +2411,19 @@ mod parallel_queue_tests {
     }
 
     fn outcome(pr: Option<Value>, threads: Option<u64>) -> CandidateOutcome {
+        outcome_typed(
+            pr.ok_or(GhFailure::Unknown),
+            threads.ok_or(GhFailure::Unknown),
+        )
+    }
+
+    /// The same gate chain with TYPED fetch failures — what #129 made expressible. `outcome` above
+    /// is this with both failures spelled `Unknown`, which is exactly what the pre-#129 `None`
+    /// meant: something failed and nothing said what.
+    fn outcome_typed(
+        pr: Result<Value, GhFailure>,
+        threads: Result<u64, GhFailure>,
+    ) -> CandidateOutcome {
         candidate_outcome(
             "rainlanguage/foo",
             12,
@@ -1187,7 +2433,7 @@ mod parallel_queue_tests {
         )
     }
 
-    fn folded_one(out: CandidateOutcome) -> (Vec<PresentablePr>, [usize; 8]) {
+    fn folded_one(out: CandidateOutcome) -> (Vec<PresentablePr>, [usize; 9]) {
         let mut rows = Vec::new();
         let mut counts = zero_counts();
         apply_outcome(out, &mut rows, &mut counts);
@@ -1199,7 +2445,7 @@ mod parallel_queue_tests {
     fn an_unreadable_pr_view_is_a_counted_fetch_error() {
         let (rows, c) = folded_one(outcome(None, Some(0)));
         assert!(rows.is_empty());
-        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
 
     // Fail-closed: a thread count that could not be read is a fetch error, NOT a clean row and
@@ -1208,13 +2454,13 @@ mod parallel_queue_tests {
     fn an_unreadable_thread_count_is_a_counted_fetch_error() {
         let (rows, c) = folded_one(outcome(Some(clean_detail()), None));
         assert!(rows.is_empty());
-        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
 
     #[test]
     fn a_clean_candidate_is_presentable_and_carries_its_cost_and_head() {
         let (rows, c) = folded_one(outcome(Some(clean_detail()), Some(0)));
-        assert_eq!(c, [0; 8]);
+        assert_eq!(c, [0; 9]);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].row.0, 40);
         assert_eq!(rows[0].row.1, "foo");
@@ -1228,7 +2474,7 @@ mod parallel_queue_tests {
         name: &'static str,
         pr: Option<Value>,
         threads: Option<u64>,
-        want: [usize; 8],
+        want: [usize; 9],
     }
 
     #[test]
@@ -1240,25 +2486,25 @@ mod parallel_queue_tests {
                 name: "conflicting",
                 pr: Some(detail("CONFLICTING", "SUCCESS", "", vetted.clone())),
                 threads: Some(0),
-                want: [1, 0, 0, 0, 0, 0, 0, 0],
+                want: [1, 0, 0, 0, 0, 0, 0, 0, 0],
             },
             GateCase {
                 name: "red ci",
                 pr: Some(detail("MERGEABLE", "FAILURE", "", vetted.clone())),
                 threads: Some(0),
-                want: [0, 1, 0, 0, 0, 0, 0, 0],
+                want: [0, 1, 0, 0, 0, 0, 0, 0, 0],
             },
             GateCase {
                 name: "unknown mergeability",
                 pr: Some(detail("UNKNOWN", "SUCCESS", "", vetted.clone())),
                 threads: Some(0),
-                want: [0, 0, 0, 1, 0, 0, 0, 0],
+                want: [0, 0, 0, 1, 0, 0, 0, 0, 0],
             },
             GateCase {
                 name: "human approved",
                 pr: Some(detail("MERGEABLE", "SUCCESS", "APPROVED", vetted.clone())),
                 threads: Some(0),
-                want: [0, 0, 0, 0, 1, 0, 0, 0],
+                want: [0, 0, 0, 0, 1, 0, 0, 0, 0],
             },
             GateCase {
                 // The vetter comment pins a DIFFERENT head, so the ai:ready label is unbacked.
@@ -1270,7 +2516,7 @@ mod parallel_queue_tests {
                     vec![vetter_comment(&"c".repeat(40), "40")],
                 )),
                 threads: Some(0),
-                want: [0, 0, 0, 0, 0, 1, 0, 0],
+                want: [0, 0, 0, 0, 0, 1, 0, 0, 0],
             },
             GateCase {
                 // Right head, superseded vet protocol: the verdict answers a question the
@@ -1289,7 +2535,7 @@ mod parallel_queue_tests {
                     })],
                 )),
                 threads: Some(0),
-                want: [0, 0, 0, 0, 0, 1, 0, 0],
+                want: [0, 0, 0, 0, 0, 1, 0, 0, 0],
             },
             GateCase {
                 // No stamp at all — the shape every verdict written before the stamp existed has.
@@ -1305,13 +2551,13 @@ mod parallel_queue_tests {
                     })],
                 )),
                 threads: Some(0),
-                want: [0, 0, 0, 0, 0, 1, 0, 0],
+                want: [0, 0, 0, 0, 0, 1, 0, 0, 0],
             },
             GateCase {
                 name: "unresolved review threads",
                 pr: Some(detail("MERGEABLE", "SUCCESS", "", vetted.clone())),
                 threads: Some(3),
-                want: [0, 0, 0, 0, 0, 0, 1, 0],
+                want: [0, 0, 0, 0, 0, 0, 1, 0, 0],
             },
         ];
         for case in cases {
@@ -1338,7 +2584,7 @@ mod parallel_queue_tests {
         });
         let (rows, c) = folded_one(outcome(Some(pr), Some(0)));
         assert!(rows.is_empty());
-        assert_eq!(c, [0, 0, 1, 0, 0, 0, 0, 0]);
+        assert_eq!(c, [0, 0, 1, 0, 0, 0, 0, 0, 0]);
     }
 
     // A slug with no `/` can never name an owner and a repo, so its thread state is unknowable —
@@ -1349,12 +2595,12 @@ mod parallel_queue_tests {
             "no-slash",
             12,
             "https://github.com/no-slash/pull/12",
-            |_, _| Some(clean_detail()),
-            |_, _, _| Some(0),
+            |_, _| Ok(clean_detail()),
+            |_, _, _| Ok(0),
         );
         let (rows, c) = folded_one(out);
         assert!(rows.is_empty());
-        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
 
     // The fetchers are called with the candidate's OWN coordinates — a pool that fetched the
@@ -1368,13 +2614,13 @@ mod parallel_queue_tests {
             "https://github.com/cyclofinance/bar/pull/77",
             |slug, num| {
                 seen.lock().unwrap().push(format!("pr {slug} {num}"));
-                Some(clean_detail())
+                Ok(clean_detail())
             },
             |owner, repo, num| {
                 seen.lock()
                     .unwrap()
                     .push(format!("threads {owner} {repo} {num}"));
-                Some(0)
+                Ok(0)
             },
         );
         assert!(matches!(out, CandidateOutcome::Present(_)));
@@ -1395,7 +2641,7 @@ mod parallel_queue_tests {
             12,
             "https://github.com/rainlanguage/foo/pull/12",
             |_, _| {
-                Some(detail(
+                Ok(detail(
                     "MERGEABLE",
                     "FAILURE",
                     "",
@@ -1404,7 +2650,7 @@ mod parallel_queue_tests {
             },
             |_, _, _| {
                 asked.fetch_add(1, Ordering::SeqCst);
-                Some(0)
+                Ok(0)
             },
         );
         assert!(matches!(out, CandidateOutcome::Red));
@@ -14658,14 +15904,14 @@ fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAc
 /// `fetch` is called ONLY for a row that would otherwise be VETTED — every other action already
 /// skips the PR, so it must not pay a GraphQL round-trip to learn something that changes nothing.
 ///
-/// FAIL-CLOSED, matching `--queue`: an unreadable thread state (`None`) is NOT offered for vetting,
-/// so a transient API failure can never launder a thread-dirty PR into an `ai:ready` verdict. The
-/// cost is one deferred vet — the next run re-reads it — against a wrong `ready` label that then
-/// needs a human to unwind. The count rides on the row as `unresolvedThreads` (`null` = unreadable)
-/// so an operator reading `--json` can tell "dirty" from "unknown".
+/// FAIL-CLOSED, matching `--queue`: an unread thread state is NOT offered for vetting, so a
+/// transient API failure can never launder a thread-dirty PR into an `ai:ready` verdict. The cost
+/// is one deferred vet — the next run re-reads it — against a wrong `ready` label that then needs a
+/// human to unwind. The count rides on the row as `unresolvedThreads` (`null` = unread) so an
+/// operator reading `--json` can tell "dirty" from "unknown".
 fn gate_open_threads(
     row: (VetAction, u8, Value),
-    fetch: impl FnOnce() -> Option<u64>,
+    fetch: impl FnOnce() -> Result<u64, GhFailure>,
 ) -> (VetAction, u8, Value) {
     let (action, prio, mut json) = row;
     if action != VetAction::Vet {
@@ -14677,11 +15923,13 @@ fn gate_open_threads(
     };
     obj.insert(
         "unresolvedThreads".into(),
-        threads.map(Value::from).unwrap_or(Value::Null),
+        threads.ok().map(Value::from).unwrap_or(Value::Null),
     );
-    // The vetter collapses `OpenThreads` and `FetchError` into ONE skip: in both cases the thread
-    // state is not verified clean, and the vetter's handling is identical (don't vet it this run).
-    // The row's `unresolvedThreads` (`null` vs a number) keeps the two distinguishable to a reader.
+    // The vetter collapses `OpenThreads` and every `Failed` reason into ONE skip: in all of them
+    // the thread state is not verified clean, and the vetter's handling is identical (don't vet it
+    // this run). It has no rate-limit move of its own — the retry already happened inside the
+    // fetch — so the typed reason changes nothing HERE, which is why this caller collapses it and
+    // `--queue`, which does have a move, does not.
     if thread_route(threads) == ThreadRoute::Present {
         return (action, prio, json);
     }
@@ -15436,7 +16684,7 @@ fn blocked_on_state_load_row(
             Ok(gate_open_threads(
                 unvetted_row(slug, num, url, title, &fresh),
                 || {
-                    let (owner, repo) = slug.split_once('/')?;
+                    let (owner, repo) = slug.split_once('/').ok_or(GhFailure::Malformed)?;
                     unresolved_threads(owner, repo, num)
                 },
             ))
@@ -15518,11 +16766,11 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         }
         // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
         // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
-        // An unsplittable slug yields None (fail-closed: not vetted this run), never a dropped PR.
+        // An unsplittable slug fails the fetch (fail-closed: not vetted this run), never a dropped PR.
         rows.push(gate_open_threads(
             unvetted_row(&slug, num, url, title, &detail),
             || {
-                let (owner, repo) = slug.split_once('/')?;
+                let (owner, repo) = slug.split_once('/').ok_or(GhFailure::Malformed)?;
                 unresolved_threads(owner, repo, num)
             },
         ));
@@ -16494,6 +17742,9 @@ fn next_ready_doc(rows: Vec<Value>, counts: &QueueCounts, presentable: usize) ->
             "unvetted": counts.unvetted,
             "openThreads": counts.open_threads,
             "fetchError": counts.fetch_error,
+            // Its OWN key, for the same reason it is its own header segment: a caller reading
+            // `fetchError` must not have a rate-limited row folded into it (#129).
+            "rateLimited": counts.rate_limited,
         },
         "next": rows,
     })
@@ -16950,6 +18201,7 @@ mod next_ready_tests {
             );
         }
         let counts = QueueCounts {
+            rate_limited: usize::MAX,
             raw: usize::MAX,
             excluded: usize::MAX,
             conflict: usize::MAX,
@@ -17007,6 +18259,7 @@ mod next_ready_tests {
             unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
+            rate_limited: 0,
         };
         // Fourteen numeric fields in the envelope: eleven counts plus the three queue figures.
         let env_len = next_ready_doc(vec![], &counts, 0).to_string().len() + 14 * NR_MAX_DIGITS;
@@ -17199,6 +18452,7 @@ mod next_ready_tests {
     #[test]
     fn an_unvetted_pr_is_counted_rather_than_returned_stale() {
         let counts = QueueCounts {
+            rate_limited: 0,
             raw: 12,
             excluded: 2,
             conflict: 1,
@@ -29604,6 +30858,7 @@ diff --git a/a.c b/a.c
             unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
+            rate_limited: 0,
         }
     }
 
@@ -29956,10 +31211,23 @@ mod open_threads_tests {
     // and "could not read" is its own outcome, never folded into clean or into dirty.
     #[test]
     fn queue_routing_is_fail_closed_and_three_way() {
-        assert_eq!(thread_route(Some(0)), ThreadRoute::Present);
-        assert_eq!(thread_route(Some(1)), ThreadRoute::OpenThreads);
-        assert_eq!(thread_route(Some(9)), ThreadRoute::OpenThreads);
-        assert_eq!(thread_route(None), ThreadRoute::FetchError);
+        assert_eq!(thread_route(Ok(0)), ThreadRoute::Present);
+        assert_eq!(thread_route(Ok(1)), ThreadRoute::OpenThreads);
+        assert_eq!(thread_route(Ok(9)), ThreadRoute::OpenThreads);
+        // The route CARRIES the reason (#129): "GitHub asked us to slow down" and "this PR is
+        // unreadable" are different facts, and a single `FetchError` could not say which.
+        assert_eq!(
+            thread_route(Err(GhFailure::Unknown)),
+            ThreadRoute::Failed(GhFailure::Unknown)
+        );
+        assert_eq!(
+            thread_route(Err(GhFailure::RateLimited {
+                retry_after: Some(9)
+            })),
+            ThreadRoute::Failed(GhFailure::RateLimited {
+                retry_after: Some(9)
+            })
+        );
     }
 
     // T6: PAGING — the total is every page summed, and each page after the first is fetched with
@@ -29970,8 +31238,8 @@ mod open_threads_tests {
         let total = total_unresolved(|cursor| {
             seen.borrow_mut().push(cursor.map(String::from));
             match cursor {
-                None => Some(page(json!([{"isResolved": false}]), true, "C1")),
-                Some("C1") => Some(page(
+                None => Ok(page(json!([{"isResolved": false}]), true, "C1")),
+                Some("C1") => Ok(page(
                     json!([{"isResolved": false}, {"isResolved": true}, {"isResolved": false}]),
                     false,
                     "",
@@ -29979,7 +31247,7 @@ mod open_threads_tests {
                 Some(other) => panic!("unexpected cursor {other}"),
             }
         });
-        assert_eq!(total, Some(3), "both pages must be counted");
+        assert_eq!(total, Ok(3), "both pages must be counted");
         assert_eq!(
             *seen.borrow(),
             vec![None, Some("C1".to_string())],
@@ -29992,10 +31260,12 @@ mod open_threads_tests {
     #[test]
     fn total_is_none_when_a_later_page_is_unreadable() {
         let total = total_unresolved(|cursor| match cursor {
-            None => Some(page(json!([{"isResolved": false}]), true, "C1")),
-            Some(_) => None,
+            None => Ok(page(json!([{"isResolved": false}]), true, "C1")),
+            // A page that FETCHED but did not carry the shape is `Malformed`, and the walk hands
+            // that reason out rather than a bare "unreadable" (#129).
+            Some(_) => Err(GhFailure::Malformed),
         });
-        assert_eq!(total, None);
+        assert_eq!(total, Err(GhFailure::Malformed));
     }
 
     // T8: a cursor that never terminates stops at the page cap and reports UNKNOWN, not the
@@ -30005,10 +31275,11 @@ mod open_threads_tests {
         let calls = Cell::new(0usize);
         let total = total_unresolved(|_| {
             calls.set(calls.get() + 1);
-            Some(page(json!([{"isResolved": false}]), true, "SAME"))
+            Ok(page(json!([{"isResolved": false}]), true, "SAME"))
         });
         assert_eq!(
-            total, None,
+            total,
+            Err(GhFailure::Unknown),
             "a non-terminating cursor must not yield a total"
         );
         assert_eq!(calls.get(), MAX_THREAD_PAGES, "paging must be bounded");
@@ -30024,7 +31295,7 @@ mod open_threads_tests {
     // `ready` verdict while a thread is open.
     #[test]
     fn vet_gate_excludes_a_pr_with_an_unresolved_thread() {
-        let (action, _, row) = gate_open_threads(vet_row(), || Some(1));
+        let (action, _, row) = gate_open_threads(vet_row(), || Ok(1));
         assert_eq!(action, VetAction::SkipOpenThreads);
         assert_eq!(row["action"], json!("skip-open-threads"));
         assert_eq!(row["unresolvedThreads"], json!(1));
@@ -30034,20 +31305,32 @@ mod open_threads_tests {
     // PRs, or vetting stops entirely.
     #[test]
     fn vet_gate_passes_a_pr_with_zero_unresolved_threads() {
-        let (action, prio, row) = gate_open_threads(vet_row(), || Some(0));
+        let (action, prio, row) = gate_open_threads(vet_row(), || Ok(0));
         assert_eq!(action, VetAction::Vet);
         assert_eq!(prio, 0);
         assert_eq!(row["action"], json!("vet"));
         assert_eq!(row["unresolvedThreads"], json!(0));
     }
 
-    // T11: an unreadable thread state is fail-closed (not vetted), and stays DISTINGUISHABLE from
-    // a verified zero on the row.
+    // T11: an unread thread state is fail-closed (not vetted), and stays DISTINGUISHABLE from a
+    // verified zero on the row — for EVERY typed reason it could not be read. The vetter has no
+    // rate-limit move of its own (the retry already happened inside the fetch), so all of them
+    // collapse to the same skip HERE while `--queue`, which does have a move, keeps them apart.
     #[test]
-    fn vet_gate_fails_closed_on_unknown_thread_state() {
-        let (action, _, row) = gate_open_threads(vet_row(), || None);
-        assert_eq!(action, VetAction::SkipOpenThreads);
-        assert_eq!(row["unresolvedThreads"], json!(null));
+    fn vet_gate_fails_closed_on_every_unread_thread_state() {
+        for f in [
+            GhFailure::Unknown,
+            GhFailure::RateLimited {
+                retry_after: Some(5),
+            },
+            GhFailure::NotFound,
+            GhFailure::Unauthorized,
+            GhFailure::Malformed,
+        ] {
+            let (action, _, row) = gate_open_threads(vet_row(), || Err(f));
+            assert_eq!(action, VetAction::SkipOpenThreads, "{f:?}");
+            assert_eq!(row["unresolvedThreads"], json!(null), "{f:?}");
+        }
     }
 
     // T12: a row that ALREADY skips costs no GraphQL round-trip — the gate only asks about PRs
@@ -30064,7 +31347,7 @@ mod open_threads_tests {
                 (skip, 4, json!({"pr": "o/r#1", "action": skip.as_str()})),
                 || {
                     called.set(true);
-                    Some(7)
+                    Ok(7)
                 },
             );
             assert!(!called.get(), "{skip:?} must not trigger a thread query");
