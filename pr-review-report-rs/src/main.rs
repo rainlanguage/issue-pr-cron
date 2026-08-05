@@ -22759,6 +22759,66 @@ mod next_close_candidate_tests {
         assert_eq!(doc["queue"]["presentable"], json!(0));
     }
 
+    // #206, as the live case that produced it. `rain.webapp` was archived on 2026-08-05 and this
+    // queue served `rain.webapp#139` as its HEAD four minutes later — a flag whose ruling could
+    // not be written, sorted to the front by an oldest-first order and staying there.
+    //
+    // The row must be GONE from `next` and PRESENT in the withheld list. Silence would leave a
+    // human unable to tell an archived-repo flag from one that was never filed, and this tool is
+    // the only place that inventory exists.
+    #[test]
+    fn a_flag_in_an_archived_repo_is_named_rather_than_offered_or_dropped() {
+        let mut w = withheld(FlagQueueCounts {
+            flagged: 7,
+            presentable: 6,
+            archived_repo: 1,
+            ..Default::default()
+        });
+        w.archived = vec![withheld_entry(
+            "rainlanguage/rain.webapp#139",
+            ARCHIVED_REPO_WHY,
+        )];
+        let doc = next_close_candidate_doc(vec![json!({"issue": "rainlanguage/raindex#960"})], &w);
+        // Not offered: the head of the queue is the live flag, not the frozen one.
+        assert_eq!(doc["next"][0]["issue"], json!("rainlanguage/raindex#960"));
+        assert_eq!(doc["next"].as_array().unwrap().len(), 1);
+        // Not dropped: named, with the reason no ruling can be written.
+        assert_eq!(
+            doc["archivedRepoFlags"][0]["issue"],
+            json!("rainlanguage/rain.webapp#139")
+        );
+        assert_eq!(doc["archivedRepoFlags"][0]["why"], json!(ARCHIVED_REPO_WHY));
+        assert_eq!(doc["counts"]["archivedRepo"], json!(1));
+        // A DIFFERENT list from `strandedFlags`: both hold flags nothing can consume, but one
+        // names a label state a transition could still clear and the other names a repo that will
+        // never accept a write. Folding them together would hide which is which.
+        assert_eq!(doc["strandedFlags"], json!([]));
+    }
+
+    /// The overflow is stated, so a scope with more frozen flags than the cap does not silently
+    /// report only the first few.
+    #[test]
+    fn frozen_flags_past_the_cap_are_counted_rather_than_lost() {
+        let mut w = withheld(FlagQueueCounts {
+            flagged: 9,
+            archived_repo: 9,
+            ..Default::default()
+        });
+        let all: Vec<Value> = (0..9)
+            .map(|i| withheld_entry(&format!("o/r#{i}"), ARCHIVED_REPO_WHY))
+            .collect();
+        let (paged, more) = page(all, Some(NCC_MAX_ARCHIVED));
+        w.archived = paged;
+        w.more_archived = more;
+        let doc = next_close_candidate_doc(vec![], &w);
+        assert_eq!(
+            doc["archivedRepoFlags"].as_array().unwrap().len(),
+            NCC_MAX_ARCHIVED
+        );
+        assert_eq!(doc["moreArchivedRepoFlags"], json!(9 - NCC_MAX_ARCHIVED));
+        assert_eq!(doc["counts"]["archivedRepo"], json!(9));
+    }
+
     // --- the budget -----------------------------------------------------------------------------
 
     fn hostile(n: usize) -> String {
@@ -33644,6 +33704,45 @@ diff --git a/a.c b/a.c
             .contains("\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1"));
     }
 
+    /// #206: an `ai:ready` PR an archived repo froze is not presentable — nothing can merge,
+    /// relabel or comment on it — and the header SAYS SO. Absent from the header, the difference
+    /// between `raw` and `presentable` would have no explanation and a reader would go looking for
+    /// a PR that was never withheld by anybody.
+    #[test]
+    fn the_header_names_the_rows_an_archived_repo_froze() {
+        let mut c = qc(5, 0, 0, 0, 0);
+        c.archived_repo = 2;
+        let out = render_queue(&[], &c, 0);
+        assert!(
+            out.contains(", 2 archived-repo"),
+            "the archived count is missing from:\n{out}"
+        );
+        // …and it is its OWN segment: an archived row is not a draft and not a human override,
+        // which is what `excluded` counts.
+        assert!(!out.contains("excluded"), "header:\n{out}");
+        // Zero is silent — a count of nothing is noise, and every other segment here is written
+        // the same way.
+        assert!(
+            !render_queue(&[], &qc(5, 0, 0, 0, 0), 0).contains("archived-repo"),
+            "an empty archived set must add nothing to the header"
+        );
+    }
+
+    /// The plain-text surfaces share one note, and it is EMPTY at zero for the same reason the
+    /// header segment is absent at zero.
+    #[test]
+    fn the_archived_note_is_silent_at_zero_and_states_the_count_above_it() {
+        assert_eq!(archived_note(0), "");
+        assert_eq!(
+            archived_note(1),
+            " (1 withheld: archived repo, unactionable)"
+        );
+        assert_eq!(
+            archived_note(29),
+            " (29 withheld: archived repo, unactionable)"
+        );
+    }
+
     // The vetted-at-head gate: green+mergeable is NOT enough — an ai:vetter comment must pin the
     // CURRENT head. A migration-labelled PR (no comment) or a moved head is not presentable.
     #[test]
@@ -35943,6 +36042,72 @@ mod repo_root_tests {
              the literal names: {offenders:?}. A repo-root file goes through `repo_root_text` / \
              `repo_root_path`; every other path in this crate is built from a value"
         );
+    }
+
+    /// #206 IS A CLASS, NOT AN INSTANCE, and this is what makes the class hold.
+    ///
+    /// The bug was found in `next_close_candidate` and fixing only that would have left the same
+    /// hole in every other org-wide enumeration — measured on 2026-08-05, `worklist`/`human-queue`
+    /// were carrying 4 frozen PRs and the producer's backlog 29 frozen issues. So the rule is
+    /// stated over the SOURCE: every item that builds an org-scoped search must also withhold
+    /// archived repos, and an item that does not must be named here with its reason.
+    ///
+    /// This is the gate a future enumeration trips. Adding a search and forgetting the filter
+    /// fails it; DELETING a filter from one that has it fails it too, which is what makes it a
+    /// mutation-killing test rather than a list somebody has to remember to update.
+    #[test]
+    fn every_org_wide_enumeration_withholds_archived_repos() {
+        // Assembled, so this test's own source is not a hit for the shape it hunts — the same
+        // move the filesystem gate above makes, for the same reason.
+        let scope = format!("org_owner{}", "_args()");
+        let filter = format!("withhold_arch{}", "ived(");
+
+        // The enumerations that FEED a queue, a state-load or a dashboard. Every one of these
+        // hands rows to something that then tries to transition them.
+        let filtered = [
+            "coverage_uncovered",
+            "human_queue_mode",
+            "presentable_queue",
+            "unvetted_fetch",
+            "worklist_rows",
+        ];
+        // …and every other item that names the org scope, each with the reason it is not here.
+        let exempt = [
+            // The accessor itself.
+            "org_owner_args",
+            // PURE argv builders. Their live callers — `flagged_open_issues` for the first — do
+            // the withholding, which is why the filter is not visible in the builder.
+            "flagged_open_issues_args",
+            // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
+            // both populations are empty in scope, and neither OFFERS work: a per-PR edit that
+            // fails is already reported as a failed edit rather than queued as a task.
+            "migrate_reject_mode",
+            "retire_blocked_infra_mode",
+            // Tests.
+            "next_close_candidate_tests",
+            "org_tests",
+            "repo_root_tests",
+        ];
+        let mut want: Vec<&str> = filtered.iter().chain(exempt.iter()).copied().collect();
+        want.sort_unstable();
+        let mut got = items_whose_code_contains(&scope);
+        got.sort_unstable();
+        assert_eq!(
+            got, want,
+            "an item names the org search scope and is neither filtered nor exempted. Every \
+             org-wide enumeration either withholds archived repos or says here why it need not — \
+             #206 is the bug where one of them did neither"
+        );
+
+        let withholds = items_whose_code_contains(&filter);
+        for item in filtered {
+            assert!(
+                withholds.contains(&item.to_string()),
+                "`{item}` enumerates org-wide but does not withhold archived repos — its rows can \
+                 include a repo that refuses every transition this FSM owns (#206). \
+                 Withholding items: {withholds:?}"
+            );
+        }
     }
 }
 
@@ -46285,6 +46450,50 @@ mod vetter_state_load_tests {
         assert_eq!(doc["skipped"].as_array().unwrap().len(), 3);
     }
 
+    /// #206: a PR in an archived repo is not vettable — `record_verdict` writes a label and a
+    /// comment and a read-only repo refuses both — so it never reaches `prs`, and it is reported
+    /// under its own name rather than folded into an existing skip that means something else.
+    #[test]
+    fn a_pr_in_an_archived_repo_is_withheld_from_the_vet_queue_and_named() {
+        let rows = vec![
+            (
+                VetAction::Vet,
+                0,
+                json!({"pr": "rainlanguage/raindex#1", "action": "vet"}),
+            ),
+            (
+                VetAction::SkipArchivedRepo,
+                4,
+                json!({
+                    "pr": "rainlanguage/rain.webapp#354",
+                    "url": "https://github.com/rainlanguage/rain.webapp/pull/354",
+                    "action": VetAction::SkipArchivedRepo.as_str(),
+                    "why": ARCHIVED_REPO_WHY,
+                }),
+            ),
+        ];
+        let doc = unvetted_doc(&rows, false, None);
+        // Not offered.
+        assert_eq!(doc["counts"]["vet"], json!(1));
+        assert_eq!(doc["prs"][0]["pr"], json!("rainlanguage/raindex#1"));
+        assert_eq!(doc["prs"].as_array().unwrap().len(), 1);
+        // Counted, under its own key — never folded into `skipHumanDecided` (nobody decided) or
+        // `skipVettedAtHead` (nothing was vetted).
+        assert_eq!(doc["counts"]["skipArchivedRepo"], json!(1));
+        assert_eq!(doc["counts"]["skipHumanDecided"], json!(0));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(0));
+        // …and named, UNCONDITIONALLY: `include_skipped` is false here and the row is still there,
+        // because this skip says the machine can never move the PR at all.
+        assert_eq!(
+            doc["archivedRepo"][0]["pr"],
+            json!("rainlanguage/rain.webapp#354")
+        );
+        assert_eq!(doc["archivedRepo"][0]["why"], json!(ARCHIVED_REPO_WHY));
+        assert!(doc.get("skipped").is_none());
+        // `open` still counts it: the population the state-load read is the whole population.
+        assert_eq!(doc["counts"]["open"], json!(2));
+    }
+
     #[test]
     fn empty_state_load_is_a_well_formed_empty_doc() {
         let doc = unvetted_doc(&[], false, None);
@@ -46293,6 +46502,8 @@ mod vetter_state_load_tests {
         assert_eq!(doc["prs"], json!([]));
         // Present-and-empty, not absent: "nothing was withheld for threads" is an answer.
         assert_eq!(doc["openThreads"], json!([]));
+        assert_eq!(doc["counts"]["skipArchivedRepo"], json!(0));
+        assert_eq!(doc["archivedRepo"], json!([]));
         assert_eq!(doc["more"], json!(0));
     }
 
