@@ -4720,6 +4720,16 @@ enum SolToolchain {
     /// #sol-shell`. Unpinned spellings of this are the same standing skew #116 reports, sitting in
     /// a consumer's CI instead of in the producer's prompt.
     Explicit(String),
+    /// A Solidity toolchain acquired WITHOUT nix — the `foundry-rs/foundry-toolchain` action, or
+    /// `foundryup`. Carries the acquisition verbatim.
+    ///
+    /// This is not a nix shell and there is no `nix develop` that enters it, so the producer
+    /// cannot match it and must SAY so. Folding it into "no toolchain to match" is a false
+    /// negative in the worst possible place: `rain.will-overflow` gates `forge fmt --check` on
+    /// foundry NIGHTLY, which is further from any shell the producer can open than the widest
+    /// rainix pin gap, so it is #116's failure mode at its largest sitting in the bucket that
+    /// says there is no failure mode here.
+    Foreign(String),
 }
 
 impl SolToolchain {
@@ -4731,7 +4741,14 @@ impl SolToolchain {
                 "the repo's own flake (nix develop, no flake argument)".into()
             }
             SolToolchain::Explicit(f) => format!("explicit flake {f}"),
+            SolToolchain::Foreign(how) => format!("NOT NIX — {how}"),
         }
+    }
+
+    /// Whether a `nix develop` can enter this toolchain at all. The producer's next move turns on
+    /// this and on nothing else: a nix toolchain it can match, a foreign one it can only name.
+    fn is_nix(&self) -> bool {
+        !matches!(self, SolToolchain::Foreign(_))
     }
 }
 
@@ -4751,21 +4768,45 @@ fn names_token(line: &str, token: &str) -> bool {
     false
 }
 
+/// Every spelling of the workflow trigger key. YAML 1.1 reads a bare `on` as the BOOLEAN true, so
+/// formatters quote it (`"on":`, `'on':`) and a round trip through a 1.1 loader can emit `true:`.
+/// GitHub accepts all four. None of the org's 45 Solidity repos writes anything but `on:` today,
+/// and the cost of being wrong is a silent misclassification into "no toolchain here" — the same
+/// false negative the `Foreign` variant exists to end — so the spellings are handled rather than
+/// assumed away.
+const WORKFLOW_TRIGGER_KEYS: [&str; 4] = ["on:", "\"on\":", "'on':", "true:"];
+
+/// PURE: `line` with any trailing `#` comment removed.
+///
+/// A comment inside the `on:` block is prose about the workflow, not a trigger — `# runs on push`
+/// would otherwise read as a gate. Only a `#` at the start of the content or after whitespace
+/// counts, so a `#` inside a branch glob or a path is left alone.
+fn strip_yaml_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (i, _) in line.match_indices('#') {
+        if i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t' {
+            return &line[..i];
+        }
+    }
+    line
+}
+
 /// PURE: whether this workflow gates a PUSH or a PULL REQUEST — i.e. whether it is a check a PR
 /// has to satisfy.
 ///
 /// Only the `on:` block is read. Top-level keys sit at column zero, so the block runs from the
-/// `on:` line to the next column-zero key; `workflow_dispatch` and `schedule` workflows gate
+/// trigger line to the next column-zero key; `workflow_dispatch` and `schedule` workflows gate
 /// nothing a PR can see and their toolchains are not the producer's problem.
 fn workflow_gates_a_push(text: &str) -> bool {
     let mut in_on = false;
-    for line in text.lines() {
+    for raw in text.lines() {
         // A column-zero key CLOSES whatever block was open and opens its own, so this single
         // assignment is the whole boundary: a `push` under `jobs:` cannot make a dispatch-only
-        // workflow look like a gate, and `on: [push]` is still read off the `on:` line itself.
-        if !line.starts_with([' ', '\t']) && !line.trim().is_empty() {
-            in_on = line.starts_with("on:");
+        // workflow look like a gate, and `on: [push]` is still read off the trigger line itself.
+        if !raw.starts_with([' ', '\t']) && !raw.trim().is_empty() {
+            in_on = WORKFLOW_TRIGGER_KEYS.iter().any(|k| raw.starts_with(k));
         }
+        let line = strip_yaml_comment(raw);
         if in_on && (names_token(line, "push") || names_token(line, "pull_request")) {
             return true;
         }
@@ -4825,6 +4866,49 @@ fn nix_develop_step(line: &str) -> Option<(SolToolchain, String)> {
     Some((toolchain, cmd))
 }
 
+/// PURE: a Solidity toolchain this line ACQUIRES without nix, if it acquires one.
+///
+/// Acquisition is the signal and the INVOCATION deliberately is not. A bare `forge` in a `run:`
+/// says nothing on its own — st0x.deploy's `multisig-artifact.yaml` opens
+/// `nix develop --command bash -c '` and calls `forge` on the NEXT line, so reading invocations
+/// line by line would report a nix repo as foreign. Naming the installer has no such ambiguity:
+/// these two lines mean "this job's forge did not come from a flake" and nothing else.
+///
+/// KNOWN BOUND: a third way of getting forge — a hand-rolled curl, a container image with it
+/// baked in — is not recognised and the workflow reads as gating nothing. That is the same false
+/// negative this function narrows, one step further out, and `a_third_way_of_getting_forge_is_a_
+/// known_blind_spot` names it so the limit is on the record rather than in someone's head.
+fn foreign_sol_toolchain(line: &str) -> Option<String> {
+    let line = strip_yaml_comment(line);
+    if let Some((_, rest)) = line.split_once("foundry-rs/foundry-toolchain@") {
+        let ver = rest.split_whitespace().next().unwrap_or("");
+        return Some(format!("foundry-rs/foundry-toolchain@{ver}"));
+    }
+    ["foundryup", "foundry.paradigm.xyz"]
+        .iter()
+        .find(|n| line.contains(**n))
+        .map(|n| (*n).to_string())
+}
+
+/// PURE: the `version:` a `foundry-toolchain` step asks for, read off the `with:` block that
+/// follows it. `nightly` is the value that matters — it is unpinned AND it moves daily, so it is
+/// the widest possible gap from any shell the producer can open, and the report must say it out
+/// loud rather than leave the reader to go and look.
+fn foundry_toolchain_version(text: &str, from: usize) -> Option<String> {
+    for line in text.lines().skip(from).take(6) {
+        let line = strip_yaml_comment(line);
+        if let Some((_, v)) = line.split_once("version:") {
+            let v = v.trim().trim_matches(['"', '\'']);
+            return (!v.is_empty()).then(|| v.to_string());
+        }
+        // A following step ends the `with:` block; anything after it belongs to something else.
+        if line.trim_start().starts_with("- ") {
+            break;
+        }
+    }
+    None
+}
+
 /// PURE: every distinct Solidity toolchain the checkout's own PUSH/PR-gating workflows run in,
 /// each with the workflows that name it. Sorted and deduplicated, so the report is stable.
 ///
@@ -4842,9 +4926,16 @@ fn sol_toolchains(workflows: &[(String, String)]) -> Vec<(SolToolchain, Vec<Stri
             continue;
         }
         let matrix_names_sol = text.contains("rainix-sol");
-        for line in text.lines() {
+        for (n, line) in text.lines().enumerate() {
             if let Some(git_ref) = rainix_sol_reusable_ref(line) {
                 found.push((SolToolchain::Reusable(git_ref), name.clone()));
+            }
+            if let Some(how) = foreign_sol_toolchain(line) {
+                let how = match foundry_toolchain_version(text, n + 1) {
+                    Some(v) => format!("{how} (version: {v})"),
+                    None => how,
+                };
+                found.push((SolToolchain::Foreign(how), name.clone()));
             }
             if let Some((toolchain, cmd)) = nix_develop_step(line) {
                 let expression = cmd.starts_with("${{");
@@ -4944,6 +5035,18 @@ fn sol_toolchain_lines(
             ),
             SolToolchain::RepoFlake => ("repo-flake", Ok(format!("nix develop {dir} -c"))),
             SolToolchain::Explicit(f) => ("explicit", Ok(format!("nix develop {f} -c"))),
+            SolToolchain::Foreign(how) => (
+                "foreign",
+                Err(format!(
+                    "this checkout's Solidity checks run on {how}, which is NOT a nix shell — \
+                     there is no `nix develop` that enters it, so you cannot verify against what \
+                     CI will actually judge. This is NOT `absent`: there IS a toolchain here and \
+                     it is one you cannot match, so an exact check (`forge fmt --check`, \
+                     `forge snapshot --check`) can red on a diff that is correct in every shell \
+                     you can open. Say so on the PR, naming that toolchain, and expect the \
+                     mismatch instead of spending a back-off attempt discovering it."
+                )),
+            ),
             SolToolchain::Reusable(git_ref) => (
                 "rainix-pin",
                 match pin {
@@ -4960,8 +5063,16 @@ fn sol_toolchain_lines(
             Err(format!(
                 "this checkout's own push/PR checks run {} different Solidity toolchains (above). \
                  A `forge fmt` that satisfies one can fail another, so there is no single answer \
-                 to give — verify against the toolchain of the CHECK you are fixing and say which.",
-                many.len()
+                 to give — verify against the toolchain of the CHECK you are fixing and say \
+                 which.{}",
+                many.len(),
+                if many.iter().all(|(t, _)| t.is_nix()) {
+                    ""
+                } else {
+                    " At least one of them is NOT a nix shell (marked above), so for that one \
+                     there is no shell to verify in at all — name it on the PR rather than \
+                     treating its check as reproducible."
+                }
             )),
         ),
     };
@@ -5029,9 +5140,9 @@ fn sol_toolchain_mode(dir: &str) -> i32 {
 #[cfg(test)]
 mod sol_toolchain_tests {
     use super::{
-        agreed_rainix_sha, is_sol_check, names_token, nix_develop_step, rainix_sha,
-        rainix_sol_reusable_ref, sol_toolchain_lines, sol_toolchains, workflow_gates_a_push,
-        SolToolchain,
+        agreed_rainix_sha, foreign_sol_toolchain, is_sol_check, names_token, nix_develop_step,
+        rainix_sha, rainix_sol_reusable_ref, sol_toolchain_lines, sol_toolchains,
+        strip_yaml_comment, workflow_gates_a_push, SolToolchain,
     };
 
     /// cyclofinance/cyclo.sol's `rainix.yaml`, the workflow the parked PR was fighting: a matrix of
@@ -5058,6 +5169,30 @@ jobs:
   standard-sol:
     uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main
     secrets: inherit
+";
+
+    /// rainlanguage/rain.will-overflow's `test.yml`, verbatim: `on: [push]`, and it gates
+    /// `forge fmt --check` on a foundry installed by ACTION at `nightly`. No flake is involved
+    /// anywhere, so there is no shell the producer can enter to reproduce that check.
+    const FOREIGN_WF: &str = "\
+name: test
+
+on: [push]
+
+jobs:
+  check:
+    name: Foundry project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Run Forge fmt
+        run: forge fmt --check
 ";
 
     /// S01-Issuer/st0x.deploy's `git-clean.yaml`: also `on: [push]`, and it formats with an
@@ -5340,6 +5475,159 @@ jobs:
             "{out}"
         );
         assert!(!out.contains("verify:"), "{out}");
+    }
+
+    #[test]
+    fn a_non_nix_gating_toolchain_is_never_reported_as_no_toolchain() {
+        let found = sol_toolchains(&wfs(&[("test.yml", FOREIGN_WF)]));
+        assert_eq!(
+            found,
+            vec![(
+                SolToolchain::Foreign(
+                    "foundry-rs/foundry-toolchain@v1 (version: nightly)".to_string()
+                ),
+                vec!["test.yml".to_string()]
+            )],
+            "rain.will-overflow gates `forge fmt --check` on foundry nightly — reading that as \
+             `absent` is the false negative this variant exists to end"
+        );
+        let (code, out) = report(&found, false, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: foreign"), "{out}");
+        assert!(!out.contains("mode: absent"), "{out}");
+        // The producer's next move turns on the DIFFERENCE, so the report must carry it in words
+        // and not only in a mode label a reader could skim past.
+        assert!(out.contains("NOT a nix shell"), "{out}");
+        assert!(out.contains("NOT `absent`"), "{out}");
+        assert!(
+            out.contains("nightly"),
+            "the toolchain must be NAMED, not just refused: {out}"
+        );
+        assert!(
+            !out.contains("verify:"),
+            "there is no shell to offer: {out}"
+        );
+    }
+
+    /// The two unresolvable modes must not read alike. `absent` means "nothing to match, use what
+    /// you like and record it"; `foreign` means "something to match that you CANNOT enter". A
+    /// change that collapses either into the other is the defect, so the texts are asserted
+    /// DISJOINT rather than each merely non-empty.
+    #[test]
+    fn absent_and_foreign_say_different_things() {
+        let (_, absent) = report(&[], false, None);
+        let (_, foreign) = report(
+            &[(
+                SolToolchain::Foreign("foundry-rs/foundry-toolchain@v1".into()),
+                vec!["test.yml".to_string()],
+            )],
+            false,
+            None,
+        );
+        assert_ne!(absent, foreign);
+        assert!(absent.contains("no CI toolchain to match"), "{absent}");
+        assert!(!foreign.contains("no CI toolchain to match"), "{foreign}");
+        assert!(foreign.contains("NOT a nix shell"), "{foreign}");
+        assert!(!absent.contains("NOT a nix shell"), "{absent}");
+    }
+
+    /// A repo can gate on a nix toolchain AND a foreign one at once. That is still a conflict, but
+    /// the advice differs: one side has no shell to verify in at all, so the conflict text has to
+    /// say so instead of implying both are reproducible.
+    #[test]
+    fn a_conflict_that_includes_a_foreign_toolchain_says_one_side_is_unreachable() {
+        let mixed = sol_toolchains(&wfs(&[
+            ("rainix-sol.yaml", REUSABLE_WF),
+            ("test.yml", FOREIGN_WF),
+        ]));
+        assert_eq!(mixed.len(), 2);
+        let (code, out) = report(&mixed, true, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: conflict"), "{out}");
+        assert!(out.contains("NOT a nix shell"), "{out}");
+
+        // …and an all-nix conflict must NOT carry that sentence, or it says nothing.
+        let all_nix = sol_toolchains(&wfs(&[
+            ("git-clean.yaml", HARDCODED_WF),
+            ("rainix-sol.yaml", REUSABLE_WF),
+        ]));
+        let (_, nix_out) = report(&all_nix, true, None);
+        assert!(nix_out.contains("mode: conflict"), "{nix_out}");
+        assert!(!nix_out.contains("NOT a nix shell"), "{nix_out}");
+    }
+
+    #[test]
+    fn a_foreign_acquisition_is_recognised_by_the_installer_not_the_invocation() {
+        assert_eq!(
+            foreign_sol_toolchain("      - uses: foundry-rs/foundry-toolchain@v1"),
+            Some("foundry-rs/foundry-toolchain@v1".to_string())
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: foundryup --version nightly"),
+            Some("foundryup".to_string())
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: curl -L https://foundry.paradigm.xyz | bash"),
+            Some("foundry.paradigm.xyz".to_string())
+        );
+        // A bare `forge` says nothing: st0x.deploy opens `nix develop --command bash -c '` and
+        // calls forge on the NEXT line, so an invocation-based reading would call a nix repo
+        // foreign.
+        assert_eq!(
+            foreign_sol_toolchain("            forge script script/X.s.sol \\"),
+            None
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: nix develop -c forge fmt"),
+            None
+        );
+        // A comment mentioning the action is prose, not an acquisition.
+        assert_eq!(
+            foreign_sol_toolchain("      # we dropped foundryup for nix"),
+            None
+        );
+    }
+
+    /// The bound, named so it is on the record rather than in someone's head: a third way of
+    /// getting forge is NOT recognised, and such a repo still reads as `absent`. Narrowing the
+    /// blind spot is not the same as closing it, and the honest place to say so is a test.
+    #[test]
+    fn a_third_way_of_getting_forge_is_a_known_blind_spot() {
+        let container = "on: [push]\njobs:\n  t:\n    container: ghcr.io/acme/forge:1\n    steps:\n      - run: forge test\n";
+        assert_eq!(sol_toolchains(&wfs(&[("test.yml", container)])), vec![]);
+    }
+
+    #[test]
+    fn a_quoted_or_boolean_on_key_is_still_the_trigger_block() {
+        // YAML 1.1 reads bare `on` as true, so these are the spellings a formatter can emit.
+        for key in ["on:", "\"on\":", "'on':", "true:"] {
+            assert!(
+                workflow_gates_a_push(&format!("name: x\n{key} [push]\njobs:\n")),
+                "{key} is the trigger block and must be read as one"
+            );
+            assert!(
+                !workflow_gates_a_push(&format!(
+                    "name: x\n{key} workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: git push\n"
+                )),
+                "{key}: a push outside the trigger block still gates nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn a_comment_inside_the_trigger_block_is_not_a_trigger() {
+        assert!(!workflow_gates_a_push(
+            "on:\n  # runs on push once we migrate\n  workflow_dispatch:\njobs:\n"
+        ));
+        // Whitespace before the `#` is left where it is: only the COMMENT has to go, and
+        // `names_token` reads words, not columns.
+        assert_eq!(strip_yaml_comment("  push:  # every branch"), "  push:  ");
+        assert_eq!(strip_yaml_comment("# all of it"), "");
+        // A `#` that is not a comment introducer stays: flake attrs and branch globs contain them.
+        assert_eq!(
+            strip_yaml_comment("        run: nix develop .#sol-shell -c forge fmt"),
+            "        run: nix develop .#sol-shell -c forge fmt"
+        );
     }
 
     #[test]
@@ -32709,6 +32997,19 @@ mod settings_tests {
             step4.contains("Exit 3") && step4.contains("RECORD"),
             "step 4 must route the unresolvable checkout to the run record, not to a fallback: \
              {step4}"
+        );
+
+        // `foreign` is the exit-3 mode that is NOT "nothing to match", and reading it as `absent`
+        // is the worst available error: four org repos gate Solidity on a non-nix forge, one of
+        // them `forge fmt --check` on NIGHTLY. The step has to name the mode and say what makes
+        // it different, or the producer meets it and treats it as a free choice of shell.
+        assert!(
+            step4.contains("`foreign`"),
+            "step 4 must name the foreign mode, not fold it into the exit-3 list: {step4}"
+        );
+        assert!(
+            step4.contains("NOT \"nothing to match\""),
+            "step 4 must say what makes `foreign` different from `absent`: {step4}"
         );
 
         // Step 1's health-check use of the same URL is a DIFFERENT question and must survive: the
