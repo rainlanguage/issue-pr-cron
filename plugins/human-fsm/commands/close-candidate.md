@@ -26,11 +26,13 @@ Run **exactly one** command, and nothing else.
 pr-review-report human-close <slug> <n> <NOTE>
 ```
 
-One transition, in a fail-safe order the binary owns: post the `👤 human` ruling
+One transition — decide+do, no state between: post the `👤 human` ruling
 comment pinned to the head sha (a PR) or to the live producer flag (an issue),
-apply `human:close-candidate`, retire the pending `ai:close-candidate`, then
-close. It resolves PR-or-issue **by lookup**, so the reference alone decides
-which population it acts on and neither you nor this command ever guesses.
+close, then retire the pending `ai:close-candidate`. The comment alone is the
+durable intent; a tear between it and the close is completed by the vetter's
+own state-load. It resolves PR-or-issue **by lookup**, so the reference alone
+decides which population it acts on and neither you nor this command ever
+guesses.
 
 On a subject that is already closed it clears a stale `ai:close-candidate` and
 writes no ruling — the close is already on the record, and a reason dated today

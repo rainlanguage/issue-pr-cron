@@ -307,8 +307,8 @@ it finds is a different PR's code.
 - **Human decisions protect AUTHORSHIP, and a ruling is an INPUT (#111).** No AI
   actor ever writes a `human:*` label, and none removes one as an OVERRIDE of
   the human: a native `APPROVED`/`CHANGES_REQUESTED` review, a `👤 human` ruling
-  pinned to the CURRENT head, an absolutely-parking label
-  (`human:close-candidate`, retired `human:reject`), or an un-executed
+  pinned to the CURRENT head, an absolutely-parking label (the retired
+  `human:reject`), or an un-executed
   `human:design` is never overwritten by the vetter — `--record-verdict` refuses
   (exit 3), closing the TOCTOU race. But absolute parking was the ruled-out
   overreaction: a ruling is an input the machine EXECUTES. A delegated
@@ -356,16 +356,18 @@ it finds is a different PR's code.
   checked against a diff that is not there is not checked, and a guard that
   silently stops firing is this very failure one level up, inside the thing
   built to prevent it.
-- **The human's TERMINAL edge is a transition too.** `gh issue close` knows
-  nothing about the FSM, so a hand-close left `ai:close-candidate` attached: 74
-  closed subjects org-wide (55 issues, 19 PRs) carried it when #94 was filed, a
-  state no modeled transition produces. `human-close` is that edge as ONE
-  transition — comment, `human:close-candidate`, retire the pending flag, close,
-  in that order, with the close LAST because a closed subject reads as moot to
-  every ruling plan. It retires `ai:close-candidate` and no other `ai:*` label:
-  that one means "a human still has to ACT", and closing is the act. Chaining a
-  ruling tool with a Bash `gh close` would put the order and the flag clear in a
-  prompt, which is exactly the half that was wrong every time.
+- **The human's TERMINAL edge is a transition too — decide+do, no state
+  between (#213).** `gh issue close` knows nothing about the FSM, so a
+  hand-close left `ai:close-candidate` attached: 74 closed subjects org-wide
+  (55 issues, 19 PRs) carried it when #94 was filed, a state no modeled
+  transition produces. `human-close` is that edge as ONE transition — the
+  pinned `👤 human` ruling comment, the close, then the flag retirement, in
+  that order, writing NO label: the comment alone is the durable intent, and a
+  tear between it and the close is the torn-close signature the vetter's
+  state-load completes. It retires `ai:close-candidate` and no other `ai:*`
+  label: that one means "a human still has to ACT", and closing is the act.
+  Chaining a ruling tool with a Bash `gh close` would put the order and the
+  flag clear in a prompt, which is exactly the half that was wrong every time.
 - **A ruling names its POPULATION.** `ai:close-candidate` covers two separately
   sized sets — `closeCandidateIssues` (a producer claim on an issue) and
   `lanes.vetter-verdicts.ai:close-candidate` (the vetter's own verdict on a PR).

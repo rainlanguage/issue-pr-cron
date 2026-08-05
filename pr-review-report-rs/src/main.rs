@@ -1261,27 +1261,24 @@ const RETIRED_HUMAN_REJECT_LABEL: &str = "human:reject";
 /// This constant is the WRITE-protected set, and it dominates the label-based views (the queue's
 /// presentability filter, [`classify_lane`]'s human-decisions lane). Which of them still PARK a PR
 /// against AI actors, and on what condition, is [`pr_human_sacred`]'s question, not this set's:
-/// `human:design` parks only while un-executed, the two in [`PR_PARKED_HUMAN_LABELS`] park
+/// `human:design` parks only while un-executed, the one in [`PR_PARKED_HUMAN_LABELS`] parks
 /// absolutely.
 ///
-/// `human:reject` appears only as the RETIRED name — see [`RETIRED_HUMAN_REJECT_LABEL`].
-const PR_SACRED_LABELS: [&str; 3] = [
-    "human:design",
-    "human:close-candidate",
-    RETIRED_HUMAN_REJECT_LABEL,
-];
+/// `human:reject` appears only as the RETIRED name — see [`RETIRED_HUMAN_REJECT_LABEL`]. A close
+/// ruling carries NO label at all (#213): deciding a close and executing it are one transition,
+/// `human-close`, whose durable record is the pinned `👤 human` comment — a state between the two
+/// would split one actor's decide/do on a terminal act that is a single API call.
+const PR_SACRED_LABELS: [&str; 2] = ["human:design", RETIRED_HUMAN_REJECT_LABEL];
 
 /// The `human:*` labels that park a PR ABSOLUTELY — no AI actor acts on the PR while one is
-/// present, whatever the comments say. Each is absolute because its consuming transition is the
-/// human's own, so there is no execution for an AI actor to complete:
-///
-/// - `human:close-candidate` is a DECIDED close awaiting the human's terminal edge (`human-close`)
-///   — closing is the human's act by standing ruling, so the machine has nothing to execute;
-/// - the retired `human:reject` is exited by `migrate-reject` and nothing else.
+/// present, whatever the comments say. One entry: the retired `human:reject`, exited by
+/// `migrate-reject` and nothing else.
 ///
 /// `human:design` is deliberately NOT here: it is authorship-protected like the rest, but an
-/// executed delegation ([`Delegation::Executed`]) is consumable — see [`pr_human_sacred`].
-const PR_PARKED_HUMAN_LABELS: [&str; 2] = ["human:close-candidate", RETIRED_HUMAN_REJECT_LABEL];
+/// executed delegation ([`Delegation::Executed`]) is consumable — see [`pr_human_sacred`]. There
+/// is no absolutely-parked live state at all: "human authority" means the machine executes what
+/// the human RECORDED (#213), so every `human:*` state has a consuming transition.
+const PR_PARKED_HUMAN_LABELS: [&str; 1] = [RETIRED_HUMAN_REJECT_LABEL];
 
 /// A `gh search` result carries a human override label (which beats an `ai:ready` label) when any of
 /// its labels is in [`PR_SACRED_LABELS`]. Derived from the constant so the sacred set and the
@@ -10432,7 +10429,6 @@ fn label_meta(label: &str) -> (&'static str, &'static str) {
         // a description get silently rewritten org-wide by whatever writes it next.
         "human:reject" => ("b60205", "Human reviewer: needs rework"),
         "human:design" => ("3d1a78", "Human maintainer: design question (sacred)"),
-        "human:close-candidate" => ("555555", "Human maintainer: close candidate (sacred)"),
         "human:keep-open" => (
             "0e8a16",
             "Human decision: keep open (excluded from the close-candidate queue)",
@@ -12825,12 +12821,10 @@ enum CloseFlagPlan {
 ///
 /// It is also the ISSUE-side ruling vocabulary: `human-rule-issue` derives its verbs from this array
 /// (see [`human_rulings`]), so a state added here gains its transition rather than needing one.
-const HUMAN_RULING_LABELS: [&str; 4] = [
-    "human:reject",
-    "human:design",
-    "human:close-candidate",
-    "human:keep-open",
-];
+/// A CLOSE ruling has no entry (#213): deciding a close and executing it are one transition,
+/// `human-close`, recorded by the pinned `👤 human` comment alone — a label between the decision
+/// and the act would be a state splitting one actor's decide/do.
+const HUMAN_RULING_LABELS: [&str; 3] = ["human:reject", "human:design", "human:keep-open"];
 
 /// The PR RULING vocabulary — the labels `human-rule` may write on a pull request, and the twin of
 /// [`HUMAN_RULING_LABELS`] on the other subject.
@@ -12841,17 +12835,19 @@ const HUMAN_RULING_LABELS: [&str; 4] = [
 /// describes. The attribute did not go away: it moved to the sha-pinned `👤 human` comment the same
 /// transition posts, where [`human_ruled_at_head`] reads it and where the vetter cannot write it.
 ///
-/// The two `human:*` entries stay in that namespace because they are not one half of a split: no
-/// `ai:design` / `ai:close-candidate` on a PR asks the same thing of the same actor as its `human:`
-/// twin — the AI's raises a question for the human; the human's records the ANSWER, which either
-/// delegates the execution (`design --rework`, the producer's work order) or explicitly parks
-/// (`design --park`), and `human:close-candidate` awaits the human's own terminal edge (#111).
+/// The one `human:*` entry stays in that namespace because it is not one half of a split:
+/// `ai:design` on a PR does not ask the same thing of the same actor as `human:design` — the AI's
+/// raises a question for the human; the human's records the ANSWER, which either delegates the
+/// execution (`design --rework`, the producer's work order) or explicitly parks (`design --park`).
+/// A CLOSE is not here at all (#213): it is `human-close`'s decide+do, never a ruling verb, for
+/// the reason #133 gives — a state that models an attribute (or a phase) is a machine bigger than
+/// the thing it describes.
 ///
 /// This is deliberately NOT the same array as [`HUMAN_DECISION_LABELS`] any more, and the invariant
 /// that mattered is kept as a property instead of an identity: every label a ruling can write must be
 /// one [`classify_lane`] buckets into a real lane, else the ruling is a leak. That is asserted
 /// directly, over both arrays.
-const HUMAN_PR_RULING_LABELS: [&str; 3] = ["ai:reject", "human:design", "human:close-candidate"];
+const HUMAN_PR_RULING_LABELS: [&str; 2] = ["ai:reject", "human:design"];
 
 /// Does any human ruling sit on this issue? Takes label NAMES, which callers already have.
 fn has_human_ruling(labels: &[String]) -> bool {
@@ -12926,11 +12922,87 @@ fn last_close_candidate_flag(issue: &Value) -> Option<(String, String)> {
         .next_back()
 }
 
-/// The most-recent trusted `🤖 ai:vetter` comment on an ISSUE recording a close-candidate verdict.
+/// The most-recent trusted `🤖 ai:vetter` comment recording a close-candidate verdict. Works on
+/// either subject type — the flag lifecycle is one machine whatever carries the label (#211), and
+/// the comment shape (`Reviewed close-candidate @<flag_at>: …`) is the same on both.
 fn last_cc_vetter_comment(issue: &Value) -> Option<String> {
     trusted_comments(issue, Some("🤖 ai:vetter"))
         .into_iter()
         .rfind(|b| b.contains("Reviewed close-candidate @"))
+}
+
+/// Is this subject snapshot actually a PULL REQUEST? `gh issue view <n>` and `gh search issues`
+/// both happily answer for one, and the subject's own `url` is the discriminator every
+/// mixed-population surface here reads (#94) — never the number, which says nothing.
+fn subject_is_pr(detail: &Value) -> bool {
+    detail
+        .get("url")
+        .and_then(|u| u.as_str())
+        .is_some_and(|u| u.contains("/pull/"))
+}
+
+/// PURE: does one trusted vetter comment body record the PR-side `close` VERDICT — a
+/// `Reviewed <sha>: close …` line? The cc-flag twin (`Reviewed close-candidate @…`) is excluded by
+/// its own token, so a flag verdict never reads as a PR close verdict or vice versa.
+///
+/// Deliberately NOT head-currency-checked: [`classify_lane`] keeps every non-`ready` verdict label
+/// in force whatever the head did, and this reader exists to explain the same label, so the two
+/// must answer alike or one surface calls "vetter verdict" what the other calls "stranded".
+fn pr_close_verdict_line(body: &str) -> bool {
+    body.lines().any(|l| {
+        let Some(rest) = l.trim().strip_prefix("Reviewed ") else {
+            return false;
+        };
+        if rest.starts_with("close-candidate @") {
+            return false;
+        }
+        matches!(
+            rest.split_once(": "),
+            Some((_, tail)) if tail.split_whitespace().next() == Some("close")
+        )
+    })
+}
+
+/// The most-recent trusted `🤖 ai:vetter` PR-side `close` verdict on this subject, as
+/// `(createdAt, body)` — the shape [`last_close_candidate_flag`] uses, and for the same consumer:
+/// the timestamp is the FIFO queue key where a flag's own timestamp does not exist, because the
+/// vetter's verdict IS what put this subject in the human's close queue.
+fn last_pr_close_verdict(detail: &Value) -> Option<(String, String)> {
+    detail
+        .get("comments")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|c| author_login(c) == Some(TRUSTED_AUTHOR))
+        .filter_map(|c| {
+            let body = c.get("body").and_then(|b| b.as_str())?;
+            if !body.starts_with("🤖 ai:vetter") || !pr_close_verdict_line(body) {
+                return None;
+            }
+            let at = c.get("createdAt").and_then(|t| t.as_str()).unwrap_or("");
+            Some((at.to_string(), body.to_string()))
+        })
+        .next_back()
+}
+
+/// PURE: has a human recorded the CLOSE ruling on this subject? A trusted `👤 human` comment with
+/// a `Ruled …: close-candidate` line — [`human_rule_comment`]'s own shape for the ruling word
+/// `human-close` records.
+///
+/// On a subject that is still OPEN this is the torn-close signature (#213): `human-close` writes
+/// the comment first and closes second, so a tear between the two leaves exactly this — the
+/// decision on the record, the act not landed. Execution needs no further judgement (the recorded
+/// ruling is the authority), which is why [`cc_gate`] routes it to completion instead of
+/// presenting the subject to anyone.
+fn human_close_ruled(detail: &Value) -> bool {
+    trusted_comments(detail, Some(HUMAN_MARKER))
+        .iter()
+        .any(|b| {
+            b.lines().any(|l| {
+                let t = l.trim();
+                t.starts_with("Ruled ") && t.contains(": close-candidate")
+            })
+        })
 }
 
 /// The issue-side analogue of [`vetted_at_head`]: a flag is vetted only when the vetter's own
@@ -12971,12 +13043,13 @@ fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str, citation: Option
 /// guard-before-write shape as [`VerdictPlan`].
 #[derive(Debug, PartialEq)]
 enum CcVerdictPlan {
-    /// The verdict was pointed at a PULL REQUEST. `gh issue view <n>` answers for one, so without
-    /// this the ISSUE-side authority silently reaches a PR — where `ai:close-candidate` is not a
-    /// producer CLAIM awaiting judgement but the vetter's own `record_verdict … close`. The refusal
-    /// that fired here instead was `NoFlag`'s "nothing to judge", which reads as "this PR has no
-    /// human path at all" and was recorded as exactly that misreading on #94.
-    NotAnIssue,
+    /// The verdict was pointed at a PULL REQUEST whose label is the vetter's OWN `record_verdict …
+    /// close` — no trusted producer flag states a claim, so there is nothing here for a second AI
+    /// judgement to judge (#211 narrowed this from "any PR": a producer CLAIM on a PR is vetted
+    /// exactly as one on an issue is). The refusal that fired here before the variant existed was
+    /// `NoFlag`'s "nothing to judge", which reads as "this PR has no human path at all" and was
+    /// recorded as exactly that misreading on #94.
+    VetterVerdictPr,
     /// A human already ruled: never overwritten.
     RefuseHuman,
     /// The issue is closed — the flag is moot.
@@ -12997,15 +13070,14 @@ enum CcVerdictPlan {
 /// stops firing.
 const CC_VERDICT_FIELDS: &str = "state,labels,comments,url";
 
-/// PURE: may the vetter record `verdict` on this flagged issue, and what does it change?
+/// PURE: may the vetter record `verdict` on this flagged subject, and what does it change?
 fn cc_verdict_plan(issue_json: &Value, verdict: &str) -> CcVerdictPlan {
-    // Subject type FIRST, so a closed PR is told what it is rather than that its flag is moot.
-    if issue_json
-        .get("url")
-        .and_then(|u| u.as_str())
-        .is_some_and(|u| u.contains("/pull/"))
-    {
-        return CcVerdictPlan::NotAnIssue;
+    // Subject type FIRST, so a closed verdict-close PR is told what it is rather than that its
+    // label is moot. A PR is refused only when NO trusted producer flag states a claim — then the
+    // label is the vetter's own verdict (#211); a flagged PR takes the same lifecycle as a
+    // flagged issue and falls through to it.
+    if subject_is_pr(issue_json) && last_close_candidate_flag(issue_json).is_none() {
+        return CcVerdictPlan::VetterVerdictPr;
     }
     let state = issue_json
         .get("state")
@@ -13632,11 +13704,12 @@ fn citation_unsupported_refusal(slug: &str, issue: &str, ev: &CitationEvidence) 
 }
 
 /// `--flag-close-candidate <owner/repo> <issue> "<reason>" [--dry-run]`: the SOLE sanctioned way the
-/// producer flags a closeable ISSUE — applies the `ai:close-candidate` label + a trusted
+/// producer flags a closeable SUBJECT — applies the `ai:close-candidate` label + a trusted
 /// `🤖 ai:producer` reason comment, replacing the old local close-candidates.jsonl. GitHub state is
-/// the source of truth: a closed/fixed issue drops out of the `--state open` query automatically,
-/// re-flagging is idempotent, and a human `human:keep-open` / `human:close-candidate` ruling is
-/// sacred (the tool refuses, exit 3). The producer NEVER closes the issue — a human does that.
+/// the source of truth: a closed/fixed subject drops out of the `--state open` query automatically,
+/// re-flagging is idempotent, and a human ruling (`human:keep-open`, or any other `human:*` label)
+/// is sacred (the tool refuses, exit 3). The producer NEVER closes the subject — that is the
+/// human's authority, exercised through `human-close`.
 ///
 /// An `already-fixed-on-main` reason additionally must carry a commit sha or merged PR number whose
 /// date POST-DATES the issue (exit 4). "This code is on main today" is not the same claim as "this
@@ -14680,9 +14753,10 @@ fn ai_state_label(labels: &[String]) -> Option<String> {
 const HUMAN_MARKER: &str = "👤 human";
 
 /// The human rulings that DISPOSE of a live producer close-candidate flag — the two that answer the
-/// flag's own question. `close-candidate` agrees with it (the issue is the human's to close);
-/// `keep-open` contradicts it outright. Any OTHER ruling written onto a live flag strands it (see
-/// [`HumanRulePlan::StrandsFlag`]).
+/// flag's own question. `close-candidate` agrees with it and is `human-close`'s OWN plan word, not
+/// a vocabulary verb (#213 — the close is decide+do, so no `human-rule*` surface offers it);
+/// `keep-open` contradicts the flag outright. Any OTHER ruling written onto a live flag strands it
+/// (see [`HumanRulePlan::StrandsFlag`]).
 const FLAG_DISPOSING_RULINGS: [&str; 2] = ["close-candidate", "keep-open"];
 
 /// PURE: the VERB a state label offers a ruling — its name after the namespace prefix. Split on the
@@ -15004,6 +15078,16 @@ fn human_pr_rule_plan(pr_json: &Value, ruling: &str, target: &str) -> HumanRuleP
         return HumanRulePlan::NoAnchor;
     }
     let labels = label_names(pr_json);
+    // The PR-side twin of the issue plan's strand guard (#211): a producer flag lives on PRs now,
+    // and `record_close_candidate_verdict` refuses once a human has ruled, so a ruling that
+    // neither disposes the flag nor clears the label would park it un-judgeable for ever —
+    // rain.erc4626.words#93's shape, on the other subject type. An `ai:*` target disposes
+    // structurally: [`labels_to_remove`] strips every other `ai:*`, the flag label with it.
+    if let Some(flag_at) = live_close_candidate_flag(pr_json, &labels) {
+        if !FLAG_DISPOSING_RULINGS.contains(&ruling) && !target.starts_with("ai:") {
+            return HumanRulePlan::StrandsFlag { flag_at };
+        }
+    }
     HumanRulePlan::Record {
         supersedes: labels
             .iter()
@@ -15346,14 +15430,12 @@ fn strands_flag_error(slug: &str, issue: &str, target: &str, flag_at: &str) -> (
              and `{target}` would strand it — every AI transition refuses once a human has ruled, \
              so `record_close_candidate_verdict` could never judge this flag again.\n\
              The moves that ARE available here, one command each:\n  \
-             human-close {slug} {issue} \"…\"                                — the flag is right AND \
-             you are acting on it now: rules close-candidate, clears the flag, closes the issue\n  \
-             human-rule-issue {slug} {issue} close-candidate \"…\"          — the flag is right but \
-             the issue stays open for now (sacred; the flag stands as the pending claim)\n  \
+             human-close {slug} {issue} \"…\"                                — the flag is right: \
+             record the ruling, close, retire the flag — decide+do, one transition\n  \
              human-rule-issue {slug} {issue} keep-open \"…\"                 — the flag is wrong AND \
              this must never be re-flagged (sacred; clears ai:close-candidate)\n  \
              record-close-candidate-verdict {slug} {issue} reject \"…\"      — the flag is wrong on \
-             THIS evidence; drop it and return the issue to the producer, which may re-flag on better \
+             THIS evidence; drop it and return the subject to its queue, which may re-flag on better \
              evidence"
         ),
     )
@@ -15657,8 +15739,8 @@ fn human_rule_issue_apply(
 // ─────────────────────────────────────────────────────────────────────────────
 // the TERMINAL human edge: rule, retire the pending flag, close.
 //
-// `iupheld --> [*] : human closes` and `hclose --> [*] : human closes` are two edges of the state
-// diagram that had no transition function, so the only way to take them was raw `gh issue close` —
+// The terminal close edges of the state diagram had no transition function, so the only way to
+// take them was raw `gh issue close` —
 // which knows nothing about the FSM. #94 measured what that cost: at the time it was filed, **74**
 // terminal subjects across the org (55 issues, 19 PRs) were CLOSED and still carrying
 // `ai:close-candidate`, a state no modeled transition produces. The one ruling in the same sitting
@@ -15669,8 +15751,14 @@ fn human_rule_issue_apply(
 // It is deliberately ONE transition rather than a command that chains two. A slash command that
 // called `human-rule-issue` and then `gh issue close` would put the ORDER — and the flag clear —
 // in a prompt, which is exactly the "loose transition" CLAUDE.md forbids: unenforced, untested, and
-// free to drift. Here the order is [`human_close_steps`], a tested property, and the close is last
-// because a closed subject reads as `Moot` to every ruling plan.
+// free to drift. Here the order is [`human_close_steps`], a tested property.
+//
+// It writes NO label (#213): a label between the decision and the act would split one actor's
+// decide/do on a terminal act that is a single API call — the pinned `👤 human` comment alone is
+// the durable intent. A tear between that comment and the close leaves the torn-close signature
+// (ruling on the record, subject still open), which the close-candidate machinery recognises and
+// COMPLETES ([`CcGate::TornHumanClose`]) wherever the subject is scan-visible, and which a re-run
+// of this same command resumes everywhere else (the comment dedups; the close executes).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The one `ai:*` label that means "a human still has to ACT on this subject", rather than "an AI
@@ -15678,9 +15766,6 @@ fn human_rule_issue_apply(
 /// the vetter's pending `close` verdict. Both name a queue, and closing the subject is the act that
 /// empties it — which is why the terminal edge retires it and no other `ai:*` label.
 const PENDING_CLOSE_FLAG: &str = "ai:close-candidate";
-/// The label the terminal edge writes. Not a parameter: `human-close` IS the `close-candidate`
-/// ruling plus its terminal act, so a second verb here would be a second spelling of one state.
-const HUMAN_CLOSE_TARGET: &str = "human:close-candidate";
 
 /// The terminal-close decision. Delegates every guard to the ruling plan the subject's own type
 /// selects — so vocabulary, note, anchor, stranding and idempotence are the SAME code, tested once —
@@ -15710,10 +15795,15 @@ enum HumanClosePlan {
 /// one.
 fn human_close_plan(subject: &Value, is_pr: bool) -> HumanClosePlan {
     let flagged = label_names(subject).iter().any(|l| l == PENDING_CLOSE_FLAG);
+    // The TARGET is empty (#213): this transition writes no label, and an empty target excepts
+    // nothing from `supersedes` — a close supersedes every standing `human:*` ruling, because the
+    // subject it parked no longer exists to be parked. The ruling WORD stays `close-candidate`:
+    // it is the vocabulary every recorded close ruling already carries, and the torn-close
+    // detector ([`human_close_ruled`]) reads exactly that word off the record.
     let plan = if is_pr {
-        human_pr_rule_plan(subject, "close-candidate", HUMAN_CLOSE_TARGET)
+        human_pr_rule_plan(subject, "close-candidate", "")
     } else {
-        human_issue_rule_plan(subject, "close-candidate", HUMAN_CLOSE_TARGET)
+        human_issue_rule_plan(subject, "close-candidate", "")
     };
     match plan {
         HumanRulePlan::Moot if flagged => HumanClosePlan::StaleFlag,
@@ -15743,22 +15833,48 @@ fn human_close_plan(subject: &Value, is_pr: bool) -> HumanClosePlan {
     }
 }
 
-/// PURE: the terminal edge's write order — the ruling's own sequence with the close appended.
-/// Reusing [`human_rule_steps`] rather than restating it keeps ONE fail-safe order: a second list
-/// could be re-ordered without the property test that guards the first one noticing.
+/// PURE: the terminal edge's write order. NOT [`human_rule_steps`] + a close any more (#213):
+/// that order existed to protect label writes, and this transition makes none. The invariant this
+/// order satisfies — pinned by tests, one per tear point — is that **no tear leaves a subject
+/// invisible to existing machinery**:
+///
+/// - `Comment` FIRST. The pinned ruling is the durable intent; a tear after it leaves the
+///   torn-close signature — close ruling on the record, subject still open — which the flag scan
+///   sees and COMPLETES while the subject carries `ai:close-candidate`
+///   ([`CcGate::TornHumanClose`]), and which a re-run of this command resumes when it does not
+///   (the comment dedups, the close executes).
+/// - `Close` SECOND, ahead of every label removal — the REVERSE of the ruling order's
+///   "close last". That rule kept label writes reachable on a subject whose plans read closed as
+///   `Moot`; with no label written, ordering the removals first would instead open the one
+///   indefensible tear: an OPEN subject with no flag, visible to no scan. A tear after the close
+///   leaves a CLOSED subject — the act is done — with at worst a stale flag, a state MACHINERY
+///   enumerates ([`sweep_stale_closed_flags`], the closed-side search on the same state-load) and
+///   the already-closed re-run path ([`HumanClosePlan::StaleFlag`], #94) also consumes.
+/// - Removals LAST: the pending flag first (it is the machine-visible queue state, and the sweep
+///   above is what heals a tear here), then superseded `human:*` rulings — the latter at worst
+///   cosmetic residue on a closed subject, with the re-run as its exit.
 fn human_close_steps(
     supersedes: &[String],
     clears: &[String],
-    has_target: bool,
     skip_comment: bool,
 ) -> Vec<RuleStep> {
-    let mut steps = human_rule_steps(supersedes, clears, has_target, skip_comment);
+    let mut steps = Vec::new();
+    if !skip_comment {
+        steps.push(RuleStep::Comment);
+    }
     steps.push(RuleStep::Close);
+    steps.extend(
+        clears
+            .iter()
+            .chain(supersedes)
+            .map(|l| RuleStep::RemoveLabel(l.clone())),
+    );
     steps
 }
 
-/// PURE: the report the terminal edge prints — the ruling's report plus the act that made it
-/// terminal, so one line says everything that moved.
+/// PURE: the report the terminal edge prints — what was recorded, what was retired, and the act,
+/// in one line. No label is named because none is written (#213): the ruling lives in the pinned
+/// comment.
 fn human_close_report(
     slug: &str,
     n: &str,
@@ -15768,17 +15884,22 @@ fn human_close_report(
     skip_comment: bool,
 ) -> String {
     format!(
-        "{} [closed]",
-        human_rule_report(
-            slug,
-            n,
-            HUMAN_CLOSE_TARGET,
-            anchor,
-            supersedes,
-            clears,
-            skip_comment,
-            ""
-        )
+        "ruled close-candidate on {slug}#{n} @ {anchor}{}{}{} [closed]",
+        if supersedes.is_empty() {
+            String::new()
+        } else {
+            format!(" [superseded {}]", supersedes.join(","))
+        },
+        if clears.is_empty() {
+            String::new()
+        } else {
+            format!(" [cleared {}]", clears.join(","))
+        },
+        if skip_comment {
+            " [comment deduped]"
+        } else {
+            " [comment posted]"
+        }
     )
 }
 
@@ -15818,7 +15939,7 @@ fn human_close_apply(
     } else {
         ("issue", seen)
     };
-    let (anchor, supersedes, clears, has_target, skip) = match human_close_plan(&subject, is_pr) {
+    let (anchor, supersedes, clears, _has_target, skip) = match human_close_plan(&subject, is_pr) {
         HumanClosePlan::Settled => {
             return Ok(format!(
                 "{slug}#{n} is already closed and carries no {PENDING_CLOSE_FLAG} — nothing written"
@@ -15868,7 +15989,7 @@ fn human_close_apply(
             ));
         }
         HumanClosePlan::Rule(HumanRulePlan::StrandsFlag { flag_at }) => {
-            return Err(strands_flag_error(slug, n, HUMAN_CLOSE_TARGET, &flag_at));
+            return Err(strands_flag_error(slug, n, "human-close", &flag_at));
         }
         HumanClosePlan::Rule(HumanRulePlan::Moot) => {
             return Ok(format!("{slug}#{n} is not open — nothing written"));
@@ -15893,13 +16014,15 @@ fn human_close_apply(
             }
         ));
     }
+    // The target is empty: this transition writes no label (#213), so no step here can reach the
+    // EnsureLabel/AddLabel argv that would need one.
     human_rule_write(
         noun,
         slug,
         n,
-        HUMAN_CLOSE_TARGET,
+        "",
         &comment,
-        &human_close_steps(&supersedes, &clears, has_target, skip),
+        &human_close_steps(&supersedes, &clears, skip),
     )?;
     Ok(human_close_report(
         slug,
@@ -16417,15 +16540,19 @@ fn print_transition_result(result: Result<String, (i32, String)>) -> i32 {
 // lane bucketing — the FSM's full inventory, grouped by lane for the dashboard.
 //
 // `human-queue --json` emits EVERY modeled state's inventory, not just the human-action ones, so the
-// dashboard can show where PRs pile up. Each producer PR lands in exactly ONE lane bucket by FSM
-// precedence (a human decision dominates a stale ai:* label; a blocked hand-off next — filed under
-// the lane of whoever moves it: the vetter for `ai:blocked-on` (#161), the producer for the
-// RETIRED blocked residue; then an ai:ready PR whose verdict is not current at its head falls back
-// to un-vetted; then the other vetter verdicts; a label-less PR is a leak if the producer
-// commented, else un-vetted).
+// dashboard can show where PRs pile up. Each producer PR lands in exactly ONE bucket by FSM
+// precedence (a human decision dominates a stale ai:* label; an `ai:close-candidate` PR is handed
+// to the close-candidate machinery, which inventories it in the mixed unvetted/upheld arrays
+// instead of any lane (#211/#212); a blocked hand-off next — filed under the lane of whoever moves
+// it: the vetter for `ai:blocked-on` (#161), the producer for the RETIRED blocked residue; then an
+// ai:ready PR whose verdict is not current at its head falls back to un-vetted; then the other
+// vetter verdicts; a label-less PR is a leak if the producer commented, else un-vetted).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The four FSM lanes, plus the `Leak` anti-lane (escaped the machine — not a modeled state).
+/// The four FSM lanes, plus the `Leak` anti-lane (escaped the machine — not a modeled state) and
+/// the `CloseCandidate` hand-off (#211/#212): a PR the flag machinery owns, inventoried by the
+/// close-candidate state-load (`closeCandidateUnvetted` / `closeCandidateUpheld`) rather than by
+/// any lane — the PR-side mirror of a flagged issue leaving `uncoveredIssues`.
 #[derive(Debug, PartialEq, Eq)]
 enum Lane {
     VetLifecycle,
@@ -16433,6 +16560,7 @@ enum Lane {
     ProducerBlocked,
     HumanDecisions,
     Leak,
+    CloseCandidate,
 }
 
 impl Lane {
@@ -16443,6 +16571,7 @@ impl Lane {
             Lane::ProducerBlocked => "producer-blocked",
             Lane::HumanDecisions => "human-decisions",
             Lane::Leak => "leak",
+            Lane::CloseCandidate => "close-candidate",
         }
     }
 }
@@ -16457,8 +16586,9 @@ impl Lane {
 /// state would misreport what the PR carries), so a delegated design PR shows here until the re-vet
 /// clears it; re-homing the dashboard slot that reads this lane is the #148-shaped follow-up gated
 /// on this machinery. The ruling vocabulary is [`HUMAN_PR_RULING_LABELS`] — no longer the same
-/// array, and no longer required to be.
-const HUMAN_DECISION_LABELS: [&str; 2] = ["human:design", "human:close-candidate"];
+/// array, and no longer required to be. A close ruling buckets nowhere by design (#213): it is
+/// `human-close`'s decide+do with no label, so there is no close state for this lane to hold.
+const HUMAN_DECISION_LABELS: [&str; 1] = ["human:design"];
 /// The vetter's non-`ready` verdict labels (the `ready` split is handled separately by head drift).
 ///
 /// `ai:relink` is RETIRED (#135) — [`VETTER_VERDICTS`] no longer accepts the word, so no transition
@@ -16467,8 +16597,12 @@ const HUMAN_DECISION_LABELS: [&str; 2] = ["human:design", "human:close-candidate
 /// reclassify that PR as `un-vetted` and hide the very thing that needs unpicking. It leaves the
 /// moment the human re-records the verdict as a `reject` naming the linkage — `labels_to_remove`
 /// strips every other `ai:*` — after which this entry is dead and can go.
-const VETTER_VERDICT_LABELS: [&str; 4] =
-    ["ai:reject", "ai:relink", "ai:design", "ai:close-candidate"];
+///
+/// `ai:close-candidate` is NOT here any more (#211/#212): the label — the vetter's `close` verdict
+/// and the producer's flag alike — hands the PR to the close-candidate machinery, which is its own
+/// arm in [`classify_lane`] rather than a verdict-lane state, so the ONE mixed upheld inbox and
+/// the ONE mixed unvetted inbox own every subject that carries it.
+const VETTER_VERDICT_LABELS: [&str; 3] = ["ai:reject", "ai:relink", "ai:design"];
 
 /// PURE: the single (lane, state) a producer PR belongs to, by FSM precedence.
 /// - `ready_vetted_at_head`: for an `ai:ready` PR, `Some(false)` when no `ai:vetter` verdict is
@@ -16497,6 +16631,16 @@ fn classify_lane(
     // actually is, not where the migration will put it.
     if has(RETIRED_HUMAN_REJECT_LABEL) {
         return (Lane::HumanDecisions, RETIRED_HUMAN_REJECT_LABEL.to_string());
+    }
+    // The close-candidate hand-off (#211/#212), ahead of every remaining `ai:*` state: the label
+    // parks the PR in the flag machinery — the org-wide label search is what enumerates it, into
+    // `closeCandidateUnvetted` (a producer flag awaiting the vetter) or `closeCandidateUpheld`
+    // (an upheld flag or the vetter's own `close` verdict, the human's ONE mixed inbox) — so
+    // bucketing it into a lane as well would count one subject in two states at once. Below the
+    // human arms because a human ruling dominates the flag in `cc_gate` too: the two classifiers
+    // must hand each subject to the same owner or the inboxes disagree.
+    if has("ai:close-candidate") {
+        return (Lane::CloseCandidate, "ai:close-candidate".to_string());
     }
     // RETIRED (#162) but still bucketed, at its old precedence: a blocked state dominates a stale
     // `ai:ready` label. Deliberately producer-blocked and NOT vet-lifecycle — the #164 clearance
@@ -16596,12 +16740,13 @@ fn leak_reason(trusted_bodies: &[String]) -> Option<String> {
 /// those cannot build a link at all — the field is simply not there.
 ///
 /// Nor can it derive one: `{repo, number}` does not say whether the number is an issue or a PR, and
-/// the arrays split BOTH ways (`states`/`leaks` are PRs, the rest are issues). That split is an
-/// implementation fact — `gh search issues` scopes to issues, `gh search prs` to PRs — not
-/// something the payload states, so a consumer has to hard-code a per-key rule it cannot verify and
-/// that changes silently if a key's source query ever changes. GitHub does redirect
-/// `/pull/<n>` ↔ `/issues/<n>`, so a guessed link survives a browser click today; it does not
-/// survive a non-following API client, a link checker, or a subject transferred to another repo.
+/// no per-key rule says either — `states`/`leaks` are PRs, `uncoveredIssues` is issues, and the
+/// close-candidate arrays MIX the two (#211/#212: the flag lifecycle covers both subject types).
+/// A consumer hard-coding a per-key rule could not verify it and would break silently when a key's
+/// source query changed — which is exactly what #211 did to the old "close-candidate ⇒ issue"
+/// rule. GitHub does redirect `/pull/<n>` ↔ `/issues/<n>`, so a guessed link survives a browser
+/// click today; it does not survive a non-following API client, a link checker, or a subject
+/// transferred to another repo.
 /// The resolved `url` is already in hand at every one of those sites (each array is built from a
 /// `gh search` / `gh issue view` payload that returns it), so carrying it costs nothing.
 ///
@@ -16708,6 +16853,13 @@ fn lanes_doc(prs: &[QueuePr]) -> Value {
     > = std::collections::BTreeMap::new();
     for p in prs {
         let (lane, state) = classify_lane(&p.labels, p.ready_vetted_at_head, p.producer_commented);
+        // NOT a lane (#211/#212): the flag machinery inventories this PR — the same run's
+        // `closeCandidateUnvetted`/`closeCandidateUpheld` arrays, fed by the org-wide label
+        // search, which reaches every PR this author-scoped scan does and more. Emitting it here
+        // too would put one subject in two states, which is the split #212 retired.
+        if lane == Lane::CloseCandidate {
+            continue;
+        }
         lanes
             .entry(lane.key())
             .or_default()
@@ -17031,12 +17183,14 @@ fn human_queue_doc(
             "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
             "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
             "closeCandidateIssues": close_issues.len(),
-            // Close-candidate VET lifecycle (#72/#73). `closeCandidateIssues` above keeps its
-            // meaning — every issue carrying the label — and these split it by vet state:
+            // Close-candidate VET lifecycle (#72/#73), over BOTH subject types (#211/#212).
+            // `closeCandidateIssues` above keeps its legacy meaning — every ISSUE carrying the
+            // label — and these are the machine's own split, mixing issues and PRs:
             //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
-            //   upheld   = the vetter judged the evidence sound; genuinely queued for the human
-            // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the issue
-            // leaves this set entirely and reappears under `uncoveredIssues`.
+            //   upheld   = the vetter judged this should close — an upheld flag on either subject
+            //              type, or the vetter's own PR `close` verdict — queued for the human
+            // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the subject
+            // leaves this set entirely — an issue back to `uncoveredIssues`, a PR to its lane.
             "closeCandidateUnvetted": cc_unvetted_n,
             "closeCandidateUpheld": cc_upheld_n,
             "leaks": leaks.len(),
@@ -17053,11 +17207,12 @@ fn human_queue_doc(
             // stays there. The key is kept while it can be non-zero — a dashboard that stopped
             // rendering the state would hide the PR that still needs re-recording as a `reject`.
             "relink": lane_state_count(lanes, "vetter-verdicts", "ai:relink"),
-            "closeCandidatePrs": lane_state_count(lanes, "vetter-verdicts", "ai:close-candidate"),
+            // No key counts a close-candidate PR lane state or a decided-close state: flagged
+            // PRs are inventoried by the mixed close-candidate arrays above (#211/#212), and a
+            // close ruling is `human-close`'s decide+do with no state between (#213).
             // RETIRED (#133). Kept — the dashboard reads it — and it now means "still to migrate".
             "humanReject": lane_state_count(lanes, "human-decisions", RETIRED_HUMAN_REJECT_LABEL),
             "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
-            "humanCloseCandidate": lane_state_count(lanes, "human-decisions", "human:close-candidate"),
         }
     });
     if let Some(open) = open {
@@ -17252,7 +17407,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .collect();
     let lanes = lanes_doc(&queue_prs);
 
-    // The open close-candidate ISSUES (close-candidate is an issue-level flag).
+    // The open close-candidate ISSUES — the LEGACY `closeCandidateIssues` count, which has always
+    // meant "issues carrying the label" and keeps that meaning; the machine's own mixed-subject
+    // populations are the `closeCandidateUnvetted`/`closeCandidateUpheld` pair below (#211/#212).
     let mut iargs: Vec<String> = vec!["search".into(), "issues".into()];
     iargs.extend(org_owner_args());
     iargs.extend(
@@ -17283,15 +17440,17 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .0,
     );
 
-    // Close-candidate vet state, as `(unvetted, upheld)`. Computed from the same state-load the
-    // vetter reads, so the dashboard and the vetter can never disagree about the size of the inbox.
-    // Additive and FAILURE-TOLERANT: this costs one `gh issue view` per flagged issue, so a transient
-    // API failure yields (0, 0) rather than aborting the queue render or corrupting the legacy
-    // `closeCandidateIssues` count, which keeps its own cheap search above.
+    // Close-candidate vet state, as `(unvetted, upheld)` — BOTH arrays mixing issues and PRs
+    // (#211/#212). Computed from the same state-load the vetter reads, so the dashboard and the
+    // vetter can never disagree about the size of the inbox.
+    // Additive and FAILURE-TOLERANT: this costs one `gh issue view` per flagged subject, so a
+    // transient API failure yields (0, 0) rather than aborting the queue render or corrupting the
+    // legacy `closeCandidateIssues` count, which keeps its own cheap search above.
     //
-    // Upheld is derived, not stored: a REJECTED flag has its label stripped, so it cannot appear in
-    // this search at all — an issue that still carries the label AND is vetted at its current flag
-    // was necessarily upheld.
+    // Upheld is derived, not stored: a REJECTED flag has its label stripped, so it cannot appear
+    // in this search at all — a subject that still carries the label AND is vetted at its current
+    // flag was necessarily upheld, and a PR whose label is the vetter's own `close` verdict is the
+    // same judgement by its other route.
     // `include_skipped` is required: the upheld set lives in the skipped rows. Arrays and counts
     // both come from this ONE document, so `counts.X == X.len()` holds by construction — the
     // dashboard's boxes are click-through, and a count that disagreed with its list would render a
@@ -17421,11 +17580,16 @@ fn human_queue_mode(json_out: bool) -> i32 {
     if let Some(v) = buckets.get("ai:design") {
         show("RULE — ai:design", v);
     }
-    show_lane(
-        "CLOSE — ai:close-candidate (PRs)",
-        "vetter-verdicts",
-        "ai:close-candidate",
-    );
+    // Print a mixed-subject close-candidate array (issues AND PRs, #211/#212) straight from the
+    // same document the JSON emits, so the daily review and the dashboard read one population.
+    let show_cc = |title: &str, items: &Value| {
+        let empty = Vec::new();
+        let items = items.as_array().unwrap_or(&empty);
+        println!("\n▓▓ {title}  ({})", items.len());
+        for it in items {
+            println!("{}", review_subject_block(&SubjectRef::from_row(it), 66));
+        }
+    };
     // producer-blocked (`ai:blocked-on` prints with the vetter's group above — #161)
     // RETIRED (#162) — no transition writes this label any more. Shown while any PR still carries
     // it, so each residue PR stays visible until its eyes-on triage: re-flag it
@@ -17449,12 +17613,16 @@ fn human_queue_mode(json_out: bool) -> i32 {
         RETIRED_HUMAN_REJECT_LABEL,
     );
     show_lane("HUMAN-DESIGN", "human-decisions", "human:design");
-    show_lane(
-        "HUMAN-CLOSE-CANDIDATE",
-        "human-decisions",
-        "human:close-candidate",
+    // The two mixed-subject inboxes (#211/#212): the vetter's, then the human's. The legacy
+    // issues-only view is gone from the review — one population, printed once, per owner.
+    show_cc(
+        "VET THE FLAG — ai:close-candidate (unvetted, issues + PRs)",
+        &cc_unvetted,
     );
-    show("CLOSE — ai:close-candidate (issues)", &close_issues);
+    show_cc(
+        "CLOSE — ai:close-candidate (upheld, issues + PRs)",
+        &cc_upheld,
+    );
     println!(
         "\n⚠⚠ NOT IN ANY MODELED STATE (FSM leak — should trend to 0)  ({})",
         leaks.len()
@@ -19513,9 +19681,14 @@ fn cc_stranded_cleared_comment(gate: CcGate, flag_at: &str) -> Option<String> {
         ),
         // NEVER `RepoArchived`: the clearance is a `--remove-label` plus a comment, and an
         // archived repo refuses both — a clearance attempted there fails on every run and reports
-        // `clearanceFailed` for ever. Total over the enum on purpose, so a new state is
-        // non-clearable until somebody decides otherwise.
+        // `clearanceFailed` for ever. NEVER `VetterClose` either: that label is a verdict in
+        // force, and clearing it would erase the vetter's own judgement (#211). NEVER
+        // `TornHumanClose`: its consuming transition is the COMPLETION (#213), not a label
+        // clearance. Total over the enum on purpose, so a new state is non-clearable until
+        // somebody decides otherwise.
         CcGate::Presentable
+        | CcGate::VetterClose
+        | CcGate::TornHumanClose
         | CcGate::HumanRuled
         | CcGate::Unvetted
         | CcGate::RepoArchived => None,
@@ -19553,6 +19726,10 @@ fn cc_row(
         human,
         &flag_at,
         last_cc_vetter_comment(detail).and_then(|b| cc_verdict_parts(&b)),
+        // Computed off the SAME detail the gate classifies, and only where it can mean anything:
+        // the `Reviewed <sha>: close` shape is a PR verdict, so an issue never reads as one.
+        subject_is_pr(detail) && last_pr_close_verdict(detail).is_some(),
+        human_close_ruled(detail),
     );
     // Precedence is `cc_gate`'s, which is the PR side's: writability first, then a human ruling,
     // then "nothing was claimed", then what the vetter did with the claim.
@@ -19562,6 +19739,13 @@ fn cc_row(
         CcGate::NoFlag => CC_CLEAR_NO_FLAG,
         CcGate::RejectedStillFlagged => CC_CLEAR_REJECTED,
         CcGate::Presentable => "skip-vetted-at-flag",
+        // The PR-side close verdict: already judged, so it skips the vetter exactly as an upheld
+        // flag does, into the same ONE human inbox (#212) — under its own name, because "vetted at
+        // flag" would claim a flag that does not exist.
+        CcGate::VetterClose => "skip-vetter-close",
+        // The torn `human-close` (#213): the recorded ruling is executed by the state-load, so
+        // the action names the completion rather than any queue.
+        CcGate::TornHumanClose => "complete-human-close",
         CcGate::Unvetted => "vet",
     };
     (
@@ -19591,18 +19775,20 @@ fn cc_row(
 ///
 /// The `url` comes from the row, which got it from the `gh issue view` that built the row — this
 /// projection used to drop it, which is the drift #114 is about. The projection carries whatever
-/// url the row holds rather than rebuilding one from `repo` + `number`: `ai:close-candidate` is a
-/// label the producer also puts on PRs (see `lanes.vetter-verdicts.ai:close-candidate`), so
-/// "close-candidate ⇒ `/issues/`" is a rule about which query fed this array, not about the
-/// concept, and it is not the projection's to encode.
+/// url the row holds rather than rebuilding one from `repo` + `number`: both arrays MIX issues and
+/// PRs (#211/#212 — the flag lifecycle is one machine whatever carries the label), so
+/// "close-candidate ⇒ `/issues/`" was never the concept's rule, and it is not the projection's to
+/// encode.
 ///
 /// Both the arrays and their counts are derived from THIS one document, which is what makes an
 /// array/count mismatch unrepresentable: a box that renders "5" and then lists three issues when
 /// clicked is the drift this shape rules out.
 ///
-/// `upheld` is the skipped rows whose action is `skip-vetted-at-flag`, and that action now means
-/// UPHELD specifically, because [`cc_row`] reads the verdict WORD off [`cc_gate`] rather than
-/// inferring it from the flag being vetted at all.
+/// `upheld` is the skipped rows whose action is `skip-vetted-at-flag` — which means UPHELD
+/// specifically, because [`cc_row`] reads the verdict WORD off [`cc_gate`] rather than inferring
+/// it from the flag being vetted at all — plus the `skip-vetter-close` rows, the PRs whose label
+/// is the vetter's own `close` verdict (#212): a different route to the same judgement, and the
+/// human's ONE disposal inbox holds both.
 ///
 /// It used to be inferred, on the argument that a rejected flag has its label stripped so it cannot
 /// appear in this search — and `rain.erc4626.words#93` disproved it: rejected 2026-07-28, label
@@ -19621,7 +19807,15 @@ fn cc_item_arrays(doc: &Value) -> (Vec<Value>, Vec<Value>) {
         .and_then(|v| v.as_array())
         .map(|a| {
             a.iter()
-                .filter(|r| r.get("action").and_then(|v| v.as_str()) == Some("skip-vetted-at-flag"))
+                // TWO actions, ONE inbox (#212): an upheld flag and a PR-side close verdict both
+                // mean "the vetter judged this should close; a human disposes of it", so they
+                // project into the same upheld array rather than splitting by subject type.
+                .filter(|r| {
+                    matches!(
+                        r.get("action").and_then(|v| v.as_str()),
+                        Some("skip-vetted-at-flag") | Some("skip-vetter-close")
+                    )
+                })
                 .map(item)
                 .collect()
         })
@@ -19700,9 +19894,105 @@ fn cc_clear_stranded_flag(
     Ok(())
 }
 
+/// The torn-close COMPLETION (#213): execute the close a recorded `👤 human` ruling already
+/// ordered. Close FIRST, then retire the flag — a failure between the two leaves a CLOSED subject
+/// with a stale flag, exactly the state `human-close`'s already-closed re-run path consumes
+/// (#94); the reverse order would tear into an open, unflagged subject no scan enumerates.
+///
+/// NO comment is written: the ruling comment is the decision's record and GitHub's own close
+/// event records the act — a machine comment between them would be provenance nobody authored.
+///
+/// `Err` is the reason, for the row: a failed completion is REPORTED and retried next state-load,
+/// never swallowed. The caller must not count it as completed — the subject is still open.
+fn cc_complete_torn_close(slug: &str, num: u64, detail: &Value) -> Result<(), String> {
+    let n = num.to_string();
+    let noun = if subject_is_pr(detail) { "pr" } else { "issue" };
+    if !gh_run(&[noun, "close", &n, "-R", slug]) {
+        return Err(
+            "closing FAILED — the ruling stands recorded and the subject is still open; the next \
+             state-load retries"
+                .to_string(),
+        );
+    }
+    if !gh_run(&[
+        "issue",
+        "edit",
+        &n,
+        "-R",
+        slug,
+        "--remove-label",
+        "ai:close-candidate",
+    ]) {
+        return Err(
+            "closed, but removing ai:close-candidate FAILED — a stale flag on a closed subject; \
+             the next state-load's closed-side sweep clears it"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// The CLOSED-side stale-flag sweep: every closed subject still carrying `ai:close-candidate` gets
+/// the label removed, org-wide, every state-load. This is the tear between `human-close`'s close
+/// and its flag retirement (and [`cc_complete_torn_close`]'s identical pair) made VISIBLE to
+/// machinery: every open-side search excludes closed subjects, so without this enumeration that
+/// tear would sit for ever — the exact #94 population, which measured 74 when it was filed.
+///
+/// No comment is written, the already-closed posture `human-close` itself takes: the close is on
+/// the record as GitHub's own event, and the label is stale decoration on a terminal subject.
+/// Archived repos are withheld and counted — the removal write would be refused for ever (#206).
+///
+/// Returns `(cleared, failures, archived)` counts plus the failure rows; failures retry next
+/// state-load by construction, because the subject stays in this search's population.
+fn sweep_stale_closed_flags(archived_repos: &ArchivedRepos) -> (usize, usize, usize, Vec<Value>) {
+    let (mut n_cleared, mut n_failed, mut n_archived) = (0usize, 0usize, 0usize);
+    let mut failures: Vec<Value> = Vec::new();
+    for noun in ["issues", "prs"] {
+        let args = flagged_subjects_args(noun, "closed");
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        // A failed search is skipped, not fatal: this sweep is a repair pass riding a state-load
+        // whose own population must still be served, and the stale flags it would have found are
+        // still there for the next run.
+        let Some(found) = gh_json(&argref).and_then(|v| v.as_array().cloned()) else {
+            continue;
+        };
+        for hit in &found {
+            let Some((slug, num)) = search_issue_ref(hit) else {
+                continue;
+            };
+            if archived_repos.contains(&slug) {
+                n_archived += 1;
+                continue;
+            }
+            if gh_run(&[
+                "issue",
+                "edit",
+                &num.to_string(),
+                "-R",
+                &slug,
+                "--remove-label",
+                "ai:close-candidate",
+            ]) {
+                n_cleared += 1;
+            } else {
+                n_failed += 1;
+                failures.push(serde_json::json!({
+                    "issue": format!("{slug}#{num}"),
+                    "url": hit.get("url").and_then(|u| u.as_str()).unwrap_or(""),
+                    "error": "removing ai:close-candidate from a closed subject FAILED — retried \
+                              next state-load",
+                }));
+            }
+        }
+    }
+    (n_cleared, n_failed, n_archived, failures)
+}
+
 /// Live `unvetted-close-candidates` state-load: ONE org-wide search for open `ai:close-candidate`
-/// issues + one `gh issue view` each. Errors rather than returning a falsely-empty set, for the same
-/// reason the PR side does — an empty queue must never be an API failure in disguise.
+/// subjects — issues AND pull requests (#211) — + one `gh issue view` each (`gh issue view`
+/// answers for a PR too, and the row's own `url` says which it was). Errors rather than returning
+/// a falsely-empty set, for the same reason the PR side does — an empty queue must never be an API
+/// failure in disguise.
 ///
 /// `limit` pages the `issues` list for the same reason [`unvetted_doc`] pages `prs` (#78): the MCP
 /// caller has a token budget, so it always supplies one. The DASHBOARD passes `None` — it derives
@@ -19713,12 +20003,13 @@ fn unvetted_close_candidates_fetch(
     limit: Option<usize>,
 ) -> Result<Value, String> {
     // The SAME search the human's `next_close_candidate` gate runs, shared rather than written
-    // twice: two spellings of "which issues are flagged" is how the vetter's inbox and the human's
-    // would come to answer differently.
-    let FlaggedIssues {
+    // twice: two spellings of "what is flagged" is how the vetter's inbox and the human's
+    // would come to answer differently. Both subject types (#211): a flag parks whatever
+    // carries it, so the vetter's inbox holds flagged PRs beside flagged issues.
+    let FlaggedSubjects {
         hits: found,
         archived: archived_repos,
-    } = flagged_open_issues()?;
+    } = flagged_open_subjects()?;
     // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
     // reported (see `fetchErrors` below), never dropped.
     // A flag in an ARCHIVED repo is not vettable either (#206): `record_close_candidate_verdict`
@@ -19734,9 +20025,14 @@ fn unvetted_close_candidates_fetch(
     // a skip is a state something else owns, and these were owned by nobody.
     let mut cleared: Vec<Value> = Vec::new();
     let mut clear_failures: Vec<Value> = Vec::new();
-    let (mut n_human, mut n_vetted) = (0usize, 0usize);
+    // The torn `human-close` completions (#213), same posture as the clearances: executed here,
+    // split by outcome, never silently absorbed into a skip.
+    let mut completed_closes: Vec<Value> = Vec::new();
+    let mut completion_failures: Vec<Value> = Vec::new();
+    let (mut n_human, mut n_vetted, mut n_vetter_close) = (0usize, 0usize, 0usize);
     let (mut n_cleared_no_flag, mut n_cleared_rejected, mut n_clear_failed) =
         (0usize, 0usize, 0usize);
+    let (mut n_completed_close, mut n_completion_failed) = (0usize, 0usize);
     for i in &found {
         let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -19772,6 +20068,27 @@ fn unvetted_close_candidates_fetch(
             archived_flags.push(row);
             continue;
         }
+        // The torn-close COMPLETION (#213), run every state-load exactly as the clearances are:
+        // the pinned `👤 human` ruling already ordered this close, so the machine executes it —
+        // no queue, no second judgement. Split by outcome; a failure keeps the subject here and
+        // the next state-load retries.
+        if gate == CcGate::TornHumanClose {
+            let obj = row.as_object_mut().expect("row is an object");
+            match cc_complete_torn_close(&slug, num, &detail) {
+                Ok(()) => {
+                    n_completed_close += 1;
+                    obj.insert("completed".into(), Value::from(true));
+                    completed_closes.push(row);
+                }
+                Err(why) => {
+                    n_completion_failed += 1;
+                    obj.insert("completed".into(), Value::from(false));
+                    obj.insert("completionError".into(), Value::from(why));
+                    completion_failures.push(row);
+                }
+            }
+            continue;
+        }
         // The CLEARANCE, run every state-load exactly as the `ai:blocked-on` one is (#161): a
         // stranded label is machine-detectable from typed data, so it is repaired by machinery
         // rather than found by a human building a tool. Attempted BEFORE the row is filed, so the
@@ -19793,6 +20110,8 @@ fn unvetted_close_candidates_fetch(
                         CcGate::NoFlag => n_cleared_no_flag += 1,
                         CcGate::RejectedStillFlagged => n_cleared_rejected += 1,
                         CcGate::Presentable
+                        | CcGate::VetterClose
+                        | CcGate::TornHumanClose
                         | CcGate::HumanRuled
                         | CcGate::Unvetted
                         | CcGate::RepoArchived => {
@@ -19821,22 +20140,37 @@ fn unvetted_close_candidates_fetch(
         } else {
             match action {
                 "skip-human-decided" => n_human += 1,
+                // Its own count, not folded into skipVettedAtFlag: a PR-side close verdict is the
+                // human's for a different reason than an upheld flag, and folding a new state into
+                // an old count is the silent accumulation #179 names.
+                "skip-vetter-close" => n_vetter_close += 1,
                 _ => n_vetted += 1,
             }
             skipped.push(row);
         }
     }
 
+    // The closed-side sweep runs on the SAME state-load as the other repairs, and against the
+    // SAME archived set, so all four self-heals (#179 clearances, #213 completions, this) report
+    // from one read of the world.
+    let (n_stale_cleared, n_stale_failed, n_stale_archived, stale_failures) =
+        sweep_stale_closed_flags(&archived_repos);
     let n_vet = rows.len();
     let (issues, more) = page(rows, limit);
     let (cleared_page, more_cleared) = page(cleared, limit);
     let (clear_failures_page, more_clear_failures) = page(clear_failures, limit);
+    let (completed_page, more_completed) = page(completed_closes, limit);
+    let (completion_failures_page, more_completion_failures) = page(completion_failures, limit);
+    let (stale_failures_page, more_stale_failures) = page(stale_failures, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "flagged": found.len() + archived_flags.len(),
             "vet": n_vet,
             "skipHumanDecided": n_human,
             "skipVettedAtFlag": n_vetted,
+            // The PR-side close verdicts (#211/#212): already judged, human-owned, listed in the
+            // upheld projection beside the upheld flags.
+            "skipVetterClose": n_vetter_close,
             "skipArchivedRepo": archived_flags.len(),
             // THE NUMBERS THAT GROW (#179). A stranded flag used to be visible only when a human
             // typed `/ncc` and read `strandedFlags` — detection in a tool nobody runs on a
@@ -19849,14 +20183,34 @@ fn unvetted_close_candidates_fetch(
             // A clearance that could not be written. This is the one that must never be quietly
             // zero: the label is still live, so the issue is still parked.
             "clearanceFailed": n_clear_failed,
-            // flagged == vet + skip* + cleared* + clearanceFailed + fetchErrors, always. A non-zero
-            // value here is the ONLY reason the parts may not sum to the whole.
+            // The torn `human-close` completions (#213): closes this state-load EXECUTED because
+            // a pinned `👤 human` ruling ordered them and the subject was still open. The failed
+            // count is the one that must never be quietly non-zero-and-ignored — the decision
+            // stands recorded while the subject stays open.
+            "completedHumanClose": n_completed_close,
+            "humanCloseCompletionFailed": n_completion_failed,
+            // The CLOSED-side sweep: stale flags on closed subjects (the tear between a close and
+            // its flag retirement, and the legacy hand-close residue, #94). Its OWN population —
+            // a closed subject is in no open-side count above, so these are additive, not parts
+            // of `flagged`.
+            "staleClosedFlagsCleared": n_stale_cleared,
+            "staleClosedFlagClearFailed": n_stale_failed,
+            "staleClosedFlagsArchived": n_stale_archived,
+            // flagged == vet + skip* + cleared* + clearanceFailed + completedHumanClose +
+            // humanCloseCompletionFailed + fetchErrors, always. A non-zero fetchErrors is the
+            // ONLY reason the parts may not sum to the whole.
             "fetchErrors": errors.len(),
         },
         "cleared": cleared_page,
         "moreCleared": more_cleared,
         "clearanceFailures": clear_failures_page,
         "moreClearanceFailures": more_clear_failures,
+        "completedHumanCloses": completed_page,
+        "moreCompletedHumanCloses": more_completed,
+        "humanCloseCompletionFailures": completion_failures_page,
+        "moreHumanCloseCompletionFailures": more_completion_failures,
+        "staleClosedFlagClearFailures": stale_failures_page,
+        "moreStaleClosedFlagClearFailures": more_stale_failures,
         "issues": issues,
         "more": more,
         // UNBOUNDED like `cleared` / `clearanceFailures`, and for the strongest version of their
@@ -19932,10 +20286,12 @@ fn close_candidate_context_fetch(slug: &str, num: u64) -> Result<Value, String> 
     ))
 }
 
-/// The close-candidate verdict write — the issue-side twin of [`record_verdict_apply`]. `uphold`
-/// leaves the flag queued for the human; `reject` REMOVES `ai:close-candidate`, which returns the
-/// issue to the producer's uncovered-issues queue. Either way a trusted, flag-pinned `🤖 ai:vetter`
-/// comment records the judgement.
+/// The close-candidate verdict write — the flag-side twin of [`record_verdict_apply`], for BOTH
+/// subject types (#211). `uphold` leaves the flag queued for the human; `reject` REMOVES
+/// `ai:close-candidate`, which returns the subject to its ordinary state — an issue to the
+/// producer's uncovered-issues queue, a PR to whatever its remaining labels say (un-vetted when
+/// they say nothing). Either way a trusted, flag-pinned `🤖 ai:vetter` comment records the
+/// judgement.
 ///
 /// The vetter never writes a `human:*` label: those are the human's namespace, and this routine is
 /// AI. Its whole authority is the `ai:*` flag it may drop and the comment it may post.
@@ -19979,14 +20335,15 @@ fn record_cc_verdict_apply(
         ));
     };
     let (flag_at, remove_label, skip) = match cc_verdict_plan(&j, verdict) {
-        CcVerdictPlan::NotAnIssue => {
+        CcVerdictPlan::VetterVerdictPr => {
             return Err((
                 2,
                 format!(
-                    "refusing: {slug}#{issue} is a PULL REQUEST, not an issue — `gh issue view` \
-                     answers for either. A close-candidate FLAG is a producer claim on an ISSUE; on \
-                     a PR `ai:close-candidate` is the VETTER's own verdict, which no second AI \
-                     judgement applies to. This is not a PR without a path — it has three:\n  \
+                    "refusing: {slug}#{issue} is a PULL REQUEST carrying `ai:close-candidate` with \
+                     NO trusted producer flag — the label is the VETTER's own `record_verdict … \
+                     close`, which no second AI judgement applies to. (A producer FLAG on a PR is \
+                     judgeable here exactly as on an issue — this subject just does not carry \
+                     one.) This is not a PR without a path — it has three:\n  \
                      human-close {slug} {issue} \"…\"             — the verdict is right: rule, \
                      clear the flag and close it, one command\n  \
                      human-rule {slug} {issue} reject \"…\"       — the verdict is wrong; it needs \
@@ -20077,10 +20434,12 @@ fn record_cc_verdict_apply(
     }
     Ok(format!(
         "recorded close-candidate {verdict} on {slug}#{issue} @ {flag_at}{}{}",
-        if remove_label {
-            " [ai:close-candidate removed -> back to the producer queue]"
-        } else {
-            " [flag stands -> queued for the human]"
+        match (remove_label, subject_is_pr(&j)) {
+            // The reject fallback is per-subject: stripping the flag returns each to the state it
+            // was parked out of — the issue to the producer's backlog, the PR to the vet queue.
+            (true, false) => " [ai:close-candidate removed -> back to the producer queue]",
+            (true, true) => " [ai:close-candidate removed -> back to the vet queue]",
+            (false, _) => " [flag stands -> queued for the human]",
         },
         if skip { " [comment deduped]" } else { "" }
     ))
@@ -22051,6 +22410,18 @@ mod next_ready_tests {
 enum CcGate {
     /// The vetter UPHELD the current flag and no human has ruled: the human's to rule on.
     Presentable,
+    /// A PULL REQUEST whose `ai:close-candidate` is the vetter's own `record_verdict … close` —
+    /// no producer flag exists, so the flag lifecycle's verdict states cannot describe it, and it
+    /// is ALREADY the vetter's judgement that this subject should close (#211/#212). The human's
+    /// to dispose of, alongside `Presentable`, in the ONE mixed upheld inbox; never stranded and
+    /// never cleared — clearing it would erase a verdict in force.
+    VetterClose,
+    /// A torn `human-close` (#213): a trusted `👤 human` close ruling is on the record and the
+    /// subject is still OPEN — the comment landed, the close did not. Not an inbox: the decision
+    /// is made and needs no second judgement, so the vetter's state-load EXECUTES the recorded
+    /// close (the same self-heal posture as the stranded-flag clearances, #179) and the human's
+    /// queue never sees the subject.
+    TornHumanClose,
     /// The REPO is archived (#206). Read-only: no label moves, no comment posts, no issue closes,
     /// so not one transition this FSM owns can be applied — including the stranded-flag clearance
     /// below, which is why this arm is FIRST in [`cc_gate`] and dominates every other state.
@@ -22091,6 +22462,8 @@ impl CcGate {
     fn as_str(self) -> &'static str {
         match self {
             CcGate::Presentable => "presentable",
+            CcGate::VetterClose => "vetter-close-verdict",
+            CcGate::TornHumanClose => "torn-human-close",
             CcGate::RepoArchived => "repo-archived",
             CcGate::HumanRuled => "human-ruled",
             CcGate::NoFlag => "no-producer-flag",
@@ -22150,6 +22523,8 @@ fn cc_gate(
     human_ruled: bool,
     flag_at: &str,
     verdict: Option<(String, String)>,
+    vetter_close: bool,
+    close_ruled: bool,
 ) -> CcGate {
     // FIRST, ahead of every other arm including the sacred one (#206). Every state below names
     // something a transition would DO — present it to a human, clear the label, ask the vetter for
@@ -22162,7 +22537,21 @@ fn cc_gate(
     if human_ruled {
         return CcGate::HumanRuled;
     }
+    // A recorded close ruling on a still-open subject is a torn `human-close` (#213), and it
+    // dominates the whole flag lifecycle below: the human has already judged the very question
+    // every remaining state exists to route — spending a vetter verdict or a human presentation
+    // on it would re-ask a decided question. The completion consumes it.
+    if close_ruled {
+        return CcGate::TornHumanClose;
+    }
     if flag_at.is_empty() {
+        // Between "no claim" and "stranded": a PR-side `close` verdict explains the label without
+        // any producer flag existing (#211) — the vetter already judged, so the subject is the
+        // human's to dispose of. Checked only when no flag is live, because a LIVE flag is a newer
+        // claim than any stored verdict and takes the ordinary lifecycle below.
+        if vetter_close {
+            return CcGate::VetterClose;
+        }
         return CcGate::NoFlag;
     }
     match verdict {
@@ -22189,6 +22578,12 @@ enum PrCoverage {
     /// The query failed or came back malformed. NEVER read as `Uncovered`: an unseen covering PR is
     /// work in flight nobody was told about, while a falsely-reported one only costs a second look.
     Unreadable,
+    /// The subject is a PULL REQUEST (#211), and "which open PRs claim to close this" is a question
+    /// GitHub only answers for issues — `closedByPullRequestsReferences` lives on the Issue type.
+    /// Its own state (open, and what closes via merging it) is on the row already, so there is no
+    /// unread signal here to fail safe about; a separate variant rather than `Unreadable` because
+    /// "cannot apply" and "could not read" ask a human for different things.
+    NotApplicable,
 }
 
 impl PrCoverage {
@@ -22197,12 +22592,14 @@ impl PrCoverage {
             PrCoverage::Covered => "covered-by-open-pr",
             PrCoverage::Uncovered => "no-open-pr",
             PrCoverage::Unreadable => "unreadable",
+            PrCoverage::NotApplicable => "not-applicable-subject-is-a-pr",
         }
     }
     /// Is something in flight against this issue, as far as the read can tell? `Unreadable` counts,
-    /// which is what makes an unanswered query fail SAFE rather than merely fail.
+    /// which is what makes an unanswered query fail SAFE rather than merely fail — `NotApplicable`
+    /// does not, because it is not an unanswered read: the question has no referent on a PR.
     fn in_flight(self) -> bool {
-        !matches!(self, PrCoverage::Uncovered)
+        !matches!(self, PrCoverage::Uncovered | PrCoverage::NotApplicable)
     }
 }
 
@@ -22288,6 +22685,10 @@ fn coverage_blocks_close(coverage: PrCoverage, grounds: FlagGrounds) -> bool {
 /// are no use to a reader who has to remember which way round the hazard runs.
 fn coverage_meaning(coverage: PrCoverage, grounds: FlagGrounds) -> &'static str {
     match (coverage, grounds) {
+        // Ahead of the grounds arms: on a PR subject neither grounds reading changes what the
+        // absent signal means, and falling through to a landing/coverage sentence would describe
+        // a read that never ran.
+        (PrCoverage::NotApplicable, _) => "coverage-does-not-apply-the-subject-is-a-pr",
         (PrCoverage::Uncovered, _) => "no-open-pr-claims-this-issue",
         (_, FlagGrounds::CitedLanding) => "reported-not-blocking-the-flag-cites-a-landing",
         (PrCoverage::Covered, FlagGrounds::NoLanding) => {
@@ -22352,7 +22753,7 @@ fn covering_open_prs(resp: Option<&Value>) -> (PrCoverage, Vec<String>) {
 /// genuinely types `Int!` and it keeps `-F`, because `-f n=7` sends `"7"` and fails the same query
 /// from the other side; blanket-converting the call site would trade one break for the other.
 ///
-/// Separated from the fetch for the reason [`flagged_open_issues_args`] is: the flag/variable
+/// Separated from the fetch for the reason [`flagged_open_subjects_args`] is: the flag/variable
 /// pairing is the thing that decides whether the read can answer at all, and inside a network call
 /// nothing asserts it.
 fn covering_prs_args(owner: &str, repo: &str, num: u64) -> Vec<String> {
@@ -22562,8 +22963,15 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
         .collect();
     let reason_full = flag_reason(f.flag_body);
     let grounds = flag_grounds(&reason_full, f.slug, f.covering);
-    let note_full = last_cc_vetter_comment(f.detail).unwrap_or_default();
-    let parts = cc_verdict_parts(&note_full);
+    // The verdict on the row: the flag-pinned cc comment where one exists, else the PR-side
+    // `close` verdict that queued this row (#212) — whose own timestamp stands in for the pin,
+    // the same value the queue ordered by, because there is no flag to pin.
+    let note_full = last_cc_vetter_comment(f.detail)
+        .or_else(|| last_pr_close_verdict(f.detail).map(|(_, b)| b))
+        .unwrap_or_default();
+    let parts = cc_verdict_parts(&note_full).or_else(|| {
+        pr_close_verdict_line(&note_full).then(|| (f.flag_at.to_string(), "close".to_string()))
+    });
     let prs: Vec<String> = f
         .covering
         .iter()
@@ -22620,10 +23028,10 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
     })
 }
 
-/// The whole-queue breakdown. Every flag the search returned lands in exactly one of these, plus the
-/// fetch errors — so `flagged == presentable + unvetted + noProducerFlag + humanRuled +
-/// vetterRejectedStillFlagged + archivedRepo + fetchErrors`, always, and a reader can see there is
-/// no further bucket quietly absorbing rows.
+/// The whole-queue breakdown. Every flagged subject the search returned lands in exactly one of
+/// these, plus the fetch errors — so `flagged == presentable + vetterCloseVerdict + unvetted +
+/// noProducerFlag + humanRuled + vetterRejectedStillFlagged + archivedRepo + fetchErrors`, always,
+/// and a reader can see there is no further bucket quietly absorbing rows.
 ///
 /// `archived_repo` is counted BEFORE the gate rather than as a gate state: a frozen flag is not
 /// classified at all, because classifying it would cost a `gh issue view` to answer a question no
@@ -22632,6 +23040,13 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
 struct FlagQueueCounts {
     flagged: usize,
     presentable: usize,
+    /// The PR-side `close` verdicts (#211/#212) — human-owned like `presentable`, counted apart
+    /// so folding two states into one number never hides which route filled the queue.
+    vetter_close: usize,
+    /// Torn `human-close` transitions (#213) — a recorded close ruling on a still-open subject.
+    /// Never presented: the vetter's state-load executes these, so a non-zero count here is a
+    /// completion that has not run yet or could not write.
+    torn_human_close: usize,
     unvetted: usize,
     no_flag: usize,
     human_ruled: usize,
@@ -22675,7 +23090,10 @@ struct FlagQueueWithheld {
 /// nothing to explain the gap, which is the defect that let them sit in the queue unnoticed.
 fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
     let returned = rows.len();
-    let presentable = w.counts.presentable;
+    // The queue holds BOTH human-owned states (#212): upheld flags and PR-side close verdicts are
+    // one inbox, so `queue.presentable` is their sum while `counts` keeps them apart. Saturating
+    // for the reason the byte-budget test feeds usize::MAX: a count display must never panic.
+    let presentable = w.counts.presentable.saturating_add(w.counts.vetter_close);
     serde_json::json!({
         "queue": {
             "presentable": presentable,
@@ -22684,7 +23102,9 @@ fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
         },
         "counts": {
             "flagged": w.counts.flagged,
-            "presentable": presentable,
+            "presentable": w.counts.presentable,
+            "vetterCloseVerdict": w.counts.vetter_close,
+            "tornHumanClose": w.counts.torn_human_close,
             "unvetted": w.counts.unvetted,
             "noProducerFlag": w.counts.no_flag,
             "humanRuled": w.counts.human_ruled,
@@ -22725,21 +23145,33 @@ fn search_issue_ref(hit: &Value) -> Option<(String, u64)> {
     Some((slug, num))
 }
 
-/// PURE: the argv of the one search behind both close-candidate inboxes. Every qualifier is
-/// load-bearing and each is wrong in its own direction: without `--state open` a closed issue's
-/// leftover flag joins the queue, without the label the queue is the whole backlog, and the `--json`
-/// set is exactly what [`search_issue_ref`] needs to ADDRESS a hit — a field dropped here makes
-/// every row unaddressable at once.
+/// PURE: the argv of ONE HALF of the search behind both close-candidate inboxes — `noun` is
+/// `"issues"` or `"prs"`, because `gh search issues` scopes to `type:issue` and `gh search prs` to
+/// `type:pr`, so covering the whole flagged population (#211: a flag can sit on either subject
+/// type) takes the same query spelled once per noun. Every qualifier is load-bearing and each is
+/// wrong in its own direction: without `--state open` a closed subject's leftover flag joins the
+/// queue, without the label the queue is the whole backlog, and the `--json` set is exactly what
+/// [`search_issue_ref`] needs to ADDRESS a hit — a field dropped here makes every row
+/// unaddressable at once.
 ///
 /// Separated from the fetch so the one thing deciding which population both inboxes see is a value a
 /// test can read; the network call around it is asserted by nothing.
-fn flagged_open_issues_args() -> Vec<String> {
-    let mut args: Vec<String> = vec!["search".into(), "issues".into()];
+fn flagged_open_subjects_args(noun: &str) -> Vec<String> {
+    flagged_subjects_args(noun, "open")
+}
+
+/// PURE: the argv shared by the open-side inboxes and the CLOSED-side stale-flag sweep — the one
+/// place the label query is spelled, parameterised on the ONE qualifier that differs. The closed
+/// spelling exists because `human-close`'s own order (comment → close → retire flag) can tear
+/// between its last two writes, and a closed subject still flagged is invisible to every
+/// `--state open` search — the #94 population, reachable again unless something enumerates it.
+fn flagged_subjects_args(noun: &str, state: &str) -> Vec<String> {
+    let mut args: Vec<String> = vec!["search".into(), noun.into()];
     args.extend(org_owner_args());
     args.extend(
         [
             "--state",
-            "open",
+            state,
             "--label",
             "ai:close-candidate",
             "--limit",
@@ -22759,31 +23191,38 @@ fn flagged_open_issues_args() -> Vec<String> {
 /// reading archived state separately is how the vetter's queue and the human's would come to
 /// disagree about which flags are actionable. The CLASSIFICATION is [`cc_gate`]'s, not this
 /// struct's — [`CcGate::RepoArchived`] is a state both inboxes get from the one classifier.
-struct FlaggedIssues {
+struct FlaggedSubjects {
     hits: Vec<Value>,
     archived: ArchivedRepos,
 }
 
-/// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
-/// `ai:close-candidate`. Shared rather than written twice, so the vetter's queue and the human's are
-/// populations of the same query — two spellings of "which issues are flagged" is how they would
-/// come to answer differently.
+/// The ONE org-wide search behind BOTH close-candidate inboxes: every open subject — issue OR pull
+/// request (#211) — carrying `ai:close-candidate`. Two `gh search` calls because that is how the
+/// CLI spells one label query over both subject types, but shared rather than written twice, so
+/// the vetter's queue and the human's are populations of the same query — two spellings of "what
+/// is flagged" is how they would come to answer differently. Issues first, then PRs: a stable
+/// concatenation order, so two runs over the same org emit the same document.
 ///
-/// Errors rather than returning a falsely-empty set, for the reason the PR side does — including
-/// when the ARCHIVED set is unreadable, since a flag whose repo's state is unknown cannot be
-/// asserted to be actionable.
-fn flagged_open_issues() -> Result<FlaggedIssues, String> {
-    let args = flagged_open_issues_args();
-    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
-    let found = gh_json(&argref)
-        .and_then(|v| v.as_array().cloned())
-        .ok_or_else(|| {
-            "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
-             aborting rather than report a falsely-empty close-candidate queue"
-                .to_string()
-        })?;
+/// Errors when EITHER half fails — including when the ARCHIVED set is unreadable — for the reason
+/// the PR side does: a queue missing half its population is a falsely-empty queue wearing a
+/// partial one's clothes, and an unseen flag is a subject parked with nobody owning it.
+fn flagged_open_subjects() -> Result<FlaggedSubjects, String> {
+    let mut found: Vec<Value> = Vec::new();
+    for noun in ["issues", "prs"] {
+        let args = flagged_open_subjects_args(noun);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        let half = gh_json(&argref)
+            .and_then(|v| v.as_array().cloned())
+            .ok_or_else(|| {
+                format!(
+                    "error: `gh search {noun} --label ai:close-candidate` failed (transient \
+                     API/auth?) — aborting rather than report a falsely-empty close-candidate queue"
+                )
+            })?;
+        found.extend(half);
+    }
     let archived = archived_repos().map_err(archived_read_error)?;
-    Ok(FlaggedIssues {
+    Ok(FlaggedSubjects {
         hits: found,
         archived,
     })
@@ -22792,10 +23231,10 @@ fn flagged_open_issues() -> Result<FlaggedIssues, String> {
 /// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
 /// then pay for the covering-PR read only on the rows actually returned.
 fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
-    let FlaggedIssues {
+    let FlaggedSubjects {
         hits: found,
         archived: archived_repos,
-    } = flagged_open_issues()?;
+    } = flagged_open_subjects()?;
     let mut flags: Vec<PresentableFlag> = Vec::new();
     let mut counts = FlagQueueCounts {
         flagged: found.len(),
@@ -22834,11 +23273,20 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         };
         let flag = last_close_candidate_flag(&detail);
         let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
+        // The PR-side close verdict, read ONCE: the gate's input, and — where it is the gate's
+        // whole answer — the presentable row's queue key and body (#211/#212).
+        let close_verdict = if subject_is_pr(&detail) {
+            last_pr_close_verdict(&detail)
+        } else {
+            None
+        };
         let gate = cc_gate(
             archived_repos.contains(&slug),
             has_human_ruling(&label_names(&detail)),
             &flag_at,
             last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
+            close_verdict.is_some(),
+            human_close_ruled(&detail),
         );
         // EXHAUSTIVE on purpose: a new gate state must be given its own count rather than folding
         // silently into an existing one, which is what makes `flagged` provably the sum of its
@@ -22846,6 +23294,10 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         // variants here that could drift from it.
         match gate {
             CcGate::Presentable => counts.presentable += 1,
+            CcGate::VetterClose => counts.vetter_close += 1,
+            // Counted, never presented: the vetter's state-load executes these (#213), and one
+            // showing here means that completion has not run yet or could not write.
+            CcGate::TornHumanClose => counts.torn_human_close += 1,
             CcGate::HumanRuled => counts.human_ruled += 1,
             CcGate::Unvetted => counts.unvetted += 1,
             CcGate::NoFlag => counts.no_flag += 1,
@@ -22858,21 +23310,43 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         if gate == CcGate::RepoArchived {
             archived.push(withheld_entry(&format!("{slug}#{num}"), ARCHIVED_REPO_WHY));
         }
-        if gate == CcGate::Presentable {
-            flags.push(PresentableFlag {
+        // BOTH human-owned states join the one queue (#212): an upheld flag keyed by the flag it
+        // judged, a PR close verdict keyed by its own timestamp — each the moment the subject
+        // became the human's, so FIFO measures the same limbo across subject types.
+        match gate {
+            CcGate::Presentable => flags.push(PresentableFlag {
                 slug,
                 num,
                 flag_at,
                 flag_body: flag.map(|(_, b)| b).unwrap_or_default(),
                 detail,
-            });
+            }),
+            CcGate::VetterClose => {
+                let (at, body) =
+                    close_verdict.expect("VetterClose is only reachable when the verdict exists");
+                flags.push(PresentableFlag {
+                    slug,
+                    num,
+                    flag_at: at,
+                    flag_body: body,
+                    detail,
+                });
+            }
+            _ => {}
         }
     }
     rank_flags(&mut flags);
     let rows: Vec<Value> = next_close_candidate_page(&flags, limit)
         .into_iter()
         .map(|f| {
-            let (coverage, covering) = covering_open_prs_fetch(&f.slug, f.num);
+            // The covering-PR read is an ISSUE question (GitHub answers it on the Issue type
+            // only), so a PR row states `not-applicable` rather than paying for a read that
+            // cannot answer and reporting its failure as an unread signal.
+            let (coverage, covering) = if subject_is_pr(&f.detail) {
+                (PrCoverage::NotApplicable, Vec::new())
+            } else {
+                covering_open_prs_fetch(&f.slug, f.num)
+            };
             next_close_candidate_row(&NextCcFacts {
                 slug: &f.slug,
                 num: f.num,
@@ -23001,23 +23475,32 @@ mod next_close_candidate_tests {
         let at = "2026-07-20T09:00:00Z";
         let parts = |w: &str| Some((at.to_string(), w.to_string()));
         assert_eq!(
-            cc_gate(false, false, at, parts("uphold")),
+            cc_gate(false, false, at, parts("uphold"), false, false),
             CcGate::Presentable
         );
         assert_eq!(
-            cc_gate(false, false, at, parts("reject")),
+            cc_gate(false, false, at, parts("reject"), false, false),
             CcGate::RejectedStillFlagged
         );
         // A word this machine does not know is not a verdict in force — the vetter still owes one,
         // exactly as an unstamped vet-protocol is never current.
         for unknown in ["close", "ready", "UPHOLD"] {
             assert_eq!(
-                cc_gate(false, false, at, parts(unknown)),
+                cc_gate(false, false, at, parts(unknown), false, false),
                 CcGate::Unvetted,
                 "{unknown}"
             );
         }
-        assert_eq!(cc_gate(false, false, at, None), CcGate::Unvetted);
+        assert_eq!(
+            cc_gate(false, false, at, None, false, false),
+            CcGate::Unvetted
+        );
+        // A LIVE flag outranks a stored PR close verdict: the flag is the newer claim, so the
+        // subject re-enters the vet lifecycle rather than sitting on the old judgement (#211).
+        assert_eq!(
+            cc_gate(false, false, at, None, true, false),
+            CcGate::Unvetted
+        );
         assert!(CcGate::RejectedStillFlagged.is_stranded());
         assert!(CcGate::NoFlag.is_stranded());
         for live in [CcGate::Presentable, CcGate::Unvetted, CcGate::HumanRuled] {
@@ -23036,7 +23519,9 @@ mod next_close_candidate_tests {
                 false,
                 false,
                 second,
-                Some((first.to_string(), "uphold".into()))
+                Some((first.to_string(), "uphold".into())),
+                false,
+                false
             ),
             CcGate::Unvetted
         );
@@ -23045,10 +23530,74 @@ mod next_close_candidate_tests {
                 false,
                 false,
                 first,
-                Some((first.to_string(), "uphold".into()))
+                Some((first.to_string(), "uphold".into())),
+                false,
+                false
             ),
             CcGate::Presentable
         );
+    }
+
+    // The PR-side close verdict (#211/#212): with no producer flag, the label is explained by the
+    // vetter's own judgement — human-owned like an upheld flag, never stranded, never cleared.
+    #[test]
+    fn a_pr_close_verdict_is_human_owned_not_stranded_and_not_cleared() {
+        assert_eq!(
+            cc_gate(false, false, "", None, true, false),
+            CcGate::VetterClose
+        );
+        // A human ruling still dominates it, exactly as it dominates an upheld flag.
+        assert_eq!(
+            cc_gate(false, true, "", None, true, false),
+            CcGate::HumanRuled
+        );
+        // …and an archived repo dominates everything.
+        assert_eq!(
+            cc_gate(true, false, "", None, true, false),
+            CcGate::RepoArchived
+        );
+        assert!(!CcGate::VetterClose.is_stranded());
+        // NOT clearable: the label is a verdict in force, and the #179 clearance erasing it would
+        // erase the vetter's own judgement.
+        assert_eq!(cc_stranded_cleared_comment(CcGate::VetterClose, ""), None);
+        assert_eq!(CcGate::VetterClose.as_str(), "vetter-close-verdict");
+    }
+
+    // The torn `human-close` (#213): a recorded close ruling on a still-open subject dominates
+    // the flag lifecycle ENTIRELY — flagless, unvetted, upheld, rejected or verdict-close alike —
+    // because the human already answered the question every one of those states routes. Only a
+    // live `human:*` label ruling and an archived repo rank above it.
+    #[test]
+    fn a_recorded_close_ruling_dominates_the_flag_lifecycle() {
+        let at = "2026-07-20T09:00:00Z";
+        for (flag_at, verdict, vetter_close) in [
+            ("", None, false),
+            ("", None, true),
+            (at, None, false),
+            (at, Some((at.to_string(), "uphold".to_string())), false),
+            (at, Some((at.to_string(), "reject".to_string())), false),
+        ] {
+            assert_eq!(
+                cc_gate(false, false, flag_at, verdict.clone(), vetter_close, true),
+                CcGate::TornHumanClose,
+                "({flag_at:?}, {verdict:?}, {vetter_close})"
+            );
+            assert_eq!(
+                cc_gate(false, true, flag_at, verdict.clone(), vetter_close, true),
+                CcGate::HumanRuled
+            );
+            assert_eq!(
+                cc_gate(true, false, flag_at, verdict, vetter_close, true),
+                CcGate::RepoArchived
+            );
+        }
+        // Consumed by the COMPLETION, so it is neither stranded nor label-clearable.
+        assert!(!CcGate::TornHumanClose.is_stranded());
+        assert_eq!(
+            cc_stranded_cleared_comment(CcGate::TornHumanClose, at),
+            None
+        );
+        assert_eq!(CcGate::TornHumanClose.as_str(), "torn-human-close");
     }
 
     // The precedence, in the one order that matters: a human ruling is sacred and already made, so
@@ -23057,15 +23606,35 @@ mod next_close_candidate_tests {
     fn a_human_ruling_dominates_and_a_flagless_label_is_stranded() {
         let at = "2026-07-20T09:00:00Z";
         assert_eq!(
-            cc_gate(false, true, at, Some((at.to_string(), "uphold".into()))),
+            cc_gate(
+                false,
+                true,
+                at,
+                Some((at.to_string(), "uphold".into())),
+                false,
+                false
+            ),
             CcGate::HumanRuled
         );
-        assert_eq!(cc_gate(false, true, "", None), CcGate::HumanRuled);
+        assert_eq!(
+            cc_gate(false, true, "", None, false, false),
+            CcGate::HumanRuled
+        );
         // Labelled, with no trusted producer comment behind it: nothing was CLAIMED, so there is
         // nothing to rule on evidence — and the vetter skips it too, which is why it is named.
-        assert_eq!(cc_gate(false, false, "", None), CcGate::NoFlag);
         assert_eq!(
-            cc_gate(false, false, "", Some((at.to_string(), "uphold".into()))),
+            cc_gate(false, false, "", None, false, false),
+            CcGate::NoFlag
+        );
+        assert_eq!(
+            cc_gate(
+                false,
+                false,
+                "",
+                Some((at.to_string(), "uphold".into())),
+                false,
+                false
+            ),
             CcGate::NoFlag
         );
     }
@@ -23083,20 +23652,36 @@ mod next_close_candidate_tests {
         let at = "2026-07-20T09:00:00Z";
         // Each of these is a DIFFERENT state when the repo is live. Archived, all of them are the
         // same one — which is what "dominates" means and what a reordering would break.
-        for (human, flag_at, verdict) in [
-            (false, at, Some((at.to_string(), "uphold".to_string()))),
-            (false, at, Some((at.to_string(), "reject".to_string()))),
-            (false, at, None),
-            (false, "", None),
-            (true, at, Some((at.to_string(), "uphold".to_string()))),
+        for (human, flag_at, verdict, vetter_close) in [
+            (
+                false,
+                at,
+                Some((at.to_string(), "uphold".to_string())),
+                false,
+            ),
+            (
+                false,
+                at,
+                Some((at.to_string(), "reject".to_string())),
+                false,
+            ),
+            (false, at, None, false),
+            (false, "", None, false),
+            (false, "", None, true),
+            (
+                true,
+                at,
+                Some((at.to_string(), "uphold".to_string())),
+                false,
+            ),
         ] {
             assert_ne!(
-                cc_gate(false, human, flag_at, verdict.clone()),
+                cc_gate(false, human, flag_at, verdict.clone(), vetter_close, false),
                 CcGate::RepoArchived,
                 "a LIVE repo never produces RepoArchived"
             );
             assert_eq!(
-                cc_gate(true, human, flag_at, verdict),
+                cc_gate(true, human, flag_at, verdict, vetter_close, false),
                 CcGate::RepoArchived,
                 "archived must dominate (human_ruled={human}, flag_at={flag_at:?})"
             );
@@ -23741,8 +24326,10 @@ mod next_close_candidate_tests {
     #[test]
     fn the_envelope_states_what_the_page_left_behind() {
         let w = withheld(FlagQueueCounts {
-            flagged: 10,
+            flagged: 11,
             presentable: 5,
+            vetter_close: 1,
+            torn_human_close: 0,
             unvetted: 2,
             no_flag: 1,
             human_ruled: 1,
@@ -23751,15 +24338,18 @@ mod next_close_candidate_tests {
             fetch_errors: 0,
         });
         let doc = next_close_candidate_doc(vec![json!({"issue": "o/r#7"})], &w);
-        assert_eq!(doc["queue"]["presentable"], json!(5));
+        // `queue.presentable` is the ONE mixed inbox (#212): upheld flags + PR close verdicts.
+        assert_eq!(doc["queue"]["presentable"], json!(6));
         assert_eq!(doc["queue"]["returned"], json!(1));
-        assert_eq!(doc["queue"]["more"], json!(4));
+        assert_eq!(doc["queue"]["more"], json!(5));
         // The counts partition the search: nothing is in two buckets and nothing is in none.
         // `archivedRepo` is one of the parts (#206) — a flag withheld for a reason that is not in
         // this list is a flag the sum cannot account for, which is how a silent drop would look.
         let c = &doc["counts"];
         let parts: u64 = [
             "presentable",
+            "vetterCloseVerdict",
+            "tornHumanClose",
             "unvetted",
             "noProducerFlag",
             "humanRuled",
@@ -23920,6 +24510,8 @@ mod next_close_candidate_tests {
                 counts: FlagQueueCounts {
                     flagged: usize::MAX,
                     presentable: usize::MAX,
+                    vetter_close: usize::MAX,
+                    torn_human_close: usize::MAX,
                     unvetted: usize::MAX,
                     no_flag: usize::MAX,
                     human_ruled: usize::MAX,
@@ -23970,12 +24562,12 @@ mod next_close_candidate_tests {
              {NCC_WITHHELD_FIXED_BYTES} allowed"
         );
 
-        // Fifteen numeric fields in the envelope: eight counts, three queue figures, three
-        // overflows.
+        // Seventeen numeric fields in the envelope: ten counts (#212 added vetterCloseVerdict,
+        // #213 tornHumanClose), three queue figures, three overflows.
         let env_len = next_close_candidate_doc(vec![], &withheld(FlagQueueCounts::default()))
             .to_string()
             .len()
-            + 15 * NCC_MAX_DIGITS;
+            + 17 * NCC_MAX_DIGITS;
         assert!(
             env_len <= NCC_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NCC_ENVELOPE_BYTES} allowed"
@@ -23983,29 +24575,34 @@ mod next_close_candidate_tests {
     }
 
     // Both close-candidate inboxes must enumerate ONE population, or the vetter and the human come
-    // to disagree about which issues are flagged. The search is shared; this pins the QUERY they
-    // share, which is otherwise inside a network call nothing asserts.
+    // to disagree about what is flagged. The search is shared; this pins the QUERY they share,
+    // which is otherwise inside a network call nothing asserts — for BOTH halves, because `gh
+    // search issues` scopes to `type:issue` and a PR-shaped flag is only reachable through the
+    // `prs` spelling (#211: the defect was exactly this half missing).
     #[test]
     fn the_two_close_candidate_inboxes_search_one_population() {
-        let args = flagged_open_issues_args();
-        let pairs: Vec<(&str, &str)> = args
-            .windows(2)
-            .map(|w| (w[0].as_str(), w[1].as_str()))
-            .collect();
-        for want in [
-            // Open only: a closed issue's leftover flag is not the human's inbox.
-            ("--state", "open"),
-            // Flagged only: without it this is the whole backlog.
-            ("--label", "ai:close-candidate"),
-            // Exactly what `search_issue_ref` addresses a hit with, plus the title.
-            ("--json", "url,number,repository,title"),
-        ] {
-            assert!(pairs.contains(&want), "{want:?} missing from {args:?}");
-        }
-        assert_eq!(&args[..2], &["search".to_string(), "issues".to_string()]);
-        // The org scope comes from the ONE source every other search reads, never a literal here.
-        for owner in org_owner_args() {
-            assert!(args.contains(&owner), "{owner} missing from {args:?}");
+        for noun in ["issues", "prs"] {
+            let args = flagged_open_subjects_args(noun);
+            let pairs: Vec<(&str, &str)> = args
+                .windows(2)
+                .map(|w| (w[0].as_str(), w[1].as_str()))
+                .collect();
+            for want in [
+                // Open only: a closed subject's leftover flag is not the human's inbox.
+                ("--state", "open"),
+                // Flagged only: without it this is the whole backlog.
+                ("--label", "ai:close-candidate"),
+                // Exactly what `search_issue_ref` addresses a hit with, plus the title.
+                ("--json", "url,number,repository,title"),
+            ] {
+                assert!(pairs.contains(&want), "{want:?} missing from {args:?}");
+            }
+            assert_eq!(&args[..2], &["search".to_string(), noun.to_string()]);
+            // The org scope comes from the ONE source every other search reads, never a literal
+            // here — in BOTH halves, or the two subject types would enumerate different orgs.
+            for owner in org_owner_args() {
+                assert!(args.contains(&owner), "{owner} missing from {args:?}");
+            }
         }
     }
 
@@ -24228,7 +24825,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_close_candidate",
             "narrows": "limit",
-            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue. Coverage is always reported; `openPr.blocksClose` pairs it with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are labels parking an issue with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
+            "description": "The next close-candidate to rule on — an upheld flag on an ISSUE OR A PR, or a PR the vetter verdicted `close` (one mixed queue, #211/#212) — OLDEST FIRST (the flag parks the subject — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per row: the subject's title/state/labels/createdAt (`url` says which subject type), the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, and the vetter's judgement pinned to what it judged (`atFlag` false means a superseded claim; a PR close verdict reports as `close` at its own timestamp). Coverage is reported for issues; on a PR row it is `not-applicable-subject-is-a-pr` and never blocks. For issues `openPr.blocksClose` pairs coverage with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `counts.vetterCloseVerdict` is the PR-close-verdict share of the queue; `strandedFlags` are labels parking a subject with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -24289,7 +24886,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "unvetted_close_candidates",
             "narrows": "limit",
-            "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
+            "description": "State-load: ONE PAGE of the producer close-candidate flags on open SUBJECTS — issues AND pull requests (#211; the row's url says which) — to vet. Per subject: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag subjects are excluded, as are PRs whose label is the vetter's own `close` verdict (counts.skipVetterClose — the human's queue, not a claim to judge).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -24300,7 +24897,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "close_candidate_context",
-            "description": "Everything needed to judge one close-candidate flag: the issue's title, body, labels, createdAt, state, and the trusted ai:producer flag(s) + any prior ai:vetter verdicts.",
+            "description": "Everything needed to judge one close-candidate flag, on an issue OR a PR (#211): the subject's title, body, labels, createdAt, state, url, and the trusted ai:producer flag(s) + any prior ai:vetter verdicts.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -24311,7 +24908,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "record_close_candidate_verdict",
-            "description": "The vetter's write on a flag: uphold (leave it queued for the human) or reject (drop ai:close-candidate, returning the issue to the producer). Posts a flag-pinned ai:vetter comment. Refuses if a human has ruled.",
+            "description": "The vetter's write on a flag, on an issue OR a PR (#211): uphold (leave it queued for the human) or reject (drop ai:close-candidate — an issue returns to the producer's backlog, a PR to its vet lane). Posts a flag-pinned ai:vetter comment. Refuses if a human has ruled, and refuses a PR whose label is the vetter's own `close` verdict (no producer claim to judge — that PR is the human's).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -24329,7 +24926,7 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "pr": {"type": "string", "description": "owner/repo#number"},
-                    "ruling": {"type": "string", "enum": ["reject", "design", "close-candidate"]},
+                    "ruling": {"type": "string", "enum": ["reject", "design"]},
                     "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."},
                     "rework": {"type": "string", "description": "The work order the producer executes — emitted as a trusted 'Rework note @<anchor>: …' comment, the exact form the producer's trusted-comments marker read accepts. Required for reject; one of rework/park for design."},
                     "park": {"type": "boolean", "description": "EXPLICIT pure park (design only): the ruling stands, the human keeps the next move. Never the default."}
@@ -24344,7 +24941,7 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "issue": {"type": "string", "description": "owner/repo#number"},
-                    "ruling": {"type": "string", "enum": ["reject", "design", "close-candidate", "keep-open"]},
+                    "ruling": {"type": "string", "enum": ["reject", "design", "keep-open"]},
                     "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."},
                     "rework": {"type": "string", "description": "The work order the producer executes — emitted as a trusted 'Rework note @<anchor>: …' comment. Required for reject; one of rework/park for design."},
                     "park": {"type": "boolean", "description": "EXPLICIT pure park (design only). Never the default."}
@@ -24354,7 +24951,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "human_close",
-            "description": "The human's TERMINAL transition on an issue OR a PR, in one call: apply human:close-candidate + a pinned 👤 human comment, retire the pending ai:close-candidate flag, then close. The subject type is resolved by lookup, so one reference cannot act on the wrong one of the two populations that share the label name. On an already-closed subject it only clears a stale flag, and invents no ruling.",
+            "description": "The human's TERMINAL transition on an issue OR a PR, in one call — decide+do, no state between (#213): post the pinned 👤 human ruling comment, CLOSE the subject, then retire the pending ai:close-candidate flag. The comment alone is the durable intent; a tear between it and the close is completed by the vetter's own state-load. The subject type is resolved by lookup, so one reference cannot act on the wrong population. On an already-closed subject it only clears a stale flag, and invents no ruling.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -29676,9 +30273,10 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Human TERMINAL transition on an issue OR a PR: rule human:close-candidate, retire the
-    /// pending ai:close-candidate flag, and close — one transition. The subject type is resolved by
-    /// lookup, so one owner/repo #n reference can never act on the wrong one of the two populations.
+    /// Human TERMINAL transition on an issue OR a PR — decide+do, one transition, no label
+    /// (#213): post the pinned 👤 human ruling comment, close, retire the pending
+    /// ai:close-candidate flag. The subject type is resolved by lookup, so one owner/repo #n
+    /// reference can never act on the wrong one of the two populations.
     HumanClose {
         /// owner/repo
         slug: String,
@@ -29846,11 +30444,11 @@ struct PrSignals {
     deploy_done_at_head: bool,
     parked: bool,
     ui_missing_screenshot: bool,
-    /// The PR carries a human decision that PARKS it: an absolutely-parking label
-    /// (`human:close-candidate` / retired `human:reject`), or a `human:design` with no work order
-    /// ([`Delegation::Parked`] — the explicit park). Blocks routine producer action, even over a
-    /// stale `ai:*` label. An EXECUTED `human:design` delegation sets neither flag: the PR is back
-    /// in the ordinary flow (awaiting re-vet), so it classifies from CI like any reworked PR.
+    /// The PR carries a human decision that PARKS it: an absolutely-parking label (the retired
+    /// `human:reject`), or a `human:design` with no work order ([`Delegation::Parked`] — the
+    /// explicit park). Blocks routine producer action, even over a stale `ai:*` label. An
+    /// EXECUTED `human:design` delegation sets neither flag: the PR is back in the ordinary flow
+    /// (awaiting re-vet), so it classifies from CI like any reworked PR.
     human_parked: bool,
     /// The PR carries a `human:design` ruling whose trusted work order is pinned to the CURRENT
     /// head ([`Delegation::Ordered`]): the ruling is the producer's WORK ORDER (#111) — execute it
@@ -31184,9 +31782,10 @@ fn coverage_uncovered() -> Option<OrgIssues> {
 }
 
 /// True when an uncovered issue belongs to the PRODUCER's untouched backlog: NOT already flagged
-/// `ai:close-candidate` (that is the human's close queue, surfaced separately) and carrying NO
-/// `human:*` label (a human ruling is the human's inbox, not the producer's). The raw
-/// `uncovered-issues` set does NOT apply these exclusions — the backlog is deliberately narrower.
+/// `ai:close-candidate` (the flag parks the subject in the close-candidate machinery — the
+/// vetter's inbox un-vetted, the human's upheld) and carrying NO `human:*` label (a human ruling
+/// is the human's inbox, not the producer's). The raw `uncovered-issues` set does NOT apply these
+/// exclusions — the backlog is deliberately narrower.
 fn is_producer_backlog(meta: &Value) -> bool {
     !meta
         .get("labels")
@@ -33948,13 +34547,14 @@ mod queue_tests {
         })
     }
 
-    // A human ruling on an ISSUE was invisible to the old check, which looked only for
-    // `human:keep-open` (a label the org does not use) and `human:close-candidate`. So an issue a
-    // human had already parked with `human:reject` / `human:design` could still be flagged.
+    // A human ruling on an ISSUE must be sacred under EVERY label in the ruling vocabulary — the
+    // old check hard-coded a subset, so an issue a human had already parked with `human:reject` /
+    // `human:design` could still be flagged. Iterating the vocabulary array itself is the fix
+    // that cannot re-drift: a label added there gains this protection with it.
     #[test]
     fn a_human_ruling_on_an_issue_is_sacred_whichever_label_it_wears() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        for l in ["human:reject", "human:design", "human:close-candidate"] {
+        for l in HUMAN_RULING_LABELS {
             assert_eq!(
                 close_candidate_plan("OPEN", &s(&[l]), false, false),
                 CloseFlagPlan::RefuseHuman,
@@ -34034,6 +34634,49 @@ mod queue_tests {
         assert_eq!(gate, CcGate::Presentable);
         assert_eq!(action, "skip-vetted-at-flag");
         assert_eq!(cc_stranded_cleared_comment(gate, at), None);
+    }
+
+    /// #211/#212: PR subjects flow through the SAME row classifier. A producer flag on a PR is the
+    /// vetter's to vet; a PR whose label is the vetter's own `close` verdict is the human's, named
+    /// apart from an upheld flag; and that verdict-close PR is never cleared as flagless, because
+    /// the clearance would strip a verdict in force.
+    #[test]
+    fn cc_row_classifies_pr_subjects_through_the_same_gate() {
+        let at = "2026-07-17T21:23:11Z";
+        let mut flagged = flagged_issue(&["ai:close-candidate"], at, "superseded-by: #48", vec![]);
+        flagged["url"] = json!("https://github.com/o/r/pull/63");
+        let (gate, action, row) = cc_row("o/r", 63, "t", &flagged, false);
+        assert_eq!(gate, CcGate::Unvetted, "a flagged PR is the vetter's inbox");
+        assert_eq!(action, "vet");
+        assert_eq!(row["url"], json!("https://github.com/o/r/pull/63"));
+        let vc = json!({
+            "state": "OPEN",
+            "labels": [{"name": "ai:close-candidate"}],
+            "url": "https://github.com/o/r/pull/63",
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "createdAt": "2026-07-26T10:00:00Z",
+                "body": "🤖 ai:vetter\nvet-protocol 1\nReviewed f0107db: close — superseded by #48",
+            }],
+        });
+        let (gate, action, _) = cc_row("o/r", 63, "t", &vc, false);
+        assert_eq!(gate, CcGate::VetterClose);
+        assert_eq!(action, "skip-vetter-close");
+        assert_eq!(cc_stranded_cleared_comment(gate, ""), None);
+        // An untrusted "verdict" does not explain the label — provenance first, as everywhere:
+        // the row falls to NoFlag and the clearance handles it as the stranded label it is.
+        let spoofed = json!({
+            "state": "OPEN",
+            "labels": [{"name": "ai:close-candidate"}],
+            "url": "https://github.com/o/r/pull/63",
+            "comments": [{
+                "author": {"login": "someone-else"},
+                "createdAt": "2026-07-26T10:00:00Z",
+                "body": "🤖 ai:vetter\nReviewed f0107db: close — spoofed",
+            }],
+        });
+        let (gate, _, _) = cc_row("o/r", 63, "t", &spoofed, false);
+        assert_eq!(gate, CcGate::NoFlag);
     }
 
     /// A human ruling dominates a stranded label. `human:*` is sacred with no carve-out, and
@@ -34284,6 +34927,10 @@ mod queue_tests {
             ],
             "skipped": [
                 row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag", "issues"),
+                // UPHELD too (#212): a PR whose label is the vetter's own `close` verdict is the
+                // same judgement by its other route, and the human's ONE disposal inbox holds it
+                // beside the upheld flags.
+                row("rainlanguage/rain.dia", 63, "superseded test PR", "skip-vetter-close", "pull"),
                 // None of these is UPHELD: one is a human ruling, one has no flag to judge, and one
                 // is `rain.erc4626.words#93`'s state — a flag the vetter REJECTED, still labelled.
                 // The last used to land in `upheld`, because "vetted at its flag" was read as
@@ -34299,7 +34946,7 @@ mod queue_tests {
 
         // Populated, and each item carries EXACTLY the generic subject-item shape — `url` included.
         assert_eq!(unvetted.len(), 2);
-        assert_eq!(upheld.len(), 1);
+        assert_eq!(upheld.len(), 2);
         assert_eq!(
             unvetted[0],
             json!({"repo": "rainlanguage/raindex", "number": 512,
@@ -34318,8 +34965,13 @@ mod queue_tests {
                    "url": "https://github.com/rainlanguage/raindex/issues/523",
                    "title": "nothing visual happens"})
         );
-        // Only `skip-vetted-at-flag` is upheld — a human ruling, a missing flag, and a REJECTED
-        // flag still wearing its label are none of them.
+        // The vetter-close PR sits beside it, PR url intact — one inbox, mixed subjects (#212).
+        assert_eq!(
+            upheld[1]["url"],
+            json!("https://github.com/rainlanguage/rain.dia/pull/63")
+        );
+        // Only `skip-vetted-at-flag` and `skip-vetter-close` are upheld — a human ruling, a
+        // missing flag, and a REJECTED flag still wearing its label are none of them.
         for r in &upheld {
             assert_ne!(r["number"], json!(184));
             assert_ne!(r["number"], json!(999));
@@ -34377,7 +35029,7 @@ mod queue_tests {
             CloseFlagPlan::RefuseHuman
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&["human:close-candidate"]), false, false),
+            close_candidate_plan("OPEN", &s(&["human:design"]), false, false),
             CloseFlagPlan::RefuseHuman
         );
         assert_eq!(
@@ -35374,7 +36026,7 @@ diff --git a/a.c b/a.c
 
     #[test]
     fn human_override_labels_detected() {
-        for l in ["human:reject", "human:design", "human:close-candidate"] {
+        for l in PR_SACRED_LABELS {
             let p = json!({"labels": [{"name": "ai:ready"}, {"name": l}]});
             assert!(has_human_override(&p), "must override on {l}");
         }
@@ -37815,9 +38467,10 @@ mod repo_root_tests {
         let exempt = [
             // The accessor itself.
             "org_owner_args",
-            // PURE argv builders. Their live callers — `flagged_open_issues` for the first — do
-            // the withholding, which is why the filter is not visible in the builder.
-            "flagged_open_issues_args",
+            // PURE argv builders. Their live callers — `flagged_open_subjects` and
+            // `sweep_stale_closed_flags` for the first — do the withholding, which is why the
+            // filter is not visible in the builder.
+            "flagged_subjects_args",
             // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
             // both populations are empty in scope, and neither OFFERS work: a per-PR edit that
             // fails is already reported as a failed edit rather than queued as a task.
@@ -37853,9 +38506,9 @@ mod repo_root_tests {
         // is only sound if the set actually reaches the classifier, so the read is pinned here.
         let reads = items_whose_code_contains(&format!("archived_re{}", "pos()"));
         assert!(
-            reads.contains(&"flagged_open_issues".to_string()),
-            "`flagged_open_issues` is the ONE search behind both close-candidate inboxes; if it \
-             stops reading the archived set, `cc_gate` is handed `false` for every issue and the \
+            reads.contains(&"flagged_open_subjects".to_string()),
+            "`flagged_open_subjects` is the ONE search behind both close-candidate inboxes; if it \
+             stops reading the archived set, `cc_gate` is handed `false` for every subject and the \
              `RepoArchived` state becomes unreachable. Reading items: {reads:?}"
         );
         // …and the classifier is where the decision is made, in both of them.
@@ -44845,7 +45498,7 @@ mod worklist_tests {
         // Any human:* ruling → the human's inbox, not the producer's.
         assert!(!is_producer_backlog(&mk(&["human:keep-open"])));
         assert!(!is_producer_backlog(&mk(&["human:design"])));
-        assert!(!is_producer_backlog(&mk(&["bug", "human:close-candidate"])));
+        assert!(!is_producer_backlog(&mk(&["bug", "human:reject"])));
         // Missing labels field → conservatively counted in, never silently dropped.
         assert!(is_producer_backlog(&json!({})));
     }
@@ -45892,9 +46545,23 @@ mod fsm_completeness_tests {
             classify_lane(&s(&["ai:design"]), None, false),
             (Lane::VetterVerdicts, "ai:design".to_string())
         );
+        // The close-candidate hand-off (#211/#212): NOT a verdict-lane state any more — the flag
+        // machinery inventories the PR (mixed unvetted/upheld arrays), so the classifier hands it
+        // over wholesale…
         assert_eq!(
             classify_lane(&s(&["ai:close-candidate"]), None, false),
-            (Lane::VetterVerdicts, "ai:close-candidate".to_string())
+            (Lane::CloseCandidate, "ai:close-candidate".to_string())
+        );
+        // …ahead of every remaining ai:* state (the flag PARKS the subject, exactly as it parks a
+        // flagged issue out of the backlog), while a human decision still dominates it — the same
+        // precedence `cc_gate` gives `HumanRuled`, so the two classifiers name one owner.
+        assert_eq!(
+            classify_lane(&s(&["ai:ready", "ai:close-candidate"]), Some(true), false),
+            (Lane::CloseCandidate, "ai:close-candidate".to_string())
+        );
+        assert_eq!(
+            classify_lane(&s(&["ai:close-candidate", "human:design"]), None, false),
+            (Lane::HumanDecisions, "human:design".to_string())
         );
         // label-less: leak if the producer commented, else un-vetted.
         assert_eq!(
@@ -45929,19 +46596,19 @@ mod fsm_completeness_tests {
     #[test]
     fn lanes_doc_emits_every_state_with_the_right_members() {
         let prs = vec![
-            qpr(1, &[], None, false),                     // un-vetted
-            qpr(2, &["ai:ready"], Some(false), false),    // un-vetted (verdict not current)
-            qpr(3, &["ai:ready"], Some(true), false),     // ai:ready
-            qpr(4, &["ai:reject"], None, false),          // ai:reject
-            qpr(5, &["ai:relink"], None, false),          // ai:relink
-            qpr(6, &["ai:design"], None, false),          // ai:design
-            qpr(7, &["ai:close-candidate"], None, false), // ai:close-candidate (PR)
-            qpr(8, &["ai:blocked-deploy"], None, false),  // producer-blocked (RETIRED residue #162)
+            qpr(1, &[], None, false),                  // un-vetted
+            qpr(2, &["ai:ready"], Some(false), false), // un-vetted (verdict not current)
+            qpr(3, &["ai:ready"], Some(true), false),  // ai:ready
+            qpr(4, &["ai:reject"], None, false),       // ai:reject
+            qpr(5, &["ai:relink"], None, false),       // ai:relink
+            qpr(6, &["ai:design"], None, false),       // ai:design
+            // NOT in any lane (#211/#212): the close-candidate machinery inventories it.
+            qpr(7, &["ai:close-candidate"], None, false),
+            qpr(8, &["ai:blocked-deploy"], None, false), // producer-blocked (RETIRED residue #162)
             qpr(9, &["ai:blocked-infra"], None, false),
             qpr(10, &["ai:blocked-on"], None, false), // vet-lifecycle: the vetter clears it (#161)
             qpr(11, &["human:reject"], None, false),  // human decisions
             qpr(12, &["human:design"], None, false),
-            qpr(13, &["human:close-candidate"], None, false),
             qpr(14, &[], None, true),             // leak
             qpr(15, &["ai:reject"], None, false), // a second ai:reject member
         ];
@@ -45956,7 +46623,11 @@ mod fsm_completeness_tests {
         assert_eq!(count("vetter-verdicts", "ai:reject"), 2);
         assert_eq!(count("vetter-verdicts", "ai:relink"), 1);
         assert_eq!(count("vetter-verdicts", "ai:design"), 1);
-        assert_eq!(count("vetter-verdicts", "ai:close-candidate"), 1);
+        // The retired PR lane state (#212): a flagged PR appears in NO lane — the close-candidate
+        // state-load inventories it — and the retired cell is absent rather than zero, so an old
+        // dashboard renders a dimmed box and a new one draws nothing.
+        assert_eq!(count("vetter-verdicts", "ai:close-candidate"), 0);
+        assert!(doc.pointer("/close-candidate").is_none(), "not a lane");
         assert_eq!(count("producer-blocked", "ai:blocked-deploy"), 1);
         assert_eq!(count("producer-blocked", "ai:blocked-infra"), 1);
         // #161: blocked-on emits under the VETTER's lane — the dash files it as vetter action
@@ -45965,7 +46636,6 @@ mod fsm_completeness_tests {
         assert_eq!(count("producer-blocked", "ai:blocked-on"), 0);
         assert_eq!(count("human-decisions", "human:reject"), 1);
         assert_eq!(count("human-decisions", "human:design"), 1);
-        assert_eq!(count("human-decisions", "human:close-candidate"), 1);
         assert_eq!(count("leak", "leak"), 1);
 
         // the PR list carries {repo, number, url, title}. #1 (never labelled) and #2 (ai:ready with
@@ -45986,14 +46656,16 @@ mod fsm_completeness_tests {
         );
         assert!(arv.get("title").is_some());
 
-        // total across lanes == number of PRs (each bucketed exactly once).
+        // total across lanes == number of PRs MINUS the close-candidate hand-off (#211/#212):
+        // #7 is inventoried by the flag machinery, and counting it in a lane too would be the
+        // one-subject-two-states split #212 retired.
         let mut total = 0usize;
         for (_, states) in doc.as_object().unwrap() {
             for (_, b) in states.as_object().unwrap() {
                 total += b.get("count").and_then(|v| v.as_u64()).unwrap() as usize;
             }
         }
-        assert_eq!(total, prs.len());
+        assert_eq!(total, prs.len() - 1);
     }
 }
 
@@ -46004,8 +46676,8 @@ mod fsm_completeness_tests {
 // subject arrays shipped `{repo, number, title}`. Nothing failed. One consumer (rain-org-health's
 // pipeline panel) simply could not render a link, because the field was not there — and could not
 // derive one, because `{repo, number}` alone does not say whether the number is an issue or a PR.
-// The arrays split BOTH ways (`states`/`leaks` PRs, the rest issues), and which way is a fact about
-// each key's source query, not something the payload states.
+// No per-key rule says either — the close-candidate arrays MIX the two (#211/#212) — and which
+// subjects a key holds is a fact about its source query, not something the payload states.
 //
 // The oracle is the LANE item, which was always right: every top-level subject item must carry the
 // same key set. That comparison, not a hard-coded key list, is what makes the next divergence a
@@ -46940,11 +47612,11 @@ mod human_rule_tests {
         // silently dropped the verb and left the human unable to reject a PR through the machine.
         assert_eq!(
             human_rulings(&HUMAN_PR_RULING_LABELS),
-            vec!["reject", "design", "close-candidate"]
+            vec!["reject", "design"]
         );
         assert_eq!(
             human_rulings(&HUMAN_RULING_LABELS),
-            vec!["reject", "design", "close-candidate", "keep-open"]
+            vec!["reject", "design", "keep-open"]
         );
         assert_eq!(
             human_ruling_label(&HUMAN_PR_RULING_LABELS, "reject"),
@@ -46971,6 +47643,9 @@ mod human_rule_tests {
             "ai:reject",
             "approve",
             "close",
+            // Decide+do (#213): a close is `human-close`'s own transition, resolvable in NO
+            // ruling vocabulary — offering it as a verb would re-split the act it fuses.
+            "close-candidate",
             " ",
         ] {
             assert_eq!(human_ruling_label(&HUMAN_RULING_LABELS, bad), None, "{bad}");
@@ -47021,8 +47696,12 @@ mod human_rule_tests {
     fn a_ruling_outside_the_vocabulary_is_refused_with_the_vocabulary() {
         let (code, msg) = human_ruling_vocab_error(&HUMAN_PR_RULING_LABELS, "keep-open", "PR");
         assert_eq!(code, 2);
-        assert!(msg.contains("reject, design, close-candidate"), "{msg}");
+        assert!(msg.contains("reject, design"), "{msg}");
         assert!(!msg.contains("keep-open,"), "{msg}");
+        assert!(
+            !msg.contains("close-candidate"),
+            "a close is decide+do (`human-close`), never a ruling verb to offer: {msg}"
+        );
         let (code, msg) = human_ruling_vocab_error(&HUMAN_RULING_LABELS, "nope", "issue");
         assert_eq!(code, 2);
         assert!(msg.contains("keep-open"), "{msg}");
@@ -47056,7 +47735,7 @@ mod human_rule_tests {
             human_rule_pr_apply("o/r", "1", "no-such-verb", "note", &RulingWork::Bare, true)
                 .unwrap_err();
         assert_eq!(code, 2);
-        assert!(msg.contains("reject, design, close-candidate"), "{msg}");
+        assert!(msg.contains("reject, design"), "{msg}");
         // … and `keep-open` is ISSUE-only here too, checked before the missing note masks it.
         let (_, msg) =
             human_rule_pr_apply("o/r", "1", "keep-open", "", &RulingWork::Bare, true).unwrap_err();
@@ -47220,11 +47899,15 @@ mod human_rule_tests {
                 "{stranding} must not strand the flag"
             );
         }
-        // The two that ANSWER the flag are legal — the human is never left without a move.
-        for disposing in FLAG_DISPOSING_RULINGS {
-            let label = human_ruling_label(&HUMAN_RULING_LABELS, disposing).unwrap();
-            record(human_issue_rule_plan(&flagged, disposing, label));
-        }
+        // The two that ANSWER the flag are legal — the human is never left without a move:
+        // `keep-open` through the ruling vocabulary, the close through the target-less plan
+        // `human-close` drives (#213 — it writes no label, so it has no vocabulary entry).
+        record(human_issue_rule_plan(
+            &flagged,
+            "keep-open",
+            "human:keep-open",
+        ));
+        record(human_issue_rule_plan(&flagged, "close-candidate", ""));
         // The guard is about a LIVE flag, not about the label alone: a bare `ai:close-candidate`
         // with no trusted producer comment is nothing `record_close_candidate_verdict` could judge
         // anyway (it returns NoFlag), so refusing there would block a human for no benefit.
@@ -47240,6 +47923,42 @@ mod human_rule_tests {
             cc_verdict_plan(&label_only, "reject"),
             CcVerdictPlan::NoFlag
         );
+    }
+
+    // The PR-side twin (#211): a producer flag lives on PRs now, and the same one-way door exists
+    // — a ruling that neither disposes the flag nor clears its label parks it un-judgeable, #93's
+    // shape on the other subject type. `reject` stays legal because its target is `ai:reject`,
+    // which clears every other `ai:*` structurally (the flag label with it); `close-candidate`
+    // stays legal because the terminal edge retires the flag itself.
+    #[test]
+    fn a_pr_ruling_that_would_strand_a_live_flag_is_refused() {
+        let flag = json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "createdAt": "2026-07-17T21:23:11Z",
+            "body": "🤖 ai:producer\nClose-candidate: already-fixed-on-main: PR #181",
+        });
+        let flagged = pr("abc123", &["ai:close-candidate"], vec![flag]);
+        assert_eq!(
+            human_pr_rule_plan(&flagged, "design", "human:design"),
+            HumanRulePlan::StrandsFlag {
+                flag_at: "2026-07-17T21:23:11Z".to_string()
+            }
+        );
+        let (_, _, clears, ..) = record(human_pr_rule_plan(&flagged, "reject", "ai:reject"));
+        assert!(
+            clears.contains(&"ai:close-candidate".to_string()),
+            "an ai:reject ruling disposes the flag by clearing its label: {clears:?}"
+        );
+        record(human_pr_rule_plan(&flagged, "close-candidate", ""));
+        // The guard protects a producer CLAIM, never the vetter's own `close` verdict — that PR
+        // has no flag for `record_close_candidate_verdict` to be locked out of, so a design
+        // ruling on it stays free.
+        let verdict = json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": "🤖 ai:vetter\nReviewed abc123: close — superseded by o/r#48",
+        });
+        let vc = pr("abc123", &["ai:close-candidate"], vec![verdict]);
+        record(human_pr_rule_plan(&vc, "design", "human:design"));
     }
 
     // The refusal must name every legal move, or it is an obstruction rather than a redirection —
@@ -47271,7 +47990,6 @@ mod human_rule_tests {
         // TERMINAL one, which is the move a human upholding a flag actually wants (#94).
         for named in [
             "human-close o/r 93",
-            "human-rule-issue o/r 93 close-candidate",
             "human-rule-issue o/r 93 keep-open",
             "record-close-candidate-verdict o/r 93 reject",
         ] {
@@ -47281,14 +47999,6 @@ mod human_rule_tests {
         // exactly the "reach for a tool that does not exist" that produced #93.
         for argv in [
             vec!["prr", "human-close", "o/r", "93", "x"],
-            vec![
-                "prr",
-                "human-rule-issue",
-                "o/r",
-                "93",
-                "close-candidate",
-                "x",
-            ],
             vec!["prr", "human-rule-issue", "o/r", "93", "keep-open", "x"],
             vec![
                 "prr",
@@ -47325,13 +48035,10 @@ mod human_rule_tests {
             "human:keep-open",
         ));
         assert_eq!(clears, s(&["ai:close-candidate"]));
-        // `close-candidate` AGREES with the flag: leaving it is consistent, and the flag is the
-        // record of what the ruling ruled on.
-        let (_, _, clears, ..) = record(human_issue_rule_plan(
-            &flagged,
-            "close-candidate",
-            "human:close-candidate",
-        ));
+        // The CLOSE plan (target-less — `human-close` writes no label, #213) leaves the flag out
+        // of the RULING's own clears: the flag AGREES with the close, and the terminal transition
+        // is what retires it, ordered after the act (see `human_close_plan`/`human_close_steps`).
+        let (_, _, clears, ..) = record(human_issue_rule_plan(&flagged, "close-candidate", ""));
         assert!(clears.is_empty());
         // Nothing else is touched: `audit` is not the machine's label to remove.
         let (_, supersedes, clears, ..) = record(human_issue_rule_plan(
@@ -47771,19 +48478,6 @@ mod human_rule_tests {
         assert!(!has_target);
         assert!(!skip);
 
-        // The RULING alone still leaves it standing — while the subject is open the flag is the
-        // live pending claim, and `closeCandidateUpheld` still counts it. The terminal act retires
-        // it. These two must not be made to agree: that difference is the transition.
-        let (_, _, ruling_clears, ..) = record(human_issue_rule_plan(
-            &flagged,
-            "close-candidate",
-            "human:close-candidate",
-        ));
-        assert!(
-            ruling_clears.is_empty(),
-            "the open-state ruling must leave the pending claim standing"
-        );
-
         // A PR carries the same label for a different reason (the vetter's own `close` verdict) and
         // is retired the same way — one reference, both populations.
         let (anchor, _, clears, ..) = close_record(human_close_plan(
@@ -47854,54 +48548,104 @@ mod human_rule_tests {
         ));
     }
 
-    // The close is TERMINAL, so it is last. Closing before the labels would make them permanently
-    // unreachable: every ruling plan reads a closed subject as `Moot`, so the retry that should
-    // finish the transition would report "nothing to do" over a half-written one.
+    // The write order IS the tear-safety argument (#213), so it is pinned exactly: the recorded
+    // ruling first, the act second, the label retirement last. No label is ever ADDED — the
+    // comment alone is the durable intent.
     #[test]
-    fn the_close_is_the_last_write_and_never_precedes_the_record() {
-        let steps = human_close_steps(
-            &s(&["human:design"]),
-            &s(&["ai:close-candidate"]),
-            false,
-            false,
-        );
+    fn the_close_follows_the_record_and_labels_are_only_ever_removed() {
+        let steps = human_close_steps(&s(&["human:design"]), &s(&["ai:close-candidate"]), false);
         assert_eq!(
             steps,
             vec![
                 RuleStep::Comment,
-                RuleStep::EnsureLabel,
-                RuleStep::AddLabel,
-                RuleStep::RemoveLabel("human:design".to_string()),
-                RuleStep::RemoveLabel("ai:close-candidate".to_string()),
                 RuleStep::Close,
+                RuleStep::RemoveLabel("ai:close-candidate".to_string()),
+                RuleStep::RemoveLabel("human:design".to_string()),
             ]
         );
-        assert_eq!(steps.last(), Some(&RuleStep::Close));
-        // Stated as the property too, so a re-order that keeps the same members still fails.
+        // Stated as properties too, so a re-order that keeps the same members still fails:
+        // nothing precedes the comment, nothing but the comment precedes the close, and no step
+        // ever writes a label.
         let close_at = steps.iter().position(|x| x == &RuleStep::Close).unwrap();
-        for (i, step) in steps.iter().enumerate() {
+        assert_eq!(close_at, 1, "only the recorded ruling precedes the act");
+        for step in &steps {
             assert!(
-                i == close_at || step != &RuleStep::Close,
-                "the close must happen exactly once"
+                !matches!(step, RuleStep::EnsureLabel | RuleStep::AddLabel),
+                "the terminal edge writes no label (#213): {step:?}"
             );
-            assert!(i <= close_at, "no write may follow the close");
         }
-        // It is the ruling's own order plus one step — not a second list that could drift.
-        let mut ruling = human_rule_steps(
-            &s(&["human:design"]),
-            &s(&["ai:close-candidate"]),
-            false,
-            false,
+        // A re-run of a close already recorded goes straight to the act: dedup drops the comment,
+        // and the close is what remains to do.
+        assert_eq!(human_close_steps(&[], &[], true), vec![RuleStep::Close]);
+    }
+
+    // One test per tear point (#213): every prefix of the close sequence must land the subject
+    // where existing machinery sees and finishes it — nothing may tear into an invisible state.
+    #[test]
+    fn every_tear_point_lands_where_machinery_can_finish_it() {
+        let ruled = |at: &str| {
+            json!({
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": human_rule_comment(&format!("close-candidate @{at}"), "close-candidate", "evidence"),
+            })
+        };
+        let at = "2026-07-17T21:23:11Z";
+        // Tear after Comment, subject FLAGGED: the flag scan enumerates it, and the gate routes it
+        // to the completion rather than to any inbox.
+        let torn = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some(at),
+            vec![ruled(at)],
         );
-        assert_eq!(&steps[..steps.len() - 1], &ruling[..]);
-        ruling.push(RuleStep::Close);
-        assert_eq!(steps, ruling);
-        // A re-run of a ruling already recorded still closes: dedup drops the comment, the present
-        // label drops the add, and the terminal act is what remains to do.
+        assert!(human_close_ruled(&torn));
+        let (gate, action, _) = cc_row("o/r", 93, "t", &torn, false);
+        assert_eq!(gate, CcGate::TornHumanClose);
+        assert_eq!(action, "complete-human-close");
+        // Tear after Comment, subject UNFLAGGED: no scan enumerates it, so the exit is the re-run
+        // of the same command — the comment dedups and the plan's remaining step is the act.
+        let unflagged = issue(
+            &["bug"],
+            "2026-01-01T00:00:00Z",
+            None,
+            vec![json!({
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": human_rule_comment("issue @2026-01-01T00:00:00Z", "close-candidate", "evidence"),
+            })],
+        );
+        let (_, supersedes, clears, _, skip) = close_record(human_close_plan(&unflagged, false));
+        assert!(skip, "the re-run must dedup the recorded ruling");
         assert_eq!(
-            human_close_steps(&[], &[], true, true),
-            vec![RuleStep::EnsureLabel, RuleStep::Close]
+            human_close_steps(&supersedes, &clears, skip),
+            vec![RuleStep::Close],
+            "the resumed transition is exactly the act that tore off"
         );
+        // Tear after Close: a CLOSED subject still flagged. TWO consumers, because every
+        // open-side search excludes it: the state-load's closed-side sweep enumerates exactly
+        // this population (the argv pinned below — the machinery path, no human required), and
+        // the already-closed re-run path (#94) finishes it interactively.
+        let mut closed = torn.clone();
+        closed["state"] = json!("CLOSED");
+        assert_eq!(human_close_plan(&closed, false), HumanClosePlan::StaleFlag);
+        for noun in ["issues", "prs"] {
+            let args = flagged_subjects_args(noun, "closed");
+            let pairs: Vec<(&str, &str)> = args
+                .windows(2)
+                .map(|w| (w[0].as_str(), w[1].as_str()))
+                .collect();
+            assert!(
+                pairs.contains(&("--state", "closed")),
+                "the sweep must search CLOSED subjects: {args:?}"
+            );
+            assert!(
+                pairs.contains(&("--label", "ai:close-candidate")),
+                "the sweep must search the flag: {args:?}"
+            );
+        }
+        // All steps landed: settled, and the re-run writes nothing.
+        let mut done = issue(&[], "2026-01-01T00:00:00Z", None, vec![ruled(at)]);
+        done["state"] = json!("CLOSED");
+        assert_eq!(human_close_plan(&done, false), HumanClosePlan::Settled);
     }
 
     // WHICH GitHub operation each step performs. A `Close` spelled as an `edit`, or an
@@ -47911,7 +48655,7 @@ mod human_rule_tests {
     #[test]
     fn each_step_invokes_the_gh_operation_it_names() {
         let argv = |step: &RuleStep, noun: &str| {
-            rule_step_argv(step, noun, "o/r", "93", "human:close-candidate", "body").join(" ")
+            rule_step_argv(step, noun, "o/r", "93", "human:design", "body").join(" ")
         };
         assert_eq!(
             argv(&RuleStep::Close, "issue"),
@@ -47925,7 +48669,7 @@ mod human_rule_tests {
         );
         assert_eq!(
             argv(&RuleStep::AddLabel, "issue"),
-            "issue edit 93 -R o/r --add-label human:close-candidate"
+            "issue edit 93 -R o/r --add-label human:design"
         );
         assert_eq!(
             argv(
@@ -47937,7 +48681,7 @@ mod human_rule_tests {
         // The label step is repo-scoped, never subject-scoped, so it carries no noun at all.
         let ensure = argv(&RuleStep::EnsureLabel, "issue");
         assert!(
-            ensure.starts_with("label create human:close-candidate -R o/r"),
+            ensure.starts_with("label create human:design -R o/r"),
             "{ensure}"
         );
         assert!(ensure.ends_with("--force"), "{ensure}");
@@ -47946,7 +48690,7 @@ mod human_rule_tests {
         // Every failure names the half-state it leaves, so the caller knows what to re-run — except
         // EnsureLabel, which is best-effort and must NOT abort a ruling.
         assert_eq!(
-            rule_step_failure(&RuleStep::EnsureLabel, "o/r", "93", "human:close-candidate"),
+            rule_step_failure(&RuleStep::EnsureLabel, "o/r", "93", "human:design"),
             None
         );
         for step in [
@@ -47955,21 +48699,19 @@ mod human_rule_tests {
             RuleStep::RemoveLabel("x".to_string()),
             RuleStep::Close,
         ] {
-            let (code, msg) =
-                rule_step_failure(&step, "o/r", "93", "human:close-candidate").expect("named");
+            let (code, msg) = rule_step_failure(&step, "o/r", "93", "human:design").expect("named");
             assert_eq!(code, 1, "{step:?}");
             assert!(msg.contains("o/r#93"), "{step:?}: {msg}");
         }
         // The close's failure says the subject is ruled but still OPEN, and that a re-run finishes
         // it — the one half-state a caller can and must complete.
-        let (_, msg) =
-            rule_step_failure(&RuleStep::Close, "o/r", "93", "human:close-candidate").unwrap();
+        let (_, msg) = rule_step_failure(&RuleStep::Close, "o/r", "93", "human:design").unwrap();
         assert!(msg.contains("still open"), "{msg}");
         assert!(msg.contains("Re-run"), "{msg}");
     }
 
-    // The report says the subject was closed, on top of everything the ruling's report already
-    // says — a transition whose terminal half is invisible reads as a ruling that did not land.
+    // The report says the subject was closed, on top of what was recorded and retired — a
+    // transition whose terminal half is invisible reads as a ruling that did not land.
     #[test]
     fn the_close_report_names_the_close_as_well_as_the_ruling() {
         let r = human_close_report(
@@ -47980,37 +48722,88 @@ mod human_rule_tests {
             &s(&["ai:close-candidate"]),
             false,
         );
-        assert!(r.contains("ruled human:close-candidate on o/r#93"), "{r}");
+        assert!(r.contains("ruled close-candidate on o/r#93"), "{r}");
         assert!(r.contains("cleared ai:close-candidate"), "{r}");
         assert!(r.contains("[closed]"), "{r}");
-        // The label it writes is the sacred one, not a fifth invented state.
-        assert!(HUMAN_RULING_LABELS.contains(&HUMAN_CLOSE_TARGET));
-        assert!(HUMAN_DECISION_LABELS.contains(&HUMAN_CLOSE_TARGET));
+        // It writes NO label (#213): no ruling vocabulary, on either subject, offers a close —
+        // deciding one IS executing one, so a close state is unrepresentable in the machine.
+        for set in [&HUMAN_RULING_LABELS[..], &HUMAN_PR_RULING_LABELS[..]] {
+            assert!(
+                !set.iter()
+                    .any(|l| ruling_verb(l) == Some("close-candidate")),
+                "a close must not be writable as a standalone ruling: {set:?}"
+            );
+        }
         // And the flag it retires is the one both populations share.
         assert_eq!(PENDING_CLOSE_FLAG, "ai:close-candidate");
     }
 
-    // The flag verdict is ISSUE-side authority. Pointed at a PR it used to answer "nothing to
-    // judge", which reads as "this PR has no human path" — and was recorded as exactly that
-    // misreading. It now says what the subject is and names the three moves that DO apply.
+    // The flag verdict covers BOTH subject types (#211): a producer flag on a PR is judged exactly
+    // as one on an issue. The refusal is narrowed to the PR whose label is the vetter's OWN
+    // `close` verdict — no claim exists for a second AI judgement — and it still names the three
+    // moves that DO apply (the pre-#211 refusal fired on every PR, flagged or not).
     #[test]
-    fn the_flag_verdict_refuses_a_pull_request_by_naming_its_moves() {
+    fn the_flag_verdict_judges_a_flagged_pr_and_refuses_the_vetters_own_verdict() {
+        // Labelled, NO producer flag: the vetter's own verdict. Refused.
         let mut p = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            None,
+            vec![],
+        );
+        p["url"] = json!("https://github.com/o/r/pull/28");
+        assert_eq!(
+            cc_verdict_plan(&p, "uphold"),
+            CcVerdictPlan::VetterVerdictPr
+        );
+        // Type before state: a CLOSED verdict-close PR must be told what it is, not that a flag
+        // it never carried is moot.
+        p["state"] = json!("CLOSED");
+        assert_eq!(
+            cc_verdict_plan(&p, "reject"),
+            CcVerdictPlan::VetterVerdictPr
+        );
+        // A PRODUCER flag on a PR is judgeable (#211) — and a reject strips the label, returning
+        // the PR to its ordinary lane.
+        let mut flagged = issue(
             &["ai:close-candidate"],
             "2026-01-01T00:00:00Z",
             Some("2026-07-17T21:23:11Z"),
             vec![],
         );
-        p["url"] = json!("https://github.com/o/r/pull/28");
-        assert_eq!(cc_verdict_plan(&p, "uphold"), CcVerdictPlan::NotAnIssue);
-        // Type before state: a CLOSED PR must be told what it is, not that its flag is moot.
-        p["state"] = json!("CLOSED");
-        assert_eq!(cc_verdict_plan(&p, "reject"), CcVerdictPlan::NotAnIssue);
+        flagged["url"] = json!("https://github.com/o/r/pull/28");
+        match cc_verdict_plan(&flagged, "reject") {
+            CcVerdictPlan::Record {
+                flag_at,
+                remove_label,
+                skip_comment,
+            } => {
+                assert_eq!(flag_at, "2026-07-17T21:23:11Z");
+                assert!(remove_label, "reject drops the flag on a PR as on an issue");
+                assert!(!skip_comment);
+            }
+            other => panic!("a flagged PR is judgeable, got {other:?}"),
+        }
+        // …and a CLOSED flagged PR is moot, exactly as a closed flagged issue is.
+        flagged["state"] = json!("CLOSED");
+        assert_eq!(
+            cc_verdict_plan(&flagged, "uphold"),
+            CcVerdictPlan::AlreadyClosed
+        );
         // An issue URL is not a PR, and a subject whose URL was not fetched is still judged.
         p["url"] = json!("https://github.com/o/r/issues/28");
         p["state"] = json!("OPEN");
+        // (No flag on `p`, so the issue path answers NoFlag — the claim-less refusal.)
+        assert_eq!(cc_verdict_plan(&p, "uphold"), CcVerdictPlan::NoFlag);
+        let mut fi = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some("2026-07-17T21:23:11Z"),
+            vec![],
+        );
+        fi["url"] = json!("https://github.com/o/r/issues/28");
         assert!(matches!(
-            cc_verdict_plan(&p, "uphold"),
+            cc_verdict_plan(&fi, "uphold"),
             CcVerdictPlan::Record { .. }
         ));
         // The guard can only fire on a field the fetch asks for.
@@ -53829,11 +54622,12 @@ mod infra_down_tests {
             &["ai:ready".to_string(), "ai:design".to_string()],
             false
         ));
-        // Everything that returns ahead of the `ai:ready` branch makes the call dead weight.
+        // Everything that returns ahead of the `ai:ready` branch makes the call dead weight —
+        // including the close-candidate hand-off (#211), whose subjects the flag machinery owns.
         for dominating in [
             "human:design",
-            "human:close-candidate",
             RETIRED_HUMAN_REJECT_LABEL,
+            "ai:close-candidate",
             RETIRED_BLOCKED_DEPLOY_LABEL,
             "ai:blocked-on",
             RETIRED_STATE_LABEL,
