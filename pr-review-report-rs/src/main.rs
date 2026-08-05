@@ -13193,8 +13193,12 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         .map(|(at, _)| cc_vetted_at_flag(&j, &at))
         .unwrap_or(false);
 
-    let (add_label, post_comment) =
-        match close_candidate_plan(state, &labels, already_noted, flag_judged) {
+    let (add_label, post_comment) = match close_candidate_plan(
+        state,
+        &labels,
+        already_noted,
+        flag_judged,
+    ) {
         CloseFlagPlan::AlreadyClosed => {
             println!("{slug}#{issue} already closed — nothing to flag");
             return 0;
@@ -31992,13 +31996,19 @@ mod queue_tests {
     #[test]
     fn a_clearance_comment_is_not_a_flag_a_verdict_or_a_prior_note() {
         for gate in [CcGate::NoFlag, CcGate::RejectedStillFlagged] {
-            let body = cc_stranded_cleared_comment(gate, "2026-07-17T21:23:11Z")
-                .unwrap_or_else(|| panic!("{gate:?} is stranded and must have a clearance comment"));
+            let body =
+                cc_stranded_cleared_comment(gate, "2026-07-17T21:23:11Z").unwrap_or_else(|| {
+                    panic!("{gate:?} is stranded and must have a clearance comment")
+                });
 
             // Authored as the vetter, so `trusted_comments` can dedup it — but never parsed as one
             // of the vetter's VERDICTS.
             assert!(body.starts_with("🤖 ai:vetter"), "{gate:?}");
-            assert_eq!(cc_verdict_parts(&body), None, "{gate:?}: reads as a verdict");
+            assert_eq!(
+                cc_verdict_parts(&body),
+                None,
+                "{gate:?}: reads as a verdict"
+            );
             assert!(
                 !body.contains("Reviewed close-candidate @"),
                 "{gate:?}: would shadow the real verdict in last_cc_vetter_comment"

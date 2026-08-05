@@ -1595,6 +1595,78 @@ interactive session) re-flags each with typed refs derived by reading the PR,
 never by regexing the prose. Until then they sit visibly in
 `blockedOnManualReview`.
 
+### The stranded-flag clearance (#179)
+
+Two states an `ai:close-candidate` issue could reach had **no transition that
+consumed them**, so an issue in either was parked indefinitely:
+`is_producer_backlog` excludes a flagged issue from the producer's backlog, and
+the vetter skipped both every run. Neither being fixed nor being closed, and
+nothing surfacing it.
+
+- **State A — a label with no claim.** The label is live and no trusted
+  `🤖 ai:producer` comment says why. The vetter classified this `skip-no-flag`
+  and skipped it, correctly — there is nothing to rule on — for ever.
+- **State B — a `reject` still wearing its label.** The verdict says "not
+  closeable", the label says "awaiting a human's close ruling", and the label is
+  what every downstream filter reads.
+
+**State B was a WRITE bug, not a failed write, and the difference matters.**
+`record_close_candidate_verdict` always attempted the removal
+(`remove_label: verdict == "reject" && has_flag_label`), performed it, and
+returned exit 1 if it failed. On `rain.erc4626.words#93` it **succeeded** — the
+timeline has `ai:close-candidate` gone at `2026-07-28T06:18:29Z`, one second
+after the verdict comment. The label came **back** on `2026-07-29T17:18:30Z`,
+inside the producer batch that also flagged `raindex#1039/#1042/#1060`, and it
+came back **alone**: `close_candidate_plan`'s comment dedup asked only whether a
+`Close-candidate:` line had ever been posted on the issue, and the rejected
+flag's own comment was still there. So the label went on, the comment was
+skipped as a duplicate, the flag's timestamp never moved, the vetter's existing
+`reject` still pinned it — and the issue was stranded from that moment.
+
+So the dedup is now scoped to the flag **episode**: a flag the vetter has
+already judged cannot be re-raised by re-applying the label alone. It takes a
+fresh claim, at a fresh timestamp, which un-vets the flag and gets it judged
+again. That restores the invariant the two writes always meant to hold — the
+label and the claim are written by the same call, so the label never asserts a
+claim no comment states.
+
+**Both states still get a consuming transition, because both stay reachable** —
+a hand-applied label, or a `--remove-label` that genuinely fails. It runs in the
+vetter's close-candidate state-load, exactly where the `ai:blocked-on` clearance
+runs and for the same reason: both states are decidable from typed data, so they
+are repaired by machinery rather than found later by building an unrelated tool.
+A trusted `🤖 ai:vetter` comment is posted first, then the label comes off.
+
+**It clears a stuck LABEL. It does not rule on the issue.** Nothing closes,
+rejects, re-flags or upholds; the issue returns to the producer's backlog with
+its own question still open. That is the whole licence for doing it
+automatically — a wrong clearance costs one producer look, where a wrong ruling
+costs real work. A human ruling still dominates: `human:*` is sacred with no
+carve-out, and "the label looks stuck" is not one.
+
+For **state A** the clearance discards whatever intent applied the label, which
+is unrecoverable because it was never written down. The comment says so, and
+names the rulings that **do** survive an AI actor —
+`human-rule-issue … keep-open` and `human-close` — so the answer to a
+wrongly-cleared label is to re-express the intent in the human's namespace
+rather than to re-apply an `ai:` one.
+
+**The counts are the point.** A recurrence is now a number that grows in the
+**vetter's own state-load**, every run: `counts.clearedNoFlag`,
+`counts.clearedRejectedStillFlagged`, and `counts.clearanceFailed` — the last
+being the one that must never be quietly non-zero, since the label is still live
+and the issue still parked. `strandedFlags` in `next_close_candidate` stays as
+the human-side view, and now means something sharper: a flag listed there is a
+clearance that has not run yet or could not write.
+
+One consequence worth naming: `cc_row` now reads the verdict **word** off
+`cc_gate` — the same classifier `/ncc` uses — rather than asking only whether a
+verdict is pinned to the flag. That is what separated the two states in the
+vetter's inbox, and it also fixed a projection: a rejected-still-flagged issue
+used to render on the dashboard as `closeCandidateUpheld`, i.e. as the vetter
+agreeing the issue should close. That is the worst direction for the error,
+because the human's next move on an upheld flag is to destroy work.
+
 ### Infrastructure down ends the run (#108)
 
 `ai:blocked-infra` used to be the fourth blocked state and the total-function
