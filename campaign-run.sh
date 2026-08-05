@@ -161,11 +161,19 @@ rm -f "$INFRAREC"
 # first, and those issues cite `audit/protofire/*.pdf` as their source (raindex#2619 names the file
 # outright) — a producer that cannot open the report it is implementing against writes a PR body
 # asserting something it never read. A missing dependency ends the run rather than degrading it.
-_pf="$(pr-review-report preflight)"; _pfrc=$?
+#
+# The two CAPABILITY flags are the run's environment preconditions, asserted here rather than by the
+# model. `gh auth status` and a `nix develop …#sol-shell -c forge --version` opened every producer
+# run byte-identically and carried no decision content — the model read two answers it could do
+# nothing about and then started work anyway. Asserted here they ABORT: no tokens, one run-metrics
+# row naming what was unsatisfied, `ToolingFailure`, which is neither a success nor a skip. The gate
+# is also stricter than the read it replaces, because it checks the token's SCOPES rather than
+# eyeballing the word "Logged".
+_pf="$(pr-review-report preflight --gh-auth --sol-shell)"; _pfrc=$?
 printf '%s\n' "$_pf" | sed 's/^/  /' >> "$LOG"
 if [ "$_pfrc" -ne 0 ]; then
   _missing="$(printf '%s\n' "$_pf" | sed -n 's/^missing=//p')"
-  echo "$(date -u +%FT%TZ) campaign run ABORT: harness tools missing from PATH: $_missing" >> "$LOG"
+  echo "$(date -u +%FT%TZ) campaign run ABORT: harness dependencies unsatisfied: $_missing" >> "$LOG"
   : > "$RUNLOG"
   mkdir -p "$DIR/metrics"
   pr-review-report run-metrics "$RUNLOG" \
@@ -248,6 +256,41 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{SCRATCH_DIR}}#$SCRATCH_DIR#g" \
               "$DIR/campaign-prompt.txt")"
 
+# --- the STANDING BRIEF every dispatched worker starts with (#200) -----------------------------
+# A dispatched sub-agent starts with no prompt, so the run's standing rules reach it only if
+# something puts them there. Until now the only channel was the dispatch prompt the main loop
+# improvised per item, and 36% of those bytes (60,891 of 181,867 across the 40 dispatches in the
+# retained traces) were the same standing rules retyped — held in the MAIN LOOP's context and
+# re-read on every one of its remaining turns, which is where they are dearest ($2.50 measured).
+# The rules the main loop did NOT retype are the ones it never thought to: 142 of the 362 GitHub
+# reads dispatched agents made were a per-turn `gh pr checks` poll and 72 were a re-read of a
+# subject already in the agent's own context — $15.73, 68% of the sub-agent cold-start bucket.
+#
+# `--agents` is the harness's own channel for this: the JSON defines a subagent TYPE whose prompt
+# the harness loads directly into each dispatched agent, so the main loop pays none of those bytes
+# and cannot paraphrase the rules away. Verified against claude 2.1.221 that a `--agents`-defined
+# type is dispatchable and inherits the full surface these settings grant — Bash, ToolSearch and
+# the `mcp__fsm__*` producer profile all resolve inside one.
+#
+# Built with jq rather than committed as JSON so the brief stays PLAIN TEXT: it is prompt prose a
+# human edits and a conformance test greps, and a hand-escaped JSON string literal is neither.
+# A brief that cannot be built ABORTS the run: dispatch would still work, which is the problem —
+# the workers would silently go back to improvised briefing and nothing in the trace would say so.
+# The condition is CONTENT, not existence: an empty (or whitespace-only) brief builds perfectly
+# valid JSON carrying an empty prompt, which registers the type and briefs nobody — the silent
+# degradation this guard exists to prevent, one truncated file away. `-f` would pass it and so
+# would `-s`, so the test is a non-space byte.
+if ! grep -q '[^[:space:]]' "$DIR/campaign-worker-prompt.txt" 2>/dev/null; then
+  echo "$(date -u +%FT%TZ) campaign run ABORT: no campaign-worker-prompt.txt in '$DIR'" >> "$LOG"
+  exit 1
+fi
+AGENTS_JSON="$(jq -nc --rawfile brief "$DIR/campaign-worker-prompt.txt" \
+  '{"pr-worker":{"description":"Producer worker: does ONE dispatched item end to end and reports its outcome.","prompt":$brief}}')"
+if [ -z "$AGENTS_JSON" ]; then
+  echo "$(date -u +%FT%TZ) campaign run ABORT: could not build the worker brief from campaign-worker-prompt.txt" >> "$LOG"
+  exit 1
+fi
+
 {
   echo "================================================================="
   echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(uname -n)) trace=$RUNLOG"
@@ -300,6 +343,7 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     --model "$USED_MODEL" \
     --settings "$DIR/campaign-settings.json" \
     --mcp-config "$DIR/campaign-mcp.json" \
+    --agents "$AGENTS_JSON" \
     --permission-mode default \
     --verbose --output-format stream-json \
     --add-dir "$WORK_DIR" \
@@ -344,6 +388,18 @@ if [ -s "$RUNLOG" ]; then
     --run-id "$TS" --role producer --model "$USED_MODEL" --exit-code "$rc" \
     --infra "$INFRAREC" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+fi
+
+# --- did this run VERIFY Solidity where its CI will judge it? (#203) --------------------------
+# `sol-toolchain` (#195) gave the producer a way to ASK which toolchain a checkout's own CI runs.
+# Nothing read the answer back, and a rule with no check cannot report its own violation — which is
+# how #116 was found, by a parked PR whose one back-off attempt had gone on a diff that could never
+# pass. This reads the run's own trace: the answer and the `nix develop` that followed it are both
+# recorded there, so the comparison costs no network read and cannot stop a run mid-flight.
+# The exit code goes in the LOG and nowhere else — a skew is something to READ at the end of a run,
+# not a reason to fail a run whose PRs are already open. Best-effort, like every line around it.
+if [ -s "$RUNLOG" ]; then
+  pr-review-report sol-toolchain-audit "$RUNLOG" >> "$LOG" 2>&1 || true
 fi
 
 # The scratch dir is reclaimed by the EXIT trap installed where the dir is created — including on
