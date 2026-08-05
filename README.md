@@ -114,12 +114,12 @@ as strings it **read and refused on**, so the one actor whose decisions
 everything else treats as sacred was also the only one improvising raw
 `gh issue edit --add-label`.
 
-| Transition                                             | The move it makes                                                                                                                                                                                                                                                                      |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111): `reject` REQUIRES `--rework "<order>"`, `design` takes exactly one of `--rework` / `--park`                                                                                       |
-| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those two plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` carry the same disposition flags, `keep-open` refuses them (the verb is its own disposition)                                                                  |
-| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition                                                                                                                                                                                        |
-| `record-close-candidate-verdict <owner/repo> <n>`      | the vetter's flag verdict, on either subject type, now reachable from a terminal too (the refusal above names it)                                                                                                                                                                                              |
+| Transition                                             | The move it makes                                                                                                                                                                                                     |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111): `reject` REQUIRES `--rework "<order>"`, `design` takes exactly one of `--rework` / `--park`                      |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those two plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` carry the same disposition flags, `keep-open` refuses them (the verb is its own disposition) |
+| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition                                                                                                                       |
+| `record-close-candidate-verdict <owner/repo> <n>`      | the vetter's flag verdict, on either subject type, now reachable from a terminal too (the refusal above names it)                                                                                                     |
 
 **A ruling can delegate, not only park (#111).** The ruling and the work order
 are two records with their own shapes — the ruling is provenance (_a human
@@ -132,19 +132,19 @@ same anchor as the ruling so the two go stale together. The tool owns the
 prefix, so the failure the issue measured — a hand-typed `Rework Note` silently
 parking a PR meant to be delegated — is unconstructible. `reject` **requires**
 the order (a reject IS a send-back; one not worth reworking is a `human-close`,
-not a park); `design` takes exactly one of `--rework` /
-`--park`; and a bare call to either **refuses** rather than parking by accident
-— pure parking is an explicit spelling, never the default meaning of a ruling.
-`keep-open` takes neither flag and says so: it is a
-standing constraint — the verb is its own disposition, so a second spelling of
-it would only be a way to mean something else by accident. A close is not a
-ruling verb at all: deciding one IS executing one (`human-close`, #213). What the human
-namespace protects is **authorship only**: no AI actor writes a `human:*` label,
-and none removes one as an override — but a ruling is an input the machine
-executes, so the producer's state-load picks a delegated `human:design` up as a
-work order (`worklist` routes it `rework-ruling`), the push moves the head, and
-the vetter's next verdict clears the spent label as the **completion** of the
-ruling through the ordinary rework → un-vetted → re-vet flow.
+not a park); `design` takes exactly one of `--rework` / `--park`; and a bare
+call to either **refuses** rather than parking by accident — pure parking is an
+explicit spelling, never the default meaning of a ruling. `keep-open` takes
+neither flag and says so: it is a standing constraint — the verb is its own
+disposition, so a second spelling of it would only be a way to mean something
+else by accident. A close is not a ruling verb at all: deciding one IS executing
+one (`human-close`, #213). What the human namespace protects is **authorship
+only**: no AI actor writes a `human:*` label, and none removes one as an
+override — but a ruling is an input the machine executes, so the producer's
+state-load picks a delegated `human:design` up as a work order (`worklist`
+routes it `rework-ruling`), the push moves the head, and the vetter's next
+verdict clears the spent label as the **completion** of the ruling through the
+ordinary rework → un-vetted → re-vet flow.
 
 The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
 (PRs) and `HUMAN_RULING_LABELS` (issues), the same constants every AI transition
@@ -244,11 +244,11 @@ alone is the durable intent.
 - **It is one transition, not a command that chains two.** A slash command that
   called a ruling tool and then `gh issue close` would put the ORDER and the
   flag clear in a prompt — unenforced, untested, free to drift. Here the order
-  is a tested property, chosen so no tear is invisible: a tear after the
-  comment leaves the torn-close signature (ruling on the record, subject open)
-  that the vetter's state-load recognises and completes itself, and a tear
-  after the close leaves a closed subject whose stale flag the same
-  state-load's closed-side sweep removes.
+  is a tested property, chosen so no tear is invisible: a tear after the comment
+  leaves the torn-close signature (ruling on the record, subject open) that the
+  vetter's state-load recognises and completes itself, and a tear after the
+  close leaves a closed subject whose stale flag the same state-load's
+  closed-side sweep removes.
 - **It retires `ai:close-candidate` and no other `ai:*` label.** That one label
   means "a human still has to ACT on this subject" — on an issue the producer's
   pending claim, on a PR the vetter's pending `close` verdict — and closing IS
@@ -268,16 +268,16 @@ alone is the durable intent.
 flag on either subject is the vetter's to judge (`closeCandidateUnvetted`), and
 an upheld flag or the vetter's own PR `close` verdict is the human's to dispose
 of, in the ONE mixed `closeCandidateUpheld` inbox. Every human transition takes
-a full `owner/repo#n`, and where it can act on either subject it READS which
-one it has rather than trusting which command was typed. Where it cannot, it
-refuses by naming what was actually referenced and handing over the command
-that fits — in **both** directions, because a refusal a caller cannot act on
-sends them straight back to raw `gh`:
+a full `owner/repo#n`, and where it can act on either subject it READS which one
+it has rather than trusting which command was typed. Where it cannot, it refuses
+by naming what was actually referenced and handing over the command that fits —
+in **both** directions, because a refusal a caller cannot act on sends them
+straight back to raw `gh`:
 
 - `record-close-candidate-verdict` pointed at a PR whose label is the vetter's
   OWN `close` verdict refuses — there is no producer claim for a second AI
-  judgement to judge — and names the three moves that do apply. A producer
-  FLAG on a PR is judged exactly as one on an issue.
+  judgement to judge — and names the three moves that do apply. A producer FLAG
+  on a PR is judged exactly as one on an issue.
 - `human-rule` pointed at an issue used to answer "`gh pr view` failed — not
   writing on incomplete data", which reads as an API outage. It now names the
   subject and prints the `human-rule-issue` line, carrying the same ruling
@@ -376,9 +376,9 @@ server is the vetter's **only** tool surface.
 | `pr_checkout`                    | local read-only clone of the PR head, so the `audit` skill has source — returns the `dir` AND the `head` sha it produced, or errors having left nothing behind                                 |
 | `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost — refused unless `covered` accounts for every changed file |
 | `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                                |
-| `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge — issues AND PRs (#211) — each with its `flagAt` + stated evidence                                                                                  |
+| `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge — issues AND PRs (#211) — each with its `flagAt` + stated evidence                                                         |
 | `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels, the full flag body, any prior verdicts, and `citationEvidence` — the machine's read of the cited change's own diff                   |
-| `record_close_candidate_verdict` | the flag write, either subject type: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                        |
+| `record_close_candidate_verdict` | the flag write, either subject type: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                    |
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
@@ -1336,21 +1336,21 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   merges/closes and the PR re-enters vetting fresh ("clear when deps merge" is
   vetter action, not human polling).
 - **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:design`, plus the RETIRED
-  `ai:relink` for as long as any PR still carries it (#135). `ai:close-candidate`
-  is NOT a lane state (#211/#212): the flag hands the PR to the close-candidate
-  machinery, which inventories it in the mixed `closeCandidateUnvetted` /
-  `closeCandidateUpheld` arrays — the PR-side mirror of a flagged issue leaving
-  `uncoveredIssues`.
+  `ai:relink` for as long as any PR still carries it (#135).
+  `ai:close-candidate` is NOT a lane state (#211/#212): the flag hands the PR to
+  the close-candidate machinery, which inventories it in the mixed
+  `closeCandidateUnvetted` / `closeCandidateUpheld` arrays — the PR-side mirror
+  of a flagged issue leaving `uncoveredIssues`.
 - **producer-blocked** — the RETIRED `ai:blocked-deploy` (#162) and
   `ai:blocked-infra` (#108), each for as long as any PR still carries it. The
   blocked-deploy residue is deliberately **not** vet-lifecycle: the #164
   clearance reads exactly `ai:blocked-on` typed refs, which this residue does
   not have — its exit is an eyes-on human pass that re-flags each PR blocked-on
   its repo's migration, or unblocks it outright.
-- **human-decisions** — `human:design`, plus the
-  RETIRED `human:reject` for as long as any PR still carries it (#133). That
-  last count is the migration's progress meter: `migrate-reject` moves those PRs
-  to `ai:reject` and it only ever shrinks.
+- **human-decisions** — `human:design`, plus the RETIRED `human:reject` for as
+  long as any PR still carries it (#133). That last count is the migration's
+  progress meter: `migrate-reject` moves those PRs to `ai:reject` and it only
+  ever shrinks.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved

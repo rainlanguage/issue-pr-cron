@@ -308,15 +308,14 @@ it finds is a different PR's code.
   actor ever writes a `human:*` label, and none removes one as an OVERRIDE of
   the human: a native `APPROVED`/`CHANGES_REQUESTED` review, a `👤 human` ruling
   pinned to the CURRENT head, an absolutely-parking label (the retired
-  `human:reject`), or an un-executed
-  `human:design` is never overwritten by the vetter — `--record-verdict` refuses
-  (exit 3), closing the TOCTOU race. But absolute parking was the ruled-out
-  overreaction: a ruling is an input the machine EXECUTES. A delegated
-  `human:design` (its trusted `Rework note` pinned at head) is the producer's
-  work order; once executed (the push moves the head past the pin) the PR is
-  un-vetted and the verdict that re-judges it clears the spent label —
-  clearing-by-execution, the completion of what the human asked, not an
-  override. Pure parking survives only as the explicit `--park` spelling.
+  `human:reject`), or an un-executed `human:design` is never overwritten by the
+  vetter — `--record-verdict` refuses (exit 3), closing the TOCTOU race. But
+  absolute parking was the ruled-out overreaction: a ruling is an input the
+  machine EXECUTES. A delegated `human:design` (its trusted `Rework note` pinned
+  at head) is the producer's work order; once executed (the push moves the head
+  past the pin) the PR is un-vetted and the verdict that re-judges it clears the
+  spent label — clearing-by-execution, the completion of what the human asked,
+  not an override. Pure parking survives only as the explicit `--park` spelling.
 - **A reject is ONE state, and the ruler rides on the comment (#133).**
   `ai:reject` and `human:reject` demanded the same move from the same actor, so
   they are one state: `ai:reject`, whoever ruled. The label says what the work
@@ -356,18 +355,18 @@ it finds is a different PR's code.
   checked against a diff that is not there is not checked, and a guard that
   silently stops firing is this very failure one level up, inside the thing
   built to prevent it.
-- **The human's TERMINAL edge is a transition too — decide+do, no state
-  between (#213).** `gh issue close` knows nothing about the FSM, so a
-  hand-close left `ai:close-candidate` attached: 74 closed subjects org-wide
-  (55 issues, 19 PRs) carried it when #94 was filed, a state no modeled
-  transition produces. `human-close` is that edge as ONE transition — the
-  pinned `👤 human` ruling comment, the close, then the flag retirement, in
-  that order, writing NO label: the comment alone is the durable intent, and a
-  tear between it and the close is the torn-close signature the vetter's
-  state-load completes. It retires `ai:close-candidate` and no other `ai:*`
-  label: that one means "a human still has to ACT", and closing is the act.
-  Chaining a ruling tool with a Bash `gh close` would put the order and the
-  flag clear in a prompt, which is exactly the half that was wrong every time.
+- **The human's TERMINAL edge is a transition too — decide+do, no state between
+  (#213).** `gh issue close` knows nothing about the FSM, so a hand-close left
+  `ai:close-candidate` attached: 74 closed subjects org-wide (55 issues, 19 PRs)
+  carried it when #94 was filed, a state no modeled transition produces.
+  `human-close` is that edge as ONE transition — the pinned `👤 human` ruling
+  comment, the close, then the flag retirement, in that order, writing NO label:
+  the comment alone is the durable intent, and a tear between it and the close
+  is the torn-close signature the vetter's state-load completes. It retires
+  `ai:close-candidate` and no other `ai:*` label: that one means "a human still
+  has to ACT", and closing is the act. Chaining a ruling tool with a Bash
+  `gh close` would put the order and the flag clear in a prompt, which is
+  exactly the half that was wrong every time.
 - **A ruling names its POPULATION.** `ai:close-candidate` covers two separately
   sized sets — `closeCandidateIssues` (a producer claim on an issue) and
   `lanes.vetter-verdicts.ai:close-candidate` (the vetter's own verdict on a PR).
