@@ -43943,13 +43943,16 @@ mod subject_ref_tests {
         assert_eq!((a.mean, a.median, a.oldest), (1.5, 1.5, 1.5));
         let a = issue_age_stats(&[aged(8 * 3_600_000, now)], now).unwrap();
         assert_eq!((a.mean, a.median, a.oldest), (0.3, 0.3, 0.3));
-        // Rounding happens ONCE, at the end: 1/3 + 1/3 + 1/3 days averages to exactly 0.3, where
-        // rounding each member to 0.3 first and then averaging would agree — so use a population
-        // that DISAGREES. Members of 0.04 and 0.06 days round individually to 0.0 and 0.1, but
-        // their mean is 0.05 → 0.1 (banker-free `.round()` goes away from zero at the half).
+        // Rounding happens ONCE, at the END — the members are averaged at full precision and only
+        // the result is rounded. Most populations cannot tell the two orders apart (rounding
+        // errors cancel), so this one is chosen because they DISAGREE: 0.04, 0.04 and 0.14 days
+        // average to 0.0733 → 0.1, while rounding each member first gives 0.0, 0.0 and 0.1, whose
+        // average is 0.0333 → 0.0. An implementation that rounded per member would report a mean
+        // of 0.0 for a population where no member is younger than an hour.
         let b = vec![
             aged((0.04 * 86_400_000.0) as i64, now),
-            aged((0.06 * 86_400_000.0) as i64, now),
+            aged((0.04 * 86_400_000.0) as i64, now),
+            aged((0.14 * 86_400_000.0) as i64, now),
         ];
         let a = issue_age_stats(&b, now).unwrap();
         assert_eq!(
