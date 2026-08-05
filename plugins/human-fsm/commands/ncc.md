@@ -134,6 +134,21 @@ MERGED is part of that, and `pr_context` carries no merged/state field, so say
 plainly that you could not confirm it here rather than substituting a read that
 answers something else.
 
+`close_candidate_context` carries `citationEvidence` for exactly this step: the
+machine's read of the CITED CHANGE'S OWN DIFF — how many files it touches, its
+`+a/-d` on every path the reason names, and which symbols the reason names its
+changed lines do not contain. It is evidence and never a verdict, and on its own
+it is never a reason to keep an issue open: a sound reason regularly names
+current-main symbols the cited change never touched, and a fix by DELETION
+leaves its evidence on the removed side. What it settles is the citation that
+cannot be what it claims. `rain.dia#22`'s flag said merged PR #48 "landed
+`testRoundTripEmpty` (line 27) and `testRoundTrip31Bytes` (line 32)" while #48's
+touch on that file is `+2/-2` and its changed lines carry neither name — PR #33
+added them. **That was still a CLOSE**, ruled on the merits with the correction
+recorded, because the issue really was fixed and rejecting the flag would have
+cost a producer cycle to reach the same answer. A wrong citation under a right
+outcome is a correction you WRITE DOWN, not a reason to send it back.
+
 **7. Read the vetter's word as a claim too, and check `verdict.atFlag`.** Every
 row here was upheld by the vetter — a rejected flag has its label stripped and
 never reaches this queue — so agreement is the default and worth nothing by
