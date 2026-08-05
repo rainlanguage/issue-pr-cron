@@ -1512,6 +1512,409 @@ mod org_tests {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// ARCHIVED REPOS — the blind spot every org-wide enumeration shared (#206).
+//
+// An archived repo is READ-ONLY. Its issues and PRs keep answering `gh search`, so every
+// enumeration in this binary kept offering them; but `gh issue edit`, `gh issue close`,
+// `gh pr merge` and `gh pr comment` all refuse against one, which means EVERY transition this
+// FSM owns is unavailable on those rows. `next_close_candidate` is where it bit: `rain.webapp`
+// was archived on 2026-08-05 and, minutes later, `rain.webapp#139` was served as the HEAD of the
+// human's queue — a sound flag, a completed read, and no ruling that could be written. The flag
+// queue is ordered OLDEST FIRST, so a frozen row does not merely appear, it sorts to the front
+// and stays there.
+//
+// THE FILTER BELONGS IN THE TOOL, NOT IN A PROMPT. Archived repos have been skipped by prompt
+// instruction before, and that works for the producer, which reads a list and chooses what to
+// work. It cannot work for a tool whose contract is "here is the next thing to rule on, ranked,
+// one at a time": a row the caller cannot act on is not something to skip past, it is the head of
+// the queue until something removes it.
+//
+// AND THE ROWS ARE WITHHELD WITH A COUNT, NEVER SILENTLY. Silence is what let the flags in
+// `rain.webapp` sit unnoticed in the first place, and a caller who sees a queue shrink with
+// nothing to explain the gap has to re-derive the reason from outside the tool — the same defect
+// the vetter's state-load fixed by counting every skip. So each surface reports how many rows an
+// archived repo froze, in the same place it reports its other withheld sets.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Every archived `owner/repo` in the [`org_names`] scope, ASCII-lowercased.
+///
+/// Lowercased because the two sides come from different GitHub APIs — the repository connection
+/// spells the slug as the repo is named, `gh search` echoes what the URL carried — and GitHub
+/// treats owner and name case-insensitively. Comparing raw would let a case difference read as
+/// "not archived", which is the one direction of error this whole section exists to prevent.
+struct ArchivedRepos(std::collections::BTreeSet<String>);
+
+impl ArchivedRepos {
+    fn contains(&self, slug: &str) -> bool {
+        self.0.contains(&slug.to_ascii_lowercase())
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[cfg(test)]
+    fn from_slugs<I: IntoIterator<Item = S>, S: AsRef<str>>(slugs: I) -> Self {
+        ArchivedRepos(
+            slugs
+                .into_iter()
+                .map(|s| s.as_ref().to_ascii_lowercase())
+                .collect(),
+        )
+    }
+}
+
+/// The GraphQL page behind [`archived_repos`], one owner at a time.
+///
+/// `repositoryOwner` rather than `organization` because [`org_names`] is a list of OWNERS and a
+/// user account is a legal one; the interface resolves either, and `isArchived:` is a filter on
+/// the connection itself so the server returns only the archived set rather than the whole one.
+///
+/// NOT `gh search repos --archived=true`, which is the cheap-looking alternative and is WRONG.
+/// Search is an INDEX, and the index is incomplete: measured on 2026-08-05, the repository
+/// connection reported 38 archived repos across the three configured orgs and the search reported
+/// 37 — it had no row for `rainlanguage/assemblyscript-cbor-fork`, which `gh repo view` confirms
+/// is archived. The same staleness applies to the `--archived=false` qualifier on the issue and PR
+/// searches, so filtering server-side inside each existing search would inherit the gap. It is
+/// also the WORST staleness to inherit here: the defect is a repo archived MINUTES before the
+/// read, which is exactly when an index has not caught up.
+const ARCHIVED_REPOS_QUERY: &str = "query($org: String!, $cursor: String) {
+  repositoryOwner(login: $org) {
+    repositories(first: 100, isArchived: true, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { nameWithOwner }
+    }
+  }
+}";
+
+/// PURE: one page of [`ARCHIVED_REPOS_QUERY`] — the slugs it names, and the cursor of the page
+/// after it (`None` when this was the last).
+///
+/// A response whose shape cannot be read is [`GhFailure::Malformed`] and NEVER an empty page: an
+/// empty page reads as "nothing here is archived", which is precisely the false negative that puts
+/// a frozen row back at the head of the queue.
+///
+/// `hasNextPage` with no `endCursor` is malformed too, rather than treated as the end. GitHub does
+/// not produce it, and reading it as "done" would silently truncate the set — under-reporting
+/// archived repos in the one direction that fails open.
+fn archived_repos_page(v: &Value) -> Result<(Vec<String>, Option<String>), GhFailure> {
+    let Some(conn) = v.pointer("/data/repositoryOwner/repositories") else {
+        return Err(GhFailure::Malformed);
+    };
+    let Some(nodes) = conn.get("nodes").and_then(|n| n.as_array()) else {
+        return Err(GhFailure::Malformed);
+    };
+    let mut slugs = Vec::with_capacity(nodes.len());
+    for n in nodes {
+        let Some(slug) = n.get("nameWithOwner").and_then(|s| s.as_str()) else {
+            return Err(GhFailure::Malformed);
+        };
+        slugs.push(slug.to_ascii_lowercase());
+    }
+    let has_next = conn
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !has_next {
+        return Ok((slugs, None));
+    }
+    let Some(cursor) = conn
+        .pointer("/pageInfo/endCursor")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty())
+    else {
+        return Err(GhFailure::Malformed);
+    };
+    Ok((slugs, Some(cursor.to_string())))
+}
+
+/// PURE: the `gh api graphql` argv for one owner's page.
+fn archived_repos_args(org: &str, cursor: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "graphql".to_string(),
+        "-f".to_string(),
+        format!("query={ARCHIVED_REPOS_QUERY}"),
+        "-f".to_string(),
+        format!("org={org}"),
+    ];
+    if let Some(c) = cursor {
+        args.push("-f".to_string());
+        args.push(format!("cursor={c}"));
+    }
+    args
+}
+
+/// LIVE: every archived repo in the configured org scope.
+///
+/// DELIBERATELY NOT MEMOISED ACROSS CALLS. The whole defect is a repo that became read-only
+/// UNDERNEATH a live queue — four minutes elapsed between `rain.webapp` being archived and the
+/// queue serving a flag from it — and `mcp` is a long-lived process, so a set cached at server
+/// start would answer with the world as it was whenever the human last restarted it. Each
+/// enumeration reads it ONCE, at the top, and shares that one answer across its whole loop:
+/// measured 1.8s for the three configured orgs (one page each, 38 repos), against 0.5s per
+/// DISTINCT repo for the per-repo `gh repo view --json isArchived` alternative — which is the
+/// lookup-inside-a-loop that would not be affordable, since the enumerations span 40–60 distinct
+/// repos.
+fn archived_repos() -> Result<ArchivedRepos, GhFailure> {
+    let mut set = std::collections::BTreeSet::new();
+    for org in org_names(&std::env::var("ORGS").unwrap_or_default()) {
+        let mut cursor: Option<String> = None;
+        loop {
+            let args = archived_repos_args(&org, cursor.as_deref());
+            let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+            let v = gh_retrying(|| gh_api_result(&argref))?;
+            let (slugs, next) = archived_repos_page(&v)?;
+            set.extend(slugs);
+            let Some(next) = next else { break };
+            cursor = Some(next);
+        }
+    }
+    Ok(ArchivedRepos(set))
+}
+
+/// The one message every surface refuses with when the archived set cannot be read.
+///
+/// An UNREADABLE archived-state must never collapse to "not archived" (#199 gave the failure a
+/// type precisely so it could not). Both fail-open and fail-closed are wrong here and in opposite
+/// directions: treating everything as live re-creates the defect, and treating everything as
+/// archived empties the queue and hides all the real work. So the enumeration ABORTS, which is
+/// what every other read in this binary already does when it cannot answer honestly — the caller
+/// gets a refusal it can retry rather than a queue it cannot trust.
+fn archived_read_error(f: GhFailure) -> String {
+    format!(
+        "error: could not read which repos are archived ({f:?}) — aborting rather than offer \
+         rows from a repo that refuses every transition"
+    )
+}
+
+/// PURE: split search hits into the ones a transition can still act on and the ones an archived
+/// repo has frozen, preserving order in both.
+///
+/// A hit whose slug will not PARSE is KEPT, never counted as archived. Every caller already has an
+/// error path for an unaddressable row, and answering "is this archived?" with a guess about a
+/// reference nobody could resolve would replace a reported error with a silent drop.
+fn withhold_archived(
+    hits: Vec<Value>,
+    archived: &ArchivedRepos,
+    slug_of: impl Fn(&Value) -> Option<String>,
+) -> (Vec<Value>, Vec<Value>) {
+    let mut live = Vec::with_capacity(hits.len());
+    let mut frozen = Vec::new();
+    for hit in hits {
+        match slug_of(&hit) {
+            Some(slug) if archived.contains(&slug) => frozen.push(hit),
+            _ => live.push(hit),
+        }
+    }
+    (live, frozen)
+}
+
+/// PURE: the `owner/repo` a `gh search issues` / `gh search prs` hit names, from the
+/// `repository.nameWithOwner` the searches all ask for, falling back to the URL. The one slug
+/// reader [`withhold_archived`] is handed, so no surface can disagree with another about which
+/// repo a hit belongs to.
+fn hit_slug(hit: &Value) -> Option<String> {
+    hit.get("repository")
+        .and_then(|r| r.get("nameWithOwner"))
+        .and_then(|s| s.as_str())
+        .map(String::from)
+        .or_else(|| {
+            hit.get("url")
+                .and_then(|u| u.as_str())
+                .and_then(|u| pr_slug(u).or_else(|| issue_slug(u)))
+        })
+}
+
+#[cfg(test)]
+mod archived_repos_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn page(nodes: Value, has_next: bool, end: Value) -> Value {
+        json!({"data": {"repositoryOwner": {"repositories": {
+            "pageInfo": {"hasNextPage": has_next, "endCursor": end},
+            "nodes": nodes,
+        }}}})
+    }
+
+    /// The live shape, copied from `gh api graphql` against `cyclofinance` on 2026-08-05.
+    #[test]
+    fn a_page_yields_its_slugs_lowercased_and_no_cursor_when_it_is_the_last() {
+        let v = page(
+            json!([
+                {"nameWithOwner": "cyclofinance/cyclo.rewardsold"},
+                {"nameWithOwner": "cyclofinance/rflr-nix"},
+            ]),
+            false,
+            json!("Y3Vyc29yOnYyOpHONxZ8-g=="),
+        );
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((
+                vec![
+                    "cyclofinance/cyclo.rewardsold".to_string(),
+                    "cyclofinance/rflr-nix".to_string(),
+                ],
+                None
+            ))
+        );
+    }
+
+    /// Casing is normalised on the way IN, so a slug spelled differently by the two APIs still
+    /// matches. GitHub owners and names are case-insensitive; a raw compare would read a case
+    /// difference as "not archived" — the one direction that fails open.
+    #[test]
+    fn slugs_are_lowercased_so_the_two_apis_spellings_agree() {
+        let v = page(json!([{"nameWithOwner": "RainLanguage/Rain.Webapp"}]), false, json!(null));
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((vec!["rainlanguage/rain.webapp".to_string()], None))
+        );
+        let set = ArchivedRepos::from_slugs(["RainLanguage/Rain.Webapp"]);
+        assert!(set.contains("rainlanguage/rain.webapp"));
+        assert!(set.contains("RAINLANGUAGE/RAIN.WEBAPP"));
+    }
+
+    #[test]
+    fn a_page_with_more_after_it_yields_the_cursor() {
+        let v = page(json!([{"nameWithOwner": "o/r"}]), true, json!("CUR"));
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((vec!["o/r".to_string()], Some("CUR".to_string())))
+        );
+    }
+
+    /// Every unreadable shape is `Malformed`, never an empty page. An empty page reads as
+    /// "nothing is archived", which puts every frozen row straight back at the head of the queue.
+    #[test]
+    fn an_unreadable_response_is_malformed_never_an_empty_set() {
+        for bad in [
+            json!({}),
+            json!({"data": {}}),
+            json!({"data": {"repositoryOwner": null}}),
+            // The connection is there but the node list is not.
+            json!({"data": {"repositoryOwner": {"repositories": {"pageInfo": {"hasNextPage": false}}}}}),
+            // A node with no slug — one unaddressable repo must not silently shrink the set.
+            page(json!([{"nameWithOwner": "o/r"}, {"id": "x"}]), false, json!(null)),
+            // `hasNextPage` with nothing to page WITH would silently truncate the set.
+            page(json!([{"nameWithOwner": "o/r"}]), true, json!(null)),
+            page(json!([{"nameWithOwner": "o/r"}]), true, json!("")),
+        ] {
+            assert_eq!(
+                archived_repos_page(&bad),
+                Err(GhFailure::Malformed),
+                "{bad} must not read as an empty archived set"
+            );
+        }
+    }
+
+    /// The cursor is threaded into the NEXT page's argv, and the first page carries none.
+    #[test]
+    fn the_argv_names_the_owner_and_pages_with_the_cursor() {
+        let first = archived_repos_args("rainlanguage", None);
+        assert_eq!(first[0], "graphql");
+        assert!(first.contains(&format!("query={ARCHIVED_REPOS_QUERY}")));
+        assert!(first.contains(&"org=rainlanguage".to_string()));
+        assert!(
+            !first.iter().any(|a| a.starts_with("cursor=")),
+            "the first page has nothing to page from: {first:?}"
+        );
+        let next = archived_repos_args("rainlanguage", Some("CUR"));
+        assert!(next.contains(&"cursor=CUR".to_string()));
+    }
+
+    /// The query asks the REPOSITORY CONNECTION, not the search index — the index was measured
+    /// incomplete (37 of 38 archived repos on 2026-08-05), and a repo archived minutes ago is
+    /// exactly the row an index has not caught up with.
+    #[test]
+    fn the_query_reads_the_repository_connection_filtered_to_archived() {
+        assert!(ARCHIVED_REPOS_QUERY.contains("repositoryOwner"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("isArchived: true"));
+        // Paged, so an owner with more than one page of archived repos is not truncated.
+        assert!(ARCHIVED_REPOS_QUERY.contains("hasNextPage"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("endCursor"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("$cursor"));
+    }
+
+    #[test]
+    fn hits_in_archived_repos_are_withheld_and_the_rest_keep_their_order() {
+        let hits = vec![
+            json!({"number": 1, "repository": {"nameWithOwner": "rainlanguage/raindex"}}),
+            json!({"number": 139, "repository": {"nameWithOwner": "rainlanguage/rain.webapp"}}),
+            json!({"number": 2, "repository": {"nameWithOwner": "rainlanguage/rain.erc4626.words"}}),
+        ];
+        let (live, frozen) = withhold_archived(
+            hits,
+            &ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]),
+            hit_slug,
+        );
+        assert_eq!(
+            live.iter().map(|h| h["number"].as_u64()).collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
+        assert_eq!(frozen.len(), 1);
+        assert_eq!(frozen[0]["number"], 139);
+    }
+
+    /// An EMPTY archived set withholds nothing — the filter must be inert where it has no answer
+    /// to give, or a queue would shrink for a reason that is not archiving.
+    #[test]
+    fn an_empty_archived_set_withholds_nothing() {
+        let hits = vec![json!({"number": 1, "repository": {"nameWithOwner": "o/r"}})];
+        let (live, frozen) =
+            withhold_archived(hits.clone(), &ArchivedRepos::from_slugs::<[&str; 0], _>([]), hit_slug);
+        assert_eq!(live, hits);
+        assert!(frozen.is_empty());
+    }
+
+    /// An unaddressable hit is KEPT, so the caller's own error path still reports it. Counting it
+    /// as archived would swap a reported error for a silent drop.
+    #[test]
+    fn an_unparseable_hit_is_kept_rather_than_counted_as_archived() {
+        let hits = vec![json!({"number": 1, "title": "no repo, no url"})];
+        let (live, frozen) = withhold_archived(
+            hits.clone(),
+            &ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]),
+            hit_slug,
+        );
+        assert_eq!(live, hits);
+        assert!(frozen.is_empty());
+    }
+
+    /// `nameWithOwner` is authoritative; the URL is the fallback, for issues and PRs alike.
+    #[test]
+    fn a_hit_is_addressed_by_its_repository_and_falls_back_to_the_url() {
+        assert_eq!(
+            hit_slug(&json!({"repository": {"nameWithOwner": "o/r"}})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(
+            hit_slug(&json!({"url": "https://github.com/o/r/issues/7"})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(
+            hit_slug(&json!({"url": "https://github.com/o/r/pull/7"})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(hit_slug(&json!({"number": 1})), None);
+    }
+
+    /// The refusal names the TYPED failure, and says which way it refused — an unreadable
+    /// archived-state is never allowed to read as "not archived".
+    #[test]
+    fn an_unreadable_archived_set_aborts_rather_than_reading_as_not_archived() {
+        let msg = archived_read_error(GhFailure::Unauthorized);
+        assert!(msg.starts_with("error:"), "{msg}");
+        assert!(msg.contains("Unauthorized"), "{msg}");
+        assert!(msg.contains("aborting"), "{msg}");
+        assert!(
+            archived_read_error(GhFailure::RateLimited { retry_after: Some(3) })
+                .contains("RateLimited"),
+        );
+    }
+}
+
 /// One PR that is presentable for a human decision, as [`presentable_queue`] produces it: its
 /// ordering key plus the per-PR `gh` JSON every consumer reads its own fields out of. Carrying the
 /// JSON rather than a pre-flattened row is what lets `next_ready` answer six questions off the
