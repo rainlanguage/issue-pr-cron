@@ -7124,9 +7124,9 @@ const CHANGED_FILE_READER_FIELD_LISTS: [(&str, &str); 3] = [
 #[cfg(test)]
 mod changed_file_tests {
     use super::{
-        changed_files_from_rest, changed_files_from_view, inject_changed_files, is_ui_path,
-        refetch_total, touches_ui, ChangedFile, ChangedFileSet, UiTouch,
-        CHANGED_FILE_READER_FIELD_LISTS,
+        changed_files_from_rest, changed_files_from_view, embeds_screenshot, inject_changed_files,
+        is_ui_path, refetch_total, screenshot_settled, touches_ui, ChangedFile, ChangedFileSet,
+        UiTouch, CHANGED_FILE_READER_FIELD_LISTS,
     };
     use serde_json::{json, Value};
 
@@ -7407,21 +7407,106 @@ mod changed_file_tests {
         assert_eq!(touches_ui(&ChangedFileSet::Complete(vec![])), UiTouch::No);
     }
 
-    /// The path convention itself, unchanged by #147 and pinned so the tri-state refactor cannot
-    /// have quietly widened or narrowed it.
+    /// The path convention itself, pinned so neither the tri-state read nor a later edit can
+    /// quietly widen or narrow it.
     #[test]
-    fn the_ui_path_convention_is_webapp_ui_components_and_site_html() {
+    fn the_ui_path_convention_is_the_frontend_packages_the_site_tree_and_the_render_extensions() {
         for yes in [
             "packages/webapp/src/Foo.svelte",
             "apps/packages/webapp/x.ts",
             "packages/ui-components/src/Bar.svelte",
+            "packages/ui-components/src/lib/services/historicalOrderCharts.ts",
             "site/index.html",
+            // The dashboard's DATA is what its panels draw, so a change to it changes the render.
+            "site/health.json",
+            "site/style.css",
+            // The three extensions, wherever a repo keeps them. `cyclo.site` keeps its components
+            // here, which is where both of #140's PRs lived.
+            "src/lib/components/Input.svelte",
+            "src/lib/components/RewardsInfo.svelte",
+            "docs/site/index.html",
+            "app/assets/theme.css",
         ] {
             assert!(is_ui_path(yes), "{yes} must be a UI path");
         }
-        for no in ["src/lib.rs", "site/style.css", "docs/site/index.html"] {
+        // Nothing that reaches no rendered surface. The three are EXTENSIONS and `site/` is a
+        // PREFIX, so a directory merely named `html`, a crate merely named `site`, a SvelteKit
+        // build directory and a sourcemap are all outside — each of which a substring test for the
+        // same strings would pull in.
+        for no in [
+            "src/lib.rs",
+            "src/html/parser.rs",
+            "crates/site/mod.rs",
+            "prelude.site",
+            "src/.svelte-kit/generated/root.js",
+            "build/app.css.map",
+            "tmp/index.html.bak",
+            "README.md",
+        ] {
             assert!(!is_ui_path(no), "{no} must not be a UI path");
         }
+    }
+
+    /// #142: the shot filename has no single shape (`shots/<pr>.png` for raindex,
+    /// `shots/<repo>-<pr>.png` elsewhere, per-view suffixes, and shots naming no PR at all), so the
+    /// BRANCH is what identifies one — the same thing the vetter's SCREENSHOT GATE accepts.
+    #[test]
+    fn a_shot_is_recognised_by_its_branch_url_and_not_by_a_filename_shape() {
+        let url = |name: &str| {
+            format!(
+                "🤖 ai:producer\n\n![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/{name})"
+            )
+        };
+        for name in [
+            "shots/2722.png",                     // raindex, the bare-number spelling
+            "shots/rain-org-health-155.png",      // every other repo, repo-qualified
+            "shots/cyclo.site-403-after.png",     // one PR, several views
+            "shots/roh-remove-overview.png",      // no PR number in the name at all
+            "rain-org-health/pr-67/pipeline.png", // not under shots/ at all
+            "shots/UPPER.PNG",
+        ] {
+            assert!(
+                embeds_screenshot(&url(name)),
+                "{name} is a shot on the branch"
+            );
+        }
+        // A MENTION of the branch is not an image. Step 5 tells the producer to "push the PNG to
+        // the raindex 'pr-screenshots' orphan branch", so this sentence is one the producer writes.
+        for prose in [
+            "🤖 ai:producer pushed nothing to pr-screenshots/ yet",
+            "see the pr-screenshots/shots/ directory",
+            "https://github.com/rainlanguage/raindex/tree/pr-screenshots/shots",
+            "![](https://example.com/shots/155.png)",
+        ] {
+            assert!(!embeds_screenshot(prose), "{prose} embeds no screenshot");
+        }
+        // Markdown and query strings do not hide the extension.
+        assert!(embeds_screenshot(
+            "[link](https://raw.githubusercontent.com/o/r/pr-screenshots/shots/x.png)"
+        ));
+        assert!(embeds_screenshot(
+            "https://raw.githubusercontent.com/o/r/pr-screenshots/shots/x.png?raw=1"
+        ));
+    }
+
+    /// Both halves of step 5's rule settle the question, and nothing else does.
+    #[test]
+    fn the_screenshot_question_is_settled_by_a_shot_or_by_the_exact_waiver_marker() {
+        let shot = "🤖 ai:producer ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/cyclo.site-432.png)".to_string();
+        let waiver = "🤖 ai:producer screenshot pending (manual): mounted RewardsCard.svelte, it \
+                      throws without a query context"
+            .to_string();
+        assert!(screenshot_settled(std::slice::from_ref(&shot)));
+        assert!(screenshot_settled(std::slice::from_ref(&waiver)));
+        assert!(screenshot_settled(&["unrelated note".to_string(), shot]));
+        assert!(!screenshot_settled(&[]));
+        // A differently-worded sentence waives nothing — step 5 says the marker is EXACT.
+        assert!(!screenshot_settled(&[
+            "🤖 ai:producer no screenshot: the change is pixel-identical".to_string()
+        ]));
+        assert!(!screenshot_settled(&[
+            "🤖 ai:producer screenshot to follow".to_string()
+        ]));
     }
 
     /// A field list that fetches `files` without `changedFiles` produces a page nothing says is a
@@ -24731,10 +24816,33 @@ impl UiTouch {
 }
 
 /// PURE: does this path fall under the screenshot requirement?
+///
+/// Deliberately WIDE, because of what the answer is USED for: it ROUTES a PR to `screenshot-3c`,
+/// where step 3c's own next sentence is the narrowing — read the diff, and a change that only
+/// touches `<script>`/store/load/pure-logic with no visible effect is skipped. So a path that
+/// fires here costs one diff read, which is the price [`UiTouch::Unknown`] is already set at.
+///
+/// A gate that REFUSED a `gh pr create` on this answer would price it at the PR, and no path rule
+/// is precise enough to carry that. Measured over the 681 PRs the producer has opened since the
+/// cron's first commit: 116 change a `.svelte`/`.css`/`.html` file, and 32 of those change no
+/// markup, style or template line at all — while 5 of that same 32 carry a screenshot the producer
+/// judged necessary anyway (a `<script>` constant can be the string a user reads). Both directions
+/// are wrong, so which side of the line a diff falls on is a JUDGEMENT about the rendered surface.
+/// It lives in step 3c and in the vetter's SCREENSHOT GATE, and this function only decides who is
+/// asked to make it (#142).
+///
+/// The families: raindex's two frontend packages; everything published as rain-org-health's
+/// dashboard, its DATA included (`site/health.json` is what the panels draw, and a scanner change
+/// that rewrites it changes the render); and the three extensions a rendered surface is written in
+/// wherever a repo keeps it — `cyclo.site` keeps its components under `src/lib/components/`. Of
+/// the 35 PRs in that corpus carrying a screenshot the producer pushed, these families see all 35.
 fn is_ui_path(p: &str) -> bool {
     p.contains("packages/webapp")
         || p.contains("packages/ui-components")
-        || (p.starts_with("site/") && p.ends_with(".html"))
+        || p.starts_with("site/")
+        || p.ends_with(".svelte")
+        || p.ends_with(".css")
+        || p.ends_with(".html")
 }
 
 /// PURE: the screenshot requirement's read of a changed-file set.
@@ -24761,6 +24869,52 @@ fn touches_ui(set: &ChangedFileSet) -> UiTouch {
             }
         }
     }
+}
+
+/// The orphan branch every screenshot is pushed to (campaign-prompt step 5). A raw URL on it is
+/// what an embedded shot IS, so the branch segment — not a filename shape — is what identifies one.
+const SCREENSHOT_BRANCH_SEGMENT: &str = "pr-screenshots/";
+
+/// PURE: does a TRUSTED comment on this PR settle the screenshot question?
+///
+/// Either half of step 5's rule settles it: a shot embedded from the `pr-screenshots` branch, or
+/// the exact `screenshot pending (manual)` waiver marker. Whether a waiver's REASON is any good is
+/// the vetter's judgement and stays there — this only reports that an answer was given.
+///
+/// The shot half matches the URL and never a filename, because the filename has no single shape:
+/// step 5 names a raindex shot `shots/<pr>.png` and every other repo's `shots/<repo>-<pr>.png`, and
+/// the branch also holds per-view suffixes (`shots/cyclo.site-403-after.png`) and shots carrying no
+/// PR number at all (`shots/roh-remove-overview.png`). A trusted comment ON THIS PR embedding a
+/// shot from that branch is this PR's shot — which is the subject the vetter's SCREENSHOT GATE
+/// names as well (`pr-screenshots/…png` in a trusted comment), so the producer's routing and the
+/// vetter's verdict are answering one question rather than one of them matching a filename the
+/// other never mentions. Matching `shots/<number>.png` instead agrees only for raindex: on
+/// 2026-08-04
+/// `rain-org-health#155` and `#156` each carried `shots/rain-org-health-<n>.png` and every run
+/// re-routed them to `screenshot-3c`, which is also what kept them out of `green-ready` (#142).
+fn screenshot_settled(trusted: &[String]) -> bool {
+    trusted
+        .iter()
+        .any(|c| c.contains("screenshot pending (manual)") || embeds_screenshot(c))
+}
+
+/// PURE: does this comment embed a screenshot from the `pr-screenshots` branch?
+///
+/// A URL, not a mention: the branch segment has to be followed, inside one unbroken run of URL
+/// characters, by a `.png`. Prose naming the branch ("push the PNG to the pr-screenshots branch" —
+/// which step 5 says, so the producer quotes it) names no image and settles nothing.
+fn embeds_screenshot(comment: &str) -> bool {
+    comment
+        .match_indices(SCREENSHOT_BRANCH_SEGMENT)
+        .any(|(i, _)| {
+            comment[i + SCREENSHOT_BRANCH_SEGMENT.len()..]
+                .split(|c: char| {
+                    c.is_whitespace() || matches!(c, ')' | ']' | '(' | '[' | '"' | '\'' | '<' | '>')
+                })
+                .next()
+                .map(|tail| tail.split(['?', '#']).next().unwrap_or(tail))
+                .is_some_and(|path| path.to_ascii_lowercase().ends_with(".png"))
+        })
 }
 
 /// Derive a PR's signals + next_action from its detail JSON (pure given the JSON).
@@ -24826,13 +24980,12 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         })
         .unwrap_or(false);
     let parked = design_flicked || handed_off;
-    // UI PR missing a screenshot: touches a webapp/ui/site path AND no shots/<n>.png marker
+    // UI PR missing a screenshot: touches a path under the screenshot requirement AND no trusted
+    // comment settles the question.
     let ui = touches_ui(&changed_files_from_view(detail));
     let num = detail.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
-    let has_shot = trusted.iter().any(|c| {
-        c.contains(&format!("shots/{num}.png")) || c.contains("screenshot pending (manual)")
-    });
-    let ui_missing_screenshot = ui != UiTouch::No && !has_shot;
+    let shot_settled = screenshot_settled(&trusted);
+    let ui_missing_screenshot = ui != UiTouch::No && !shot_settled;
 
     let labels: Vec<String> = detail
         .get("labels")
@@ -24880,7 +25033,10 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
             "designFlicked": design_flicked,
             "handedOff": handed_off,
             "has3bAttempt": has_3b_attempt,
-            "screenshotPending": has_shot,
+            // TRUE means the screenshot question is answered on this PR — a shot is embedded, or
+            // the waiver marker is present. It is what suppresses `screenshot-3c`, so a name that
+            // read as "a shot is still owed" said the opposite of what the value gates.
+            "screenshotSettled": shot_settled,
             // Reported, not just consumed: `unknown` is the case where the screenshot requirement
             // applies because the file list could not be ruled out, and a producer told to post a
             // shot has to be able to see that that is why.
@@ -32809,6 +32965,50 @@ mod settings_tests {
         );
     }
 
+    /// #142: the enforcement point stays at the vetter and at step 3c, so 3c's list has to be the
+    /// list the tool computes. A path enumeration written into the step is a SECOND definition of
+    /// `is_ui_path` that drifts from the first while reading as though it agrees — the drift that
+    /// left `cyclo.site`'s `src/lib/components/*.svelte` outside both, which is where every PR
+    /// #140 was filed about lived.
+    #[test]
+    fn step_3c_takes_its_list_from_the_tool_and_not_from_a_path_list_of_its_own() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step3c = producer_step(&prompt, "3c");
+
+        assert!(
+            step3c.contains("`worklist` ROWS WHOSE `nextAction` IS `screenshot-3c`"),
+            "3c's list must BE the tool's rows, named as such: {step3c}"
+        );
+        assert!(
+            step3c.contains("`is_ui_path` is the ONE definition"),
+            "3c must say which side owns the definition, or a reader re-derives it here: {step3c}"
+        );
+        // `unknown` routes here too, and a step that only explains `yes` reads as though a PR whose
+        // file list could not be resolved does not need one.
+        assert!(
+            step3c.contains("`unknown` means nothing ruled UI out"),
+            "3c must say what `unknown` means, since it is half of what routes a PR here: {step3c}"
+        );
+        // A filename is not how a shot is recognised — that is the whole of the #155/#156 defect.
+        assert!(
+            step3c.contains("do not go looking for one particular filename"),
+            "3c must not send the producer hunting a filename shape: {step3c}"
+        );
+        // …and the old shape must be gone from the PROMPT, not merely overridden further down.
+        assert!(
+            !prompt.contains("a PR that already has `shots/<n>.png` is done"),
+            "the filename-shaped marker test must be gone, not shadowed by a later sentence"
+        );
+        // 3c reads its fleet through the tool like every other step: a per-PR `gh pr view` here is
+        // the loose transition CLAUDE.md's north star is about, and it is what re-derived the list.
+        assert!(
+            !step3c.contains("gh pr view"),
+            "3c must not enumerate its own fleet with raw gh: {step3c}"
+        );
+    }
+
     // MCP mode's whole claim is that a non-FSM operation is UNREPRESENTABLE: no Bash at all, so no
     // raw `gh`/`git`, and no prefix-matched deny-list to route around.
     #[test]
@@ -38281,6 +38481,43 @@ mod worklist_tests {
         let row = worklist_row("o/r", &detail);
         assert_eq!(row["nextAction"], "screenshot-3c");
         assert_eq!(row["markers"]["uiTouch"], "yes");
+        assert_eq!(row["markers"]["screenshotSettled"], false);
+    }
+
+    /// #142: a posted shot settles the requirement WHATEVER step 5 named the file. Matching
+    /// `shots/<number>.png` settles it only for raindex, and on 2026-08-04 that left
+    /// `rain-org-health#155`/`#156` — both carrying `shots/rain-org-health-<n>.png` — routed to
+    /// `screenshot-3c` on every run, which is also what held them out of `green-ready`.
+    #[test]
+    fn worklist_row_a_posted_shot_settles_the_requirement_whatever_the_file_is_called() {
+        let with_shot = |name: &str| {
+            json!({
+                "number": 155, "headRefOid": "H",
+                "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+                "mergeStateStatus": "CLEAN", "labels": [],
+                "files": [{"path":"site/metrics.html"}], "changedFiles": 1,
+                "comments": [{"author": {"login": "thedavidmeister"}, "body": format!(
+                    "🤖 ai:producer\n\n![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/{name})"
+                )}],
+            })
+        };
+        for name in [
+            "shots/rain-org-health-155.png",
+            "shots/155.png",
+            "shots/rain-org-health-155-after.png",
+            "shots/roh-remove-overview.png",
+        ] {
+            let row = worklist_row("rainlanguage/rain-org-health", &with_shot(name));
+            assert_eq!(row["markers"]["screenshotSettled"], true, "{name}");
+            assert_eq!(row["nextAction"], "green-ready", "{name}");
+        }
+        // An UNTRUSTED author's shot settles nothing: the marker is public body text, so trust is
+        // by author here exactly as it is everywhere else.
+        let mut spoofed = with_shot("shots/rain-org-health-155.png");
+        spoofed["comments"][0]["author"]["login"] = json!("passer-by");
+        let row = worklist_row("rainlanguage/rain-org-health", &spoofed);
+        assert_eq!(row["markers"]["screenshotSettled"], false);
+        assert_eq!(row["nextAction"], "screenshot-3c");
     }
 
     /// #147: a file list that is not known to be whole means the PR MAY touch UI, so the screenshot
