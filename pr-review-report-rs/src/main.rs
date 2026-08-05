@@ -24029,7 +24029,7 @@ fn mcp_all_tools() -> Value {
                     "repo": {"type": "string", "description": "owner/repo"},
                     "head": {"type": "string", "description": "The branch holding the work, ALREADY PUSHED to that repo."},
                     "title": {"type": "string", "description": "PR title."},
-                    "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body, and NAMED FOR the issue `closes` names — .../pr-body-63.md, the FIRST number in the file name being that issue. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name — or one another issue could equally claim — is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
                     "closes": {"type": "integer", "description": "The issue this PR closes. Omit for a partial fix — then say `Refs #N` in the body yourself."},
                     "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
                 },
@@ -24055,7 +24055,7 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "pr": {"type": "string", "description": "owner/repo#number"},
-                    "block_file": {"type": "string", "description": "Absolute path to the file holding the section-8 block. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "block_file": {"type": "string", "description": "ABSOLUTE path to the file holding the section-8 block, and NAMED FOR this PR — .../qa-block-63.md, the FIRST number in the file name being this PR. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name — or one another PR could equally claim — is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
                     "replace": {"type": "boolean", "description": "Replace an existing `## QA` section — only once the evidence has actually been re-run."},
                     "dry_run": {"type": "boolean", "description": "Report the plan without writing."}
                 },
@@ -24649,19 +24649,9 @@ fn validate_call(
             let slug = parse_repo_arg(req_str(args, "repo")?)?;
             let head = parse_branch(req_str(args, "head")?)?;
             let title = req_str(args, "title")?.trim().to_string();
-            // ABSOLUTE, and refused here rather than resolved. The MCP server runs in the CRON's
-            // working directory, never the model's clone, so a relative path resolves against a
-            // directory the caller never named — reading some other file, or none, with no way for
-            // either side to notice which happened.
-            let body_file = req_str(args, "body_file")?.trim().to_string();
-            if !body_file.starts_with('/') {
-                return Err(format!(
-                    "body_file {body_file:?} must be an ABSOLUTE path — this server's working \
-                     directory is the cron's, not your clone's"
-                ));
-            }
             // Optional, and a positive integer when present — `closes: 0` is not an issue, the same
-            // ruling `parse_pr_ref` makes for `#0`.
+            // ruling `parse_pr_ref` makes for `#0`. Read BEFORE `body_file` because it is the
+            // subject that file has to be named for.
             let closes = match args.get("closes") {
                 None | Some(Value::Null) => None,
                 Some(v) => Some(v.as_u64().filter(|n| *n > 0).ok_or_else(|| {
@@ -24669,6 +24659,14 @@ fn validate_call(
                         .to_string()
                 })?),
             };
+            // Refused here rather than resolved, and this IS the whole guard for `open_pr`: the
+            // tool has no CLI spelling, so every call reaches the effect through this parser.
+            // (`repair_qa_block` does have one, which is why its identical check sits in the apply
+            // both surfaces share.)
+            let body_file = req_str(args, "body_file")?.trim().to_string();
+            if let Some(fault) = body_path_fault(&body_file, closes) {
+                return Err(fault.message("body_file", &body_file, closes));
+            }
             let base = match args.get("base") {
                 None | Some(Value::Null) => None,
                 Some(_) => Some(parse_branch(req_str(args, "base")?)?),
@@ -26211,6 +26209,344 @@ fn append_separator(body: &str) -> &'static str {
 // wrote. Typing it changes who can read it, not what may be claimed.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// WHY a path a GitHub write reads its BYTES from was refused — a TYPED discriminant, like
+/// [`Refusal`] and [`OpenPrRefusal`], so the message derives from the variant rather than from a
+/// caller re-classifying prose.
+#[derive(Debug, PartialEq, Eq)]
+enum BodyPathFault {
+    /// Not absolute, so it resolves against a working directory the caller never named.
+    Relative,
+    /// Absolute, but the FILE NAME does not carry the number of the thing being written to.
+    Unnamed,
+}
+
+/// PURE: what is wrong with the path a body/block write takes its bytes from, or `None`.
+///
+/// TWO properties, and the second is the one that stops the collision.
+///
+/// ABSOLUTE, because the process that performs the read — the MCP server, or a `pr-review-report`
+/// invocation — runs in the CRON's working directory and never in the caller's clone, so a
+/// relative name resolves somewhere the caller did not choose. Neither side can tell which file
+/// was read: the write succeeds and reports success either way.
+///
+/// NAMED FOR ITS SUBJECT, because absolute is not unique. `SCRATCH_DIR` is per RUN
+/// (`campaign-run.sh`), and every worker a run dispatches is handed that SAME directory, so two
+/// absolute paths chosen by two concurrent agents are routinely the same path — which is how one
+/// PR's body came to be written from another PR's file. What makes those paths differ by
+/// construction is a file name that resolves to exactly ONE subject, so the grammar is
+/// POSITIONAL rather than a search: the FIRST number in the base name IS the subject, and
+/// anything after it is free. That is already the name `campaign-prompt.txt` prescribes
+/// (`pr-body-<N>.md`, `qa-block-<n>.md` — a letters-and-hyphens prefix, then the number), so this
+/// refuses only a caller that departed from it. `pr-body-63-v2.md` is still 63's; `pr-body-62-63.md`
+/// is 62's and is refused for 63, because a name two subjects could both claim IS the collision,
+/// not a defence against it.
+///
+/// `subject` is `None` where the call names no number the file could be named for — `open_pr`
+/// without `closes`, a deliberate partial-coverage open — and there only the absolute half is
+/// decidable. That case is deliberately FAIL-OPEN: there is no subject to name the file for, and
+/// refusing would block a legitimate write. Every other case is fail-CLOSED, because the costs are
+/// asymmetric — a refusal costs one retry and writes nothing, while an accepted wrong file is a
+/// GitHub write that renders, reads as evidence, and reports nothing.
+fn body_path_fault(path: &str, subject: Option<u64>) -> Option<BodyPathFault> {
+    if !path.starts_with('/') {
+        return Some(BodyPathFault::Relative);
+    }
+    let subject = subject?;
+    let name = path.rsplit('/').next().unwrap_or("");
+    if names_number(name, subject) {
+        None
+    } else {
+        Some(BodyPathFault::Unnamed)
+    }
+}
+
+/// PURE: whether `name` NAMES `n` — its FIRST run of digits, taken whole, is `n`'s decimal
+/// spelling. `qa-block-63.md` and `pr-body-63-v2.md` name 63, a suffix after the number being
+/// free. `qa-block-163.md` and `qa-block-632.md` name other PRs, because digits inside a longer
+/// number are not that number. `pr-body-62-63.md` names 62 and nothing else: carrying `n`
+/// somewhere further along is not naming it, and treating it as if it were would make one file
+/// two subjects' at once — exactly the neighbouring-file collision this is about.
+fn names_number(name: &str, n: u64) -> bool {
+    let needle = n.to_string();
+    let Some(start) = name.find(|c: char| c.is_ascii_digit()) else {
+        return false;
+    };
+    let rest = &name[start..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end] == needle
+}
+
+impl BodyPathFault {
+    /// The refusal text. `arg` is the argument's own name, so a refusal names what the caller
+    /// typed on the surface they typed it on, and both surfaces state the same rule.
+    fn message(&self, arg: &str, path: &str, subject: Option<u64>) -> String {
+        match self {
+            BodyPathFault::Relative => format!(
+                "{arg} {path:?} must be an ABSOLUTE path — the process that reads it runs in the \
+                 cron's working directory, not your clone's, so a relative name resolves against \
+                 a directory you never chose and neither side can tell which file was read."
+            ),
+            BodyPathFault::Unnamed => {
+                let n = subject.map(|n| n.to_string()).unwrap_or_default();
+                format!(
+                    "{arg} {path:?} is absolute but not UNIQUE — every worker a run dispatches is \
+                     handed the SAME scratch directory, so a name that is generic, or that \
+                     another subject could equally claim, is a file another agent is also \
+                     writing. The FIRST number in the file name is what it is written to: name it \
+                     pr-body-{n}.md or qa-block-{n}.md, as campaign-prompt.txt prescribes."
+                )
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod body_path_tests {
+    use super::{
+        body_path_fault, mcp_all_tools, repair_qa_block_apply, repo_root_text, BodyPathFault,
+    };
+
+    /// The incident's own shape: a name with no directory in front of it, which the reader resolves
+    /// against ITS working directory. Every spelling of "not absolute" is the same fault — `./`
+    /// and `../` are not a lesser version of it, and `~/` is a shell expansion that never happened.
+    #[test]
+    fn a_path_that_is_not_absolute_is_refused_whatever_its_spelling() {
+        for path in [
+            "pr-body.md",
+            "./pr-body.md",
+            "../scratch/pr-body.md",
+            "~/scratch/pr-body.md",
+            "scratch/pr-body-63.md",
+            "",
+        ] {
+            assert_eq!(
+                body_path_fault(path, Some(63)),
+                Some(BodyPathFault::Relative),
+                "{path} is not absolute"
+            );
+            // …and the subject is irrelevant to it: a relative path is refused before there is
+            // anything to be named for.
+            assert_eq!(
+                body_path_fault(path, None),
+                Some(BodyPathFault::Relative),
+                "{path} is not absolute"
+            );
+        }
+    }
+
+    /// The half `#201`'s hand-fix had and "absolute" does not imply. Both agents write absolute
+    /// paths into the one scratch dir the run handed them; only the NAME keeps them apart.
+    #[test]
+    fn an_absolute_path_that_does_not_name_its_subject_is_refused() {
+        for path in [
+            "/run/scratch/pr-body.md",
+            "/run/scratch/qa-block.md",
+            "/run/scratch/body.md",
+            "/run/scratch/out.json",
+            "/run/scratch/",
+        ] {
+            assert_eq!(
+                body_path_fault(path, Some(63)),
+                Some(BodyPathFault::Unnamed),
+                "{path} names no subject"
+            );
+        }
+        for path in [
+            "/run/scratch/pr-body-63.md",
+            "/run/scratch/qa-block-63.md",
+            "/run/scratch/63.md",
+            "/run/scratch/pr-body-63-v2.md",
+        ] {
+            assert_eq!(body_path_fault(path, Some(63)), None, "{path} names 63");
+        }
+    }
+
+    /// The neighbour the OTHER way round: `pr-body-62-63.md` carries 63, and carrying is not
+    /// naming. Its first number is 62, so it is 62's file — one name, one subject, which is the
+    /// only thing that keeps two workers in the one scratch dir off the same file. A name valid
+    /// for both of them would be the collision itself.
+    ///
+    /// The rule that refuses it is POSITIONAL and not a count of the numbers in the name: a count
+    /// would refuse `pr-body-63-v2.md`, which names 63 and no one else.
+    #[test]
+    fn a_name_whose_first_number_is_another_subject_is_that_subject_s_file() {
+        assert_eq!(
+            body_path_fault("/run/scratch/pr-body-62-63.md", Some(63)),
+            Some(BodyPathFault::Unnamed),
+            "62-63 is 62's file, not 63's"
+        );
+        assert_eq!(
+            body_path_fault("/run/scratch/pr-body-62-63.md", Some(62)),
+            None
+        );
+        // A suffix after the subject is not a second subject, and is not a second claimant.
+        assert_eq!(
+            body_path_fault("/run/scratch/pr-body-63-v2.md", Some(63)),
+            None
+        );
+        assert_eq!(
+            body_path_fault("/run/scratch/pr-body-63-v2.md", Some(2)),
+            Some(BodyPathFault::Unnamed),
+            "the 2 of -v2 is a suffix, and PR 2 does not get to claim 63's file"
+        );
+    }
+
+    /// The refusal has to tell a caller holding `pr-body-62-63.md` for 63 what to type instead —
+    /// "put 63 in the file name" would describe a name it already wrote.
+    #[test]
+    fn the_unnamed_refusal_says_which_number_the_name_must_lead_with() {
+        let un =
+            BodyPathFault::Unnamed.message("body_file", "/run/scratch/pr-body-62-63.md", Some(63));
+        assert!(un.contains("FIRST number"), "{un}");
+        assert!(un.contains("pr-body-63.md"), "{un}");
+    }
+
+    /// `qa-block-163.md` is the file for PR 163, sitting in the same directory — the NEIGHBOUR this
+    /// guard exists to keep out. A substring match would hand it over as if it were 63's.
+    #[test]
+    fn the_subject_must_be_a_number_of_its_own_not_digits_inside_another() {
+        for path in [
+            "/run/scratch/qa-block-163.md",
+            "/run/scratch/qa-block-632.md",
+            "/run/scratch/qa-block-1632.md",
+        ] {
+            assert_eq!(
+                body_path_fault(path, Some(63)),
+                Some(BodyPathFault::Unnamed),
+                "{path} is named for another PR"
+            );
+        }
+    }
+
+    /// Only the FILE NAME counts. A run's scratch directory is `<timestamp>-<pid>` — digits enough
+    /// to satisfy almost any subject — so a whole-path match would accept every generic basename in
+    /// it and leave the guard asserting nothing.
+    #[test]
+    fn the_directory_does_not_get_to_name_the_subject() {
+        assert_eq!(
+            body_path_fault(
+                "/home/x/code/scratch/20260804T063000Z-63/pr-body.md",
+                Some(63)
+            ),
+            Some(BodyPathFault::Unnamed)
+        );
+        assert_eq!(
+            body_path_fault(
+                "/home/x/code/scratch/20260804T063000Z-11/pr-body-63.md",
+                Some(63)
+            ),
+            None
+        );
+    }
+
+    /// FAIL-OPEN, deliberately: `open_pr` without `closes` is the partial-coverage open, and there
+    /// is no number the file could be named for. The absolute half still holds — that is what stops
+    /// this from being a hole rather than a boundary.
+    #[test]
+    fn a_call_with_no_subject_is_held_to_the_absolute_half_only() {
+        assert_eq!(body_path_fault("/run/scratch/pr-body.md", None), None);
+        assert_eq!(
+            body_path_fault("pr-body.md", None),
+            Some(BodyPathFault::Relative)
+        );
+    }
+
+    /// Each fault names the ARGUMENT the caller typed and the fix for it, so the same rule reads
+    /// correctly on the MCP surface (`body_file`) and the CLI one (`--block-file`).
+    #[test]
+    fn each_refusal_names_the_argument_and_what_to_do() {
+        let rel = BodyPathFault::Relative.message("body_file", "pr-body.md", Some(63));
+        assert!(rel.contains("body_file"), "{rel}");
+        assert!(rel.contains("ABSOLUTE"), "{rel}");
+        let un = BodyPathFault::Unnamed.message("--block-file", "/run/scratch/qa.md", Some(63));
+        assert!(un.contains("--block-file"), "{un}");
+        assert!(
+            un.contains("63"),
+            "the fix names the number to put in the file name: {un}"
+        );
+    }
+
+    /// The guard is on `repair_qa_block_apply` and not on the MCP parser, because the CLI
+    /// subcommand — the spelling `campaign-prompt.txt` hands the producer — never passes through
+    /// that parser. Exit 7 rather than 2 is what proves the ORDER: the path is judged before the
+    /// file is read, so a refused call read nothing and reached no `gh`.
+    #[test]
+    fn repair_qa_block_judges_the_path_before_it_reads_or_writes_anything() {
+        for bad in [
+            "qa-block-63.md",
+            "/run/scratch/qa-block.md",
+            "/run/scratch/qa-block-163.md",
+        ] {
+            let (code, msg) = repair_qa_block_apply("o/r", "63", bad, false, false)
+                .expect_err("{bad} must be refused");
+            assert_eq!(code, 7, "{bad}: {msg}");
+            assert!(msg.contains("REFUSED - repair-qa-block o/r#63"), "{msg}");
+        }
+        // …and a compliant path is NOT refused by this guard: it gets as far as the read, which is
+        // the unreadable-file refusal (2) and not this one. Without that half the guard could be
+        // "refuse everything" and every test above would still pass.
+        let (code, _) = repair_qa_block_apply(
+            "o/r",
+            "63",
+            "/nonexistent/run/scratch/qa-block-63.md",
+            false,
+            false,
+        )
+        .expect_err("an unreadable file is still a refusal");
+        assert_eq!(code, 2, "a compliant path must reach the read");
+    }
+
+    /// `block_file`'s schema said "Absolute path" for as long as nothing anywhere checked one —
+    /// advertised rule, no code. That is the drift this pins: BOTH file arguments must state the
+    /// rule their transition actually enforces, because the schema is the only description of it a
+    /// caller reads before it is refused.
+    #[test]
+    fn both_file_arguments_advertise_the_rule_that_is_enforced() {
+        let tools = mcp_all_tools();
+        for (tool, arg) in [("open_pr", "body_file"), ("repair_qa_block", "block_file")] {
+            let desc = tools
+                .as_array()
+                .expect("the tool table is an array")
+                .iter()
+                .find(|t| t["name"] == serde_json::json!(tool))
+                .and_then(|t| t["inputSchema"]["properties"][arg]["description"].as_str())
+                .unwrap_or_else(|| panic!("{tool}.{arg} has no description"))
+                .to_string();
+            assert!(desc.contains("ABSOLUTE"), "{tool}.{arg}: {desc}");
+            assert!(desc.contains("NAMED FOR"), "{tool}.{arg}: {desc}");
+        }
+    }
+
+    /// A guard the prompts do not teach is a guard every run discovers by being refused. Both
+    /// prompts must name the filename shape this accepts — the producer's, and the WORKER's, since
+    /// the worker is the concurrent agent whose `open_pr` this collides with.
+    #[test]
+    fn both_prompts_teach_the_file_name_the_guard_requires() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("pr-body-<N>.md"),
+            "step 4 must name the body file for the issue `closes` names"
+        );
+        assert!(
+            prompt.contains("absolute is not UNIQUE"),
+            "the producer must be told WHY absolute is not the whole rule, or it will read the \
+             refusal as a bug in the tool"
+        );
+        let Some(brief) = repo_root_text("campaign-worker-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            brief.contains("pr-body-<issue>.md"),
+            "the worker opens PRs through `open_pr` and shares the run's one scratch dir, so the \
+             naming rule has to reach it too — the dispatch prompt carries only the item"
+        );
+    }
+}
+
 /// WHY an `open_pr` was refused — a TYPED discriminant, like [`Refusal`] and [`RepairRefusal`], so
 /// the exit code and the message both derive from the variant and no caller re-classifies by prose.
 #[derive(Debug, PartialEq, Eq)]
@@ -27087,7 +27423,7 @@ fn write_repaired_body(
 ///
 /// Exit: 0 written (or already present), 1 a `gh` call failed, 2 unusable block, 3 not our PR,
 /// 4 a `## QA` section is already there and `--replace` was not passed, 5 the PR is not open,
-/// 6 the edited body would not pass the gate.
+/// 6 the edited body would not pass the gate, 7 the `--block-file` path is not this caller's own.
 fn repair_qa_block_apply(
     slug: &str,
     pr: &str,
@@ -27096,6 +27432,22 @@ fn repair_qa_block_apply(
     dry_run: bool,
 ) -> Result<String, (i32, String)> {
     let subject = format!("{slug}#{pr}");
+    // The path guard lives HERE rather than at the MCP argument edge because this transition has
+    // TWO entry points — the `repair_qa_block` tool and the `repair-qa-block` CLI subcommand that
+    // `campaign-prompt.txt` hands the producer — and this function is the only point on both. A
+    // check at the MCP edge alone is the asymmetry that left `block_file`'s "Absolute path" schema
+    // text with nothing behind it on either surface. It runs before the read, so a refused call has
+    // read nothing and written nothing.
+    let num = pr.trim().parse::<u64>().ok();
+    if let Some(fault) = body_path_fault(block_file, num) {
+        return Err((
+            7,
+            format!(
+                "REFUSED - repair-qa-block {subject}\n\n  {}\n",
+                fault.message("--block-file", block_file, num)
+            ),
+        ));
+    }
     let block = std::fs::read_to_string(block_file).map_err(|e| {
         (
             2,
@@ -50188,6 +50540,11 @@ mod mcp_tests {
             // RELATIVE: this server's cwd is the cron's, not the caller's clone, so a relative
             // path names a file neither side can identify.
             json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "body.md"}),
+            // ABSOLUTE BUT NOT UNIQUE: every worker the run dispatched writes into the same
+            // scratch dir, so `pr-body.md` there is a file some other agent is also writing —
+            // and `pr-body-163.md` is the one that belongs to issue 163.
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/scratch/pr-body.md", "closes": 63}),
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/scratch/pr-body-163.md", "closes": 63}),
             json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "closes": 0}),
             json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "closes": "12"}),
             json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md", "base": "two words"}),
@@ -50217,6 +50574,47 @@ mod mcp_tests {
                 closes: Some(63),
                 base: None,
             }]
+        );
+    }
+
+    /// The BOUNDARY of the file-naming half, stated as a passing call rather than left implicit:
+    /// an open with no `closes` is the deliberate partial-coverage case, there is no issue number
+    /// the body file could be named for, and refusing it would block a legitimate PR. The absolute
+    /// half still applies, which is what keeps this a boundary rather than a way around the rule.
+    #[test]
+    fn an_open_that_closes_nothing_is_held_to_the_absolute_half_only() {
+        let f = FakeExec::producer();
+        f.handle(&call(
+            "open_pr",
+            json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/scratch/pr-body.md"}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![McpCall::OpenPr {
+                slug: "o/r".to_string(),
+                head: "b".to_string(),
+                title: "t".to_string(),
+                body_file: "/scratch/pr-body.md".to_string(),
+                closes: None,
+                base: None,
+            }]
+        );
+
+        let g = FakeExec::producer();
+        let resp = g
+            .handle(&call(
+                "open_pr",
+                json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "pr-body.md"}),
+            ))
+            .unwrap();
+        assert!(
+            is_error(&resp),
+            "relative is refused with or without closes"
+        );
+        assert!(
+            g.calls().is_empty(),
+            "no refused argument reached an effect"
         );
     }
 
