@@ -105,13 +105,49 @@ rulings at the end of this file are the only ones there are.
   arguable, `/design` is the ruling that says so, not a quiet uphold.
 
 **6. `openPr.coverage`, whatever the reason says.** `covered-by-open-pr` means
-an open PR already claims to close this issue, and an open PR is **not a landed
-fix** — the issue is not closeable while it is in flight, even if the flag's
-reason is otherwise sound. This is the producer's own rule ("an issue merely
-COVERED BY AN OPEN PR is NOT a close-candidate"), so a flag on such an issue is
-already a flag that should not have been written, and saying so is the finding.
-`unreadable` means the query failed and is treated as covered: it blocks, and
-you say the query failed rather than reading a failure as an absence.
+an open PR already claims to close this issue. It is always REPORTED and always
+worth reading — a PR claims what you are about to close — but what it COSTS the
+ruling depends on the flag's grounds, and `openPr.blocksClose` is that pairing:
+
+- **`flag.grounds: cites-no-landing`** — `invalid` / `duplicate` / `wont-fix`,
+  or an `already-fixed-on-main` claim naming nothing datable. The open PR may be
+  the only thing that would ever resolve the issue, so it BLOCKS: this is the
+  producer's own rule ("an issue **merely** COVERED BY AN OPEN PR is NOT a
+  close-candidate"), and a flag on such an issue is already one that should not
+  have been written. `unreadable` means the query failed, and here it blocks too
+  — say the query failed rather than reading a failure as an absence.
+- **`flag.grounds: cites-a-landing`** — an `already-fixed-on-main` claim naming
+  a commit, or a PR that is **not** one of the covering ones. It does not block.
+  Rule 7a's other half says an open PR is never sufficient **evidence**, which
+  governs what may be cited FOR a close, not what may veto one, and a redundant
+  PR in flight does not un-land what landed. Disposing of that PR is a decision
+  in the PR lane; it is not this issue's blocker. `rain.dia#6` sat blocked
+  behind a PR that was itself queued for closure, each queue holding half the
+  picture and neither reading the other. A reason citing one of the covering PRs
+  **as** its landing reads as `cites-no-landing` and blocks — that is rule 7a
+  applied literally, not an exception to it.
+
+`blocksClose: false` is not "close it", and the tool is not claiming the fix is
+real: `grounds` is a fact about the reason's TEXT — what it cites — and step 5
+is still the check on whether the citation holds. Confirming the cited PR is
+MERGED is part of that, and `pr_context` carries no merged/state field, so say
+plainly that you could not confirm it here rather than substituting a read that
+answers something else.
+
+`close_candidate_context` carries `citationEvidence` for exactly this step: the
+machine's read of the CITED CHANGE'S OWN DIFF — how many files it touches, its
+`+a/-d` on every path the reason names, and which symbols the reason names its
+changed lines do not contain. It is evidence and never a verdict, and on its own
+it is never a reason to keep an issue open: a sound reason regularly names
+current-main symbols the cited change never touched, and a fix by DELETION
+leaves its evidence on the removed side. What it settles is the citation that
+cannot be what it claims. `rain.dia#22`'s flag said merged PR #48 "landed
+`testRoundTripEmpty` (line 27) and `testRoundTrip31Bytes` (line 32)" while #48's
+touch on that file is `+2/-2` and its changed lines carry neither name — PR #33
+added them. **That was still a CLOSE**, ruled on the merits with the correction
+recorded, because the issue really was fixed and rejecting the flag would have
+cost a producer cycle to reach the same answer. A wrong citation under a right
+outcome is a correction you WRITE DOWN, not a reason to send it back.
 
 **7. Read the vetter's word as a claim too, and check `verdict.atFlag`.** Every
 row here was upheld by the vetter — a rejected flag has its label stripped and
@@ -207,11 +243,15 @@ Each field of the row is one read a human otherwise does by hand:
 
 - **`flag.reason`** — the producer's stated evidence. The CLAIM, never a fact,
   and step 5 is what checks it. `flag.at` is the anchor every record on this
-  issue pins to.
+  issue pins to. **`flag.grounds`** is what that reason CITES — a landing, or
+  nothing datable — read off the same parse the flag write gates on.
 - **`verdict`** — the vetter's word on that same claim, with `verdict.flagAt`
   and `atFlag` saying whether it judged THIS flag or a superseded one.
 - **`openPr`** — `coverage`, the PRs named as refs you can hand straight to
   `pr_context`, and a `meaning` that says which way round the hazard runs.
+  `blocksClose` pairs the coverage with `flag.grounds`, because the same
+  coverage state costs a flag citing a landing and a flag citing none two
+  different things.
 - **`createdAt`** — the recency baseline. Evidence dated before the issue was
   filed cannot be the fix for it.
 - **`labels`** and **`state`** — what else has been said about this issue, and
@@ -220,9 +260,19 @@ Each field of the row is one read a human otherwise does by hand:
 `queue.more` and `counts` frame the row. A flag you expected and did not get is
 usually in `counts.unvetted` — the vetter has not judged it, and under the
 3-item run cap it may wait; a flag the vetter would REJECT never arrives here at
-all. `strandedFlags` is the list nothing else surfaces: a label with no producer
-comment behind it, or a reject whose label removal did not land. No AI
-transition clears either, so they sit until a human is told they exist.
+all. `strandedFlags` is a label parking an issue with nothing consuming it: no
+producer comment behind it, or a reject whose label is live anyway. The vetter's
+state-load clears both, so one listed here is a clearance that has not run yet
+or could not write — the label is still parking the issue either way. It is not
+yours to rule on: leave it and let the next vetter run take it, or look at
+`clearanceFailed` on that state-load if it persists.
+
+`archivedRepoFlags` is a separate list and a harder state: the flag's REPO is
+archived, so no ruling can be written on it at all — a label will not move, a
+comment will not post, the issue will not close. It is not a clearance waiting
+to happen and there is nothing to retry; the flag is frozen where it is. Do not
+try to rule on one, and do not treat it as a defect in the flag — the repo was
+archived deliberately and the flag simply outlived its repo.
 
 ## Present the result, do not summarise it away
 

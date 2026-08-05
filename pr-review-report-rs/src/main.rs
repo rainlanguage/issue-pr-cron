@@ -28,13 +28,941 @@ enum Merge {
     Conflicting,
     Unknown,
 }
-/// Run gh and parse stdout as JSON; None on non-zero exit, spawn failure, or unparseable output.
-fn gh_json(args: &[&str]) -> Option<Value> {
-    let out = Command::new("gh").args(args).output().ok()?;
-    if !out.status.success() {
+// ---------------------------------------------------------------------------------------------
+// WHY a `gh` call produced no document (#129).
+//
+// Every failure used to collapse into one `None`, so a rate limit, a deleted PR and a dead network
+// were the same fact — and `--queue` turned all three into `fetch_error`, dropping a candidate
+// GitHub had merely asked it to re-ask for. Concurrency made that more likely, not less: #123/#126
+// put the per-candidate fetches on a bounded pool, and a burst from one token is exactly what draws
+// a SECONDARY limit.
+//
+// The discriminant is not available from every invocation, and this module says so instead of
+// guessing. MEASURED against gh 2.93.0 (nixpkgs):
+//
+//   gh pr view 9999999 -R <real repo>     exit 1, stdout 0 bytes  (message on stderr only)
+//   gh pr view 1 -R <no such repo>        exit 1, stdout 0 bytes
+//   gh api user, unroutable proxy         exit 1, stdout 0 bytes
+//   gh api <no such repo>                 exit 1, stdout {"message":…,"status":"404"}
+//   gh api user, bad credentials          exit 1, stdout {"message":…,"status":"401"}
+//   gh api graphql <no such repo>         exit 1, stdout {"errors":[{"type":"NOT_FOUND",…}]}
+//   gh api graphql <no such PR>           exit 1, stdout {"errors":[{"type":"NOT_FOUND",…}]}
+//   gh api graphql <malformed query>      exit 1, stdout {"errors":[{"message":…}]} — and NO `type`
+//   gh api --include …                    the HTTP status line and headers precede that body
+//
+// Two readings decide the whole design. `gh pr view` has NO structured failure at all: exit 1 and
+// an empty stdout for a missing PR, a missing repo and a dead network alike, so nothing but the
+// stderr prose tells them apart and this codebase does not classify prose. `gh api` DOES hand back
+// the response body it received, and `--include` hands back the status line and the headers too.
+//
+// So the classification reads only typed fields — the HTTP status integer, the `Retry-After` and
+// `X-RateLimit-Remaining` header fields, GitHub's documented GraphQL `errors[].type` enum, and the
+// REST body's own `status`. It reads no message anywhere. Where an invocation offers nothing typed
+// the answer is [`GhFailure::Unknown`], not the nearest plausible class: the same posture as
+// [`Merge::Unknown`] and `CodeRabbitCoverage::Unreadable`, and the reason `gh pr view`'s failure is
+// re-asked through [`gh_api_result`] rather than assumed (see [`pr_fetch_failure`]).
+// ---------------------------------------------------------------------------------------------
+
+/// WHY a `gh` call produced no document — a TYPED discriminant, never a message substring.
+///
+/// `Copy`, and every variant is deliberately kept so: a failure that had to carry a borrowed
+/// message would be a message this codebase then had to resist classifying on. `retry_after` is a
+/// NUMBER out of a header field, which is the only payload any of these needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GhFailure {
+    /// GitHub asked us to slow down. The ONLY class a retry answers, and it carries GitHub's own
+    /// `Retry-After` when the response named one.
+    RateLimited { retry_after: Option<u64> },
+    /// The subject genuinely does not resolve. A retry re-asks a question already answered.
+    NotFound,
+    /// The token may not read this — bad credentials, missing scope, suspended actor. Not a
+    /// property of one subject: the same token serves every call, so one of these means the next
+    /// call is unreadable too.
+    Unauthorized,
+    /// A response arrived and could not be read as the document asked for — including a GraphQL
+    /// query this binary got wrong, which is a bug here and never a reason to retry.
+    Malformed,
+    /// Nothing typed was available to classify on. HONEST, not a catch-all excuse: it is what a
+    /// `gh pr view` failure and a spawn failure both are, and treating it as anything narrower
+    /// would be the lie #129 is about.
+    Unknown,
+}
+
+/// How urgently a failure has to be acted on — the DECLARATION ORDER is the precedence, and the
+/// order is the behaviour. A GraphQL response can carry several errors at once (one field rate
+/// limited while another is merely absent), and reading such a response as `NotFound` is #129's
+/// bug in miniature: the most actionable class wins.
+fn failure_rank(f: &GhFailure) -> u8 {
+    match f {
+        GhFailure::RateLimited { .. } => 0,
+        GhFailure::Unauthorized => 1,
+        GhFailure::NotFound => 2,
+        GhFailure::Malformed => 3,
+        GhFailure::Unknown => 4,
+    }
+}
+
+/// The head of an HTTP response as `gh api --include` prints it: the status CODE — a typed integer,
+/// never the reason phrase beside it — and the header fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HttpHead {
+    status: u16,
+    headers: Vec<(String, String)>,
+}
+
+impl HttpHead {
+    /// Case-insensitive field lookup: HTTP field names are case-insensitive, `gh` prints them
+    /// canonicalised (`X-Ratelimit-Remaining`) and GitHub documents them lowercase, so a
+    /// case-sensitive read would silently find nothing.
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// First index at which `needle` occurs in `hay`.
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
         return None;
     }
-    serde_json::from_slice(&out.stdout).ok()
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// PURE: the status CODE out of an HTTP status line (`HTTP/2.0 404 Not Found` → 404).
+///
+/// The reason phrase is deliberately discarded. It is prose the server may reword at any time and
+/// the code is the typed field that says the same thing — reading "Not Found" instead of 404 would
+/// be exactly the message-matching this classifier exists to avoid.
+fn parse_status_line(line: &str) -> Option<u16> {
+    let rest = line.strip_prefix("HTTP/")?;
+    let (_version, rest) = rest.split_once(' ')?;
+    let code = rest.split(' ').next()?;
+    if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    code.parse().ok()
+}
+
+/// PURE: split `gh api --include` output into the response head and the body it precedes.
+///
+/// Answers `(None, whole)` for output that is not an HTTP dump — which is what EVERY invocation
+/// without `--include` produces — so ONE reader serves both and no caller has to remember which
+/// flag it passed. The guard is structural rather than a search: the output must BEGIN with a
+/// well-formed status line AND the head must be terminated by the CRLFCRLF the protocol requires,
+/// so a JSON document containing a blank line cannot be mistaken for a response head (and no JSON
+/// document begins `HTTP/` in any case).
+///
+/// `gh` terminates the status line with a bare LF and each header with CRLF, so lines are split on
+/// LF and the CR is trimmed rather than relied on. The CRLFCRLF terminator is required as written:
+/// every GitHub response carries headers, so it is always there, and a hypothetical headerless one
+/// would fall through to `(None, whole)` — the body then fails to parse and the call is `Malformed`,
+/// which is fail-closed rather than a head silently read as a document.
+fn split_http_head(out: &[u8]) -> (Option<HttpHead>, &[u8]) {
+    let Some(end) = find_subslice(out, b"\r\n\r\n") else {
+        return (None, out);
+    };
+    let Ok(head) = std::str::from_utf8(&out[..end]) else {
+        return (None, out);
+    };
+    let mut lines = head.split('\n').map(|l| l.trim_end_matches('\r'));
+    let Some(status) = lines.next().and_then(parse_status_line) else {
+        return (None, out);
+    };
+    let headers = lines
+        .filter_map(|l| l.split_once(':'))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect();
+    (Some(HttpHead { status, headers }), &out[end + 4..])
+}
+
+/// PURE: does the response head itself say we are being rate limited, and for how long?
+///
+/// TWO typed signals, both protocol fields rather than prose:
+///
+/// * `429`, the status code whose entire meaning is this;
+/// * `403` TOGETHER WITH `Retry-After` or an exhausted `X-RateLimit-Remaining` — how GitHub spells
+///   both its primary limit and the SECONDARY one a concurrent burst draws.
+///
+/// The pairing is what makes 403 readable at all. A plain permission denial carries neither field,
+/// so "slow down" and "you may not read this" stay apart without anyone reading the English
+/// sentence that distinguishes them. Requiring a companion field also means a 403 this binary
+/// cannot explain is NOT retried, which is the safe direction: a blind retry under a limit is the
+/// traffic GitHub is objecting to.
+fn head_rate_limit(head: &HttpHead) -> Option<GhFailure> {
+    let retry_after = head
+        .header("Retry-After")
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    let exhausted = head
+        .header("X-RateLimit-Remaining")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .is_some_and(|n| n == 0);
+    if head.status == 429 || (head.status == 403 && (retry_after.is_some() || exhausted)) {
+        return Some(GhFailure::RateLimited { retry_after });
+    }
+    None
+}
+
+/// PURE: the failure an HTTP status CODE names on its own, once [`head_rate_limit`] has ruled out
+/// the rate-limited readings of 403 and 429.
+///
+/// 401 and 404 are measured above; 403 (permission) and 410 (the resource is gone) are GitHub's
+/// documented refusals for the same two facts. Every other code is `Unknown` — a status this
+/// binary has no rule for is not folded into whichever rule looks closest.
+fn status_failure(status: u16) -> GhFailure {
+    match status {
+        401 | 403 => GhFailure::Unauthorized,
+        404 | 410 => GhFailure::NotFound,
+        429 => GhFailure::RateLimited { retry_after: None },
+        _ => GhFailure::Unknown,
+    }
+}
+
+/// PURE: the failure ONE GitHub GraphQL `errors[].type` word names.
+///
+/// The words are GitHub's own documented enum, matched WHOLE and never by substring, so a future
+/// `NOT_FOUND_IN_ORG` cannot be read as `NOT_FOUND` — the same rule `RateLimitWindow::from_wire`
+/// follows for the five-hour window. A word this binary has no rule for is `Unknown`: an
+/// unrecognised type is not evidence for the nearest recognised one.
+fn graphql_error_failure(ty: &str) -> GhFailure {
+    match ty {
+        "RATE_LIMITED" => GhFailure::RateLimited { retry_after: None },
+        "FORBIDDEN" | "INSUFFICIENT_SCOPES" | "ACTOR_SUSPENDED" => GhFailure::Unauthorized,
+        "NOT_FOUND" => GhFailure::NotFound,
+        _ => GhFailure::Unknown,
+    }
+}
+
+/// PURE: the failure a GraphQL `errors` array names, or `None` when the document carries no such
+/// array to read.
+///
+/// An array whose every entry lacks `type` is `Malformed`: that is the measured shape of a query
+/// GitHub could not parse, which is this binary's own bug and never a reason to retry.
+fn graphql_failure(body: &Value) -> Option<GhFailure> {
+    let errors = body.get("errors")?.as_array()?;
+    if errors.is_empty() {
+        return None;
+    }
+    let typed: Vec<GhFailure> = errors
+        .iter()
+        .filter_map(|e| e.get("type").and_then(|t| t.as_str()))
+        .map(graphql_error_failure)
+        .collect();
+    if typed.is_empty() {
+        return Some(GhFailure::Malformed);
+    }
+    typed.into_iter().min_by_key(failure_rank)
+}
+
+/// PURE: the failure a REST error body's OWN `status` field names. GitHub echoes the HTTP status
+/// back inside the document (measured: `"status":"404"`, `"status":"401"`), which is the one typed
+/// field still available when the head was not asked for.
+fn rest_body_failure(body: &Value) -> Option<GhFailure> {
+    let code = match body.get("status")? {
+        Value::String(s) => s.trim().parse::<u16>().ok()?,
+        Value::Number(n) => u16::try_from(n.as_u64()?).ok()?,
+        _ => return None,
+    };
+    Some(status_failure(code))
+}
+
+/// PURE: WHY a failed `gh` call produced no document, from the response head (when `--include` was
+/// asked for) and whatever body `gh` printed.
+///
+/// ORDER IS THE BEHAVIOUR, and each step earns its place:
+///
+/// 1. the head's rate-limit reading first, because it is the ONLY signal that survives a secondary
+///    limit — GitHub answers those with a plain 403 and a `Retry-After`, carrying no GraphQL type
+///    at all;
+/// 2. then `errors[].type`, because a PRIMARY GraphQL rate limit arrives as HTTP **200** with
+///    `RATE_LIMITED` in the body — trusting the status code there would read a rate limit as a
+///    success;
+/// 3. then the bare status code, and only then the REST body's own copy of it.
+fn classify_gh_failure(head: Option<&HttpHead>, body: &[u8]) -> GhFailure {
+    if let Some(f) = head.and_then(head_rate_limit) {
+        return f;
+    }
+    let doc: Option<Value> = serde_json::from_slice(body).ok();
+    if let Some(f) = doc.as_ref().and_then(graphql_failure) {
+        return f;
+    }
+    if let Some(f) = head.map(|h| status_failure(h.status)) {
+        if f != GhFailure::Unknown {
+            return f;
+        }
+    }
+    doc.as_ref()
+        .and_then(rest_body_failure)
+        .unwrap_or(GhFailure::Unknown)
+}
+
+/// Run `gh` and parse stdout as JSON, with a TYPED failure.
+///
+/// The classes are only as good as the structure the invocation returns: a `gh pr view` failure is
+/// [`GhFailure::Unknown`] and can be nothing else, because an empty stdout supports nothing else.
+/// Use [`gh_api_result`] where the class has to be known.
+fn gh_result(args: &[&str]) -> Result<Value, GhFailure> {
+    let Ok(out) = Command::new("gh").args(args).output() else {
+        // `gh` never ran: there is no response, so there is nothing typed to read.
+        return Err(GhFailure::Unknown);
+    };
+    let (head, body) = split_http_head(&out.stdout);
+    if !out.status.success() {
+        return Err(classify_gh_failure(head.as_ref(), body));
+    }
+    serde_json::from_slice(body).map_err(|_| GhFailure::Malformed)
+}
+
+/// [`gh_result`] for `gh api`, asking for the response head as well.
+///
+/// `--include` is what puts the status line and the `Retry-After` / `X-RateLimit-Remaining` fields
+/// in reach; without it a secondary rate limit is indistinguishable from a permission denial, since
+/// GitHub spells that one as a plain 403 whose only distinguishing mark is an English sentence.
+/// [`split_http_head`] takes the head back off, so a caller sees the same document it would have
+/// received without the flag.
+fn gh_api_result(args: &[&str]) -> Result<Value, GhFailure> {
+    let mut full: Vec<&str> = Vec::with_capacity(args.len() + 2);
+    full.push("api");
+    full.push("--include");
+    full.extend_from_slice(args);
+    gh_result(&full)
+}
+
+/// The wait before each retry when the response named no `Retry-After`, in seconds. The LENGTH of
+/// this table is the retry budget.
+const GH_RATE_LIMIT_BACKOFF_SECS: [u64; 2] = [2, 8];
+
+/// Attempts a rate-limited `gh` call gets in total, the first included. Derived from the backoff
+/// table rather than stated beside it, because two constants that must agree are two constants that
+/// can disagree.
+const GH_RATE_LIMIT_ATTEMPTS: usize = GH_RATE_LIMIT_BACKOFF_SECS.len() + 1;
+
+/// The longest this process will EVER sleep waiting out a rate limit. A window longer than this is
+/// not something a queue render sits through: the candidate is reported rate-limited — a state the
+/// header now names — and the run stays responsive.
+const GH_RATE_LIMIT_MAX_SLEEP_SECS: u64 = 30;
+
+/// The fallback table can never exceed the ceiling, asserted at COMPILE time rather than clamped at
+/// run time. A clamp would silently shorten a wait somebody deliberately lengthened; this fails the
+/// build instead, and it is what lets [`rate_limit_backoff`] treat "over the ceiling" as a fact
+/// about GitHub's `Retry-After` alone.
+const _: () = {
+    let mut i = 0;
+    while i < GH_RATE_LIMIT_BACKOFF_SECS.len() {
+        assert!(GH_RATE_LIMIT_BACKOFF_SECS[i] <= GH_RATE_LIMIT_MAX_SLEEP_SECS);
+        i += 1;
+    }
+};
+
+/// PURE: how long to wait before the retry that FOLLOWS `attempt` (0-based), or `None` for "do not
+/// retry at all" — the budget is spent, or GitHub named a window this process will not sit through.
+///
+/// GitHub's own `Retry-After` wins wherever it gave one: it knows when the window opens, and a
+/// guess can only be too short (more of the traffic being objected to) or too long (a stalled run).
+///
+/// SO A WINDOW OVER [`GH_RATE_LIMIT_MAX_SLEEP_SECS`] STOPS THE RETRIES — it is NOT clamped and
+/// retried anyway. Clamping produces exactly the too-short guess named above: `Retry-After: 60`
+/// would wait 30s and then send a request that CANNOT succeed, because the window has not opened,
+/// adding traffic to the limit that caused it. Against a SECONDARY limit — the one a concurrent
+/// burst draws, and the whole reason #129 exists — an early retry deepens the limit it is answering.
+/// The ceiling therefore protects the run by REPORTING, never by waiting less and asking again.
+fn rate_limit_backoff(attempt: usize, retry_after: Option<u64>) -> Option<std::time::Duration> {
+    let fallback = *GH_RATE_LIMIT_BACKOFF_SECS.get(attempt)?;
+    let Some(asked) = retry_after else {
+        // Nothing was named, so there is no window to respect — only this binary's own guess, which
+        // the compile-time assertion above holds under the ceiling.
+        return Some(std::time::Duration::from_secs(fallback));
+    };
+    if asked > GH_RATE_LIMIT_MAX_SLEEP_SECS {
+        return None;
+    }
+    Some(std::time::Duration::from_secs(asked))
+}
+
+/// Retry `call` for as long as it fails with [`GhFailure::RateLimited`], waiting as
+/// [`rate_limit_backoff`] says.
+///
+/// EVERY OTHER FAILURE RETURNS AT ONCE. That restraint is the point: a retry is the answer to "slow
+/// down" and to nothing else, and re-asking for a PR that does not exist is the blind retry #129
+/// rejects — it retries hardest exactly when GitHub is asking for less traffic. A budget that runs
+/// out yields the rate-limited failure itself, never a laundered one, so the caller still knows why.
+///
+/// `sleep` is a parameter so the policy is testable without one, the same split
+/// [`total_unresolved`] uses for its pages.
+fn retrying_rate_limit<T>(
+    mut call: impl FnMut() -> Result<T, GhFailure>,
+    mut sleep: impl FnMut(std::time::Duration),
+) -> Result<T, GhFailure> {
+    // What comes back when the budget runs out is the LAST failure seen, never a substitute class:
+    // "we gave up waiting" is still a rate limit, and reporting it as anything else re-creates the
+    // laundering #129 is about one layer up. The seed is only reachable if the budget were zero,
+    // which [`GH_RATE_LIMIT_ATTEMPTS`] forbids by construction.
+    let mut last = GhFailure::RateLimited { retry_after: None };
+    for attempt in 0..GH_RATE_LIMIT_ATTEMPTS {
+        match call() {
+            Ok(v) => return Ok(v),
+            Err(e) => last = e,
+        }
+        let GhFailure::RateLimited { retry_after } = last else {
+            return Err(last);
+        };
+        // Both bounds are the backoff table: the loop's, and this index running off its end. They
+        // are derived from the one constant, so they cannot disagree about the budget.
+        let Some(wait) = rate_limit_backoff(attempt, retry_after) else {
+            break;
+        };
+        sleep(wait);
+    }
+    Err(last)
+}
+
+/// [`retrying_rate_limit`] on the real clock.
+fn gh_retrying<T>(call: impl FnMut() -> Result<T, GhFailure>) -> Result<T, GhFailure> {
+    retrying_rate_limit(call, std::thread::sleep)
+}
+
+/// Run gh and parse stdout as JSON; None on non-zero exit, spawn failure, or unparseable output.
+///
+/// The COLLAPSED shim over [`gh_result`], serving the call sites #129 has not converted. `None`
+/// here means "no document" and specifically NOT "not found": a caller that must tell a rate limit
+/// from a missing subject calls [`gh_result`] or [`gh_api_result`] and reads the [`GhFailure`].
+fn gh_json(args: &[&str]) -> Option<Value> {
+    gh_result(args).ok()
+}
+
+#[cfg(test)]
+mod gh_failure_tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
+
+    /// A response head as `gh api --include` actually prints one: the status line terminated with a
+    /// BARE LF, every header with CRLF, and CRLFCRLF before the body. Copied from a live
+    /// `gh api --include repos/<owner>/<no-such-repo>` (gh 2.93.0), because a hand-guessed line
+    /// ending is exactly the detail a fixture gets wrong and the parser then gets wrong with it.
+    fn dump(status_line: &str, headers: &[(&str, &str)], body: &str) -> Vec<u8> {
+        let mut s = String::from(status_line);
+        s.push('\n');
+        for (k, v) in headers {
+            s.push_str(&format!("{k}: {v}\r\n"));
+        }
+        s.push_str("\r\n");
+        s.push_str(body);
+        s.into_bytes()
+    }
+
+    /// The GraphQL error body a missing subject produces, MEASURED (`gh api graphql` against a
+    /// repository that does not exist, and against PR 9999999 of one that does).
+    const GRAPHQL_NOT_FOUND: &str = r#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"locations":[{"line":1,"column":2}],"message":"Could not resolve to a Repository with the name 'rainlanguage/definitely-no-such-repo-xyz'."}]}"#;
+
+    /// The GraphQL error body a query GitHub could not PARSE produces, MEASURED
+    /// (`gh api graphql -f query=notvalidgraphql`). Note what it does NOT have: a `type`.
+    const GRAPHQL_SYNTAX_ERROR: &str = r#"{"errors":[{"message":"Expected one of SCHEMA, SCALAR, TYPE, ENUM, INPUT, UNION, INTERFACE, actual: IDENTIFIER (\"notvalidgraphql\") at [1, 1]","locations":[{"line":1,"column":1}]}]}"#;
+
+    /// The REST error bodies MEASURED for a missing repository and for bad credentials. Both echo
+    /// the HTTP status back INSIDE the document, which is the typed field read here.
+    const REST_404: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/repos#get-a-repository","status":"404"}"#;
+    const REST_401: &str = r#"{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}"#;
+
+    fn classify(out: &[u8]) -> GhFailure {
+        let (head, body) = split_http_head(out);
+        classify_gh_failure(head.as_ref(), body)
+    }
+
+    // ── the head parser ───────────────────────────────────────────────────────────────────────
+
+    // A real `--include` dump splits into a typed status + headers and a body that still parses as
+    // the document the caller asked for. Both halves matter: a splitter that ate one byte too many
+    // would leave unparseable JSON, and one that ate too few would leave the head in it.
+    #[test]
+    fn an_include_dump_splits_into_a_typed_head_and_an_intact_body() {
+        let out = dump(
+            "HTTP/2.0 404 Not Found",
+            &[
+                ("Content-Type", "application/json; charset=utf-8"),
+                ("X-Ratelimit-Remaining", "4959"),
+            ],
+            REST_404,
+        );
+        let (head, body) = split_http_head(&out);
+        let head = head.expect("an --include dump has a head");
+        assert_eq!(head.status, 404);
+        assert_eq!(head.header("x-ratelimit-remaining"), Some("4959"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(body).unwrap()["status"],
+            json!("404")
+        );
+    }
+
+    // Output from an invocation WITHOUT `--include` is all body. This is what lets one reader serve
+    // both call shapes, so no caller has to remember which flag it passed.
+    #[test]
+    fn plain_json_output_is_all_body_and_has_no_head() {
+        let out = REST_404.as_bytes();
+        let (head, body) = split_http_head(out);
+        assert_eq!(head, None);
+        assert_eq!(body, out);
+    }
+
+    // The guard is STRUCTURAL: output that merely CONTAINS CRLFCRLF is not a response head,
+    // because it does not begin with a status line. A splitter that searched for the blank line
+    // alone would eat everything before it and report `Malformed` for a perfectly good response.
+    #[test]
+    fn output_containing_a_blank_line_is_not_mistaken_for_a_head() {
+        let doc: &[u8] = b"{\"a\":1}\r\n\r\n{\"b\":2}";
+        let (head, body) = split_http_head(doc);
+        assert_eq!(head, None);
+        assert_eq!(body, doc);
+        // …and a head-shaped first line IS taken, so the assertion above is not passing because
+        // the splitter never splits anything.
+        let (head, body) = split_http_head(b"HTTP/2.0 200 OK\nX-A: 1\r\n\r\n{\"b\":2}");
+        assert_eq!(head.map(|h| h.status), Some(200));
+        assert_eq!(body, b"{\"b\":2}");
+    }
+
+    // Only the CODE is read. The reason phrase beside it is prose the server may reword, and this
+    // classifier reads no prose.
+    #[test]
+    fn only_the_status_code_is_read_never_the_reason_phrase() {
+        assert_eq!(parse_status_line("HTTP/2.0 403 Forbidden"), Some(403));
+        assert_eq!(
+            parse_status_line("HTTP/1.1 403 Something Else Entirely"),
+            Some(403)
+        );
+        // The reason phrase is OPTIONAL in the protocol, so its absence is not a parse failure.
+        assert_eq!(parse_status_line("HTTP/2.0 403"), Some(403));
+        // What IS refused: anything that is not three digits where the code belongs, and anything
+        // that is not a status line at all — the guard that keeps a JSON body out of the head.
+        assert_eq!(parse_status_line("HTTP/2.0 40x Weird"), None);
+        assert_eq!(parse_status_line("HTTP/2.0 4030 Weird"), None);
+        assert_eq!(parse_status_line("HTTP/2.0"), None);
+        assert_eq!(parse_status_line("{\"a\":1}"), None);
+    }
+
+    // ── the discriminant matrix ───────────────────────────────────────────────────────────────
+
+    // A PRIMARY GraphQL rate limit arrives as HTTP **200** with `RATE_LIMITED` in the body. This is
+    // the case that decides the classifier's ORDER: read the status code first and a rate limit
+    // reads as a success, which is worse than the bug #129 filed.
+    #[test]
+    fn a_graphql_rate_limit_is_read_from_the_body_even_at_http_200() {
+        let body = r#"{"data":null,"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}"#;
+        let out = dump(
+            "HTTP/2.0 200 OK",
+            &[("Content-Type", "application/json")],
+            body,
+        );
+        assert_eq!(classify(&out), GhFailure::RateLimited { retry_after: None });
+        // …and with no head at all (a plain `gh api graphql`), the body still answers.
+        assert_eq!(
+            classify(body.as_bytes()),
+            GhFailure::RateLimited { retry_after: None }
+        );
+    }
+
+    // The SECONDARY limit — the one a concurrent burst draws, and the reason #123/#126 made this
+    // matter — carries no GraphQL type at all: a plain 403 whose only other mark is an English
+    // sentence. `Retry-After` is what makes it readable without touching that sentence.
+    #[test]
+    fn a_secondary_rate_limit_is_read_from_the_retry_after_header() {
+        let out = dump(
+            "HTTP/2.0 403 Forbidden",
+            &[("Retry-After", "60"), ("X-Ratelimit-Remaining", "4821")],
+            r#"{"message":"You have exceeded a secondary rate limit.","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api"}"#,
+        );
+        assert_eq!(
+            classify(&out),
+            GhFailure::RateLimited {
+                retry_after: Some(60)
+            }
+        );
+    }
+
+    // A 403 with an EXHAUSTED budget is the primary limit on the REST side. The remaining count is
+    // a number, not a sentence.
+    #[test]
+    fn a_403_with_an_exhausted_budget_is_a_rate_limit() {
+        let out = dump(
+            "HTTP/2.0 403 Forbidden",
+            &[("X-Ratelimit-Remaining", "0")],
+            r#"{"message":"API rate limit exceeded"}"#,
+        );
+        assert_eq!(classify(&out), GhFailure::RateLimited { retry_after: None });
+    }
+
+    // …and a 403 with NEITHER companion field is a permission denial, which must NOT be retried.
+    // This is the pair that makes 403 readable at all: collapse it either way and the classifier
+    // either hammers GitHub over a scope error or sits out a real limit.
+    #[test]
+    fn a_bare_403_is_a_permission_denial_and_not_a_rate_limit() {
+        let out = dump(
+            "HTTP/2.0 403 Forbidden",
+            &[("X-Ratelimit-Remaining", "4900")],
+            r#"{"message":"Resource not accessible by personal access token"}"#,
+        );
+        assert_eq!(classify(&out), GhFailure::Unauthorized);
+    }
+
+    #[test]
+    fn a_429_is_a_rate_limit_on_the_status_code_alone() {
+        let out = dump(
+            "HTTP/2.0 429 Too Many Requests",
+            &[("Retry-After", "12")],
+            "",
+        );
+        assert_eq!(
+            classify(&out),
+            GhFailure::RateLimited {
+                retry_after: Some(12)
+            }
+        );
+    }
+
+    // The measured bodies, each landing on the class it names — and each on a DIFFERENT class, so
+    // one mapping collapsed into another fails here.
+    #[test]
+    fn the_measured_failure_bodies_each_land_on_their_own_class() {
+        let cases = [
+            (GRAPHQL_NOT_FOUND, GhFailure::NotFound),
+            (GRAPHQL_SYNTAX_ERROR, GhFailure::Malformed),
+            (REST_404, GhFailure::NotFound),
+            (REST_401, GhFailure::Unauthorized),
+        ];
+        for (body, want) in cases {
+            assert_eq!(classify(body.as_bytes()), want, "{body}");
+        }
+    }
+
+    // MEASURED: `gh pr view` writes nothing to stdout however it fails, and so does a transport
+    // error. `Unknown` is the honest answer — and asserting it is what stops a later reader
+    // "improving" the empty case into `NotFound`, which would be the #129 lie with a type on it.
+    #[test]
+    fn no_output_at_all_is_unknown_never_a_guess() {
+        assert_eq!(classify(b""), GhFailure::Unknown);
+        assert_eq!(classify(b"not json at all"), GhFailure::Unknown);
+    }
+
+    // The GraphQL type words are matched WHOLE. A near-miss is `Unknown`, never the type it
+    // resembles: a `contains` test would read a future `NOT_FOUND_IN_ORG` as `NOT_FOUND` and a
+    // future `RATE_LIMITED_SECONDARY` as a limit this code already knows how to wait out.
+    #[test]
+    fn an_unrecognised_graphql_type_is_unknown_not_the_one_it_resembles() {
+        for word in ["NOT_FOUND_IN_ORG", "RATE_LIMITED_SECONDARY", "FORBIDDEN_X"] {
+            let body = json!({"errors": [{"type": word, "message": "…"}]}).to_string();
+            assert_eq!(classify(body.as_bytes()), GhFailure::Unknown, "{word}");
+        }
+        // The exact words still resolve, so the test above is not passing by matching nothing.
+        assert_eq!(graphql_error_failure("NOT_FOUND"), GhFailure::NotFound);
+        assert_eq!(graphql_error_failure("FORBIDDEN"), GhFailure::Unauthorized);
+        assert_eq!(
+            graphql_error_failure("INSUFFICIENT_SCOPES"),
+            GhFailure::Unauthorized
+        );
+        assert_eq!(
+            graphql_error_failure("ACTOR_SUSPENDED"),
+            GhFailure::Unauthorized
+        );
+    }
+
+    // A GraphQL response may carry SEVERAL errors: one field rate limited while another is merely
+    // absent. Reading such a response as `NotFound` would drop the candidate and never retry it —
+    // #129's bug, arriving through the typed path. The most actionable class wins, whatever order
+    // GitHub listed them in.
+    #[test]
+    fn the_most_actionable_error_wins_a_mixed_array() {
+        let orders = [
+            json!([{"type": "NOT_FOUND"}, {"type": "RATE_LIMITED"}]),
+            json!([{"type": "RATE_LIMITED"}, {"type": "NOT_FOUND"}]),
+        ];
+        for errors in orders {
+            let body = json!({ "errors": errors }).to_string();
+            assert_eq!(
+                classify(body.as_bytes()),
+                GhFailure::RateLimited { retry_after: None },
+                "{body}"
+            );
+        }
+        let body = json!({"errors": [{"type": "NOT_FOUND"}, {"type": "FORBIDDEN"}]}).to_string();
+        assert_eq!(classify(body.as_bytes()), GhFailure::Unauthorized);
+    }
+
+    // An `errors` array is what a GraphQL FAILURE has; a successful document has none, and a
+    // present-but-empty one says nothing. Neither may be read as an error class.
+    #[test]
+    fn a_document_with_no_errors_array_yields_no_graphql_class() {
+        assert_eq!(graphql_failure(&json!({"data": {"x": 1}})), None);
+        assert_eq!(graphql_failure(&json!({"errors": []})), None);
+        assert_eq!(graphql_failure(&json!({"errors": "nope"})), None);
+    }
+
+    // The REST body's own `status`, whether GitHub sent it as a string (measured) or a number.
+    #[test]
+    fn the_rest_body_status_field_is_read_as_a_status_code() {
+        assert_eq!(
+            rest_body_failure(&json!({"status": "404"})),
+            Some(GhFailure::NotFound)
+        );
+        assert_eq!(
+            rest_body_failure(&json!({"status": 401})),
+            Some(GhFailure::Unauthorized)
+        );
+        assert_eq!(rest_body_failure(&json!({"status": "teapot"})), None);
+        assert_eq!(rest_body_failure(&json!({"message": "hi"})), None);
+    }
+
+    // A code with no rule is `Unknown` — never folded into whichever rule looks nearest.
+    #[test]
+    fn a_status_code_with_no_rule_is_unknown() {
+        assert_eq!(status_failure(401), GhFailure::Unauthorized);
+        assert_eq!(status_failure(404), GhFailure::NotFound);
+        assert_eq!(status_failure(410), GhFailure::NotFound);
+        assert_eq!(status_failure(422), GhFailure::Unknown);
+        assert_eq!(status_failure(500), GhFailure::Unknown);
+        assert_eq!(status_failure(200), GhFailure::Unknown);
+    }
+
+    // ── the retry policy ──────────────────────────────────────────────────────────────────────
+
+    // GitHub's own `Retry-After` wins where it gave one, EXACTLY — never rounded down. The budget
+    // is the backoff table's length, and a `Retry-After` does not extend it.
+    #[test]
+    fn the_backoff_honours_retry_after_exactly_and_runs_out() {
+        assert_eq!(
+            rate_limit_backoff(0, None),
+            Some(Duration::from_secs(GH_RATE_LIMIT_BACKOFF_SECS[0]))
+        );
+        assert_eq!(rate_limit_backoff(0, Some(5)), Some(Duration::from_secs(5)));
+        // Exactly at the ceiling still waits — the boundary is inclusive, so the give-up rule below
+        // cannot be read as "at or over".
+        assert_eq!(
+            rate_limit_backoff(0, Some(GH_RATE_LIMIT_MAX_SLEEP_SECS)),
+            Some(Duration::from_secs(GH_RATE_LIMIT_MAX_SLEEP_SECS))
+        );
+        assert_eq!(
+            rate_limit_backoff(GH_RATE_LIMIT_BACKOFF_SECS.len(), Some(1)),
+            None,
+            "the budget is spent, and a Retry-After does not extend it"
+        );
+    }
+
+    // A window LONGER than this process will sit through stops the retries — it is NOT clamped and
+    // retried anyway. Clamping would send a request into a window GitHub said has not opened: it
+    // cannot succeed, and it adds traffic to the very limit that produced the header. Against a
+    // secondary limit that deepens the limit being answered.
+    #[test]
+    fn a_window_over_the_ceiling_stops_retrying_rather_than_waiting_less() {
+        let over = GH_RATE_LIMIT_MAX_SLEEP_SECS + 1;
+        assert_eq!(rate_limit_backoff(0, Some(over)), None);
+        assert_eq!(rate_limit_backoff(0, Some(86_400)), None);
+        // …at EVERY attempt, not just the first: a later attempt must not become the retry the
+        // first one refused.
+        for attempt in 0..GH_RATE_LIMIT_BACKOFF_SECS.len() {
+            assert_eq!(rate_limit_backoff(attempt, Some(over)), None, "{attempt}");
+        }
+    }
+
+    // The same fact through the driver, which is where it costs a request: ONE call, NO sleep, and
+    // the rate limit reported with GitHub's own window intact so the caller can say why.
+    #[test]
+    fn a_long_window_costs_exactly_one_call_and_no_sleep() {
+        let asked = GH_RATE_LIMIT_MAX_SLEEP_SECS * 2;
+        let calls = std::cell::Cell::new(0usize);
+        let waits = std::cell::RefCell::new(Vec::new());
+        let got: Result<u8, GhFailure> = retrying_rate_limit(
+            || {
+                calls.set(calls.get() + 1);
+                Err(GhFailure::RateLimited {
+                    retry_after: Some(asked),
+                })
+            },
+            |d| waits.borrow_mut().push(d),
+        );
+        assert_eq!(
+            calls.get(),
+            1,
+            "the window is not open; asking again cannot help"
+        );
+        assert!(waits.borrow().is_empty(), "nothing is slept off");
+        assert_eq!(
+            got,
+            Err(GhFailure::RateLimited {
+                retry_after: Some(asked)
+            }),
+            "the window GitHub named survives to the caller"
+        );
+    }
+
+    // The fallback table is held under the ceiling at COMPILE time, so the `None` above is a fact
+    // about GitHub's header alone and never about this binary's own guess. Restated here because a
+    // const assertion is invisible in a test report.
+    #[test]
+    fn every_fallback_wait_is_under_the_ceiling() {
+        for (i, secs) in GH_RATE_LIMIT_BACKOFF_SECS.iter().enumerate() {
+            assert!(*secs <= GH_RATE_LIMIT_MAX_SLEEP_SECS, "entry {i} is {secs}");
+            assert_eq!(
+                rate_limit_backoff(i, None),
+                Some(Duration::from_secs(*secs)),
+                "a fallback wait is never refused"
+            );
+        }
+    }
+
+    /// Run `outcomes` through the retry driver, recording every wait instead of taking it.
+    fn drive(outcomes: Vec<Result<u8, GhFailure>>) -> (Result<u8, GhFailure>, Vec<Duration>) {
+        let waits = std::cell::RefCell::new(Vec::new());
+        let mut it = outcomes.into_iter();
+        let got = retrying_rate_limit(
+            || {
+                it.next()
+                    .expect("the driver asked for more calls than the budget allows")
+            },
+            |d| waits.borrow_mut().push(d),
+        );
+        (got, waits.into_inner())
+    }
+
+    // A rate limit is waited out and the call succeeds on the retry — the queue absorbs a soft
+    // limit instead of counting it.
+    #[test]
+    fn a_rate_limited_call_is_retried_after_a_wait_and_can_then_succeed() {
+        let (got, waits) = drive(vec![
+            Err(GhFailure::RateLimited {
+                retry_after: Some(3),
+            }),
+            Ok(7),
+        ]);
+        assert_eq!(got, Ok(7));
+        assert_eq!(waits, vec![Duration::from_secs(3)]);
+    }
+
+    // EVERY OTHER CLASS RETURNS AT ONCE, with no wait. Retrying a missing PR is the blind retry
+    // #129 rejects: it re-asks a question already answered, and it does it hardest exactly when
+    // GitHub is asking for less traffic.
+    #[test]
+    fn only_a_rate_limit_is_retried() {
+        for f in [
+            GhFailure::NotFound,
+            GhFailure::Unauthorized,
+            GhFailure::Malformed,
+            GhFailure::Unknown,
+        ] {
+            let (got, waits) = drive(vec![Err(f)]);
+            assert_eq!(got, Err(f));
+            assert!(waits.is_empty(), "{f:?} must not be waited on");
+        }
+    }
+
+    // A budget that runs out yields the RATE LIMIT, not a laundered class — the caller still knows
+    // the row is un-read rather than unreadable. The call count is the budget exactly: one more
+    // would panic in `drive`, one fewer fails the wait assertion.
+    #[test]
+    fn an_exhausted_budget_still_reports_the_rate_limit_it_gave_up_on() {
+        let limited = || {
+            Err(GhFailure::RateLimited {
+                retry_after: Some(1),
+            })
+        };
+        let (got, waits) = drive((0..GH_RATE_LIMIT_ATTEMPTS).map(|_| limited()).collect());
+        assert_eq!(
+            got,
+            Err(GhFailure::RateLimited {
+                retry_after: Some(1)
+            })
+        );
+        assert_eq!(waits.len(), GH_RATE_LIMIT_ATTEMPTS - 1);
+        assert_eq!(GH_RATE_LIMIT_ATTEMPTS, GH_RATE_LIMIT_BACKOFF_SECS.len() + 1);
+    }
+
+    // ── the re-ask that gives `gh pr view` a typed reason ─────────────────────────────────────
+
+    fn pr_probe(v: Value) -> impl FnOnce() -> Result<Value, GhFailure> {
+        move || Ok(v)
+    }
+
+    // A structureless `gh pr view` failure — the ONLY class it can produce — is resolved by the
+    // re-ask, and the re-ask's own typed failure IS the answer. This is the whole reason the queue
+    // spends an extra request: without it every one of these was `Unknown` and became a
+    // `fetch_error`.
+    #[test]
+    fn a_structureless_view_failure_takes_the_reasks_typed_answer() {
+        for f in [
+            GhFailure::RateLimited {
+                retry_after: Some(4),
+            },
+            GhFailure::Unauthorized,
+            GhFailure::NotFound,
+            GhFailure::Malformed,
+        ] {
+            assert_eq!(pr_fetch_failure(GhFailure::Unknown, || Err(f)), f);
+        }
+    }
+
+    // A PR the re-ask RESOLVES is not missing: the detail fetch failed for a reason nothing typed
+    // named, so the answer stays `Unknown`. Calling it `NotFound` here would be #129's lie with a
+    // type painted on it — a transient blip reported as a deleted PR.
+    #[test]
+    fn a_resolvable_pr_whose_detail_fetch_failed_stays_unknown() {
+        let found = json!({"data": {"repository": {"pullRequest": {"number": 12}}}});
+        assert_eq!(
+            pr_fetch_failure(GhFailure::Unknown, pr_probe(found)),
+            GhFailure::Unknown
+        );
+    }
+
+    // …and one the re-ask cannot resolve IS `NotFound`, whether GitHub said `null` or omitted the
+    // field entirely. Both are asserted, because a classifier that answered `NotFound`
+    // unconditionally would pass the missing case on its own.
+    #[test]
+    fn a_pr_the_reask_cannot_resolve_is_not_found() {
+        for doc in [
+            json!({"data": {"repository": {"pullRequest": null}}}),
+            json!({"data": {"repository": null}}),
+            json!({}),
+        ] {
+            assert_eq!(
+                pr_fetch_failure(GhFailure::Unknown, pr_probe(doc.clone())),
+                GhFailure::NotFound,
+                "{doc}"
+            );
+        }
+    }
+
+    // A failure that ALREADY came from somewhere typed is kept, and costs NO re-ask. Spending a
+    // request to re-learn a class we hold — while GitHub may be rate limiting us — is exactly the
+    // traffic the retry policy refuses everywhere else.
+    #[test]
+    fn an_already_typed_view_failure_is_kept_without_a_reask() {
+        for f in [
+            GhFailure::RateLimited { retry_after: None },
+            GhFailure::Unauthorized,
+            GhFailure::NotFound,
+            GhFailure::Malformed,
+        ] {
+            let asked = std::cell::Cell::new(false);
+            let got = pr_fetch_failure(f, || {
+                asked.set(true);
+                Ok(json!({}))
+            });
+            assert_eq!(got, f);
+            assert!(!asked.get(), "{f:?} must not cost a re-ask");
+        }
+    }
+
+    // The pagination walk keeps the PAGE's own failure, so a rate limit that stops the walk is
+    // still a rate limit at the queue — and a page that fetched but did not carry the shape is
+    // `Malformed`, which is a different fact and must not be retried.
+    #[test]
+    fn the_page_walk_carries_the_pages_own_failure_out() {
+        assert_eq!(
+            total_unresolved(|_| Err(GhFailure::RateLimited { retry_after: None })),
+            Err(GhFailure::RateLimited { retry_after: None })
+        );
+        assert_eq!(
+            total_unresolved(|_| Ok(json!({"data": {"repository": null}}))),
+            Err(GhFailure::Malformed)
+        );
+    }
 }
 
 /// One page of the reviewThreads GraphQL response → (unresolved count, end cursor if more pages).
@@ -71,26 +999,39 @@ const MAX_THREAD_PAGES: usize = 100;
 
 /// PURE given `fetch_page`: fold every reviewThreads page into one unresolved total. `fetch_page`
 /// receives the cursor to resume from (`None` for the first page) and returns that page's raw JSON.
-/// Paging stops at the first page whose `hasNextPage` is false. Returns None the moment ANY page is
+/// Paging stops at the first page whose `hasNextPage` is false. Fails the moment ANY page is
 /// unfetchable, unparseable, or the page cap is hit — a partial read is never reported as a total,
 /// so a long review history can never silently truncate into a false clean.
-fn total_unresolved(mut fetch_page: impl FnMut(Option<&str>) -> Option<Value>) -> Option<u64> {
+///
+/// The failure is the page's own [`GhFailure`] where the fetch had one, so a rate limit that stops
+/// the walk stays a rate limit all the way out to the queue instead of arriving as "unreadable"
+/// (#129). A page that FETCHED but did not carry the expected shape is `Malformed`; exhausting
+/// [`MAX_THREAD_PAGES`] or overflowing the total is `Unknown`, since neither is anything GitHub
+/// said.
+fn total_unresolved(
+    mut fetch_page: impl FnMut(Option<&str>) -> Result<Value, GhFailure>,
+) -> Result<u64, GhFailure> {
     let mut total = 0u64;
     let mut cursor: Option<String> = None;
     for _ in 0..MAX_THREAD_PAGES {
-        let (page, next) = count_unresolved_page(&fetch_page(cursor.as_deref())?)?;
-        total = total.checked_add(page)?;
+        let doc = fetch_page(cursor.as_deref())?;
+        let (page, next) = count_unresolved_page(&doc).ok_or(GhFailure::Malformed)?;
+        total = total.checked_add(page).ok_or(GhFailure::Unknown)?;
         match next {
             Some(cur) => cursor = Some(cur),
-            None => return Some(total),
+            None => return Ok(total),
         }
     }
-    None
+    Err(GhFailure::Unknown)
 }
 
 /// Total unresolved review threads on a PR (CodeRabbit or human), paginated so a long review
-/// history is never silently truncated. None on any fetch/parse failure.
-fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Option<u64> {
+/// history is never silently truncated, with a TYPED failure.
+///
+/// The one hot-path fetch that already spoke GraphQL, so the structure #129 needs was always on the
+/// wire and only `gh_json` was throwing it away. Each page is retried while GitHub says
+/// `RATE_LIMITED`, so the concurrent queue absorbs a soft limit instead of counting it.
+fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Result<u64, GhFailure> {
     let query = "query($owner:String!,$repo:String!,$num:Int!,$cursor:String){\
                  repository(owner:$owner,name:$repo){pullRequest(number:$num){\
                  reviewThreads(first:100,after:$cursor){nodes{isResolved}\
@@ -113,7 +1054,9 @@ fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Option<u64> {
             args.push(format!("cursor={cur}"));
         }
         let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
-        gh_json(&argrefs)
+        // `args` already begins "api graphql"; `gh_api_result` supplies `api --include`, so the
+        // leading "api" is dropped rather than repeated.
+        gh_retrying(|| gh_api_result(&argrefs[1..]))
     })
 }
 
@@ -128,19 +1071,23 @@ enum ThreadRoute {
     Present,
     /// At least one unresolved thread — the producer's step-3e work.
     OpenThreads,
-    /// The thread state could not be read. FAIL-CLOSED: not presented, and counted as a fetch
-    /// error rather than silently as clean or as dirty, so a transient API failure is visible in
-    /// the report instead of being laundered into either verdict.
-    FetchError,
+    /// The thread state could not be read, and WHY. FAIL-CLOSED: not presented, and reported as
+    /// the failure it was rather than silently as clean or as dirty, so a transient API failure is
+    /// visible in the report instead of being laundered into either verdict.
+    ///
+    /// It carries the [`GhFailure`] because "GitHub asked us to slow down" and "this PR is
+    /// unreadable" want different handling one level up, and a bare `FetchError` could not say
+    /// which had happened (#129).
+    Failed(GhFailure),
 }
 
 /// PURE: route a thread count. Only a verified zero passes (fail-closed, matching the queue's
 /// existing mergeable check — an unverifiable PR is never presented to the human).
-fn thread_route(threads: Option<u64>) -> ThreadRoute {
+fn thread_route(threads: Result<u64, GhFailure>) -> ThreadRoute {
     match threads {
-        Some(0) => ThreadRoute::Present,
-        Some(_) => ThreadRoute::OpenThreads,
-        None => ThreadRoute::FetchError,
+        Ok(0) => ThreadRoute::Present,
+        Ok(_) => ThreadRoute::OpenThreads,
+        Err(f) => ThreadRoute::Failed(f),
     }
 }
 
@@ -405,6 +1352,14 @@ struct QueueCounts {
     unvetted: usize, // green+mergeable but no current ai:vetter verdict at head — the vetter owes it one
     open_threads: usize, // otherwise-presentable but unresolved review threads — producer thread-resolution work
     fetch_error: usize,
+    /// Candidates GitHub was still rate-limiting after the retry budget. SEPARATE from
+    /// `fetch_error` (#129): those rows are un-read, not unreadable, and the operator's move is to
+    /// re-run rather than to go looking for broken PRs.
+    rate_limited: usize,
+    /// `ai:ready` PRs an ARCHIVED repo froze (#206). SEPARATE from `excluded`, which counts rows a
+    /// human or a draft flag deliberately held back: these were never held back by anyone, and
+    /// nothing anybody does to the PR will make them mergeable again.
+    archived_repo: usize,
 }
 
 /// Render the queue: a header with the true ai:ready -> presentable / conflicting / red / pending /
@@ -426,8 +1381,22 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
     } else {
         String::new()
     };
+    // Reported under its own name, never folded into fetch-error: the two ask the reader for
+    // different things (re-run vs. investigate), which is the whole of #129 at the render layer.
+    let limited = if c.rate_limited > 0 {
+        format!(", {} rate-limited", c.rate_limited)
+    } else {
+        String::new()
+    };
     let excl = if c.excluded > 0 {
         format!(", {} excluded (draft/human-override)", c.excluded)
+    } else {
+        String::new()
+    };
+    // Stated, never silent: a frozen row is one nobody can act on, and a queue that just got
+    // smaller with no reason given is what left these unnoticed in the first place (#206).
+    let archived = if c.archived_repo > 0 {
+        format!(", {} archived-repo", c.archived_repo)
     } else {
         String::new()
     };
@@ -437,8 +1406,8 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, excl, trunc
+        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{}{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, limited, excl, archived, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -554,6 +1523,429 @@ mod org_tests {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// ARCHIVED REPOS — the blind spot every org-wide enumeration shared (#206).
+//
+// An archived repo is READ-ONLY. Its issues and PRs keep answering `gh search`, so every
+// enumeration in this binary kept offering them; but `gh issue edit`, `gh issue close`,
+// `gh pr merge` and `gh pr comment` all refuse against one, which means EVERY transition this
+// FSM owns is unavailable on those rows. `next_close_candidate` is where it bit: `rain.webapp`
+// was archived on 2026-08-05 and, minutes later, `rain.webapp#139` was served as the HEAD of the
+// human's queue — a sound flag, a completed read, and no ruling that could be written. The flag
+// queue is ordered OLDEST FIRST, so a frozen row does not merely appear, it sorts to the front
+// and stays there.
+//
+// THE FILTER BELONGS IN THE TOOL, NOT IN A PROMPT. Archived repos have been skipped by prompt
+// instruction before, and that works for the producer, which reads a list and chooses what to
+// work. It cannot work for a tool whose contract is "here is the next thing to rule on, ranked,
+// one at a time": a row the caller cannot act on is not something to skip past, it is the head of
+// the queue until something removes it.
+//
+// AND THE ROWS ARE WITHHELD WITH A COUNT, NEVER SILENTLY. Silence is what let the flags in
+// `rain.webapp` sit unnoticed in the first place, and a caller who sees a queue shrink with
+// nothing to explain the gap has to re-derive the reason from outside the tool — the same defect
+// the vetter's state-load fixed by counting every skip. So each surface reports how many rows an
+// archived repo froze, in the same place it reports its other withheld sets.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Every archived `owner/repo` in the [`org_names`] scope, ASCII-lowercased.
+///
+/// Lowercased because the two sides come from different GitHub APIs — the repository connection
+/// spells the slug as the repo is named, `gh search` echoes what the URL carried — and GitHub
+/// treats owner and name case-insensitively. Comparing raw would let a case difference read as
+/// "not archived", which is the one direction of error this whole section exists to prevent.
+struct ArchivedRepos(std::collections::BTreeSet<String>);
+
+impl ArchivedRepos {
+    fn contains(&self, slug: &str) -> bool {
+        self.0.contains(&slug.to_ascii_lowercase())
+    }
+
+    #[cfg(test)]
+    fn from_slugs<I: IntoIterator<Item = S>, S: AsRef<str>>(slugs: I) -> Self {
+        ArchivedRepos(
+            slugs
+                .into_iter()
+                .map(|s| s.as_ref().to_ascii_lowercase())
+                .collect(),
+        )
+    }
+}
+
+/// The GraphQL page behind [`archived_repos`], one owner at a time.
+///
+/// `repositoryOwner` rather than `organization` because [`org_names`] is a list of OWNERS and a
+/// user account is a legal one; the interface resolves either, and `isArchived:` is a filter on
+/// the connection itself so the server returns only the archived set rather than the whole one.
+///
+/// NOT `gh search repos --archived=true`, which is the cheap-looking alternative and is WRONG.
+/// Search is an INDEX, and the index is incomplete: measured on 2026-08-05, the repository
+/// connection reported 38 archived repos across the three configured orgs and the search reported
+/// 37 — it had no row for `rainlanguage/assemblyscript-cbor-fork`, which `gh repo view` confirms
+/// is archived. The same staleness applies to the `--archived=false` qualifier on the issue and PR
+/// searches, so filtering server-side inside each existing search would inherit the gap. It is
+/// also the WORST staleness to inherit here: the defect is a repo archived MINUTES before the
+/// read, which is exactly when an index has not caught up.
+const ARCHIVED_REPOS_QUERY: &str = "query($org: String!, $cursor: String) {
+  repositoryOwner(login: $org) {
+    repositories(first: 100, isArchived: true, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { nameWithOwner }
+    }
+  }
+}";
+
+/// PURE: one page of [`ARCHIVED_REPOS_QUERY`] — the slugs it names, and the cursor of the page
+/// after it (`None` when this was the last).
+///
+/// A response whose shape cannot be read is [`GhFailure::Malformed`] and NEVER an empty page: an
+/// empty page reads as "nothing here is archived", which is precisely the false negative that puts
+/// a frozen row back at the head of the queue.
+///
+/// `hasNextPage` with no `endCursor` is malformed too, rather than treated as the end. GitHub does
+/// not produce it, and reading it as "done" would silently truncate the set — under-reporting
+/// archived repos in the one direction that fails open.
+fn archived_repos_page(v: &Value) -> Result<(Vec<String>, Option<String>), GhFailure> {
+    let Some(conn) = v.pointer("/data/repositoryOwner/repositories") else {
+        return Err(GhFailure::Malformed);
+    };
+    let Some(nodes) = conn.get("nodes").and_then(|n| n.as_array()) else {
+        return Err(GhFailure::Malformed);
+    };
+    let mut slugs = Vec::with_capacity(nodes.len());
+    for n in nodes {
+        let Some(slug) = n.get("nameWithOwner").and_then(|s| s.as_str()) else {
+            return Err(GhFailure::Malformed);
+        };
+        slugs.push(slug.to_ascii_lowercase());
+    }
+    let has_next = conn
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !has_next {
+        return Ok((slugs, None));
+    }
+    let Some(cursor) = conn
+        .pointer("/pageInfo/endCursor")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty())
+    else {
+        return Err(GhFailure::Malformed);
+    };
+    Ok((slugs, Some(cursor.to_string())))
+}
+
+/// PURE: the `gh api graphql` argv for one owner's page.
+fn archived_repos_args(org: &str, cursor: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "graphql".to_string(),
+        "-f".to_string(),
+        format!("query={ARCHIVED_REPOS_QUERY}"),
+        "-f".to_string(),
+        format!("org={org}"),
+    ];
+    if let Some(c) = cursor {
+        args.push("-f".to_string());
+        args.push(format!("cursor={c}"));
+    }
+    args
+}
+
+/// LIVE: every archived repo in the configured org scope.
+///
+/// DELIBERATELY NOT MEMOISED ACROSS CALLS. The whole defect is a repo that became read-only
+/// UNDERNEATH a live queue — four minutes elapsed between `rain.webapp` being archived and the
+/// queue serving a flag from it — and `mcp` is a long-lived process, so a set cached at server
+/// start would answer with the world as it was whenever the human last restarted it. Each
+/// enumeration reads it ONCE, at the top, and shares that one answer across its whole loop:
+/// measured 1.8s for the three configured orgs (one page each, 38 repos), against 0.5s per
+/// DISTINCT repo for the per-repo `gh repo view --json isArchived` alternative — which is the
+/// lookup-inside-a-loop that would not be affordable, since the enumerations span 40–60 distinct
+/// repos.
+fn archived_repos() -> Result<ArchivedRepos, GhFailure> {
+    let mut set = std::collections::BTreeSet::new();
+    for org in org_names(&std::env::var("ORGS").unwrap_or_default()) {
+        let mut cursor: Option<String> = None;
+        loop {
+            let args = archived_repos_args(&org, cursor.as_deref());
+            let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+            let v = gh_retrying(|| gh_api_result(&argref))?;
+            let (slugs, next) = archived_repos_page(&v)?;
+            set.extend(slugs);
+            let Some(next) = next else { break };
+            cursor = Some(next);
+        }
+    }
+    Ok(ArchivedRepos(set))
+}
+
+/// The one message every surface refuses with when the archived set cannot be read.
+///
+/// An UNREADABLE archived-state must never collapse to "not archived" (#199 gave the failure a
+/// type precisely so it could not). Both fail-open and fail-closed are wrong here and in opposite
+/// directions: treating everything as live re-creates the defect, and treating everything as
+/// archived empties the queue and hides all the real work. So the enumeration ABORTS, which is
+/// what every other read in this binary already does when it cannot answer honestly — the caller
+/// gets a refusal it can retry rather than a queue it cannot trust.
+fn archived_read_error(f: GhFailure) -> String {
+    format!(
+        "error: could not read which repos are archived ({f:?}) — aborting rather than offer \
+         rows from a repo that refuses every transition"
+    )
+}
+
+/// PURE: the one-line note a plain-text surface appends when an archived repo froze rows out of
+/// it. EMPTY at zero, so an operator never reads a count that says nothing happened — and never
+/// silent above zero, which is the whole point.
+fn archived_note(n: usize) -> String {
+    if n == 0 {
+        String::new()
+    } else {
+        format!(" ({n} withheld: archived repo, unactionable)")
+    }
+}
+
+/// PURE: split search hits into the ones a transition can still act on and the ones an archived
+/// repo has frozen, preserving order in both.
+///
+/// A hit whose slug will not PARSE is KEPT, never counted as archived. Every caller already has an
+/// error path for an unaddressable row, and answering "is this archived?" with a guess about a
+/// reference nobody could resolve would replace a reported error with a silent drop.
+fn withhold_archived(
+    hits: Vec<Value>,
+    archived: &ArchivedRepos,
+    slug_of: impl Fn(&Value) -> Option<String>,
+) -> (Vec<Value>, Vec<Value>) {
+    let mut live = Vec::with_capacity(hits.len());
+    let mut frozen = Vec::new();
+    for hit in hits {
+        match slug_of(&hit) {
+            Some(slug) if archived.contains(&slug) => frozen.push(hit),
+            _ => live.push(hit),
+        }
+    }
+    (live, frozen)
+}
+
+/// PURE: the `owner/repo` a `gh search issues` / `gh search prs` hit names, from the
+/// `repository.nameWithOwner` the searches all ask for, falling back to the URL. The one slug
+/// reader [`withhold_archived`] is handed, so no surface can disagree with another about which
+/// repo a hit belongs to.
+fn hit_slug(hit: &Value) -> Option<String> {
+    hit.get("repository")
+        .and_then(|r| r.get("nameWithOwner"))
+        .and_then(|s| s.as_str())
+        .map(String::from)
+        .or_else(|| {
+            hit.get("url")
+                .and_then(|u| u.as_str())
+                .and_then(|u| pr_slug(u).or_else(|| issue_slug(u)))
+        })
+}
+
+#[cfg(test)]
+mod archived_repos_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn page(nodes: Value, has_next: bool, end: Value) -> Value {
+        json!({"data": {"repositoryOwner": {"repositories": {
+            "pageInfo": {"hasNextPage": has_next, "endCursor": end},
+            "nodes": nodes,
+        }}}})
+    }
+
+    /// The live shape, copied from `gh api graphql` against `cyclofinance` on 2026-08-05.
+    #[test]
+    fn a_page_yields_its_slugs_lowercased_and_no_cursor_when_it_is_the_last() {
+        let v = page(
+            json!([
+                {"nameWithOwner": "cyclofinance/cyclo.rewardsold"},
+                {"nameWithOwner": "cyclofinance/rflr-nix"},
+            ]),
+            false,
+            json!("Y3Vyc29yOnYyOpHONxZ8-g=="),
+        );
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((
+                vec![
+                    "cyclofinance/cyclo.rewardsold".to_string(),
+                    "cyclofinance/rflr-nix".to_string(),
+                ],
+                None
+            ))
+        );
+    }
+
+    /// Casing is normalised on the way IN, so a slug spelled differently by the two APIs still
+    /// matches. GitHub owners and names are case-insensitive; a raw compare would read a case
+    /// difference as "not archived" — the one direction that fails open.
+    #[test]
+    fn slugs_are_lowercased_so_the_two_apis_spellings_agree() {
+        let v = page(
+            json!([{"nameWithOwner": "RainLanguage/Rain.Webapp"}]),
+            false,
+            json!(null),
+        );
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((vec!["rainlanguage/rain.webapp".to_string()], None))
+        );
+        let set = ArchivedRepos::from_slugs(["RainLanguage/Rain.Webapp"]);
+        assert!(set.contains("rainlanguage/rain.webapp"));
+        assert!(set.contains("RAINLANGUAGE/RAIN.WEBAPP"));
+    }
+
+    #[test]
+    fn a_page_with_more_after_it_yields_the_cursor() {
+        let v = page(json!([{"nameWithOwner": "o/r"}]), true, json!("CUR"));
+        assert_eq!(
+            archived_repos_page(&v),
+            Ok((vec!["o/r".to_string()], Some("CUR".to_string())))
+        );
+    }
+
+    /// Every unreadable shape is `Malformed`, never an empty page. An empty page reads as
+    /// "nothing is archived", which puts every frozen row straight back at the head of the queue.
+    #[test]
+    fn an_unreadable_response_is_malformed_never_an_empty_set() {
+        for bad in [
+            json!({}),
+            json!({"data": {}}),
+            json!({"data": {"repositoryOwner": null}}),
+            // The connection is there but the node list is not.
+            json!({"data": {"repositoryOwner": {"repositories": {"pageInfo": {"hasNextPage": false}}}}}),
+            // A node with no slug — one unaddressable repo must not silently shrink the set.
+            page(
+                json!([{"nameWithOwner": "o/r"}, {"id": "x"}]),
+                false,
+                json!(null),
+            ),
+            // `hasNextPage` with nothing to page WITH would silently truncate the set.
+            page(json!([{"nameWithOwner": "o/r"}]), true, json!(null)),
+            page(json!([{"nameWithOwner": "o/r"}]), true, json!("")),
+        ] {
+            assert_eq!(
+                archived_repos_page(&bad),
+                Err(GhFailure::Malformed),
+                "{bad} must not read as an empty archived set"
+            );
+        }
+    }
+
+    /// The cursor is threaded into the NEXT page's argv, and the first page carries none.
+    #[test]
+    fn the_argv_names_the_owner_and_pages_with_the_cursor() {
+        let first = archived_repos_args("rainlanguage", None);
+        assert_eq!(first[0], "graphql");
+        assert!(first.contains(&format!("query={ARCHIVED_REPOS_QUERY}")));
+        assert!(first.contains(&"org=rainlanguage".to_string()));
+        assert!(
+            !first.iter().any(|a| a.starts_with("cursor=")),
+            "the first page has nothing to page from: {first:?}"
+        );
+        let next = archived_repos_args("rainlanguage", Some("CUR"));
+        assert!(next.contains(&"cursor=CUR".to_string()));
+    }
+
+    /// The query asks the REPOSITORY CONNECTION, not the search index — the index was measured
+    /// incomplete (37 of 38 archived repos on 2026-08-05), and a repo archived minutes ago is
+    /// exactly the row an index has not caught up with.
+    #[test]
+    fn the_query_reads_the_repository_connection_filtered_to_archived() {
+        assert!(ARCHIVED_REPOS_QUERY.contains("repositoryOwner"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("isArchived: true"));
+        // Paged, so an owner with more than one page of archived repos is not truncated.
+        assert!(ARCHIVED_REPOS_QUERY.contains("hasNextPage"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("endCursor"));
+        assert!(ARCHIVED_REPOS_QUERY.contains("$cursor"));
+    }
+
+    #[test]
+    fn hits_in_archived_repos_are_withheld_and_the_rest_keep_their_order() {
+        let hits = vec![
+            json!({"number": 1, "repository": {"nameWithOwner": "rainlanguage/raindex"}}),
+            json!({"number": 139, "repository": {"nameWithOwner": "rainlanguage/rain.webapp"}}),
+            json!({"number": 2, "repository": {"nameWithOwner": "rainlanguage/rain.erc4626.words"}}),
+        ];
+        let (live, frozen) = withhold_archived(
+            hits,
+            &ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]),
+            hit_slug,
+        );
+        assert_eq!(
+            live.iter()
+                .map(|h| h["number"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
+        assert_eq!(frozen.len(), 1);
+        assert_eq!(frozen[0]["number"], 139);
+    }
+
+    /// An EMPTY archived set withholds nothing — the filter must be inert where it has no answer
+    /// to give, or a queue would shrink for a reason that is not archiving.
+    #[test]
+    fn an_empty_archived_set_withholds_nothing() {
+        let hits = vec![json!({"number": 1, "repository": {"nameWithOwner": "o/r"}})];
+        let (live, frozen) = withhold_archived(
+            hits.clone(),
+            &ArchivedRepos::from_slugs::<[&str; 0], _>([]),
+            hit_slug,
+        );
+        assert_eq!(live, hits);
+        assert!(frozen.is_empty());
+    }
+
+    /// An unaddressable hit is KEPT, so the caller's own error path still reports it. Counting it
+    /// as archived would swap a reported error for a silent drop.
+    #[test]
+    fn an_unparseable_hit_is_kept_rather_than_counted_as_archived() {
+        let hits = vec![json!({"number": 1, "title": "no repo, no url"})];
+        let (live, frozen) = withhold_archived(
+            hits.clone(),
+            &ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]),
+            hit_slug,
+        );
+        assert_eq!(live, hits);
+        assert!(frozen.is_empty());
+    }
+
+    /// `nameWithOwner` is authoritative; the URL is the fallback, for issues and PRs alike.
+    #[test]
+    fn a_hit_is_addressed_by_its_repository_and_falls_back_to_the_url() {
+        assert_eq!(
+            hit_slug(&json!({"repository": {"nameWithOwner": "o/r"}})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(
+            hit_slug(&json!({"url": "https://github.com/o/r/issues/7"})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(
+            hit_slug(&json!({"url": "https://github.com/o/r/pull/7"})),
+            Some("o/r".to_string())
+        );
+        assert_eq!(hit_slug(&json!({"number": 1})), None);
+    }
+
+    /// The refusal names the TYPED failure, and says which way it refused — an unreadable
+    /// archived-state is never allowed to read as "not archived".
+    #[test]
+    fn an_unreadable_archived_set_aborts_rather_than_reading_as_not_archived() {
+        let msg = archived_read_error(GhFailure::Unauthorized);
+        assert!(msg.starts_with("error:"), "{msg}");
+        assert!(msg.contains("Unauthorized"), "{msg}");
+        assert!(msg.contains("aborting"), "{msg}");
+        assert!(archived_read_error(GhFailure::RateLimited {
+            retry_after: Some(3)
+        })
+        .contains("RateLimited"),);
+    }
+}
+
 /// One PR that is presentable for a human decision, as [`presentable_queue`] produces it: its
 /// ordering key plus the per-PR `gh` JSON every consumer reads its own fields out of. Carrying the
 /// JSON rather than a pre-flattened row is what lets `next_ready` answer six questions off the
@@ -578,9 +1970,17 @@ enum CandidateOutcome {
     Present(Box<PresentablePr>),
     /// Otherwise-presentable but unresolved review threads — the producer's work.
     OpenThreads,
-    /// The `gh pr view` or the thread count could not be read. Fail-closed: counted, never
-    /// laundered into a verdict.
+    /// The `gh pr view` or the thread count could not be read, and the reason was NOT one this
+    /// queue has a move for. Fail-closed: counted, never laundered into a verdict.
     FetchError,
+    /// GitHub asked us to slow down, and it was still asking after the retry budget ran out
+    /// ([`retrying_rate_limit`]). SEPARATE from `FetchError` on purpose (#129): the candidate is
+    /// not unreadable, it is un-read, and a header that says so tells an operator to re-run rather
+    /// than to go looking for a broken PR.
+    RateLimited,
+    /// The token may not read this candidate. Not a per-candidate fact — the same token serves
+    /// every fetch — so the enumeration ABORTS on it rather than counting it (see [`queue_abort`]).
+    Unauthorized,
     /// Green + mergeable, but no CURRENT `ai:vetter` verdict at the current head — none at all,
     /// one pinned to an earlier head, or one stamped with a superseded vet protocol. The vetter
     /// owes this PR a verdict, which is the same thing being said of a PR it has never seen.
@@ -602,11 +2002,12 @@ fn candidate_outcome(
     slug: &str,
     num: u64,
     url: &str,
-    fetch_pr: impl FnOnce(&str, u64) -> Option<Value>,
-    fetch_threads: impl FnOnce(&str, &str, u64) -> Option<u64>,
+    fetch_pr: impl FnOnce(&str, u64) -> Result<Value, GhFailure>,
+    fetch_threads: impl FnOnce(&str, &str, u64) -> Result<u64, GhFailure>,
 ) -> CandidateOutcome {
-    let Some(j) = fetch_pr(slug, num) else {
-        return CandidateOutcome::FetchError;
+    let j = match fetch_pr(slug, num) {
+        Ok(j) => j,
+        Err(f) => return failure_outcome(f),
     };
     let merge = match j.get("mergeable").and_then(|x| x.as_str()) {
         Some("MERGEABLE") => Merge::Mergeable,
@@ -636,8 +2037,10 @@ fn candidate_outcome(
             // (CodeRabbit or human) is the producer's thread-resolution work, not
             // human-presentable. Only a VERIFIED zero passes (fail-closed): an unknown thread
             // state counts as a fetch error, never a maybe-dirty row.
+            // A slug with no `/` came out of this binary's own URL parse, not out of GitHub, so
+            // there is nothing typed to classify: `Malformed` is what it is.
             let Some((owner, repo)) = slug.split_once('/') else {
-                return CandidateOutcome::FetchError;
+                return failure_outcome(GhFailure::Malformed);
             };
             match thread_route(fetch_threads(owner, repo, num)) {
                 ThreadRoute::Present => {
@@ -653,7 +2056,7 @@ fn candidate_outcome(
                     }))
                 }
                 ThreadRoute::OpenThreads => CandidateOutcome::OpenThreads,
-                ThreadRoute::FetchError => CandidateOutcome::FetchError,
+                ThreadRoute::Failed(f) => failure_outcome(f),
             }
         }
         PresentState::Red => CandidateOutcome::Red,
@@ -677,6 +2080,11 @@ fn apply_outcome(out: CandidateOutcome, rows: &mut Vec<PresentablePr>, counts: &
         CandidateOutcome::Present(p) => rows.push(*p),
         CandidateOutcome::OpenThreads => counts.open_threads += 1,
         CandidateOutcome::FetchError => counts.fetch_error += 1,
+        CandidateOutcome::RateLimited => counts.rate_limited += 1,
+        // Never counted: `queue_abort` turns this one into an `Err` before the fold is reached.
+        // Bumping `fetch_error` here would be the #129 laundering in the one arm that must not do
+        // it, so the arm is a no-op rather than a plausible-looking counter.
+        CandidateOutcome::Unauthorized => {}
         CandidateOutcome::Unvetted => counts.unvetted += 1,
         CandidateOutcome::Red => counts.red += 1,
         CandidateOutcome::Pending => counts.pending += 1,
@@ -686,15 +2094,72 @@ fn apply_outcome(out: CandidateOutcome, rows: &mut Vec<PresentablePr>, counts: &
     }
 }
 
+/// PURE: the message this outcome ABORTS the whole enumeration with, if it does.
+///
+/// An auth failure is not a property of one candidate: the same token serves every fetch, so one
+/// `Unauthorized` means the rest of the queue is unreadable too. Counting it would print a short
+/// queue that reads as complete — the falsely-empty queue the search-layer abort already refuses,
+/// arriving one layer lower down.
+///
+/// WHY ONE UNREADABLE REPO DOES NOT KILL THE RUN. The obvious objection is that a bare 403 might be
+/// a PER-REPO permission denial — a repo transferred out, access revoked, a private repo the token
+/// no longer sees — and aborting on one of those would turn a single inaccessible repo into a dead
+/// run. MEASURED: it does not reach here. GitHub masks a repository the token cannot see as **404 /
+/// `NOT_FOUND`**, not 403, and deliberately so — a 403 would leak the repo's existence. `gh api
+/// repos/github/github` (a repository that certainly exists and this token certainly cannot read)
+/// answers `{"message":"Not Found",…,"status":"404"}`, and the same query through `gh api graphql`
+/// answers `errors[].type == "NOT_FOUND"`. Both land on [`GhFailure::NotFound`], which
+/// [`failure_outcome`] routes to `FetchError`: the candidate is DROPPED AND COUNTED and the
+/// enumeration continues. That path is pinned by
+/// `a_repo_the_token_cannot_read_is_counted_not_aborted`.
+///
+/// What is left producing a bare 403 is token-wide or org-wide by nature — bad credentials, a scope
+/// the token lacks for this endpoint, SAML SSO or an IP allow list — and every one of them fails the
+/// next candidate identically. Aborting is right for those, and #129's own Check asks for it: a loud
+/// abort naming the cause beats a queue silently missing every row it could not read.
+fn queue_abort(out: &CandidateOutcome) -> Option<String> {
+    match out {
+        CandidateOutcome::Unauthorized => Some(
+            "error: `gh` is not authorised to read the ai:ready candidates (bad credentials / \
+             insufficient scopes / suspended actor) — aborting rather than report a falsely-short \
+             queue"
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+/// PURE: the queue outcome ONE typed `gh` failure routes to — the whole of #129 in one function.
+///
+/// `RateLimited` and `Unauthorized` are the two the queue has a MOVE for (report it as un-read;
+/// abort). Everything else is a genuine `fetch_error`: `NotFound` is a candidate the search
+/// returned and the detail fetch cannot resolve, `Malformed` is a response this binary could not
+/// read, and `Unknown` is a failure with nothing typed to read at all. The three are one counter
+/// because the queue's answer to all three is the same — say the row is missing — not because they
+/// are the same fact.
+fn failure_outcome(f: GhFailure) -> CandidateOutcome {
+    match f {
+        GhFailure::RateLimited { .. } => CandidateOutcome::RateLimited,
+        GhFailure::Unauthorized => CandidateOutcome::Unauthorized,
+        GhFailure::NotFound | GhFailure::Malformed | GhFailure::Unknown => {
+            CandidateOutcome::FetchError
+        }
+    }
+}
+
 /// Per-candidate fetches in flight at once.
 ///
 /// The bound is GitHub's, not this machine's: a burst of concurrent requests from one token trips
-/// the SECONDARY rate limit, and a rate-limited fetch is indistinguishable from a genuine failure
-/// here (`gh` exits 1 for every error class), so it would silently become a `fetch_error` and
-/// render a queue that looks complete while missing rows. The value therefore does NOT scale with
-/// `available_parallelism` — the work is two blocking `gh` subprocesses per candidate and the
-/// process is idle on the network the whole time. 8 keeps a ~36-candidate queue under ten seconds
-/// while staying far below the burst rates that draw a 403.
+/// the SECONDARY rate limit. The value therefore does NOT scale with `available_parallelism` — the
+/// work is two blocking `gh` subprocesses per candidate and the process is idle on the network the
+/// whole time. 8 keeps a ~36-candidate queue under ten seconds while staying far below the burst
+/// rates that draw a 403.
+///
+/// A limit that IS drawn is now named rather than guessed at: the fetches classify it from GitHub's
+/// own typed fields, retry it under [`retrying_rate_limit`], and report a candidate that outlasts
+/// the budget as `RateLimited` instead of `fetch_error` (#129). That makes the cap a
+/// throughput/politeness trade-off rather than the only thing standing between the queue and a
+/// silently short render.
 const QUEUE_FETCH_CONCURRENCY: usize = 8;
 
 /// Map `f` over `items` on at most [`QUEUE_FETCH_CONCURRENCY`] threads, returning the results in
@@ -744,15 +2209,85 @@ fn map_bounded<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec
 /// labels to answer the base branch and the deploy gate. Asking for them here rather than in a
 /// second fetch is what keeps the decision and the ranking on the same snapshot — and costs one
 /// request either way.
-fn queue_pr_detail(slug: &str, num: u64) -> Option<Value> {
-    gh_json(&[
-        "pr",
-        "view",
-        &num.to_string(),
-        "-R",
-        slug,
-        "--json",
-        "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments,title,body,baseRefName,labels,url,number",
+fn queue_pr_detail(slug: &str, num: u64) -> Result<Value, GhFailure> {
+    gh_retrying(|| {
+        gh_result(&[
+            "pr",
+            "view",
+            &num.to_string(),
+            "-R",
+            slug,
+            "--json",
+            "mergeable,statusCheckRollup,reviewDecision,headRefOid,comments,title,body,baseRefName,labels,url,number",
+        ])
+        .map_err(|f| pr_fetch_failure(f, || pr_exists_probe(slug, num)))
+    })
+}
+
+/// PURE given `reask`: the class a `gh pr view` failure resolves to.
+///
+/// MEASURED: `gh pr view` writes NOTHING to stdout when it fails, for every class alike, so
+/// [`gh_result`] can only ever hand this `Unknown`. That is not a class to act on, so the question
+/// is RE-ASKED down a channel that answers in types rather than guessed at. Any other class already
+/// came from somewhere typed and is kept — re-asking it would spend a request to learn nothing.
+///
+/// The four readings of the re-ask:
+///
+/// * it FAILED — that failure is the answer, and it is typed;
+/// * it resolved the PR — the PR exists, so the detail fetch failed for a reason nothing typed
+///   named, and `Unknown` stays `Unknown`. This is the honest arm: inventing a class for a network
+///   blip is the #129 lie with a type painted on it;
+/// * it answered `null`, or the field is absent — the PR does not resolve, which is `NotFound`.
+///
+/// Split from the call so the DECISION is unit-testable without a network, the same split
+/// [`candidate_outcome`] uses for its two fetchers.
+fn pr_fetch_failure(
+    view: GhFailure,
+    reask: impl FnOnce() -> Result<Value, GhFailure>,
+) -> GhFailure {
+    if view != GhFailure::Unknown {
+        return view;
+    }
+    match reask() {
+        Ok(v) => match v.pointer("/data/repository/pullRequest") {
+            Some(Value::Null) | None => GhFailure::NotFound,
+            Some(_) => GhFailure::Unknown,
+        },
+        Err(f) => f,
+    }
+}
+
+/// The GraphQL re-ask [`pr_fetch_failure`] reads: does this PR resolve?
+///
+/// `gh pr view --json` is the queue's snapshot because gh normalises `statusCheckRollup` and the
+/// comment/label sets into the shape `classify_ci` and `vetted_at_head` read; hand-rolling that
+/// query is a separate change. But its failure is structureless, so #129 asks the SAME question —
+/// does this PR resolve? — down a channel that answers in types: `errors[].type` is GitHub's own
+/// enum, and `--include` adds the status line and `Retry-After` a secondary limit rides on.
+///
+/// Re-asking the same question is what makes this sound where a `gh api rate_limit` probe is not.
+/// That endpoint reports the PRIMARY limits only, so under the SECONDARY limit a concurrent burst
+/// actually draws it would answer "thousands remaining" and the classification would come back
+/// wrong in precisely the case #123/#126 made likelier. A probe that travels the same path as the
+/// failed call cannot miss a limit that call hit.
+///
+/// It costs ONE extra request, and only on the failure path.
+fn pr_exists_probe(slug: &str, num: u64) -> Result<Value, GhFailure> {
+    let Some((owner, repo)) = slug.split_once('/') else {
+        return Err(GhFailure::Malformed);
+    };
+    let query = "query($owner:String!,$repo:String!,$num:Int!){\
+                 repository(owner:$owner,name:$repo){pullRequest(number:$num){number}}}";
+    gh_api_result(&[
+        "graphql",
+        "-f",
+        &format!("query={query}"),
+        "-f",
+        &format!("owner={owner}"),
+        "-f",
+        &format!("repo={repo}"),
+        "-F",
+        &format!("num={num}"),
     ])
 }
 
@@ -796,6 +2331,12 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     let Some(arr) = val.as_array() else {
         return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
     };
+    // An `ai:ready` PR in an ARCHIVED repo cannot be merged, relabelled or commented on, so it is
+    // not presentable however green it is (#206). Withheld BEFORE the per-PR fetch below, which
+    // costs a `gh pr view` + a threads query per candidate — paying that for a row no ruling can
+    // reach is the second cost of the same bug.
+    let archived_set = archived_repos().map_err(archived_read_error)?;
+    let (arr, frozen) = withhold_archived(arr.clone(), &archived_set, hit_slug);
 
     // Candidate filter (from the search JSON, no extra call): drop drafts and any PR whose ai:ready
     // is overridden by a human:* label (the human's verdict wins).
@@ -819,7 +2360,10 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     // whole point, so each candidate's real CI rollup + mergeable + reviewDecision is fetched.
     let mut rows: Vec<PresentablePr> = Vec::new();
     let mut counts = QueueCounts {
-        raw: arr.len(),
+        // `raw` stays the WHOLE `ai:ready` population, frozen rows included, so the header's
+        // "N ai:ready -> M presentable" still accounts for every row the search returned and the
+        // archived count explains part of the difference rather than vanishing from both sides.
+        raw: arr.len() + frozen.len(),
         excluded: arr.len() - candidates.len(),
         conflict: 0,
         red: 0,
@@ -829,6 +2373,8 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         unvetted: 0,
         open_threads: 0,
         fetch_error: 0,
+        rate_limited: 0,
+        archived_repo: frozen.len(),
     };
     // The fetches run concurrently; the COUNTING does not. `map_bounded` hands back one outcome
     // per candidate in candidate order, and `apply_outcome` folds them serially, so the counts and
@@ -837,6 +2383,11 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         candidate_outcome(slug, *num, url, queue_pr_detail, unresolved_threads)
     });
     for out in outcomes {
+        // Checked BEFORE the fold, in candidate order, so an unauthorised token aborts the whole
+        // enumeration on the first candidate that proves it rather than being counted (#129).
+        if let Some(err) = queue_abort(&out) {
+            return Err(err);
+        }
         apply_outcome(out, &mut rows, &mut counts);
     }
     // The ONE ordering, applied ONCE, here — before either consumer sees the set.
@@ -1001,12 +2552,16 @@ mod parallel_queue_tests {
             unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
+            rate_limited: 0,
+            archived_repo: 0,
         }
     }
 
     /// Every per-candidate counter as one vector, so an assertion pins the counter that moved AND
-    /// the seven that did not — a swapped increment is not a passing test.
-    fn counters(c: &QueueCounts) -> [usize; 8] {
+    /// the eight that did not — a swapped increment is not a passing test. `rate_limited` is in
+    /// here for exactly that reason: #129 split it OUT of `fetch_error`, and a vector assertion is
+    /// what makes a regression that folds it back in fail.
+    fn counters(c: &QueueCounts) -> [usize; 9] {
         [
             c.conflict,
             c.red,
@@ -1016,6 +2571,7 @@ mod parallel_queue_tests {
             c.unvetted,
             c.open_threads,
             c.fetch_error,
+            c.rate_limited,
         ]
     }
 
@@ -1039,15 +2595,17 @@ mod parallel_queue_tests {
     #[test]
     fn each_outcome_bumps_exactly_one_counter() {
         let cases = [
-            (CandidateOutcome::Conflicting, [1, 0, 0, 0, 0, 0, 0, 0]),
-            (CandidateOutcome::Red, [0, 1, 0, 0, 0, 0, 0, 0]),
-            (CandidateOutcome::Pending, [0, 0, 1, 0, 0, 0, 0, 0]),
-            (CandidateOutcome::MergeUnknown, [0, 0, 0, 1, 0, 0, 0, 0]),
-            (CandidateOutcome::Approved, [0, 0, 0, 0, 1, 0, 0, 0]),
-            (CandidateOutcome::Unvetted, [0, 0, 0, 0, 0, 1, 0, 0]),
-            (CandidateOutcome::OpenThreads, [0, 0, 0, 0, 0, 0, 1, 0]),
+            (CandidateOutcome::Conflicting, [1, 0, 0, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::Red, [0, 1, 0, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::Pending, [0, 0, 1, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::MergeUnknown, [0, 0, 0, 1, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::Approved, [0, 0, 0, 0, 1, 0, 0, 0, 0]),
+            (CandidateOutcome::Unvetted, [0, 0, 0, 0, 0, 1, 0, 0, 0]),
+            (CandidateOutcome::OpenThreads, [0, 0, 0, 0, 0, 0, 1, 0, 0]),
             // A failed fetch is COUNTED, never dropped: a queue short one row must say so.
-            (CandidateOutcome::FetchError, [0, 0, 0, 0, 0, 0, 0, 1]),
+            (CandidateOutcome::FetchError, [0, 0, 0, 0, 0, 0, 0, 1, 0]),
+            // …and a rate-limited one lands in its OWN counter, never `fetch_error` (#129).
+            (CandidateOutcome::RateLimited, [0, 0, 0, 0, 0, 0, 0, 0, 1]),
         ];
         for (out, want) in cases {
             let mut rows = Vec::new();
@@ -1067,9 +2625,129 @@ mod parallel_queue_tests {
             &mut rows,
             &mut counts,
         );
-        assert_eq!(counters(&counts), [0; 8]);
+        assert_eq!(counters(&counts), [0; 9]);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].slug, "rainlanguage/foo");
+    }
+
+    // ── the typed failure, routed (#129) ──────────────────────────────────────────────────────
+
+    // The whole of #129 in one assertion: the five classes do NOT all land in `fetch_error`.
+    // Before this, every one of them did, so a rate-limited candidate was reported as an
+    // unreadable PR and dropped. A regression that folds `RateLimited` or `Unauthorized` back into
+    // `FetchError` fails here.
+    #[test]
+    fn each_typed_failure_routes_to_its_own_queue_outcome() {
+        let cases = [
+            (
+                GhFailure::RateLimited {
+                    retry_after: Some(30),
+                },
+                CandidateOutcome::RateLimited,
+            ),
+            (GhFailure::Unauthorized, CandidateOutcome::Unauthorized),
+            (GhFailure::NotFound, CandidateOutcome::FetchError),
+            (GhFailure::Malformed, CandidateOutcome::FetchError),
+            (GhFailure::Unknown, CandidateOutcome::FetchError),
+        ];
+        for (f, want) in cases {
+            assert_eq!(
+                std::mem::discriminant(&failure_outcome(f)),
+                std::mem::discriminant(&want),
+                "{f:?}"
+            );
+        }
+    }
+
+    // A rate-limited candidate is reported as rate-limited and NOT as a fetch error. Both halves
+    // are asserted, because a change that bumped BOTH counters would look correct in a test that
+    // only checked the new one.
+    #[test]
+    fn a_rate_limited_candidate_is_counted_apart_from_a_fetch_error() {
+        let limit = GhFailure::RateLimited { retry_after: None };
+        let (rows, c) = folded_one(outcome_typed(Err(limit), Ok(0)));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 0, 1]);
+
+        // …and from the OTHER fetch, so both hot-path calls carry the class out.
+        let (rows, c) = folded_one(outcome_typed(Ok(clean_detail()), Err(limit)));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    // A genuinely missing PR stays a fetch error. This is the other side of the split: making
+    // `RateLimited` visible must not turn every failure into it.
+    #[test]
+    fn a_missing_pr_is_still_a_counted_fetch_error() {
+        let (rows, c) = folded_one(outcome_typed(Err(GhFailure::NotFound), Ok(0)));
+        assert!(rows.is_empty());
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0]);
+    }
+
+    // An auth failure ABORTS the enumeration instead of being counted. The same token serves every
+    // fetch, so counting it would print a queue short by every remaining row while reading as
+    // complete — the falsely-empty queue the search-layer abort already refuses.
+    #[test]
+    fn an_auth_failure_aborts_the_enumeration_and_is_never_counted() {
+        assert!(queue_abort(&CandidateOutcome::Unauthorized).is_some());
+        for out in [
+            CandidateOutcome::RateLimited,
+            CandidateOutcome::FetchError,
+            CandidateOutcome::OpenThreads,
+            CandidateOutcome::Red,
+        ] {
+            assert!(queue_abort(&out).is_none(), "only auth aborts");
+        }
+        // It bumps NOTHING if it ever reaches the fold — no counter is a plausible home for it.
+        let (rows, c) = folded_one(CandidateOutcome::Unauthorized);
+        assert!(rows.is_empty());
+        assert_eq!(c, [0; 9]);
+    }
+
+    // ONE UNREADABLE REPO MUST NOT KILL THE RUN. GitHub masks a repository the token cannot see as
+    // 404 / NOT_FOUND rather than 403 — deliberately, since a 403 would leak that the repo exists.
+    // MEASURED against the live API: `gh api repos/github/github` (exists, unreadable by this
+    // token) answers `"status":"404"`, and the same subject through `gh api graphql` answers
+    // `errors[].type == "NOT_FOUND"`. So a per-repo denial arrives as `NotFound`, is counted as a
+    // fetch error, and the enumeration CONTINUES.
+    //
+    // This is asserted from the classifier inward — the real response bodies, not a hand-made
+    // `GhFailure` — because the whole question is which class those bodies produce. Reclassify
+    // either of them as `Unauthorized` and one inaccessible repo becomes a dead run: the
+    // falsely-short queue in a different costume.
+    #[test]
+    fn a_repo_the_token_cannot_read_is_counted_not_aborted() {
+        let masked_rest = br#"{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/repos#get-a-repository","status":"404"}"#;
+        let masked_graphql = br#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"Could not resolve to a Repository with the name 'github/github'."}]}"#;
+        for body in [masked_rest.as_slice(), masked_graphql.as_slice()] {
+            let (head, rest) = split_http_head(body);
+            let failure = classify_gh_failure(head.as_ref(), rest);
+            assert_eq!(failure, GhFailure::NotFound, "{:?}", body);
+            let out = failure_outcome(failure);
+            assert!(
+                queue_abort(&out).is_none(),
+                "an unreadable repo must not abort the enumeration"
+            );
+            let (rows, c) = folded_one(out);
+            assert!(rows.is_empty());
+            assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0], "counted as a fetch error");
+        }
+    }
+
+    // The header names the two apart. An operator reading "rate-limited" re-runs; one reading
+    // "fetch-error" goes looking for a broken PR, and #129 is that they used to read the same word.
+    #[test]
+    fn the_header_reports_rate_limited_rows_apart_from_fetch_errors() {
+        let mut c = zero_counts();
+        c.raw = 3;
+        c.fetch_error = 1;
+        c.rate_limited = 2;
+        let out = render_queue(&[], &c, 0);
+        assert!(out.contains("1 fetch-error"), "{out}");
+        assert!(out.contains("2 rate-limited"), "{out}");
+        // Silent when there is nothing to say, like every other optional segment.
+        let quiet = render_queue(&[], &zero_counts(), 0);
+        assert!(!quiet.contains("rate-limited"), "{quiet}");
     }
 
     // ── the determinism the concurrency must not cost ─────────────────────────────────────────
@@ -1178,6 +2856,19 @@ mod parallel_queue_tests {
     }
 
     fn outcome(pr: Option<Value>, threads: Option<u64>) -> CandidateOutcome {
+        outcome_typed(
+            pr.ok_or(GhFailure::Unknown),
+            threads.ok_or(GhFailure::Unknown),
+        )
+    }
+
+    /// The same gate chain with TYPED fetch failures — what #129 made expressible. `outcome` above
+    /// is this with both failures spelled `Unknown`, which is exactly what the pre-#129 `None`
+    /// meant: something failed and nothing said what.
+    fn outcome_typed(
+        pr: Result<Value, GhFailure>,
+        threads: Result<u64, GhFailure>,
+    ) -> CandidateOutcome {
         candidate_outcome(
             "rainlanguage/foo",
             12,
@@ -1187,7 +2878,7 @@ mod parallel_queue_tests {
         )
     }
 
-    fn folded_one(out: CandidateOutcome) -> (Vec<PresentablePr>, [usize; 8]) {
+    fn folded_one(out: CandidateOutcome) -> (Vec<PresentablePr>, [usize; 9]) {
         let mut rows = Vec::new();
         let mut counts = zero_counts();
         apply_outcome(out, &mut rows, &mut counts);
@@ -1199,7 +2890,7 @@ mod parallel_queue_tests {
     fn an_unreadable_pr_view_is_a_counted_fetch_error() {
         let (rows, c) = folded_one(outcome(None, Some(0)));
         assert!(rows.is_empty());
-        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
 
     // Fail-closed: a thread count that could not be read is a fetch error, NOT a clean row and
@@ -1208,13 +2899,13 @@ mod parallel_queue_tests {
     fn an_unreadable_thread_count_is_a_counted_fetch_error() {
         let (rows, c) = folded_one(outcome(Some(clean_detail()), None));
         assert!(rows.is_empty());
-        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
 
     #[test]
     fn a_clean_candidate_is_presentable_and_carries_its_cost_and_head() {
         let (rows, c) = folded_one(outcome(Some(clean_detail()), Some(0)));
-        assert_eq!(c, [0; 8]);
+        assert_eq!(c, [0; 9]);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].row.0, 40);
         assert_eq!(rows[0].row.1, "foo");
@@ -1228,7 +2919,7 @@ mod parallel_queue_tests {
         name: &'static str,
         pr: Option<Value>,
         threads: Option<u64>,
-        want: [usize; 8],
+        want: [usize; 9],
     }
 
     #[test]
@@ -1240,25 +2931,25 @@ mod parallel_queue_tests {
                 name: "conflicting",
                 pr: Some(detail("CONFLICTING", "SUCCESS", "", vetted.clone())),
                 threads: Some(0),
-                want: [1, 0, 0, 0, 0, 0, 0, 0],
+                want: [1, 0, 0, 0, 0, 0, 0, 0, 0],
             },
             GateCase {
                 name: "red ci",
                 pr: Some(detail("MERGEABLE", "FAILURE", "", vetted.clone())),
                 threads: Some(0),
-                want: [0, 1, 0, 0, 0, 0, 0, 0],
+                want: [0, 1, 0, 0, 0, 0, 0, 0, 0],
             },
             GateCase {
                 name: "unknown mergeability",
                 pr: Some(detail("UNKNOWN", "SUCCESS", "", vetted.clone())),
                 threads: Some(0),
-                want: [0, 0, 0, 1, 0, 0, 0, 0],
+                want: [0, 0, 0, 1, 0, 0, 0, 0, 0],
             },
             GateCase {
                 name: "human approved",
                 pr: Some(detail("MERGEABLE", "SUCCESS", "APPROVED", vetted.clone())),
                 threads: Some(0),
-                want: [0, 0, 0, 0, 1, 0, 0, 0],
+                want: [0, 0, 0, 0, 1, 0, 0, 0, 0],
             },
             GateCase {
                 // The vetter comment pins a DIFFERENT head, so the ai:ready label is unbacked.
@@ -1270,7 +2961,7 @@ mod parallel_queue_tests {
                     vec![vetter_comment(&"c".repeat(40), "40")],
                 )),
                 threads: Some(0),
-                want: [0, 0, 0, 0, 0, 1, 0, 0],
+                want: [0, 0, 0, 0, 0, 1, 0, 0, 0],
             },
             GateCase {
                 // Right head, superseded vet protocol: the verdict answers a question the
@@ -1289,7 +2980,7 @@ mod parallel_queue_tests {
                     })],
                 )),
                 threads: Some(0),
-                want: [0, 0, 0, 0, 0, 1, 0, 0],
+                want: [0, 0, 0, 0, 0, 1, 0, 0, 0],
             },
             GateCase {
                 // No stamp at all — the shape every verdict written before the stamp existed has.
@@ -1305,13 +2996,13 @@ mod parallel_queue_tests {
                     })],
                 )),
                 threads: Some(0),
-                want: [0, 0, 0, 0, 0, 1, 0, 0],
+                want: [0, 0, 0, 0, 0, 1, 0, 0, 0],
             },
             GateCase {
                 name: "unresolved review threads",
                 pr: Some(detail("MERGEABLE", "SUCCESS", "", vetted.clone())),
                 threads: Some(3),
-                want: [0, 0, 0, 0, 0, 0, 1, 0],
+                want: [0, 0, 0, 0, 0, 0, 1, 0, 0],
             },
         ];
         for case in cases {
@@ -1338,7 +3029,7 @@ mod parallel_queue_tests {
         });
         let (rows, c) = folded_one(outcome(Some(pr), Some(0)));
         assert!(rows.is_empty());
-        assert_eq!(c, [0, 0, 1, 0, 0, 0, 0, 0]);
+        assert_eq!(c, [0, 0, 1, 0, 0, 0, 0, 0, 0]);
     }
 
     // A slug with no `/` can never name an owner and a repo, so its thread state is unknowable —
@@ -1349,12 +3040,12 @@ mod parallel_queue_tests {
             "no-slash",
             12,
             "https://github.com/no-slash/pull/12",
-            |_, _| Some(clean_detail()),
-            |_, _, _| Some(0),
+            |_, _| Ok(clean_detail()),
+            |_, _, _| Ok(0),
         );
         let (rows, c) = folded_one(out);
         assert!(rows.is_empty());
-        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
 
     // The fetchers are called with the candidate's OWN coordinates — a pool that fetched the
@@ -1368,13 +3059,13 @@ mod parallel_queue_tests {
             "https://github.com/cyclofinance/bar/pull/77",
             |slug, num| {
                 seen.lock().unwrap().push(format!("pr {slug} {num}"));
-                Some(clean_detail())
+                Ok(clean_detail())
             },
             |owner, repo, num| {
                 seen.lock()
                     .unwrap()
                     .push(format!("threads {owner} {repo} {num}"));
-                Some(0)
+                Ok(0)
             },
         );
         assert!(matches!(out, CandidateOutcome::Present(_)));
@@ -1395,7 +3086,7 @@ mod parallel_queue_tests {
             12,
             "https://github.com/rainlanguage/foo/pull/12",
             |_, _| {
-                Some(detail(
+                Ok(detail(
                     "MERGEABLE",
                     "FAILURE",
                     "",
@@ -1404,7 +3095,7 @@ mod parallel_queue_tests {
             },
             |_, _, _| {
                 asked.fetch_add(1, Ordering::SeqCst);
-                Some(0)
+                Ok(0)
             },
         );
         assert!(matches!(out, CandidateOutcome::Red));
@@ -2818,39 +4509,93 @@ fn token_report_mode(path: &str, json: bool) -> i32 {
 // regex invents eight work items that do not exist (`batch#1` out of "cyclo.site conflicts batch
 // 1", `A0#2` out of "rain.solmem A02 sentinel alignment PR"). A metric whose denominator is
 // hallucinated is worse than no metric, so there is no label parser here, not as a fallback and not
-// behind a flag. A task's work item is what `open_pr` RECORDED, and a task with none goes to churn.
+// behind a flag. An actor's work item is what a WORK-ITEM TRANSITION recorded, and an actor with
+// none goes to churn.
 //
 // `clone_create` is typed too and is deliberately NOT used as a second source. Its `branch` names a
 // CLONE, not a deliverable, and resolving it through GitHub's head index invents items exactly the
 // way the regex does: on the 2026-07-29T17 run one task cloned `main` to read it, and
 // `gh pr list -R rainlanguage/raindex --head main` answers with a real, closed PR the task never
 // touched. Typed data joined on the wrong key is still a wrong join.
+//
+// THE FOUR KINDS OF WORK, AND WHICH ONES ARE TYPED. `campaign-prompt.txt`'s RUN BUDGET counts "an
+// issue you PR, a rework you push, a conflict you resolve, a deploy you dispatch". The first is
+// `open_pr`. The middle two are the SAME typed effect — a moved head on an existing PR — and that
+// is `push`, which names a PR only when the head it just moved IS that PR's head. The deploy is
+// dispatched by the `deploy` SUBCOMMAND, whose result reaches the trace as Bash text, so it carries
+// no typed record and its work is invisible here; the report says so rather than guessing at it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The tool whose RESULT names a work item, matched on the last `__`-segment of the tool name.
+/// The tools whose RESULT names a work item, matched on the last `__`-segment of the tool name, and
+/// the KIND of work each one is the record of.
 ///
 /// Matched that way for the reason [`AUDIT_SKILL_LEAF`] is matched on its last `:`-segment: the
 /// harness prefixes an MCP tool with its SERVER name (`mcp__fsm__open_pr`), which is configuration
 /// — `campaign-mcp.json` could name the server anything — while the transition's own name is what
 /// this pipeline defines. Keying on the whole string would make the metric silently empty the day
 /// the server is renamed.
-const OPEN_PR_TOOL_LEAF: &str = "open_pr";
+///
+/// The kind comes from the TRANSITION, never from the payload: a result cannot claim to be a kind
+/// of work it is not the record of, and a third emitter is one row here.
+const WORK_ITEM_TOOL_LEAVES: &[(&str, WorkItemKind)] = &[
+    ("open_pr", WorkItemKind::Opened),
+    ("push", WorkItemKind::Reworked),
+];
 
-/// One TYPED work item a dispatched task produced: the PR the pipeline's own `open_pr` transition
-/// says it opened, and the issues that PR closes.
+/// Which of the cap's kinds of work one record is the evidence of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkItemKind {
+    /// A PR that did not exist before this transition ran.
+    Opened,
+    /// A moved head on a PR that did. Both "a rework you push" and "a conflict you resolve" land
+    /// here: they are one typed effect, and the transition cannot see which motive produced it.
+    Reworked,
+}
+
+impl WorkItemKind {
+    fn key(self) -> &'static str {
+        match self {
+            WorkItemKind::Opened => "opened",
+            WorkItemKind::Reworked => "reworked",
+        }
+    }
+    /// How strong a claim this kind is, so one PR touched by several transitions keeps the
+    /// strongest. Opening a PR is a claim on the whole PR; moving its head is a claim on one push.
+    fn rank(self) -> u8 {
+        match self {
+            WorkItemKind::Opened => 2,
+            WorkItemKind::Reworked => 1,
+        }
+    }
+}
+
+/// One TYPED work item an actor produced: the PR a work-item transition says it acted on, what kind
+/// of work that was, and the issues the PR closes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkItem {
     slug: String,
     pr: u64,
     closes: Vec<u64>,
+    kind: WorkItemKind,
 }
 
-/// PURE: the work item one `open_pr` RESULT describes, or `None` when the result is not one.
+impl WorkItem {
+    /// WHICH PR this is about, which is what makes two records one item. A PR opened and then
+    /// pushed to in the same run is one work item, not two — the identity is the subject, never the
+    /// number of transitions that touched it.
+    fn identity(&self) -> (&str, u64) {
+        (&self.slug, self.pr)
+    }
+}
+
+/// PURE: the work item one work-item transition's RESULT describes, or `None` when the result
+/// names no PR.
 ///
 /// STRICT on both fields it joins on — a slug of the shape every other transition takes, and a
 /// positive number — because a work item that cannot be looked up is not a work item, and admitting
-/// one would put an unresolvable row in the denominator.
-fn work_item_from_result(v: &Value) -> Option<WorkItem> {
+/// one would put an unresolvable row in the denominator. `push` answers with a null `pr` for every
+/// push it could not tie to a PR head, which is exactly this refusal.
+fn work_item_from_result(v: &Value, kind: WorkItemKind) -> Option<WorkItem> {
     let slug = parse_repo_arg(v.get("repo")?.as_str()?).ok()?;
     let pr = v.get("pr")?.as_u64().filter(|n| *n > 0)?;
     let closes = v
@@ -2858,23 +4603,32 @@ fn work_item_from_result(v: &Value) -> Option<WorkItem> {
         .and_then(|c| c.as_array())
         .map(|a| a.iter().filter_map(|n| n.as_u64()).collect())
         .unwrap_or_default();
-    Some(WorkItem { slug, pr, closes })
+    Some(WorkItem {
+        slug,
+        pr,
+        closes,
+        kind,
+    })
 }
 
-/// PURE: every typed work item each dispatched task produced, keyed by the task's
-/// `parent_tool_use_id` — the same key [`token_attribution`] groups spend by, which is what lets
-/// the two be joined at all.
+/// PURE: every typed work item each ACTOR produced, keyed by that actor's `parent_tool_use_id` —
+/// the same key [`token_attribution`] groups spend by, which is what lets the two be joined at all.
+///
+/// An actor is a dispatched task OR the main loop, which is keyed `__main__` here exactly as it is
+/// there. Inline work has no subagent to attribute to and it is not going away — the prompt makes
+/// fan-out the default for INDEPENDENT items and inline correct for the rest — so the main loop is
+/// an actor that can carry work items, not a thread whose output is dropped.
 ///
 /// The call and its result are matched by `tool_use_id`, not by the result event's own
-/// `parent_tool_use_id`: the id proves THIS result answers an `open_pr`, so a task's items can
-/// never pick up a neighbouring tool's output.
+/// `parent_tool_use_id`: the id proves THIS result answers a work-item transition, so an actor's
+/// items can never pick up a neighbouring tool's output.
 ///
 /// A REFUSED call (`is_error`) contributes nothing, and neither does a call whose result the trace
-/// never recorded. Both are the same fact — no PR was demonstrably opened — and counting either as
+/// never recorded. Both are the same fact — no work was demonstrably done — and counting either as
 /// a work item would put a PR that does not exist in the denominator.
 fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkItem>> {
     use std::collections::HashMap;
-    let mut owner_of: HashMap<String, String> = HashMap::new();
+    let mut owner_of: HashMap<String, (String, WorkItemKind)> = HashMap::new();
     let mut out: HashMap<String, Vec<WorkItem>> = HashMap::new();
 
     let events: Vec<Value> = trace
@@ -2899,11 +4653,12 @@ fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkIte
                 continue;
             }
             let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            if name.rsplit("__").next() != Some(OPEN_PR_TOOL_LEAF) {
+            let leaf = name.rsplit("__").next().unwrap_or("");
+            let Some((_, kind)) = WORK_ITEM_TOOL_LEAVES.iter().find(|(l, _)| *l == leaf) else {
                 continue;
-            }
+            };
             if let Some(id) = b.get("id").and_then(|i| i.as_str()) {
-                owner_of.insert(id.to_string(), task.clone());
+                owner_of.insert(id.to_string(), (task.clone(), *kind));
             }
         }
     }
@@ -2916,7 +4671,7 @@ fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkIte
             if b.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
                 continue;
             }
-            let Some(task) = b
+            let Some((task, kind)) = b
                 .get("tool_use_id")
                 .and_then(|i| i.as_str())
                 .and_then(|id| owner_of.get(id))
@@ -2929,14 +4684,26 @@ fn task_work_items(trace: &str) -> std::collections::HashMap<String, Vec<WorkIte
             let Some(item) = serde_json::from_str::<Value>(tool_result_text(b).trim())
                 .ok()
                 .as_ref()
-                .and_then(work_item_from_result)
+                .and_then(|v| work_item_from_result(v, *kind))
             else {
                 continue;
             };
             let items = out.entry(task.clone()).or_default();
-            // A retried call can report the same PR twice; the PR is still one work item.
-            if !items.contains(&item) {
-                items.push(item);
+            // ONE PR IS ONE ITEM. A retried call reports the same PR twice, and a PR this actor
+            // opened and then pushed to reports it under two kinds — neither is a second unit of
+            // work, so the identity is the SUBJECT and the strongest kind wins.
+            match items.iter_mut().find(|i| i.identity() == item.identity()) {
+                Some(seen) => {
+                    if item.kind.rank() > seen.kind.rank() {
+                        seen.kind = item.kind;
+                    }
+                    for n in item.closes {
+                        if !seen.closes.contains(&n) {
+                            seen.closes.push(n);
+                        }
+                    }
+                }
+                None => items.push(item),
             }
         }
     }
@@ -3062,14 +4829,35 @@ struct RunWork {
     run_id: String,
     role: String,
     tasks: Vec<TaskWork>,
-    /// The MAIN LOOP's own spend. Orchestration, not work — it dispatches, reads the worklist and
-    /// writes the summary — but it is spent to land the same items, so it is in the numerator.
+    /// The MAIN LOOP's own spend: orchestration — dispatching, reading the worklist, writing the
+    /// summary — PLUS whatever work it did inline. One number holds both, and the trace offers no
+    /// way to split it: `parent_tool_use_id` separates one subagent's turns from another's, and
+    /// every inline turn carries the same absent value. So this is in the numerator, where it is
+    /// real money, and in no bucket, because charging it to one of `main_items` would be inventing
+    /// a per-item cost the record does not contain.
     main_usd: f64,
     main_tokens: u64,
+    /// The typed work items the MAIN LOOP produced. They count in the denominator like any other
+    /// actor's — the work was done and the transition recorded it — while the spend above stays
+    /// unsplit.
+    main_items: Vec<(WorkItem, PrOutcome)>,
     /// Whole-run output, which no per-agent key can carry ([`unattributable_output`]). Real money,
     /// so it is in the numerator; unattributable, so it is in no bucket.
     output_usd: f64,
     output_tokens: u64,
+}
+
+impl RunWork {
+    /// Is there an ACTOR here whose work this report can speak about? A dispatched task is one; so
+    /// is a main loop that carried a typed work item.
+    ///
+    /// This is the corpus's entry condition, and it is deliberately not "the run spent tokens". A
+    /// run that dispatched nothing and recorded nothing is a run about which the trace says only
+    /// that it happened — admitting it would put its whole spend in churn on the strength of an
+    /// absence, which is the inference this metric refuses everywhere else.
+    fn has_actor(&self) -> bool {
+        !self.tasks.is_empty() || !self.main_items.is_empty()
+    }
 }
 
 /// The input-side tokens one agent's key can carry.
@@ -3082,10 +4870,14 @@ fn agent_tokens(a: &AgentSpend) -> u64 {
     a.tokens_in + a.cache_read + a.cache_write_5m + a.cache_write_1h
 }
 
-/// PURE given `resolve`: one run's dispatched tasks, joined to their typed work items.
+/// PURE given `resolve`: one run's actors, joined to their typed work items.
 ///
-/// The main loop is excluded from `tasks` and carried separately: it is not a unit of work and
-/// putting it in a bucket would make every run look like one more churned task.
+/// The main loop stays out of `tasks` and carries its items separately, because its spend and a
+/// task's spend do not mean the same thing: a task's dollars bought that task's items and nothing
+/// else, while the main loop's dollars bought its items AND the orchestration around them, with no
+/// boundary in the trace between the two. Merging it into `tasks` would put that mixture in a
+/// bucket and print it as the cost of the work; dropping its items leaves a run that worked
+/// inline producing nothing at all.
 fn run_work(
     run_id: &str,
     role: &str,
@@ -3094,12 +4886,19 @@ fn run_work(
 ) -> RunWork {
     let items = task_work_items(trace);
     let (output_tokens, output_usd) = unattributable_output(trace);
+    let mut resolved = |id: &str| -> Vec<(WorkItem, PrOutcome)> {
+        items
+            .get(id)
+            .map(|v| v.iter().map(|i| (i.clone(), resolve(i))).collect())
+            .unwrap_or_default()
+    };
     let mut out = RunWork {
         run_id: run_id.to_string(),
         role: role.to_string(),
         tasks: Vec::new(),
         main_usd: 0.0,
         main_tokens: 0,
+        main_items: resolved("__main__"),
         output_usd,
         output_tokens,
     };
@@ -3113,10 +4912,7 @@ fn run_work(
             label: a.label.clone(),
             usd: a.usd,
             tokens: agent_tokens(&a),
-            items: items
-                .get(&a.id)
-                .map(|v| v.iter().map(|i| (i.clone(), resolve(i))).collect())
-                .unwrap_or_default(),
+            items: resolved(&a.id),
         });
     }
     out
@@ -3136,21 +4932,36 @@ struct BucketTotals {
 /// They are DATA rather than prose in the printer because a JSON consumer misreads this number in
 /// exactly the ways a human does — the backlog as waste, the corpus as a trend — and a caveat only
 /// one of the two outputs carries is a caveat that will be dropped by whichever reader matters.
-fn work_tokens_notes(landed: usize, awaiting: usize, typed: usize, tasks: usize) -> Vec<String> {
+fn work_tokens_notes(
+    landed: usize,
+    awaiting: usize,
+    typed: usize,
+    tasks: usize,
+    inline_items: usize,
+) -> Vec<String> {
     let mut notes = vec![
         "Only CHURN is waste. Merges are human-gated by design, so the landed:awaiting ratio \
          measures the human's review bandwidth, NOT the pipeline's efficiency."
             .to_string(),
-        "Task-level rows exist only for runs that dispatched subagents AND whose trace survives. \
-         This is a snapshot of that corpus, not a trend — do not read it as one."
+        "A run enters this corpus when it dispatched a task or recorded an inline work item, AND \
+         its trace survives. This is a snapshot of that corpus, not a trend — do not read it as \
+         one."
             .to_string(),
     ];
+    if inline_items > 0 {
+        notes.push(format!(
+            "{inline_items} item(s) were done INLINE by a main loop. They count in the \
+             denominator, but there is NO per-item cost for them: a main loop's spend is its \
+             orchestration and its inline work in one number, and the trace holds no boundary \
+             between them. Their dollars are in the `main loop` row, not in a bucket."
+        ));
+    }
     if typed < tasks {
         notes.push(format!(
-            "{} of {tasks} tasks carry NO typed work item and are counted as churn. A task's work \
-             item is what `open_pr` recorded; nothing is inferred from a dispatch label. Where \
-             this fraction is large the churn figure is a CEILING on waste, not a measurement of \
-             it.",
+            "{} of {tasks} dispatched tasks carry NO typed work item and are counted as churn. A \
+             work item is what a work-item transition (`open_pr`, `push`) recorded; nothing is \
+             inferred from a dispatch label, a branch name or a label. Where this fraction is \
+             large the churn figure is a CEILING on waste, not a measurement of it.",
             tasks - typed
         ));
     }
@@ -3190,17 +5001,64 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
     let (mut churn_no_item, mut churn_reworking, mut churn_closed) = (0usize, 0usize, 0usize);
     let (mut unresolved_tasks, mut unresolved_items) = (0usize, 0usize);
     let (mut typed_tasks, mut tasks_total) = (0usize, 0usize);
-    let (mut orchestration_usd, mut orchestration_tokens) = (0.0f64, 0u64);
+    let (mut main_usd, mut main_tokens) = (0.0f64, 0u64);
     let (mut output_usd, mut output_tokens) = (0.0f64, 0u64);
+    let (mut inline_items, mut inline_runs) = (0usize, 0usize);
+    let (mut opened_items, mut reworked_items) = (0usize, 0usize);
     let mut task_rows: Vec<Value> = Vec::new();
     let mut run_rows: Vec<Value> = Vec::new();
 
+    /// Count ONE item in the bucket its own outcome names. Written once and called for every
+    /// actor's items, so an item the main loop produced is counted by the same rule as a
+    /// dispatched task's — the denominator must not depend on who did the work.
+    fn count_item(
+        item: &WorkItem,
+        outcome: PrOutcome,
+        buckets: &mut std::collections::HashMap<&'static str, BucketTotals>,
+        unresolved_items: &mut usize,
+        run_landed: &mut usize,
+        opened: &mut usize,
+        reworked: &mut usize,
+    ) {
+        match item.kind {
+            WorkItemKind::Opened => *opened += 1,
+            WorkItemKind::Reworked => *reworked += 1,
+        }
+        match outcome.bucket() {
+            Some(b) => {
+                buckets.get_mut(b.key()).expect("bucket seeded above").items += 1;
+                if b == WorkBucket::Landed {
+                    *run_landed += 1;
+                }
+            }
+            None => *unresolved_items += 1,
+        }
+    }
+
     for r in runs {
-        orchestration_usd += r.main_usd;
-        orchestration_tokens += r.main_tokens;
+        main_usd += r.main_usd;
+        main_tokens += r.main_tokens;
         output_usd += r.output_usd;
         output_tokens += r.output_tokens;
         let mut run_landed = 0usize;
+        // The MAIN LOOP's items, counted in the denominator exactly like a task's. Its SPEND is
+        // not bucketed with them: one number holds the orchestration and the inline work, so
+        // charging it to these items would be printing a per-item cost the trace does not have.
+        inline_items += r.main_items.len();
+        if !r.main_items.is_empty() {
+            inline_runs += 1;
+        }
+        for (i, o) in &r.main_items {
+            count_item(
+                i,
+                *o,
+                &mut buckets,
+                &mut unresolved_items,
+                &mut run_landed,
+                &mut opened_items,
+                &mut reworked_items,
+            );
+        }
         for t in &r.tasks {
             tasks_total += 1;
             if !t.items.is_empty() {
@@ -3210,16 +5068,16 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
             // landed one PR and abandoned another contributes one item to each — counting items
             // only in the task's bucket would drop the abandoned one entirely, which is the
             // denominator quietly disagreeing with the waste figure beside it.
-            for (_, o) in &t.items {
-                match o.bucket() {
-                    Some(b) => {
-                        buckets.get_mut(b.key()).expect("bucket seeded above").items += 1;
-                        if b == WorkBucket::Landed {
-                            run_landed += 1;
-                        }
-                    }
-                    None => unresolved_items += 1,
-                }
+            for (i, o) in &t.items {
+                count_item(
+                    i,
+                    *o,
+                    &mut buckets,
+                    &mut unresolved_items,
+                    &mut run_landed,
+                    &mut opened_items,
+                    &mut reworked_items,
+                );
             }
             // SPEND is counted once, in the bucket of the task's BEST item: a task is one unit of
             // work however many PRs it opened, and its dollars cannot be split between outcomes
@@ -3249,11 +5107,7 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
                 "usd": round3(t.usd),
                 "tokens": t.tokens,
                 "bucket": bucket.map(|b| b.key()).unwrap_or("unresolved"),
-                "items": t.items.iter().map(|(i, o)| serde_json::json!({
-                    "pr": format!("{}#{}", i.slug, i.pr),
-                    "closes": i.closes,
-                    "outcome": format!("{o:?}"),
-                })).collect::<Vec<Value>>(),
+                "items": item_rows(&t.items),
             }));
         }
         run_rows.push(serde_json::json!({
@@ -3263,17 +5117,19 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
             "landedItems": run_landed,
             "mainLoopUsd": round3(r.main_usd),
             "outputUsd": round3(r.output_usd),
+            // The main loop's items are named, not just counted: they are the only items in the
+            // report with no per-item cost beside them, so a reader must be able to see WHICH.
+            "inlineItems": item_rows(&r.main_items),
         }));
     }
 
     let landed = buckets[WorkBucket::Landed.key()];
     let awaiting = buckets[WorkBucket::AwaitingHuman.key()];
     let churn = buckets[WorkBucket::Churn.key()];
-    // EVERY dollar the corpus spent, including the churn and the orchestration — the whole point of
+    // EVERY dollar the corpus spent, including the churn and the main loops — the whole point of
     // the metric is that what a landed item cost includes what it cost to not land the others.
-    let total_usd = landed.usd + awaiting.usd + churn.usd + orchestration_usd + output_usd;
-    let total_tokens =
-        landed.tokens + awaiting.tokens + churn.tokens + orchestration_tokens + output_tokens;
+    let total_usd = landed.usd + awaiting.usd + churn.usd + main_usd + output_usd;
+    let total_tokens = landed.tokens + awaiting.tokens + churn.tokens + main_tokens + output_tokens;
     let per = |n: usize| -> Value {
         if n == 0 {
             Value::Null
@@ -3293,6 +5149,14 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
             "typedTasks": typed_tasks,
             "typedCoveragePct": if tasks_total == 0 { Value::Null }
                 else { serde_json::json!(round3(100.0 * typed_tasks as f64 / tasks_total as f64)) },
+            // Work done by a main loop rather than a dispatched task. Counted apart because it is
+            // the part of the denominator that carries no per-item cost.
+            "inlineItems": inline_items,
+            "inlineRuns": inline_runs,
+            "itemsByKind": {
+                WorkItemKind::Opened.key(): opened_items,
+                WorkItemKind::Reworked.key(): reworked_items,
+            },
             "skippedRows": skipped.iter().map(|(why, rows)| serde_json::json!({"why": why, "rows": rows}))
                 .collect::<Vec<Value>>(),
         },
@@ -3301,24 +5165,47 @@ fn work_tokens_report(runs: &[RunWork], skipped: &[(String, usize)]) -> Value {
             WorkBucket::AwaitingHuman.key(): bucket_json(WorkBucket::AwaitingHuman),
             WorkBucket::Churn.key(): bucket_json(WorkBucket::Churn),
         },
+        // Why each churned DISPATCHED TASK is in that bucket. Per task, because it explains where
+        // a task's SPEND went — and inline items have no spend of their own to explain, so they
+        // are counted in the bucket above and named on their run's row, never here.
         "churnBreakdown": {
             "noTypedWorkItem": churn_no_item,
             "openNotPresentable": churn_reworking,
             "closedUnmerged": churn_closed,
         },
         "unresolved": {"tasks": unresolved_tasks, "items": unresolved_items},
-        "orchestrationUsd": round3(orchestration_usd),
-        "orchestrationTokens": orchestration_tokens,
+        // The main loops' whole spend: orchestration, plus any work they did inline. Named for the
+        // ACTOR rather than for one of the two things it paid for, because the two are not
+        // separable — a key called `orchestration` would assert a split that does not exist.
+        "mainLoopUsd": round3(main_usd),
+        "mainLoopTokens": main_tokens,
         "outputUsd": round3(output_usd),
         "outputTokens": output_tokens,
         "totalUsd": round3(total_usd),
         "totalTokens": total_tokens,
         "usdPerLandedItem": per(landed.items),
         "usdPerDeliveredItem": per(landed.items + awaiting.items),
-        "notes": work_tokens_notes(landed.items, awaiting.items, typed_tasks, tasks_total),
+        "notes": work_tokens_notes(landed.items, awaiting.items, typed_tasks, tasks_total, inline_items),
         "runs": run_rows,
         "tasks": task_rows,
     })
+}
+
+/// PURE: how one actor's items are reported — the PR they are about, the KIND of work that was,
+/// what became of it. One function so an inline item and a dispatched task's item are described
+/// identically; only their cost differs.
+fn item_rows(items: &[(WorkItem, PrOutcome)]) -> Vec<Value> {
+    items
+        .iter()
+        .map(|(i, o)| {
+            serde_json::json!({
+                "pr": format!("{}#{}", i.slug, i.pr),
+                "kind": i.kind.key(),
+                "closes": i.closes,
+                "outcome": format!("{o:?}"),
+            })
+        })
+        .collect()
 }
 
 /// PURE: the table, rendered from the report VALUE rather than from the totals again — so a number
@@ -3334,11 +5221,23 @@ fn render_work_tokens(report: &Value) -> String {
         "tokens to land work".to_string(),
         String::new(),
         format!(
-            "corpus: {} runs, {} dispatched tasks; {} carry a typed work item ({:.0}% coverage)",
+            "corpus: {} runs, {} dispatched tasks; {} carry a typed work item ({} coverage)",
             n("/corpus/runs"),
             n("/corpus/tasks"),
             n("/corpus/typedTasks"),
-            f("/corpus/typedCoveragePct"),
+            // `n/a`, never 0%, when the corpus dispatched nothing: a coverage figure over no
+            // tasks is not a low score, it is a fraction with no denominator.
+            match report.pointer("/corpus/typedCoveragePct") {
+                Some(Value::Null) | None => "n/a".to_string(),
+                Some(_) => format!("{:.0}%", f("/corpus/typedCoveragePct")),
+            },
+        ),
+        format!(
+            "items: {} opened, {} reworked; {} of them done inline by a main loop ({} runs)",
+            n("/corpus/itemsByKind/opened"),
+            n("/corpus/itemsByKind/reworked"),
+            n("/corpus/inlineItems"),
+            n("/corpus/inlineRuns"),
         ),
     ];
     // The corpus is small enough to NAME. A reader who can see which three runs these are can
@@ -3349,10 +5248,14 @@ fn render_work_tokens(report: &Value) -> String {
         .unwrap_or(&Vec::new())
     {
         out.push(format!(
-            "  {} {} — {} tasks, {} landed",
+            "  {} {} — {} tasks, {} inline items, {} landed",
             r.get("runId").and_then(|v| v.as_str()).unwrap_or("?"),
             r.get("role").and_then(|v| v.as_str()).unwrap_or("?"),
             r.get("tasks").and_then(|v| v.as_u64()).unwrap_or(0),
+            r.get("inlineItems")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
             r.get("landedItems").and_then(|v| v.as_u64()).unwrap_or(0),
         ));
     }
@@ -3380,7 +5283,7 @@ fn render_work_tokens(report: &Value) -> String {
     }
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
-        "  churn: no typed item",
+        "  churn tasks: no item",
         n("/churnBreakdown/noTypedWorkItem"),
         "",
         "",
@@ -3388,7 +5291,7 @@ fn render_work_tokens(report: &Value) -> String {
     ));
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
-        "  churn: open, not ready",
+        "  churn tasks: not ready",
         n("/churnBreakdown/openNotPresentable"),
         "",
         "",
@@ -3396,7 +5299,7 @@ fn render_work_tokens(report: &Value) -> String {
     ));
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
-        "  churn: closed unmerged",
+        "  churn tasks: closed",
         n("/churnBreakdown/closedUnmerged"),
         "",
         "",
@@ -3404,11 +5307,13 @@ fn render_work_tokens(report: &Value) -> String {
     ));
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
-        format!("orchestration ({} main)", n("/corpus/runs")),
+        format!("main loop ({} runs)", n("/corpus/runs")),
         "",
+        // Blank, though inline items exist: an item is counted in the BUCKET its outcome names,
+        // and repeating it beside the spend that is not attributed to it would print it twice.
         "",
-        money("/orchestrationUsd"),
-        n("/orchestrationTokens"),
+        money("/mainLoopUsd"),
+        n("/mainLoopTokens"),
     ));
     out.push(format!(
         "{:<26}{:>6}{:>7}{:>11}{:>15}",
@@ -3541,10 +5446,10 @@ fn work_tokens_mode(path: &str, json: bool) -> i32 {
                 .entry((item.slug.clone(), item.pr))
                 .or_insert_with(|| fetch_pr_outcome(item))
         });
-        if run.tasks.is_empty() {
+        if !run.has_actor() {
             skip(
                 &mut skipped,
-                "the run dispatched no subagents — no task-level rows",
+                "the run dispatched no subagent and recorded no work item",
             );
             continue;
         }
@@ -4244,41 +6149,2252 @@ fn resolve_in(path: &std::ffi::OsStr, bin: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-/// `preflight`: resolve every [`HARNESS_TOOLS`] entry against the process's own `$PATH`, print
-/// what was found, exit non-zero when any is missing.
+// ---------------------------------------------------------------------------------------------
+// Capabilities: the half of the environment PATH cannot answer.
+//
+// [`HARNESS_TOOLS`] proves PRESENCE. A capability proves FUNCTION, which is a different question
+// about the same environment — `gh` resolves and is unauthenticated, `nix` resolves and cannot
+// realise the shell the Solidity work builds in. The distinction is the same one `closure-render`
+// draws against `closure-preflight`: a closure can carry `pdftoppm` and still fail on a missing
+// shared library.
+//
+// Each is OPT-IN per runner, because a capability is role-shaped where a read-time dependency is
+// not: the vetter reads PRs through the FSM tool surface and never builds anything, so making it
+// realise a Solidity shell would spend a nix evaluation on a capability it does not use — and a
+// gate that costs a runner something for nothing is a gate that gets switched off.
+//
+// Each probe is a fact about the moment, not about a PR (#108's line), so an unsatisfied one takes
+// the SAME exit the missing-dependency abort takes: no label, no comment, one run-metrics row
+// naming what was unsatisfied, `ToolingFailure`. It is never a skip — a skipped tick is a tick the
+// pipeline CHOSE not to run.
+// ---------------------------------------------------------------------------------------------
+
+/// The scopes `gh` must hold for the pipeline's writes — labels and comments are `repo`, and the
+/// producer's deploy path dispatches a workflow.
+const REQUIRED_GH_SCOPES: [&str; 2] = ["repo", "workflow"];
+
+/// Capability name for "`gh` is authenticated, with the scopes the pipeline writes through".
+const CAP_GH_AUTH: &str = "gh-auth";
+
+/// Capability name for "nix can realise rainix's `sol-shell` and run `forge` out of it".
+const CAP_SOL_SHELL: &str = "sol-shell";
+
+/// The flake shell every Solidity build in this pipeline happens inside. Unpinned, exactly as the
+/// work itself invokes it: a SHA here would prove a shell no clone ever enters.
+const SOL_SHELL_FLAKE: &str = "github:rainlanguage/rainix#sol-shell";
+
+/// PURE: what `gh auth status` says about the token this run would write through. `None` = the
+/// capability holds; `Some(reason)` is what the abort reports.
+///
+/// The scope read is deliberately one-directional. A `Token scopes:` line that LACKS a required
+/// scope is proof the write will fail, so it fails the gate. NO scopes line at all is not proof of
+/// anything — `gh` omits it for token kinds that do not carry classic scopes — and inferring a
+/// missing scope from a missing line would abort a run whose token is fine. Absence of evidence
+/// leaves the status quo: the operation itself fails later, where it always did.
+fn gh_auth_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
+    if code != Some(0) {
+        let first = out
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("no output");
+        return Some(match code {
+            Some(c) => format!("`gh auth status` exited {c}: {first}"),
+            None => format!("`gh auth status` did not run: {first}"),
+        });
+    }
+    let scopes = gh_token_scopes(out)?;
+    let lacking: Vec<&str> = REQUIRED_GH_SCOPES
+        .iter()
+        .copied()
+        .filter(|r| !scopes.iter().any(|s| s == r))
+        .collect();
+    if lacking.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "the gh token lacks scope(s) {} (has: {})",
+            lacking.join(", "),
+            if scopes.is_empty() {
+                "none".to_string()
+            } else {
+                scopes.join(", ")
+            }
+        ))
+    }
+}
+
+/// PURE: the scopes `gh auth status` reports, or `None` when it reports no scopes line at all.
+///
+/// `gh` prints them quoted and comma-separated (`Token scopes: 'gist', 'repo', 'workflow'`); the
+/// quotes are stripped rather than matched, so an unquoted rendering reads the same. Matching on
+/// the trimmed WHOLE entry and not on a substring is what keeps `public_repo` from satisfying
+/// `repo`.
+fn gh_token_scopes(out: &str) -> Option<Vec<String>> {
+    let line = out.lines().find(|l| l.contains("Token scopes:"))?;
+    let (_, rest) = line.split_once("Token scopes:")?;
+    Some(
+        rest.split(',')
+            .map(|s| s.trim().trim_matches(['\'', '"', '`']).to_string())
+            .filter(|s| !s.is_empty() && s != "none")
+            .collect(),
+    )
+}
+
+/// PURE: whether the rainix `sol-shell` probe proved the capability. The exit status is the whole
+/// signal — a shell that cannot be realised, and a `forge` that cannot run inside one, both fail
+/// non-zero, and asserting on the version banner's wording would fail a working forge that
+/// reworded it.
+fn sol_shell_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
+    if code == Some(0) {
+        return None;
+    }
+    let last = out
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or("no output");
+    Some(match code {
+        Some(c) => format!("`nix develop {SOL_SHELL_FLAKE} -c forge --version` exited {c}: {last}"),
+        None => format!("`nix develop {SOL_SHELL_FLAKE} -c forge --version` did not run: {last}"),
+    })
+}
+
+/// `preflight`: resolve every [`HARNESS_TOOLS`] entry against the process's own `$PATH`, probe each
+/// capability the caller asked for, print what was found, exit non-zero when any is unsatisfied.
 ///
 /// Exit [`CLOSURE_UNSATISFIED`] is its own code (like the usage gate's 10) so the runner can tell
 /// "a dependency is missing" from "the binary itself failed".
 ///
 /// The environment is a PARAMETER of [`preflight_report`], not a global read, which is what lets
 /// the CI closure gate ask the identical question of a runner's BAKED path — one implementation,
-/// so the declaration and the closure cannot answer differently.
-fn preflight_mode() -> i32 {
-    preflight_report(&std::env::var_os("PATH").unwrap_or_default())
+/// so the declaration and the closure cannot answer differently. The capability verdicts are
+/// parameters for the same reason: the probes are spawned here, at the one impure point, and the
+/// report is a pure function of what they said.
+fn preflight_mode(gh_auth: bool, sol_shell: bool) -> i32 {
+    let mut caps: Vec<(&str, Option<String>)> = Vec::new();
+    if gh_auth {
+        let (code, out) = run_probe("gh", &["auth", "status"]);
+        caps.push((CAP_GH_AUTH, gh_auth_unsatisfied(code, &out)));
+    }
+    if sol_shell {
+        let (code, out) = run_probe(
+            "nix",
+            &["develop", SOL_SHELL_FLAKE, "-c", "forge", "--version"],
+        );
+        caps.push((CAP_SOL_SHELL, sol_shell_unsatisfied(code, &out)));
+    }
+    preflight_report(&std::env::var_os("PATH").unwrap_or_default(), &caps)
 }
 
-fn preflight_report(path: &std::ffi::OsStr) -> i32 {
-    let mut missing = Vec::new();
+/// Run a capability probe, returning its exit code (`None` if it could not be spawned at all) and
+/// its combined output. Combined because `gh` and `nix` both report the interesting part on stderr.
+fn run_probe(bin: &str, args: &[&str]) -> (Option<i32>, String) {
+    match Command::new(bin).args(args).output() {
+        Ok(o) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
+            s.push_str(&String::from_utf8_lossy(&o.stderr));
+            (o.status.code(), s)
+        }
+        Err(e) => (None, e.to_string()),
+    }
+}
+
+fn preflight_report(path: &std::ffi::OsStr, caps: &[(&str, Option<String>)]) -> i32 {
+    let (code, lines, missing) = preflight_lines(path, caps);
+    for l in &lines {
+        println!("{l}");
+    }
+    if code != 0 {
+        eprintln!(
+            "error: {} harness dependency/dependencies unsatisfied: {}",
+            missing.len(),
+            missing.join(", ")
+        );
+    }
+    code
+}
+
+/// PURE: the exit code, the report stdout carries, and the unsatisfied names.
+///
+/// Everything the gate DECIDES lives here, over a PATH and a set of already-taken probe verdicts,
+/// so the decision is testable without a process and without a network.
+fn preflight_lines(
+    path: &std::ffi::OsStr,
+    caps: &[(&str, Option<String>)],
+) -> (i32, Vec<String>, Vec<String>) {
+    let mut missing: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
     for t in HARNESS_TOOLS {
         match resolve_in(path, t.bin) {
-            Some(p) => println!("ok      {:<10} {}", t.bin, p.display()),
+            Some(p) => lines.push(format!("ok      {:<10} {}", t.bin, p.display())),
             None => {
-                println!("MISSING {:<10} {}", t.bin, t.why);
-                missing.push(t.bin);
+                lines.push(format!("MISSING {:<10} {}", t.bin, t.why));
+                missing.push(t.bin.to_string());
+            }
+        }
+    }
+    for (name, unsatisfied) in caps {
+        match unsatisfied {
+            None => lines.push(format!("ok      {name:<10} capability holds")),
+            Some(why) => {
+                lines.push(format!("MISSING {name:<10} {why}"));
+                missing.push((*name).to_string());
             }
         }
     }
     if missing.is_empty() {
-        return 0;
+        return (0, lines, missing);
     }
     // stdout carries the machine-readable list; the runner passes it straight to `run-metrics`.
-    println!("missing={}", missing.join(","));
-    eprintln!(
-        "error: {} harness tool(s) missing from PATH: {}",
-        missing.len(),
-        missing.join(", ")
-    );
-    CLOSURE_UNSATISFIED
+    lines.push(format!("missing={}", missing.join(",")));
+    (CLOSURE_UNSATISFIED, lines, missing)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Which Solidity toolchain a checkout's OWN CI runs in (#116).
+//
+// [`SOL_SHELL_FLAKE`] above belongs to the STARTUP health check, and only there: it asks "can this
+// box realise a rainix shell and run forge at all", against whatever rainix HEAD is. It is not an
+// answer to "will this satisfy that repo's CI", and spending it as one is what parked
+// cyclofinance/cyclo.sol#42 — a `forge fmt` at rainix HEAD produced a diff the repo's own pinned
+// `forge fmt --check` rejected, and the single permitted back-off attempt went with it.
+//
+// There is no org-wide answer to substitute for it, which is why this is COMPUTED per checkout
+// instead of written into the prompt. Measured over the 45 foundry repos in the pipeline's org
+// scope, the org's Solidity checks come in two shapes and they want opposite things:
+//
+//   the rainix REUSABLES (`uses: rainlanguage/rainix/.github/workflows/rainix-sol*.yaml@<ref>`,
+//   35 repos) run every step as `nix develop github:rainlanguage/rainix/<RAINIX_SHA>#sol-shell -c`.
+//   The pin is declared in the REUSABLE at `<ref>`; the calling repo's flake.lock is never read by
+//   those checks, so matching it would be a second mismatch in the other direction.
+//
+//   a repo-local workflow (`run: nix develop -c rainix-sol-static`, 4 repos — cyclo.sol among
+//   them) runs the CALLING repo's flake at its own flake.lock pin. That is where "use the repo's
+//   own toolchain" is exactly right, and it is the shape the parked PR was fighting.
+//
+// The remaining repos gate no Solidity check on a push at all. Reporting that is the point rather
+// than a gap: a silent fall back to the health-check flake is how the skew gets reintroduced
+// without leaving a trace anyone can read afterwards.
+// ---------------------------------------------------------------------------------------------
+
+/// The `uses:` prefix that identifies a rainix Solidity reusable. The `workflows/` segment is part
+/// of the match: `rainlanguage/rainix/.github/actions/…` composites are referenced by these same
+/// workflows and pin no toolchain of their own.
+const RAINIX_SOL_REUSABLE: &str = "rainlanguage/rainix/.github/workflows/rainix-sol";
+
+/// The reusables that DECLARE the `RAINIX_SHA` a rainix-hosted Solidity check runs at. The umbrella
+/// `rainix-sol.yaml` a consumer usually names carries no pin — it delegates to these — so the
+/// resolution reads the leaves whatever the consumer wrote.
+const RAINIX_SOL_LEAVES: [&str; 2] = ["rainix-sol-static.yaml", "rainix-sol-test.yaml"];
+
+/// The dev shell a rainix Solidity check runs in. `sol-shell` and `default` share one
+/// `sol-build-inputs` (foundry-bin, slither, solc) in rainix's flake, so at a given rev they are
+/// the same Solidity toolchain and `sol-shell` is merely the slimmer closure.
+const SOL_SHELL_ATTR: &str = "#sol-shell";
+
+/// Exit code for "this checkout has no single Solidity toolchain to verify against". Its own code,
+/// not 1, because the caller must RECORD the fact rather than read it as a failed lookup — an
+/// unrecorded fallback to some other shell is the state #116 exists about.
+const SOL_TOOLCHAIN_UNRESOLVED: i32 = 3;
+
+/// A toolchain some Solidity check in a checkout runs in.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SolToolchain {
+    /// A rainix reusable pinned at this git ref. The `nix develop` argument is the `RAINIX_SHA`
+    /// declared inside the reusable AT that ref — a network read, so it is deliberately not
+    /// carried here: this type stays a pure function of the checkout.
+    Reusable(String),
+    /// `nix develop` with no flake argument: the checkout's OWN flake, at its own flake.lock pin.
+    RepoFlake,
+    /// A flake reference written into the workflow verbatim, e.g. `github:rainlanguage/rainix
+    /// #sol-shell`. Unpinned spellings of this are the same standing skew #116 reports, sitting in
+    /// a consumer's CI instead of in the producer's prompt.
+    Explicit(String),
+    /// A Solidity toolchain acquired WITHOUT nix — the `foundry-rs/foundry-toolchain` action, or
+    /// `foundryup`. Carries the acquisition verbatim.
+    ///
+    /// This is not a nix shell and there is no `nix develop` that enters it, so the producer
+    /// cannot match it and must SAY so. Folding it into "no toolchain to match" is a false
+    /// negative in the worst possible place: `rain.will-overflow` gates `forge fmt --check` on
+    /// foundry NIGHTLY, which is further from any shell the producer can open than the widest
+    /// rainix pin gap, so it is #116's failure mode at its largest sitting in the bucket that
+    /// says there is no failure mode here.
+    Foreign(String),
+}
+
+impl SolToolchain {
+    /// How the report names this toolchain on a `check:` line.
+    fn describe(&self) -> String {
+        match self {
+            SolToolchain::Reusable(r) => format!("rainix reusable @{r}"),
+            SolToolchain::RepoFlake => {
+                "the repo's own flake (nix develop, no flake argument)".into()
+            }
+            SolToolchain::Explicit(f) => format!("explicit flake {f}"),
+            SolToolchain::Foreign(how) => format!("NOT NIX — {how}"),
+        }
+    }
+
+    /// Whether a `nix develop` can enter this toolchain at all. The producer's next move turns on
+    /// this and on nothing else: a nix toolchain it can match, a foreign one it can only name.
+    fn is_nix(&self) -> bool {
+        !matches!(self, SolToolchain::Foreign(_))
+    }
+}
+
+/// PURE: whether a name appears in `line` as a whole word, so `push` does not match `pushed` and
+/// `pull_request` does not match a job called `pull_request_target_helper`.
+fn names_token(line: &str, token: &str) -> bool {
+    let boundary = |c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let mut rest = line;
+    while let Some(at) = rest.find(token) {
+        let before = rest[..at].chars().next_back().is_none_or(boundary);
+        let after = rest[at + token.len()..].chars().next().is_none_or(boundary);
+        if before && after {
+            return true;
+        }
+        rest = &rest[at + token.len()..];
+    }
+    false
+}
+
+/// Every spelling of the workflow trigger key. YAML 1.1 reads a bare `on` as the BOOLEAN true, so
+/// formatters quote it (`"on":`, `'on':`) and a round trip through a 1.1 loader can emit `true:`.
+/// GitHub accepts all four. None of the org's 45 Solidity repos writes anything but `on:` today,
+/// and the cost of being wrong is a silent misclassification into "no toolchain here" — the same
+/// false negative the `Foreign` variant exists to end — so the spellings are handled rather than
+/// assumed away.
+const WORKFLOW_TRIGGER_KEYS: [&str; 4] = ["on:", "\"on\":", "'on':", "true:"];
+
+/// PURE: `line` with any trailing `#` comment removed.
+///
+/// A comment inside the `on:` block is prose about the workflow, not a trigger — `# runs on push`
+/// would otherwise read as a gate. Only a `#` at the start of the content or after whitespace
+/// counts, so a `#` inside a branch glob or a path is left alone.
+fn strip_yaml_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (i, _) in line.match_indices('#') {
+        if i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t' {
+            return &line[..i];
+        }
+    }
+    line
+}
+
+/// PURE: whether this workflow gates a PUSH or a PULL REQUEST — i.e. whether it is a check a PR
+/// has to satisfy.
+///
+/// Only the `on:` block is read. Top-level keys sit at column zero, so the block runs from the
+/// trigger line to the next column-zero key; `workflow_dispatch` and `schedule` workflows gate
+/// nothing a PR can see and their toolchains are not the producer's problem.
+fn workflow_gates_a_push(text: &str) -> bool {
+    let mut in_on = false;
+    for raw in text.lines() {
+        // Stripped FIRST, and that order is the whole point: a comment is not a key at ANY
+        // indentation, so a column-zero `# gate every branch` sitting between `on:` and `push:`
+        // must not close the block it is inside. Reading `raw` here made it do exactly that, and
+        // the result was a `mode: absent` on a repo that gates every branch.
+        let line = strip_yaml_comment(raw);
+        // A column-zero key CLOSES whatever block was open and opens its own, so this single
+        // assignment is the whole boundary: a `push` under `jobs:` cannot make a dispatch-only
+        // workflow look like a gate, and `on: [push]` is still read off the trigger line itself.
+        if !line.starts_with([' ', '\t']) && !line.trim().is_empty() {
+            in_on = WORKFLOW_TRIGGER_KEYS.iter().any(|k| line.starts_with(k));
+        }
+        if in_on && (names_token(line, "push") || names_token(line, "pull_request")) {
+            return true;
+        }
+    }
+    false
+}
+
+/// PURE: whether an explicit flake reference names an immutable revision.
+///
+/// `github:owner/repo#attr` floats with that repo's default branch; `github:owner/repo/<rev>#attr`
+/// does not. An unpinned one still reproduces CI's TEXT exactly — it is what the workflow says —
+/// but the two runs resolve it at different moments, which is the same moving target that parked
+/// cyclofinance/cyclo.sol#42. Anything that is not a `github:` URL is left alone: a local path is
+/// whatever is on disk, and calling that unpinned would warn about every ordinary checkout.
+fn flake_ref_is_pinned(flake: &str) -> bool {
+    let Some(rest) = flake.strip_prefix("github:") else {
+        return true;
+    };
+    let path = rest.split('#').next().unwrap_or("");
+    path.split('/').filter(|s| !s.is_empty()).count() >= 3
+}
+
+/// PURE: the git ref a `uses:` line pins a rainix Solidity reusable at, if that is what it is.
+fn rainix_sol_reusable_ref(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once("uses:")?;
+    let spec = rest.split_whitespace().next()?;
+    let (_, git_ref) = spec.strip_prefix(RAINIX_SOL_REUSABLE)?.split_once('@')?;
+    (!git_ref.is_empty()).then(|| git_ref.to_string())
+}
+
+/// PURE: whether a command run inside a dev shell is a Solidity CHECK — one whose verdict, or
+/// whose committed output, depends on which toolchain realised the shell.
+///
+/// `forge soldeer install` is excluded deliberately: it fetches the dependency versions the lock
+/// names, so it produces the same tree out of any forge and says nothing about the checks.
+fn is_sol_check(cmd: &str) -> bool {
+    let cmd = cmd.trim();
+    if cmd.starts_with("forge soldeer") {
+        return false;
+    }
+    ["forge", "slither", "solc", "rainix-sol"]
+        .iter()
+        .any(|p| cmd.starts_with(p))
+}
+
+/// PURE: the toolchain and command of a `nix develop … -c <cmd>` step, if the line is one.
+///
+/// Both spellings of the flag are accepted (`-c` and `--command`), and the flake reference is the
+/// single non-flag word before it — absent for the repo's own flake, which is the whole
+/// distinction this function exists to make.
+fn nix_develop_step(line: &str) -> Option<(SolToolchain, String)> {
+    let (_, rest) = line.split_once("nix develop")?;
+    let mut flake: Option<&str> = None;
+    let mut words = rest.split_whitespace();
+    let mut cmd = String::new();
+    for w in words.by_ref() {
+        if w == "-c" || w == "--command" {
+            cmd = words.collect::<Vec<_>>().join(" ");
+            break;
+        }
+        if !w.starts_with('-') {
+            flake = Some(w);
+        }
+    }
+    if cmd.is_empty() {
+        return None;
+    }
+    let toolchain = match flake {
+        None | Some(".") => SolToolchain::RepoFlake,
+        Some(f) => SolToolchain::Explicit(f.to_string()),
+    };
+    Some((toolchain, cmd))
+}
+
+/// PURE: a Solidity toolchain this line ACQUIRES without nix, if it acquires one.
+///
+/// Acquisition is the signal and the INVOCATION deliberately is not. A bare `forge` in a `run:`
+/// says nothing on its own — st0x.deploy's `multisig-artifact.yaml` opens
+/// `nix develop --command bash -c '` and calls `forge` on the NEXT line, so reading invocations
+/// line by line would report a nix repo as foreign. Naming the installer has no such ambiguity:
+/// these two lines mean "this job's forge did not come from a flake" and nothing else.
+///
+/// KNOWN BOUND: a third way of getting forge — a hand-rolled curl, a container image with it
+/// baked in — is not recognised and the workflow reads as gating nothing. That is the same false
+/// negative this function narrows, one step further out, and `a_third_way_of_getting_forge_is_a_
+/// known_blind_spot` names it so the limit is on the record rather than in someone's head.
+fn foreign_sol_toolchain(line: &str) -> Option<String> {
+    let line = strip_yaml_comment(line);
+    if let Some((_, rest)) = line.split_once("foundry-rs/foundry-toolchain@") {
+        let ver = rest.split_whitespace().next().unwrap_or("");
+        return Some(format!("foundry-rs/foundry-toolchain@{ver}"));
+    }
+    ["foundryup", "foundry.paradigm.xyz"]
+        .iter()
+        .find(|n| line.contains(**n))
+        .map(|n| (*n).to_string())
+}
+
+/// PURE: the `version:` a `foundry-toolchain` step asks for, read off the `with:` block that
+/// follows it. `nightly` is the value that matters — it is unpinned AND it moves daily, so it is
+/// the widest possible gap from any shell the producer can open, and the report must say it out
+/// loud rather than leave the reader to go and look.
+fn foundry_toolchain_version(text: &str, from: usize) -> Option<String> {
+    for line in text.lines().skip(from).take(6) {
+        let line = strip_yaml_comment(line);
+        if let Some((_, v)) = line.split_once("version:") {
+            let v = v.trim().trim_matches(['"', '\'']);
+            return (!v.is_empty()).then(|| v.to_string());
+        }
+        // A following step ends the `with:` block; anything after it belongs to something else.
+        if line.trim_start().starts_with("- ") {
+            break;
+        }
+    }
+    None
+}
+
+/// PURE: every distinct Solidity toolchain the checkout's own PUSH/PR-gating workflows run in,
+/// each with the workflows that name it. Sorted and deduplicated, so the report is stable.
+///
+/// `workflows` is `(filename, text)` for each file under `.github/workflows`.
+///
+/// A step whose command is a `${{ … }}` expression (the `task:` matrix the org's repo-local
+/// workflows use — `nix develop -c ${{ matrix.task }}`) is counted as a Solidity check when the
+/// workflow names a `rainix-sol` task anywhere. The expression is not evaluated: naming one is
+/// what a matrix over `rainix-sol-{test,static,legal}` does, and any other reading of that file
+/// would have to run GitHub's expression engine to improve on it.
+fn sol_toolchains(workflows: &[(String, String)]) -> Vec<(SolToolchain, Vec<String>)> {
+    let mut found: Vec<(SolToolchain, String)> = Vec::new();
+    for (name, text) in workflows {
+        if !workflow_gates_a_push(text) {
+            continue;
+        }
+        let matrix_names_sol = text.contains("rainix-sol");
+        for (n, raw) in text.lines().enumerate() {
+            // Stripped ONCE here rather than in each parser, so a COMMENTED-OUT step cannot
+            // register as a toolchain. A `# uses: …rainix-sol.yaml@main` above a live
+            // `nix develop -c rainix-sol-static` used to make a one-toolchain repo report
+            // `mode: conflict` — an invented disagreement, reported with exit 3.
+            let line = strip_yaml_comment(raw);
+            if let Some(git_ref) = rainix_sol_reusable_ref(line) {
+                found.push((SolToolchain::Reusable(git_ref), name.clone()));
+            }
+            if let Some(how) = foreign_sol_toolchain(line) {
+                let how = match foundry_toolchain_version(text, n + 1) {
+                    Some(v) => format!("{how} (version: {v})"),
+                    None => how,
+                };
+                found.push((SolToolchain::Foreign(how), name.clone()));
+            }
+            if let Some((toolchain, cmd)) = nix_develop_step(line) {
+                let expression = cmd.starts_with("${{");
+                if is_sol_check(&cmd) || (expression && matrix_names_sol) {
+                    found.push((toolchain, name.clone()));
+                }
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    let mut out: Vec<(SolToolchain, Vec<String>)> = Vec::new();
+    for (toolchain, wf) in found {
+        match out.last_mut() {
+            Some((t, wfs)) if *t == toolchain => wfs.push(wf),
+            _ => out.push((toolchain, vec![wf])),
+        }
+    }
+    out
+}
+
+/// PURE: the `RAINIX_SHA` a rainix reusable declares, if it declares one.
+fn rainix_sha(text: &str) -> Option<String> {
+    let line = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("RAINIX_SHA:"))?;
+    let (_, v) = line.split_once("RAINIX_SHA:")?;
+    let v = v.trim().trim_matches(['"', '\'']);
+    (!v.is_empty()).then(|| v.to_string())
+}
+
+/// PURE: the one pin the leaf reusables agree on at a ref.
+///
+/// Disagreement is an error and not a pick. The leaves run DIFFERENT checks — `rainix-sol-static`
+/// formats and lints, `rainix-sol-test` runs the suite — so two pins mean two toolchains gating one
+/// PR, and choosing either one silently reproduces #116 one layer further in.
+fn agreed_rainix_sha(leaves: &[(&str, Option<String>)]) -> Result<String, String> {
+    let mut seen: Vec<(&str, &str)> = Vec::new();
+    for (file, sha) in leaves {
+        if let Some(s) = sha {
+            seen.push((file, s));
+        }
+    }
+    let Some((_, first)) = seen.first() else {
+        return Err("no rainix Solidity reusable at that ref declares a RAINIX_SHA".into());
+    };
+    if let Some((file, other)) = seen.iter().find(|(_, s)| s != first) {
+        return Err(format!(
+            "the rainix Solidity reusables at that ref disagree: {} pins {first}, {file} pins {other}",
+            seen[0].0
+        ));
+    }
+    Ok((*first).to_string())
+}
+
+/// PURE: the report a resolved toolchain prints, and the exit code that goes with it.
+///
+/// `pin` is what the network read returned for a [`SolToolchain::Reusable`] — `Ok(sha)`, or `Err`
+/// carrying why it could not be resolved. Every decision is here, over already-taken readings, so
+/// the whole verdict is testable without a checkout and without a network.
+///
+/// `unreadable` is why the workflow read is a PARAMETER and not a silent empty list: a directory
+/// that could not be read produces the same empty `toolchains` a repo with no Solidity CI does,
+/// and reporting both as `absent` is this subcommand's own failure mode wearing its own clothes.
+fn sol_toolchain_lines(
+    dir: &str,
+    has_flake: bool,
+    toolchains: &[(SolToolchain, Vec<String>)],
+    pin: Option<Result<String, String>>,
+    unreadable: Option<String>,
+) -> (i32, Vec<String>) {
+    if let Some(why) = unreadable {
+        return (
+            SOL_TOOLCHAIN_UNRESOLVED,
+            vec![
+                "mode: unreadable".to_string(),
+                format!(
+                    "error: this checkout's workflows could not be read ({why}), so NOTHING is \
+                     known about what gates it — which is not the same as knowing nothing gates \
+                     it. Fix the checkout and ask again; do not record this as `absent`."
+                ),
+            ],
+        );
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for (toolchain, wfs) in toolchains {
+        for wf in wfs {
+            lines.push(format!(
+                "check: .github/workflows/{wf}  {}",
+                toolchain.describe()
+            ));
+        }
+    }
+    lines.push(format!(
+        "flake: {}",
+        if has_flake { "present" } else { "ABSENT" }
+    ));
+
+    let (mode, verdict) = match toolchains {
+        [] => (
+            "absent",
+            Err(
+                "no push/PR-gating Solidity check in this checkout, so there is no CI toolchain to \
+                 match. Record that in the run and say which shell you used instead."
+                    .to_string(),
+            ),
+        ),
+        [(one, _)] => match one {
+            SolToolchain::RepoFlake if !has_flake => (
+                "repo-flake",
+                Err(format!(
+                    "{dir} has no flake.nix, yet its checks run `nix develop` with no flake \
+                     argument. Nothing here can be reproduced locally — record it."
+                )),
+            ),
+            SolToolchain::RepoFlake => ("repo-flake", Ok(format!("nix develop {dir} -c"))),
+            SolToolchain::Explicit(f) => {
+                // The command IS what CI runs, so it is still the right thing to run — but an
+                // unpinned ref resolves at TWO different moments and a floating answer handed
+                // over as an authoritative one is #116 in miniature. Warn; do not withhold the
+                // only correct action.
+                if !flake_ref_is_pinned(f) {
+                    lines.push(format!(
+                        "warn: {f} names no revision, so it floats with that repo's default \
+                         branch — CI resolved it when CI ran and you resolve it now. Matching \
+                         text is not matching toolchain; say so if an exact check reds."
+                    ));
+                }
+                ("explicit", Ok(format!("nix develop {f} -c")))
+            }
+            SolToolchain::Foreign(how) => (
+                "foreign",
+                Err(format!(
+                    "this checkout's Solidity checks run on {how}, which is NOT a nix shell — \
+                     there is no `nix develop` that enters it, so you cannot verify against what \
+                     CI will actually judge. This is NOT `absent`: there IS a toolchain here and \
+                     it is one you cannot match, so an exact check (`forge fmt --check`, \
+                     `forge snapshot --check`) can red on a diff that is correct in every shell \
+                     you can open. Say so on the PR, naming that toolchain, and expect the \
+                     mismatch instead of spending a back-off attempt discovering it."
+                )),
+            ),
+            SolToolchain::Reusable(git_ref) => (
+                "rainix-pin",
+                match pin {
+                    Some(Ok(sha)) => Ok(format!(
+                        "nix develop github:rainlanguage/rainix/{sha}{SOL_SHELL_ATTR} -c"
+                    )),
+                    Some(Err(why)) => Err(format!("the pin at @{git_ref} is unreadable: {why}")),
+                    None => Err(format!("the pin at @{git_ref} was not read")),
+                },
+            ),
+        },
+        many => (
+            "conflict",
+            Err(format!(
+                "this checkout's own push/PR checks run {} different Solidity toolchains (above). \
+                 A `forge fmt` that satisfies one can fail another, so there is no single answer \
+                 to give — verify against the toolchain of the CHECK you are fixing and say \
+                 which.{}",
+                many.len(),
+                if many.iter().all(|(t, _)| t.is_nix()) {
+                    ""
+                } else {
+                    " At least one of them is NOT a nix shell (marked above), so for that one \
+                     there is no shell to verify in at all — name it on the PR rather than \
+                     treating its check as reproducible."
+                }
+            )),
+        ),
+    };
+    lines.insert(0, format!("mode: {mode}"));
+    match verdict {
+        Ok(v) => {
+            lines.push(format!("verify: {v}"));
+            (0, lines)
+        }
+        Err(why) => {
+            lines.push(format!("error: {why}"));
+            (SOL_TOOLCHAIN_UNRESOLVED, lines)
+        }
+    }
+}
+
+/// PURE: the workflows to classify, and the FIRST read failure among them.
+///
+/// Split out of the directory walk so "a read failure is not an absence" is testable without a
+/// filesystem that can be made to fail on demand. A single unreadable FILE counts, not just an
+/// unreadable directory: it could be the one workflow that gates the repo, and dropping it
+/// silently is indistinguishable from the repo having no Solidity CI.
+fn collect_workflows<I>(reads: I) -> (Vec<(String, String)>, Option<String>)
+where
+    I: IntoIterator<Item = Result<(String, String), String>>,
+{
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut unreadable = None;
+    for r in reads {
+        match r {
+            Ok(wf) => out.push(wf),
+            Err(why) => {
+                unreadable = Some(why);
+                break;
+            }
+        }
+    }
+    out.sort();
+    (out, unreadable)
+}
+
+/// `sol-toolchain`: print the `nix develop` prefix this checkout's OWN Solidity checks run in.
+///
+/// The impure half — the directory walk and the one contents read — is here; every judgment is
+/// [`sol_toolchains`] and [`sol_toolchain_lines`].
+fn sol_toolchain_mode(dir: &str) -> i32 {
+    let say = |code: i32, lines: Vec<String>| {
+        for l in &lines {
+            println!("{l}");
+        }
+        code
+    };
+    // The printed command carries `dir` verbatim, so a relative one only reproduces CI from the
+    // directory it was typed in — and that command IS this subcommand's whole deliverable. The
+    // contract is enforced here rather than asserted in a doc comment.
+    let dir = match std::fs::canonicalize(dir) {
+        Ok(p) => p.to_string_lossy().into_owned(),
+        Err(e) => {
+            let (c, l) = sol_toolchain_lines("", false, &[], None, Some(format!("{dir}: {e}")));
+            return say(c, l);
+        }
+    };
+    let dir = dir.as_str();
+
+    // A directory that cannot be read yields the same empty list as a repo with no Solidity CI.
+    // Distinguishing them is the entire point of this subcommand, so the read failure is carried
+    // rather than swallowed — including a single unreadable FILE, which would silently drop the
+    // one workflow that gates the repo.
+    let wf_dir = std::path::Path::new(dir).join(".github/workflows");
+    let reads: Vec<Result<(String, String), String>> = match std::fs::read_dir(&wf_dir) {
+        // No workflow directory at all is an honest `absent`, not a read failure.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => vec![Err(format!("{}: {e}", wf_dir.display()))],
+        Ok(entries) => entries
+            .map(|e| {
+                let e = e.map_err(|err| format!("{}: {err}", wf_dir.display()))?;
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !(name.ends_with(".yaml") || name.ends_with(".yml")) {
+                    return Ok(None);
+                }
+                let text = std::fs::read_to_string(e.path())
+                    .map_err(|err| format!("{}: {err}", e.path().display()))?;
+                Ok(Some((name, text)))
+            })
+            .filter_map(|r: Result<Option<(String, String)>, String>| match r {
+                Ok(Some(wf)) => Some(Ok(wf)),
+                Ok(None) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect(),
+    };
+    let (workflows, unreadable) = collect_workflows(reads);
+    let toolchains = sol_toolchains(&workflows);
+    let has_flake = std::path::Path::new(dir).join("flake.nix").is_file();
+    if unreadable.is_some() {
+        let (c, l) = sol_toolchain_lines(dir, has_flake, &[], None, unreadable);
+        return say(c, l);
+    }
+
+    // One network read, and only for the shape that needs it: the pin lives in the reusable, so a
+    // checkout cannot answer this on its own however hard it is parsed.
+    let pin = match toolchains.as_slice() {
+        [(SolToolchain::Reusable(git_ref), _)] => {
+            let leaves: Vec<(&str, Option<String>)> = RAINIX_SOL_LEAVES
+                .iter()
+                .map(|f| {
+                    let path = format!(
+                        "repos/rainlanguage/rainix/contents/.github/workflows/{f}?ref={git_ref}"
+                    );
+                    let text = gh_text(&["api", &path, "-H", "Accept: application/vnd.github.raw"]);
+                    (*f, text.as_deref().and_then(rainix_sha))
+                })
+                .collect();
+            Some(agreed_rainix_sha(&leaves))
+        }
+        _ => None,
+    };
+
+    let (code, lines) = sol_toolchain_lines(dir, has_flake, &toolchains, pin, None);
+    say(code, lines)
+}
+
+#[cfg(test)]
+mod sol_toolchain_tests {
+    use super::{
+        agreed_rainix_sha, collect_workflows, flake_ref_is_pinned, foreign_sol_toolchain,
+        is_sol_check, names_token, nix_develop_step, rainix_sha, rainix_sol_reusable_ref,
+        sol_toolchain_lines, sol_toolchains, strip_yaml_comment, workflow_gates_a_push,
+        SolToolchain,
+    };
+
+    /// cyclofinance/cyclo.sol's `rainix.yaml`, the workflow the parked PR was fighting: a matrix of
+    /// `rainix-sol-*` tasks, each run through the REPO's own flake.
+    const REPO_FLAKE_WF: &str = "\
+name: Rainix CI
+on: [push]
+jobs:
+  rainix:
+    strategy:
+      matrix:
+        task: [rainix-sol-test, rainix-sol-static, rainix-sol-legal]
+    steps:
+      - run: nix develop -c rainix-sol-prelude
+      - name: Run ${{ matrix.task }}
+        run: nix develop -c ${{ matrix.task }}
+";
+
+    /// The shape 35 of the org's 45 foundry repos use: the umbrella reusable, pinned `@main`.
+    const REUSABLE_WF: &str = "\
+name: Rainix CI
+on: [push]
+jobs:
+  standard-sol:
+    uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main
+    secrets: inherit
+";
+
+    /// rainlanguage/rain.will-overflow's `test.yml`, verbatim: `on: [push]`, and it gates
+    /// `forge fmt --check` on a foundry installed by ACTION at `nightly`. No flake is involved
+    /// anywhere, so there is no shell the producer can enter to reproduce that check.
+    const FOREIGN_WF: &str = "\
+name: test
+
+on: [push]
+
+jobs:
+  check:
+    name: Foundry project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Run Forge fmt
+        run: forge fmt --check
+";
+
+    /// S01-Issuer/st0x.deploy's `git-clean.yaml`: also `on: [push]`, and it formats with an
+    /// UNPINNED rainix beside the pinned reusable above.
+    const HARDCODED_WF: &str = "\
+name: Git is clean
+on: [push]
+jobs:
+  git-clean:
+    steps:
+      - run: nix develop github:rainlanguage/rainix#sol-shell -c forge soldeer install
+      - run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt
+";
+
+    fn wfs(items: &[(&str, &str)]) -> Vec<(String, String)> {
+        items
+            .iter()
+            .map(|(n, t)| (n.to_string(), t.to_string()))
+            .collect()
+    }
+
+    fn report(
+        toolchains: &[(SolToolchain, Vec<String>)],
+        has_flake: bool,
+        pin: Option<Result<String, String>>,
+    ) -> (i32, String) {
+        let (code, lines) = sol_toolchain_lines("/w/clone", has_flake, toolchains, pin, None);
+        (code, lines.join("\n"))
+    }
+
+    #[test]
+    fn a_token_match_is_a_whole_word() {
+        assert!(names_token("on: [push]", "push"));
+        assert!(names_token("  push:", "push"));
+        assert!(!names_token("    - pushed-tags", "push"));
+        assert!(!names_token("on: workflow_dispatch:", "push"));
+        assert!(names_token("  pull_request:", "pull_request"));
+    }
+
+    /// The gate that keeps `manual-sol-artifacts.yaml` out of the answer. Those files run
+    /// `nix develop -c rainix-sol-artifacts` against the repo's flake and are dispatched by hand;
+    /// counting them would report a second toolchain on repos whose PR checks have exactly one,
+    /// turning 20-odd repos into false conflicts.
+    #[test]
+    fn only_a_push_or_pr_triggered_workflow_gates_anything() {
+        assert!(workflow_gates_a_push("on: [push]\njobs:\n"));
+        assert!(workflow_gates_a_push(
+            "on:\n  push:\n    branches: [main]\njobs:\n"
+        ));
+        assert!(workflow_gates_a_push("on:\n  pull_request:\njobs:\n"));
+        assert!(!workflow_gates_a_push("on: workflow_dispatch:\njobs:\n"));
+        assert!(!workflow_gates_a_push(
+            "on:\n  workflow_dispatch:\n    inputs:\n      network:\njobs:\n  push-it:\n"
+        ));
+        assert!(!workflow_gates_a_push(
+            "on:\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n"
+        ));
+    }
+
+    /// A `push` named OUTSIDE the `on:` block must not make a dispatch-only workflow look like a
+    /// gate. `manual-broadcast.yaml` and friends have jobs and steps that say `push` all over.
+    #[test]
+    fn a_push_after_the_on_block_does_not_count() {
+        assert!(!workflow_gates_a_push(
+            "on: workflow_dispatch:\njobs:\n  deploy:\n    steps:\n      - run: git push\n"
+        ));
+    }
+
+    #[test]
+    fn a_rainix_sol_reusable_is_recognised_with_its_ref() {
+        assert_eq!(
+            rainix_sol_reusable_ref(
+                "    uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main"
+            ),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            rainix_sol_reusable_ref(
+                "    uses: rainlanguage/rainix/.github/workflows/rainix-sol-static.yaml@v2"
+            ),
+            Some("v2".to_string())
+        );
+        // A composite ACTION under the same owner pins no toolchain of its own.
+        assert_eq!(
+            rainix_sol_reusable_ref("      - uses: rainlanguage/rainix/.github/actions/cache@main"),
+            None
+        );
+        // The RUST reusables are a different toolchain and a different question.
+        assert_eq!(
+            rainix_sol_reusable_ref(
+                "    uses: rainlanguage/rainix/.github/workflows/rainix-rs-static.yaml@main"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_nix_develop_step_is_read_for_its_flake_and_its_command() {
+        assert_eq!(
+            nix_develop_step("      - run: nix develop -c rainix-sol-static"),
+            Some((SolToolchain::RepoFlake, "rainix-sol-static".to_string()))
+        );
+        // `.` is the repo's own flake spelled out, not a third thing.
+        assert_eq!(
+            nix_develop_step("      - run: nix develop . -c forge test"),
+            Some((SolToolchain::RepoFlake, "forge test".to_string()))
+        );
+        assert_eq!(
+            nix_develop_step("      - run: nix develop --command rainix-sol-prelude"),
+            Some((SolToolchain::RepoFlake, "rainix-sol-prelude".to_string()))
+        );
+        assert_eq!(
+            nix_develop_step(
+                "        run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt"
+            ),
+            Some((
+                SolToolchain::Explicit("github:rainlanguage/rainix#sol-shell".to_string()),
+                "forge fmt".to_string()
+            ))
+        );
+        // No command: `nix develop` alone opens a shell and checks nothing.
+        assert_eq!(nix_develop_step("      - run: nix develop"), None);
+        assert_eq!(nix_develop_step("      - run: npm ci"), None);
+    }
+
+    /// The exclusion that keeps a dependency FETCH from being read as a toolchain the checks care
+    /// about. `forge soldeer install` resolves the versions `soldeer.lock` names out of any forge,
+    /// so rain.metadata's `subgraph-test.yaml` — `on: [push]`, and it installs through an unpinned
+    /// rainix — is not a second gating toolchain.
+    #[test]
+    fn a_soldeer_install_is_not_a_solidity_check() {
+        assert!(!is_sol_check("forge soldeer install"));
+        assert!(is_sol_check("forge fmt --check"));
+        assert!(is_sol_check("forge test -vvv"));
+        assert!(is_sol_check("slither ."));
+        assert!(is_sol_check("rainix-sol-static"));
+        assert!(!is_sol_check("npm run lint"));
+    }
+
+    #[test]
+    fn a_repo_local_matrix_workflow_resolves_to_the_repos_own_flake() {
+        assert_eq!(
+            sol_toolchains(&wfs(&[("rainix.yaml", REPO_FLAKE_WF)])),
+            vec![(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])]
+        );
+    }
+
+    /// The majority shape. The repo HAS a flake and it is not the answer: these checks never read
+    /// it, so `nix develop <dir>` here would be a fresh mismatch in the opposite direction from the
+    /// one #116 reports.
+    #[test]
+    fn a_reusable_consumer_resolves_to_the_reusables_ref_not_its_own_flake() {
+        assert_eq!(
+            sol_toolchains(&wfs(&[("rainix-sol.yaml", REUSABLE_WF)])),
+            vec![(
+                SolToolchain::Reusable("main".to_string()),
+                vec!["rainix-sol.yaml".to_string()]
+            )]
+        );
+    }
+
+    /// A dispatch-only workflow contributes nothing even when it runs Solidity through a different
+    /// flake — which is the case on ~20 of the org's repos.
+    #[test]
+    fn a_dispatch_only_workflow_contributes_no_toolchain() {
+        let manual = "on: workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: nix develop -c rainix-sol-artifacts\n";
+        assert_eq!(
+            sol_toolchains(&wfs(&[
+                ("rainix-sol.yaml", REUSABLE_WF),
+                ("manual.yaml", manual)
+            ])),
+            vec![(
+                SolToolchain::Reusable("main".to_string()),
+                vec!["rainix-sol.yaml".to_string()]
+            )]
+        );
+    }
+
+    /// S01-Issuer/st0x.deploy as it stands: a pinned reusable and an unpinned `forge fmt`, both on
+    /// push. Two toolchains formatting one repo is a real disagreement, so the answer is that there
+    /// is no single answer — not a quiet pick between them.
+    #[test]
+    fn two_gating_toolchains_are_reported_as_a_conflict_not_resolved_to_one() {
+        let found = sol_toolchains(&wfs(&[
+            ("git-clean.yaml", HARDCODED_WF),
+            ("rainix-sol.yaml", REUSABLE_WF),
+        ]));
+        assert_eq!(found.len(), 2);
+        let (code, out) = report(&found, true, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: conflict"), "{out}");
+        assert!(out.contains("2 different Solidity toolchains"), "{out}");
+        assert!(
+            !out.contains("verify:"),
+            "a conflict must offer no command: {out}"
+        );
+    }
+
+    #[test]
+    fn a_declared_pin_is_read_off_the_reusable() {
+        assert_eq!(
+            rainix_sha("name: x\nenv:\n  RAINIX_SHA: 53e96a7d0a97\njobs:\n"),
+            Some("53e96a7d0a97".to_string())
+        );
+        assert_eq!(
+            rainix_sha("env:\n  RAINIX_SHA: \"abc\"\n"),
+            Some("abc".to_string())
+        );
+        assert_eq!(rainix_sha("name: x\njobs:\n"), None);
+        assert_eq!(rainix_sha("env:\n  RAINIX_SHA:\n"), None);
+    }
+
+    #[test]
+    fn the_leaves_must_agree_on_the_pin() {
+        assert_eq!(
+            agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", Some("aaa".into()))]),
+            Ok("aaa".to_string())
+        );
+        // One unreadable leaf is not a disagreement.
+        assert_eq!(
+            agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", None)]),
+            Ok("aaa".to_string())
+        );
+        let err =
+            agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", Some("bbb".into()))])
+                .unwrap_err();
+        assert!(err.contains("disagree"), "{err}");
+        assert!(agreed_rainix_sha(&[("static", None), ("test", None)]).is_err());
+    }
+
+    #[test]
+    fn the_repo_flake_verdict_names_the_checkout_and_not_a_flake_url() {
+        let (code, out) = report(
+            &[(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])],
+            true,
+            None,
+        );
+        assert_eq!(code, 0);
+        assert!(out.contains("mode: repo-flake"), "{out}");
+        assert!(out.contains("verify: nix develop /w/clone -c"), "{out}");
+        assert!(!out.contains("github:"), "{out}");
+    }
+
+    /// The resolved pin must reach the command. A report that named the ref but not the SHA would
+    /// leave the reader to do the lookup this subcommand exists to do.
+    #[test]
+    fn the_reusable_verdict_carries_the_resolved_sha_into_the_command() {
+        let (code, out) = report(
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["w.yaml".to_string()],
+            )],
+            true,
+            Some(Ok("53e96a7d0a97d7c7c75c3b2412521324776fdac6".into())),
+        );
+        assert_eq!(code, 0);
+        assert_eq!(
+            out.lines().last(),
+            Some(
+                "verify: nix develop github:rainlanguage/rainix/53e96a7d0a97d7c7c75c3b2412521324776fdac6#sol-shell -c"
+            )
+        );
+    }
+
+    /// An unreadable pin fails LOUD. Falling back to the health-check flake here is exactly the
+    /// silent substitution #116 is about, and it would print a command that looks authoritative.
+    #[test]
+    fn an_unreadable_pin_offers_no_command_at_all() {
+        let (code, out) = report(
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["w.yaml".to_string()],
+            )],
+            true,
+            Some(Err("404".into())),
+        );
+        assert_eq!(code, 3);
+        assert!(
+            out.contains("error: the pin at @main is unreadable: 404"),
+            "{out}"
+        );
+        assert!(!out.contains("verify:"), "{out}");
+    }
+
+    #[test]
+    fn a_non_nix_gating_toolchain_is_never_reported_as_no_toolchain() {
+        let found = sol_toolchains(&wfs(&[("test.yml", FOREIGN_WF)]));
+        assert_eq!(
+            found,
+            vec![(
+                SolToolchain::Foreign(
+                    "foundry-rs/foundry-toolchain@v1 (version: nightly)".to_string()
+                ),
+                vec!["test.yml".to_string()]
+            )],
+            "rain.will-overflow gates `forge fmt --check` on foundry nightly — reading that as \
+             `absent` is the false negative this variant exists to end"
+        );
+        let (code, out) = report(&found, false, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: foreign"), "{out}");
+        assert!(!out.contains("mode: absent"), "{out}");
+        // The producer's next move turns on the DIFFERENCE, so the report must carry it in words
+        // and not only in a mode label a reader could skim past.
+        assert!(out.contains("NOT a nix shell"), "{out}");
+        assert!(out.contains("NOT `absent`"), "{out}");
+        assert!(
+            out.contains("nightly"),
+            "the toolchain must be NAMED, not just refused: {out}"
+        );
+        assert!(
+            !out.contains("verify:"),
+            "there is no shell to offer: {out}"
+        );
+    }
+
+    /// The two unresolvable modes must not read alike. `absent` means "nothing to match, use what
+    /// you like and record it"; `foreign` means "something to match that you CANNOT enter". A
+    /// change that collapses either into the other is the defect, so the texts are asserted
+    /// DISJOINT rather than each merely non-empty.
+    #[test]
+    fn absent_and_foreign_say_different_things() {
+        let (_, absent) = report(&[], false, None);
+        let (_, foreign) = report(
+            &[(
+                SolToolchain::Foreign("foundry-rs/foundry-toolchain@v1".into()),
+                vec!["test.yml".to_string()],
+            )],
+            false,
+            None,
+        );
+        assert_ne!(absent, foreign);
+        assert!(absent.contains("no CI toolchain to match"), "{absent}");
+        assert!(!foreign.contains("no CI toolchain to match"), "{foreign}");
+        assert!(foreign.contains("NOT a nix shell"), "{foreign}");
+        assert!(!absent.contains("NOT a nix shell"), "{absent}");
+    }
+
+    /// A repo can gate on a nix toolchain AND a foreign one at once. That is still a conflict, but
+    /// the advice differs: one side has no shell to verify in at all, so the conflict text has to
+    /// say so instead of implying both are reproducible.
+    #[test]
+    fn a_conflict_that_includes_a_foreign_toolchain_says_one_side_is_unreachable() {
+        let mixed = sol_toolchains(&wfs(&[
+            ("rainix-sol.yaml", REUSABLE_WF),
+            ("test.yml", FOREIGN_WF),
+        ]));
+        assert_eq!(mixed.len(), 2);
+        let (code, out) = report(&mixed, true, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: conflict"), "{out}");
+        assert!(out.contains("NOT a nix shell"), "{out}");
+
+        // …and an all-nix conflict must NOT carry that sentence, or it says nothing.
+        let all_nix = sol_toolchains(&wfs(&[
+            ("git-clean.yaml", HARDCODED_WF),
+            ("rainix-sol.yaml", REUSABLE_WF),
+        ]));
+        let (_, nix_out) = report(&all_nix, true, None);
+        assert!(nix_out.contains("mode: conflict"), "{nix_out}");
+        assert!(!nix_out.contains("NOT a nix shell"), "{nix_out}");
+    }
+
+    #[test]
+    fn a_foreign_acquisition_is_recognised_by_the_installer_not_the_invocation() {
+        assert_eq!(
+            foreign_sol_toolchain("      - uses: foundry-rs/foundry-toolchain@v1"),
+            Some("foundry-rs/foundry-toolchain@v1".to_string())
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: foundryup --version nightly"),
+            Some("foundryup".to_string())
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: curl -L https://foundry.paradigm.xyz | bash"),
+            Some("foundry.paradigm.xyz".to_string())
+        );
+        // A bare `forge` says nothing: st0x.deploy opens `nix develop --command bash -c '` and
+        // calls forge on the NEXT line, so an invocation-based reading would call a nix repo
+        // foreign.
+        assert_eq!(
+            foreign_sol_toolchain("            forge script script/X.s.sol \\"),
+            None
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: nix develop -c forge fmt"),
+            None
+        );
+        // A comment mentioning the action is prose, not an acquisition.
+        assert_eq!(
+            foreign_sol_toolchain("      # we dropped foundryup for nix"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_column_zero_comment_does_not_close_the_trigger_block() {
+        // YAML permits a comment at any indentation. Reading the RAW line for the block boundary
+        // made this workflow — which gates every branch — report `mode: absent`.
+        assert!(workflow_gates_a_push(
+            "on:\n# gate every branch\n  push:\njobs:\n"
+        ));
+        // …and the boundary still has to close on a real column-zero KEY.
+        assert!(!workflow_gates_a_push(
+            "on:\n  workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: git push\n"
+        ));
+    }
+
+    /// A commented-out step is not a toolchain. Reading it as one invents a `conflict` on a repo
+    /// that has exactly one — an exit-3 refusal manufactured out of a comment.
+    #[test]
+    fn a_commented_out_step_registers_no_toolchain() {
+        let wf = "\
+on: [push]
+jobs:
+  a:
+    steps:
+      # uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main
+      # - run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt
+      - run: nix develop -c rainix-sol-static
+";
+        assert_eq!(
+            sol_toolchains(&wfs(&[("rainix.yaml", wf)])),
+            vec![(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])],
+            "only the LIVE step is a toolchain"
+        );
+    }
+
+    #[test]
+    fn an_unpinned_explicit_flake_still_gets_its_command_but_is_flagged_as_floating() {
+        let (code, out) = report(
+            &[(
+                SolToolchain::Explicit("github:rainlanguage/rainix#sol-shell".into()),
+                vec!["git-clean.yaml".to_string()],
+            )],
+            true,
+            None,
+        );
+        // The command IS what CI runs, so withholding it would deny the only correct action.
+        assert_eq!(code, 0);
+        assert!(
+            out.contains("verify: nix develop github:rainlanguage/rainix#sol-shell -c"),
+            "{out}"
+        );
+        // …but it floats, and handing a moving target over as authoritative is #116 in miniature.
+        assert!(
+            out.contains("warn:") && out.contains("names no revision"),
+            "{out}"
+        );
+
+        // A PINNED explicit ref resolves to one thing forever and must NOT carry the warning.
+        let (code, pinned) = report(
+            &[(
+                SolToolchain::Explicit("github:rainlanguage/rainix/53e96a7d#sol-shell".into()),
+                vec!["git-clean.yaml".to_string()],
+            )],
+            true,
+            None,
+        );
+        assert_eq!(code, 0);
+        assert!(!pinned.contains("warn:"), "{pinned}");
+    }
+
+    #[test]
+    fn a_flake_ref_is_pinned_only_when_it_names_a_revision() {
+        assert!(!flake_ref_is_pinned("github:rainlanguage/rainix#sol-shell"));
+        assert!(!flake_ref_is_pinned("github:rainlanguage/rainix"));
+        assert!(flake_ref_is_pinned(
+            "github:rainlanguage/rainix/53e96a7d#sol-shell"
+        ));
+        assert!(flake_ref_is_pinned(
+            "github:rainlanguage/rainix/main#sol-shell"
+        ));
+        // Not a github URL: a local path is whatever is on disk, and warning about every ordinary
+        // checkout would make the warning worth nothing.
+        assert!(flake_ref_is_pinned("/w/clone"));
+        assert!(flake_ref_is_pinned(".#sol-shell"));
+    }
+
+    /// An unreadable checkout yields the same EMPTY toolchain list a repo with no Solidity CI
+    /// does. Reporting both as `absent` is this subcommand's own failure mode wearing its own
+    /// clothes — knowing nothing is not the same as knowing nothing gates it.
+    /// One unreadable FILE is enough, and it must not be swallowed. The file that fails to read
+    /// could be the only workflow that gates the repo, and dropping it leaves an empty list
+    /// indistinguishable from a repo with no Solidity CI — `absent`, reported confidently.
+    #[test]
+    fn a_single_unreadable_workflow_file_is_reported_not_dropped() {
+        let ok = |n: &str| Ok((n.to_string(), "on: [push]\n".to_string()));
+        let (wfs, unreadable) = collect_workflows(vec![
+            ok("a.yaml"),
+            Err("b.yaml: permission denied".to_string()),
+            ok("c.yaml"),
+        ]);
+        assert_eq!(
+            unreadable.as_deref(),
+            Some("b.yaml: permission denied"),
+            "a file that could not be read is a fact, not a gap to close over"
+        );
+        assert!(
+            wfs.len() < 3,
+            "the read stopped at the failure rather than pretending to a full picture: {wfs:?}"
+        );
+
+        // All-readable is the ordinary path and reports nothing.
+        let (wfs, unreadable) = collect_workflows(vec![ok("b.yaml"), ok("a.yaml")]);
+        assert_eq!(unreadable, None);
+        assert_eq!(
+            wfs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            ["a.yaml", "b.yaml"],
+            "sorted, so the report is stable across filesystem ordering"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_checkout_is_not_absent() {
+        let (code, out) = sol_toolchain_lines(
+            "/w/clone",
+            false,
+            &[],
+            None,
+            Some("/w/clone/.github/workflows: permission denied".into()),
+        );
+        let out = out.join("\n");
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: unreadable"), "{out}");
+        assert!(!out.contains("mode: absent"), "{out}");
+        assert!(out.contains("do not record this as `absent`"), "{out}");
+        assert!(!out.contains("verify:"), "{out}");
+
+        let (_, absent) = report(&[], false, None);
+        assert!(!absent.contains("mode: unreadable"), "{absent}");
+    }
+
+    /// The bound, named so it is on the record rather than in someone's head: a third way of
+    /// getting forge is NOT recognised, and such a repo still reads as `absent`. Narrowing the
+    /// blind spot is not the same as closing it, and the honest place to say so is a test.
+    #[test]
+    fn a_third_way_of_getting_forge_is_a_known_blind_spot() {
+        let container = "on: [push]\njobs:\n  t:\n    container: ghcr.io/acme/forge:1\n    steps:\n      - run: forge test\n";
+        assert_eq!(sol_toolchains(&wfs(&[("test.yml", container)])), vec![]);
+    }
+
+    #[test]
+    fn a_quoted_or_boolean_on_key_is_still_the_trigger_block() {
+        // YAML 1.1 reads bare `on` as true, so these are the spellings a formatter can emit.
+        for key in ["on:", "\"on\":", "'on':", "true:"] {
+            assert!(
+                workflow_gates_a_push(&format!("name: x\n{key} [push]\njobs:\n")),
+                "{key} is the trigger block and must be read as one"
+            );
+            assert!(
+                !workflow_gates_a_push(&format!(
+                    "name: x\n{key} workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: git push\n"
+                )),
+                "{key}: a push outside the trigger block still gates nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn a_comment_inside_the_trigger_block_is_not_a_trigger() {
+        assert!(!workflow_gates_a_push(
+            "on:\n  # runs on push once we migrate\n  workflow_dispatch:\njobs:\n"
+        ));
+        // Whitespace before the `#` is left where it is: only the COMMENT has to go, and
+        // `names_token` reads words, not columns.
+        assert_eq!(strip_yaml_comment("  push:  # every branch"), "  push:  ");
+        assert_eq!(strip_yaml_comment("# all of it"), "");
+        // A `#` that is not a comment introducer stays: flake attrs and branch globs contain them.
+        assert_eq!(
+            strip_yaml_comment("        run: nix develop .#sol-shell -c forge fmt"),
+            "        run: nix develop .#sol-shell -c forge fmt"
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_no_gating_solidity_check_says_so_rather_than_guessing() {
+        let (code, out) = report(&[], false, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: absent"), "{out}");
+        assert!(out.contains("flake: ABSENT"), "{out}");
+        assert!(!out.contains("verify:"), "{out}");
+    }
+
+    /// The issue's "repo with no dev shell" case, and the reason `flake:` is reported at all: the
+    /// checks say `nix develop` and there is no flake to develop. Nothing can be reproduced, and
+    /// that is a fact for the run record, not a fallback.
+    #[test]
+    fn a_repo_flake_verdict_without_a_flake_is_an_error_not_a_command() {
+        let (code, out) = report(
+            &[(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])],
+            false,
+            None,
+        );
+        assert_eq!(code, 3);
+        assert!(out.contains("has no flake.nix"), "{out}");
+        assert!(!out.contains("verify:"), "{out}");
+    }
+
+    /// Every report names the workflow it read the toolchain out of, so a wrong answer is
+    /// traceable to a file rather than to this function's judgment.
+    #[test]
+    fn every_toolchain_is_reported_with_the_workflow_that_names_it() {
+        let (_, out) = report(
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["rainix-sol.yaml".to_string()],
+            )],
+            true,
+            Some(Ok("abc".into())),
+        );
+        assert!(
+            out.contains("check: .github/workflows/rainix-sol.yaml  rainix reusable @main"),
+            "{out}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// `sol-toolchain-audit` (#203): did the run VERIFY in the toolchain `sol-toolchain` named?
+//
+// #195 gave the producer a way to ASK which toolchain a checkout's own CI judges it with. Nothing
+// read the answer back, and a rule with no check cannot report its own violation — which is how
+// #116 was found: a parked PR whose one permitted back-off attempt had gone on a diff that could
+// never pass. The next wrong rule would be found the same way.
+//
+// This reads the run's OWN trace, and that choice is the design. The answer is already recorded
+// there, in the `sol-toolchain` call's output, next to the `nix develop` lines that came after it,
+// so the comparison is between what the run was TOLD and what the run then RAN: no network read
+// per Bash call, no clone still on disk, and nothing that can stop a run mid-flight on a blip. The
+// price is that it cannot prevent the wasted attempt inside the run it audits — it makes the next
+// wrong rule announce itself at the end of the run that obeyed it, instead of waiting for a parked
+// PR to say so weeks later.
+//
+// MEASURED, over the 21 retained traces at the time of writing (all of which predate #195, so all
+// of their Solidity verification ran the hardcoded shell the old prompt named): 241 Solidity `nix
+// develop` invocations, 159 of them CHECKS whose verdict depends on the shell, run against 17
+// distinct work clones in 3 runs, every one in a shell those checkouts' CI does not run. That is
+// the size of one wrong rule, and it is why the count is worth reporting rather than assumed small.
+
+/// Exit code for "this run ran a Solidity check in a shell that checkout's own CI does not run".
+const SOL_AUDIT_SKEW: i32 = 3;
+
+/// PURE: a path or flake reference as this audit compares them — unquoted, with any trailing slash
+/// removed, so `"/w/clone"` and `/w/clone/` name the same checkout.
+fn audit_ref(raw: &str) -> String {
+    let trimmed = raw.trim().trim_matches(['\'', '"']);
+    let stripped = trimmed.trim_end_matches('/');
+    // A lone `/` is not a checkout, but stripping it to nothing would silently drop the reference.
+    if stripped.is_empty() {
+        trimmed
+    } else {
+        stripped
+    }
+    .to_string()
+}
+
+/// PURE: the checkout a `pr-review-report sol-toolchain <dir>` command asks about.
+///
+/// The subcommand is matched as a whole WORD, so `sol-toolchain-audit` — which a run may also
+/// invoke, and whose argument is a trace rather than a checkout — is never read as a question.
+fn sol_toolchain_question(cmd: &str) -> Option<String> {
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let at = words.iter().position(|w| *w == "sol-toolchain")?;
+    let dir = words[at + 1..].iter().find(|w| !w.starts_with('-'))?;
+    Some(audit_ref(dir))
+}
+
+/// PURE: the flake reference a `nix develop` invocation names, or `None` when it names none —
+/// `nix develop -c …` enters whatever flake the WORKING DIRECTORY holds, which is a different
+/// thing from naming no shell.
+fn nix_develop_flake(seg: &str) -> Option<String> {
+    let (_, rest) = seg.split_once("nix develop")?;
+    for w in rest.split_whitespace() {
+        if w == "-c" || w == "--command" {
+            return None;
+        }
+        if !w.starts_with('-') {
+            return Some(audit_ref(w));
+        }
+    }
+    None
+}
+
+/// PURE: the command a `nix develop … -c` invocation runs INSIDE the shell, `""` when it runs none.
+///
+/// The earlier of the two flag spellings wins by POSITION. Keyed on the first match of either
+/// pattern instead, `nix develop --command bash -c '…'` would take the inner `-c` and report the
+/// wrapper's argument as the command.
+fn nix_develop_inner(seg: &str) -> &str {
+    let Some((_, rest)) = seg.split_once("nix develop") else {
+        return "";
+    };
+    [" -c ", " --command "]
+        .iter()
+        .filter_map(|f| rest.find(f).map(|at| (at, at + f.len())))
+        .min_by_key(|(at, _)| *at)
+        .map(|(_, end)| &rest[end..])
+        .unwrap_or("")
+}
+
+/// PURE: `line` with any leading `env` and `VAR=VALUE` assignments removed, so what gets classified
+/// is the command being run. `env CI=true forge fmt` is a `forge fmt`.
+fn strip_env_prefix(line: &str) -> &str {
+    let mut rest = line.trim();
+    rest = rest.strip_prefix("env ").unwrap_or(rest).trim_start();
+    while let Some(w) = rest.split_whitespace().next() {
+        if w.starts_with('-') || !w.contains('=') {
+            break;
+        }
+        rest = rest[w.len()..].trim_start();
+    }
+    rest
+}
+
+/// PURE: whether a shell command line runs a Solidity CHECK.
+///
+/// [`is_sol_check`] decides what counts as one; this is what finds the commands to ask it about in
+/// a line a RUN writes rather than a line a workflow writes. A workflow step is one command; a run
+/// writes `&&` chains, pipelines, and the `bash -c '…'` and `env VAR=V …` wrappers — 9 of the 241
+/// Solidity invocations in the retained traces are `bash -c` wrapped, and reading only the first
+/// word after `-c` classifies every one of them as not-a-check.
+fn runs_sol_check(inner: &str) -> bool {
+    let mut text = inner.trim();
+    for w in ["bash -c ", "sh -c "] {
+        if let Some(rest) = text.strip_prefix(w) {
+            text = rest.trim();
+        }
+    }
+    text.split(['\n', ';', '|'])
+        .flat_map(|l| l.split("&&"))
+        .any(|stage| {
+            let s = stage
+                .trim()
+                .trim_start_matches(['\'', '"', '('])
+                .trim_start();
+            is_sol_check(strip_env_prefix(s))
+        })
+}
+
+/// PURE: the value of `flag` in a command line, if it is present with one.
+fn flag_value(cmd: &str, flag: &str) -> Option<String> {
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let at = words.iter().position(|w| *w == flag)?;
+    words.get(at + 1).map(|v| audit_ref(v))
+}
+
+/// PURE: the working directory a command line moves to before running — `cd <dir>` or `env -C
+/// <dir>`. The LAST one wins, because that is the one in force. Only an ABSOLUTE directory counts:
+/// a relative `cd` resolves against a working directory the trace does not record, so reading it as
+/// a checkout would name the wrong one rather than admit it does not know.
+fn shell_cwd(text: &str) -> Option<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut found = None;
+    for (i, w) in words.iter().enumerate() {
+        let names_dir = w.trim_start_matches('(') == "cd"
+            || (*w == "-C" && i > 0 && words[i - 1].trim_start_matches('(') == "env");
+        if !names_dir {
+            continue;
+        }
+        if let Some(d) = words.get(i + 1).map(|d| audit_ref(d)) {
+            if d.starts_with('/') {
+                found = Some(d);
+            }
+        }
+    }
+    found
+}
+
+/// PURE: the checkout a Solidity invocation acts on, read off the command line itself.
+///
+/// In order: `forge --root <dir>`, which overrides the working directory and so overrides
+/// everything else here; then a `cd <dir>` / `env -C <dir>` the line performs; then a `nix develop
+/// <path>` naming a LOCAL flake, which is a checkout by construction. `None` when the line names
+/// none — a Bash call's working directory is not in the trace, so the audit cannot say which
+/// checkout that invocation meant and reports that rather than guessing.
+///
+/// `prefix` is the command text BEFORE this invocation, which is where a `cd` that governs it
+/// lives when one line runs several: `cd /w/clone && nix develop … && nix develop …`.
+fn sol_verify_target(prefix: &str, seg: &str) -> Option<String> {
+    if let Some(d) = flag_value(seg, "--root") {
+        return Some(d);
+    }
+    if let Some(d) = shell_cwd(&format!("{prefix}{seg}")) {
+        return Some(d);
+    }
+    match nix_develop_flake(seg) {
+        Some(f) if f.starts_with('/') || f.starts_with('.') => Some(f),
+        _ => None,
+    }
+}
+
+/// What a run's own record says about the shell one Solidity check ran in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SolAudit {
+    /// It ran in the shell `sol-toolchain` named for that checkout.
+    Matched,
+    /// It ran in a DIFFERENT shell from the one named. This is #116, caught in the run that did it.
+    Skew {
+        dir: String,
+        used: String,
+        named: String,
+    },
+    /// A Solidity check in a checkout `sol-toolchain` was never asked about. Not a lesser finding
+    /// than [`SolAudit::Skew`]: an answer never sought is the shape all 159 of #116's mismatched
+    /// checks had, and a rule that is obeyed by not asking is not obeyed.
+    Unasked { dir: String, used: String },
+    /// Asked, and the answer carried no command — every exit-3 shape (`foreign`, `absent`,
+    /// `conflict`, `unreadable`, a `repo-flake` with no flake.nix). There is no prefix to match, so
+    /// this is a fact to RECORD and not a violation; a `foreign` checkout in particular cannot be
+    /// matched by any shell that exists, which is why it is outside this audit's judgment.
+    Unmatchable { dir: String, mode: String },
+    /// The line names no checkout, so the audit cannot say which one it meant. A blind spot of the
+    /// AUDIT, not a fault of the run.
+    Untargeted,
+    /// The line entered the working directory's flake without naming that directory, so the audit
+    /// cannot say which flake that was. A blind spot, same as [`SolAudit::Untargeted`].
+    UnknownShell { dir: String },
+}
+
+/// PURE: what a recorded `sol-toolchain` run answered — `Ok(flake reference)` off its `verify:`
+/// line, `Err(mode)` when it printed none, which is every exit-3 shape.
+///
+/// The `mode:` is carried rather than dropped because the four exit-3 modes want different things
+/// from a reader: `foreign` says no shell can match, `conflict` says pick one and say which,
+/// `absent` says say what you used instead. Collapsing them to "unresolved" here would undo the
+/// discrimination the subcommand exists for.
+fn sol_toolchain_answer(out: &str) -> Result<String, String> {
+    let mut mode = "unknown".to_string();
+    for line in out.lines() {
+        let line = line.trim();
+        if let Some(m) = line.strip_prefix("mode:") {
+            mode = m.trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("verify:") {
+            if let Some(f) = nix_develop_flake(v) {
+                return Ok(f);
+            }
+        }
+    }
+    Err(mode)
+}
+
+/// PURE: classify one `nix develop` invocation against the answers recorded BEFORE it.
+fn classify_sol_verify(
+    answers: &std::collections::HashMap<String, Result<String, String>>,
+    prefix: &str,
+    seg: &str,
+) -> SolAudit {
+    let used = match nix_develop_flake(seg) {
+        Some(f) => Some(f),
+        // `nix develop -c` enters the working directory's flake. That is a real answer only when
+        // the line says what the working directory is.
+        None => shell_cwd(&format!("{prefix}{seg}")),
+    };
+    let Some(dir) = sol_verify_target(prefix, seg) else {
+        return SolAudit::Untargeted;
+    };
+    let Some(used) = used else {
+        return SolAudit::UnknownShell { dir };
+    };
+    match answers.get(&dir) {
+        None => SolAudit::Unasked { dir, used },
+        Some(Err(mode)) => SolAudit::Unmatchable {
+            dir,
+            mode: mode.clone(),
+        },
+        Some(Ok(named)) if *named == used => SolAudit::Matched,
+        // A `repo-flake` answer prints the CANONICALISED checkout path, which need not be the path
+        // the question was asked with. The same checkout named the way the question named it is the
+        // same shell, and calling that skew would report the audit's own normalisation as a fault.
+        Some(Ok(named)) if named.starts_with('/') && used == dir => SolAudit::Matched,
+        Some(Ok(named)) => SolAudit::Skew {
+            dir,
+            used,
+            named: named.clone(),
+        },
+    }
+}
+
+/// PURE: the audit of one run, over the Bash commands it issued IN ORDER and what each printed.
+///
+/// Order is the contract: an answer counts only for the checks that came after it, so a run that
+/// verifies first and asks afterwards is not credited with having used the answer it did not have.
+///
+/// One command line can hold several invocations (12 of the retained traces' 241 do), so each
+/// `nix develop` is classified separately, with the text before it as its context.
+fn sol_audit(calls: &[(String, String)]) -> Vec<(SolAudit, String)> {
+    let mut answers: std::collections::HashMap<String, Result<String, String>> =
+        std::collections::HashMap::new();
+    let mut out: Vec<(SolAudit, String)> = Vec::new();
+    for (cmd, output) in calls {
+        // Recorded BEFORE the scan, not instead of it: one line may both ask and then verify.
+        if let Some(dir) = sol_toolchain_question(cmd) {
+            answers.insert(dir, sol_toolchain_answer(output));
+        }
+        let offsets: Vec<usize> = cmd.match_indices("nix develop").map(|(i, _)| i).collect();
+        for (i, at) in offsets.iter().enumerate() {
+            let end = offsets.get(i + 1).copied().unwrap_or(cmd.len());
+            let seg = &cmd[*at..end];
+            if !runs_sol_check(nix_develop_inner(seg)) {
+                continue;
+            }
+            out.push((classify_sol_verify(&answers, &cmd[..*at], seg), cmd.clone()));
+        }
+    }
+    out
+}
+
+/// PURE: `cmd` on one line, short enough to read in a run log.
+fn audit_cmd_excerpt(cmd: &str) -> String {
+    let flat = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 160 {
+        return flat;
+    }
+    format!("{}…", flat.chars().take(160).collect::<String>())
+}
+
+/// PURE: the audit's report and its exit code.
+///
+/// The exit code turns on `skew` and `unasked` and on nothing else. The two blind spots — a line
+/// that names no checkout, and one that enters the working directory's flake without naming it —
+/// are printed WITH their counts and change no exit code: failing a run on what the checker cannot
+/// see is the fail-closed direction, and a checker that stops a run on its own ignorance is worse
+/// than the skew it looks for. `unmatchable` is reported the same way for a different reason: the
+/// checkout has a toolchain and it is one no `nix develop` enters, so there was never a shell to
+/// match and the run did nothing wrong by not matching it.
+fn sol_audit_lines(findings: &[(SolAudit, String)]) -> (i32, Vec<String>) {
+    let count = |p: &dyn Fn(&SolAudit) -> bool| findings.iter().filter(|(f, _)| p(f)).count();
+    let skew = count(&|f| matches!(f, SolAudit::Skew { .. }));
+    let unasked = count(&|f| matches!(f, SolAudit::Unasked { .. }));
+    let mut lines = vec![format!(
+        "sol-toolchain audit: {} Solidity checks — {} matched, {} skew, {} unasked, {} unmatchable, \
+         {} named no checkout, {} named no shell",
+        findings.len(),
+        count(&|f| matches!(f, SolAudit::Matched)),
+        skew,
+        unasked,
+        count(&|f| matches!(f, SolAudit::Unmatchable { .. })),
+        count(&|f| matches!(f, SolAudit::Untargeted)),
+        count(&|f| matches!(f, SolAudit::UnknownShell { .. })),
+    )];
+    for (finding, cmd) in findings {
+        let detail = match finding {
+            SolAudit::Matched => continue,
+            SolAudit::Skew { dir, used, named } => format!(
+                "skew: {dir} was verified in {used}, but its own CI runs {named} — a check that \
+                 passes here can red there, which is #116"
+            ),
+            SolAudit::Unasked { dir, used } => format!(
+                "unasked: {dir} was verified in {used} with no `sol-toolchain {dir}` answer on the \
+                 record — nothing in this run knows whether that is the shell its CI runs"
+            ),
+            SolAudit::Unmatchable { dir, mode } => format!(
+                "unmatchable: {dir} answered `mode: {mode}`, so there is no prefix to match — say \
+                 in the run summary which shell you used and why"
+            ),
+            SolAudit::Untargeted => {
+                "untargeted: this invocation names no checkout, so the audit cannot say which one \
+                 it verified"
+                    .to_string()
+            }
+            SolAudit::UnknownShell { dir } => format!(
+                "unknown-shell: this invocation entered the working directory's flake without \
+                 naming that directory, so the audit cannot say what shell {dir} was verified in"
+            ),
+        };
+        lines.push(detail);
+        lines.push(format!("  cmd: {}", audit_cmd_excerpt(cmd)));
+    }
+    (
+        if skew + unasked > 0 {
+            SOL_AUDIT_SKEW
+        } else {
+            0
+        },
+        lines,
+    )
+}
+
+/// PURE: every Bash command a stream-json trace issued, in order, paired with what it printed.
+///
+/// A `tool_result` arrives later in the stream than the `tool_use` it answers, so the pairing is by
+/// id and the ORDER is the order the commands were issued — which is what [`sol_audit`] needs, and
+/// is not the order the results arrive in.
+fn sol_audit_calls(trace: &str) -> Vec<(String, String)> {
+    let mut issued: Vec<(String, String)> = Vec::new();
+    let mut results: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for line in trace.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let blocks = ev
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array());
+        for b in blocks.into_iter().flatten() {
+            match b.get("type").and_then(|t| t.as_str()) {
+                Some("tool_use") if b.get("name").and_then(|n| n.as_str()) == Some("Bash") => {
+                    let (Some(id), Some(cmd)) = (
+                        b.get("id").and_then(|i| i.as_str()),
+                        b.get("input")
+                            .and_then(|i| i.get("command"))
+                            .and_then(|c| c.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    issued.push((id.to_string(), cmd.to_string()));
+                }
+                Some("tool_result") => {
+                    if let Some(id) = b.get("tool_use_id").and_then(|i| i.as_str()) {
+                        results.insert(id.to_string(), tool_result_text(b));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    issued
+        .into_iter()
+        .map(|(id, cmd)| {
+            let out = results.remove(&id).unwrap_or_default();
+            (cmd, out)
+        })
+        .collect()
+}
+
+/// `sol-toolchain-audit`: read a run's trace back and report every Solidity check it ran against
+/// the toolchain `sol-toolchain` named for that checkout.
+fn sol_toolchain_audit_mode(trace: &str) -> i32 {
+    let text = match std::fs::read_to_string(trace) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{trace}: {e}");
+            return 2;
+        }
+    };
+    let (code, lines) = sol_audit_lines(&sol_audit(&sol_audit_calls(&text)));
+    for l in &lines {
+        println!("{l}");
+    }
+    code
+}
+
+#[cfg(test)]
+mod sol_audit_tests {
+    use super::{
+        nix_develop_flake, nix_develop_inner, runs_sol_check, shell_cwd, sol_audit,
+        sol_audit_calls, sol_audit_lines, sol_toolchain_answer, sol_toolchain_question,
+        sol_verify_target, SolAudit, SOL_AUDIT_SKEW,
+    };
+
+    /// The answer `sol-toolchain` prints for a repo whose CI runs the rainix reusables.
+    const PINNED: &str = "mode: rainix-pin\ncheck: .github/workflows/rainix-sol.yaml  rainix \
+                          reusable @main\nflake: present\nverify: nix develop \
+                          github:rainlanguage/rainix/deadbeef#sol-shell -c\n";
+
+    fn call(cmd: &str) -> (String, String) {
+        (cmd.to_string(), String::new())
+    }
+    fn asked(dir: &str, out: &str) -> (String, String) {
+        (
+            format!("pr-review-report sol-toolchain {dir}"),
+            out.to_string(),
+        )
+    }
+    fn findings(calls: &[(String, String)]) -> Vec<SolAudit> {
+        sol_audit(calls).into_iter().map(|(f, _)| f).collect()
+    }
+
+    #[test]
+    fn a_check_run_in_the_named_shell_matches() {
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", PINNED),
+                call(
+                    "nix develop github:rainlanguage/rainix/deadbeef#sol-shell -c forge test \
+                     --root /w/clone"
+                ),
+            ]),
+            vec![SolAudit::Matched]
+        );
+    }
+
+    /// The whole point. #116's shell is `github:rainlanguage/rainix#sol-shell`, which is not the
+    /// pinned one however similar it reads.
+    #[test]
+    fn a_check_run_in_a_different_shell_is_skew() {
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", PINNED),
+                call(
+                    "nix develop github:rainlanguage/rainix#sol-shell -c forge fmt --root /w/clone"
+                ),
+            ]),
+            vec![SolAudit::Skew {
+                dir: "/w/clone".into(),
+                used: "github:rainlanguage/rainix#sol-shell".into(),
+                named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+            }]
+        );
+    }
+
+    /// An answer counts for what comes AFTER it. Crediting a check with an answer the run had not
+    /// received yet would pass exactly the runs that verified first and asked to justify it.
+    #[test]
+    fn an_answer_does_not_reach_backwards_to_a_check_that_preceded_it() {
+        let before = findings(&[
+            call("nix develop github:rainlanguage/rainix#sol-shell -c forge test --root /w/clone"),
+            asked("/w/clone", PINNED),
+        ]);
+        assert_eq!(
+            before,
+            vec![SolAudit::Unasked {
+                dir: "/w/clone".into(),
+                used: "github:rainlanguage/rainix#sol-shell".into(),
+            }],
+            "the check ran before the answer existed"
+        );
+    }
+
+    /// Verifying without asking at all is the shape every one of #116's invocations had.
+    #[test]
+    fn a_check_in_a_checkout_never_asked_about_is_unasked() {
+        assert_eq!(
+            findings(&[call(
+                "cd /w/other && nix develop github:rainlanguage/rainix#sol-shell -c forge test"
+            )]),
+            vec![SolAudit::Unasked {
+                dir: "/w/other".into(),
+                used: "github:rainlanguage/rainix#sol-shell".into(),
+            }]
+        );
+    }
+
+    /// A `foreign` checkout has a toolchain no `nix develop` enters, so there is nothing to match
+    /// and the run did nothing wrong. Reporting it as skew would spend attention on the one case
+    /// #195's own text tells the producer to expect.
+    #[test]
+    fn a_foreign_checkout_is_recorded_not_judged() {
+        let out = "mode: foreign\nflake: present\nerror: this checkout's Solidity checks run on \
+                   foundry-rs/foundry-toolchain@v1, which is NOT a nix shell\n";
+        let calls = [
+            asked("/w/foreign", out),
+            call("nix develop github:rainlanguage/rainix#sol-shell -c forge fmt --root /w/foreign"),
+        ];
+        assert_eq!(
+            findings(&calls),
+            vec![SolAudit::Unmatchable {
+                dir: "/w/foreign".into(),
+                mode: "foreign".into(),
+            }]
+        );
+        let (code, _) = sol_audit_lines(&sol_audit(&calls));
+        assert_eq!(code, 0, "an unmatchable checkout is not a failing audit");
+    }
+
+    /// `forge soldeer install` fetches the versions the lock names and produces the same tree out
+    /// of any forge, so which shell ran it says nothing. 31 of the retained traces' mismatched
+    /// invocations are this command; counting them would inflate the finding with non-findings.
+    #[test]
+    fn a_dependency_fetch_is_not_a_check() {
+        assert!(findings(&[call(
+            "cd /w/clone && nix develop github:rainlanguage/rainix#sol-shell -c forge soldeer \
+             install"
+        )])
+        .is_empty());
+    }
+
+    /// The check is inside the quotes. Reading only the first word after `-c` sees `bash`.
+    #[test]
+    fn a_check_wrapped_in_bash_c_is_still_a_check() {
+        // A wrapped command with NO shell operator in it. This is what the unwrapping is FOR:
+        // splitting on `&&`/`|` already reaches inside the quotes of a chained one, so a test that
+        // only uses a chained command passes with the unwrapping deleted.
+        assert!(runs_sol_check("bash -c 'forge fmt --check'"));
+        assert!(runs_sol_check("sh -c \"forge test\""));
+        assert!(runs_sol_check(
+            "bash -c 'cd /w/clone && forge test 2>&1 | tail -3'"
+        ));
+        assert!(runs_sol_check(
+            "env CI=true FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge fmt --check"
+        ));
+        assert!(!runs_sol_check(
+            "bash -c 'cd /w/clone && forge soldeer install'"
+        ));
+        assert!(!runs_sol_check("npm ci"));
+    }
+
+    /// A line that runs two shells is two findings, and the `cd` before the first governs both.
+    #[test]
+    fn each_invocation_on_one_line_is_classified_separately() {
+        let out = findings(&[
+            asked("/w/clone", PINNED),
+            call(
+                "cd /w/clone && nix develop github:rainlanguage/rainix/deadbeef#sol-shell -c \
+                 forge fmt && nix develop github:rainlanguage/rainix#sol-shell -c forge fmt \
+                 --check",
+            ),
+        ]);
+        assert_eq!(
+            out,
+            vec![
+                SolAudit::Matched,
+                SolAudit::Skew {
+                    dir: "/w/clone".into(),
+                    used: "github:rainlanguage/rainix#sol-shell".into(),
+                    named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+                }
+            ]
+        );
+    }
+
+    /// `--root` is what forge acts on, so it wins over the directory the line cd'd to.
+    #[test]
+    fn root_names_the_checkout_over_the_working_directory() {
+        assert_eq!(
+            sol_verify_target(
+                "cd /w/elsewhere && ",
+                "nix develop github:x#sol-shell -c forge test --root /w/clone"
+            ),
+            Some("/w/clone".to_string())
+        );
+    }
+
+    /// A repo whose CI runs its own flake, entered by cd-ing into the checkout. The answer's
+    /// canonical path and the question's path name the same checkout.
+    #[test]
+    fn the_repo_own_flake_entered_by_cd_matches_its_repo_flake_answer() {
+        let out = "mode: repo-flake\nflake: present\nverify: nix develop /w/clone -c\n";
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", out),
+                call("cd /w/clone && nix develop -c forge test"),
+            ]),
+            vec![SolAudit::Matched]
+        );
+    }
+
+    /// `sol-toolchain` CANONICALISES the checkout before printing it, so a question asked with a
+    /// path that resolves through a symlink gets an answer that does not spell it the same way.
+    /// Both name the same directory and therefore the same flake, and reporting that as skew would
+    /// be the audit's own normalisation showing up as a fault in the run.
+    #[test]
+    fn a_repo_flake_answer_matches_the_checkout_however_the_question_spelled_it() {
+        let out = "mode: repo-flake\nflake: present\nverify: nix develop /canonical/clone -c\n";
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", out),
+                call("cd /w/clone && nix develop -c forge test"),
+            ]),
+            vec![SolAudit::Matched]
+        );
+        // The equivalence is for a PATH answer only. A checkout that enters its own flake when its
+        // CI runs a pinned rainix is the mirrored mistake #195's text names, and must still report.
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", PINNED),
+                call("cd /w/clone && nix develop -c forge test"),
+            ]),
+            vec![SolAudit::Skew {
+                dir: "/w/clone".into(),
+                used: "/w/clone".into(),
+                named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+            }]
+        );
+    }
+
+    /// The audit's own blind spots, reported as such. A `nix develop -c` whose working directory
+    /// the line never names could be any flake on the box; an invocation that names no checkout
+    /// could be about any of them.
+    #[test]
+    fn the_audits_blind_spots_are_named_and_do_not_fail_the_run() {
+        let calls = [
+            call("nix develop -c forge test --root /w/clone"),
+            call("nix develop github:rainlanguage/rainix#sol-shell -c forge --version"),
+        ];
+        assert_eq!(
+            findings(&calls),
+            vec![
+                SolAudit::UnknownShell {
+                    dir: "/w/clone".into()
+                },
+                SolAudit::Untargeted,
+            ]
+        );
+        let (code, lines) = sol_audit_lines(&sol_audit(&calls));
+        assert_eq!(
+            code, 0,
+            "a run must not fail on what the audit cannot see: fail-closed on the checker's own \
+             ignorance is worse than the skew it hunts"
+        );
+        assert!(lines[0].contains("1 named no checkout"), "{lines:?}");
+        assert!(lines[0].contains("1 named no shell"), "{lines:?}");
+    }
+
+    /// Skew and unasked are what the exit code is for, and it is ONE code for both: a rule obeyed
+    /// by not asking is not obeyed.
+    #[test]
+    fn skew_and_unasked_both_fail_the_audit() {
+        for calls in [
+            vec![
+                asked("/w/clone", PINNED),
+                call("nix develop github:rainlanguage/rainix#sol-shell -c forge test --root /w/clone"),
+            ],
+            vec![call(
+                "nix develop github:rainlanguage/rainix#sol-shell -c forge test --root /w/clone",
+            )],
+        ] {
+            let (code, lines) = sol_audit_lines(&sol_audit(&calls));
+            assert_eq!(code, SOL_AUDIT_SKEW, "{lines:?}");
+            assert!(lines.iter().any(|l| l.contains("  cmd: ")), "{lines:?}");
+        }
+    }
+
+    /// The subcommand's own name must not be read as a question about a trace file. It is invoked
+    /// with a path argument exactly where `sol-toolchain` takes a checkout.
+    #[test]
+    fn the_audits_own_invocation_is_not_a_toolchain_question() {
+        assert_eq!(
+            sol_toolchain_question("pr-review-report sol-toolchain-audit /runs/x.jsonl"),
+            None
+        );
+        assert_eq!(
+            sol_toolchain_question("pr-review-report sol-toolchain /w/clone"),
+            Some("/w/clone".to_string())
+        );
+    }
+
+    #[test]
+    fn an_answer_with_no_verify_line_carries_its_mode() {
+        assert_eq!(
+            sol_toolchain_answer("mode: conflict\nerror: two toolchains\n"),
+            Err("conflict".to_string())
+        );
+        assert_eq!(
+            sol_toolchain_answer("mode: repo-flake\nverify: nix develop /w/c -c\n"),
+            Ok("/w/c".to_string())
+        );
+        // Nothing recorded at all is not an answer either, and must not read as one.
+        assert_eq!(sol_toolchain_answer(""), Err("unknown".to_string()));
+    }
+
+    /// `--command` and `-c` are the same flag, and the EARLIER one is the wrapper's.
+    #[test]
+    fn the_outer_command_flag_wins_over_a_wrapped_one() {
+        assert_eq!(
+            nix_develop_inner("nix develop --command bash -c 'forge fmt'").trim(),
+            "bash -c 'forge fmt'"
+        );
+        assert_eq!(nix_develop_flake("nix develop -c forge test"), None);
+        assert_eq!(
+            nix_develop_flake("nix develop '/w/clone' -c forge test"),
+            Some("/w/clone".to_string())
+        );
+    }
+
+    /// A relative `cd` resolves against a working directory the trace does not record.
+    #[test]
+    fn only_an_absolute_working_directory_names_a_checkout() {
+        assert_eq!(shell_cwd("cd sub && nix develop -c forge test"), None);
+        assert_eq!(
+            shell_cwd("cd /a && cd /b && nix develop -c forge test"),
+            Some("/b".to_string()),
+            "the last cd is the one in force"
+        );
+        assert_eq!(
+            shell_cwd("env -C /w/clone nix develop -c forge test"),
+            Some("/w/clone".to_string())
+        );
+    }
+
+    /// The trace pairing: results arrive after the calls, and the ORDER the audit reads is the
+    /// order the commands were issued.
+    #[test]
+    fn a_trace_yields_its_bash_calls_in_issue_order_with_their_output() {
+        let trace = "\
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\",\"input\":{\"command\":\"pr-review-report sol-toolchain /w/clone\"}}]}}
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"Bash\",\"input\":{\"command\":\"nix develop github:rainlanguage/rainix#sol-shell -c forge test --root /w/clone\"}}]}}
+not json at all
+{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":\"mode: rainix-pin\\nverify: nix develop github:rainlanguage/rainix/deadbeef#sol-shell -c\\n\"}]}}
+";
+        let calls = sol_audit_calls(trace);
+        assert_eq!(calls.len(), 2, "a corrupt line does not stop the read");
+        assert!(calls[0].0.contains("sol-toolchain /w/clone"));
+        assert!(calls[0].1.contains("verify:"), "the ANSWER is paired on");
+        assert_eq!(calls[1].1, "", "a call with no recorded result reads empty");
+        assert_eq!(
+            findings(&calls),
+            vec![SolAudit::Skew {
+                dir: "/w/clone".into(),
+                used: "github:rainlanguage/rainix#sol-shell".into(),
+                named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+            }],
+            "the result that arrived LATER still answers the call that came first"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -5177,7 +9293,8 @@ fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
     0
 }
 
-/// One `{ts, counts}` rollup line for human-queue-history.jsonl, from a human-queue.json snapshot.
+/// One `{ts, counts[, ages]}` rollup line for human-queue-history.jsonl, from a human-queue.json
+/// snapshot.
 ///
 /// Replaces `jq -c --arg ts "$ts" '{ts: $ts, counts: .counts}'` in refresh-human-queue.sh and the
 /// per-commit `select(.counts != null) | …` in backfill-human-queue-history.sh — one implementation
@@ -5186,13 +9303,23 @@ fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
 ///
 /// Returns None when the snapshot has no `counts` (the backfill's `select`): early commits of
 /// human-queue.json predate the key, and those commits must be skipped, not emitted as null.
+///
+/// `ages` (rain-org-health#140 / #165) rides along exactly when the snapshot carries it — a
+/// snapshot without one (every commit predating the key, and any refresh whose backlog had no age
+/// to report) emits a line WITHOUT the key, never `"ages": null`. The dashboard's degradation
+/// contract is a missing field, and a null would be a third shape both sides would have to handle.
 fn queue_history_line(snapshot: &str, ts: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(snapshot).ok()?;
     let counts = doc.get("counts")?;
     if counts.is_null() {
         return None;
     }
-    let line = serde_json::json!({ "ts": ts, "counts": counts });
+    let mut line = serde_json::json!({ "ts": ts, "counts": counts });
+    if let Some(ages) = doc.get("ages").filter(|a| !a.is_null()) {
+        line.as_object_mut()
+            .expect("the rollup line is an object")
+            .insert("ages".into(), ages.clone());
+    }
     Some(serde_json::to_string(&line).unwrap())
 }
 
@@ -5227,7 +9354,8 @@ fn queue_history_line_mode(path: Option<&str>, ts: &str) -> i32 {
     0
 }
 
-/// Render one trace event as the human-readable log line the runners tee into `$LOG`.
+/// Renders trace events as the human-readable log lines the runners tee into `$LOG`, each line
+/// attributed to the agent that produced it.
 ///
 /// This is the jq distiller from campaign-run.sh/review-run.sh, moved into the binary so both
 /// runners share one implementation and so the truncation widths are covered by tests rather than
@@ -5236,60 +9364,156 @@ fn queue_history_line_mode(path: Option<&str>, ts: &str) -> i32 {
 /// Widths and glyphs are preserved exactly: tool calls and assistant text clip to 200 characters,
 /// result lines to 800. Clipping is by CHARACTER, matching jq's `.[0:200]` (which slices
 /// codepoints), so a multi-byte glyph is never cut in half.
-fn distill_event(ev: &Value) -> Vec<String> {
-    fn flatten(s: &str, limit: usize) -> String {
-        s.replace('\n', " ").chars().take(limit).collect()
+///
+/// ATTRIBUTION IS WHY THIS HOLDS STATE. A trace is ONE stream carrying every agent at once, so a
+/// dispatching run's log is not a narrative — run `20260802T130003Z` put 2,676 tool lines in
+/// `campaign.log` from 19 different owners, 88% of consecutive pairs from a different owner than
+/// the line above and up to 14 owners inside a single 20-line window. Rendered without their
+/// owner those lines are unreadable in the specific way that matters: fourteen `git -C <clone>`
+/// calls in view and no way to tell which agent's work any one of them is. `parent_tool_use_id` is
+/// on every event and says exactly that, so the whole fix is to stop dropping it. Each dispatched
+/// agent gets a short tag (`a1`, `a2`, … in dispatch order); the `Agent` call that CREATES one
+/// carries the tag it is creating, which is the only place a reader can learn what `a7` was sent
+/// to do. A run that dispatches nothing renders byte-identically to a stateless distiller — the
+/// main loop is never tagged.
+#[derive(Default)]
+struct TraceDistiller {
+    /// Dispatching `Agent`/`Task` tool_use id → the tag its sub-agent's lines carry.
+    tags: std::collections::HashMap<String, String>,
+}
+
+impl TraceDistiller {
+    /// The tag for a dispatch id, minting one on first sight. Ids arrive dispatch-first (a
+    /// sub-agent cannot emit before the call that spawned it), so the numbering IS dispatch order.
+    fn tag_for(&mut self, id: &str) -> String {
+        if let Some(t) = self.tags.get(id) {
+            return t.clone();
+        }
+        let t = format!("a{}", self.tags.len() + 1);
+        self.tags.insert(id.to_string(), t.clone());
+        t
     }
-    let mut out = Vec::new();
-    match ev.get("type").and_then(|t| t.as_str()) {
-        Some("assistant") => {
-            let content = ev
-                .get("message")
-                .and_then(|m| m.get("content"))
-                .and_then(|c| c.as_array());
-            for item in content.into_iter().flatten() {
-                match item.get("type").and_then(|t| t.as_str()) {
-                    Some("tool_use") => {
-                        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                        // Same precedence as the jq: the command, else the description, else the
-                        // whole input rendered as JSON.
-                        let input = item.get("input");
-                        let detail = input
-                            .and_then(|i| i.get("command"))
-                            .and_then(|c| c.as_str())
-                            .map(|s| s.to_string())
-                            .or_else(|| {
-                                input
-                                    .and_then(|i| i.get("description"))
-                                    .and_then(|d| d.as_str())
-                                    .map(|s| s.to_string())
+
+    /// The `[tag] ` prefix for the agent that PRODUCED this event, empty for the main loop.
+    fn owner_prefix(&mut self, ev: &Value) -> String {
+        match ev
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .filter(|p| !p.is_empty())
+        {
+            Some(id) => format!("[{}] ", self.tag_for(id)),
+            None => String::new(),
+        }
+    }
+
+    fn distill(&mut self, ev: &Value) -> Vec<String> {
+        fn flatten(s: &str, limit: usize) -> String {
+            s.replace('\n', " ").chars().take(limit).collect()
+        }
+        let mut out = Vec::new();
+        match ev.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                // Renderable items are selected BEFORE a tag is minted. `parent_tool_use_id` is on
+                // more than sub-agent events — a `tool_progress` for a BACKGROUND BASH TASK carries
+                // one too and renders nothing, and minting there both burns a number no line ever
+                // wears and pushes the agents off dispatch order (it is what `a1` and `a17` were in
+                // run 20260802T130003Z, whose 18 dispatches then ran a2..a20).
+                let content: Vec<&Value> = ev
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter(|it| {
+                                matches!(
+                                    it.get("type").and_then(|t| t.as_str()),
+                                    Some("tool_use") | Some("text")
+                                )
                             })
-                            .unwrap_or_else(|| match input {
-                                Some(i) => serde_json::to_string(i).unwrap_or_default(),
-                                None => String::new(),
-                            });
-                        out.push(format!("  ▸ {}  {}", name, flatten(&detail, 200)));
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if content.is_empty() {
+                    return out;
+                }
+                let who = self.owner_prefix(ev);
+                for item in content {
+                    match item.get("type").and_then(|t| t.as_str()) {
+                        Some("tool_use") => {
+                            let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                            // Same precedence as the jq: the command, else the description, else
+                            // the whole input rendered as JSON.
+                            let input = item.get("input");
+                            let detail = input
+                                .and_then(|i| i.get("command"))
+                                .and_then(|c| c.as_str())
+                                .map(|s| s.to_string())
+                                .or_else(|| {
+                                    input
+                                        .and_then(|i| i.get("description"))
+                                        .and_then(|d| d.as_str())
+                                        .map(|s| s.to_string())
+                                })
+                                .unwrap_or_else(|| match input {
+                                    Some(i) => serde_json::to_string(i).unwrap_or_default(),
+                                    None => String::new(),
+                                });
+                            let mut detail = flatten(&detail, 200);
+                            // A dispatch NAMES the agent it creates. Minting here is what binds
+                            // `a7` to the prompt it was given; the clip is applied before the tag
+                            // so the widths above stay the widths of the DETAIL. The id must be
+                            // one an event can be attributed BY: `""` is the main loop on the
+                            // owner side, so a tag minted from it is one no line can ever wear,
+                            // and spending a number on it shifts every later agent off dispatch
+                            // order exactly as a `tool_progress` mint would.
+                            if matches!(name, "Agent" | "Task") {
+                                if let Some(id) = item
+                                    .get("id")
+                                    .and_then(|i| i.as_str())
+                                    .filter(|i| !i.is_empty())
+                                {
+                                    detail = format!("[{}] {}", self.tag_for(id), detail);
+                                }
+                            }
+                            out.push(format!("  {}▸ {}  {}", who, name, detail));
+                        }
+                        Some("text") => {
+                            let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                            out.push(format!("  {}· {}", who, flatten(text, 200)));
+                        }
+                        _ => {}
                     }
-                    Some("text") => {
-                        let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                        out.push(format!("  · {}", flatten(text, 200)));
-                    }
-                    _ => {}
                 }
             }
+            Some("result") => {
+                let subtype = ev
+                    .get("subtype")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("done")
+                    .to_ascii_uppercase();
+                let result = ev.get("result").and_then(|r| r.as_str()).unwrap_or("");
+                // A dispatched task reports back as a result event of its own, with no
+                // `parent_tool_use_id` to attribute it by — only `origin.kind`. Untagged, the run's
+                // OWN answer is indistinguishable from the eleven task reports beside it, and the
+                // run summary is the one line a human reads.
+                let task = matches!(
+                    ev.get("origin")
+                        .and_then(|o| o.get("kind"))
+                        .and_then(|k| k.as_str()),
+                    Some("task-notification")
+                );
+                let who = if task {
+                    "[task] ".to_string()
+                } else {
+                    self.owner_prefix(ev)
+                };
+                out.push(format!("  {}⟹ {}: {}", who, subtype, flatten(result, 800)));
+            }
+            _ => {}
         }
-        Some("result") => {
-            let subtype = ev
-                .get("subtype")
-                .and_then(|s| s.as_str())
-                .unwrap_or("done")
-                .to_ascii_uppercase();
-            let result = ev.get("result").and_then(|r| r.as_str()).unwrap_or("");
-            out.push(format!("  ⟹ {}: {}", subtype, flatten(result, 800)));
-        }
-        _ => {}
+        out
     }
-    out
 }
 
 /// `distill-trace`: stream stream-json on stdin, write the human log lines on stdout.
@@ -5298,10 +9522,14 @@ fn distill_event(ev: &Value) -> Vec<String> {
 /// run is still going, and a human watching `tail -f` must see progress rather than a block at exit.
 /// Unparseable lines are skipped rather than fatal — the trace is written by another process and a
 /// torn final line must not lose the whole distillation.
+///
+/// ONE distiller for the whole stream: the tag map is what makes a fan-out run's interleaved lines
+/// readable, and it only holds while the same instance sees every event.
 fn distill_trace_mode() -> i32 {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
+    let mut distiller = TraceDistiller::default();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -5310,7 +9538,7 @@ fn distill_trace_mode() -> i32 {
         let Ok(ev) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        for out in distill_event(&ev) {
+        for out in distiller.distill(&ev) {
             if writeln!(stdout, "{out}").is_err() {
                 return 0; // downstream closed (the runner's `|| cat >/dev/null` path)
             }
@@ -6649,9 +10877,9 @@ const CHANGED_FILE_READER_FIELD_LISTS: [(&str, &str); 3] = [
 #[cfg(test)]
 mod changed_file_tests {
     use super::{
-        changed_files_from_rest, changed_files_from_view, inject_changed_files, is_ui_path,
-        refetch_total, touches_ui, ChangedFile, ChangedFileSet, UiTouch,
-        CHANGED_FILE_READER_FIELD_LISTS,
+        changed_files_from_rest, changed_files_from_view, embeds_screenshot, inject_changed_files,
+        is_ui_path, refetch_total, screenshot_settled, touches_ui, ChangedFile, ChangedFileSet,
+        UiTouch, CHANGED_FILE_READER_FIELD_LISTS,
     };
     use serde_json::{json, Value};
 
@@ -6932,21 +11160,106 @@ mod changed_file_tests {
         assert_eq!(touches_ui(&ChangedFileSet::Complete(vec![])), UiTouch::No);
     }
 
-    /// The path convention itself, unchanged by #147 and pinned so the tri-state refactor cannot
-    /// have quietly widened or narrowed it.
+    /// The path convention itself, pinned so neither the tri-state read nor a later edit can
+    /// quietly widen or narrow it.
     #[test]
-    fn the_ui_path_convention_is_webapp_ui_components_and_site_html() {
+    fn the_ui_path_convention_is_the_frontend_packages_the_site_tree_and_the_render_extensions() {
         for yes in [
             "packages/webapp/src/Foo.svelte",
             "apps/packages/webapp/x.ts",
             "packages/ui-components/src/Bar.svelte",
+            "packages/ui-components/src/lib/services/historicalOrderCharts.ts",
             "site/index.html",
+            // The dashboard's DATA is what its panels draw, so a change to it changes the render.
+            "site/health.json",
+            "site/style.css",
+            // The three extensions, wherever a repo keeps them. `cyclo.site` keeps its components
+            // here, which is where both of #140's PRs lived.
+            "src/lib/components/Input.svelte",
+            "src/lib/components/RewardsInfo.svelte",
+            "docs/site/index.html",
+            "app/assets/theme.css",
         ] {
             assert!(is_ui_path(yes), "{yes} must be a UI path");
         }
-        for no in ["src/lib.rs", "site/style.css", "docs/site/index.html"] {
+        // Nothing that reaches no rendered surface. The three are EXTENSIONS and `site/` is a
+        // PREFIX, so a directory merely named `html`, a crate merely named `site`, a SvelteKit
+        // build directory and a sourcemap are all outside — each of which a substring test for the
+        // same strings would pull in.
+        for no in [
+            "src/lib.rs",
+            "src/html/parser.rs",
+            "crates/site/mod.rs",
+            "prelude.site",
+            "src/.svelte-kit/generated/root.js",
+            "build/app.css.map",
+            "tmp/index.html.bak",
+            "README.md",
+        ] {
             assert!(!is_ui_path(no), "{no} must not be a UI path");
         }
+    }
+
+    /// #142: the shot filename has no single shape (`shots/<pr>.png` for raindex,
+    /// `shots/<repo>-<pr>.png` elsewhere, per-view suffixes, and shots naming no PR at all), so the
+    /// BRANCH is what identifies one — the same thing the vetter's SCREENSHOT GATE accepts.
+    #[test]
+    fn a_shot_is_recognised_by_its_branch_url_and_not_by_a_filename_shape() {
+        let url = |name: &str| {
+            format!(
+                "🤖 ai:producer\n\n![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/{name})"
+            )
+        };
+        for name in [
+            "shots/2722.png",                     // raindex, the bare-number spelling
+            "shots/rain-org-health-155.png",      // every other repo, repo-qualified
+            "shots/cyclo.site-403-after.png",     // one PR, several views
+            "shots/roh-remove-overview.png",      // no PR number in the name at all
+            "rain-org-health/pr-67/pipeline.png", // not under shots/ at all
+            "shots/UPPER.PNG",
+        ] {
+            assert!(
+                embeds_screenshot(&url(name)),
+                "{name} is a shot on the branch"
+            );
+        }
+        // A MENTION of the branch is not an image. Step 5 tells the producer to "push the PNG to
+        // the raindex 'pr-screenshots' orphan branch", so this sentence is one the producer writes.
+        for prose in [
+            "🤖 ai:producer pushed nothing to pr-screenshots/ yet",
+            "see the pr-screenshots/shots/ directory",
+            "https://github.com/rainlanguage/raindex/tree/pr-screenshots/shots",
+            "![](https://example.com/shots/155.png)",
+        ] {
+            assert!(!embeds_screenshot(prose), "{prose} embeds no screenshot");
+        }
+        // Markdown and query strings do not hide the extension.
+        assert!(embeds_screenshot(
+            "[link](https://raw.githubusercontent.com/o/r/pr-screenshots/shots/x.png)"
+        ));
+        assert!(embeds_screenshot(
+            "https://raw.githubusercontent.com/o/r/pr-screenshots/shots/x.png?raw=1"
+        ));
+    }
+
+    /// Both halves of step 5's rule settle the question, and nothing else does.
+    #[test]
+    fn the_screenshot_question_is_settled_by_a_shot_or_by_the_exact_waiver_marker() {
+        let shot = "🤖 ai:producer ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/cyclo.site-432.png)".to_string();
+        let waiver = "🤖 ai:producer screenshot pending (manual): mounted RewardsCard.svelte, it \
+                      throws without a query context"
+            .to_string();
+        assert!(screenshot_settled(std::slice::from_ref(&shot)));
+        assert!(screenshot_settled(std::slice::from_ref(&waiver)));
+        assert!(screenshot_settled(&["unrelated note".to_string(), shot]));
+        assert!(!screenshot_settled(&[]));
+        // A differently-worded sentence waives nothing — step 5 says the marker is EXACT.
+        assert!(!screenshot_settled(&[
+            "🤖 ai:producer no screenshot: the change is pixel-identical".to_string()
+        ]));
+        assert!(!screenshot_settled(&[
+            "🤖 ai:producer screenshot to follow".to_string()
+        ]));
     }
 
     /// A field list that fetches `files` without `changedFiles` produces a page nothing says is a
@@ -8487,16 +12800,40 @@ fn has_human_ruling(labels: &[String]) -> bool {
 
 /// A human ruling is sacred (refuse); a CLOSED issue is moot; otherwise flag it, adding the label /
 /// posting the note only when not already present.
-fn close_candidate_plan(state: &str, labels: &[String], already_noted: bool) -> CloseFlagPlan {
+///
+/// **The comment dedup is scoped to the flag EPISODE, not to the issue's lifetime — and that is
+/// #179's State B.** `already_noted` asks only whether a `Close-candidate:` line has ever been
+/// posted here, so once the vetter REJECTED a flag (which strips the label but leaves the comment on
+/// the record), a later re-flag added the label back and skipped the comment as a duplicate. The
+/// flag's timestamp never moved, the vetter's existing `reject` still pinned it, and the issue
+/// landed in `vetter-rejected-but-still-flagged` — where the vetter skips it every run and
+/// `is_producer_backlog` keeps it out of the producer's queue. `rain.erc4626.words#93` is that
+/// exact sequence: rejected 2026-07-28T06:18, label re-applied 2026-07-29T17:18 with no comment.
+///
+/// So a flag the vetter has already JUDGED cannot be re-raised by re-applying the label alone: it
+/// takes a fresh claim, at a fresh timestamp, which un-vets the flag and gets it judged again. This
+/// restores the invariant the label and the comment were always meant to hold — they are written by
+/// the same call, so the label never asserts a claim that no comment states.
+///
+/// `flag_judged` is only consulted while ADDING the label. An issue that still CARRIES the label is
+/// a no-op re-run (and cannot reach here anyway — `is_producer_backlog` excludes it), so an upheld
+/// flag awaiting a human is never re-noted out from under them.
+fn close_candidate_plan(
+    state: &str,
+    labels: &[String],
+    already_noted: bool,
+    flag_judged: bool,
+) -> CloseFlagPlan {
     if state == "CLOSED" {
         return CloseFlagPlan::AlreadyClosed;
     }
     if has_human_ruling(labels) {
         return CloseFlagPlan::RefuseHuman;
     }
+    let has_label = labels.iter().any(|l| l == "ai:close-candidate");
     CloseFlagPlan::Flag {
-        add_label: !labels.iter().any(|l| l == "ai:close-candidate"),
-        post_comment: !already_noted,
+        add_label: !has_label,
+        post_comment: !already_noted || (!has_label && flag_judged),
     }
 }
 
@@ -8547,13 +12884,25 @@ fn cc_vetted_at_flag(issue: &Value, flag_at: &str) -> bool {
 
 /// The sha-bound verdict comment's issue-side twin: pins the flag being judged, so the record says
 /// WHICH claim was reviewed rather than merely that a review happened.
-fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str) -> String {
+///
+/// `citation` is the machine's own read of the cited diff, appended the way [`lens_stamp`] is
+/// appended to a PR verdict and for the same reason: the vetter writes the NOTE, the tool writes
+/// what was READ, and the vetter cannot author or omit the second. #192 is the case this closes —
+/// a verdict that reproduced the producer's specifics in the producer's own words, which on the
+/// record is indistinguishable from one that opened the diff. It still is indistinguishable as
+/// PROSE; what changes is that the facts now sit beside it, so a restatement that contradicts them
+/// is visible without anyone re-deriving anything.
+fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str, citation: Option<&str>) -> String {
     let tail = if note.trim().is_empty() {
         String::new()
     } else {
         format!(" — {}", note.trim())
     };
-    format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict}{tail}")
+    let stamp = match citation {
+        Some(c) => format!("\n{c}"),
+        None => String::new(),
+    };
+    format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict}{tail}{stamp}")
 }
 
 /// The close-candidate recording decision, computed PURELY from the fetched issue JSON — the same
@@ -8766,6 +13115,460 @@ fn recency_exit_code(slug: &str, issue: &str, what: &str, landed: &str, filed: &
     }
 }
 
+/// Field names the PIPELINE ITSELF puts in a producer's mouth. `campaign-prompt.txt` step 7a tells
+/// the producer to weigh its evidence against the issue's `createdAt`, so reasons say
+/// "vs issue createdAt 2024-12-10" — an identifier by shape, prose by role, and never a thing a
+/// repository's diff contains. Excluded from [`reason_symbols`] so the evidence line does not open
+/// by reporting the pipeline's own vocabulary as missing from the code.
+const CITATION_FIELD_WORDS: [&str; 6] = [
+    "createdAt",
+    "mergedAt",
+    "closedAt",
+    "updatedAt",
+    "headRefOid",
+    "closingIssuesReferences",
+];
+
+/// How many reason-named paths / absent symbols one evidence line prints before it summarises. A
+/// close-candidate reason can name a dozen of each, and an evidence line longer than the claim it
+/// annotates is one nobody reads.
+const CITATION_MAX_LISTED: usize = 4;
+
+/// PURE: the repository paths a close-candidate reason names.
+///
+/// A path is a whitespace token with a `/` whose last segment carries an extension. The trailing
+/// `:27` / `:89-92,141-146` line anchors producers write are stripped (they address a line, not a
+/// file), URLs are skipped (a link cites a page, not a tree path), and a token carrying `*` is a
+/// SHELL GLOB out of a quoted grep command — `*.svelte/*.ts/*.html/*.js` is one token by this
+/// tokenizer and names no file at all.
+fn reason_paths(reason: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in reason.split_whitespace() {
+        if tok.contains("://") || tok.contains('*') {
+            continue;
+        }
+        // `file.ts:34-40` — a line anchor only when what follows the colon is a NUMBER. A
+        // `Closes:` or a bare `note: x` keeps its whole token and simply fails the tests below.
+        let head = match tok.split_once(':') {
+            Some((h, t)) if t.starts_with(|c: char| c.is_ascii_digit()) => h,
+            _ => tok,
+        };
+        let head = head
+            .trim_start_matches(['(', '[', '<', '"', '\'', '`'])
+            .trim_end_matches([',', ';', ':', ')', ']', '>', '"', '\'', '`', '.']);
+        if !head.contains('/') {
+            continue;
+        }
+        let base = head.rsplit('/').next().unwrap_or_default();
+        // A dotfile is not an extension, and a segment with no dot is a DIRECTORY — `script/` and
+        // `origin/main` are both real tokens in live reasons and neither addresses a file.
+        if base.starts_with('.') || !base.contains('.') {
+            continue;
+        }
+        let head = head.to_string();
+        if !out.contains(&head) {
+            out.push(head);
+        }
+    }
+    out
+}
+
+/// PURE: is this token shaped like a code identifier rather than a word of English?
+///
+/// An underscore, or a lower→upper transition. That admits `testRoundTripEmpty`,
+/// `STOX_PROD_AUTHORISER_V4_CLONE` and the mixed-case body of a checksummed address, and rejects
+/// prose, dates (`2026-07-20` tokenizes to three runs), and short commit shas (`70a76a0` is all
+/// lower). Four characters is the floor because `file`, `line` and `main` are words.
+fn identifier_shaped(tok: &str) -> bool {
+    if tok.len() < 4 {
+        return false;
+    }
+    if tok.contains('_') {
+        return tok.chars().any(|c| c.is_ascii_alphabetic());
+    }
+    tok.chars()
+        .zip(tok.chars().skip(1))
+        .any(|(a, b)| a.is_ascii_lowercase() && b.is_ascii_uppercase())
+}
+
+/// PURE: the code symbols a close-candidate reason names, minus everything a diff cannot be asked
+/// about.
+///
+/// **A symbol that occurs inside a reason-named PATH is dropped**, and that exclusion is what makes
+/// the check mean anything. A file's own name is not in its contents, so `TableRowLink` from
+/// `app/_components/TableRowLink.tsx` would read as "absent from the diff" for every correct flag
+/// ever written — while the churn on that path is reported directly, and better, beside it. It is
+/// also what keeps the check honest in the other direction: on `rain.dia#22` the reason names
+/// `LibDia.t.sol`, and counting `LibDia` (which the cited import-rewrite does touch) as a hit was
+/// enough to make that flag's citation look supported.
+fn reason_symbols(reason: &str, paths: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in reason.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+        if !identifier_shaped(tok)
+            || CITATION_FIELD_WORDS.contains(&tok)
+            || paths.iter().any(|p| p.contains(tok))
+            || out.iter().any(|s| s == tok)
+        {
+            continue;
+        }
+        out.push(tok.to_string());
+    }
+    out.sort();
+    out
+}
+
+/// PURE: per-file churn plus the changed-line bodies of a unified diff.
+///
+/// Hunk COUNTS drive the walk for the reason [`diff_new_lines`] gives: an added line whose own
+/// content starts with `++` renders as `+++…`, and a parser that sniffs the marker reads it as a
+/// file header.
+///
+/// Files are keyed off the `diff --git` header rather than `+++`, because a DELETION writes
+/// `+++ /dev/null` and deletions are most of what this is asked about — four of the seven live
+/// `already-fixed-on-main` flags are fixed-by-removal.
+///
+/// Both sides land in `changed`: the evidence a fix leaves behind is an ADDED line only when the fix
+/// added something. `h-full` (rain.webapp#243), `script/BuildPointers.sol` (rain.dia#43) and the
+/// whole `tauri-app/` tree (raindex#1039/#1042/#960) appear on the removed side and nowhere else.
+struct DiffChurn {
+    /// `(path, added, removed)` in the order the diff presents them.
+    files: Vec<(String, usize, usize)>,
+    /// Every added and removed line body, joined — what a named symbol is looked for in.
+    changed: String,
+}
+
+fn diff_churn(diff: &str) -> DiffChurn {
+    let mut files: Vec<(String, usize, usize)> = Vec::new();
+    let mut changed = String::new();
+    let (mut old_left, mut new_left) = (0u64, 0u64);
+    for raw in diff.lines() {
+        if old_left > 0 || new_left > 0 {
+            // Inside a hunk: byte 0 is the marker, so slicing at 1 is always on a char boundary.
+            match raw.as_bytes().first().copied() {
+                Some(b'+') if new_left > 0 => {
+                    if let Some(f) = files.last_mut() {
+                        f.1 += 1;
+                    }
+                    changed.push_str(&raw[1..]);
+                    changed.push('\n');
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'-') if old_left > 0 => {
+                    if let Some(f) = files.last_mut() {
+                        f.2 += 1;
+                    }
+                    changed.push_str(&raw[1..]);
+                    changed.push('\n');
+                    old_left -= 1;
+                    continue;
+                }
+                // A context line, and its degenerate form: git writes " " for an empty context
+                // line, but tools that strip trailing whitespace leave a bare "".
+                Some(b' ') | None if old_left > 0 && new_left > 0 => {
+                    old_left -= 1;
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'\\') => continue, // "\ No newline at end of file"
+                _ => {
+                    // Counts exhausted or the diff is malformed: leave hunk state and re-read this
+                    // line as a header.
+                    old_left = 0;
+                    new_left = 0;
+                }
+            }
+        }
+        if let Some(rest) = raw.strip_prefix("diff --git ") {
+            if let Some(p) = diff_git_new_path(rest) {
+                files.push((p, 0, 0));
+            }
+            continue;
+        }
+        if let Some((_, old_count, new_count)) = hunk_header(raw) {
+            old_left = old_count;
+            new_left = new_count;
+        }
+    }
+    DiffChurn { files, changed }
+}
+
+/// What the CITED change's own diff contains, next to what the reason says it contains.
+///
+/// Every field is a FACT about the diff. None of them is a verdict, and #192's measurement is why:
+/// across the 21 close-candidate flags in the live and closed queues that cite a fetchable anchor,
+/// no threshold on any of these separates the sound citations from the one unsound one. See
+/// [`citation_stamp`].
+#[derive(Debug, PartialEq)]
+struct CitationEvidence {
+    /// How the anchor reads to a human — `PR #48`, `commit 70a76a0`.
+    anchor: String,
+    /// How many files the cited change touches at all.
+    files: usize,
+    /// Each path the reason names, with the cited change's `(added, removed)` on it — `None` when
+    /// the cited change does not touch that path.
+    paths: Vec<(String, Option<(usize, usize)>)>,
+    /// How many reason-named symbols the cited change's changed lines DO contain.
+    present: usize,
+    /// The reason-named symbols they do not.
+    absent: Vec<String>,
+}
+
+/// PURE: [`CitationEvidence`] for one reason against one cited diff.
+fn citation_evidence(anchor: &str, reason: &str, diff: &str) -> CitationEvidence {
+    let churn = diff_churn(diff);
+    let named = reason_paths(reason);
+    let symbols = reason_symbols(reason, &named);
+    let absent: Vec<String> = symbols
+        .iter()
+        .filter(|s| !churn.changed.contains(s.as_str()))
+        .cloned()
+        .collect();
+    CitationEvidence {
+        anchor: anchor.to_string(),
+        files: churn.files.len(),
+        paths: named
+            .into_iter()
+            .map(|p| {
+                let hit = churn
+                    .files
+                    .iter()
+                    .find(|(f, _, _)| *f == p)
+                    .map(|(_, a, r)| (*a, *r));
+                (p, hit)
+            })
+            .collect(),
+        present: symbols.len() - absent.len(),
+        absent,
+    }
+}
+
+/// PURE: render [`CitationEvidence`] as the one line that goes on the record.
+///
+/// **This is EVIDENCE, never a gate, and the line says so in its own text.** #192 proposed gating a
+/// flag on whether a reason-named symbol appears as an added line in the cited diff, calling it
+/// decisive. Measured over every close-candidate flag in the live and closed queues carrying a
+/// fetchable anchor, it is not: `already-fixed-on-main` reasons routinely name symbols the cited
+/// change never touched, because the reason argues about CURRENT MAIN as well as about the landing
+/// — `raindex#1060` names the guard the cited PR removed AND the renamed file and test that carry
+/// the behaviour today, and only the first pair is in that PR. Refusing on a miss would have blocked
+/// eleven sound flags to catch the one unsound one, which is precisely the rework the ruling on
+/// `rain.dia#22` forbids. So the tool computes the facts, writes them where a reader cannot miss
+/// them, and refuses nothing.
+///
+/// What it buys is that a restatement stops being indistinguishable from a check. On `rain.dia#22`
+/// this line reads `test/src/lib/dia/LibDiaStringV3Test.t.sol +2/-2` and
+/// `0 of 3 named symbols in its changed lines; absent: testRoundTrip, testRoundTrip31Bytes,
+/// testRoundTripEmpty` — sitting directly beneath a note asserting that PR landed two functions
+/// occupying about ten lines of it. Nobody has to judge that; they only have to read it.
+fn citation_stamp(ev: &CitationEvidence) -> String {
+    let mut s = format!(
+        "Citation evidence (machine-read from the cited diff; NOT a verdict) — {} changes {} file{}.",
+        ev.anchor,
+        ev.files,
+        if ev.files == 1 { "" } else { "s" }
+    );
+    if !ev.paths.is_empty() {
+        let shown: Vec<String> = ev
+            .paths
+            .iter()
+            .take(CITATION_MAX_LISTED)
+            .map(|(p, hit)| match hit {
+                Some((a, r)) => format!("{p} +{a}/-{r}"),
+                None => format!("{p} NOT TOUCHED BY IT"),
+            })
+            .collect();
+        s.push_str(&format!(" Paths this reason names: {}", shown.join("; ")));
+        if ev.paths.len() > CITATION_MAX_LISTED {
+            s.push_str(&format!(
+                " (+{} more)",
+                ev.paths.len() - CITATION_MAX_LISTED
+            ));
+        }
+        s.push('.');
+    }
+    let total = ev.present + ev.absent.len();
+    if total > 0 {
+        s.push_str(&format!(
+            " Symbols this reason names: {} of {total} in its changed lines",
+            ev.present
+        ));
+        if !ev.absent.is_empty() {
+            let shown: Vec<&str> = ev
+                .absent
+                .iter()
+                .take(CITATION_MAX_LISTED)
+                .map(String::as_str)
+                .collect();
+            s.push_str(&format!("; absent: {}", shown.join(", ")));
+            if ev.absent.len() > CITATION_MAX_LISTED {
+                s.push_str(&format!(
+                    " (+{} more)",
+                    ev.absent.len() - CITATION_MAX_LISTED
+                ));
+            }
+        }
+        s.push('.');
+    }
+    if ev.paths.is_empty() && total == 0 {
+        s.push_str(" This reason names no path or symbol its diff can be checked against.");
+    }
+    s
+}
+
+/// The cited change's own unified diff, and how the anchor reads. The impure half of the citation
+/// check: ONE fetch, off the anchor [`already_fixed_recency_gate`] already made the flag carry.
+///
+/// A commit is read through the diff media type rather than the JSON `files` array for the reason
+/// the PR side is read with `gh pr diff`: the array is capped (100 entries on a PR, 300 on a
+/// commit) and `raindex#2420` alone is 188 files. Every fact this check reports comes out of the
+/// diff TEXT, so no cap can silently shrink the answer.
+fn citation_diff(slug: &str, anchor: &FixAnchor) -> Option<(String, String)> {
+    match anchor {
+        FixAnchor::Pr(n) => {
+            gh_text(&["pr", "diff", n, "-R", slug]).map(|d| (format!("PR #{n}"), d))
+        }
+        FixAnchor::Commit(sha) => gh_text(&[
+            "api",
+            &format!("repos/{slug}/commits/{sha}"),
+            "-H",
+            "Accept: application/vnd.github.diff",
+        ])
+        .map(|d| (format!("commit {sha}"), d)),
+        FixAnchor::Missing | FixAnchor::NotApplicable => None,
+    }
+}
+
+/// What ONE citation read produced. Typed so the evidence line and the support gate are two PURE
+/// readings of the SAME fetch — the alternative is two `gh` round trips that can disagree.
+enum CitationRead {
+    /// The reason cites no anchor to read.
+    NotCited,
+    /// An anchor that would not fetch, carrying how it reads to a human.
+    Unreadable(String),
+    Read(CitationEvidence),
+}
+
+/// The citation read for one reason: ONE `gh` call, at the impure boundary.
+fn citation_read(slug: &str, reason: &str) -> CitationRead {
+    let anchor = already_fixed_anchor(reason);
+    match citation_diff(slug, &anchor) {
+        Some((label, diff)) => CitationRead::Read(citation_evidence(&label, reason, &diff)),
+        None => match anchor {
+            FixAnchor::Pr(n) => CitationRead::Unreadable(format!("PR #{n}")),
+            FixAnchor::Commit(sha) => CitationRead::Unreadable(format!("commit {sha}")),
+            FixAnchor::Missing | FixAnchor::NotApplicable => CitationRead::NotCited,
+        },
+    }
+}
+
+/// PURE: the evidence line for a read, or `None` when the reason cites no anchor.
+///
+/// An anchor that will not fetch is NOT `None`: silence is the failure mode this whole check exists
+/// to end, so the line still lands and says the diff could not be read.
+fn citation_line_of(read: &CitationRead) -> Option<String> {
+    match read {
+        CitationRead::NotCited => None,
+        CitationRead::Unreadable(anchor) => Some(citation_unreadable(anchor)),
+        CitationRead::Read(ev) => Some(citation_stamp(ev)),
+    }
+}
+
+/// PURE: the line for an anchor whose diff would not fetch.
+fn citation_unreadable(anchor: &str) -> String {
+    format!(
+        "Citation evidence (machine-read from the cited diff; NOT a verdict) — {anchor}: its diff \
+         could not be read, so NOTHING about this citation was checked."
+    )
+}
+
+/// PURE: is NOTHING the reason names present in the change it cites?
+///
+/// **This is the one thing about a citation that is decidable, and it is deliberately the weakest
+/// possible reading of "wrong".** Not "some path is untouched" and not "some symbol is missing" —
+/// each of those is ordinary in a sound reason, because an `already-fixed-on-main` claim argues
+/// about CURRENT MAIN as well as about the landing. `raindex#1060` names the guard its cited PR
+/// removed AND the renamed file that carries the behaviour today; the paths miss and the symbols
+/// hit, and it is a good flag. Only the CONJUNCTION is a finding: the reason named something, and
+/// not one of those things — no path, no symbol — occurs anywhere in the change it says did the
+/// work. Then the citation and the claim are about different code.
+///
+/// A reason that names nothing checkable returns `false`. There is no evidence either way, and
+/// inventing a refusal out of an empty check is how a guard starts costing more than it saves.
+fn citation_disconnected(ev: &CitationEvidence) -> bool {
+    let named = ev.paths.len() + ev.present + ev.absent.len();
+    named > 0 && ev.present == 0 && ev.paths.iter().all(|(_, churn)| churn.is_none())
+}
+
+/// The exit code `--flag-close-candidate` refuses a DISCONNECTED citation with. Distinct from the
+/// recency refusal (4) because it is a different finding with a different fix — 4 says the cited
+/// change is too OLD to be the fix, 5 says it is not ABOUT the thing claimed — and a caller that
+/// has to tell them apart by reading the message is one that will not.
+const CITATION_UNSUPPORTED_EXIT: i32 = 5;
+
+/// Enforce that an `already-fixed-on-main` reason cites a change its own claim touches.
+///
+/// **This closes an EVASION of a guard that already exists.** `already_fixed_recency_gate` refuses a
+/// bare `file:line` outright ([`FixAnchor::Missing`]) because "this code is on main today" is not
+/// "a change landed that fixed this". Appending the sha the tree was READ at converts that same
+/// unsupported claim into a `Commit` anchor that always post-dates the issue, so the date check
+/// passes vacuously and the refusal never fires. Measured on the close-candidate queues, that is
+/// the shape of every commit-anchored flag on record: `raindex#588`/`#574`/`#573`/`#570` all cite
+/// `bb83031`, which is "Merge pull request #2810 … fix/build-script-name" and touches
+/// `foundry.toml`, `script/Build.sol` and three siblings — not one of the Svelte components those
+/// four reasons are about. `raindex#928` cites `7ba0fa8` in the words "tauri-app/ existed **at**
+/// 7ba0fa8", naming the state BEFORE the deletion it credits.
+///
+/// An UNREADABLE diff does not refuse. The anchor already resolved to a date one gate ago, so a
+/// failure here is a transient `gh` read, and failing closed on it would turn a network blip into a
+/// producer cycle. The evidence line still says nothing was checked.
+fn citation_support_gate(slug: &str, issue: &str, read: &CitationRead) -> i32 {
+    let CitationRead::Read(ev) = read else {
+        return 0;
+    };
+    if !citation_disconnected(ev) {
+        return 0;
+    }
+    eprintln!("{}", citation_unsupported_refusal(slug, issue, ev));
+    CITATION_UNSUPPORTED_EXIT
+}
+
+/// PURE: the refusal message. Split out so every word of it is testable without a network, and
+/// because this is the whole user interface of the gate — a producer that cannot tell what to do
+/// next re-flags the same reason.
+fn citation_unsupported_refusal(slug: &str, issue: &str, ev: &CitationEvidence) -> String {
+    let named = if ev.paths.is_empty() {
+        format!("the {} symbol(s) it names", ev.present + ev.absent.len())
+    } else {
+        format!(
+            "the path(s) it names ({})",
+            ev.paths
+                .iter()
+                .take(CITATION_MAX_LISTED)
+                .map(|(p, _)| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "refusing to flag {slug}#{issue}: {} does not touch {named}, and its changed lines contain \
+         none of the symbols this reason names.\n\
+         {}\n\
+         A change that contains NOTHING the claim is about cannot be the change that resolved it. \
+         The usual cause is citing the sha you READ main at rather than the change that fixed it — \
+         \"…Foo.svelte:40 at abc1234\" dates a tree, and every recent main sha post-dates the \
+         issue, so the recency check passes without meaning anything.\n\
+         Find the change that actually landed the fix (`git log -S'<the line>' -- <file>`, or the \
+         merged PR) and cite THAT. If the fix genuinely landed under a path or name that has since \
+         been renamed, cite a path or symbol the change ITSELF contains — that is better \
+         provenance anyway. If no such change exists, the issue is probably still live, or the \
+         honest category is `invalid`/`duplicate`/`wont-fix`, which name no landing and are not \
+         checked here.",
+        ev.anchor,
+        citation_stamp(ev)
+    )
+}
+
 /// `--flag-close-candidate <owner/repo> <issue> "<reason>" [--dry-run]`: the SOLE sanctioned way the
 /// producer flags a closeable ISSUE — applies the `ai:close-candidate` label + a trusted
 /// `🤖 ai:producer` reason comment, replacing the old local close-candidates.jsonl. GitHub state is
@@ -8776,6 +13579,15 @@ fn recency_exit_code(slug: &str, issue: &str, what: &str, landed: &str, filed: &
 /// An `already-fixed-on-main` reason additionally must carry a commit sha or merged PR number whose
 /// date POST-DATES the issue (exit 4). "This code is on main today" is not the same claim as "this
 /// issue is fixed": evidence that predates the report cannot be the fix.
+///
+/// It must ALSO cite a change its own claim touches ([`citation_support_gate`], exit 5) — a change
+/// containing nothing the reason names cannot be the change that resolved it.
+///
+/// The flag it writes then CARRIES [`citation_line_of`] — what the cited change's own diff contains,
+/// beside what the reason says it contains. Written here rather than only at vet time because
+/// [`flag_grounds`] reads this comment back off the issue: a reason citing a merged PR sets
+/// `cites-a-landing`, which switches the `covered-by-open-pr` block OFF, so an unchecked citation
+/// does not merely mislead an audit trail — it suppresses a live gate on the human's queue.
 fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: bool) -> i32 {
     if reason.trim().is_empty() {
         eprintln!(
@@ -8801,6 +13613,18 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
     if gate != 0 {
         return gate;
     }
+    // The cited change is read ONCE and used twice — the support gate below, and the evidence line
+    // on the comment. Two reads could disagree about the same citation, and this one is a network
+    // fetch of a diff that is 828 KB for `raindex#2420`.
+    //
+    // Ordered with the recency gate rather than after the plan, because both answer the same
+    // question about the same string: can what this reason CITES be the fix it claims? Neither
+    // depends on the issue's label state.
+    let cited = citation_read(slug, reason);
+    let support = citation_support_gate(slug, issue, &cited);
+    if support != 0 {
+        return support;
+    }
     let state = j.get("state").and_then(|s| s.as_str()).unwrap_or("");
     let labels: Vec<String> = j
         .get("labels")
@@ -8824,7 +13648,18 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         })
         .unwrap_or(false);
 
-    let (add_label, post_comment) = match close_candidate_plan(state, &labels, already_noted) {
+    // Has the vetter already ruled on the flag `already_noted` is about? Read off the SAME issue
+    // JSON, so the dedup and the judgement it defers to cannot be about different fetches.
+    let flag_judged = last_close_candidate_flag(&j)
+        .map(|(at, _)| cc_vetted_at_flag(&j, &at))
+        .unwrap_or(false);
+
+    let (add_label, post_comment) = match close_candidate_plan(
+        state,
+        &labels,
+        already_noted,
+        flag_judged,
+    ) {
         CloseFlagPlan::AlreadyClosed => {
             println!("{slug}#{issue} already closed — nothing to flag");
             return 0;
@@ -8840,7 +13675,16 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
             post_comment,
         } => (add_label, post_comment),
     };
-    let comment = format!("🤖 ai:producer\nClose-candidate: {reason}");
+    // Its own line, BELOW the claim: `flag_reason` reads the `Close-candidate:` line and nothing
+    // else, so the evidence travels with the flag without becoming part of what the producer
+    // asserted or of what the vetter is asked to judge.
+    //
+    // Read off the SAME `cited` the support gate judged, so the line on the record and the decision
+    // that let it be written can never be about different fetches.
+    let comment = match citation_line_of(&cited) {
+        Some(ev) => format!("🤖 ai:producer\nClose-candidate: {reason}\n{ev}"),
+        None => format!("🤖 ai:producer\nClose-candidate: {reason}"),
+    };
 
     if dry_run {
         println!("[dry-run] flag {slug}#{issue} ai:close-candidate");
@@ -11546,7 +16390,7 @@ fn close_candidate_issue_refs(found: &[Value]) -> Vec<SubjectRef> {
 ///
 /// An issue whose meta is missing is kept (a missing row must not silently shrink the backlog) with
 /// an empty url, because there is no honest link to emit for it — never a `/issues/<n>` guess.
-fn producer_backlog_refs(
+fn producer_backlog(
     open: &[(String, u64)],
     meta: &std::collections::HashMap<(String, u64), Value>,
 ) -> Vec<SubjectRef> {
@@ -11564,6 +16408,133 @@ fn producer_backlog_refs(
         .collect()
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// OPEN-ISSUE AGES (#165 / rain-org-health#140) — how old the work is, org-wide.
+//
+// The FSM panel sparklines every queue's SIZE over time, and a size cannot tell turnover from
+// stagnation: a queue holding twelve issues all week looks identical whether those are twelve
+// fresh ones each day or the same twelve since 2024.
+//
+// THE POPULATION IS EVERY OPEN ISSUE IN THE ORG SCOPE. Not the producer backlog — not narrowed by
+// coverage, not narrowed by label. Deliberately WIDER than `counts.uncoveredIssues`, and the
+// inclusions are the point: an issue that has been "covered" by an open PR for six months, or
+// parked behind a `human:*` ruling, or sitting flagged `ai:close-candidate`, is stagnating exactly
+// as hard as an untouched one, and a metric scoped to the producer's share cannot see any of it.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// One open issue: its subject reference plus its `createdAt` as epoch ms, BOTH read from the SAME
+/// `gh search issues` row.
+///
+/// The pair is why `counts.openIssues` and `ages.openIssues` cannot describe different sets of
+/// issues: [`open_issues`] is the ONE site that builds this list, and the count, the statistics and
+/// the oldest-issue link the daily review prints are three reads of that one list. A `createdAt`
+/// fetched separately from the population could silently age a different set than the count counts.
+///
+/// `created_ms` is `None` when the meta row is missing or its `createdAt` does not parse. The issue
+/// still COUNTS (a missing row must never shrink the population); it just contributes no age.
+struct OpenIssue {
+    subject: SubjectRef,
+    created_ms: Option<i64>,
+}
+
+/// PURE: EVERY open issue in the configured org scope, paired with its creation time — the
+/// population the age statistics measure.
+///
+/// There is no filter here, and that is the whole design: the only narrowing GitHub already did is
+/// `--state open` on the search, and any further narrowing would be a second definition of "the
+/// org's issues" for the metric to disagree with [`producer_backlog`] about.
+fn open_issues(
+    all: &[(String, u64)],
+    meta: &std::collections::HashMap<(String, u64), Value>,
+) -> Vec<OpenIssue> {
+    all.iter()
+        .map(|(slug, num)| {
+            let row = meta.get(&(slug.clone(), *num));
+            let field = |k: &str| {
+                row.and_then(|m| m.get(k))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            };
+            OpenIssue {
+                subject: SubjectRef::new(slug, *num, field("url"), field("title")),
+                created_ms: row
+                    .and_then(|m| m.get("createdAt"))
+                    .and_then(|v| v.as_str())
+                    .and_then(iso_to_epoch_ms),
+            }
+        })
+        .collect()
+}
+
+/// The age of a population of open issues, in DAYS to one decimal.
+///
+/// MEAN AND MEDIAN ARE BOTH EMITTED, AS EQUALS — neither is the fallback for the other. Issue-age
+/// distributions are badly skewed: measured over the live org scope on 2026-08-05 the mean was
+/// 333.8 days against a median of 99.0, because a handful of 2022-era issues drag the mean by most
+/// of a year while the typical open issue is a few months old. That divergence is not a reason to
+/// pick one — it is ITSELF the signal. A mean and a median that track each other say the backlog
+/// ages uniformly; a mean running far ahead of its median says a long tail is doing the work, and
+/// `oldest` says how long that tail is. Reporting only one of the three hides which of those the
+/// org is looking at, and the renderer, not this binary, chooses what to draw.
+struct IssueAges {
+    mean: f64,
+    median: f64,
+    oldest: f64,
+    /// The member `oldest` measures, carried out of the SAME sorted row rather than re-derived, so
+    /// the tail number and the tail issue the daily review names can never disagree. Not emitted
+    /// in the JSON — rain-org-health#140's contract is the three numbers.
+    oldest_subject: SubjectRef,
+}
+
+impl IssueAges {
+    /// The emitted block: the three numbers, no hierarchy among them.
+    fn to_json(&self) -> Value {
+        serde_json::json!({
+            "meanDays": self.mean,
+            "medianDays": self.median,
+            "oldestDays": self.oldest,
+        })
+    }
+}
+
+/// PURE: the age statistics over the population members that carry a parseable `createdAt`, or
+/// `None` when none do.
+///
+/// Absence is the honest empty value: an empty population HAS no age, and emitting `0` would claim
+/// a set of brand-new issues, which is the opposite of what "no issues" means (rain-org-health#140).
+///
+/// A `createdAt` after `now_ms` (clock skew between GitHub and this host) clamps to 0.0 — an age is
+/// never negative. Rounding happens once, at the end, on the three emitted numbers, so no
+/// intermediate is rounded twice.
+fn issue_age_stats(issues: &[OpenIssue], now_ms: i64) -> Option<IssueAges> {
+    let mut aged: Vec<(f64, &SubjectRef)> = issues
+        .iter()
+        .filter_map(|i| {
+            i.created_ms
+                .map(|c| (((now_ms - c) as f64 / 86_400_000.0).max(0.0), &i.subject))
+        })
+        .collect();
+    if aged.is_empty() {
+        return None;
+    }
+    aged.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let n = aged.len();
+    let mean = aged.iter().map(|(d, _)| *d).sum::<f64>() / n as f64;
+    let median = if n % 2 == 1 {
+        aged[n / 2].0
+    } else {
+        (aged[n / 2 - 1].0 + aged[n / 2].0) / 2.0
+    };
+    let (oldest, oldest_subject) = aged[n - 1];
+    let tenth = |d: f64| (d * 10.0).round() / 10.0;
+    Some(IssueAges {
+        mean: tenth(mean),
+        median: tenth(median),
+        oldest: tenth(oldest),
+        oldest_subject: oldest_subject.clone(),
+    })
+}
+
 /// PURE: clip to `n` CHARACTERS. Titles and leak reasons carry unicode (em-dash, middle-dot,
 /// emoji), so a byte-index slice would panic mid-codepoint.
 fn clip_chars(s: &str, n: usize) -> String {
@@ -11578,6 +16549,33 @@ fn clip_chars(s: &str, n: usize) -> String {
 /// close-candidate ISSUE — the same guess #114 removes from the JSON.
 fn review_subject_block(s: &SubjectRef, clip_to: usize) -> String {
     format!("   {}\n      {}", s.url, clip_chars(&s.title, clip_to))
+}
+
+/// PURE: the daily review's org-wide open-issue age block — the population SIZE, then the three
+/// age numbers, then the oldest issue NAMED rather than merely measured.
+///
+/// Mirrors the JSON exactly: the size is always reported (a population whose rows carry no readable
+/// `createdAt` still has one), the ages only when there is an age to report. The no-age case says
+/// so in words rather than printing a `0`, which would read as "all brand new" — the same lie the
+/// JSON avoids by omitting the block.
+///
+/// The oldest issue's link comes out of [`IssueAges`] itself, not from a second scan of `open`, so
+/// the number on this line and the issue on the next can never name different issues.
+fn review_open_issue_ages(open: &[OpenIssue], now_ms: i64) -> String {
+    match issue_age_stats(open, now_ms) {
+        Some(a) => format!(
+            "▓▓ All open issues — org-wide: {}  (mean {:.1}d, median {:.1}d, oldest {:.1}d)\n{}\n",
+            open.len(),
+            a.mean,
+            a.median,
+            a.oldest,
+            review_subject_block(&a.oldest_subject, 66)
+        ),
+        None => format!(
+            "▓▓ All open issues — org-wide: {}  (no age reported)\n",
+            open.len()
+        ),
+    }
 }
 
 /// PURE: the two lines the leak section prints — the leaking PR's resolved url + clipped title,
@@ -11608,14 +16606,22 @@ fn human_queue_doc(
     cc_upheld: Value,
     cc_upheld_n: usize,
     backlog: &[SubjectRef],
+    // Every open issue in the org scope (#165), or None when the coverage read FAILED. The
+    // distinction is load-bearing and is why this is not a plain slice: an empty population and an
+    // unreadable one both have no ages, but an empty one honestly has `counts.openIssues: 0` while
+    // an unreadable one must emit no count at all rather than claim the org has no open issues
+    // (#199 typed the gh failure precisely so it could not read as an empty answer).
+    open: Option<&[OpenIssue]>,
     leaks: &[(SubjectRef, String)],
     total_producer_prs: usize,
+    archived_prs: &[SubjectRef],
+    now_ms: i64,
 ) -> Value {
     let bmap: serde_json::Map<String, Value> = buckets
         .iter()
         .map(|(k, v)| (k.clone(), Value::Array(SubjectRef::array(v))))
         .collect();
-    serde_json::json!({
+    let mut doc = serde_json::json!({
         "states": bmap,
         "lanes": lanes,
         "closeCandidateIssues": SubjectRef::array(close_issues),
@@ -11624,6 +16630,11 @@ fn human_queue_doc(
         "closeCandidateUnvetted": cc_unvetted,
         "closeCandidateUpheld": cc_upheld,
         "uncoveredIssues": SubjectRef::array(backlog),
+        // The producer PRs an ARCHIVED repo froze (#206). A top-level array beside the lanes, not a
+        // lane of its own: a lane names a state the machine can move out of, and this one names a
+        // repo that will never accept another write. The dashboard's lane totals therefore stay
+        // "PRs the machine can still act on", with the frozen ones accounted for right here.
+        "archivedRepoPrs": SubjectRef::array(archived_prs),
         "leaks": leaks
             .iter()
             .map(|(s, reason)| s.to_json_with(&[("reason", Value::from(reason.as_str()))]))
@@ -11651,6 +16662,7 @@ fn human_queue_doc(
             "closeCandidateUpheld": cc_upheld_n,
             "leaks": leaks.len(),
             "totalProducerPrs": total_producer_prs,
+            "archivedRepoPrs": archived_prs.len(),
             // Producer untouched backlog — open issues with no covering open PR, excluding
             // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
             "uncoveredIssues": backlog.len(),
@@ -11668,7 +16680,28 @@ fn human_queue_doc(
             "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
             "humanCloseCandidate": lane_state_count(lanes, "human-decisions", "human:close-candidate"),
         }
-    })
+    });
+    if let Some(open) = open {
+        // The org-wide open-issue count goes in `counts` beside the queue counts, and the ages go
+        // in a SIBLING `ages` block, never inside `counts` — `counts` is named for what it holds
+        // and an age is not a count (rain-org-health#140 / #165). Both read the SAME `open` list,
+        // which [`open_issues`] is the only site to build: the number of issues and the age of
+        // those issues cannot describe different populations.
+        doc["counts"]["openIssues"] = Value::from(open.len());
+        // ABSENT, not null and not zero, when no member carries a parseable `createdAt` — the
+        // dashboard's documented degradation for a missing field is no spark, never a broken box,
+        // and a `0` would claim a set of brand-new issues. Note this is independent of the count
+        // above: a population whose rows all lack `createdAt` still HAS a size.
+        if let Some(ages) = issue_age_stats(open, now_ms) {
+            doc.as_object_mut()
+                .expect("human_queue_doc is an object")
+                .insert(
+                    "ages".into(),
+                    serde_json::json!({ "openIssues": ages.to_json() }),
+                );
+        }
+    }
+    doc
 }
 
 /// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
@@ -11705,6 +16738,36 @@ fn human_queue_mode(json_out: bool) -> i32 {
         eprintln!("error: `gh search prs --author {assignee}` failed — aborting rather than print a false-empty queue");
         return 1;
     };
+    // A PR in an ARCHIVED repo belongs in no lane (#206): every lane names a transition, and an
+    // archived repo refuses all of them. Withheld from the buckets and REPORTED as its own
+    // top-level count — this document is the dashboard's source, so a row that silently vanished
+    // from a lane would show as a lane that quietly shrank.
+    let archived_set = match archived_repos() {
+        Ok(s) => s,
+        Err(f) => {
+            eprintln!("{}", archived_read_error(f));
+            return 1;
+        }
+    };
+    let (prs, frozen) = withhold_archived(prs, &archived_set, hit_slug);
+    let archived_prs: Vec<SubjectRef> = frozen
+        .iter()
+        .filter_map(|p| {
+            let url = p
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string();
+            let slug = pr_slug(&url)?;
+            let num = p.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+            let title = p
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(SubjectRef::new(slug, num, url, title))
+        })
+        .collect();
 
     // One pass: the legacy label bucket (`states`, unchanged) + a per-PR `(SubjectRef, labels)`
     // record the lane classifier consumes. `unlabeled` = PRs with no `ai:*` label (leak candidates).
@@ -11828,10 +16891,17 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .map(|s| s.to_string()),
     );
     let iref: Vec<&str> = iargs.iter().map(String::as_str).collect();
+    // Filtered through the SAME archived set the lanes above use, so this legacy count and the
+    // vetted close-candidate figures below cannot disagree about which flags are actionable.
     let close_issues = close_candidate_issue_refs(
-        &gh_json(&iref)
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default(),
+        &withhold_archived(
+            gh_json(&iref)
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default(),
+            &archived_set,
+            hit_slug,
+        )
+        .0,
     );
 
     // Close-candidate vet state, as `(unvetted, upheld)`. Computed from the same state-load the
@@ -11863,9 +16933,22 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // previously invisible on the FSM dashboard. Same coverage computation as `uncovered-issues`
     // (via `coverage_uncovered`); `is_producer_backlog` narrows it to the producer's share. A gh
     // failure leaves it empty rather than aborting the whole queue render — it is additive.
-    let backlog: Vec<SubjectRef> = coverage_uncovered()
-        .map(|(open, meta)| producer_backlog_refs(&open, &meta))
-        .unwrap_or_default();
+    //
+    // The SAME read also yields the org-wide open-issue population the ages measure (#165) — the
+    // unnarrowed `all`, which is what makes an issue parked behind an open PR or a `human:*`
+    // ruling visible to the age metric while `backlog` deliberately excludes it. One `gh search
+    // issues`, two populations, no second query.
+    //
+    // The failure shapes differ, and deliberately: `backlog` degrades to empty (its count is
+    // legacy and the dashboard reads it), while `open` stays `None` so the new count and the ages
+    // are OMITTED rather than reported as an org with zero open issues.
+    let (backlog, open): (Vec<SubjectRef>, Option<Vec<OpenIssue>>) = match coverage_uncovered() {
+        Some(c) => {
+            let (backlog, open) = c.populations();
+            (backlog, Some(open))
+        }
+        None => (Vec::new(), None),
+    };
 
     if json_out {
         let doc = human_queue_doc(
@@ -11877,8 +16960,13 @@ fn human_queue_mode(json_out: bool) -> i32 {
             cc_upheld,
             cc_upheld_n,
             &backlog,
+            open.as_deref(),
             &leaks,
             prs.len(),
+            &archived_prs,
+            // The one impure input to the age arithmetic: "now", taken once so every emitted
+            // age in this snapshot measures against the same instant.
+            now_unix() * 1000,
         );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
@@ -11905,13 +16993,22 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
     };
     println!(
-        "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs) ===",
-        prs.len()
+        "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs{}) ===",
+        prs.len(),
+        archived_note(archived_prs.len())
     );
     println!(
         "▓▓ Producer backlog — untouched issues, no open PR (excl. human-gated / close-candidate): {}",
         backlog.len()
     );
+    // Org-wide open-issue age (#165) — the WIDER population, printed right under the backlog it is
+    // deliberately wider than, so the human reading the daily review sees the two side by side and
+    // cannot mistake one for the other. Mean and median both, because a mean far ahead of its
+    // median is the long tail announcing itself, and the oldest issue is named rather than just
+    // measured: an unactionable "1654.5 days" becomes a link to click.
+    if let Some(open) = open.as_deref() {
+        print!("{}", review_open_issue_ages(open, now_unix() * 1000));
+    }
     // vet-lifecycle
     show_lane(
         "UN-VETTED — the vetter owes a verdict",
@@ -12847,10 +17944,110 @@ fn default_branch_of(dir: &std::path::Path) -> Result<String, String> {
         .ok_or_else(|| "could not determine the repo's default branch — pass `base`".to_string())
 }
 
-/// Every work clone under every configured root, with the state that decides whether it is
-/// releasable. Read-only: the answer to "what is on this box and who owns it".
-fn clone_list_exec(roots: &[String]) -> Result<Value, String> {
-    let mut out = Vec::new();
+/// Byte cap on each clone-root path and each sweep error a clone tool echoes back. The roots are
+/// the environment's (`clone_roots`), never a caller's, so this clips nothing in practice — it is
+/// what makes the envelope of a clone result a BOUNDED size, which is the half [`fit_clone_rows`]
+/// cannot supply.
+const CLONE_ECHO_BYTES: usize = 300;
+
+/// PURE: the roots a clone result echoes, each clipped to [`CLONE_ECHO_BYTES`].
+fn clone_roots_echo(roots: &[String]) -> Value {
+    Value::Array(
+        roots
+            .iter()
+            .map(|r| Value::from(clip_field(r, CLONE_ECHO_BYTES)))
+            .collect(),
+    )
+}
+
+/// PURE: pack as many of `rows` into `doc` under `key` as [`MCP_MAX_RESULT_BYTES`] has room for,
+/// and STATE the split as `listed` / `omitted`.
+///
+/// This is what makes a per-clone listing safe on a box of any size. The alternative shapes both
+/// fail on the box this was measured on: an uncapped list is refused outright (#117 —
+/// `clone_list` produced 60,237 bytes against a 36,000-byte budget and the producer replaced a
+/// state load with `ls | wc -l`), and a fixed row cap either truncates a small box needlessly or
+/// still overflows a large one, because a row's size is a clone NAME and a BRANCH name, neither of
+/// which has a length this crate controls.
+///
+/// It is a truncation, and a truncation is only acceptable because the counts around it are NOT:
+/// every caller of this gets whole-population figures in the same document, so the omitted rows
+/// are a sample that was dropped rather than state that went unmentioned. `omitted` says exactly
+/// how many.
+///
+/// TERMINATION / POSTCONDITION: the base length is measured with both counters at `usize::MAX` —
+/// the widest they can serialise — and with the row array empty, so the finished document is at
+/// most `base + Σ rows + commas`, which is the quantity the loop compares against the budget. Rows
+/// are only ever added while that sum stays under, so `doc.to_string().len() <= MCP_MAX_RESULT_BYTES`
+/// holds whenever the empty-row envelope does.
+fn fit_clone_rows(doc: &mut serde_json::Map<String, Value>, key: &str, rows: &[Value]) {
+    doc.insert("listed".to_string(), Value::from(usize::MAX));
+    doc.insert("omitted".to_string(), Value::from(usize::MAX));
+    doc.insert(key.to_string(), Value::Array(Vec::new()));
+    let mut used = Value::Object(doc.clone()).to_string().len();
+    let mut kept: Vec<Value> = Vec::new();
+    for row in rows {
+        // The row's own bytes, plus the comma that joins it to the row before it.
+        let cost = row.to_string().len() + usize::from(!kept.is_empty());
+        if used + cost > MCP_MAX_RESULT_BYTES {
+            break;
+        }
+        used += cost;
+        kept.push(row.clone());
+    }
+    doc.insert("listed".to_string(), Value::from(kept.len()));
+    doc.insert("omitted".to_string(), Value::from(rows.len() - kept.len()));
+    doc.insert(key.to_string(), Value::Array(kept));
+}
+
+/// The four states a clone can be in, as the names `clone_list` counts and reports them under.
+/// They PARTITION the box: [`clone_hold`] returns the first that applies, in the order
+/// [`release_decision`] itself tests them, so the counts always sum to the number of clones.
+const CLONE_HOLDS: [&str; 3] = ["unknown", "unpushed", "uncommitted"];
+const CLONE_RELEASABLE: &str = "releasable";
+
+/// PURE: WHY this clone cannot be released right now, as a TYPED discriminant — `None` when it can.
+///
+/// Derived from the same ladder as [`release_decision`] (unknown push state, then unpushed commits,
+/// then uncommitted changes) rather than from its message, so a caller grouping clones by reason is
+/// grouping by the decision and not by a sentence that may be reworded.
+fn clone_hold(s: &LocalCloneState) -> Option<&'static str> {
+    match s.unpushed {
+        None => return Some("unknown"),
+        Some(n) if n > 0 => return Some("unpushed"),
+        Some(_) => {}
+    }
+    match &s.dirt {
+        None => Some("unknown"),
+        Some(d) if !d.is_empty() => Some("uncommitted"),
+        Some(_) => None,
+    }
+}
+
+/// PURE: the order a listing is truncated in — the clones whose state is unreadable first, then the
+/// ones holding commits nobody else has, then merely dirty ones, then the releasable ones. Within a
+/// class, OLDEST first. So the rows the budget drops are always the ones a caller acts on last.
+fn clone_row_rank(hold: Option<&str>) -> u8 {
+    match hold {
+        Some("unknown") => 0,
+        Some("unpushed") => 1,
+        Some("uncommitted") => 2,
+        _ => 3,
+    }
+}
+
+/// Every work clone under every configured root: the whole box as COUNTS, plus the rows that name a
+/// decision. Read-only: the answer to "what is on this box and who owns it".
+///
+/// The counts are the load-bearing half and they are never truncated, which is what lets the rows
+/// be. `include` chooses which rows are offered to the budget — the held ones by default, because
+/// the question this tool is called for is why something is still here (`campaign-prompt.txt`'s gc
+/// step names it for exactly that) and a releasable clone is the answer to no question. `"all"`
+/// offers every row, still ordered so that the ones the budget drops are the boring ones.
+fn clone_list_exec(roots: &[String], include_all: bool) -> Result<Value, String> {
+    let mut rows = Vec::new();
+    let mut counts: std::collections::HashMap<&'static str, usize> =
+        std::collections::HashMap::new();
     for root in roots {
         let Ok(entries) = std::fs::read_dir(root) else {
             continue;
@@ -12863,29 +18060,77 @@ fn clone_list_exec(roots: &[String]) -> Result<Value, String> {
         for dir in dirs {
             let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
             let state = local_clone_state(&dir);
-            out.push(serde_json::json!({
-                "name": name,
-                "root": root,
-                "branch": state.branch,
-                "unpushed": state.unpushed,
-                "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
-                "ageDays": clone_age_days(&dir),
-                "releasable": release_decision(&state, false).is_ok(),
-            }));
+            let hold = clone_hold(&state);
+            *counts.entry(hold.unwrap_or(CLONE_RELEASABLE)).or_default() += 1;
+            let age = clone_age_days(&dir);
+            rows.push((
+                clone_row_rank(hold),
+                std::cmp::Reverse(age),
+                name.to_string(),
+                serde_json::json!({
+                    "name": name,
+                    "root": clip_field(root, CLONE_ECHO_BYTES),
+                    "branch": state.branch,
+                    "unpushed": state.unpushed,
+                    "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
+                    "ageDays": age,
+                    "releasable": hold.is_none(),
+                    "held": hold,
+                }),
+            ));
         }
     }
-    Ok(serde_json::json!({"roots": roots, "clones": out}))
+    let total = rows.len();
+    rows.sort_by(|a, b| (a.0, a.1, &a.2).cmp(&(b.0, b.1, &b.2)));
+    let offered: Vec<Value> = rows
+        .into_iter()
+        .filter(|(rank, ..)| include_all || *rank != clone_row_rank(None))
+        .map(|(.., row)| row)
+        .collect();
+    let mut doc = serde_json::Map::new();
+    doc.insert("roots".to_string(), clone_roots_echo(roots));
+    doc.insert("total".to_string(), Value::from(total));
+    doc.insert(
+        "counts".to_string(),
+        Value::Object(
+            CLONE_HOLDS
+                .into_iter()
+                .chain([CLONE_RELEASABLE])
+                // Every state gets a key even at zero, so an absent class is never something a
+                // caller has to infer from silence.
+                .map(|k| {
+                    (
+                        k.to_string(),
+                        Value::from(counts.get(k).copied().unwrap_or(0)),
+                    )
+                })
+                .collect(),
+        ),
+    );
+    doc.insert(
+        "include".to_string(),
+        Value::from(if include_all { "all" } else { "held" }),
+    );
+    doc.insert("matched".to_string(), Value::from(offered.len()));
+    fit_clone_rows(&mut doc, "clones", &offered);
+    Ok(Value::Object(doc))
 }
 
 /// The unattended sweep, as a tool. Same decision function as the CLI (`gc_decision`), across every
 /// configured root, returning what it did instead of printing it — STDOUT is the MCP protocol.
+///
+/// Its per-clone records go through the same budget fit `clone_list` uses, and for a sharper reason:
+/// this call has already DELETED things by the time the result is built, so an over-budget refusal
+/// would discard the only account of what it destroyed. The rows are ordered so the ones the budget
+/// drops are the `kept` ones — a clone that is still there and can be listed again — and never an
+/// `error` or a deletion.
 fn clone_gc_exec(roots: &[String], max_age_days: u64, dry_run: bool) -> Result<Value, String> {
     let mut recs = Vec::new();
     let mut errors = Vec::new();
     for root in roots {
         match gc_clones_sweep(root, max_age_days, dry_run, &mut |_r| {}) {
             Ok(mut r) => recs.append(&mut r),
-            Err(e) => errors.push(e),
+            Err(e) => errors.push(Value::from(clip_field(&e, CLONE_ECHO_BYTES))),
         }
     }
     let freed: u64 = recs.iter().map(|r| r.bytes).sum();
@@ -12893,20 +18138,38 @@ fn clone_gc_exec(roots: &[String], max_age_days: u64, dry_run: bool) -> Result<V
         .iter()
         .filter(|r| r.outcome == "deleted" || r.outcome == "would-delete")
         .count();
-    Ok(serde_json::json!({
-        "dryRun": dry_run,
-        "roots": roots,
-        "scanned": recs.len(),
-        "deleted": deleted,
-        "kept": recs.len() - deleted,
-        "bytesReclaimed": freed,
-        "reclaimed": human_bytes(freed),
-        "errors": errors,
-        "clones": recs.iter().map(|r| serde_json::json!({
-            "name": r.name, "root": r.root, "outcome": r.outcome,
-            "reason": r.reason, "bytes": r.bytes,
-        })).collect::<Vec<_>>(),
-    }))
+    recs.sort_by_key(|r| gc_outcome_rank(r.outcome));
+    let rows: Vec<Value> = recs
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.name, "root": clip_field(&r.root, CLONE_ECHO_BYTES),
+                "outcome": r.outcome, "reason": r.reason, "bytes": r.bytes,
+            })
+        })
+        .collect();
+    let mut doc = serde_json::Map::new();
+    doc.insert("dryRun".to_string(), Value::from(dry_run));
+    doc.insert("roots".to_string(), clone_roots_echo(roots));
+    doc.insert("scanned".to_string(), Value::from(recs.len()));
+    doc.insert("deleted".to_string(), Value::from(deleted));
+    doc.insert("kept".to_string(), Value::from(recs.len() - deleted));
+    doc.insert("bytesReclaimed".to_string(), Value::from(freed));
+    doc.insert("reclaimed".to_string(), Value::from(human_bytes(freed)));
+    doc.insert("errors".to_string(), Value::Array(errors));
+    fit_clone_rows(&mut doc, "clones", &rows);
+    Ok(Value::Object(doc))
+}
+
+/// PURE: the order sweep records are truncated in — what FAILED first, then what was destroyed, then
+/// what was left alone. The first two are the account of an irreversible act; the third can be read
+/// again from `clone_list` at any time.
+fn gc_outcome_rank(outcome: &str) -> u8 {
+    match outcome {
+        "error" => 0,
+        "deleted" | "would-delete" => 1,
+        _ => 2,
+    }
 }
 
 // --- --deploy: the SOLE, constrained way the producer triggers a sanctioned Zoltu deploy ---------
@@ -13468,6 +18731,11 @@ enum VetAction {
     /// flag), a malformed `blocked-by` line, an unresolvable ref, or a clearance write that
     /// failed. Never auto-cleared, never vetted, never silent: the row names every reason (#161).
     SkipBlockedOnManual,
+    /// The repo is ARCHIVED (#206). Not a property of the PR at all: `record_verdict` applies a
+    /// label and posts a comment, and a read-only repo refuses both, so no verdict this tool can
+    /// form is writable. Its own action rather than a fold into `SkipHuman`, because nobody
+    /// decided anything — and unlike every other skip here, no future push clears it.
+    SkipArchivedRepo,
 }
 
 impl VetAction {
@@ -13480,6 +18748,7 @@ impl VetAction {
             VetAction::SkipOpenThreads => "skip-open-threads",
             VetAction::SkipBlockedOn => "skip-blocked-on",
             VetAction::SkipBlockedOnManual => "blocked-on-manual-review",
+            VetAction::SkipArchivedRepo => "skip-archived-repo",
         }
     }
 }
@@ -13512,14 +18781,14 @@ fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAc
 /// `fetch` is called ONLY for a row that would otherwise be VETTED — every other action already
 /// skips the PR, so it must not pay a GraphQL round-trip to learn something that changes nothing.
 ///
-/// FAIL-CLOSED, matching `--queue`: an unreadable thread state (`None`) is NOT offered for vetting,
-/// so a transient API failure can never launder a thread-dirty PR into an `ai:ready` verdict. The
-/// cost is one deferred vet — the next run re-reads it — against a wrong `ready` label that then
-/// needs a human to unwind. The count rides on the row as `unresolvedThreads` (`null` = unreadable)
-/// so an operator reading `--json` can tell "dirty" from "unknown".
+/// FAIL-CLOSED, matching `--queue`: an unread thread state is NOT offered for vetting, so a
+/// transient API failure can never launder a thread-dirty PR into an `ai:ready` verdict. The cost
+/// is one deferred vet — the next run re-reads it — against a wrong `ready` label that then needs a
+/// human to unwind. The count rides on the row as `unresolvedThreads` (`null` = unread) so an
+/// operator reading `--json` can tell "dirty" from "unknown".
 fn gate_open_threads(
     row: (VetAction, u8, Value),
-    fetch: impl FnOnce() -> Option<u64>,
+    fetch: impl FnOnce() -> Result<u64, GhFailure>,
 ) -> (VetAction, u8, Value) {
     let (action, prio, mut json) = row;
     if action != VetAction::Vet {
@@ -13531,11 +18800,13 @@ fn gate_open_threads(
     };
     obj.insert(
         "unresolvedThreads".into(),
-        threads.map(Value::from).unwrap_or(Value::Null),
+        threads.ok().map(Value::from).unwrap_or(Value::Null),
     );
-    // The vetter collapses `OpenThreads` and `FetchError` into ONE skip: in both cases the thread
-    // state is not verified clean, and the vetter's handling is identical (don't vet it this run).
-    // The row's `unresolvedThreads` (`null` vs a number) keeps the two distinguishable to a reader.
+    // The vetter collapses `OpenThreads` and every `Failed` reason into ONE skip: in all of them
+    // the thread state is not verified clean, and the vetter's handling is identical (don't vet it
+    // this run). It has no rate-limit move of its own — the retry already happened inside the
+    // fetch — so the typed reason changes nothing HERE, which is why this caller collapses it and
+    // `--queue`, which does have a move, does not.
     if thread_route(threads) == ThreadRoute::Present {
         return (action, prio, json);
     }
@@ -13685,6 +18956,7 @@ fn unvetted_doc(
     let mut open_threads: Vec<Value> = Vec::new();
     let mut blocked_on: Vec<Value> = Vec::new();
     let mut blocked_manual: Vec<Value> = Vec::new();
+    let mut archived: Vec<Value> = Vec::new();
     let (mut n_draft, mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize, 0usize);
     for (action, prio, row) in rows {
         match action {
@@ -13732,6 +19004,16 @@ fn unvetted_doc(
                             "reasons": row.get("blockedOnReasons").cloned().unwrap_or(Value::Null),
                         }));
                     }
+                    // UNCONDITIONAL, like `openThreads` and manual-review, and for the stronger
+                    // version of their reason: this PR is not merely un-vetted this run, it can
+                    // never be vetted again, and no push will change that (#206).
+                    VetAction::SkipArchivedRepo => {
+                        archived.push(serde_json::json!({
+                            "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+                            "url": row.get("url").cloned().unwrap_or(Value::Null),
+                            "why": row.get("why").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
                     // `Vet` is taken by the arm above; the only action left here is vetted-at-head.
                     VetAction::SkipVetted | VetAction::Vet => n_vetted += 1,
                 }
@@ -13745,8 +19027,10 @@ fn unvetted_doc(
     let prs: Vec<Value> = page_rows.into_iter().map(|(_, _, r)| r).collect();
     let (open_threads, more_threads) = page(open_threads, limit);
     let (n_blocked, n_blocked_manual) = (blocked_on.len(), blocked_manual.len());
+    let n_archived = archived.len();
     let (blocked_on, more_blocked) = page(blocked_on, limit);
     let (blocked_manual, more_blocked_manual) = page(blocked_manual, limit);
+    let (archived, more_archived) = page(archived, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "open": rows.len(),
@@ -13757,6 +19041,7 @@ fn unvetted_doc(
             "skipOpenThreads": n_threads,
             "skipBlockedOn": n_blocked,
             "blockedOnManualReview": n_blocked_manual,
+            "skipArchivedRepo": n_archived,
         },
         "prs": prs,
         // How many vet-able PRs this page LEFT BEHIND. A caller that reads `prs.len()` as the whole
@@ -13768,6 +19053,8 @@ fn unvetted_doc(
         "moreBlockedOn": more_blocked,
         "blockedOnManualReview": blocked_manual,
         "moreBlockedOnManualReview": more_blocked_manual,
+        "archivedRepo": archived,
+        "moreArchivedRepo": more_archived,
     });
     if include_skipped {
         let (rows, more_skipped) = page(skipped, limit);
@@ -13781,28 +19068,120 @@ fn unvetted_doc(
     doc
 }
 
-/// PURE: one row of the close-candidate vet queue, plus whether it is to be vetted and why not.
-/// Split out so the skip reasons are unit-testable without the network — the same shape the PR-side
-/// state-load uses.
-fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static str, Value) {
+/// The action a [`CcGate::NoFlag`] issue asks for: the label is live and no trusted producer
+/// comment states a claim.
+const CC_CLEAR_NO_FLAG: &str = "clear-stranded-no-flag";
+
+/// The action a [`CcGate::RejectedStillFlagged`] issue asks for: the recorded verdict on the live
+/// flag is `reject`, and the label is on the issue anyway.
+const CC_CLEAR_REJECTED: &str = "clear-stranded-rejected";
+
+/// The action a [`CcGate::RepoArchived`] issue asks for: NOTHING. It is the one state here that
+/// names no move at all — the repo refuses every write, so the row exists to be COUNTED and named,
+/// never to be worked (#206).
+const CC_SKIP_ARCHIVED: &str = "skip-archived-repo";
+
+/// PURE: the trusted `🤖 ai:vetter` comment that RECORDS a stranded-label clearance, or `None` for
+/// any state that is not stranded — so a live flag cannot be cleared by construction rather than by
+/// the caller remembering not to.
+///
+/// **This clears a stuck LABEL. It does not rule on the issue.** Nothing here closes, rejects,
+/// re-flags or upholds anything: the label comes off, the issue goes back to the producer's
+/// backlog, and whatever the issue actually asks stays open for the producer or a human to answer.
+/// That distinction is the whole licence for doing this automatically — a wrong clearance costs one
+/// producer look at an issue, where a wrong RULING costs real work.
+///
+/// It is posted BEFORE the label is removed, the same order and for the same reason as every other
+/// write here: a label that vanishes with no record is indistinguishable from a human de-flagging
+/// it by hand.
+///
+/// The body deliberately contains neither `Close-candidate:` nor `Reviewed close-candidate @`, so
+/// it cannot be read back as a producer flag by [`last_close_candidate_flag`], as a verdict by
+/// [`cc_verdict_parts`], or as a prior note by `flag_close_candidate_mode`'s dedup. A clearance that
+/// re-entered the machine as one of the things it clears is the failure this whole issue is about.
+fn cc_stranded_cleared_comment(gate: CcGate, flag_at: &str) -> Option<String> {
+    match gate {
+        // State B. The vetter already concluded this flag is wrong and its own write took the label
+        // off; the label being back means something re-applied it without raising a new claim. This
+        // re-asserts the recorded verdict — it does not form a new one.
+        CcGate::RejectedStillFlagged => Some(format!(
+            "🤖 ai:vetter\nStranded flag cleared @{flag_at}: the recorded verdict on this flag is \
+             `reject`, and the label was live anyway — a state no transition consumed, so the issue \
+             was in neither the producer's backlog nor a human's queue. Removing the label completes \
+             the change that verdict already called for and returns the issue to the producer. The \
+             reject stands; NO new ruling is made here, and the issue itself is untouched."
+        )),
+        // State A. There is no claim, so there is nothing to judge and nothing to rework — but the
+        // label parks the issue regardless. What is GIVEN UP by dropping it is whatever intent
+        // applied it, which is unrecoverable because it was never written down; so the comment says
+        // so, and names the two rulings that DO survive an AI, rather than pretending nothing was
+        // lost.
+        CcGate::NoFlag => Some(
+            "🤖 ai:vetter\nStranded flag cleared: the ai:close-candidate label was live with no \
+             trusted producer comment stating a claim. Nothing could judge it (there is no claim) \
+             and nothing could clear it, while the label kept the issue out of the producer's \
+             backlog. Removing the label returns the issue to the producer. NO ruling is made on \
+             the issue.\n\nThis discards whatever intent applied the label, which was never \
+             recorded. To park an issue durably, rule it: `human-rule-issue <repo> <n> keep-open \
+             \"…\"` or `human-close <repo> <n> \"…\"`. Those are the human's namespace — sacred, \
+             and no AI actor clears them."
+                .to_string(),
+        ),
+        // NEVER `RepoArchived`: the clearance is a `--remove-label` plus a comment, and an
+        // archived repo refuses both — a clearance attempted there fails on every run and reports
+        // `clearanceFailed` for ever. Total over the enum on purpose, so a new state is
+        // non-clearable until somebody decides otherwise.
+        CcGate::Presentable
+        | CcGate::HumanRuled
+        | CcGate::Unvetted
+        | CcGate::RepoArchived => None,
+    }
+}
+
+/// PURE: one row of the close-candidate vet queue, plus the STATE it is in and the action that
+/// state asks for. Split out so the reasons are unit-testable without the network — the same shape
+/// the PR-side state-load uses.
+///
+/// The state comes from [`cc_gate`], which is also what the human's `next_close_candidate` reads.
+/// Sharing it is the point rather than a tidy-up: the vetter's inbox and the human's used to
+/// classify the same issue independently, so `/ncc` could report a flag as
+/// `vetter-rejected-but-still-flagged` while the vetter's own state-load called it
+/// `skip-vetted-at-flag` and moved on — one tool DETECTING what the other could not see (#179).
+///
+/// Two of the five states are STRANDED: no transition consumed them, so they sat here for ever
+/// while the label kept the issue out of the producer's backlog. They now ask for a CLEARANCE,
+/// which the live fetch performs — see [`cc_stranded_cleared_comment`] for what it may and may not
+/// do.
+fn cc_row(
+    slug: &str,
+    num: u64,
+    title: &str,
+    detail: &Value,
+    repo_archived: bool,
+) -> (CcGate, &'static str, Value) {
     let labels = label_names(detail);
     let human = has_human_ruling(&labels);
     let flag = last_close_candidate_flag(detail);
     let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
     let vetted = cc_vetted_at_flag(detail, &flag_at);
-    // Precedence mirrors the PR side: a human ruling dominates, then "nothing to judge", then a
-    // verdict already recorded against THIS flag.
-    let (vet, action) = if human {
-        (false, "skip-human-decided")
-    } else if flag.is_none() {
-        (false, "skip-no-flag")
-    } else if vetted {
-        (false, "skip-vetted-at-flag")
-    } else {
-        (true, "vet")
+    let gate = cc_gate(
+        repo_archived,
+        human,
+        &flag_at,
+        last_cc_vetter_comment(detail).and_then(|b| cc_verdict_parts(&b)),
+    );
+    // Precedence is `cc_gate`'s, which is the PR side's: writability first, then a human ruling,
+    // then "nothing was claimed", then what the vetter did with the claim.
+    let action = match gate {
+        CcGate::RepoArchived => CC_SKIP_ARCHIVED,
+        CcGate::HumanRuled => "skip-human-decided",
+        CcGate::NoFlag => CC_CLEAR_NO_FLAG,
+        CcGate::RejectedStillFlagged => CC_CLEAR_REJECTED,
+        CcGate::Presentable => "skip-vetted-at-flag",
+        CcGate::Unvetted => "vet",
     };
     (
-        vet,
+        gate,
         action,
         serde_json::json!({
             "issue": format!("{slug}#{num}"),
@@ -13837,9 +19216,15 @@ fn cc_row(slug: &str, num: u64, title: &str, detail: &Value) -> (bool, &'static 
 /// array/count mismatch unrepresentable: a box that renders "5" and then lists three issues when
 /// clicked is the drift this shape rules out.
 ///
-/// `upheld` is the skipped rows whose action is `skip-vetted-at-flag`: a REJECTED flag has its
-/// label stripped, so it cannot appear in this search at all — an issue still carrying the label
-/// AND vetted at its current flag was necessarily upheld.
+/// `upheld` is the skipped rows whose action is `skip-vetted-at-flag`, and that action now means
+/// UPHELD specifically, because [`cc_row`] reads the verdict WORD off [`cc_gate`] rather than
+/// inferring it from the flag being vetted at all.
+///
+/// It used to be inferred, on the argument that a rejected flag has its label stripped so it cannot
+/// appear in this search — and `rain.erc4626.words#93` disproved it: rejected 2026-07-28, label
+/// re-applied a day later, and from then on projected here as UPHELD. A verdict of `reject`
+/// rendered to a human as the vetter agreeing the issue should close is the worst direction for
+/// this particular error, since the human's next move on an upheld flag is to destroy work.
 fn cc_item_arrays(doc: &Value) -> (Vec<Value>, Vec<Value>) {
     let item = |r: &Value| SubjectRef::from_row(r).to_json();
     let unvetted: Vec<Value> = doc
@@ -13883,6 +19268,54 @@ fn flag_reason(body: &str) -> String {
         .to_string()
 }
 
+/// The stranded-label CLEARANCE write: record it, then remove `ai:close-candidate`.
+///
+/// Comment BEFORE the label, the order every write here uses — if the removal fails, the next
+/// state-load dedups the comment and retries the removal, and the record of WHY the label was going
+/// to move already exists. The reverse order can leave a label gone with nothing saying who moved
+/// it, which is indistinguishable from a human de-flagging by hand.
+///
+/// `Err` is the reason, for the row: a failed clearance is REPORTED and retried, never swallowed.
+/// The caller must not count it as cleared — the label is still on the issue.
+fn cc_clear_stranded_flag(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    comment: &str,
+) -> Result<(), String> {
+    let n = num.to_string();
+    // Dedup against the exact body, over TRUSTED comments only: a previous run that posted the
+    // comment and then failed to remove the label must not post it a second time. Matched on the
+    // whole body rather than on "most recent", because the clearance may not be the newest vetter
+    // comment — state B always has the reject comment sitting beside it.
+    let already = trusted_comments(detail, Some("🤖 ai:vetter"))
+        .iter()
+        .any(|b| b == comment);
+    if !already && !gh_run(&["issue", "comment", &n, "-R", slug, "--body", comment]) {
+        return Err(
+            "posting the clearance comment FAILED — nothing was cleared; the next state-load retries"
+                .to_string(),
+        );
+    }
+    if !gh_run(&[
+        "issue",
+        "edit",
+        &n,
+        "-R",
+        slug,
+        "--remove-label",
+        "ai:close-candidate",
+    ]) {
+        return Err(
+            "clearance comment posted but removing ai:close-candidate FAILED — the label is still \
+             live and the issue is still parked; the next state-load dedups the comment and retries \
+             the removal"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Live `unvetted-close-candidates` state-load: ONE org-wide search for open `ai:close-candidate`
 /// issues + one `gh issue view` each. Errors rather than returning a falsely-empty set, for the same
 /// reason the PR side does — an empty queue must never be an API failure in disguise.
@@ -13898,14 +19331,28 @@ fn unvetted_close_candidates_fetch(
     // The SAME search the human's `next_close_candidate` gate runs, shared rather than written
     // twice: two spellings of "which issues are flagged" is how the vetter's inbox and the human's
     // would come to answer differently.
-    let found = flagged_open_issues()?;
+    let FlaggedIssues {
+        hits: found,
+        archived: archived_repos,
+    } = flagged_open_issues()?;
     // The dashboard's `closeCandidateUnvetted` reads this queue, so a per-issue failure must be
     // reported (see `fetchErrors` below), never dropped.
+    // A flag in an ARCHIVED repo is not vettable either (#206): `record_close_candidate_verdict`
+    // writes a comment and, on reject, strips a label — both refused by a read-only repo. It is
+    // classified as such by `cc_row`, which is the SAME classifier the human's inbox reads, and
+    // counted here for the same reason every other skip is.
+    let mut archived_flags: Vec<Value> = Vec::new();
 
     let mut rows: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
     let mut errors: Vec<Value> = Vec::new();
-    let (mut n_human, mut n_noflag, mut n_vetted) = (0usize, 0usize, 0usize);
+    // The stranded states, split by outcome. Kept apart from `skipped` because they are not skips:
+    // a skip is a state something else owns, and these were owned by nobody.
+    let mut cleared: Vec<Value> = Vec::new();
+    let mut clear_failures: Vec<Value> = Vec::new();
+    let (mut n_human, mut n_vetted) = (0usize, 0usize);
+    let (mut n_cleared_no_flag, mut n_cleared_rejected, mut n_clear_failed) =
+        (0usize, 0usize, 0usize);
     for i in &found {
         let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -13933,13 +19380,63 @@ fn unvetted_close_candidates_fetch(
             }));
             continue;
         };
-        let (vet, action, row) = cc_row(&slug, num, title, &detail);
-        if vet {
+        let (gate, action, mut row) =
+            cc_row(&slug, num, title, &detail, archived_repos.contains(&slug));
+        // Filed and counted, never vetted and never CLEARED: an archived repo refuses the label
+        // removal a clearance is, so attempting one would fail on every run for ever (#206).
+        if gate == CcGate::RepoArchived {
+            archived_flags.push(row);
+            continue;
+        }
+        // The CLEARANCE, run every state-load exactly as the `ai:blocked-on` one is (#161): a
+        // stranded label is machine-detectable from typed data, so it is repaired by machinery
+        // rather than found by a human building a tool. Attempted BEFORE the row is filed, so the
+        // row reports what became of the state rather than only that it was in it.
+        let flag_at = last_close_candidate_flag(&detail)
+            .map(|(a, _)| a)
+            .unwrap_or_default();
+        if let Some(comment) = cc_stranded_cleared_comment(gate, &flag_at) {
+            let outcome = cc_clear_stranded_flag(&slug, num, &detail, &comment);
+            let obj = row.as_object_mut().expect("row is an object");
+            match outcome {
+                Ok(()) => {
+                    // EXHAUSTIVE, for the reason the gate histogram above it is: a new stranded
+                    // state must be given its own count rather than folding silently into an
+                    // existing one. A `_` arm here would have quietly reported some future state's
+                    // clearances as `clearedRejectedStillFlagged`, which is the same class of
+                    // silent accumulation this whole change is about.
+                    match gate {
+                        CcGate::NoFlag => n_cleared_no_flag += 1,
+                        CcGate::RejectedStillFlagged => n_cleared_rejected += 1,
+                        CcGate::Presentable
+                        | CcGate::HumanRuled
+                        | CcGate::Unvetted
+                        | CcGate::RepoArchived => {
+                            unreachable!(
+                            "{gate:?} is not stranded — cc_stranded_cleared_comment returned None"
+                        )
+                        }
+                    }
+                    obj.insert("cleared".into(), Value::from(true));
+                    cleared.push(row);
+                }
+                Err(why) => {
+                    n_clear_failed += 1;
+                    obj.insert("cleared".into(), Value::from(false));
+                    obj.insert("clearanceError".into(), Value::from(why));
+                    // Filed as a FAILURE, never as a clearance: the label is still on the issue, so
+                    // the state is exactly the one this run set out to consume, and the next
+                    // state-load retries it.
+                    clear_failures.push(row);
+                }
+            }
+            continue;
+        }
+        if gate == CcGate::Unvetted {
             rows.push(row);
         } else {
             match action {
                 "skip-human-decided" => n_human += 1,
-                "skip-no-flag" => n_noflag += 1,
                 _ => n_vetted += 1,
             }
             skipped.push(row);
@@ -13948,19 +19445,40 @@ fn unvetted_close_candidates_fetch(
 
     let n_vet = rows.len();
     let (issues, more) = page(rows, limit);
+    let (cleared_page, more_cleared) = page(cleared, limit);
+    let (clear_failures_page, more_clear_failures) = page(clear_failures, limit);
     let mut doc = serde_json::json!({
         "counts": {
-            "flagged": found.len(),
+            "flagged": found.len() + archived_flags.len(),
             "vet": n_vet,
             "skipHumanDecided": n_human,
-            "skipNoFlag": n_noflag,
             "skipVettedAtFlag": n_vetted,
-            // flagged == vet + skip* + fetchErrors, always. A non-zero value here is the ONLY
-            // reason the parts may not sum to the whole.
+            "skipArchivedRepo": archived_flags.len(),
+            // THE NUMBERS THAT GROW (#179). A stranded flag used to be visible only when a human
+            // typed `/ncc` and read `strandedFlags` — detection in a tool nobody runs on a
+            // schedule. These are emitted by the VETTER's own state-load, every run, so a
+            // recurrence is a count in the run log rather than something rediscovered later.
+            // `clearedNoFlag` is state A (a label with no claim under it), `clearedRejected...` is
+            // state B (a flag the vetter rejected, still labelled).
+            "clearedNoFlag": n_cleared_no_flag,
+            "clearedRejectedStillFlagged": n_cleared_rejected,
+            // A clearance that could not be written. This is the one that must never be quietly
+            // zero: the label is still live, so the issue is still parked.
+            "clearanceFailed": n_clear_failed,
+            // flagged == vet + skip* + cleared* + clearanceFailed + fetchErrors, always. A non-zero
+            // value here is the ONLY reason the parts may not sum to the whole.
             "fetchErrors": errors.len(),
         },
+        "cleared": cleared_page,
+        "moreCleared": more_cleared,
+        "clearanceFailures": clear_failures_page,
+        "moreClearanceFailures": more_clear_failures,
         "issues": issues,
         "more": more,
+        // UNBOUNDED like `cleared` / `clearanceFailures`, and for the strongest version of their
+        // reason: these flags will never be judged by anything, so a page that hid some of them
+        // would hide a permanent state rather than defer a transient one.
+        "archivedRepoFlags": archived_flags,
         "fetchErrors": errors,
     });
     if include_skipped {
@@ -13974,10 +19492,20 @@ fn unvetted_close_candidates_fetch(
 
 /// PURE: the judging bundle for ONE flagged issue — the claim, and everything needed to test it.
 /// The issue-side twin of [`pr_context_doc`]; comments are the TRUSTED ones only.
-fn close_candidate_context_doc(slug: &str, num: u64, detail: &Value) -> Value {
+///
+/// `citationEvidence` is [`citation_line`]'s read of the cited diff, handed in by the fetch. It is
+/// here rather than only on the verdict the vetter writes because the vetter has to SEE it to
+/// engage with it, and a flag posted before this check existed carries none in its own body.
+fn close_candidate_context_doc(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    citation: Option<&str>,
+) -> Value {
     let flag = last_close_candidate_flag(detail);
     let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
     serde_json::json!({
+        "citationEvidence": citation.unwrap_or(""),
         "issue": format!("{slug}#{num}"),
         "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
         "title": detail.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -14009,7 +19537,15 @@ fn close_candidate_context_fetch(slug: &str, num: u64) -> Result<Value, String> 
         "number,title,body,url,state,createdAt,labels,comments",
     ])
     .ok_or_else(|| format!("error: `gh issue view {slug}#{num}` failed"))?;
-    Ok(close_candidate_context_doc(slug, num, &detail))
+    let citation = last_close_candidate_flag(&detail)
+        .map(|(_, body)| flag_reason(&body))
+        .and_then(|reason| citation_line_of(&citation_read(slug, &reason)));
+    Ok(close_candidate_context_doc(
+        slug,
+        num,
+        &detail,
+        citation.as_deref(),
+    ))
 }
 
 /// The close-candidate verdict write — the issue-side twin of [`record_verdict_apply`]. `uphold`
@@ -14098,7 +19634,20 @@ fn record_cc_verdict_apply(
             skip_comment,
         } => (flag_at, remove_label, skip_comment),
     };
-    let comment = cc_verdict_comment(&flag_at, verdict, note);
+    // Recomputed here rather than lifted off the flag body: a flag posted before this check existed
+    // carries no evidence line, and those are the whole existing queue. The read is of the SAME
+    // reason the vetter judged, so the two cannot be about different citations.
+    // Skipped when the comment is a dedup no-op, for the reason `flag_close_candidate_mode` skips
+    // it: nothing is written, so the diff read buys nothing. `dry_run` still pays, likewise — a
+    // dry run exists to show the comment that would be posted.
+    let citation = (!skip)
+        .then(|| {
+            last_close_candidate_flag(&j)
+                .map(|(_, body)| flag_reason(&body))
+                .and_then(|reason| citation_line_of(&citation_read(slug, &reason)))
+        })
+        .flatten();
+    let comment = cc_verdict_comment(&flag_at, verdict, note, citation.as_deref());
 
     if dry_run {
         return Ok(format!(
@@ -14259,7 +19808,7 @@ fn blocked_on_state_load_row(
             Ok(gate_open_threads(
                 unvetted_row(slug, num, url, title, &fresh),
                 || {
-                    let (owner, repo) = slug.split_once('/')?;
+                    let (owner, repo) = slug.split_once('/').ok_or(GhFailure::Malformed)?;
                     unresolved_threads(owner, repo, num)
                 },
             ))
@@ -14291,8 +19840,31 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         .ok_or_else(|| {
             format!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty vet queue")
         })?;
+    // A PR in an ARCHIVED repo cannot be vetted (#206): `record_verdict` applies a label and posts
+    // a comment, and a read-only repo refuses both. Withheld before the per-PR fetch — paying a
+    // `gh pr view` per frozen PR buys a verdict nothing can record — and carried as a row with its
+    // OWN action, so the state-load counts it where it counts every other skip.
+    let archived_set = archived_repos().map_err(archived_read_error)?;
+    let (prs, frozen) = withhold_archived(prs, &archived_set, hit_slug);
 
     let mut rows: Vec<(VetAction, u8, Value)> = Vec::new();
+    for p in &frozen {
+        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        rows.push((
+            VetAction::SkipArchivedRepo,
+            4,
+            serde_json::json!({
+                "pr": pr_slug(url)
+                    .zip(p.get("number").and_then(|n| n.as_u64()))
+                    .map_or_else(String::new, |(slug, num)| format!("{slug}#{num}")),
+                "url": url,
+                "title": p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+                "labels": label_names(p),
+                "action": VetAction::SkipArchivedRepo.as_str(),
+                "why": ARCHIVED_REPO_WHY,
+            }),
+        ));
+    }
     for p in &prs {
         let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let (Some(slug), Some(num)) = (pr_slug(url), p.get("number").and_then(|n| n.as_u64()))
@@ -14341,11 +19913,11 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         }
         // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
         // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
-        // An unsplittable slug yields None (fail-closed: not vetted this run), never a dropped PR.
+        // An unsplittable slug fails the fetch (fail-closed: not vetted this run), never a dropped PR.
         rows.push(gate_open_threads(
             unvetted_row(&slug, num, url, title, &detail),
             || {
-                let (owner, repo) = slug.split_once('/')?;
+                let (owner, repo) = slug.split_once('/').ok_or(GhFailure::Malformed)?;
                 unresolved_threads(owner, repo, num)
             },
         ));
@@ -14367,7 +19939,7 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     }
     let c = &doc["counts"];
     println!(
-        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review)",
+        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
         c["vet"],
         c["open"],
         c["skipDraft"],
@@ -14375,7 +19947,8 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
         c["skipVettedAtHead"],
         c["skipOpenThreads"],
         c["skipBlockedOn"],
-        c["blockedOnManualReview"]
+        c["blockedOnManualReview"],
+        c["skipArchivedRepo"]
     );
     for p in doc["prs"].as_array().into_iter().flatten() {
         println!(
@@ -14416,6 +19989,16 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
             "  {}  [blocked-on MANUAL REVIEW · {}]",
             b["pr"].as_str().unwrap_or(""),
             b["reasons"]
+        );
+    }
+    // Also unconditional (#206): a frozen PR is one the vetter will never be able to judge, and
+    // the only reason it is not in the queue is a fact about the REPO that nothing here reports
+    // otherwise.
+    for a in doc["archivedRepo"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [withheld · {}]",
+            a["pr"].as_str().unwrap_or(""),
+            a["why"].as_str().unwrap_or(ARCHIVED_REPO_WHY)
         );
     }
     0
@@ -15319,6 +20902,13 @@ fn next_ready_doc(rows: Vec<Value>, counts: &QueueCounts, presentable: usize) ->
             "unvetted": counts.unvetted,
             "openThreads": counts.open_threads,
             "fetchError": counts.fetch_error,
+            // Its OWN key, for the same reason it is its own header segment: a caller reading
+            // `fetchError` must not have a rate-limited row folded into it (#129).
+            "rateLimited": counts.rate_limited,
+            // `ai:ready` PRs an ARCHIVED repo froze (#206). Reported for the reason every other
+            // withheld count here is: this tool hands the human ONE PR at a time, so a row it
+            // drops is a row the human has no other way to learn about.
+            "archivedRepo": counts.archived_repo,
         },
         "next": rows,
     })
@@ -15746,6 +21336,7 @@ mod next_ready_tests {
             );
         }
         let counts = QueueCounts {
+            rate_limited: usize::MAX,
             raw: usize::MAX,
             excluded: usize::MAX,
             conflict: usize::MAX,
@@ -15756,6 +21347,7 @@ mod next_ready_tests {
             unvetted: usize::MAX,
             open_threads: usize::MAX,
             fetch_error: usize::MAX,
+            archived_repo: usize::MAX,
         };
         let len = next_ready_doc(rows, &counts, usize::MAX).to_string().len();
         assert!(
@@ -15803,9 +21395,11 @@ mod next_ready_tests {
             unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
+            rate_limited: 0,
+            archived_repo: 0,
         };
-        // Fourteen numeric fields in the envelope: eleven counts plus the three queue figures.
-        let env_len = next_ready_doc(vec![], &counts, 0).to_string().len() + 14 * NR_MAX_DIGITS;
+        // Fifteen numeric fields in the envelope: twelve counts plus the three queue figures.
+        let env_len = next_ready_doc(vec![], &counts, 0).to_string().len() + 15 * NR_MAX_DIGITS;
         assert!(
             env_len <= NR_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NR_ENVELOPE_BYTES} allowed"
@@ -15995,6 +21589,7 @@ mod next_ready_tests {
     #[test]
     fn an_unvetted_pr_is_counted_rather_than_returned_stale() {
         let counts = QueueCounts {
+            rate_limited: 0,
             raw: 12,
             excluded: 2,
             conflict: 1,
@@ -16005,6 +21600,7 @@ mod next_ready_tests {
             unvetted: 4,
             open_threads: 1,
             fetch_error: 0,
+            archived_repo: 0,
         };
         let doc = next_ready_doc(vec![json!({"pr": "o/r#1"})], &counts, 3);
         assert_eq!(doc["counts"]["unvetted"], json!(4));
@@ -16068,19 +21664,39 @@ mod next_ready_tests {
 enum CcGate {
     /// The vetter UPHELD the current flag and no human has ruled: the human's to rule on.
     Presentable,
+    /// The REPO is archived (#206). Read-only: no label moves, no comment posts, no issue closes,
+    /// so not one transition this FSM owns can be applied — including the stranded-flag clearance
+    /// below, which is why this arm is FIRST in [`cc_gate`] and dominates every other state.
+    ///
+    /// `rain.webapp` was archived on 2026-08-05 and `rain.webapp#139` was served as the head of the
+    /// human's queue four minutes later: a sound flag, a completed read, and no ruling that could
+    /// be written. The ordering is oldest-flag-first, so a frozen flag sorts to the FRONT and stays
+    /// there.
+    RepoArchived,
     /// A `human:*` label is already on the issue. Human decisions are sacred, and a ruling is not an
     /// inbox item — whatever the flag still says.
     HumanRuled,
     /// The label is on the issue and NO trusted producer comment says why. There is no claim to
-    /// check, so there is nothing to rule on evidence — and no AI transition clears it either (the
-    /// vetter skips it as `skip-no-flag`), which is why it is reported rather than dropped.
+    /// check, so there is nothing here to rule on evidence.
+    ///
+    /// The vetter's state-load CLEARS this (#179): it drops the label, records why, and the issue
+    /// returns to the producer's backlog. Reaching this state at all means something applied the
+    /// label outside `flag-close-candidate`, which writes the label and the claim together.
     NoFlag,
     /// No trusted `🤖 ai:vetter` verdict pinned to the CURRENT flag. The vetter owes this one a
     /// verdict; presenting it here would spend the human's judgement on the vetter's turn, and a
     /// flag the vetter REJECTS never reaches the human at all (the reject strips the label).
     Unvetted,
-    /// The verdict at the current flag is `reject` and the label is STILL here. A reject removes it,
-    /// so this is a half-applied write, not a state the machine produces — reported, never presented.
+    /// The verdict at the current flag is `reject` and the label is STILL here — the verdict says
+    /// "not closeable" while the label says "awaiting a human's close ruling", and the label is what
+    /// every downstream filter reads. Never presented.
+    ///
+    /// This was read as a half-applied write, and `rain.erc4626.words#93` shows it is not: the
+    /// vetter's removal LANDED (2026-07-28T06:18:29Z, one second after its comment), and the
+    /// producer put the label back on 2026-07-29T17:18:30Z with no new claim, because the flag
+    /// comment dedup matched the already-rejected flag. See [`close_candidate_plan`], which is where
+    /// that is now prevented. A failed `--remove-label` still reaches this state, so the vetter's
+    /// state-load also CLEARS it (#179) rather than only reporting it.
     RejectedStillFlagged,
 }
 
@@ -16088,14 +21704,22 @@ impl CcGate {
     fn as_str(self) -> &'static str {
         match self {
             CcGate::Presentable => "presentable",
+            CcGate::RepoArchived => "repo-archived",
             CcGate::HumanRuled => "human-ruled",
             CcGate::NoFlag => "no-producer-flag",
             CcGate::Unvetted => "unvetted-vetter-owes-a-verdict",
             CcGate::RejectedStillFlagged => "vetter-rejected-but-still-flagged",
         }
     }
-    /// The two states no modelled transition will ever clear on its own — a human has to act, and
-    /// until this tool named them nothing said they existed.
+    /// The two states that had no transition consuming them, which is what made them accumulate
+    /// silently: the vetter skipped them every run while the label kept the issue out of the
+    /// producer's backlog.
+    ///
+    /// The vetter's state-load now CLEARS both (#179), so seeing one HERE means the clearance has
+    /// not run yet or could not write — `counts.clearanceFailed` on that state-load is the same
+    /// fact from the other side. The classification stays because the states stay REACHABLE (a
+    /// hand-applied label; a `--remove-label` that fails), and a state that can be reached is a
+    /// state worth naming.
     fn is_stranded(self) -> bool {
         matches!(self, CcGate::NoFlag | CcGate::RejectedStillFlagged)
     }
@@ -16134,7 +21758,20 @@ fn cc_verdict_parts(body: &str) -> Option<(String, String)> {
 /// Ordered as the vetter's own `cc_row` orders its skips, and for the same reason: a human ruling
 /// dominates everything (it is sacred and already made), then "nothing was claimed", then what the
 /// vetter did with the claim. Only the last arm can produce a row.
-fn cc_gate(human_ruled: bool, flag_at: &str, verdict: Option<(String, String)>) -> CcGate {
+fn cc_gate(
+    repo_archived: bool,
+    human_ruled: bool,
+    flag_at: &str,
+    verdict: Option<(String, String)>,
+) -> CcGate {
+    // FIRST, ahead of every other arm including the sacred one (#206). Every state below names
+    // something a transition would DO — present it to a human, clear the label, ask the vetter for
+    // a verdict — and an archived repo refuses all of them. Deciding writability before deciding
+    // what to write is what stops the #179 clearance firing against a repo that would reject it on
+    // every run, for ever, and it is structural rather than a comment asking a reader to remember.
+    if repo_archived {
+        return CcGate::RepoArchived;
+    }
     if human_ruled {
         return CcGate::HumanRuled;
     }
@@ -16153,17 +21790,17 @@ fn cc_gate(human_ruled: bool, flag_at: &str, verdict: Option<(String, String)>) 
     }
 }
 
-/// Whether an OPEN pull request already claims to close this issue — the `covered-by-open-pr` state,
-/// which is a KNOWN non-closeable one: an open PR is not a landed fix.
+/// Whether an OPEN pull request already claims to close this issue — the `covered-by-open-pr`
+/// signal. It says something is IN FLIGHT against the issue and nothing more; what that costs a
+/// ruling is [`coverage_blocks_close`]'s answer, not this enum's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PrCoverage {
     /// At least one open PR's native closing references name this issue.
     Covered,
     /// The query answered, and named none.
     Uncovered,
-    /// The query failed or came back malformed. FAIL-SAFE: never read as `Uncovered`, because the
-    /// error direction matters here — an unseen covering PR is an issue closed out from under work
-    /// in flight, while a falsely-reported one only costs a second look.
+    /// The query failed or came back malformed. NEVER read as `Uncovered`: an unseen covering PR is
+    /// work in flight nobody was told about, while a falsely-reported one only costs a second look.
     Unreadable,
 }
 
@@ -16175,19 +21812,101 @@ impl PrCoverage {
             PrCoverage::Unreadable => "unreadable",
         }
     }
-    /// Does this signal stand in the way of a close? `Unreadable` does, which is what makes the
-    /// failure fail SAFE rather than merely fail.
-    fn blocks_close(self) -> bool {
+    /// Is something in flight against this issue, as far as the read can tell? `Unreadable` counts,
+    /// which is what makes an unanswered query fail SAFE rather than merely fail.
+    fn in_flight(self) -> bool {
         !matches!(self, PrCoverage::Uncovered)
     }
-    /// What the signal MEANS for the ruling, in the shape [`ThreadMeaning`] uses: the raw state is
-    /// no use to a reader who has to remember which way round the hazard runs.
-    fn meaning(self) -> &'static str {
+}
+
+/// What the producer's flag OFFERS as grounds — the second input to [`coverage_blocks_close`], and
+/// the distinction rule 7a's "**merely** COVERED BY AN OPEN PR" turns on.
+///
+/// This says what the reason CITES, never that the citation is true. Nothing on this surface can
+/// check the latter: "this is fixed" is settled by reading the code the issue named, which is the
+/// human's job at `/ncc` step 5 and the whole reason that step exists.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FlagGrounds {
+    /// An `already-fixed-on-main` claim citing a commit or a PR number — a LANDING, offered as
+    /// grounds independent of anything in flight. [`already_fixed_recency_gate`] is what put it
+    /// there: the flag could not have been written without that anchor resolving to a date past the
+    /// issue's own, so a PR anchor here is one that was merged when the flag was posted.
+    CitedLanding,
+    /// Everything else. `invalid` / `duplicate` / `wont-fix` are judgements that name no landing at
+    /// all, an `already-fixed-on-main` claim with no datable anchor names one nobody can find, and
+    /// one whose anchor is a PR already covering this issue names something still in flight.
+    NoLanding,
+}
+
+impl FlagGrounds {
+    fn as_str(self) -> &'static str {
         match self {
-            PrCoverage::Covered => "not-closeable-an-open-pr-is-not-a-landed-fix",
-            PrCoverage::Uncovered => "no-open-pr-claims-this-issue",
-            PrCoverage::Unreadable => "unknown-read-as-covered",
+            FlagGrounds::CitedLanding => "cites-a-landing",
+            FlagGrounds::NoLanding => "cites-no-landing",
         }
+    }
+}
+
+/// PURE: the grounds one flag offers, read off its [`flag_reason`] payload and what is in flight
+/// against the same issue.
+///
+/// The anchor parse is [`already_fixed_anchor`] — the one the write side gates on, so the two cannot
+/// disagree about what a reason cites.
+///
+/// **A citation that is ITSELF one of the covering PRs is not a landing**, and that is rule 7a
+/// stated outright: an OPEN PR is never sufficient evidence. Without this, a reason naming the very
+/// PR in flight would launder it into grounds for ignoring it. `already_fixed_anchor` keeps only the
+/// anchor's digits, so the match is against the issue's OWN repo — a covering PR in another repo
+/// that happens to share a number is a different PR from the one this reason cites.
+fn flag_grounds(reason: &str, slug: &str, covering: &[String]) -> FlagGrounds {
+    match already_fixed_anchor(reason) {
+        FixAnchor::Commit(_) => FlagGrounds::CitedLanding,
+        FixAnchor::Pr(n) => {
+            let cited = format!("{slug}#{n}");
+            if covering.contains(&cited) {
+                FlagGrounds::NoLanding
+            } else {
+                FlagGrounds::CitedLanding
+            }
+        }
+        FixAnchor::Missing | FixAnchor::NotApplicable => FlagGrounds::NoLanding,
+    }
+}
+
+/// PURE: does the coverage signal stand in the way of THIS close?
+///
+/// **Coverage alone does not decide it, and reading it as though it did inverts the evidence
+/// hierarchy.** Rule 7a bars an issue "**merely** COVERED BY AN OPEN PR" and calls an open PR "never
+/// sufficient **evidence**" — a rule about what may be cited FOR a close, not a veto over one. A
+/// flag citing a landing is not merely covered: it offers something an open PR is not, and a
+/// redundant PR in flight does not un-land what landed. There the covering PR is a second thing to
+/// dispose of, in the PR lane, rather than this issue's blocker — `rain.dia#6` sat blocked from
+/// 2026-07-28 behind a PR that was itself queued for closure, each queue holding half the picture.
+///
+/// Where the flag cites NO landing the open PR may be the only thing that would ever resolve the
+/// issue, so closing under it discards work in flight. There coverage blocks, and an unreadable
+/// answer blocks with it.
+///
+/// `false` is not "close it". It says the coverage read is not what stands in the way; whether the
+/// cited landing is really this issue's fix is the check the human runs, and this function has not
+/// run it.
+fn coverage_blocks_close(coverage: PrCoverage, grounds: FlagGrounds) -> bool {
+    match grounds {
+        FlagGrounds::CitedLanding => false,
+        FlagGrounds::NoLanding => coverage.in_flight(),
+    }
+}
+
+/// PURE: what the pair MEANS for the ruling, in the shape [`ThreadMeaning`] uses — two raw states
+/// are no use to a reader who has to remember which way round the hazard runs.
+fn coverage_meaning(coverage: PrCoverage, grounds: FlagGrounds) -> &'static str {
+    match (coverage, grounds) {
+        (PrCoverage::Uncovered, _) => "no-open-pr-claims-this-issue",
+        (_, FlagGrounds::CitedLanding) => "reported-not-blocking-the-flag-cites-a-landing",
+        (PrCoverage::Covered, FlagGrounds::NoLanding) => {
+            "not-closeable-an-open-pr-is-not-a-landed-fix"
+        }
+        (PrCoverage::Unreadable, FlagGrounds::NoLanding) => "unknown-read-as-covered",
     }
 }
 
@@ -16360,6 +22079,7 @@ const NCC_ISSUE_BYTES: usize = 160;
 const NCC_TIME_BYTES: usize = 40;
 const NCC_STATE_BYTES: usize = 32;
 const NCC_VERDICT_BYTES: usize = 32;
+const NCC_GROUNDS_BYTES: usize = 32;
 const NCC_LABEL_BYTES: usize = 60;
 const NCC_MAX_LABELS: usize = 8;
 const NCC_PR_REF_BYTES: usize = 160;
@@ -16376,6 +22096,7 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
     + 3 * NCC_TIME_BYTES
     + NCC_STATE_BYTES
     + NCC_VERDICT_BYTES
+    + NCC_GROUNDS_BYTES
     + NCC_MAX_LABELS * NCC_LABEL_BYTES
     + NCC_MAX_PRS * NCC_PR_REF_BYTES;
 
@@ -16384,10 +22105,11 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
 const NCC_ROW_FIXED_BYTES: usize = 1_200;
 const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
 
-// The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded, because
-// they ride inside the same one budget the rows do — and an unbounded list of stranded flags is how
-// a document that must always be servable becomes one that is refused on a bad day.
+// The three withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded,
+// because they ride inside the same one budget the rows do — and an unbounded list of stranded
+// flags is how a document that must always be servable becomes one that is refused on a bad day.
 const NCC_MAX_STRANDED: usize = 3;
+const NCC_MAX_ARCHIVED: usize = 3;
 const NCC_MAX_ERRORS: usize = 3;
 const NCC_WITHHELD_FIELD_BYTES: usize = NCC_ISSUE_BYTES + NCC_ERROR_BYTES;
 const NCC_WITHHELD_FIXED_BYTES: usize = 150;
@@ -16402,7 +22124,7 @@ const NCC_ENVELOPE_BYTES: usize = 1_500;
 /// crate does not build.
 const _: () = assert!(
     NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
-        + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
+        + (NCC_MAX_STRANDED + NCC_MAX_ARCHIVED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
         + NCC_ENVELOPE_BYTES
         <= MCP_MAX_RESULT_BYTES
 );
@@ -16452,6 +22174,7 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
         .map(|l| clip_field(l, NCC_LABEL_BYTES))
         .collect();
     let reason_full = flag_reason(f.flag_body);
+    let grounds = flag_grounds(&reason_full, f.slug, f.covering);
     let note_full = last_cc_vetter_comment(f.detail).unwrap_or_default();
     let parts = cc_verdict_parts(&note_full);
     let prs: Vec<String> = f
@@ -16480,6 +22203,10 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "reason": clip_field(&reason_full, NCC_REASON_BYTES),
             "reasonBytes": reason_full.len(),
             "reasonTruncated": reason_full.len() > NCC_REASON_BYTES,
+            // Stated because it is the second input to `openPr.blocksClose`, and a decision whose
+            // inputs are not both on the row is one a reader has to take on trust. It is a fact
+            // about the reason's TEXT — what it cites, never whether the citation holds.
+            "grounds": grounds.as_str(),
         },
         "verdict": {
             // The flag the vetter PINNED its verdict to, and whether that is the flag above. Equal
@@ -16493,9 +22220,11 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "noteTruncated": note_full.len() > NCC_NOTE_BYTES,
         },
         "openPr": {
+            // REPORTED whatever the flag says: a human ruling on this issue must see that a PR
+            // claims it, even where that claim is not what stands in the way.
             "coverage": f.coverage.as_str(),
-            "blocksClose": f.coverage.blocks_close(),
-            "meaning": f.coverage.meaning(),
+            "blocksClose": coverage_blocks_close(f.coverage, grounds),
+            "meaning": coverage_meaning(f.coverage, grounds),
             // NAMED, not counted — the ref is what a reader hands to `pr_context` to see what the
             // open PR actually does.
             "prs": prs,
@@ -16506,8 +22235,12 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
 
 /// The whole-queue breakdown. Every flag the search returned lands in exactly one of these, plus the
 /// fetch errors — so `flagged == presentable + unvetted + noProducerFlag + humanRuled +
-/// vetterRejectedStillFlagged + fetchErrors`, always, and a reader can see there is no sixth bucket
-/// quietly absorbing rows.
+/// vetterRejectedStillFlagged + archivedRepo + fetchErrors`, always, and a reader can see there is
+/// no further bucket quietly absorbing rows.
+///
+/// `archived_repo` is counted BEFORE the gate rather than as a gate state: a frozen flag is not
+/// classified at all, because classifying it would cost a `gh issue view` to answer a question no
+/// ruling can act on.
 #[derive(Default)]
 struct FlagQueueCounts {
     flagged: usize,
@@ -16516,16 +22249,27 @@ struct FlagQueueCounts {
     no_flag: usize,
     human_ruled: usize,
     rejected_still_flagged: usize,
+    archived_repo: usize,
     fetch_errors: usize,
 }
 
-/// The document's non-row halves: the counts, and the two lists a reader must see even though this
+/// The one line every surface gives for a row an archived repo froze.
+const ARCHIVED_REPO_WHY: &str = "repo is archived — no label, comment or close can be written";
+
+/// The document's non-row halves: the counts, and the three lists a reader must see even though this
 /// call will not act on them.
 struct FlagQueueWithheld {
     counts: FlagQueueCounts,
     /// The [`CcGate::is_stranded`] flags — capped, with the overflow in `more_stranded`.
     stranded: Vec<Value>,
     more_stranded: usize,
+    /// The flags frozen by an ARCHIVED repo — a separate list from `stranded` on purpose. Both are
+    /// flags no transition can consume, but the causes are different and so are the answers: a
+    /// stranded flag is a label/verdict state some future transition could clear, while an
+    /// archived repo will never accept a write again. Folding them together would hide which is
+    /// which behind one number.
+    archived: Vec<Value>,
+    more_archived: usize,
     errors: Vec<Value>,
     more_errors: usize,
 }
@@ -16537,6 +22281,11 @@ struct FlagQueueWithheld {
 /// is the answer to a question nothing else asks — those flags are in states no AI transition
 /// clears, so they sit until a human notices, and a queue that silently skipped them is how they
 /// stayed unnoticed.
+///
+/// `archivedRepoFlags` is the same argument for a different cause (#206). Those flags CANNOT be
+/// ruled on at all — every write this FSM owns is refused by an archived repo — so offering one is
+/// offering work nobody can do; but dropping them silently would shrink the human's inbox with
+/// nothing to explain the gap, which is the defect that let them sit in the queue unnoticed.
 fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
     let returned = rows.len();
     let presentable = w.counts.presentable;
@@ -16553,10 +22302,13 @@ fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
             "noProducerFlag": w.counts.no_flag,
             "humanRuled": w.counts.human_ruled,
             "vetterRejectedStillFlagged": w.counts.rejected_still_flagged,
+            "archivedRepo": w.counts.archived_repo,
             "fetchErrors": w.counts.fetch_errors,
         },
         "strandedFlags": w.stranded,
         "moreStrandedFlags": w.more_stranded,
+        "archivedRepoFlags": w.archived,
+        "moreArchivedRepoFlags": w.more_archived,
         "fetchErrors": w.errors,
         "moreFetchErrors": w.more_errors,
         "next": rows,
@@ -16614,34 +22366,59 @@ fn flagged_open_issues_args() -> Vec<String> {
     args
 }
 
+/// The flagged population and the archived-repo set to classify it against (#206).
+///
+/// Both come from ONE read, here, for the same reason the search itself is shared: two surfaces
+/// reading archived state separately is how the vetter's queue and the human's would come to
+/// disagree about which flags are actionable. The CLASSIFICATION is [`cc_gate`]'s, not this
+/// struct's — [`CcGate::RepoArchived`] is a state both inboxes get from the one classifier.
+struct FlaggedIssues {
+    hits: Vec<Value>,
+    archived: ArchivedRepos,
+}
+
 /// The ONE org-wide search behind BOTH close-candidate inboxes: every open issue carrying
 /// `ai:close-candidate`. Shared rather than written twice, so the vetter's queue and the human's are
 /// populations of the same query — two spellings of "which issues are flagged" is how they would
 /// come to answer differently.
 ///
-/// Errors rather than returning a falsely-empty set, for the reason the PR side does.
-fn flagged_open_issues() -> Result<Vec<Value>, String> {
+/// Errors rather than returning a falsely-empty set, for the reason the PR side does — including
+/// when the ARCHIVED set is unreadable, since a flag whose repo's state is unknown cannot be
+/// asserted to be actionable.
+fn flagged_open_issues() -> Result<FlaggedIssues, String> {
     let args = flagged_open_issues_args();
     let argref: Vec<&str> = args.iter().map(String::as_str).collect();
-    gh_json(&argref)
+    let found = gh_json(&argref)
         .and_then(|v| v.as_array().cloned())
         .ok_or_else(|| {
             "error: `gh search issues --label ai:close-candidate` failed (transient API/auth?) — \
              aborting rather than report a falsely-empty close-candidate queue"
                 .to_string()
-        })
+        })?;
+    let archived = archived_repos().map_err(archived_read_error)?;
+    Ok(FlaggedIssues {
+        hits: found,
+        archived,
+    })
 }
 
 /// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
 /// then pay for the covering-PR read only on the rows actually returned.
 fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
-    let found = flagged_open_issues()?;
+    let FlaggedIssues {
+        hits: found,
+        archived: archived_repos,
+    } = flagged_open_issues()?;
     let mut flags: Vec<PresentableFlag> = Vec::new();
     let mut counts = FlagQueueCounts {
         flagged: found.len(),
         ..Default::default()
     };
     let mut stranded: Vec<Value> = Vec::new();
+    // The archived rows are named, not merely counted: this tool's contract is "here is the next
+    // thing to rule on, and here is everything you are NOT being shown", and a human who knows a
+    // flag exists somewhere unreachable can decide what to do about the repo.
+    let mut archived: Vec<Value> = Vec::new();
     let mut errors: Vec<Value> = Vec::new();
     for hit in &found {
         let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -16671,6 +22448,7 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         let flag = last_close_candidate_flag(&detail);
         let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
         let gate = cc_gate(
+            archived_repos.contains(&slug),
             has_human_ruling(&label_names(&detail)),
             &flag_at,
             last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
@@ -16685,9 +22463,13 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
             CcGate::Unvetted => counts.unvetted += 1,
             CcGate::NoFlag => counts.no_flag += 1,
             CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
+            CcGate::RepoArchived => counts.archived_repo += 1,
         }
         if gate.is_stranded() {
             stranded.push(withheld_entry(&format!("{slug}#{num}"), gate.as_str()));
+        }
+        if gate == CcGate::RepoArchived {
+            archived.push(withheld_entry(&format!("{slug}#{num}"), ARCHIVED_REPO_WHY));
         }
         if gate == CcGate::Presentable {
             flags.push(PresentableFlag {
@@ -16716,6 +22498,7 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         })
         .collect();
     let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
+    let (archived, more_archived) = page(archived, Some(NCC_MAX_ARCHIVED));
     let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
     Ok(next_close_candidate_doc(
         rows,
@@ -16723,6 +22506,8 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
             counts,
             stranded,
             more_stranded,
+            archived,
+            more_archived,
             errors,
             more_errors,
         },
@@ -16742,7 +22527,7 @@ mod next_close_candidate_tests {
     fn vetter(flag_at: &str, verdict: &str, note: &str) -> Value {
         json!({
             "author": {"login": TRUSTED_AUTHOR},
-            "body": cc_verdict_comment(flag_at, verdict, note),
+            "body": cc_verdict_comment(flag_at, verdict, note, None),
         })
     }
 
@@ -16793,7 +22578,7 @@ mod next_close_candidate_tests {
             ("reject", ""),
             ("uphold", "—"),
         ] {
-            let body = cc_verdict_comment(at, verdict, note);
+            let body = cc_verdict_comment(at, verdict, note, None);
             assert_eq!(
                 cc_verdict_parts(&body),
                 Some((at.to_string(), verdict.to_string())),
@@ -16828,21 +22613,24 @@ mod next_close_candidate_tests {
     fn the_gate_reads_the_verdict_word_not_the_label_still_being_there() {
         let at = "2026-07-20T09:00:00Z";
         let parts = |w: &str| Some((at.to_string(), w.to_string()));
-        assert_eq!(cc_gate(false, at, parts("uphold")), CcGate::Presentable);
         assert_eq!(
-            cc_gate(false, at, parts("reject")),
+            cc_gate(false, false, at, parts("uphold")),
+            CcGate::Presentable
+        );
+        assert_eq!(
+            cc_gate(false, false, at, parts("reject")),
             CcGate::RejectedStillFlagged
         );
         // A word this machine does not know is not a verdict in force — the vetter still owes one,
         // exactly as an unstamped vet-protocol is never current.
         for unknown in ["close", "ready", "UPHOLD"] {
             assert_eq!(
-                cc_gate(false, at, parts(unknown)),
+                cc_gate(false, false, at, parts(unknown)),
                 CcGate::Unvetted,
                 "{unknown}"
             );
         }
-        assert_eq!(cc_gate(false, at, None), CcGate::Unvetted);
+        assert_eq!(cc_gate(false, false, at, None), CcGate::Unvetted);
         assert!(CcGate::RejectedStillFlagged.is_stranded());
         assert!(CcGate::NoFlag.is_stranded());
         for live in [CcGate::Presentable, CcGate::Unvetted, CcGate::HumanRuled] {
@@ -16857,11 +22645,21 @@ mod next_close_candidate_tests {
         let first = "2026-07-20T09:00:00Z";
         let second = "2026-07-25T09:00:00Z";
         assert_eq!(
-            cc_gate(false, second, Some((first.to_string(), "uphold".into()))),
+            cc_gate(
+                false,
+                false,
+                second,
+                Some((first.to_string(), "uphold".into()))
+            ),
             CcGate::Unvetted
         );
         assert_eq!(
-            cc_gate(false, first, Some((first.to_string(), "uphold".into()))),
+            cc_gate(
+                false,
+                false,
+                first,
+                Some((first.to_string(), "uphold".into()))
+            ),
             CcGate::Presentable
         );
     }
@@ -16872,17 +22670,90 @@ mod next_close_candidate_tests {
     fn a_human_ruling_dominates_and_a_flagless_label_is_stranded() {
         let at = "2026-07-20T09:00:00Z";
         assert_eq!(
-            cc_gate(true, at, Some((at.to_string(), "uphold".into()))),
+            cc_gate(false, true, at, Some((at.to_string(), "uphold".into()))),
             CcGate::HumanRuled
         );
-        assert_eq!(cc_gate(true, "", None), CcGate::HumanRuled);
+        assert_eq!(cc_gate(false, true, "", None), CcGate::HumanRuled);
         // Labelled, with no trusted producer comment behind it: nothing was CLAIMED, so there is
         // nothing to rule on evidence — and the vetter skips it too, which is why it is named.
-        assert_eq!(cc_gate(false, "", None), CcGate::NoFlag);
+        assert_eq!(cc_gate(false, false, "", None), CcGate::NoFlag);
         assert_eq!(
-            cc_gate(false, "", Some((at.to_string(), "uphold".into()))),
+            cc_gate(false, false, "", Some((at.to_string(), "uphold".into()))),
             CcGate::NoFlag
         );
+    }
+
+    /// #206: an ARCHIVED repo dominates EVERY other state, including the sacred one. Every state
+    /// below it names something a transition would do — present, clear, ask for a verdict — and a
+    /// read-only repo refuses all of them, so writability is decided before anything decides what
+    /// to write.
+    ///
+    /// The precedence is the behaviour, not a tidiness: if `RepoArchived` sat after the stranded
+    /// arms, #179's clearance would fire against a repo that rejects the `--remove-label` it is
+    /// made of, and would report `clearanceFailed` on every run for ever.
+    #[test]
+    fn an_archived_repo_dominates_every_other_gate_state() {
+        let at = "2026-07-20T09:00:00Z";
+        // Each of these is a DIFFERENT state when the repo is live. Archived, all of them are the
+        // same one — which is what "dominates" means and what a reordering would break.
+        for (human, flag_at, verdict) in [
+            (false, at, Some((at.to_string(), "uphold".to_string()))),
+            (false, at, Some((at.to_string(), "reject".to_string()))),
+            (false, at, None),
+            (false, "", None),
+            (true, at, Some((at.to_string(), "uphold".to_string()))),
+        ] {
+            assert_ne!(
+                cc_gate(false, human, flag_at, verdict.clone()),
+                CcGate::RepoArchived,
+                "a LIVE repo never produces RepoArchived"
+            );
+            assert_eq!(
+                cc_gate(true, human, flag_at, verdict),
+                CcGate::RepoArchived,
+                "archived must dominate (human_ruled={human}, flag_at={flag_at:?})"
+            );
+        }
+        // NOT stranded: `strandedFlags` names label states a transition could still clear, and
+        // this one names a repo that will never accept a write.
+        assert!(!CcGate::RepoArchived.is_stranded());
+        // …and therefore NOT clearable. The clearance is a label removal plus a comment; both are
+        // refused, so attempting one fails every run.
+        assert_eq!(cc_stranded_cleared_comment(CcGate::RepoArchived, at), None);
+        assert_eq!(CcGate::RepoArchived.as_str(), "repo-archived");
+    }
+
+    /// The vetter's row for a frozen flag: its own action, naming no move — never `vet` (nothing
+    /// can record a verdict) and never a clearance (nothing can remove the label).
+    #[test]
+    fn the_vetter_row_for_an_archived_repo_asks_for_no_move() {
+        let at = "2026-07-29T13:19:24Z";
+        let detail = json!({
+            "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
+            "labels": [{"name": "ai:close-candidate"}],
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": format!("🤖 ai:producer\nClose-candidate: already fixed on main\n\nflag @{at}"),
+            }],
+        });
+        let (gate, action, row) = cc_row(
+            "rainlanguage/rain.webapp",
+            139,
+            "i was asked to infinite approve quick on deposit",
+            &detail,
+            true,
+        );
+        assert_eq!(gate, CcGate::RepoArchived);
+        assert_eq!(action, CC_SKIP_ARCHIVED);
+        assert_eq!(row["action"], json!("skip-archived-repo"));
+        assert_ne!(action, CC_CLEAR_NO_FLAG);
+        assert_ne!(action, CC_CLEAR_REJECTED);
+        assert_ne!(action, "vet");
+        // The same issue in a LIVE repo is a different row entirely — the flag itself is fine.
+        let (live_gate, live_action, _) =
+            cc_row("rainlanguage/rain.webapp", 139, "t", &detail, false);
+        assert_ne!(live_gate, CcGate::RepoArchived);
+        assert_ne!(live_action, CC_SKIP_ARCHIVED);
     }
 
     // --- the ordering, which is this tool's own design decision ---------------------------------
@@ -16988,9 +22859,9 @@ mod next_close_candidate_tests {
 
     // --- the covering-PR read -------------------------------------------------------------------
 
-    // `covered-by-open-pr` is a known NON-closeable state, so the failure direction is not
-    // symmetric: an unseen covering PR closes an issue out from under work in flight, while a
-    // falsely-reported one costs a second look. A failed query is `Unreadable` and BLOCKS.
+    // The failure direction is not symmetric: an unseen covering PR is work in flight nobody was
+    // told about, while a falsely-reported one costs a second look. A failed query is `Unreadable`
+    // and counts as in flight.
     #[test]
     fn an_unreadable_coverage_query_is_never_read_as_uncovered() {
         for bad in [
@@ -17005,10 +22876,143 @@ mod next_close_candidate_tests {
             let (v, prs) = covering_open_prs(bad.as_ref());
             assert_eq!(v, PrCoverage::Unreadable, "{bad:?}");
             assert!(prs.is_empty());
-            assert!(v.blocks_close(), "an unknown answer must fail SAFE");
+            assert!(v.in_flight(), "an unknown answer must fail SAFE");
+            assert!(
+                coverage_blocks_close(v, FlagGrounds::NoLanding),
+                "and blocking is what failing safe COSTS: a flag with nothing landed behind it \
+                 waits on a query nobody could answer"
+            );
         }
-        assert!(PrCoverage::Covered.blocks_close());
-        assert!(!PrCoverage::Uncovered.blocks_close());
+        assert!(PrCoverage::Covered.in_flight());
+        assert!(!PrCoverage::Uncovered.in_flight());
+    }
+
+    // --- what coverage costs a ruling, which is NOT a function of coverage ----------------------
+
+    // Rule 7a bars an issue MERELY covered by an open PR and calls an open PR never sufficient
+    // EVIDENCE — a rule about what may be cited FOR a close. A flag citing a landing is not merely
+    // covered, and a redundant PR in flight does not un-land what landed; a flag citing none may
+    // have that PR as the only thing that would ever resolve it. So the same coverage state costs
+    // two different things, and reading it as a veto is what deadlocked `rain.dia#6`.
+    #[test]
+    fn coverage_blocks_only_a_flag_that_cites_no_landing() {
+        for coverage in [PrCoverage::Covered, PrCoverage::Unreadable] {
+            assert!(
+                !coverage_blocks_close(coverage, FlagGrounds::CitedLanding),
+                "{coverage:?}: a cited landing is grounds an open PR is not and cannot undo"
+            );
+            assert!(
+                coverage_blocks_close(coverage, FlagGrounds::NoLanding),
+                "{coverage:?}: with nothing landed cited, the PR in flight may be the fix"
+            );
+        }
+        // Nothing in flight blocks nothing, whichever grounds the flag offers — otherwise the new
+        // input would have turned a clean row into a blocked one.
+        for grounds in [FlagGrounds::CitedLanding, FlagGrounds::NoLanding] {
+            assert!(!coverage_blocks_close(PrCoverage::Uncovered, grounds));
+        }
+    }
+
+    // The meaning has to distinguish the two ways a row does not block, or a reader cannot tell "no
+    // PR claims this" from "one does and it is not the obstacle" — and the second is the whole
+    // finding. `unreadable` keeps its own wording in the lane where it still blocks, so a query
+    // failure never reads as an absence.
+    #[test]
+    fn the_meaning_names_which_of_the_two_it_is() {
+        assert_eq!(
+            coverage_meaning(PrCoverage::Uncovered, FlagGrounds::NoLanding),
+            "no-open-pr-claims-this-issue"
+        );
+        assert_eq!(
+            coverage_meaning(PrCoverage::Uncovered, FlagGrounds::CitedLanding),
+            "no-open-pr-claims-this-issue"
+        );
+        assert_eq!(
+            coverage_meaning(PrCoverage::Covered, FlagGrounds::NoLanding),
+            "not-closeable-an-open-pr-is-not-a-landed-fix"
+        );
+        assert_eq!(
+            coverage_meaning(PrCoverage::Unreadable, FlagGrounds::NoLanding),
+            "unknown-read-as-covered"
+        );
+        for coverage in [PrCoverage::Covered, PrCoverage::Unreadable] {
+            assert_eq!(
+                coverage_meaning(coverage, FlagGrounds::CitedLanding),
+                "reported-not-blocking-the-flag-cites-a-landing",
+                "{coverage:?}"
+            );
+        }
+    }
+
+    // The grounds are read off the SAME parse the write side gates on, so the two cannot disagree
+    // about what a reason cites. A bare `file:line` is the case that matters: it is an
+    // `already-fixed-on-main` claim naming nothing anyone can date, so it offers no landing and
+    // coverage still cautions.
+    #[test]
+    fn only_a_dated_already_fixed_claim_counts_as_citing_a_landing() {
+        for cites in [
+            "already-fixed-on-main: fixed by PR #2420",
+            "already-fixed-on-main: 2a319034 removed the tauri app",
+            "already-fixed-on-main: merged PR #48 (commit 8e6bcd6, merged 2026-07-20)",
+        ] {
+            assert_eq!(
+                flag_grounds(cites, "o/r", &[]),
+                FlagGrounds::CitedLanding,
+                "{cites}"
+            );
+        }
+        for none in [
+            // A judgement names no landing at all, whatever numbers it happens to contain.
+            "invalid: every 256-bit word IS a valid Float",
+            "duplicate: of #123",
+            "wont-fix: superseded by the registry flow",
+            // The `already-fixed-on-main` shape with nothing datable in it.
+            "already-fixed-on-main: crates/settings/src/raindex.rs:116-133",
+            "already-fixed-on-main: see foo#bar in the docs",
+            // Not one of the four categories at all — itself a finding, and never grounds.
+            "already-fixed: merged in o/r#1348",
+            "",
+        ] {
+            assert_eq!(
+                flag_grounds(none, "o/r", &[]),
+                FlagGrounds::NoLanding,
+                "{none}"
+            );
+        }
+    }
+
+    // The one hole pairing the grounds with the coverage opens: a reason naming the very PR in
+    // flight would launder that PR into grounds for ignoring it. Rule 7a covers this literally — an
+    // OPEN PR is never sufficient evidence — so a citation that is itself covering the issue is no
+    // landing. `already_fixed_anchor` keeps only the digits, so the match is scoped to the issue's
+    // OWN repo: a same-numbered PR elsewhere is a different PR from the one the reason cites.
+    #[test]
+    fn a_reason_citing_the_covering_pr_itself_is_not_citing_a_landing() {
+        let reason = "already-fixed-on-main: fixed by PR #60";
+        assert_eq!(
+            flag_grounds(reason, "o/r", &["o/r#60".to_string()]),
+            FlagGrounds::NoLanding,
+            "the citation IS the thing in flight"
+        );
+        assert_eq!(
+            flag_grounds(reason, "o/r", &["o/r#59".to_string(), "o/r#61".to_string()]),
+            FlagGrounds::CitedLanding,
+            "a different PR in flight says nothing about what #60 did"
+        );
+        assert_eq!(
+            flag_grounds(reason, "o/r", &["o/other#60".to_string()]),
+            FlagGrounds::CitedLanding,
+            "another repo's #60 is not the PR this reason names"
+        );
+        // A commit anchor is not a PR number and cannot collide with one.
+        assert_eq!(
+            flag_grounds(
+                "already-fixed-on-main: 2a319034 removed it",
+                "o/r",
+                &["o/r#60".to_string()]
+            ),
+            FlagGrounds::CitedLanding
+        );
     }
 
     fn coverage_response(nodes: Value) -> Value {
@@ -17031,9 +23035,12 @@ mod next_close_candidate_tests {
         let (v, prs) = covering_open_prs(Some(&resp));
         assert_eq!(v, PrCoverage::Covered);
         assert_eq!(prs, vec!["o/r#109".to_string(), "o/other#7".to_string()]);
-        assert_eq!(v.meaning(), "not-closeable-an-open-pr-is-not-a-landed-fix");
+        assert_eq!(
+            coverage_meaning(v, FlagGrounds::NoLanding),
+            "not-closeable-an-open-pr-is-not-a-landed-fix"
+        );
 
-        // An empty answer is an ANSWER — this is the one state that does not block a close.
+        // An empty answer is an ANSWER — this is the one state nothing is in flight against.
         let (v, prs) = covering_open_prs(Some(&coverage_response(json!([]))));
         assert_eq!(v, PrCoverage::Uncovered);
         assert!(prs.is_empty());
@@ -17173,6 +23180,11 @@ mod next_close_candidate_tests {
             .as_str()
             .unwrap()
             .contains("diff matches the ask"));
+        assert_eq!(
+            row["flag"]["grounds"],
+            json!("cites-no-landing"),
+            "outside the four categories, so it offers nothing datable"
+        );
         assert_eq!(row["openPr"]["coverage"], json!("no-open-pr"));
         assert_eq!(row["openPr"]["blocksClose"], json!(false));
         assert_eq!(row["openPr"]["prs"], json!([]));
@@ -17211,13 +23223,15 @@ mod next_close_candidate_tests {
             .contains("held then"));
     }
 
-    // An open PR claiming the issue is the state the flag lane already knows is not closeable, and
-    // the row says so in the field AND in the meaning beside it — the raw enum is no use to a reader
-    // who has to remember which way round the hazard runs.
+    // A flag that cites no landing is the one rule 7a calls MERELY covered: the open PR may be the
+    // only thing that would ever resolve the issue, so it blocks — and the row says so in the field
+    // AND in the meaning beside it, because the raw enum is no use to a reader who has to remember
+    // which way round the hazard runs.
     #[test]
-    fn an_open_pr_claiming_the_issue_blocks_the_close_and_is_named() {
+    fn an_open_pr_blocks_a_flag_that_cites_no_landing_and_is_named() {
         let at = "2026-07-20T09:00:00Z";
-        let detail = issue(&["ai:close-candidate"], vec![producer(at, "already-fixed")]);
+        let reason = "wont-fix: the reported surface is not a product path";
+        let detail = issue(&["ai:close-candidate"], vec![producer(at, reason)]);
         let covering = vec![
             "o/r#109".to_string(),
             "o/r#110".to_string(),
@@ -17229,10 +23243,11 @@ mod next_close_candidate_tests {
             num: 7,
             detail: &detail,
             flag_at: at,
-            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed",
+            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
             coverage: PrCoverage::Covered,
             covering: &covering,
         });
+        assert_eq!(row["flag"]["grounds"], json!("cites-no-landing"));
         assert_eq!(row["openPr"]["coverage"], json!("covered-by-open-pr"));
         assert_eq!(row["openPr"]["blocksClose"], json!(true));
         assert_eq!(
@@ -17247,6 +23262,45 @@ mod next_close_candidate_tests {
             row["openPr"]["prsTruncated"],
             json!(true),
             "the list is a PAGE, and a reader must not read three as all of them"
+        );
+    }
+
+    // `rain.dia#6`'s shape, which sat blocked from 2026-07-28 until a human happened to look: the
+    // flag cites a MERGED PR, and a redundant PR is open against the same issue. The covering PR is
+    // still REPORTED and still NAMED — a human ruling must see that a PR claims the issue — but it
+    // is not what stands in the way, and the meaning says which of the two "does not block" this is.
+    #[test]
+    fn a_flag_citing_a_landing_reports_its_coverage_without_being_blocked_by_it() {
+        let at = "2026-07-28T09:00:00Z";
+        let reason = "already-fixed-on-main: arity guard landed in MERGED PR #33";
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![
+                producer(at, reason),
+                vetter(at, "uphold", "guard is on main"),
+            ],
+        );
+        let covering = vec!["o/r#60".to_string()];
+        let row = next_close_candidate_row(&NextCcFacts {
+            slug: "o/r",
+            num: 6,
+            detail: &detail,
+            flag_at: at,
+            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
+            coverage: PrCoverage::Covered,
+            covering: &covering,
+        });
+        assert_eq!(row["flag"]["grounds"], json!("cites-a-landing"));
+        assert_eq!(
+            row["openPr"]["coverage"],
+            json!("covered-by-open-pr"),
+            "coverage is REPORTED either way — the human still has to see the claim"
+        );
+        assert_eq!(row["openPr"]["prs"], json!(["o/r#60"]));
+        assert_eq!(row["openPr"]["blocksClose"], json!(false));
+        assert_eq!(
+            row["openPr"]["meaning"],
+            json!("reported-not-blocking-the-flag-cites-a-landing")
         );
     }
 
@@ -17288,6 +23342,8 @@ mod next_close_candidate_tests {
             counts,
             stranded: vec![],
             more_stranded: 0,
+            archived: vec![],
+            more_archived: 0,
             errors: vec![],
             more_errors: 0,
         }
@@ -17298,12 +23354,13 @@ mod next_close_candidate_tests {
     #[test]
     fn the_envelope_states_what_the_page_left_behind() {
         let w = withheld(FlagQueueCounts {
-            flagged: 9,
+            flagged: 10,
             presentable: 5,
             unvetted: 2,
             no_flag: 1,
             human_ruled: 1,
             rejected_still_flagged: 0,
+            archived_repo: 1,
             fetch_errors: 0,
         });
         let doc = next_close_candidate_doc(vec![json!({"issue": "o/r#7"})], &w);
@@ -17311,6 +23368,8 @@ mod next_close_candidate_tests {
         assert_eq!(doc["queue"]["returned"], json!(1));
         assert_eq!(doc["queue"]["more"], json!(4));
         // The counts partition the search: nothing is in two buckets and nothing is in none.
+        // `archivedRepo` is one of the parts (#206) — a flag withheld for a reason that is not in
+        // this list is a flag the sum cannot account for, which is how a silent drop would look.
         let c = &doc["counts"];
         let parts: u64 = [
             "presentable",
@@ -17318,6 +23377,7 @@ mod next_close_candidate_tests {
             "noProducerFlag",
             "humanRuled",
             "vetterRejectedStillFlagged",
+            "archivedRepo",
             "fetchErrors",
         ]
         .iter()
@@ -17326,9 +23386,9 @@ mod next_close_candidate_tests {
         assert_eq!(parts, c["flagged"].as_u64().unwrap());
     }
 
-    // The flags no modelled transition will ever clear. Reporting them is the whole reason they are
-    // classified separately: the vetter skips a flagless label for ever, and a half-applied reject
-    // is not a state the machine produces — both sit until a human is told they exist.
+    // The two stranded states, named rather than folded into a skip. The vetter's state-load clears
+    // both (#179), so a flag reported here is one the clearance has not reached or could not write —
+    // which is the case a human most needs named, because the label is still parking the issue.
     #[test]
     fn stranded_flags_are_named_rather_than_silently_skipped() {
         let mut w = withheld(FlagQueueCounts {
@@ -17351,6 +23411,66 @@ mod next_close_candidate_tests {
         );
         assert_eq!(doc["moreStrandedFlags"], json!(1));
         assert_eq!(doc["queue"]["presentable"], json!(0));
+    }
+
+    // #206, as the live case that produced it. `rain.webapp` was archived on 2026-08-05 and this
+    // queue served `rain.webapp#139` as its HEAD four minutes later — a flag whose ruling could
+    // not be written, sorted to the front by an oldest-first order and staying there.
+    //
+    // The row must be GONE from `next` and PRESENT in the withheld list. Silence would leave a
+    // human unable to tell an archived-repo flag from one that was never filed, and this tool is
+    // the only place that inventory exists.
+    #[test]
+    fn a_flag_in_an_archived_repo_is_named_rather_than_offered_or_dropped() {
+        let mut w = withheld(FlagQueueCounts {
+            flagged: 7,
+            presentable: 6,
+            archived_repo: 1,
+            ..Default::default()
+        });
+        w.archived = vec![withheld_entry(
+            "rainlanguage/rain.webapp#139",
+            ARCHIVED_REPO_WHY,
+        )];
+        let doc = next_close_candidate_doc(vec![json!({"issue": "rainlanguage/raindex#960"})], &w);
+        // Not offered: the head of the queue is the live flag, not the frozen one.
+        assert_eq!(doc["next"][0]["issue"], json!("rainlanguage/raindex#960"));
+        assert_eq!(doc["next"].as_array().unwrap().len(), 1);
+        // Not dropped: named, with the reason no ruling can be written.
+        assert_eq!(
+            doc["archivedRepoFlags"][0]["issue"],
+            json!("rainlanguage/rain.webapp#139")
+        );
+        assert_eq!(doc["archivedRepoFlags"][0]["why"], json!(ARCHIVED_REPO_WHY));
+        assert_eq!(doc["counts"]["archivedRepo"], json!(1));
+        // A DIFFERENT list from `strandedFlags`: both hold flags nothing can consume, but one
+        // names a label state a transition could still clear and the other names a repo that will
+        // never accept a write. Folding them together would hide which is which.
+        assert_eq!(doc["strandedFlags"], json!([]));
+    }
+
+    /// The overflow is stated, so a scope with more frozen flags than the cap does not silently
+    /// report only the first few.
+    #[test]
+    fn frozen_flags_past_the_cap_are_counted_rather_than_lost() {
+        let mut w = withheld(FlagQueueCounts {
+            flagged: 9,
+            archived_repo: 9,
+            ..Default::default()
+        });
+        let all: Vec<Value> = (0..9)
+            .map(|i| withheld_entry(&format!("o/r#{i}"), ARCHIVED_REPO_WHY))
+            .collect();
+        let (paged, more) = page(all, Some(NCC_MAX_ARCHIVED));
+        w.archived = paged;
+        w.more_archived = more;
+        let doc = next_close_candidate_doc(vec![], &w);
+        assert_eq!(
+            doc["archivedRepoFlags"].as_array().unwrap().len(),
+            NCC_MAX_ARCHIVED
+        );
+        assert_eq!(doc["moreArchivedRepoFlags"], json!(9 - NCC_MAX_ARCHIVED));
+        assert_eq!(doc["counts"]["archivedRepo"], json!(9));
     }
 
     // --- the budget -----------------------------------------------------------------------------
@@ -17417,10 +23537,13 @@ mod next_close_candidate_tests {
                     no_flag: usize::MAX,
                     human_ruled: usize::MAX,
                     rejected_still_flagged: usize::MAX,
+                    archived_repo: usize::MAX,
                     fetch_errors: usize::MAX,
                 },
                 stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
                 more_stranded: usize::MAX,
+                archived: (0..NCC_MAX_ARCHIVED).map(|_| entry.clone()).collect(),
+                more_archived: usize::MAX,
                 errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
                 more_errors: usize::MAX,
             },
@@ -17460,11 +23583,12 @@ mod next_close_candidate_tests {
              {NCC_WITHHELD_FIXED_BYTES} allowed"
         );
 
-        // Twelve numeric fields in the envelope: seven counts, three queue figures, two overflows.
+        // Fifteen numeric fields in the envelope: eight counts, three queue figures, three
+        // overflows.
         let env_len = next_close_candidate_doc(vec![], &withheld(FlagQueueCounts::default()))
             .to_string()
             .len()
-            + 12 * NCC_MAX_DIGITS;
+            + 15 * NCC_MAX_DIGITS;
         assert!(
             env_len <= NCC_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NCC_ENVELOPE_BYTES} allowed"
@@ -17586,11 +23710,19 @@ impl McpProfile {
             // calls against 35 MCP ones — the same root cause as #170, a typed surface displaced by
             // an untyped one. As a tool the whole `{agent, repo, issue, PR}` tuple is a typed
             // argument list and a typed result, which is what `work-tokens` joins on.
+            //
+            // `push` is the OTHER output edge, and it is here for the same reason one level along:
+            // opening a PR is one of the four kinds of work the RUN BUDGET counts, and two more —
+            // a rework and a conflict resolution — end in a moved head on a PR that already exists.
+            // Those went out as a bare `git push`, so the whole of the first capped run's work was
+            // invisible to `work-tokens`. As a tool the push reports the sha it created and the PR
+            // whose head that sha IS, which is the join, and it cannot spell a force-push at all.
             McpProfile::Producer => &[
                 "clone_create",
                 "clone_release",
                 "clone_list",
                 "clone_gc",
+                "push",
                 "open_pr",
                 "repair_qa_block",
                 "weaken_closes",
@@ -17650,8 +23782,15 @@ impl McpProfile {
     }
 }
 
+/// The tool table's own declaration of [`narrowing_argument`]'s answer. It lives ON the tool, beside
+/// the schema that has to advertise it, so the refusal and the schema cannot come to disagree about
+/// which arguments a tool accepts — which is the whole of #117. It is NOT part of the MCP tool
+/// object, so [`mcp_tools`] strips it before listing.
+const TOOL_NARROWS_KEY: &str = "narrows";
+
 /// The TOOL SURFACE. Descriptions are one line each on purpose: every schema here is re-sent in the
-/// preamble of every API call, so the surface must replace more prose than it adds.
+/// preamble of every API call, so the surface must replace more prose than it adds — which is also
+/// why [`TOOL_NARROWS_KEY`] comes off here rather than riding along in every preamble.
 fn mcp_tools(profile: McpProfile) -> Value {
     let names = profile.tool_names();
     let all = mcp_all_tools();
@@ -17660,10 +23799,15 @@ fn mcp_tools(profile: McpProfile) -> Value {
         names
             .iter()
             .map(|n| {
-                all.iter()
+                let mut t = all
+                    .iter()
                     .find(|t| t["name"] == Value::String((*n).to_string()))
                     .unwrap_or_else(|| panic!("profile names an undefined tool {n:?}"))
-                    .clone()
+                    .clone();
+                if let Some(o) = t.as_object_mut() {
+                    o.remove(TOOL_NARROWS_KEY);
+                }
+                t
             })
             .collect(),
     )
@@ -17673,6 +23817,7 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
+            "narrows": "limit",
             "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
@@ -17684,6 +23829,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "next_ready",
+            "narrows": "limit",
             "description": "The next ai:ready PR to rule on, cheapest-first off the same queue: the vetter's sha-bound verdict note, headRefOid, baseRefName, CI rollup with failing checks named, whether CodeRabbit actually reviewed (only `reviewed` is coverage — rate-limited/queued are green checks with no review, making 0 unresolved threads vacuous), unresolved threads, and the legacy deploy signal (`repo-not-migrated` = the repo still has the pre-split premerge deploy shape; never a merge gate — #162).",
             "inputSchema": {
                 "type": "object",
@@ -17694,7 +23840,8 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "next_close_candidate",
-            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact), the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue (`covered-by-open-pr` is NOT closeable — an open PR is not a landed fix; an unreadable answer blocks too). `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are the ones no AI transition will ever clear.",
+            "narrows": "limit",
+            "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue. Coverage is always reported; `openPr.blocksClose` pairs it with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are labels parking an issue with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -17704,6 +23851,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "pr_context",
+            "narrows": "max_diff_bytes",
             "description": "Everything needed to judge one PR: title, body, files, additions/deletions, headRefOid, ci, mergeable, the full diff, every linked issue's title/body/labels, and the trusted ai:vetter/ai:producer comments.",
             "inputSchema": {
                 "type": "object",
@@ -17753,6 +23901,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "unvetted_close_candidates",
+            "narrows": "limit",
             "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
             "inputSchema": {
                 "type": "object",
@@ -17852,8 +24001,13 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "clone_list",
-            "description": "Every work clone on this box: name, branch, unpushed/uncommitted counts, age, and whether it is releasable now.",
-            "inputSchema": {"type": "object", "properties": {}}
+            "description": "Every work clone on this box, as COUNTS plus the rows that name a decision. `counts` partitions the WHOLE box — releasable / unpushed / uncommitted / unknown, zeroes stated — and is never truncated. Rows carry name, root, branch, unpushed/uncommitted counts, age, `releasable`, and `held` (the typed reason it is not; null when it is), unreadable state first, then unpushed, then dirty, oldest first within each. `listed`/`omitted` say how many rows the budget fitted and how many it left — only ever the least interesting ones, and never a count.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "include": {"type": "string", "enum": ["held", "all"], "description": "Which clones get a ROW: the held ones (default — why is this still here) or all of them. The counts cover the whole box either way."}
+                }
+            }
         },
         {
             "name": "clone_gc",
@@ -17880,6 +24034,18 @@ fn mcp_all_tools() -> Value {
                     "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
                 },
                 "required": ["repo", "head", "title", "body_file"]
+            }
+        },
+        {
+            "name": "push",
+            "description": "PUSH THE WORK in a clone to origin — the rework, the conflict resolution, the branch a PR is about to be opened for. Plain fast-forward of the clone's branch: there is no force spelling this tool can express, and a non-fast-forward is git's own refusal. It reports whether the remote ref actually MOVED, and names the PR whose head it moved — only when an open PR on that branch is at exactly the commit just pushed, else `pr` is null with the reason. That result is this run's record that the rework happened; a `git push` in Bash leaves nothing any reader can join to a PR.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "clone": {"type": "string", "description": "Clone dir name (or its full path under the work root)."},
+                    "branch": {"type": "string", "description": "Remote branch to fast-forward; defaults to the clone's checked-out branch. Name it when the local branch is called something else."}
+                },
+                "required": ["clone"]
             }
         },
         {
@@ -18000,7 +24166,12 @@ enum McpCall {
         name: String,
         discard_uncommitted: bool,
     },
-    CloneList,
+    /// `include_all` widens the ROWS to the releasable clones as well. It is not a narrowing
+    /// argument and the tool has none: [`fit_clone_rows`] already keeps every result inside the
+    /// budget, so there is nothing for a caller to lower.
+    CloneList {
+        include_all: bool,
+    },
     CloneGc {
         max_age_days: u64,
         dry_run: bool,
@@ -18018,6 +24189,13 @@ enum McpCall {
         body_file: String,
         closes: Option<u64>,
         base: Option<String>,
+    },
+    /// The producer's REWORK edge. `root`/`name` are the path guard's OUTPUT, like the clone
+    /// lifecycle's; `branch` is absent when the clone's own checked-out branch is the one to move.
+    Push {
+        root: String,
+        name: String,
+        branch: Option<String>,
     },
     /// The producer's two BODY REPAIRS (#136). `issue` is a NUMBER, not a `#N` string: the tool
     /// weakens the linkage to exactly one issue, and a free-text argument there is the "edit
@@ -18125,27 +24303,43 @@ fn call_result_budget(_call: &McpCall) -> usize {
     MCP_MAX_RESULT_BYTES
 }
 
-/// PURE: which argument actually makes THIS call's result fit.
+/// PURE: which argument actually makes THIS TOOL's result fit — read off the tool's own table entry
+/// ([`TOOL_NARROWS_KEY`]), never guessed from the call.
 ///
-/// Every answer here is now truthful because [`call_result_budget`] does not move with the argument:
-/// lowering the named argument lowers the payload against a FIXED allowance, so narrowing strictly
-/// converges. While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument
-/// was advice that could not work — budget and content fell together and the caller could loop for
-/// ever — which is why the fix is the budget, not the wording.
-/// `next_ready` gets an arm of its own rather than falling through the catch-all. The catch-all
-/// would answer `limit` — which happens to be true here — but a tool whose refusal is correct only
-/// because a default guessed right is a tool that inherits #117 the day the default changes. The
-/// catch-all itself is #117's to fix (it advises `limit` to `clone_list`, which has none, making
-/// [`oversize_result_error`]'s truthful `None` branch unreachable); this arm keeps `next_ready` out
-/// of that blast radius. For this tool the refusal is doubly sound: `limit` is real AND lowering it
-/// strictly removes whole rows, against a budget the row caps already keep it under. Both human
-/// gates share the arm, because both are true of both.
-fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
-    match call {
-        McpCall::PrContext { .. } => Some("max_diff_bytes"),
-        McpCall::NextReady { .. } | McpCall::NextCloseCandidate { .. } => Some("limit"),
-        _ => Some("limit"),
-    }
+/// It is keyed by NAME, and that is the fix for #117. The answer used to come from a match over
+/// [`McpCall`] whose catch-all was `Some("limit")`, so every tool without an arm of its own was
+/// ASSERTED to take a `limit`: of the seventeen variants that reached it, exactly two did.
+/// `clone_list` is the one that bit — schema `{"properties": {}}`, refusal "lower `limit`" — and a
+/// refusal naming an argument the tool does not accept is advice the caller cannot follow, so the
+/// producer improvised `ls -d …/*/ | wc -l` and reported a COUNT where a state load belonged. That
+/// is the exact failure [`oversize_result_error`] exists to prevent, arriving through the guard
+/// meant to prevent it.
+///
+/// Reading the declaration off the tool table means the refusal and the advertised schema are the
+/// same datum: `each_refusal_names_an_argument_that_actually_narrows_it` walks the whole table and
+/// requires every declared name to be a property the tool advertises, so a tool added without one
+/// gets the truthful `None` rather than a `limit` that does not exist. The default is now the SAFE
+/// answer instead of the confident one.
+///
+/// What the table cannot derive is which of a tool's arguments narrows: `clone_gc` accepts
+/// `dry_run` and `max_age_days` and neither changes the size of the result, and `pr_context`
+/// accepts `pr` as well as `max_diff_bytes`. So the property is DECLARED beside the schema rather
+/// than inferred from a property name — inference would be a convention hidden in a spelling, and
+/// the first tool with a `limit` that does not narrow would revive #117 silently.
+///
+/// Every declared answer is also one that CONVERGES, because [`call_result_budget`] does not move
+/// with the argument: lowering the named argument lowers the payload against a FIXED allowance.
+/// While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument was advice
+/// that could not work — budget and content fell together and the caller could loop for ever —
+/// which is why that fix was the budget and not the wording.
+fn narrowing_argument(name: &str) -> Option<String> {
+    mcp_all_tools()
+        .as_array()?
+        .iter()
+        .find(|t| t["name"] == Value::String(name.to_string()))?
+        .get(TOOL_NARROWS_KEY)?
+        .as_str()
+        .map(std::string::ToString::to_string)
 }
 
 /// PURE: the over-budget refusal. It is an ERROR, not a truncation and not a spill, and it names the
@@ -18153,20 +24347,34 @@ fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
 /// improvised one. (#78: the vetter met an over-budget state-load, invented a fallback that dropped
 /// the open-threads accounting, and nothing in the run said so.) When NO argument makes it smaller
 /// it says that instead, and names the only honest move left.
+///
+/// The prohibition on improvising sits in the HEAD, shared by both branches. It used to sit only in
+/// the `None` branch, on the reasoning that a caller told to re-call narrower has somewhere to go —
+/// but #117 is what happens when it does not: the advice was followable-looking and wrong, and the
+/// caller improvised anyway. A refusal a caller cannot act on is worse than a stated truncation,
+/// because the substitute it provokes is unstated.
+///
+/// The `None` text is TOOL-GENERAL. It used to describe `max_diff_bytes` and end "record NO verdict
+/// for this PR", which was `pr_context`'s case written into the branch every other tool reaches —
+/// so fixing the catch-all alone would only have routed `clone_list` from one untruth to another.
 fn oversize_result_error(name: &str, len: usize, budget: usize, narrow: Option<&str>) -> String {
     let head = format!(
         "error: tool `{name}` produced {len} bytes, over the {budget}-byte budget one tool result \
          must fit in. Nothing was truncated or spilled — a partial state-load cannot say what it is \
-         missing. "
+         missing. Do NOT improvise a substitute read: a shell command that answers part of this \
+         question drops the rest silently, and the run then carries a fragment nothing declares as \
+         one. "
     );
     match narrow {
-        Some(arg) => format!("{head}Re-call NARROWER: lower `{arg}`."),
+        Some(arg) => format!(
+            "{head}Re-call NARROWER: lower `{arg}` — it is an argument this tool accepts, and the \
+             budget does not move with it, so a smaller value is a strictly smaller result."
+        ),
         None => format!(
-            "{head}NO argument makes this call smaller — `max_diff_bytes` caps the diff and raises \
-             this budget by the same amount, so this result is over budget on its METADATA alone. \
-             Do not retry it with a different `max_diff_bytes` expecting a different answer, and do \
-             not improvise a substitute read: record NO verdict for this PR and name it in your run \
-             summary."
+            "{head}NO argument makes this call smaller: `{name}` accepts none that shrinks its \
+             result, so re-calling it with different arguments cannot change this answer. Record \
+             NOTHING from it and name this call, by tool name, in your run summary — an unanswered \
+             read is a reportable state, and it is the only honest move left."
         ),
     }
 }
@@ -18388,7 +24596,30 @@ fn validate_call(
                     .unwrap_or(false),
             })
         }
-        "clone_list" => Ok(McpCall::CloneList),
+        // The REWORK edge takes a CLONE, never a directory and never a remote: the same path guard
+        // the lifecycle tools run, so "push from somewhere that is not a work clone" is not
+        // expressible. `branch` is the REMOTE branch to fast-forward, for the corpus's real case
+        // where the local branch is named something else.
+        "push" => {
+            let (root, name) = clone_in_roots(roots, req_str(args, "clone")?)?;
+            let branch = match args.get("branch") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(push_branch(req_str(args, "branch")?)?),
+            };
+            Ok(McpCall::Push { root, name, branch })
+        }
+        // `include` is REFUSED rather than clamped to a default when it is not one of the two
+        // words, for the reason `state_load_limit` refuses an out-of-range page: a silently
+        // reinterpreted argument leaves the caller believing it asked for something it did not get.
+        "clone_list" => {
+            let include_all = match args.get("include") {
+                None | Some(Value::Null) => false,
+                Some(Value::String(s)) if s.trim() == "all" => true,
+                Some(Value::String(s)) if s.trim() == "held" => false,
+                Some(v) => return Err(format!("include must be \"held\" or \"all\", not {v}")),
+            };
+            Ok(McpCall::CloneList { include_all })
+        }
         "clone_gc" => {
             let max_age_days = match args.get("max_age_days") {
                 None | Some(Value::Null) => GC_MAX_AGE_DEFAULT,
@@ -18556,16 +24787,21 @@ fn mcp_handle(
             let out = match validate_call(profile, roots, name, &args) {
                 Err(e) => tool_result(e, true),
                 Ok(call) => {
-                    // The budget AND the narrowing advice are read off the VALIDATED call, before the
-                    // effect runs, because `exec` consumes it — and because both are properties of
-                    // what was asked for.
+                    // The budget is read off the VALIDATED call, before the effect runs, because
+                    // `exec` consumes it — and because it is a property of what was asked for. The
+                    // narrowing advice is read off the tool NAME instead (#117), so it survives the
+                    // call being consumed and comes from the same table entry as the schema.
                     let budget = call_result_budget(&call);
-                    let narrow = narrowing_argument(&call);
                     match exec(call) {
                         // A result over budget is THIS server's error to raise. Handing it back and
                         // letting the harness reject it is what left the vetter improvising (#78).
                         Ok(text) if text.len() > budget => tool_result(
-                            oversize_result_error(name, text.len(), budget, narrow),
+                            oversize_result_error(
+                                name,
+                                text.len(),
+                                budget,
+                                narrowing_argument(name).as_deref(),
+                            ),
                             true,
                         ),
                         Ok(text) => tool_result(text, false),
@@ -18668,7 +24904,9 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             name,
             discard_uncommitted,
         } => clone_release_exec(&root, &name, discard_uncommitted).map(|d| d.to_string()),
-        McpCall::CloneList => clone_list_exec(&roots).map(|d| d.to_string()),
+        McpCall::CloneList { include_all } => {
+            clone_list_exec(&roots, include_all).map(|d| d.to_string())
+        }
         McpCall::CloneGc {
             max_age_days,
             dry_run,
@@ -18681,6 +24919,8 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             closes,
             base,
         } => open_pr_apply(&slug, &head, &title, &body_file, closes, base.as_deref())
+            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+        McpCall::Push { root, name, branch } => push_apply(&root, &name, branch.as_deref())
             .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::RepairQaBlock {
             slug,
@@ -20199,6 +26439,318 @@ fn open_pr_apply(
         "assignee": assignee,
     })
     .to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// push — the REWORK as a TYPED transition.
+//
+// WHY IT EXISTS. `open_pr` records a PR that did not exist before. Three of the four kinds of work
+// the RUN BUDGET counts are not that: "a rework you push", "a conflict you resolve" and "a deploy
+// you dispatch". The first two have ONE outcome between them — the head of an existing PR moves —
+// and the producer performed it with a bare `git push` inside Bash, which leaves a shell string in
+// the trace and nothing to join on. On the first capped run all THREE items were of that shape, so
+// the run recorded no work at all and `work-tokens` reported `n/a` for a run that did three things.
+//
+// WHY THE COMMAND STRING IS NOT A SUBSTITUTE. Reading the pushes out of the Bash calls was measured
+// against the seven producer traces and it does not work: 76 command strings contain a `git … push`
+// and they are not one shape (`git -C <dir> push`, `push origin <branch>`, `push -u origin
+// <branch>`, `push origin HEAD:<branch>`, `push origin <local>:<remote>` where the two names
+// differ), several are chained behind `;` into unrelated commands, and at least two are not pushes
+// at all — one is a `for c in "git push" …` grep list, one is a diff argument. A parser over that
+// invents work items, which is the defect #175 rejected a label regex for.
+//
+// THE JOIN IS CAUSAL, NOT NOMINAL. A branch name resolved through GitHub's head index is exactly
+// the join #175 rejected `clone_create` for: `gh pr list --head main` answers with a real PR the
+// task never touched. This names a PR only when the remote ref MOVED and the open PR's `headRefOid`
+// IS the commit this call pushed — so the record says "the head this transition created is that
+// PR's head", which is a fact about a sha rather than a guess about a name. Nothing moved, or no
+// PR at that head, and the result carries `pr: null` and the reason: an unattributable push is a
+// defensible `n/a`, and a plausible-looking wrong PR is not.
+//
+// IT CANNOT FORCE-PUSH. The argv is [`push_args`]: `push origin HEAD:refs/heads/<branch>`, no flags
+// at all, and the branch may carry no `:` or leading `+`. So "the producer never force-pushes"
+// stops being a prompt rule this path can violate — there is no argument that spells one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// WHY a `push` was refused — a TYPED discriminant, like [`OpenPrRefusal`], so the exit code and the
+/// message both derive from the variant and no caller re-classifies by prose.
+#[derive(Debug, PartialEq, Eq)]
+enum PushRefusal {
+    /// The `clone` argument named nothing this tool may touch. Carries the path guard's own words.
+    CloneUnusable(String),
+    /// The clone is not on a branch, so there is no head to move.
+    DetachedHead,
+    /// `origin` names no GitHub repo, so no result could say WHICH repo was pushed to.
+    NoOriginSlug(String),
+    /// git could not say what the local head or the remote ref is. Distinct from a failed push
+    /// because NOTHING was attempted: the tool refuses rather than pushing blind.
+    StateUnreadable(String),
+    /// `git push` itself failed. Carries git's own output, which already names the cause (a
+    /// non-fast-forward, no permission, a hook) better than a re-classification would.
+    PushFailed(String),
+    /// The push reported success and the remote ref is NOT at the commit that was pushed. The
+    /// effect may have happened; what is certain is that this tool cannot say what the head is, so
+    /// it records no work item rather than one it cannot stand behind.
+    HeadUnconfirmed { want: String, got: String },
+}
+
+impl PushRefusal {
+    /// Exit code, distinct per variant because they are six different things to do next: fix the
+    /// clone name, check the branch out, fix the remote, look at git's error, read the push output,
+    /// go and look at what the remote actually holds.
+    fn exit(&self) -> i32 {
+        match self {
+            PushRefusal::PushFailed(_) => 1,
+            PushRefusal::CloneUnusable(_) => 2,
+            PushRefusal::DetachedHead => 3,
+            PushRefusal::NoOriginSlug(_) => 4,
+            PushRefusal::StateUnreadable(_) => 5,
+            PushRefusal::HeadUnconfirmed { .. } => 6,
+        }
+    }
+
+    fn render(&self, subject: &str) -> String {
+        let mut lines = vec![format!("REFUSED - push {subject}"), String::new()];
+        match self {
+            PushRefusal::CloneUnusable(why) => lines.push(format!("  {why}")),
+            PushRefusal::DetachedHead => lines.extend([
+                "  this clone is not on a branch, so there is no head to move.".to_string(),
+                "  Check the work branch out, or name it with `branch`.".to_string(),
+            ]),
+            PushRefusal::NoOriginSlug(url) => lines.extend([
+                format!("  origin is {url:?}, which names no owner/repo on github.com."),
+                "  A push there could not be recorded against any repo.".to_string(),
+            ]),
+            PushRefusal::StateUnreadable(why) => lines.extend([
+                format!("  {why}"),
+                "  NOTHING was pushed - this refuses rather than pushing blind.".to_string(),
+            ]),
+            PushRefusal::PushFailed(out) => lines.extend([
+                "  `git push` failed and the remote is UNCHANGED. git said:".to_string(),
+                String::new(),
+                out.trim_end().to_string(),
+            ]),
+            PushRefusal::HeadUnconfirmed { want, got } => lines.extend([
+                format!("  the push reported success, but the remote ref reads {got} and this"),
+                format!("  call pushed {want}. Go and look at the branch before doing anything"),
+                "  else - do NOT re-push, and treat NO work item as recorded.".to_string(),
+            ]),
+        }
+        lines.join("\n")
+    }
+}
+
+/// PURE: the branch a `push` may write. [`parse_branch`]'s rules, plus the two spellings that would
+/// turn the refspec into something other than a plain fast-forward of one branch.
+fn push_branch(s: &str) -> Result<String, String> {
+    let branch = parse_branch(s)?;
+    if branch.starts_with('+') {
+        return Err(format!(
+            "refusing branch {branch:?}: a leading `+` is the force spelling of a refspec"
+        ));
+    }
+    if branch.contains(':') {
+        return Err(format!(
+            "refusing branch {branch:?}: a `:` would make this a refspec rather than a branch"
+        ));
+    }
+    Ok(branch)
+}
+
+/// PURE: the argv `push` runs — the destination named in full, and no flags at all.
+///
+/// Every force spelling (`--force`, `-f`, `--force-with-lease`, a leading `+`) is absent BY
+/// CONSTRUCTION rather than by a rule someone keeps: there is no argument that reaches this vector,
+/// and [`push_branch`] has already refused the one string that could smuggle one in.
+fn push_args(branch: &str) -> Vec<String> {
+    vec![
+        "push".to_string(),
+        "origin".to_string(),
+        format!("HEAD:refs/heads/{branch}"),
+    ]
+}
+
+/// PURE: the sha `git ls-remote` reports for a ref, or `None` when the ref does not exist there.
+///
+/// `ls-remote` prints `<sha>\t<ref>` per line and nothing for a ref that is absent, so an empty
+/// answer is the ref not existing — which is a NEW branch, not a failure.
+///
+/// The FIRST field of the FIRST line that has one: `split_whitespace` never yields an empty
+/// string, so a blank line contributes nothing and no emptiness check is needed here.
+fn ls_remote_sha(out: &str) -> Option<String> {
+    out.lines()
+        .find_map(|l| l.split_whitespace().next())
+        .map(|s| s.to_string())
+}
+
+/// The PR a push moved, or the reason there is none. Not an error either way: a push with no PR
+/// behind it is ordinary — it is how a branch reaches GitHub before `open_pr` runs.
+#[derive(Debug, PartialEq, Eq)]
+enum PushedPr {
+    Moved { pr: u64, url: String },
+    None(String),
+}
+
+/// PURE: which PR this push MOVED, decided from the pushed sha and GitHub's own answer for that
+/// head branch.
+///
+/// An answer that could not be READ is its own nothing, never "no PR has this branch": a producer
+/// told there is no PR on the branch it just reworked would open a second one.
+///
+/// The sha equality is the whole guard. `gh pr list --head <branch>` answers on a NAME, and a name
+/// is what attributed a read-only clone of `main` a real closed PR in #175; requiring the PR's
+/// `headRefOid` to BE the commit this call pushed makes the record a statement about the effect
+/// that just happened. More than one match names none of them: two PRs at one head is a real shape
+/// (a branch opened against two bases), and picking one would be a guess.
+fn pushed_pr(pushed_sha: &str, resp: Option<&Value>) -> PushedPr {
+    let Some(prs) = resp.and_then(|v| v.as_array()) else {
+        return PushedPr::None(
+            "GitHub could not be read, so this push names no PR — the push itself succeeded"
+                .to_string(),
+        );
+    };
+    let at_head: Vec<&Value> = prs
+        .iter()
+        .filter(|p| {
+            p.get("headRefOid")
+                .and_then(|s| s.as_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case(pushed_sha))
+        })
+        .collect();
+    match at_head.len() {
+        1 => {
+            let p = at_head[0];
+            match p.get("number").and_then(|n| n.as_u64()).filter(|n| *n > 0) {
+                Some(pr) => PushedPr::Moved {
+                    pr,
+                    url: p
+                        .get("url")
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                },
+                None => PushedPr::None(
+                    "an open PR sits at this head but names no number — recording nothing"
+                        .to_string(),
+                ),
+            }
+        }
+        0 if prs.is_empty() => PushedPr::None("no open PR has this branch as its head".to_string()),
+        0 => PushedPr::None(
+            "an open PR has this branch, but its head is not the commit this call pushed"
+                .to_string(),
+        ),
+        n => PushedPr::None(format!(
+            "{n} open PRs sit at this head — naming one of them would be a guess"
+        )),
+    }
+}
+
+/// The `push` producer MCP tool: fast-forward one work clone's branch onto `origin`, and record the
+/// PR whose head it moved.
+///
+/// Returns the report text rather than printing it: on the MCP server STDOUT IS THE PROTOCOL.
+///
+/// Exit: 0 pushed (or already up to date), 1 the push failed, 2 unusable clone, 3 detached HEAD,
+/// 4 origin names no repo, 5 local/remote state unreadable, 6 the remote head could not be
+/// confirmed.
+fn push_apply(root: &str, name: &str, branch: Option<&str>) -> Result<String, (i32, String)> {
+    let subject = format!(
+        "{name}{}",
+        branch.map(|b| format!(" {b}")).unwrap_or_default()
+    );
+    let refuse = |r: PushRefusal| (r.exit(), r.render(&subject));
+
+    let dir =
+        resolve_existing_clone(root, name).map_err(|e| refuse(PushRefusal::CloneUnusable(e)))?;
+    let state = local_clone_state(&dir);
+    let branch = match branch {
+        Some(b) => b.to_string(),
+        None => {
+            if state.branch.is_empty() || state.branch == "HEAD" {
+                return Err(refuse(PushRefusal::DetachedHead));
+            }
+            state.branch.clone()
+        }
+    };
+    let origin = git_out(&dir, &["remote", "get-url", "origin"]).ok_or_else(|| {
+        refuse(PushRefusal::StateUnreadable(
+            "this clone has no `origin` remote".to_string(),
+        ))
+    })?;
+    let slug = parse_repo_slug(&origin).ok_or_else(|| refuse(PushRefusal::NoOriginSlug(origin)))?;
+    let head = git_out(&dir, &["rev-parse", "HEAD"]).ok_or_else(|| {
+        refuse(PushRefusal::StateUnreadable(
+            "`git rev-parse HEAD` could not name a commit to push".to_string(),
+        ))
+    })?;
+
+    // BEFORE, so "this call moved the head" is a comparison rather than a reading of git's prose.
+    let remote_ref = format!("refs/heads/{branch}");
+    let read_remote = |dir: &std::path::Path| {
+        git_out(dir, &["ls-remote", "origin", &remote_ref])
+            .ok_or_else(|| format!("`git ls-remote origin {remote_ref}` failed"))
+            .map(|o| ls_remote_sha(&o))
+    };
+    let before = read_remote(&dir).map_err(|e| refuse(PushRefusal::StateUnreadable(e)))?;
+
+    let moved = before.as_deref() != Some(head.as_str());
+    if moved {
+        let args = push_args(&branch);
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        git_run(&dir, &argv).map_err(|e| refuse(PushRefusal::PushFailed(e)))?;
+        let after = read_remote(&dir).map_err(|e| refuse(PushRefusal::StateUnreadable(e)))?;
+        if after.as_deref() != Some(head.as_str()) {
+            return Err(refuse(PushRefusal::HeadUnconfirmed {
+                want: head.clone(),
+                got: after.unwrap_or_else(|| "no such ref".to_string()),
+            }));
+        }
+    }
+
+    // A push that moved NOTHING is not this transition's work item, whatever the PR's head says:
+    // the head it would name was put there by something else, and crediting it here is how a
+    // read-only call comes to own a real PR.
+    let pr = if moved {
+        let prs = gh_json(&[
+            "pr",
+            "list",
+            "-R",
+            &slug,
+            "--head",
+            &branch,
+            "--state",
+            "open",
+            "--json",
+            "number,headRefOid,url",
+            "--limit",
+            "10",
+        ]);
+        pushed_pr(&head, prs.as_ref())
+    } else {
+        PushedPr::None("the remote ref was already at this commit — nothing moved".to_string())
+    };
+
+    let mut out = serde_json::json!({
+        "repo": slug,
+        "clone": name,
+        "branch": branch,
+        "head": head,
+        "moved": moved,
+        "before": before,
+        "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
+    });
+    match pr {
+        PushedPr::Moved { pr, url } => {
+            out["pr"] = serde_json::json!(pr);
+            out["url"] = serde_json::json!(url);
+        }
+        PushedPr::None(why) => {
+            out["pr"] = Value::Null;
+            out["prNote"] = serde_json::json!(why);
+        }
+    }
+    Ok(out.to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22055,12 +28607,43 @@ enum Cmd {
         #[arg(long, requires = "skipped")]
         skip_reason: Option<String>,
     },
-    /// Resolve every external binary the HARNESS needs at read time. Exit 12 if any is missing.
+    /// Resolve every external binary the HARNESS needs at read time, plus each capability asked
+    /// for. Exit 12 if any is unsatisfied.
     ///
     /// Run before the model, by both runners. A dependency that is absent must stop the run, not
     /// degrade it: the failure that motivated this was a vetter that could not render an audit PDF,
-    /// vetted the PR on what was left, and reported success (#85).
-    Preflight,
+    /// vetted the PR on what was left, and reported success (#85). The capability flags carry the
+    /// same rule one layer out — a tool that resolves and cannot do the job stops the run too.
+    Preflight {
+        /// Require `gh` to be authenticated, holding the scopes the pipeline writes through.
+        #[arg(long)]
+        gh_auth: bool,
+        /// Require nix to realise rainix's `sol-shell` and run `forge` out of it.
+        #[arg(long)]
+        sol_shell: bool,
+    },
+    /// Print the `nix develop` prefix a CHECKOUT's own Solidity checks run in, so a local `forge`
+    /// is the one its CI will judge with. Exit 3 when the checkout has no single answer.
+    ///
+    /// The pipeline's Solidity repos split two ways and want opposite things — the rainix
+    /// reusables run at a `RAINIX_SHA` the REUSABLE pins, repo-local workflows run the CALLING
+    /// repo's flake — so this is read off the checkout rather than fixed anywhere.
+    SolToolchain {
+        /// The work clone to resolve. Absolute: it lands verbatim in the printed command.
+        dir: String,
+    },
+    /// Read a run's trace back: every Solidity check it ran, against the toolchain `sol-toolchain`
+    /// named for that checkout. Exit 3 when one ran in a shell that checkout's CI does not run, or
+    /// with no answer on the record at all.
+    ///
+    /// `sol-toolchain` gave the producer a way to ASK. This is what reads the answer back, and it
+    /// reads it out of the run's OWN record — the answer and the `nix develop` that followed it are
+    /// both in the trace — so there is no network read per Bash call and nothing that can stop a
+    /// run on a blip.
+    SolToolchainAudit {
+        /// The run trace to read (runs/<id>.jsonl).
+        trace: String,
+    },
     /// CI gate: every `HARNESS_TOOLS` entry resolves from EACH model runner's own baked PATH.
     /// Exit 12 if a closure is missing one, 2 if a runner could not be built or read.
     ClosurePreflight {
@@ -22181,6 +28764,48 @@ enum Cmd {
     UncoveredIssues {
         #[arg(long)]
         json: bool,
+    },
+    /// Wait — in ONE turn, inside `Monitor` — until every named PR has SETTLED: its checks have all
+    /// reported, and (with `@<sha>`) a push has moved its head off `<sha>`. Replaces the per-turn
+    /// `gh pr view --json headRefOid` / `gh pr checks` probing that was 60% of the enumeration
+    /// cost #170 measured. Exit 3 = the deadline stopped it; the report still names every subject.
+    Await {
+        /// `owner/repo#n`, or `owner/repo#n@<sha>` to also wait for a push off `<sha>`. Repeatable
+        /// — the whole in-flight set is ONE wait, which is what makes it one turn.
+        #[arg(required = true)]
+        refs: Vec<String>,
+        /// Give up after this many seconds and REPORT where each subject got to. A wait always
+        /// polls once, so 0 is a snapshot.
+        #[arg(long, default_value_t = 900)]
+        timeout_secs: u64,
+        /// Seconds between passes. Refused below 1: a zero interval is an API hammer, and clamping
+        /// it silently would hide the caller's mistake.
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..))]
+        interval_secs: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Has a MERGED PR referencing this issue landed SINCE it was filed? The candidate-selection
+    /// question `uncovered-issues` cannot answer, since that split is computed from OPEN PRs only.
+    /// Takes ISSUE refs (should this be worked at all) and PR refs (is this open PR superseded —
+    /// each of the issues it closes is checked). Exit 4 = something is merged-since, 1 = something
+    /// could not be read, 0 = every subject clear.
+    AlreadyFixed {
+        /// `owner/repo#n`, repeatable — a run checks the candidates it actually took.
+        #[arg(required = true, num_args = 1..)]
+        refs: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The PRODUCER's state-load in ONE result: the fleet's `nextAction` histogram, the rows that
+    /// name work, the approved set, and the audit backlog by severity — pre-grouped, so a run opens
+    /// on a typed answer rather than on a blob it re-slices with `jq`.
+    StateLoad {
+        #[arg(long)]
+        json: bool,
+        /// Bypass the fleet's read-through cache entirely (always fetch fresh).
+        #[arg(long)]
+        no_cache: bool,
     },
     /// END THE RUN: the infrastructure the work depends on is down. Records the reason on the run
     /// record and exits 12. Writes NOTHING to any PR — no label, no comment (#108).
@@ -22898,10 +29523,33 @@ impl UiTouch {
 }
 
 /// PURE: does this path fall under the screenshot requirement?
+///
+/// Deliberately WIDE, because of what the answer is USED for: it ROUTES a PR to `screenshot-3c`,
+/// where step 3c's own next sentence is the narrowing — read the diff, and a change that only
+/// touches `<script>`/store/load/pure-logic with no visible effect is skipped. So a path that
+/// fires here costs one diff read, which is the price [`UiTouch::Unknown`] is already set at.
+///
+/// A gate that REFUSED a `gh pr create` on this answer would price it at the PR, and no path rule
+/// is precise enough to carry that. Measured over the 681 PRs the producer has opened since the
+/// cron's first commit: 116 change a `.svelte`/`.css`/`.html` file, and 32 of those change no
+/// markup, style or template line at all — while 5 of that same 32 carry a screenshot the producer
+/// judged necessary anyway (a `<script>` constant can be the string a user reads). Both directions
+/// are wrong, so which side of the line a diff falls on is a JUDGEMENT about the rendered surface.
+/// It lives in step 3c and in the vetter's SCREENSHOT GATE, and this function only decides who is
+/// asked to make it (#142).
+///
+/// The families: raindex's two frontend packages; everything published as rain-org-health's
+/// dashboard, its DATA included (`site/health.json` is what the panels draw, and a scanner change
+/// that rewrites it changes the render); and the three extensions a rendered surface is written in
+/// wherever a repo keeps it — `cyclo.site` keeps its components under `src/lib/components/`. Of
+/// the 35 PRs in that corpus carrying a screenshot the producer pushed, these families see all 35.
 fn is_ui_path(p: &str) -> bool {
     p.contains("packages/webapp")
         || p.contains("packages/ui-components")
-        || (p.starts_with("site/") && p.ends_with(".html"))
+        || p.starts_with("site/")
+        || p.ends_with(".svelte")
+        || p.ends_with(".css")
+        || p.ends_with(".html")
 }
 
 /// PURE: the screenshot requirement's read of a changed-file set.
@@ -22928,6 +29576,52 @@ fn touches_ui(set: &ChangedFileSet) -> UiTouch {
             }
         }
     }
+}
+
+/// The orphan branch every screenshot is pushed to (campaign-prompt step 5). A raw URL on it is
+/// what an embedded shot IS, so the branch segment — not a filename shape — is what identifies one.
+const SCREENSHOT_BRANCH_SEGMENT: &str = "pr-screenshots/";
+
+/// PURE: does a TRUSTED comment on this PR settle the screenshot question?
+///
+/// Either half of step 5's rule settles it: a shot embedded from the `pr-screenshots` branch, or
+/// the exact `screenshot pending (manual)` waiver marker. Whether a waiver's REASON is any good is
+/// the vetter's judgement and stays there — this only reports that an answer was given.
+///
+/// The shot half matches the URL and never a filename, because the filename has no single shape:
+/// step 5 names a raindex shot `shots/<pr>.png` and every other repo's `shots/<repo>-<pr>.png`, and
+/// the branch also holds per-view suffixes (`shots/cyclo.site-403-after.png`) and shots carrying no
+/// PR number at all (`shots/roh-remove-overview.png`). A trusted comment ON THIS PR embedding a
+/// shot from that branch is this PR's shot — which is the subject the vetter's SCREENSHOT GATE
+/// names as well (`pr-screenshots/…png` in a trusted comment), so the producer's routing and the
+/// vetter's verdict are answering one question rather than one of them matching a filename the
+/// other never mentions. Matching `shots/<number>.png` instead agrees only for raindex: on
+/// 2026-08-04
+/// `rain-org-health#155` and `#156` each carried `shots/rain-org-health-<n>.png` and every run
+/// re-routed them to `screenshot-3c`, which is also what kept them out of `green-ready` (#142).
+fn screenshot_settled(trusted: &[String]) -> bool {
+    trusted
+        .iter()
+        .any(|c| c.contains("screenshot pending (manual)") || embeds_screenshot(c))
+}
+
+/// PURE: does this comment embed a screenshot from the `pr-screenshots` branch?
+///
+/// A URL, not a mention: the branch segment has to be followed, inside one unbroken run of URL
+/// characters, by a `.png`. Prose naming the branch ("push the PNG to the pr-screenshots branch" —
+/// which step 5 says, so the producer quotes it) names no image and settles nothing.
+fn embeds_screenshot(comment: &str) -> bool {
+    comment
+        .match_indices(SCREENSHOT_BRANCH_SEGMENT)
+        .any(|(i, _)| {
+            comment[i + SCREENSHOT_BRANCH_SEGMENT.len()..]
+                .split(|c: char| {
+                    c.is_whitespace() || matches!(c, ')' | ']' | '(' | '[' | '"' | '\'' | '<' | '>')
+                })
+                .next()
+                .map(|tail| tail.split(['?', '#']).next().unwrap_or(tail))
+                .is_some_and(|path| path.to_ascii_lowercase().ends_with(".png"))
+        })
 }
 
 /// Derive a PR's signals + next_action from its detail JSON (pure given the JSON).
@@ -22996,13 +29690,12 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         })
         .unwrap_or(false);
     let parked = design_flicked || handed_off;
-    // UI PR missing a screenshot: touches a webapp/ui/site path AND no shots/<n>.png marker
+    // UI PR missing a screenshot: touches a path under the screenshot requirement AND no trusted
+    // comment settles the question.
     let ui = touches_ui(&changed_files_from_view(detail));
     let num = detail.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
-    let has_shot = trusted.iter().any(|c| {
-        c.contains(&format!("shots/{num}.png")) || c.contains("screenshot pending (manual)")
-    });
-    let ui_missing_screenshot = ui != UiTouch::No && !has_shot;
+    let shot_settled = screenshot_settled(&trusted);
+    let ui_missing_screenshot = ui != UiTouch::No && !shot_settled;
 
     let labels: Vec<String> = detail
         .get("labels")
@@ -23050,7 +29743,10 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
             "designFlicked": design_flicked,
             "handedOff": handed_off,
             "has3bAttempt": has_3b_attempt,
-            "screenshotPending": has_shot,
+            // TRUE means the screenshot question is answered on this PR — a shot is embedded, or
+            // the waiver marker is present. It is what suppresses `screenshot-3c`, so a name that
+            // read as "a shot is still owed" said the opposite of what the value gates.
+            "screenshotSettled": shot_settled,
             // Reported, not just consumed: `unknown` is the case where the screenshot requirement
             // applies because the file list could not be ruled out, and a producer told to post a
             // shot has to be able to see that that is why.
@@ -23058,11 +29754,256 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         },
         "stateLabel": state_label,
         "humanOverride": has_human_override,
+        // GitHub's native review state, carried because human approval IS that field (there is no
+        // ledger) and 2z works the approved set first. `WORKLIST_DETAIL_FIELDS` already fetched it;
+        // dropping it from the row is what left every run re-asking GitHub the same question with a
+        // separate `gh search prs --review approved`.
+        "reviewDecision": detail
+            .get("reviewDecision")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
         "nextAction": action.as_str(),
     })
 }
 
+/// The `nextAction` values that name WORK this run: a row carrying one is dispatched to its step.
+/// The rest — `green-ready` (the human's move), `wait` (CI's), `parked-skip` (a human-gated state)
+/// — are counted and not enumerated, which is the whole reason a digest is smaller than the fleet.
+const ACTIONABLE_ACTIONS: [&str; 5] = [
+    "deploy",
+    "needs-3b",
+    "conflict-3d",
+    "coderabbit-3e",
+    "screenshot-3c",
+];
+
+/// Every `nextAction` a row can carry, in dispatch order. The histogram reports ALL of them,
+/// including the zeroes: a class absent from a `group_by` has to be inferred, and "deploy is
+/// absent, so presumably zero" is a re-derivation the caller should never have to make.
+const ALL_ACTIONS: [&str; 8] = [
+    "deploy",
+    "needs-3b",
+    "conflict-3d",
+    "coderabbit-3e",
+    "screenshot-3c",
+    "green-ready",
+    "wait",
+    "parked-skip",
+];
+
+/// PURE: the fleet half of the producer's state-load.
+///
+/// The three things every producer run derived from the raw worklist before doing anything:
+/// the `nextAction` histogram, the rows that name work, and the approved set. Approved rows are
+/// repeated in full rather than referenced, because 2z works them FIRST and an approved row is
+/// usually also an actionable one — a reference would be a second lookup into the same result.
+fn fleet_digest(rows: &[Value]) -> Value {
+    let action_of = |r: &Value| {
+        r.get("nextAction")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut by_action = serde_json::Map::new();
+    for a in ALL_ACTIONS {
+        by_action.insert(
+            a.to_string(),
+            Value::from(rows.iter().filter(|r| action_of(r) == a).count()),
+        );
+    }
+    let actionable: Vec<Value> = rows
+        .iter()
+        .filter(|r| ACTIONABLE_ACTIONS.contains(&action_of(r).as_str()))
+        .cloned()
+        .collect();
+    let approved: Vec<Value> = rows
+        .iter()
+        .filter(|r| r.get("reviewDecision").and_then(|v| v.as_str()) == Some("APPROVED"))
+        .cloned()
+        .collect();
+    serde_json::json!({
+        "total": rows.len(),
+        "byAction": Value::Object(by_action),
+        "actionable": actionable,
+        "approved": approved,
+    })
+}
+
+/// The severity labels the audit skill puts on an issue, worst first. The order is the priority
+/// order the producer works the backlog in, so it is stated once here rather than re-sorted by
+/// each caller.
+const SEVERITY_LABELS: [&str; 5] = ["critical", "high", "medium", "low", "info"];
+
+/// The bucket for an audit-labelled issue carrying no severity label at all. A named bucket and
+/// not a dropped row: an audit finding whose severity nobody set is still work, and a histogram
+/// that silently omits it under-reports the backlog.
+const SEVERITY_NONE: &str = "none";
+
+/// PURE: an issue's label names, from either shape `gh` returns them in — objects (`gh search
+/// issues --json labels`) or bare strings. Both, because a reader that assumed one shape is
+/// exactly what made four separate runs re-run the same query until it parsed.
+fn issue_label_names(meta: &Value) -> Vec<String> {
+    meta.get("labels")
+        .and_then(|l| l.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| match l {
+                    Value::String(s) => Some(s.clone()),
+                    _ => l
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .map(std::string::ToString::to_string),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// PURE: is this issue part of the AUDIT backlog — the set the producer drains before general work?
+///
+/// `passN` is matched as the prefix plus a digit run, not as the bare prefix: the audit skill emits
+/// `pass0`..`pass6` today and the count of passes is its business, but an ordinary label that merely
+/// starts with those four letters is not an audit finding.
+fn is_audit_labelled(labels: &[String]) -> bool {
+    labels.iter().any(|l| {
+        l == "audit"
+            || l == "mutation-test"
+            || l.strip_prefix("pass")
+                .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+/// PURE: an issue's severity, worst-first when it carries more than one.
+fn issue_severity(labels: &[String]) -> &'static str {
+    SEVERITY_LABELS
+        .into_iter()
+        .find(|s| labels.iter().any(|l| l == s))
+        .unwrap_or(SEVERITY_NONE)
+}
+
+/// PURE: the backlog half of the producer's state-load.
+///
+/// The audit set is enumerated and the general set is counted, which is the priority order the
+/// prompt already works in — audit-labelled first, by severity. Counting the general set rather
+/// than listing it is what keeps the digest bounded: the uncovered set runs to ~650 issues and the
+/// audit subset to ~50.
+fn backlog_digest(issues: &[Value]) -> Value {
+    let mut audit: Vec<Value> = Vec::new();
+    let mut by_severity = serde_json::Map::new();
+    for s in SEVERITY_LABELS
+        .iter()
+        .chain(std::iter::once(&SEVERITY_NONE))
+    {
+        by_severity.insert((*s).to_string(), Value::from(0u64));
+    }
+    for it in issues {
+        let labels = issue_label_names(it);
+        if !is_audit_labelled(&labels) {
+            continue;
+        }
+        let sev = issue_severity(&labels);
+        let n = by_severity
+            .get(sev)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        by_severity.insert(sev.to_string(), Value::from(n + 1));
+        audit.push(serde_json::json!({
+            "repo": issue_repo(it),
+            "number": it.get("number").and_then(serde_json::Value::as_u64).unwrap_or(0),
+            "url": it.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+            "title": it.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+            "severity": sev,
+            "labels": labels,
+        }));
+    }
+    // worst-first, so the row order IS the order the backlog is worked in.
+    audit.sort_by_key(|r| {
+        SEVERITY_LABELS
+            .iter()
+            .position(|s| Some(*s) == r.get("severity").and_then(|v| v.as_str()))
+            .unwrap_or(SEVERITY_LABELS.len())
+    });
+    serde_json::json!({
+        "uncovered": issues.len(),
+        "audit": {
+            "total": audit.len(),
+            "bySeverity": Value::Object(by_severity),
+            "issues": audit,
+        },
+        "general": issues.len() - audit.len(),
+    })
+}
+
+/// PURE: an issue's `owner/repo`, from either shape `gh` returns it in.
+fn issue_repo(meta: &Value) -> String {
+    match meta.get("repository") {
+        Some(Value::String(s)) => s.clone(),
+        Some(r) => r
+            .get("nameWithOwner")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        None => String::new(),
+    }
+}
+
 fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
+    let Some((rows, n_archived)) = worklist_rows(use_cache) else {
+        return 1;
+    };
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into())
+        );
+    } else {
+        println!(
+            "worklist: {} open PRs by {}{}\n",
+            rows.len(),
+            pr_assignee(),
+            archived_note(n_archived)
+        );
+        for r in &rows {
+            let fc = r
+                .get("failingChecks")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            println!(
+                "  [{:>12}] {}#{}  ci={} merge={} threads={}{}",
+                r.get("nextAction").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("number")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                r.get("ci").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("mergeState").and_then(|v| v.as_str()).unwrap_or(""),
+                r.get("unresolvedThreads")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                if fc.is_empty() {
+                    String::new()
+                } else {
+                    format!("  failing=[{fc}]")
+                },
+            );
+        }
+    }
+    0
+}
+
+/// The fleet rows themselves, action-ranked, plus how many open PRs an ARCHIVED repo froze out of
+/// the fleet (#206). Split out from [`worklist_mode`] so `state-load` can compose the same
+/// computation instead of re-deriving it — one fleet read, one classifier, so the digest and the
+/// raw list can never disagree about what a PR needs. `None` on a gh failure, which every caller
+/// must treat as an abort rather than as an empty fleet — INCLUDING an unreadable archived set,
+/// since a fleet that cannot tell which repos accept writes cannot say what work is possible.
+fn worklist_rows(use_cache: bool) -> Option<(Vec<Value>, usize)> {
     let assignee = pr_assignee();
     let mut search: Vec<String> = vec!["search".into(), "prs".into()];
     search.extend(org_owner_args());
@@ -23083,10 +30024,25 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
     let sref: Vec<&str> = search.iter().map(String::as_str).collect();
     let Some(val) = gh_json(&sref) else {
         eprintln!("error: `gh search prs --author {assignee}` failed (transient API/auth?) — aborting rather than report a falsely-empty worklist");
-        return 1;
+        return None;
     };
     let empty = Vec::new();
-    let arr = val.as_array().unwrap_or(&empty);
+    // An archived repo's PR has no `nextAction` this fleet can take — every one of them
+    // (`push`, a thread resolution, a merge) is a write the repo refuses — so it is withheld
+    // rather than ranked into the producer's work (#206). Stated at the render, never silent.
+    let archived_set = archived_repos().map_err(|f| {
+        eprintln!("{}", archived_read_error(f));
+    });
+    let Ok(archived_set) = archived_set else {
+        return None;
+    };
+    let (arr, frozen) = withhold_archived(
+        val.as_array().unwrap_or(&empty).clone(),
+        &archived_set,
+        hit_slug,
+    );
+    let n_archived = frozen.len();
+    let arr = &arr;
 
     let mut cache = if use_cache {
         load_cache()
@@ -23166,41 +30122,113 @@ fn worklist_mode(json_out: bool, use_cache: bool) -> i32 {
         })
     });
 
+    Some((rows, n_archived))
+}
+
+/// `state-load`: the producer's WHOLE opening picture in ONE result.
+///
+/// It composes the two state-loads a run already made — the fleet and the uncovered backlog — and
+/// answers, in the result itself, the questions every run then re-derived in shell: the
+/// `nextAction` histogram, the rows that name work, the approved set, and the audit backlog by
+/// severity. Those four were measured across the producer traces, not chosen: each is deterministic
+/// given data the two subcommands already hold, so each round trip that computed one was buying an
+/// answer the tool could have handed over.
+///
+/// PRE-GROUPED, NOT QUERYABLE. A query interface would put the round trip back for the caller that
+/// wants one grouping, and the payload argument does not survive the counts: three of the four are
+/// wanted by every run and the fourth by most, so the inflation a general result pays is a fraction
+/// of one grouping's summary — against 6–31 shell calls whose results also sit in context for the
+/// rest of the run.
+///
+/// A FAILED half is an ABORT, never a partial digest: the two underlying reads each refuse to
+/// report a falsely-empty set, and a digest that quietly dropped one would launder exactly the
+/// emptiness they refuse.
+fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
+    let Some((rows, fleet_archived)) = worklist_rows(use_cache) else {
+        return 1;
+    };
+    let Some(OrgIssues {
+        uncovered: open,
+        meta,
+        archived_repo: backlog_archived,
+        ..
+    }) = coverage_uncovered()
+    else {
+        return 1;
+    };
+    let issues: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
+    let mut fleet = fleet_digest(&rows);
+    let mut backlog = backlog_digest(&issues);
+    // Both halves report what an archived repo froze out of them, in the digest itself: this is
+    // the producer's WHOLE opening picture, and a picture that silently omits rows is one the run
+    // then re-derives from outside the tool (#206).
+    for (doc, n) in [
+        (&mut fleet, fleet_archived),
+        (&mut backlog, backlog_archived),
+    ] {
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert("archivedRepo".into(), Value::from(n));
+        }
+    }
     if json_out {
         println!(
             "{}",
-            serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".into())
+            serde_json::to_string_pretty(&serde_json::json!({
+                "fleet": fleet,
+                "backlog": backlog,
+            }))
+            .unwrap_or_else(|_| "{}".into())
         );
-    } else {
-        println!("worklist: {} open PRs by {assignee}\n", rows.len());
-        for r in &rows {
-            let fc = r
-                .get("failingChecks")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                })
-                .unwrap_or_default();
-            println!(
-                "  [{:>12}] {}#{}  ci={} merge={} threads={}{}",
-                r.get("nextAction").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("repo").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
-                r.get("ci").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("mergeState").and_then(|v| v.as_str()).unwrap_or(""),
-                r.get("unresolvedThreads")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-                if fc.is_empty() {
-                    String::new()
-                } else {
-                    format!("  failing=[{fc}]")
-                },
-            );
-        }
+        return 0;
+    }
+    println!(
+        "fleet: {} open PRs by {}{}",
+        fleet
+            .get("total")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        pr_assignee(),
+        archived_note(fleet_archived)
+    );
+    for a in ALL_ACTIONS {
+        println!(
+            "  {a:<14} {}",
+            fleet
+                .pointer(&format!("/byAction/{a}"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        );
+    }
+    println!(
+        "  approved       {}",
+        fleet
+            .get("approved")
+            .and_then(|v| v.as_array())
+            .map_or(0, Vec::len)
+    );
+    println!(
+        "\nbacklog: {} uncovered issues ({} audit-labelled){}",
+        backlog
+            .get("uncovered")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        backlog
+            .pointer("/audit/total")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        archived_note(backlog_archived)
+    );
+    for s in SEVERITY_LABELS
+        .iter()
+        .chain(std::iter::once(&SEVERITY_NONE))
+    {
+        println!(
+            "  {s:<14} {}",
+            backlog
+                .pointer(&format!("/audit/bySeverity/{s}"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        );
     }
     0
 }
@@ -23221,19 +30249,55 @@ fn action_rank(a: &str) -> u8 {
     }
 }
 
-/// The uncovered-coverage result: the uncovered issues (repo, number) paired with a lookup from
-/// (repo, number) to each issue's meta.
-type UncoveredCoverage = (
-    Vec<(String, u64)>,
-    std::collections::HashMap<(String, u64), Value>,
-);
+/// What one org-wide issue search plus one open-PR search know: every open issue, which of them no
+/// open PR covers, and the raw search row behind each.
+///
+/// `all` and `uncovered` are two populations of DIFFERENT widths and every consumer wants exactly
+/// one of them — `uncovered-issues` and the producer backlog narrow to `uncovered`, the org-wide
+/// age stats (#165) measure `all`. They are named fields rather than tuple positions because they
+/// have the same type: a swapped position would compile, run, and silently report the wrong
+/// population, which is the whole failure mode the age work is here to avoid.
+struct OrgIssues {
+    /// EVERY open issue in the configured org scope, in the order GitHub returned them. No
+    /// coverage filter, no label filter — the widest population this binary knows.
+    all: Vec<(String, u64)>,
+    /// The subset of `all` that no open PR's `closingIssuesReferences` covers.
+    uncovered: Vec<(String, u64)>,
+    /// The raw `gh search issues` row for every member of `all` — so for every member of
+    /// `uncovered` too, since `uncovered` is a subset. Keyed the way both lists are.
+    meta: std::collections::HashMap<(String, u64), Value>,
+    /// How many open issues an ARCHIVED repo withheld from `all` — and therefore from `uncovered`
+    /// and from the ages too (#206). A repo that refuses every write holds no work for anybody, so
+    /// its issues are not backlog and their age is not a fact about the org's responsiveness; the
+    /// count says they exist without offering them.
+    archived_repo: usize,
+}
 
-/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter)
-/// and the covered set from open PRs' native `closingIssuesReferences`, then return the uncovered
-/// issues (no covering open PR) with their meta. `None` on a gh failure — callers MUST abort rather
-/// than report a false-empty set. Both `uncovered-issues` and the `human-queue` producer-backlog
-/// count read this ONE computation, so their coverage semantics can never drift.
-fn coverage_uncovered() -> Option<UncoveredCoverage> {
+impl OrgIssues {
+    /// The two populations `human-queue` reports on, each built from the field that DEFINES it:
+    /// the producer backlog narrows `uncovered`, the age population takes `all` whole.
+    ///
+    /// The choice of field IS the whole difference between the two metrics, so it is made here, in
+    /// one tested function, rather than at the call site: `open_issues(&c.uncovered, …)` differs
+    /// from `open_issues(&c.all, …)` by one word, compiles either way, and silently re-narrows the
+    /// org-wide ages back to the producer's share. That narrowing is not hypothetical — it is what
+    /// #165 originally shipped, and what this rescope undoes.
+    fn populations(&self) -> (Vec<SubjectRef>, Vec<OpenIssue>) {
+        (
+            producer_backlog(&self.uncovered, &self.meta),
+            open_issues(&self.all, &self.meta),
+        )
+    }
+}
+
+/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter,
+/// and WITH `createdAt` so the issue age stats are arithmetic on this same payload — one more
+/// field on this one query, never a per-issue fetch) and the covered set from open PRs' native
+/// `closingIssuesReferences`, then return every open issue, the uncovered subset, and the meta.
+/// `None` on a gh failure — callers MUST abort or omit rather than report a false-empty set. Every
+/// org-wide issue population in this binary reads this ONE computation, so no two of them can
+/// disagree about what is open or what is covered.
+fn coverage_uncovered() -> Option<OrgIssues> {
     // open issues
     let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
     isearch.extend(org_owner_args());
@@ -23244,7 +30308,7 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
             "--limit",
             "1000",
             "--json",
-            "number,repository,url,title,labels",
+            "number,repository,url,title,labels,createdAt",
         ]
         .iter()
         .map(|s| s.to_string()),
@@ -23254,6 +30318,23 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
         eprintln!("error: `gh search issues` failed — aborting rather than report a falsely-empty issue set");
         return None;
     };
+    // The BACKLOG's version of the same defect (#206), and the largest instance of it: measured on
+    // 2026-08-05, 29 of the 802 open issues in scope were in archived repos. The producer cannot
+    // work one — it cannot push a branch or open a PR against a read-only repo — so an issue there
+    // is not backlog, it is a row that would be picked up and abandoned. Withheld and counted.
+    let archived_set = match archived_repos() {
+        Ok(s) => s,
+        Err(f) => {
+            eprintln!("{}", archived_read_error(f));
+            return None;
+        }
+    };
+    let (ival, frozen) = withhold_archived(
+        ival.as_array().cloned().unwrap_or_default(),
+        &archived_set,
+        hit_slug,
+    );
+    let n_archived = frozen.len();
     // open PRs + their NATIVE closing references (GraphQL). The REST `gh search prs` cannot
     // return `closingIssuesReferences`, and regexing title+body missed the URL and cross-repo
     // reference forms GitHub honors while over-counting title keywords GitHub ignores — the
@@ -23269,7 +30350,7 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
     let mut issues: Vec<(String, u64)> = Vec::new();
     let mut meta: std::collections::HashMap<(String, u64), Value> =
         std::collections::HashMap::new();
-    for it in ival.as_array().unwrap_or(&Vec::new()) {
+    for it in &ival {
         let Some(repo) = it
             .get("repository")
             .and_then(|r| r.get("nameWithOwner"))
@@ -23285,7 +30366,13 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
         meta.insert(k, it.clone());
     }
 
-    Some((uncovered(&issues, &covered), meta))
+    let no_open_pr = uncovered(&issues, &covered);
+    Some(OrgIssues {
+        all: issues,
+        uncovered: no_open_pr,
+        meta,
+        archived_repo: n_archived,
+    })
 }
 
 /// True when an uncovered issue belongs to the PRODUCER's untouched backlog: NOT already flagged
@@ -23306,7 +30393,13 @@ fn is_producer_backlog(meta: &Value) -> bool {
 }
 
 fn uncovered_issues_mode(json_out: bool) -> i32 {
-    let Some((open, meta)) = coverage_uncovered() else {
+    let Some(OrgIssues {
+        uncovered: open,
+        meta,
+        archived_repo: n_archived,
+        ..
+    }) = coverage_uncovered()
+    else {
         return 1;
     };
     if json_out {
@@ -23316,7 +30409,11 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
             serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_else(|_| "[]".into())
         );
     } else {
-        println!("uncovered issues (no open PR): {}\n", open.len());
+        println!(
+            "uncovered issues (no open PR): {}{}\n",
+            open.len(),
+            archived_note(n_archived)
+        );
         for (repo, num) in &open {
             let title = meta
                 .get(&(repo.clone(), *num))
@@ -23330,6 +30427,1045 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
         }
     }
     0
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// AWAIT — the fleet-side wait, in ONE turn (#170).
+//
+// #170 was filed as "worklist did not displace per-PR enumeration" and offered two causes: the
+// prompt is not binding, or the row is missing fields. Classifying all 1,124 `gh pr view` /
+// `gh pr checks` / `gh issue view` calls in `runs/*.jsonl` says it is NEITHER. Only 35 of them
+// (2.2% of the attributable cost) re-fetch a field the row already carries. The largest class —
+// 622 calls, $46 of $78, 60% — is the main loop SPIN-WAITING on GitHub: in 20260729T170004Z, 320
+// of 788 main-loop turns did nothing but probe `gh pr view --json headRefOid` and `gh pr checks`
+// on two to four PRs, and 317 of those 320 ran with three or more sub-agents live. The run was
+// waiting for delegates to push and for CI to report.
+//
+// SO THE COST IS TURNS, NOT PAYLOAD. Each of those probes returns ~46 bytes and costs a full
+// re-read of the main loop's context — $43.92 of the $46.28 is the turn, not the answer. Widening
+// the worklist row cannot touch it (the row is not what is missing) and neither can a firmer
+// instruction to call `worklist` (it had already been called). The only thing that helps is
+// collapsing the whole wait into ONE turn.
+//
+// `campaign-prompt.txt` already says waiting is `Monitor`, but the only idiom it gives is
+// `until grep -q '<done-marker>' <output-file>` — which needs a LOCAL FILE. There is no local file
+// for "cyclo.site#294's checks have reported", so the rule was unreachable for exactly the wait
+// the runs actually do, and they hand-rolled it one turn at a time instead. That is the gap this
+// closes: `await` is a bounded, in-process poll that a single `Monitor` call can hold.
+//
+// Two conditions, because the traces show two waits, usually together: 412 of the probes read
+// `headRefOid` (has the delegate's push landed?) and the rest read the check rollup (has CI
+// reported?). `owner/repo#n@<sha>` expresses the first, and it GATES the second — see
+// [`await_state`], where an unmoved head is reported as such no matter what the checks say,
+// because those checks belong to the old head.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// The `gh pr view --json` field list `await` polls with. Deliberately the SMALLEST list that
+/// answers both questions: a poll runs tens of times per wait, and unlike `worklist` it is not
+/// building a row anybody reads — only the FINAL states are reported. Pinned as a constant and
+/// conformance-tested against [`await_state`]'s reads for [`WORKLIST_DETAIL_FIELDS`]'s reason.
+const AWAIT_DETAIL_FIELDS: &str = "headRefOid,statusCheckRollup";
+
+/// One subject of an `await`: the PR to wait on, and — when the caller is waiting for a PUSH to
+/// land — the head sha it must move OFF.
+#[derive(Clone, Debug, PartialEq)]
+struct AwaitRef {
+    owner: String,
+    repo: String,
+    num: u64,
+    from_head: Option<String>,
+}
+
+impl AwaitRef {
+    fn label(&self) -> String {
+        format!("{}/{}#{}", self.owner, self.repo, self.num)
+    }
+}
+
+/// PURE: `owner/repo#n`, or `owner/repo#n@<sha>` to also wait for the head to move off `<sha>`.
+///
+/// The sha half is validated as HEX rather than taken as given. A baseline that cannot be a sha is
+/// a baseline nothing will ever equal, so [`head_moved`] would report "moved" on the first poll and
+/// the whole wait would silently do nothing — a typo that costs a phantom-green PR rather than an
+/// error message. Seven is git's own minimum abbreviation.
+fn parse_await_ref(r: &str) -> Option<AwaitRef> {
+    let (subject, from_head) = match r.split_once('@') {
+        Some((s, sha)) => {
+            if sha.len() < 7 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+                return None;
+            }
+            (s, Some(sha.to_string()))
+        }
+        None => (r, None),
+    };
+    let (owner, repo, num) = parse_subject_ref(subject)?;
+    Some(AwaitRef {
+        owner,
+        repo,
+        num,
+        from_head,
+    })
+}
+
+/// PURE: has `head` moved off `baseline`?
+///
+/// Compared as PREFIXES in both directions, so a short sha read out of a log matches the full one
+/// GitHub returns — the same equivalence [`deploy_confirmed_at_head`] already accepts, and the
+/// reason it exists there is the reason it is needed here. An EMPTY head is not a move: an
+/// unreadable head must never be mistaken for a push that landed.
+fn head_moved(head: &str, baseline: &str) -> bool {
+    !(head.starts_with(baseline) || baseline.starts_with(head))
+}
+
+/// Where one subject stands at the moment it was polled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AwaitState {
+    /// Nothing more is coming: the push (if one was awaited) landed, and every check has reported.
+    Settled,
+    /// Still at the sha the caller said it was waiting to move off — the push has not landed.
+    HeadUnchanged,
+    /// Checks are still in flight.
+    ChecksPending,
+    /// The head carries NO checks yet, and the grace period for them to appear has not run out.
+    /// Not settled: see [`await_state`].
+    ChecksUnregistered,
+    /// The read failed, or the document did not carry what the poll asked for.
+    Unreadable,
+}
+
+impl AwaitState {
+    fn as_str(self) -> &'static str {
+        match self {
+            AwaitState::Settled => "settled",
+            AwaitState::HeadUnchanged => "head-unchanged",
+            AwaitState::ChecksPending => "checks-pending",
+            AwaitState::ChecksUnregistered => "checks-unregistered",
+            AwaitState::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// How long an EMPTY check rollup is read as "the checks have not appeared yet" rather than "this
+/// repo has no CI".
+///
+/// `NoChecks` is the `nochecks` is not `passed` trap: an empty rollup is a true statement about the
+/// document and a false answer to "is anything still coming", because GitHub registers a push's
+/// checks seconds AFTER the push. Both readings are right sometimes and there is no field that
+/// distinguishes them, so the only honest discriminator is TIME — and it has to be bounded in both
+/// directions, since settling instantly is a phantom green and never settling hangs every repo that
+/// genuinely has no CI. Two minutes is an order of magnitude beyond the observed registration
+/// window while still ending a no-CI wait long before the default deadline.
+///
+/// The grace is timed from the moment a subject became ELIGIBLE (see [`await_head_ready`]), never
+/// from the start of the wait: a head that moves at minute ten must still get its full grace, and
+/// timing from the start would hand it a phantom green precisely when a push had just landed.
+const AWAIT_CHECKS_GRACE_SECS: u64 = 120;
+
+/// PURE: the head gate on its own — `Some(true)` when the checks in this document are the ones the
+/// caller is waiting on, `Some(false)` while the head has not moved off the named baseline, `None`
+/// when the document could not be read.
+///
+/// Split out of [`await_state`] because the poll loop has to know WHEN a subject became eligible in
+/// order to time [`AWAIT_CHECKS_GRACE_SECS`] from that moment.
+fn await_head_ready(detail: Option<&Value>, baseline: Option<&str>) -> Option<bool> {
+    let head = detail?.get("headRefOid").and_then(|v| v.as_str())?;
+    Some(match baseline {
+        Some(b) => head_moved(head, b),
+        None => true,
+    })
+}
+
+/// PURE: one subject's state, from the document one poll fetched.
+///
+/// Three things here are decisions rather than mechanics, and each one is a way this could report
+/// a wait as OVER when it is not — which is the only expensive direction. A wait that ends late
+/// costs one bounded timeout; a wait that ends early hands the run a PR it then treats as finished.
+///
+///  1. AN UNMOVED HEAD OUTRANKS THE CHECKS. When the caller named a baseline sha and the head is
+///     still on it, the rollup being green describes the PREVIOUS head — the phantom green the
+///     prompt's STALE-CI GUARD is about. So the checks are not even consulted.
+///  2. AN EMPTY ROLLUP IS NOT GREEN UNTIL THE GRACE RUNS OUT — see [`AWAIT_CHECKS_GRACE_SECS`].
+///     This is NOT scoped to the `@sha` case: a caller that names no baseline is waiting on checks
+///     it believes are already running, and "they have not been created yet" is the same wrong
+///     answer whether or not this process is the one that saw the push.
+///  3. AN UNREADABLE SUBJECT IS NOT SETTLED. A failed read is not an answer, the same way
+///     [`count_unresolved_page`] returns `None` rather than a silent zero.
+fn await_state(
+    detail: Option<&Value>,
+    baseline: Option<&str>,
+    checks_grace_expired: bool,
+) -> AwaitState {
+    match await_head_ready(detail, baseline) {
+        None => return AwaitState::Unreadable,
+        Some(false) => return AwaitState::HeadUnchanged,
+        Some(true) => {}
+    }
+    let Some(detail) = detail else {
+        return AwaitState::Unreadable;
+    };
+    // Key presence, not value shape: the poll ASKED for this field, so a document without it is a
+    // document that did not answer. `null` is an answer (no checks) and reaches `classify_ci`.
+    let Some(rollup) = detail.get("statusCheckRollup") else {
+        return AwaitState::Unreadable;
+    };
+    match classify_ci(rollup) {
+        Ci::Pending => AwaitState::ChecksPending,
+        Ci::NoChecks if !checks_grace_expired => AwaitState::ChecksUnregistered,
+        _ => AwaitState::Settled,
+    }
+}
+
+/// How many CONSECUTIVE unreadable polls of one subject end the wait.
+///
+/// An unreadable subject never settles, so without a bound a wait on one runs the full deadline —
+/// and since `gh_json` collapses every failure to `None` (#129, PR 199), a RATE LIMIT arrives here
+/// as `Unreadable` and the wait answers it by making 45 more calls per subject into the limit that
+/// caused it. Ending on the FIRST one instead would be worse in the other direction: a single 502
+/// would abort a legitimate wait, which is the case
+/// `an_unreadable_subject_does_not_end_the_wait` pins.
+///
+/// So the discriminator is PERSISTENCE, which is the right one here precisely BECAUSE the cause is
+/// not knowable: whatever a read failure means, one that survives five consecutive polls is not a
+/// blip, and the wait cannot answer it by asking again. At the 20-second default that is 100
+/// seconds of continuous failure. When #199 lands and read failures carry a TYPE, this budget is
+/// where a rate limit can start honouring its reset header and a 404 can become terminal on the
+/// first poll — the structure is what makes that a refinement rather than a rewrite, so nothing
+/// here tries to guess the cause from an error string in the meantime.
+const AWAIT_UNREADABLE_LIMIT: u32 = 5;
+
+/// Why a wait stopped. A bare `timed_out: bool` could not say "we gave up because a subject stayed
+/// unreadable", which is a different thing for the caller to do something about than a deadline —
+/// and a caller that cannot tell them apart re-derives the difference from the per-subject lines,
+/// which is the kind of re-derivation this whole tool exists to remove.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AwaitStop {
+    AllSettled,
+    Deadline,
+    Unreadable,
+}
+
+impl AwaitStop {
+    fn as_str(self) -> &'static str {
+        match self {
+            AwaitStop::AllSettled => "all-settled",
+            AwaitStop::Deadline => "deadline",
+            AwaitStop::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// What one `await` ended up with: every subject's last-polled state, and what stopped the wait.
+#[derive(Debug, PartialEq)]
+struct AwaitOutcome {
+    rows: Vec<(AwaitRef, AwaitState)>,
+    polls: u32,
+    stop: AwaitStop,
+}
+
+impl AwaitOutcome {
+    fn settled(&self) -> bool {
+        self.stop == AwaitStop::AllSettled
+    }
+}
+
+/// Per-subject state the loop carries ACROSS polls. Everything else about a subject is a pure
+/// function of the document in front of it; these two are not, and both exist to bound a wait that
+/// would otherwise run to the deadline.
+#[derive(Default)]
+struct AwaitProgress {
+    /// Clock at the first poll where this subject's head test passed — when its checks became the
+    /// ones being waited on, and therefore when [`AWAIT_CHECKS_GRACE_SECS`] starts.
+    eligible_since: Option<u64>,
+    /// Consecutive polls this subject has come back [`AwaitState::Unreadable`].
+    unreadable_streak: u32,
+}
+
+/// The wait itself, with its clock, its reads and its sleeping injected — so every branch that
+/// decides WHEN A WAIT ENDS is testable without a network or a real second passing.
+///
+/// EVERY SUBJECT IS RE-FETCHED ON EVERY POLL, INCLUDING ONES ALREADY SETTLED, AND THAT IS THE
+/// POINT. The exit condition is "all settled AT ONCE", not "each has settled at least once", so a
+/// green PR that receives another push goes back to `checks-pending` and holds the wait open. The
+/// difference is not hypothetical: in run `20260729T170004Z`, which is the run this subcommand was
+/// derived from, `cyclofinance/cyclo.site#294` was pushed at 17:42:40Z and AGAIN at 18:01:08Z
+/// inside one wait, and `#409` at 17:33:37Z and 17:43:05Z. Under settle-once both would have been
+/// reported finished on the first green, and the second push's CI — the CI that describes the code
+/// a human would then be shown — would never have been looked at. Caching a settled subject to
+/// save API calls buys back exactly the staleness the `@sha` gate above exists to prevent, one
+/// dimension over: that gate refuses a verdict from a stale HEAD, this refuses one from a stale
+/// MOMENT. The cost is real but it is quota, not tokens, and the turn count — the thing #170 is
+/// about — is 1 either way.
+///
+/// Three orderings carry the rest of the correctness:
+///
+///  * THE SETTLE CHECK COMES BEFORE EVERY REASON TO GIVE UP, so a fleet that settles on the very
+///    poll that exhausts the budget is reported settled. The deadline bounds the wait; it does not
+///    overrule an answer already in hand.
+///  * THE UNREADABLE BUDGET COMES BEFORE THE DEADLINE, because when both are true the specific
+///    reason is the useful one and stopping sooner is the whole point of having it.
+///  * A FULL PASS ALWAYS HAPPENS FIRST, so `--timeout-secs 0` is a single snapshot rather than a
+///    report of nothing, and the sleep only ever happens between passes — never after the last one,
+///    where it would be pure latency.
+fn await_poll(
+    refs: &[AwaitRef],
+    timeout_secs: u64,
+    interval_secs: u64,
+    now: &mut dyn FnMut() -> u64,
+    fetch: &mut dyn FnMut(&AwaitRef) -> Option<Value>,
+    sleep: &mut dyn FnMut(u64),
+) -> AwaitOutcome {
+    let start = now();
+    let mut progress: Vec<AwaitProgress> = refs.iter().map(|_| AwaitProgress::default()).collect();
+    let mut polls = 0u32;
+    loop {
+        let at = now();
+        let mut rows: Vec<(AwaitRef, AwaitState)> = Vec::with_capacity(refs.len());
+        let mut stalled = false;
+        for (r, p) in refs.iter().zip(progress.iter_mut()) {
+            let detail = fetch(r);
+            let baseline = r.from_head.as_deref();
+            if await_head_ready(detail.as_ref(), baseline) == Some(true)
+                && p.eligible_since.is_none()
+            {
+                p.eligible_since = Some(at);
+            }
+            let grace_expired = p
+                .eligible_since
+                .is_some_and(|since| at.saturating_sub(since) >= AWAIT_CHECKS_GRACE_SECS);
+            let state = await_state(detail.as_ref(), baseline, grace_expired);
+            if state == AwaitState::Unreadable {
+                p.unreadable_streak += 1;
+                if p.unreadable_streak >= AWAIT_UNREADABLE_LIMIT {
+                    stalled = true;
+                }
+            } else {
+                p.unreadable_streak = 0;
+            }
+            rows.push((r.clone(), state));
+        }
+        polls += 1;
+        let stop = if rows.iter().all(|(_, s)| *s == AwaitState::Settled) {
+            AwaitStop::AllSettled
+        } else if stalled {
+            AwaitStop::Unreadable
+        } else if now().saturating_sub(start) >= timeout_secs {
+            AwaitStop::Deadline
+        } else {
+            sleep(interval_secs);
+            continue;
+        };
+        return AwaitOutcome { rows, polls, stop };
+    }
+}
+
+/// PURE: the report. One line per subject plus one summary line, because the caller's next move is
+/// decided per PR — a bare "timed out" would send it straight back to the per-PR probing this
+/// subcommand exists to replace.
+fn await_report(out: &AwaitOutcome) -> String {
+    let mut s = String::new();
+    for (r, st) in &out.rows {
+        s.push_str(&format!("{} {}\n", r.label(), st.as_str()));
+    }
+    let unsettled = out
+        .rows
+        .iter()
+        .filter(|(_, st)| *st != AwaitState::Settled)
+        .count();
+    s.push_str(&format!(
+        "{} of {} settled after {} poll(s){}\n",
+        out.rows.len() - unsettled,
+        out.rows.len(),
+        out.polls,
+        match out.stop {
+            AwaitStop::AllSettled => "",
+            AwaitStop::Deadline => " — TIMED OUT",
+            AwaitStop::Unreadable => " — GAVE UP: a subject stayed unreadable",
+        }
+    ));
+    s
+}
+
+/// PURE: the machine-readable form of the same answer.
+fn await_json(out: &AwaitOutcome) -> Value {
+    serde_json::json!({
+        "settled": out.settled(),
+        "stop": out.stop.as_str(),
+        "polls": out.polls,
+        "subjects": out.rows.iter().map(|(r, st)| serde_json::json!({
+            "repo": format!("{}/{}", r.owner, r.repo),
+            "number": r.num,
+            "fromHead": r.from_head,
+            "state": st.as_str(),
+        })).collect::<Vec<Value>>(),
+    })
+}
+
+/// Exit code for an `await` the deadline stopped. Distinct from a usage error (2) because the
+/// caller acts on it: a timeout is a real answer about a fleet that is still moving, and the
+/// per-subject lines say which parts of it.
+const AWAIT_TIMED_OUT: i32 = 3;
+
+/// Exit code for an `await` that gave up because a subject stayed unreadable. Distinct from the
+/// deadline (3) because the two ask for different next moves: a deadline says the fleet is still
+/// working, this says the tool could not see it — often the rate limit that would also spoil
+/// whatever the caller does next.
+const AWAIT_UNREADABLE: i32 = 4;
+
+fn await_mode(refs: &[String], timeout_secs: u64, interval_secs: u64, json_out: bool) -> i32 {
+    let mut subjects = Vec::new();
+    for r in refs {
+        let Some(a) = parse_await_ref(r) else {
+            eprintln!(
+                "error: {r:?} is not an await reference — the form is `owner/repo#n`, or \
+                 `owner/repo#n@<sha>` to wait for a push off `<sha>` (sha: 7+ hex digits)"
+            );
+            return 2;
+        };
+        subjects.push(a);
+    }
+    let out = await_poll(
+        &subjects,
+        timeout_secs,
+        interval_secs,
+        &mut || now_unix() as u64,
+        &mut |r| {
+            gh_json(&[
+                "pr",
+                "view",
+                &r.num.to_string(),
+                "-R",
+                &format!("{}/{}", r.owner, r.repo),
+                "--json",
+                AWAIT_DETAIL_FIELDS,
+            ])
+        },
+        &mut |secs| std::thread::sleep(std::time::Duration::from_secs(secs)),
+    );
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&await_json(&out)).unwrap_or_else(|_| "{}".into())
+        );
+    } else {
+        print!("{}", await_report(&out));
+    }
+    match out.stop {
+        AwaitStop::AllSettled => 0,
+        AwaitStop::Deadline => AWAIT_TIMED_OUT,
+        AwaitStop::Unreadable => AWAIT_UNREADABLE,
+    }
+}
+
+#[cfg(test)]
+mod await_tests {
+    use super::{
+        await_head_ready, await_json, await_poll, await_report, await_state, head_moved,
+        parse_await_ref, AwaitRef, AwaitState, AwaitStop, AWAIT_CHECKS_GRACE_SECS,
+        AWAIT_DETAIL_FIELDS, AWAIT_UNREADABLE_LIMIT,
+    };
+    use serde_json::{json, Value};
+
+    fn r(s: &str) -> AwaitRef {
+        parse_await_ref(s).unwrap_or_else(|| panic!("{s} should parse"))
+    }
+
+    /// A PR document as `AWAIT_DETAIL_FIELDS` returns it.
+    fn doc(head: &str, checks: Value) -> Value {
+        json!({"headRefOid": head, "statusCheckRollup": checks})
+    }
+    fn green() -> Value {
+        json!([{"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}])
+    }
+    fn pending() -> Value {
+        json!([{"name": "test", "status": "IN_PROGRESS"}])
+    }
+    fn red() -> Value {
+        json!([{"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}])
+    }
+
+    // --- parse_await_ref -------------------------------------------------------------------
+
+    #[test]
+    fn a_bare_ref_waits_on_checks_alone() {
+        assert_eq!(
+            r("o/repo#12"),
+            AwaitRef {
+                owner: "o".into(),
+                repo: "repo".into(),
+                num: 12,
+                from_head: None
+            }
+        );
+    }
+
+    #[test]
+    fn an_at_sha_ref_also_waits_for_the_push() {
+        assert_eq!(r("o/repo#12@abc1234").from_head.as_deref(), Some("abc1234"));
+    }
+
+    /// A baseline that cannot be a sha is a baseline nothing ever equals, so the wait would end on
+    /// its first poll having done nothing. Both malformed shapes are refused at parse time, where
+    /// the caller still gets told.
+    #[test]
+    fn a_baseline_that_is_not_a_sha_is_refused_rather_than_silently_never_matching() {
+        assert_eq!(
+            parse_await_ref("o/repo#12@abc123"),
+            None,
+            "6 hex is too short"
+        );
+        assert_eq!(parse_await_ref("o/repo#12@nothex1"), None, "not hex");
+        assert_eq!(
+            parse_await_ref("o/repo#12@"),
+            None,
+            "an empty sha names nothing"
+        );
+    }
+
+    #[test]
+    fn a_malformed_subject_is_refused() {
+        assert_eq!(parse_await_ref("no-slug#1"), None);
+        assert_eq!(parse_await_ref("o/repo"), None);
+        assert_eq!(parse_await_ref("o/repo#notanumber"), None);
+    }
+
+    // --- head_moved ------------------------------------------------------------------------
+
+    #[test]
+    fn a_head_matched_by_either_prefix_direction_has_not_moved() {
+        assert!(
+            !head_moved("abc1234def", "abc1234"),
+            "short baseline, full head"
+        );
+        assert!(
+            !head_moved("abc1234", "abc1234def"),
+            "full baseline, short head"
+        );
+        assert!(!head_moved("abc1234", "abc1234"), "exact");
+        assert!(head_moved("fff0000", "abc1234"));
+    }
+
+    /// An unreadable head must never read as a push that landed.
+    #[test]
+    fn an_empty_head_has_not_moved() {
+        assert!(!head_moved("", "abc1234"));
+    }
+
+    // --- await_state -----------------------------------------------------------------------
+
+    #[test]
+    fn checks_that_have_all_reported_are_settled_whether_green_or_red() {
+        assert_eq!(
+            await_state(Some(&doc("h", green())), None, false),
+            AwaitState::Settled
+        );
+        assert_eq!(
+            await_state(Some(&doc("h", red())), None, false),
+            AwaitState::Settled,
+            "a red IS the answer — the wait is for the checks to report, not to pass"
+        );
+    }
+
+    #[test]
+    fn checks_still_running_are_pending() {
+        assert_eq!(
+            await_state(Some(&doc("h", pending())), None, false),
+            AwaitState::ChecksPending
+        );
+    }
+
+    /// THE PHANTOM-GREEN GUARD. Until the push lands, the rollup describes the PREVIOUS head, so a
+    /// green one is not an answer about the work being waited for.
+    #[test]
+    fn an_unmoved_head_outranks_the_checks_however_they_read() {
+        for checks in [green(), red(), pending(), json!([])] {
+            assert_eq!(
+                await_state(Some(&doc("abc1234def", checks)), Some("abc1234"), false),
+                AwaitState::HeadUnchanged,
+                "checks on the old head can never settle a wait for a push"
+            );
+        }
+    }
+
+    #[test]
+    fn a_moved_head_lets_the_checks_decide() {
+        assert_eq!(
+            await_state(Some(&doc("fff0000", green())), Some("abc1234"), false),
+            AwaitState::Settled
+        );
+    }
+
+    /// GitHub registers a push's checks seconds after the push. An empty rollup in that window is
+    /// `NoChecks` about the document and "nothing has started yet" about the world.
+    #[test]
+    fn an_empty_rollup_right_after_an_awaited_push_is_not_settled() {
+        assert_eq!(
+            await_state(Some(&doc("fff0000", json!([]))), Some("abc1234"), false),
+            AwaitState::ChecksUnregistered
+        );
+    }
+
+    /// …and an empty rollup with NO push awaited gets the same grace, because the caller is waiting
+    /// on checks it believes are already running and "not created yet" is the same wrong answer
+    /// either way. The `nochecks` is not `passed` trap is closed by design here, not by telling the
+    /// prompt to always pass `@sha` — an instruction the design does not support is exactly the
+    /// failure this whole subcommand was built to diagnose.
+    #[test]
+    fn an_empty_rollup_is_ungraded_until_the_grace_runs_out_with_or_without_a_baseline() {
+        for baseline in [None, Some("abc1234")] {
+            let head = if baseline.is_some() { "fff0000" } else { "h" };
+            assert_eq!(
+                await_state(Some(&doc(head, json!([]))), baseline, false),
+                AwaitState::ChecksUnregistered,
+                "inside the grace, an empty rollup is not an answer (baseline={baseline:?})"
+            );
+            assert_eq!(
+                await_state(Some(&doc(head, json!([]))), baseline, true),
+                AwaitState::Settled,
+                "once the grace is out, a repo with no CI must not hang the wait \
+                 (baseline={baseline:?})"
+            );
+        }
+    }
+
+    /// The gate the grace clock is timed from, on its own.
+    #[test]
+    fn the_head_gate_reports_readable_moved_and_unmoved_separately() {
+        assert_eq!(await_head_ready(Some(&doc("h", green())), None), Some(true));
+        assert_eq!(
+            await_head_ready(Some(&doc("fff0000", green())), Some("abc1234")),
+            Some(true)
+        );
+        assert_eq!(
+            await_head_ready(Some(&doc("abc1234def", green())), Some("abc1234")),
+            Some(false)
+        );
+        assert_eq!(await_head_ready(None, None), None);
+        assert_eq!(await_head_ready(Some(&json!({})), None), None);
+    }
+
+    #[test]
+    fn a_failed_read_is_unreadable_never_settled() {
+        assert_eq!(await_state(None, None, false), AwaitState::Unreadable);
+        assert_eq!(
+            await_state(None, Some("abc1234"), false),
+            AwaitState::Unreadable
+        );
+    }
+
+    /// CONFORMANCE: every field `AWAIT_DETAIL_FIELDS` fetches is one `await_state` cannot answer
+    /// without. Asserted by REMOVAL from an otherwise-settled document, so a field that stopped
+    /// being load-bearing — or one that quietly started being read without being fetched — turns
+    /// this red instead of costing a poll per call forever.
+    #[test]
+    fn every_awaited_field_is_load_bearing_and_its_absence_is_unreadable() {
+        let fields: Vec<&str> = AWAIT_DETAIL_FIELDS.split(',').collect();
+        assert_eq!(fields, vec!["headRefOid", "statusCheckRollup"]);
+        assert_eq!(
+            await_state(Some(&doc("h", green())), None, false),
+            AwaitState::Settled,
+            "the full document settles, or the removals below prove nothing"
+        );
+        for f in fields {
+            let mut d = doc("h", green());
+            d.as_object_mut().expect("object").remove(f);
+            assert_eq!(
+                await_state(Some(&d), None, false),
+                AwaitState::Unreadable,
+                "a document missing {f} did not answer the poll"
+            );
+        }
+    }
+
+    /// `null` is GitHub ANSWERING "no checks", which is different from the key being absent — so it
+    /// takes the empty-rollup grace like any other no-checks answer, and never `Unreadable`, which
+    /// is what an absent key gets.
+    #[test]
+    fn a_null_rollup_is_an_answer_not_a_malformed_document() {
+        assert_eq!(
+            await_state(Some(&doc("h", Value::Null)), None, false),
+            AwaitState::ChecksUnregistered
+        );
+        assert_eq!(
+            await_state(Some(&doc("h", Value::Null)), None, true),
+            AwaitState::Settled
+        );
+    }
+
+    // --- await_poll ------------------------------------------------------------------------
+
+    /// A poll harness: canned documents per pass (the last pass repeats once exhausted), a clock
+    /// that advances ONLY when the loop sleeps — so elapsed time is a pure function of the sleeps
+    /// the code chose — and a record of every sleep.
+    struct Harness {
+        passes: Vec<Vec<Option<Value>>>,
+        slept: Vec<u64>,
+        /// Total document reads. The only way to pin "every subject, every pass" — no assertion
+        /// about STATES can tell a re-fetch from a cached settled subject.
+        fetches: usize,
+    }
+    impl Harness {
+        fn new(passes: Vec<Vec<Option<Value>>>) -> Self {
+            Harness {
+                passes,
+                slept: Vec::new(),
+                fetches: 0,
+            }
+        }
+    }
+
+    /// The clock advances ONLY when the loop sleeps, so elapsed time is a pure function of the
+    /// sleeps the code chose and a deadline assertion is exact rather than approximate. That makes
+    /// a wait that stops sleeping run forever, so the fetch counter is the harness's own
+    /// termination proof: it PANICS rather than hanging, which is how "this change removed the
+    /// only thing that advances the deadline" arrives as a red test instead of a stuck suite.
+    const RUNAWAY: usize = 10_000;
+
+    fn run(h: &mut Harness, refs: &[AwaitRef], timeout: u64, interval: u64) -> super::AwaitOutcome {
+        use std::cell::{Cell, RefCell};
+        let passes = std::mem::take(&mut h.passes);
+        let pass = Cell::new(0usize);
+        let idx = Cell::new(0usize);
+        let fetches = Cell::new(0usize);
+        let clock = Cell::new(0u64);
+        let slept = RefCell::new(Vec::new());
+        let out = await_poll(
+            refs,
+            timeout,
+            interval,
+            &mut || clock.get(),
+            &mut |_| {
+                fetches.set(fetches.get() + 1);
+                assert!(
+                    fetches.get() < RUNAWAY,
+                    "await_poll did not terminate: {} fetches without reaching the deadline or \
+                     settling — nothing is advancing the clock",
+                    fetches.get()
+                );
+                let p = passes
+                    .get(pass.get().min(passes.len() - 1))
+                    .expect("a pass");
+                let v = p.get(idx.get()).cloned().flatten();
+                idx.set(idx.get() + 1);
+                if idx.get() == p.len() {
+                    idx.set(0);
+                    pass.set(pass.get() + 1);
+                }
+                v
+            },
+            &mut |secs| {
+                slept.borrow_mut().push(secs);
+                clock.set(clock.get() + secs);
+            },
+        );
+        h.slept = slept.into_inner();
+        h.fetches = fetches.get();
+        out
+    }
+
+    #[test]
+    fn a_fleet_already_settled_polls_once_and_never_sleeps() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", green())),
+            Some(doc("h2", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(out.polls, 1);
+        assert!(h.slept.is_empty(), "no wait means no sleep: {:?}", h.slept);
+    }
+
+    #[test]
+    fn a_wait_keeps_polling_until_the_last_subject_settles() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h", pending())), Some(doc("h2", green()))],
+            vec![Some(doc("h", pending())), Some(doc("h2", green()))],
+            vec![Some(doc("h", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(out.polls, 3);
+        assert_eq!(
+            h.slept,
+            vec![20, 20],
+            "one sleep BETWEEN passes, none after the last"
+        );
+    }
+
+    #[test]
+    fn the_deadline_stops_a_wait_and_the_report_still_names_every_subject() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", pending())),
+            Some(doc("h2", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 40, 20);
+        assert_eq!(out.stop, AwaitStop::Deadline);
+        assert_eq!(out.rows[0].1, AwaitState::ChecksPending);
+        assert_eq!(
+            out.rows[1].1,
+            AwaitState::Settled,
+            "a timeout still reports the settled ones"
+        );
+    }
+
+    /// The settle check runs BEFORE the deadline check, so an answer already in hand is not
+    /// overruled by the clock reaching the budget on the very same pass.
+    #[test]
+    fn settling_exactly_at_the_deadline_is_settled_not_timed_out() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h", pending()))],
+            vec![Some(doc("h", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1")], 20, 20);
+        assert!(
+            out.settled(),
+            "the clock hits the budget on the pass that settles; the answer wins"
+        );
+        assert_eq!(out.polls, 2);
+    }
+
+    /// A full pass always happens first, so a zero budget is a SNAPSHOT rather than a report of
+    /// nothing — and it never sleeps.
+    #[test]
+    fn a_zero_timeout_is_one_snapshot_pass() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let out = run(&mut h, &[r("o/a#1")], 0, 20);
+        assert_eq!(out.stop, AwaitStop::Deadline);
+        assert_eq!(out.polls, 1);
+        assert!(h.slept.is_empty());
+    }
+
+    /// An unreadable subject holds the wait open rather than ending it, which is what makes a
+    /// transient API failure cost time instead of a false answer.
+    #[test]
+    fn an_unreadable_subject_does_not_end_the_wait() {
+        let mut h = Harness::new(vec![vec![None], vec![Some(doc("h", green()))]]);
+        let out = run(&mut h, &[r("o/a#1")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(out.polls, 2);
+    }
+
+    /// …but only for as long as it could still be transient. Without this the wait runs the whole
+    /// deadline making calls, which for the case that produces most unreadables — a rate limit —
+    /// means answering the limit by spending more of it.
+    #[test]
+    fn a_subject_that_stays_unreadable_ends_the_wait_early() {
+        let mut h = Harness::new(vec![vec![None]]);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, 20);
+        assert_eq!(out.stop, AwaitStop::Unreadable);
+        assert_eq!(
+            out.polls, AWAIT_UNREADABLE_LIMIT,
+            "it gives up ON the poll that hits the budget, not a poll later"
+        );
+        assert_eq!(out.rows[0].1, AwaitState::Unreadable);
+    }
+
+    /// The streak is CONSECUTIVE, so a subject that reads once between failures has not stalled —
+    /// otherwise a flaky-but-working API would be indistinguishable from a dead one.
+    #[test]
+    fn a_readable_poll_resets_the_unreadable_streak() {
+        let mut passes: Vec<Vec<Option<Value>>> = Vec::new();
+        for _ in 0..(AWAIT_UNREADABLE_LIMIT - 1) {
+            passes.push(vec![None]);
+        }
+        passes.push(vec![Some(doc("h", pending()))]); // one good read resets it
+        for _ in 0..(AWAIT_UNREADABLE_LIMIT - 1) {
+            passes.push(vec![None]);
+        }
+        passes.push(vec![Some(doc("h", green()))]);
+        let mut h = Harness::new(passes);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, 20);
+        assert_eq!(
+            out.stop,
+            AwaitStop::AllSettled,
+            "two sub-budget runs of failures either side of a good read must not add up"
+        );
+    }
+
+    /// THE EXIT CONDITION IS "ALL SETTLED AT ONCE", NOT "EACH SETTLED ONCE". A subject that has
+    /// already gone green is polled again on every pass, so another push puts it back to
+    /// `checks-pending` and the wait continues.
+    ///
+    /// This is measured behaviour, not a preference: in `20260729T170004Z`, `cyclo.site#294` was
+    /// pushed at 17:42:40Z and again at 18:01:08Z inside ONE wait, and `#409` at 17:33:37Z and
+    /// 17:43:05Z. Settle-once would have reported both finished on the first green and never looked
+    /// at the second push's CI.
+    #[test]
+    fn a_settled_subject_that_is_pushed_again_re_opens_the_wait() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            // #1 has been pushed again — its checks restart while #2 is still going
+            vec![Some(doc("h1b", pending())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1b", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 3,
+            "the wait did not stop when the first subject went green on pass 1"
+        );
+    }
+
+    /// …and the mechanism that makes the above possible: EVERY subject is fetched on EVERY pass.
+    /// Counting the fetches is what pins it — an implementation that cached settled subjects to
+    /// save API calls would still satisfy every state assertion in this module.
+    #[test]
+    fn every_subject_is_fetched_on_every_poll_including_settled_ones() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.polls, 3);
+        assert_eq!(
+            h.fetches, 6,
+            "3 passes x 2 subjects: the already-green subject is re-read every time, because a \
+             verdict from a stale MOMENT is the same defect as one from a stale HEAD"
+        );
+    }
+
+    /// The empty-rollup grace is timed from ELIGIBILITY, not from the start of the wait: a head
+    /// that moves late must still get its full grace, or the push that just landed is exactly the
+    /// one handed a phantom green.
+    #[test]
+    fn the_checks_grace_starts_when_the_head_moves_not_when_the_wait_does() {
+        let interval = AWAIT_CHECKS_GRACE_SECS; // one sleep is a whole grace period
+        let mut h = Harness::new(vec![
+            // long enough that a grace timed from the START would already be spent
+            vec![Some(doc("abc1234", json!([])))],
+            vec![Some(doc("abc1234", json!([])))],
+            // the push lands, with no checks registered yet
+            vec![Some(doc("fff0000", json!([])))],
+            vec![Some(doc("fff0000", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1@abc1234")], 100_000, interval);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 4,
+            "pass 3 saw the moved head with an empty rollup and must NOT have settled it"
+        );
+    }
+
+    /// …and the other half: with nothing left to wait for, the grace expires and a repo that simply
+    /// has no CI stops the wait instead of running the deadline.
+    #[test]
+    fn an_empty_rollup_settles_once_the_grace_is_spent() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", json!([])))]]);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, AWAIT_CHECKS_GRACE_SECS);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 2,
+            "pass 1 is inside the grace, pass 2 is past it — a no-CI repo costs one grace, \
+             not one deadline"
+        );
+    }
+
+    // --- reporting -------------------------------------------------------------------------
+
+    /// THREE subjects, not two, and the split is deliberately UNEVEN: with one settled and one not,
+    /// the settled count and the unsettled count are the same number, so a summary reporting the
+    /// wrong one of them would still read correctly. A mutation pass found exactly that — inverting
+    /// `rows.len() - unsettled` to `unsettled` survived the even fixture.
+    #[test]
+    fn the_report_names_each_subject_and_counts_the_settled() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", pending())),
+            Some(doc("h2", green())),
+            Some(doc("h3", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2"), r("o/c#3")], 0, 20);
+        let text = await_report(&out);
+        assert!(text.contains("o/a#1 checks-pending"), "{text}");
+        assert!(text.contains("o/b#2 settled"), "{text}");
+        assert!(text.contains("o/c#3 settled"), "{text}");
+        assert!(
+            text.contains("2 of 3 settled after 1 poll(s) — TIMED OUT"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_json_form_carries_the_same_answer() {
+        let mut h = Harness::new(vec![vec![Some(doc("fff0000", green()))]]);
+        let out = run(&mut h, &[r("o/a#1@abc1234")], 900, 20);
+        let v = await_json(&out);
+        assert_eq!(v["settled"], true);
+        assert_eq!(v["stop"], "all-settled");
+        assert_eq!(v["subjects"][0]["repo"], "o/a");
+        assert_eq!(v["subjects"][0]["number"], 1);
+        assert_eq!(v["subjects"][0]["fromHead"], "abc1234");
+        assert_eq!(v["subjects"][0]["state"], "settled");
+    }
+
+    /// The stop reason is on the machine-readable form as a NAME, so a caller distinguishes "the
+    /// fleet is still working" from "the tool could not see it" without re-deriving either from
+    /// the per-subject rows.
+    #[test]
+    fn the_json_form_names_each_way_a_wait_can_stop() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let v = await_json(&run(&mut h, &[r("o/a#1")], 0, 20));
+        assert_eq!(v["settled"], false);
+        assert_eq!(v["stop"], "deadline");
+
+        let mut h = Harness::new(vec![vec![None]]);
+        let v = await_json(&run(&mut h, &[r("o/a#1")], 100_000, 20));
+        assert_eq!(v["settled"], false);
+        assert_eq!(v["stop"], "unreadable");
+    }
+
+    /// …and the human-readable form says which one too, because "TIMED OUT" on a wait that gave up
+    /// after five failed reads would send the reader looking for slow CI that is not there.
+    #[test]
+    fn the_report_distinguishes_a_deadline_from_giving_up_on_a_read() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let text = await_report(&run(&mut h, &[r("o/a#1")], 0, 20));
+        assert!(text.contains("— TIMED OUT"), "{text}");
+
+        let mut h = Harness::new(vec![vec![None]]);
+        let text = await_report(&run(&mut h, &[r("o/a#1")], 100_000, 20));
+        assert!(text.contains("o/a#1 unreadable"), "{text}");
+        assert!(
+            text.contains("— GAVE UP: a subject stayed unreadable"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("TIMED OUT"),
+            "a read the tool gave up on is not a deadline: {text}"
+        );
+    }
+
+    #[test]
+    fn await_parses_many_refs_and_refuses_an_interval_of_zero() {
+        use clap::Parser;
+        let cmd = super::Cli::try_parse_from([
+            "prr",
+            "await",
+            "o/a#1",
+            "o/b#2@abc1234",
+            "--timeout-secs",
+            "60",
+            "--json",
+        ])
+        .expect("refs parse")
+        .command;
+        assert_eq!(
+            cmd,
+            super::Cmd::Await {
+                refs: vec!["o/a#1".to_string(), "o/b#2@abc1234".to_string()],
+                timeout_secs: 60,
+                interval_secs: 20,
+                json: true,
+            }
+        );
+        assert!(
+            super::Cli::try_parse_from(["prr", "await", "o/a#1", "--interval-secs", "0"]).is_err(),
+            "a zero interval hammers the API; clap refuses it rather than the code clamping silently"
+        );
+        assert!(
+            super::Cli::try_parse_from(["prr", "await"]).is_err(),
+            "a wait on nothing is a usage error"
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -23878,6 +32014,410 @@ fn migrate_reject_mode(apply: bool) -> i32 {
     0
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// already-fixed — the MERGED-side read the candidate set does not have.
+//
+// `uncovered-issues` splits covered from uncovered using OPEN PRs' closing references. That is the
+// right denominator for "is anyone already working on this" and the wrong one for "is this still
+// broken": an issue whose fix has landed on main with no open PR pointing at it is UNCOVERED by
+// that definition, so it enters the candidate set and gets worked. `rainlanguage/rain.dia#60` is
+// the shape — a producer PR opened 2026-07-18 re-implementing a guard merged PR #33 had landed on
+// 2026-07-17.
+//
+// This is the CHEAP precursor to that judgement, not the judgement: it answers "does a MERGED PR
+// reference this issue and land AFTER it was filed", which is a reason to LOOK before working an
+// issue, never a finding that it is fixed. Establishing the fix is `flag-close-candidate`'s job and
+// it re-checks the recency of whatever is finally cited.
+//
+// PER-SUBJECT AND NOT FOLDED INTO `uncovered-issues`, which is a cost decision, measured: the
+// uncovered set is 617 issues and the read is one GraphQL round trip each (~0.65s measured over a
+// 40-issue sample), while the producer's run budget is 3 work items. Running it over the backlog
+// buys ~614 answers per run that nothing reads. Running it over the candidates costs three calls.
+//
+// The recency rule is [`landed_after_filed`] — the SAME function `already_fixed_recency_gate`
+// enforces at flag time, so the two ends of a run cannot disagree about what "post-dates" means.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The MERGED-side twin of [`COVERING_PRS_QUERY`]: every PR that has REFERENCED this issue, with
+/// the date it merged, plus the issue's own filing date to compare against.
+///
+/// `timelineItems(CROSS_REFERENCED_EVENT)` and NOT `closedByPullRequestsReferences(
+/// includeClosedPrs:true)`, which is the field that looks like the answer. Measured against the
+/// three cases this exists for: that field returns only the producer's OWN open PR for all three
+/// and NONE of the merged fixes, because a PR appears there only when it declared a closing
+/// KEYWORD — and `rain.dia#33`, `rain.dia#48` and `st0x.deploy#252` each declared none for the
+/// issue they fixed. A merged fix that never wrote `Closes` is exactly the fix `uncovered-issues`
+/// is blind to, so reading a field that requires one reproduces the blind spot.
+///
+/// `mergedAt` is both filters in one field: null means never landed, and the value is the date the
+/// recency rule compares. `state` is not asked for, because a PR carrying a `mergedAt` is merged.
+///
+/// `pageInfo` is asked for because a truncated page reads as "nothing merged references this",
+/// which is the direction that opens a duplicate PR — see [`merged_fixes_since_filing`].
+const MERGED_REFS_QUERY: &str = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){createdAt timelineItems(first:100,itemTypes:[CROSS_REFERENCED_EVENT]){pageInfo{hasNextPage}nodes{... on CrossReferencedEvent{source{... on PullRequest{number title url mergedAt repository{nameWithOwner}}}}}}}}}";
+
+/// Resolve `owner/repo#n` to WHICH population it is in, and — for a PR — the issues it claims to
+/// close. `issueOrPullRequest` is one lookup for both, so a reference can never be checked against
+/// the wrong population (the rule [`HumanClose`](Cmd::HumanClose) already holds for rulings).
+const SUBJECT_KIND_QUERY: &str = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issueOrPullRequest(number:$n){__typename ... on PullRequest{closingIssuesReferences(first:50){nodes{number repository{nameWithOwner}}}}}}}";
+
+/// A merged PR referencing an issue that landed AFTER the issue was filed.
+#[derive(Debug, PartialEq, Clone)]
+struct MergedFix {
+    /// `owner/repo#n` — the addressing string every other tool takes, so a caller can hand one
+    /// straight on without reassembling a ref (#132).
+    pr: String,
+    merged_at: String,
+    title: String,
+    url: String,
+}
+
+/// What the merged-side read says about one issue.
+#[derive(Debug, PartialEq)]
+enum AlreadyFixed {
+    /// The read could not be answered. NEVER an empty answer: an unseen merged fix is what makes
+    /// the producer duplicate landed work, so an unknown reads as "go and look".
+    Unreadable,
+    /// Nothing merged since the issue was filed references it — no reason here not to work it.
+    Clear,
+    /// Merged PRs referencing the issue that post-date it, newest merge first.
+    MergedSince(Vec<MergedFix>),
+}
+
+impl AlreadyFixed {
+    /// Does this answer stop the producer from opening a PR on the issue without looking first?
+    /// `Unreadable` does, for the same reason [`PrCoverage::Unreadable`] blocks a close: the two
+    /// failure directions are not symmetric, and only one of them writes a duplicate PR.
+    fn needs_a_look(&self) -> bool {
+        !matches!(self, AlreadyFixed::Clear)
+    }
+
+    /// The one-word status a report row carries.
+    fn status(&self) -> &'static str {
+        match self {
+            AlreadyFixed::Unreadable => "unreadable",
+            AlreadyFixed::Clear => "clear",
+            AlreadyFixed::MergedSince(_) => "merged-since-filing",
+        }
+    }
+}
+
+/// PURE: the merged PRs referencing an issue that landed after it was filed, out of a
+/// [`MERGED_REFS_QUERY`] response.
+///
+/// Every uncertainty resolves to [`AlreadyFixed::Unreadable`] rather than to a shorter list,
+/// because a shorter list is indistinguishable from a complete one once it is just a `Vec` and the
+/// caller acts on the difference. That covers a failed query, a missing filing date, a TRUNCATED
+/// timeline page, a malformed node, and a merged date that cannot be ordered against the filing —
+/// the last because concluding `Clear` from a pair nothing can compare is the fail-OPEN direction.
+fn merged_fixes_since_filing(resp: Option<&Value>) -> AlreadyFixed {
+    let Some(issue) = resp.and_then(|v| v.pointer("/data/repository/issue")) else {
+        return AlreadyFixed::Unreadable;
+    };
+    let Some(filed) = issue.get("createdAt").and_then(|s| s.as_str()) else {
+        return AlreadyFixed::Unreadable;
+    };
+    let Some(items) = issue.get("timelineItems") else {
+        return AlreadyFixed::Unreadable;
+    };
+    // Only an explicit "there is no next page" is an answer. A `true` means references this never
+    // saw, and an absent/non-bool `pageInfo` means the same thing without saying so.
+    if items
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        return AlreadyFixed::Unreadable;
+    }
+    let Some(nodes) = items.get("nodes").and_then(|n| n.as_array()) else {
+        return AlreadyFixed::Unreadable;
+    };
+    let mut fixes: Vec<MergedFix> = Vec::new();
+    for n in nodes {
+        // A cross-reference whose source is an ISSUE matches no inline fragment here, so it
+        // arrives with no `mergedAt` at all. That is "not a merged PR", not a malformed node.
+        let Some(src) = n.get("source") else {
+            continue;
+        };
+        let Some(merged_at) = src.get("mergedAt").and_then(|s| s.as_str()) else {
+            continue;
+        };
+        match landed_after_filed(merged_at, filed) {
+            Some(true) => {}
+            Some(false) => continue,
+            None => return AlreadyFixed::Unreadable,
+        }
+        let (Some(slug), Some(num)) = (
+            src.pointer("/repository/nameWithOwner")
+                .and_then(|s| s.as_str()),
+            src.get("number").and_then(Value::as_u64),
+        ) else {
+            return AlreadyFixed::Unreadable;
+        };
+        fixes.push(MergedFix {
+            pr: format!("{slug}#{num}"),
+            merged_at: merged_at.to_string(),
+            title: src
+                .get("title")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            url: src
+                .get("url")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+        });
+    }
+    if fixes.is_empty() {
+        return AlreadyFixed::Clear;
+    }
+    // Newest merge first: the most recent landing is the one most likely to be the fix, and it is
+    // the one a reader should open.
+    fixes.sort_by(|a, b| b.merged_at.cmp(&a.merged_at));
+    AlreadyFixed::MergedSince(fixes)
+}
+
+/// Which population a checked reference is in.
+#[derive(Debug, PartialEq)]
+enum Subject {
+    Unreadable,
+    Issue,
+    /// A PR, and the `(owner/repo, number)` issues it claims to close — the SAME closing references
+    /// `uncovered-issues` computes coverage from, so a PR is checked against exactly the issues its
+    /// merge would close.
+    Pr(Vec<(String, u64)>),
+}
+
+/// PURE: the subject of a [`SUBJECT_KIND_QUERY`] response.
+fn subject_kind(resp: Option<&Value>) -> Subject {
+    let Some(s) = resp.and_then(|v| v.pointer("/data/repository/issueOrPullRequest")) else {
+        return Subject::Unreadable;
+    };
+    match s.get("__typename").and_then(|t| t.as_str()) {
+        Some("Issue") => Subject::Issue,
+        Some("PullRequest") => {
+            let Some(nodes) = s
+                .pointer("/closingIssuesReferences/nodes")
+                .and_then(|n| n.as_array())
+            else {
+                return Subject::Unreadable;
+            };
+            let mut closes = Vec::new();
+            for r in nodes {
+                let (Some(slug), Some(num)) = (
+                    r.pointer("/repository/nameWithOwner")
+                        .and_then(|s| s.as_str()),
+                    r.get("number").and_then(Value::as_u64),
+                ) else {
+                    return Subject::Unreadable;
+                };
+                closes.push((slug.to_string(), num));
+            }
+            Subject::Pr(closes)
+        }
+        _ => Subject::Unreadable,
+    }
+}
+
+/// PURE: `owner/repo#n` split into its three parts. The one accepted spelling, because it is the
+/// one every other typed reference in this tool uses (`--blocked-by`, the refs `covering_open_prs`
+/// emits, the `pr_context` argument).
+fn parse_subject_ref(r: &str) -> Option<(String, String, u64)> {
+    let (slug, num) = r.rsplit_once('#')?;
+    let (owner, repo) = slug.split_once('/')?;
+    if owner.is_empty() || repo.is_empty() || repo.contains('/') {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string(), num.parse().ok()?))
+}
+
+/// PURE: the argv of a per-subject GraphQL read, one flag per variable.
+///
+/// The flag is decided by the variable's DECLARED TYPE, exactly as in [`covering_prs_args`]:
+/// `gh api graphql` retypes a `-F` value that parses as an integer, so `-F o=<owner>` on an
+/// all-numeric owner or repo name sends an `Int` at a `String!` and GitHub refuses the whole query
+/// — which arrives here as `Unreadable`, a read failure on a repository that reads perfectly well.
+fn subject_query_args(query: &str, owner: &str, repo: &str, num: u64) -> Vec<String> {
+    vec![
+        "api".into(),
+        "graphql".into(),
+        "-f".into(),
+        format!("query={query}"),
+        "-f".into(),
+        format!("o={owner}"),
+        "-f".into(),
+        format!("r={repo}"),
+        "-F".into(),
+        format!("n={num}"),
+    ]
+}
+
+/// Live merged-side read for one issue.
+fn merged_fixes_fetch(owner: &str, repo: &str, num: u64) -> AlreadyFixed {
+    let args = subject_query_args(MERGED_REFS_QUERY, owner, repo, num);
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    merged_fixes_since_filing(gh_json(&argref).as_ref())
+}
+
+/// Live subject resolution for one reference.
+fn subject_kind_fetch(owner: &str, repo: &str, num: u64) -> Subject {
+    let args = subject_query_args(SUBJECT_KIND_QUERY, owner, repo, num);
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    subject_kind(gh_json(&argref).as_ref())
+}
+
+/// PURE: one report row, given a subject reference, the issue it is about and that issue's answer.
+///
+/// `supersededBy` is the SAME list under a name that says what it means for a PR: a merged PR that
+/// post-dates the issue an OPEN PR claims to close is a PR doing landed work again. The producer's
+/// step-3 route for that is a PR close-candidate naming which PR supersedes it, and this row names
+/// it — `S01-Issuer/st0x.deploy#250`, `rainlanguage/rain.dia#60` and `rainlanguage/rain.dia#63` are
+/// each in that state.
+fn already_fixed_row(subject: &str, kind: &str, issue: &str, answer: &AlreadyFixed) -> Value {
+    let fixes = match answer {
+        AlreadyFixed::MergedSince(f) => f.as_slice(),
+        _ => &[],
+    };
+    let key = if kind == "pr" {
+        "supersededBy"
+    } else {
+        "mergedSince"
+    };
+    serde_json::json!({
+        "subject": subject,
+        "kind": kind,
+        "issue": issue,
+        "status": answer.status(),
+        // The consumer's actual question is binary, and it is stated rather than left to be
+        // re-derived: a caller matching on `status` has to re-encode that `unreadable` counts, and
+        // the one that forgets fails in the direction that opens a duplicate PR.
+        "needsALook": answer.needs_a_look(),
+        key: fixes.iter().map(|f| serde_json::json!({
+            "pr": f.pr,
+            "mergedAt": f.merged_at,
+            "title": f.title,
+            "url": f.url,
+        })).collect::<Vec<Value>>(),
+    })
+}
+
+/// PURE: the exit code for a whole run of rows.
+///
+/// 4 when anything is `merged-since-filing`, 1 when nothing is but something could not be read, 0
+/// only when every subject is clear. A FINDING outranks a GAP because 4 names something a caller
+/// can act on and 1 names something it cannot; both are non-zero, so nothing reads either as clear.
+fn already_fixed_exit_code(rows: &[Value]) -> i32 {
+    let status = |s: &str| {
+        rows.iter()
+            .any(|r| r.get("status").and_then(|v| v.as_str()) == Some(s))
+    };
+    if status("merged-since-filing") {
+        4
+    } else if status("unreadable") {
+        1
+    } else {
+        0
+    }
+}
+
+/// `already-fixed <owner/repo#n>...`: for each reference, has a MERGED PR referencing the issue
+/// landed since the issue was filed?
+///
+/// An ISSUE reference is checked directly — the producer's candidate-selection question, asked of
+/// the handful of candidates a run actually takes rather than of the whole backlog. A PR reference
+/// is resolved to the issues it CLOSES and each of those is checked, which is the same question
+/// asked of work already in flight: a merged PR post-dating the issue an open PR closes is the
+/// SUPERSEDED-PR condition.
+fn already_fixed_mode(refs: &[String], json_out: bool) -> i32 {
+    let mut rows: Vec<Value> = Vec::new();
+    for r in refs {
+        let Some((owner, repo, num)) = parse_subject_ref(r) else {
+            eprintln!("error: {r:?} is not a reference — the form is `owner/repo#n`");
+            return 2;
+        };
+        match subject_kind_fetch(&owner, &repo, num) {
+            Subject::Unreadable => {
+                rows.push(already_fixed_row(
+                    r,
+                    "unknown",
+                    "",
+                    &AlreadyFixed::Unreadable,
+                ));
+            }
+            Subject::Issue => {
+                let answer = merged_fixes_fetch(&owner, &repo, num);
+                rows.push(already_fixed_row(r, "issue", r, &answer));
+            }
+            Subject::Pr(closes) if closes.is_empty() => {
+                // A PR closing nothing cannot be superseded on an issue it does not claim. That is
+                // an ANSWER, not a gap — a `Refs`-only PR is a deliberate, valid linkage.
+                rows.push(already_fixed_row(r, "pr", "", &AlreadyFixed::Clear));
+            }
+            Subject::Pr(closes) => {
+                for (slug, inum) in closes {
+                    let Some((io, ir)) = slug.split_once('/') else {
+                        rows.push(already_fixed_row(r, "pr", &slug, &AlreadyFixed::Unreadable));
+                        continue;
+                    };
+                    let answer = match merged_fixes_fetch(io, ir, inum) {
+                        // The PR being checked cannot supersede itself, and a merged one would
+                        // otherwise report that it had.
+                        AlreadyFixed::MergedSince(f) => {
+                            let kept: Vec<MergedFix> =
+                                f.into_iter().filter(|x| &x.pr != r).collect();
+                            if kept.is_empty() {
+                                AlreadyFixed::Clear
+                            } else {
+                                AlreadyFixed::MergedSince(kept)
+                            }
+                        }
+                        other => other,
+                    };
+                    rows.push(already_fixed_row(
+                        r,
+                        "pr",
+                        &format!("{slug}#{inum}"),
+                        &answer,
+                    ));
+                }
+            }
+        }
+    }
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_else(|_| "[]".into())
+        );
+        return already_fixed_exit_code(&rows);
+    }
+    for row in &rows {
+        let subject = row.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+        let issue = row.get("issue").and_then(|v| v.as_str()).unwrap_or("");
+        let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let about = if issue.is_empty() || issue == subject {
+            String::new()
+        } else {
+            format!(" (closes {issue})")
+        };
+        println!("{subject}{about}: {status}");
+        for f in row
+            .get("supersededBy")
+            .or_else(|| row.get("mergedSince"))
+            .and_then(|v| v.as_array())
+            .unwrap_or(&Vec::new())
+        {
+            println!(
+                "  {} merged {} — {}",
+                f.get("pr").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("mergedAt").and_then(|v| v.as_str()).unwrap_or(""),
+                f.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+        }
+    }
+    already_fixed_exit_code(&rows)
+}
+
 fn main() {
     let code = match Cli::parse().command {
         Cmd::Queue { n } => {
@@ -23978,7 +32518,9 @@ fn main() {
             infra.as_deref(),
             skipped.as_deref().zip(skip_reason.as_deref()),
         ),
-        Cmd::Preflight => preflight_mode(),
+        Cmd::Preflight { gh_auth, sol_shell } => preflight_mode(gh_auth, sol_shell),
+        Cmd::SolToolchain { dir } => sol_toolchain_mode(&dir),
+        Cmd::SolToolchainAudit { trace } => sol_toolchain_audit_mode(&trace),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
         Cmd::ClosureRender { flake } => closure_render_mode(&flake),
         Cmd::ClosureSurface { flake } => closure_surface_mode(&flake),
@@ -24008,6 +32550,14 @@ fn main() {
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::Await {
+            refs,
+            timeout_secs,
+            interval_secs,
+            json,
+        } => await_mode(&refs, timeout_secs, interval_secs, json),
+        Cmd::AlreadyFixed { refs, json } => already_fixed_mode(&refs, json),
+        Cmd::StateLoad { json, no_cache } => state_load_mode(json, !no_cache),
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
         Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
         Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
@@ -24115,6 +32665,454 @@ fn main() {
 }
 
 #[cfg(test)]
+mod already_fixed_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A [`MERGED_REFS_QUERY`] response: the issue's filing date and its cross-reference nodes.
+    fn refs_response(filed: &str, has_next: Value, nodes: Value) -> Value {
+        json!({"data": {"repository": {"issue": {
+            "createdAt": filed,
+            "timelineItems": {"pageInfo": {"hasNextPage": has_next}, "nodes": nodes},
+        }}}})
+    }
+
+    fn merged_node(slug: &str, num: u64, merged_at: &str, title: &str) -> Value {
+        json!({"source": {
+            "number": num,
+            "title": title,
+            "url": format!("https://github.com/{slug}/pull/{num}"),
+            "mergedAt": merged_at,
+            "repository": {"nameWithOwner": slug},
+        }})
+    }
+
+    // The live case this exists for, as data. `rainlanguage/rain.dia#6` was filed 2026-07-15;
+    // PR #33 merged 2026-07-17; the producer opened rain.dia#60 re-implementing the same guard on
+    // 2026-07-18. The read has to say "look at #33" for that issue on 2026-07-18.
+    #[test]
+    fn a_merged_pr_that_post_dates_the_filing_is_reported_as_a_reason_to_look() {
+        let resp = refs_response(
+            "2026-07-15T15:07:10Z",
+            json!(false),
+            json!([merged_node(
+                "rainlanguage/rain.dia",
+                33,
+                "2026-07-17T09:00:51Z",
+                "Harden DIA price validation"
+            )]),
+        );
+        let answer = merged_fixes_since_filing(Some(&resp));
+        assert_eq!(
+            answer,
+            AlreadyFixed::MergedSince(vec![MergedFix {
+                pr: "rainlanguage/rain.dia#33".into(),
+                merged_at: "2026-07-17T09:00:51Z".into(),
+                title: "Harden DIA price validation".into(),
+                url: "https://github.com/rainlanguage/rain.dia/pull/33".into(),
+            }])
+        );
+        assert!(answer.needs_a_look());
+        assert_eq!(answer.status(), "merged-since-filing");
+    }
+
+    // The recency rule is the whole discriminator, and it is `landed_after_filed` — the SAME
+    // function `already_fixed_recency_gate` runs at flag time. A PR merged BEFORE the issue was
+    // filed cannot be its fix (that is how live issues got wrongly flagged), and one merged at the
+    // exact filing instant is not strictly after it either.
+    #[test]
+    fn a_merge_that_predates_or_equals_the_filing_is_not_a_fix() {
+        let filed = "2026-07-15T15:07:10Z";
+        for (merged, want_clear) in [
+            ("2026-07-14T00:00:00Z", true),
+            (filed, true),
+            ("2026-07-15T15:07:11Z", false),
+        ] {
+            let resp = refs_response(
+                filed,
+                json!(false),
+                json!([merged_node("o/r", 1, merged, "t")]),
+            );
+            let answer = merged_fixes_since_filing(Some(&resp));
+            assert_eq!(
+                answer == AlreadyFixed::Clear,
+                want_clear,
+                "merged {merged} vs filed {filed}"
+            );
+            assert_eq!(answer.needs_a_look(), !want_clear);
+        }
+    }
+
+    // An unmerged reference is not a landing. The producer's OWN open PR cross-references the issue
+    // it is about, so if an open PR counted here every worked issue would report itself.
+    #[test]
+    fn an_unmerged_or_non_pr_reference_is_not_a_landing() {
+        let resp = refs_response(
+            "2026-07-15T15:07:10Z",
+            json!(false),
+            json!([
+                // the producer's own open PR
+                {"source": {"number": 60, "title": "t", "url": "u", "mergedAt": null,
+                            "repository": {"nameWithOwner": "rainlanguage/rain.dia"}}},
+                // a cross-reference from an ISSUE matches no PullRequest fragment at all
+                {"source": {}},
+                // ...and an event with no source at all
+                {},
+            ]),
+        );
+        assert_eq!(merged_fixes_since_filing(Some(&resp)), AlreadyFixed::Clear);
+    }
+
+    // Newest merge first: the row a reader opens should be the most recent landing.
+    #[test]
+    fn merged_fixes_are_reported_newest_merge_first() {
+        let resp = refs_response(
+            "2026-05-20T06:49:48Z",
+            json!(false),
+            json!([
+                merged_node("o/r", 1, "2026-05-21T15:47:55Z", "older"),
+                merged_node("o/other", 2, "2026-06-09T15:11:55Z", "newest"),
+                merged_node("o/r", 3, "2026-05-29T20:53:02Z", "middle"),
+            ]),
+        );
+        let AlreadyFixed::MergedSince(fixes) = merged_fixes_since_filing(Some(&resp)) else {
+            panic!("three merges post-date the filing");
+        };
+        assert_eq!(
+            fixes.iter().map(|f| f.pr.as_str()).collect::<Vec<_>>(),
+            ["o/other#2", "o/r#3", "o/r#1"]
+        );
+        // A cross-repo merged PR keeps its OWN slug, so the ref addresses the right repository.
+        assert_eq!(fixes[0].pr, "o/other#2");
+    }
+
+    // Every uncertainty is `Unreadable`, never a shorter list: an unseen merged fix is what makes
+    // the producer duplicate landed work, so the unknown has to fail the way that costs a look.
+    #[test]
+    fn every_unreadable_shape_fails_toward_looking_not_toward_clear() {
+        let bad = [
+            None,
+            Some(json!({})),
+            Some(json!({"data": {"repository": null}})),
+            Some(json!({"errors": [{"message": "Something went wrong"}]})),
+            // no filing date to compare against
+            Some(json!({"data": {"repository": {"issue": {
+                "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []}}}}})),
+            // no timeline at all
+            Some(json!({"data": {"repository": {"issue": {"createdAt": "2026-07-15T15:07:10Z"}}}})),
+            // TRUNCATED: references this read never saw would read as "nothing merged".
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(true),
+                json!([]),
+            )),
+            // ...and pageInfo that does not answer at all is the same hazard unstated.
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(null),
+                json!([]),
+            )),
+            // nodes missing
+            Some(json!({"data": {"repository": {"issue": {
+                "createdAt": "2026-07-15T15:07:10Z",
+                "timelineItems": {"pageInfo": {"hasNextPage": false}}}}}})),
+            // a merged date nothing can order against the filing — `Clear` here is fail-OPEN
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(false),
+                json!([merged_node("o/r", 1, "yesterday", "t")]),
+            )),
+            // a merged node with no repository to address it by
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(false),
+                json!([{"source": {"number": 1, "mergedAt": "2026-07-17T09:00:51Z"}}]),
+            )),
+            // ...and one with no number
+            Some(refs_response(
+                "2026-07-15T15:07:10Z",
+                json!(false),
+                json!([{"source": {"mergedAt": "2026-07-17T09:00:51Z",
+                                   "repository": {"nameWithOwner": "o/r"}}}]),
+            )),
+        ];
+        for b in bad {
+            let answer = merged_fixes_since_filing(b.as_ref());
+            assert_eq!(answer, AlreadyFixed::Unreadable, "{b:?}");
+            assert!(answer.needs_a_look(), "an unknown must fail toward looking");
+            assert_eq!(answer.status(), "unreadable");
+        }
+        // ...and the one shape that IS an answer.
+        let clear = refs_response("2026-07-15T15:07:10Z", json!(false), json!([]));
+        assert_eq!(merged_fixes_since_filing(Some(&clear)), AlreadyFixed::Clear);
+        assert!(!AlreadyFixed::Clear.needs_a_look());
+        assert_eq!(AlreadyFixed::Clear.status(), "clear");
+    }
+
+    // The query has to ask GitHub for the things the parse reads, or the parse above is exercised
+    // on a shape the live call never produces.
+    #[test]
+    fn the_merged_query_asks_for_the_fields_the_parse_reads() {
+        for needed in [
+            "CROSS_REFERENCED_EVENT",
+            "mergedAt",
+            "createdAt",
+            "hasNextPage",
+            "nameWithOwner",
+            "url",
+            "title",
+        ] {
+            assert!(MERGED_REFS_QUERY.contains(needed), "{needed}");
+        }
+        // NOT the field that looks like the answer: `closedByPullRequestsReferences` lists only PRs
+        // that declared a closing keyword, and the merged fixes for rain.dia#6, rain.dia#22 and
+        // st0x.deploy#248 declared none — reading it would reproduce the blind spot this closes.
+        assert!(!MERGED_REFS_QUERY.contains("closedByPullRequestsReferences"));
+        // The subject read resolves BOTH populations in one lookup, and asks a PR what it closes.
+        for needed in [
+            "issueOrPullRequest",
+            "__typename",
+            "closingIssuesReferences",
+        ] {
+            assert!(SUBJECT_KIND_QUERY.contains(needed), "{needed}");
+        }
+    }
+
+    // `gh api graphql` retypes a `-F` value that parses as a number, so an all-numeric owner or
+    // repo name sent with `-F` reaches a `String!` as an `Int` and GitHub refuses the whole query —
+    // arriving here as `Unreadable` on a repository that reads fine. The expectation is DERIVED
+    // from each query's own declarations, so adding a variable without a matching flag fails here.
+    #[test]
+    fn each_subject_query_variable_is_passed_with_the_flag_its_declared_type_needs() {
+        for query in [MERGED_REFS_QUERY, SUBJECT_KIND_QUERY] {
+            let decls = query
+                .split_once('{')
+                .expect("the query has a selection set")
+                .0
+                .trim()
+                .trim_start_matches("query")
+                .trim_matches(|c| c == '(' || c == ')');
+            let declared: Vec<(&str, &str)> = decls
+                .split(',')
+                .map(|d| {
+                    let (name, ty) = d.trim().split_once(':').expect("a declared type");
+                    (
+                        name.trim().trim_start_matches('$'),
+                        ty.trim().trim_end_matches('!'),
+                    )
+                })
+                .collect();
+            assert!(
+                declared.iter().any(|(_, ty)| *ty == "String")
+                    && declared.iter().any(|(_, ty)| *ty == "Int"),
+                "the query must mix both types for this test to be worth anything: {declared:?}"
+            );
+            // An owner and a repo that `-F` would silently retype. Both are legal name shapes.
+            let args = subject_query_args(query, "123", "456", 7);
+            assert_eq!(&args[..2], &["api".to_string(), "graphql".to_string()]);
+            let mut seen: Vec<&str> = Vec::new();
+            for pair in args[2..].chunks(2) {
+                let [flag, field] = pair else {
+                    panic!("every variable is a flag/value pair: {args:?}");
+                };
+                let name = field.split_once('=').expect("name=value").0;
+                if name == "query" {
+                    assert_eq!(flag, "-f");
+                    continue;
+                }
+                let ty = declared
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .unwrap_or_else(|| panic!("{name} is not declared by the query"))
+                    .1;
+                assert_eq!(
+                    flag,
+                    if ty == "Int" { "-F" } else { "-f" },
+                    "{name}:{ty} must take the flag its type needs"
+                );
+                seen.push(name);
+            }
+            for (name, _) in &declared {
+                assert!(seen.contains(name), "{name} is declared but never passed");
+            }
+        }
+    }
+
+    // A PR is checked against exactly the issues its MERGE would close — the same
+    // `closingIssuesReferences` set `uncovered-issues` computes coverage from.
+    #[test]
+    fn a_reference_resolves_to_its_own_population() {
+        let pr = json!({"data": {"repository": {"issueOrPullRequest": {
+            "__typename": "PullRequest",
+            "closingIssuesReferences": {"nodes": [
+                {"number": 6, "repository": {"nameWithOwner": "rainlanguage/rain.dia"}},
+                {"number": 9, "repository": {"nameWithOwner": "o/other"}},
+            ]},
+        }}}});
+        assert_eq!(
+            subject_kind(Some(&pr)),
+            Subject::Pr(vec![
+                ("rainlanguage/rain.dia".into(), 6),
+                ("o/other".into(), 9)
+            ])
+        );
+        let issue =
+            json!({"data": {"repository": {"issueOrPullRequest": {"__typename": "Issue"}}}});
+        assert_eq!(subject_kind(Some(&issue)), Subject::Issue);
+        // A PR closing nothing is an ANSWER (a `Refs`-only linkage), not a gap.
+        let bare = json!({"data": {"repository": {"issueOrPullRequest": {
+            "__typename": "PullRequest", "closingIssuesReferences": {"nodes": []}}}}});
+        assert_eq!(subject_kind(Some(&bare)), Subject::Pr(vec![]));
+        // An issue that carries a `__typename` of neither is not a subject this can check, and a
+        // PR whose closing references cannot be read is not a PR whose closes are empty.
+        for bad in [
+            None,
+            Some(json!({})),
+            Some(json!({"data": {"repository": {"issueOrPullRequest": null}}})),
+            Some(
+                json!({"data": {"repository": {"issueOrPullRequest": {"__typename": "Milestone"}}}}),
+            ),
+            Some(
+                json!({"data": {"repository": {"issueOrPullRequest": {"__typename": "PullRequest"}}}}),
+            ),
+            Some(json!({"data": {"repository": {"issueOrPullRequest": {
+                "__typename": "PullRequest",
+                "closingIssuesReferences": {"nodes": [{"number": 6}]}}}}})),
+            Some(json!({"data": {"repository": {"issueOrPullRequest": {
+                "__typename": "PullRequest",
+                "closingIssuesReferences": {"nodes": [
+                    {"repository": {"nameWithOwner": "o/r"}}]}}}}})),
+        ] {
+            assert_eq!(subject_kind(bad.as_ref()), Subject::Unreadable, "{bad:?}");
+        }
+    }
+
+    // `owner/repo#n` is the one accepted spelling — the addressing string every other typed
+    // reference in this tool takes. Anything else is a usage error, not a silent mis-read.
+    #[test]
+    fn only_a_well_formed_owner_repo_hash_number_is_a_reference() {
+        assert_eq!(
+            parse_subject_ref("rainlanguage/rain.dia#60"),
+            Some(("rainlanguage".into(), "rain.dia".into(), 60))
+        );
+        // Digit-only owners and repos are legal names and must survive the split.
+        assert_eq!(
+            parse_subject_ref("123/456#7"),
+            Some(("123".into(), "456".into(), 7))
+        );
+        for bad in [
+            "rain.dia#60",                     // no owner
+            "o/r",                             // no number
+            "o/r#",                            // empty number
+            "o/r#abc",                         // not a number
+            "o/r#-1",                          // not a u64
+            "/r#1",                            // empty owner
+            "o/#1",                            // empty repo
+            "o/r/extra#1",                     // a slug is exactly two parts
+            "https://github.com/o/r/issues/1", // a URL is not the accepted form
+            "",
+        ] {
+            assert_eq!(parse_subject_ref(bad), None, "{bad}");
+        }
+    }
+
+    // A row names WHICH issue it is about, and for a PR it names the finding as SUPERSESSION —
+    // the condition step 3's "log the narrower one as a PR close-candidate" route needs detected.
+    #[test]
+    fn a_pr_row_names_the_finding_as_supersession_and_an_issue_row_as_a_landing() {
+        let fixes = AlreadyFixed::MergedSince(vec![MergedFix {
+            pr: "rainlanguage/rain.dia#33".into(),
+            merged_at: "2026-07-17T09:00:51Z".into(),
+            title: "Harden DIA price validation".into(),
+            url: "u".into(),
+        }]);
+        let pr_row = already_fixed_row(
+            "rainlanguage/rain.dia#60",
+            "pr",
+            "rainlanguage/rain.dia#6",
+            &fixes,
+        );
+        assert_eq!(pr_row["subject"], json!("rainlanguage/rain.dia#60"));
+        assert_eq!(pr_row["issue"], json!("rainlanguage/rain.dia#6"));
+        assert_eq!(pr_row["status"], json!("merged-since-filing"));
+        assert_eq!(
+            pr_row["supersededBy"][0]["pr"],
+            json!("rainlanguage/rain.dia#33")
+        );
+        assert!(pr_row.get("mergedSince").is_none());
+
+        let issue_row = already_fixed_row(
+            "rainlanguage/rain.dia#6",
+            "issue",
+            "rainlanguage/rain.dia#6",
+            &fixes,
+        );
+        assert_eq!(
+            issue_row["mergedSince"][0]["mergedAt"],
+            json!("2026-07-17T09:00:51Z")
+        );
+        assert!(issue_row.get("supersededBy").is_none());
+        // A clear or unreadable row still carries the list key, empty — a consumer reading it
+        // never has to tell "no fixes" from "the key is missing".
+        for answer in [AlreadyFixed::Clear, AlreadyFixed::Unreadable] {
+            let row = already_fixed_row("o/r#1", "issue", "o/r#1", &answer);
+            assert_eq!(row["mergedSince"], json!([]));
+            assert_eq!(row["status"], json!(answer.status()));
+        }
+        // `needsALook` is STATED, so a consumer never re-derives it from the status string — and
+        // an UNREADABLE row is one of the two that need a look, which is the whole hazard.
+        assert_eq!(pr_row["needsALook"], json!(true));
+        for (answer, want) in [
+            (AlreadyFixed::Clear, false),
+            (AlreadyFixed::Unreadable, true),
+        ] {
+            let row = already_fixed_row("o/r#1", "issue", "o/r#1", &answer);
+            assert_eq!(row["needsALook"], json!(want), "{answer:?}");
+        }
+    }
+
+    // A FINDING outranks a GAP, and both outrank clear: 4 names something the caller can act on,
+    // 1 names something it cannot, and 0 must mean every subject was actually answered.
+    #[test]
+    fn a_finding_outranks_a_gap_and_only_all_clear_exits_zero() {
+        let row = |status: &str| json!({"status": status});
+        assert_eq!(already_fixed_exit_code(&[]), 0);
+        assert_eq!(already_fixed_exit_code(&[row("clear")]), 0);
+        assert_eq!(already_fixed_exit_code(&[row("clear"), row("clear")]), 0);
+        assert_eq!(already_fixed_exit_code(&[row("unreadable")]), 1);
+        assert_eq!(
+            already_fixed_exit_code(&[row("clear"), row("unreadable")]),
+            1
+        );
+        assert_eq!(already_fixed_exit_code(&[row("merged-since-filing")]), 4);
+        assert_eq!(
+            already_fixed_exit_code(&[row("unreadable"), row("merged-since-filing")]),
+            4
+        );
+        // A row whose status is unreadable-as-a-shape is not silently clear.
+        assert_eq!(already_fixed_exit_code(&[json!({})]), 0);
+    }
+
+    // The refs the CLI takes are the refs the tool emits, and it takes several — a run checks the
+    // handful of candidates it took, which is the whole reason this is per-subject.
+    #[test]
+    fn already_fixed_parses_one_or_many_refs_and_refuses_none() {
+        use clap::Parser;
+        let cmd = Cli::try_parse_from(["prr", "already-fixed", "o/r#1", "o/other#2", "--json"])
+            .expect("refs parse")
+            .command;
+        assert_eq!(
+            cmd,
+            Cmd::AlreadyFixed {
+                refs: vec!["o/r#1".to_string(), "o/other#2".to_string()],
+                json: true,
+            }
+        );
+        assert!(Cli::try_parse_from(["prr", "already-fixed"]).is_err());
+    }
+}
+
+#[cfg(test)]
 mod queue_tests {
     use super::*;
     use serde_json::json;
@@ -24150,7 +33148,7 @@ mod queue_tests {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         for l in ["human:reject", "human:design", "human:close-candidate"] {
             assert_eq!(
-                close_candidate_plan("OPEN", &s(&[l]), false),
+                close_candidate_plan("OPEN", &s(&[l]), false, false),
                 CloseFlagPlan::RefuseHuman,
                 "{l} must block a producer flag"
             );
@@ -24179,7 +33177,7 @@ mod queue_tests {
             vec![vetter_cc_comment(first, "uphold")],
         );
         assert!(cc_vetted_at_flag(&vetted, first));
-        let (_, action, _) = cc_row("o/r", 1, "t", &vetted);
+        let (_, action, _) = cc_row("o/r", 1, "t", &vetted, false);
         assert_eq!(action, "skip-vetted-at-flag");
 
         // The producer re-flags with new evidence: the old verdict no longer covers it.
@@ -24190,10 +33188,139 @@ mod queue_tests {
             vec![vetter_cc_comment(first, "uphold")],
         );
         assert!(!cc_vetted_at_flag(&reflagged, second));
-        let (vet, action, row) = cc_row("o/r", 1, "t", &reflagged);
-        assert!(vet);
+        let (gate, action, row) = cc_row("o/r", 1, "t", &reflagged, false);
+        assert_eq!(gate, CcGate::Unvetted);
         assert_eq!(action, "vet");
         assert_eq!(row["flagAt"], json!(second));
+    }
+
+    /// #179 state B, from the vetter's own inbox. `cc_row` used to ask only "is there a verdict
+    /// pinned to this flag", so a `reject` and an `uphold` were the same row — `skip-vetted-at-flag`
+    /// — and the vetter walked past `rain.erc4626.words#93` on every run for six days. Reading the
+    /// verdict WORD is what separates the state that is waiting on a human from the one that is
+    /// waiting on nobody.
+    #[test]
+    fn a_rejected_flag_still_wearing_its_label_asks_to_be_cleared_not_skipped() {
+        let at = "2026-07-17T21:23:11Z";
+        let rejected = flagged_issue(
+            &["ai:close-candidate"],
+            at,
+            "already-fixed-on-main: #181",
+            vec![vetter_cc_comment(at, "reject")],
+        );
+        // Vetted at its flag — which is exactly why the old check called this upheld and skipped it.
+        assert!(cc_vetted_at_flag(&rejected, at));
+        let (gate, action, _) = cc_row("o/r", 93, "t", &rejected, false);
+        assert_eq!(gate, CcGate::RejectedStillFlagged);
+        assert_eq!(action, CC_CLEAR_REJECTED);
+
+        // The SAME shape with `uphold` is the live queue's ordinary case and must stay a skip: it
+        // is waiting on a human, and clearing it would silently drop a real inbox item.
+        let upheld = flagged_issue(
+            &["ai:close-candidate"],
+            at,
+            "already-fixed-on-main: #181",
+            vec![vetter_cc_comment(at, "uphold")],
+        );
+        let (gate, action, _) = cc_row("o/r", 93, "t", &upheld, false);
+        assert_eq!(gate, CcGate::Presentable);
+        assert_eq!(action, "skip-vetted-at-flag");
+        assert_eq!(cc_stranded_cleared_comment(gate, at), None);
+    }
+
+    /// A human ruling dominates a stranded label. `human:*` is sacred with no carve-out, and
+    /// "the label looks stuck" is not one — the clearance is an AI write, so it must not fire on an
+    /// issue a human has already parked, whatever the flag underneath still says.
+    #[test]
+    fn a_human_ruling_beats_a_stranded_label_and_nothing_is_cleared() {
+        let at = "2026-07-17T21:23:11Z";
+        for ruling in HUMAN_RULING_LABELS {
+            // Both stranded shapes, under a human ruling: a rejected flag, and no flag at all.
+            let rejected = flagged_issue(
+                &[ruling, "ai:close-candidate"],
+                at,
+                "already-fixed-on-main: #181",
+                vec![vetter_cc_comment(at, "reject")],
+            );
+            let (gate, action, _) = cc_row("o/r", 93, "t", &rejected, false);
+            assert_eq!(gate, CcGate::HumanRuled, "{ruling}");
+            assert_eq!(action, "skip-human-decided", "{ruling}");
+            assert_eq!(cc_stranded_cleared_comment(gate, at), None, "{ruling}");
+        }
+    }
+
+    /// The clearance is a LABEL move and must not re-enter the machine as any of the things it
+    /// clears. Its body is read back by three different parsers, and matching any of them would be
+    /// the same class of bug one level up: the flag reader (a clearance read as a producer claim),
+    /// the verdict reader (read as a vetter ruling), and the producer's own dedup (which would then
+    /// suppress the fresh claim a re-flag owes).
+    #[test]
+    fn a_clearance_comment_is_not_a_flag_a_verdict_or_a_prior_note() {
+        for gate in [CcGate::NoFlag, CcGate::RejectedStillFlagged] {
+            let body =
+                cc_stranded_cleared_comment(gate, "2026-07-17T21:23:11Z").unwrap_or_else(|| {
+                    panic!("{gate:?} is stranded and must have a clearance comment")
+                });
+
+            // Authored as the vetter, so `trusted_comments` can dedup it — but never parsed as one
+            // of the vetter's VERDICTS.
+            assert!(body.starts_with("🤖 ai:vetter"), "{gate:?}");
+            assert_eq!(
+                cc_verdict_parts(&body),
+                None,
+                "{gate:?}: reads as a verdict"
+            );
+            assert!(
+                !body.contains("Reviewed close-candidate @"),
+                "{gate:?}: would shadow the real verdict in last_cc_vetter_comment"
+            );
+
+            // Not a producer flag, by author AND by marker.
+            assert!(!body.starts_with("🤖 ai:producer"), "{gate:?}");
+            let posted = json!({
+                "state": "OPEN",
+                "labels": [{"name": "ai:close-candidate"}],
+                "comments": [{
+                    "author": {"login": TRUSTED_AUTHOR},
+                    "createdAt": "2026-07-30T09:00:00Z",
+                    "body": body,
+                }],
+            });
+            assert_eq!(last_close_candidate_flag(&posted), None, "{gate:?}");
+
+            // And not a `Close-candidate:` note, which `flag_close_candidate_mode` dedups on: a
+            // clearance that set `already_noted` would suppress the very comment the re-flag owes.
+            assert!(
+                !body.contains("Close-candidate:"),
+                "{gate:?}: would set already_noted and re-strand the issue"
+            );
+        }
+        // A live state has no clearance at all — the guard is the type, not the caller.
+        for gate in [CcGate::Presentable, CcGate::HumanRuled, CcGate::Unvetted] {
+            assert_eq!(cc_stranded_cleared_comment(gate, "T"), None, "{gate:?}");
+        }
+    }
+
+    /// State A's comment must say what the clearance COSTS. A bare label carries no claim, so
+    /// dropping it discards whatever intent applied it, and that intent is unrecoverable because it
+    /// was never written down. The record has to name the durable alternative rather than let the
+    /// label look like it merely expired.
+    #[test]
+    fn the_no_flag_clearance_names_what_it_discards_and_the_ruling_that_survives() {
+        let body = cc_stranded_cleared_comment(CcGate::NoFlag, "").expect("stranded");
+        assert!(body.contains("no trusted producer comment"));
+        assert!(body.contains("discards whatever intent applied the label"));
+        assert!(body.contains("NO ruling is made"));
+        // The two human transitions that DO survive an AI actor, named by the command a reader runs.
+        assert!(body.contains("human-rule-issue"));
+        assert!(body.contains("human-close"));
+
+        // State B's pins the flag it completes, the way every other record here pins its subject.
+        let b = cc_stranded_cleared_comment(CcGate::RejectedStillFlagged, "2026-07-17T21:23:11Z")
+            .expect("stranded");
+        assert!(b.contains("@2026-07-17T21:23:11Z"));
+        assert!(b.contains("`reject`"));
+        assert!(b.contains("NO new ruling is made"));
     }
 
     // A marker is public body text: a flag from an untrusted author is not a flag.
@@ -24210,9 +33337,11 @@ mod queue_tests {
         });
         assert_eq!(last_close_candidate_flag(&spoofed), None);
         assert_eq!(cc_verdict_plan(&spoofed, "uphold"), CcVerdictPlan::NoFlag);
-        let (vet, action, _) = cc_row("o/r", 1, "t", &spoofed);
-        assert!(!vet);
-        assert_eq!(action, "skip-no-flag");
+        // A label with only an untrusted "flag" under it IS state A: no claim, and the label parks
+        // the issue. The state-load clears it rather than skipping it for ever.
+        let (gate, action, _) = cc_row("o/r", 1, "t", &spoofed, false);
+        assert_eq!(gate, CcGate::NoFlag);
+        assert_eq!(action, CC_CLEAR_NO_FLAG);
     }
 
     // The three failure classes from the hand-triage (#72). The vetter's REJECT is what keeps a
@@ -24266,12 +33395,40 @@ mod queue_tests {
     #[test]
     fn cc_verdict_comment_pins_the_flag_it_judged() {
         assert_eq!(
-            cc_verdict_comment("2026-07-20T09:00:00Z", "reject", "evidence predates the issue"),
+            cc_verdict_comment(
+                "2026-07-20T09:00:00Z",
+                "reject",
+                "evidence predates the issue",
+                None
+            ),
             "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z: reject — evidence predates the issue"
         );
         assert_eq!(
-            cc_verdict_comment("T", "uphold", "   "),
+            cc_verdict_comment("T", "uphold", "   ", None),
             "🤖 ai:vetter\nReviewed close-candidate @T: uphold"
+        );
+    }
+
+    /// #192. The citation evidence is the TOOL'S line, on its own line BELOW the vetter's — the
+    /// issue-side twin of `lens_stamp`. The vetter authors the note and nothing else, so a verdict
+    /// that merely restates the producer still lands beside what the cited diff actually contains.
+    #[test]
+    fn a_cc_verdict_carries_the_machines_citation_read_under_the_vetters_note() {
+        let body = cc_verdict_comment("T", "uphold", "pins the two named cases", Some("EV"));
+        assert_eq!(
+            body,
+            "🤖 ai:vetter\nReviewed close-candidate @T: uphold — pins the two named cases\nEV"
+        );
+        // The pin parse must survive the extra line, or every verdict carrying evidence reads as
+        // NO verdict — the flag would look un-vetted and the human's queue would lose the row.
+        assert_eq!(
+            cc_verdict_parts(&body),
+            Some(("T".to_string(), "uphold".to_string()))
+        );
+        // And an empty note still leaves the stamp on its own line rather than glued to the verb.
+        assert_eq!(
+            cc_verdict_comment("T", "reject", "", Some("EV")),
+            "🤖 ai:vetter\nReviewed close-candidate @T: reject\nEV"
         );
     }
 
@@ -24319,9 +33476,15 @@ mod queue_tests {
             ],
             "skipped": [
                 row("rainlanguage/raindex", 523, "nothing visual happens", "skip-vetted-at-flag", "issues"),
-                // Neither of these is UPHELD: one is a human ruling, one has no flag to judge.
+                // None of these is UPHELD: one is a human ruling, one has no flag to judge, and one
+                // is `rain.erc4626.words#93`'s state — a flag the vetter REJECTED, still labelled.
+                // The last used to land in `upheld`, because "vetted at its flag" was read as
+                // upheld on the argument that a rejected flag cannot still carry the label. It can,
+                // and rendering a `reject` to a human as the vetter agreeing to close is the worst
+                // direction for the error: the human's next move on an upheld flag destroys work.
                 row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided", "issues"),
-                row("rainlanguage/raindex", 999, "no flag", "skip-no-flag", "issues"),
+                row("rainlanguage/raindex", 999, "no flag", CC_CLEAR_NO_FLAG, "issues"),
+                row("rainlanguage/raindex", 93, "rejected, still flagged", CC_CLEAR_REJECTED, "issues"),
             ],
         });
         let (unvetted, upheld) = cc_item_arrays(&doc);
@@ -24347,10 +33510,16 @@ mod queue_tests {
                    "url": "https://github.com/rainlanguage/raindex/issues/523",
                    "title": "nothing visual happens"})
         );
-        // Only `skip-vetted-at-flag` is upheld — a human ruling or a missing flag is neither.
+        // Only `skip-vetted-at-flag` is upheld — a human ruling, a missing flag, and a REJECTED
+        // flag still wearing its label are none of them.
         for r in &upheld {
             assert_ne!(r["number"], json!(184));
             assert_ne!(r["number"], json!(999));
+            assert_ne!(
+                r["number"],
+                json!(93),
+                "a vetter REJECT must never render to a human as an upheld flag"
+            );
         }
 
         // A doc with no skipped rows (include_skipped omitted) yields an EMPTY upheld array, never
@@ -24392,31 +33561,78 @@ mod queue_tests {
     fn close_candidate_plan_respects_state_human_and_dedup() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            close_candidate_plan("CLOSED", &s(&[]), false),
+            close_candidate_plan("CLOSED", &s(&[]), false, false),
             CloseFlagPlan::AlreadyClosed
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&["human:keep-open"]), false),
+            close_candidate_plan("OPEN", &s(&["human:keep-open"]), false, false),
             CloseFlagPlan::RefuseHuman
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&["human:close-candidate"]), false),
+            close_candidate_plan("OPEN", &s(&["human:close-candidate"]), false, false),
             CloseFlagPlan::RefuseHuman
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&[]), false),
+            close_candidate_plan("OPEN", &s(&[]), false, false),
             CloseFlagPlan::Flag {
                 add_label: true,
                 post_comment: true
             }
         );
         assert_eq!(
-            close_candidate_plan("OPEN", &s(&["ai:close-candidate"]), true),
+            close_candidate_plan("OPEN", &s(&["ai:close-candidate"]), true, false),
             CloseFlagPlan::Flag {
                 add_label: false,
                 post_comment: false
             }
         );
+    }
+
+    /// #179 state B, as `rain.erc4626.words#93` actually reached it — and the reason this is a fix
+    /// to a WRITE rather than only a transition that mops up after one.
+    ///
+    /// The vetter rejected the 2026-07-17 flag and its `--remove-label` LANDED (the timeline shows
+    /// the label gone at 06:18:29Z, one second after the verdict comment at 06:18:28Z). The producer
+    /// then re-flagged on 2026-07-29: `already_noted` matched the rejected flag's own comment, so
+    /// the label went back on with no comment beside it. The flag's timestamp never moved, the
+    /// vetter's `reject` still pinned it, and the issue was stranded from that moment.
+    #[test]
+    fn a_reflag_over_a_judged_flag_must_state_a_fresh_claim() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+
+        // #93 exactly: label absent (the reject took it off), a `Close-candidate:` comment already
+        // on the record, and that flag already judged. The label may go back only WITH a new claim.
+        assert_eq!(
+            close_candidate_plan("OPEN", &s(&[]), true, true),
+            CloseFlagPlan::Flag {
+                add_label: true,
+                post_comment: true
+            },
+            "re-labelling a judged flag without a fresh comment is what stranded #93"
+        );
+
+        // The dedup still holds where it was right: a flag NOT yet judged is a half-written flag,
+        // and completing the label without re-noting it is the correct repair.
+        assert_eq!(
+            close_candidate_plan("OPEN", &s(&[]), true, false),
+            CloseFlagPlan::Flag {
+                add_label: true,
+                post_comment: false
+            }
+        );
+
+        // And an issue still CARRYING the label is a no-op re-run either way — an upheld flag
+        // waiting on a human is never re-noted out from under them.
+        for judged in [true, false] {
+            assert_eq!(
+                close_candidate_plan("OPEN", &s(&["ai:close-candidate"]), true, judged),
+                CloseFlagPlan::Flag {
+                    add_label: false,
+                    post_comment: false
+                },
+                "judged={judged}"
+            );
+        }
     }
 
     #[test]
@@ -24658,6 +33874,545 @@ mod queue_tests {
         );
     }
 
+    /// `rain.dia#22`, byte-for-byte from the flag and from `gh pr diff 48`. It is the whole of #192
+    /// in one fixture: the reason names the file the cited PR really does touch, and the cited PR's
+    /// touch on it is an IMPORT REWRITE that contains neither function the reason says it landed.
+    const DIA22_REASON: &str = "already-fixed-on-main: merged PR #48 (commit 70a76a0, merged \
+         2026-07-20) split LibDia.t.sol and landed test/src/lib/dia/LibDiaStringV3Test.t.sol, which \
+         pins exactly the two cases this issue names — testRoundTripEmpty (line 27) and \
+         testRoundTrip31Bytes (line 32) — plus a fuzz testRoundTrip over every length 0..31";
+
+    /// PR #48's real shape on that file: two import lines swapped, nothing else.
+    const DIA22_CITED_DIFF: &str = "\
+diff --git a/test/src/lib/dia/LibDiaStringV3Test.t.sol b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+--- a/test/src/lib/dia/LibDiaStringV3Test.t.sol
++++ b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+@@ -4,8 +4,8 @@ pragma solidity =0.8.25;
+ import {Test} from \"forge-std/Test.sol\";
+-import {LibDia} from \"src/lib/LibDia.sol\";
+-import {IntOrAString} from \"rain.intorastring/lib/LibIntOrAString.sol\";
++import {LibDia} from \"../../../../src/lib/LibDia.sol\";
++import {IntOrAString} from \"../../../../lib/rain.intorastring/src/lib/LibIntOrAString.sol\";
+ contract LibDiaStringV3Test is Test {
+";
+
+    /// PR #33's real shape on the same file: the tests themselves.
+    const DIA22_REAL_FIX_DIFF: &str = "\
+diff --git a/test/src/lib/dia/LibDiaStringV3Test.t.sol b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+--- a/test/src/lib/dia/LibDiaStringV3Test.t.sol
++++ b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+@@ -25,3 +25,9 @@ contract LibDiaStringV3Test is Test {
+     }
++    function testRoundTripEmpty() external pure {
++        assertEq(LibDia.intOrAStringToString(LibDia.stringToIntOrAString(\"\")), \"\");
++    }
++    function testRoundTrip31Bytes() external pure {
++        assertEq(bytes(THIRTY_ONE).length, 31);
++    }
+";
+
+    /// #192's CORE. The same reason against the PR it cited and against the PR that really landed
+    /// the tests: the file is the same, the path churn and the symbols are not.
+    ///
+    /// This is the whole discriminator, and it is why the path alone was never enough — #48 DOES
+    /// touch the file the reason names.
+    #[test]
+    fn citation_evidence_separates_the_cited_pr_from_the_one_that_landed_the_change() {
+        let bad = citation_evidence("PR #48", DIA22_REASON, DIA22_CITED_DIFF);
+        assert_eq!(
+            bad.paths,
+            vec![(
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                Some((2, 2))
+            )],
+            "the cited PR's touch on the named file is an import rewrite, and the churn says so"
+        );
+        assert_eq!(bad.present, 0);
+        assert_eq!(
+            bad.absent,
+            vec![
+                "testRoundTrip",
+                "testRoundTrip31Bytes",
+                "testRoundTripEmpty"
+            ],
+            "not one function the reason says PR #48 landed is in PR #48's changed lines"
+        );
+
+        let good = citation_evidence("PR #33", DIA22_REASON, DIA22_REAL_FIX_DIFF);
+        assert_eq!(
+            good.paths,
+            vec![(
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                Some((6, 0))
+            )]
+        );
+        assert!(
+            good.absent.is_empty() && good.present == 3,
+            "the PR that added the tests contains every symbol the reason names: {good:?}"
+        );
+    }
+
+    /// The rendered line is what a human and the vetter actually read, so the DAMNING facts have to
+    /// survive rendering — and the header has to say it is not a verdict, because nothing in this
+    /// check refuses anything.
+    #[test]
+    fn the_citation_stamp_prints_the_churn_and_names_the_absent_symbols() {
+        let s = citation_stamp(&citation_evidence("PR #48", DIA22_REASON, DIA22_CITED_DIFF));
+        assert!(s.contains("NOT a verdict"), "{s}");
+        assert!(s.contains("PR #48 changes 1 file."), "{s}");
+        assert!(
+            s.contains("test/src/lib/dia/LibDiaStringV3Test.t.sol +2/-2"),
+            "{s}"
+        );
+        assert!(s.contains("0 of 3 in its changed lines"), "{s}");
+        assert!(
+            s.contains("absent: testRoundTrip, testRoundTrip31Bytes, testRoundTripEmpty"),
+            "{s}"
+        );
+    }
+
+    /// **The hard constraint, as a test.** A fix by DELETION leaves its evidence on the REMOVED
+    /// side, and four of the seven live `already-fixed-on-main` flags are that shape
+    /// (`rain.webapp#243`'s `h-full`, `rain.dia#43`'s deleted `BuildPointers.sol`, raindex#1039 /
+    /// #1042 / #960's deleted `tauri-app/` tree). #192 proposed looking at ADDED lines; that would
+    /// have reported every one of them as unsupported.
+    #[test]
+    fn a_fix_by_removal_counts_as_evidence_because_the_diff_carries_it_on_the_removed_side() {
+        // rain.webapp#243, real: PR #244 removed `h-full` from the cell anchor.
+        let diff = "\
+diff --git a/app/_components/TableRowLink.tsx b/app/_components/TableRowLink.tsx
+--- a/app/_components/TableRowLink.tsx
++++ b/app/_components/TableRowLink.tsx
+@@ -35,7 +35,7 @@ export const TableCellLink = () => {
+ \t\t\t\t<a
+-\t\t\t\t\tclassName=\"flex items-center justify-start h-full w-full p-4 hasHover\"
++\t\t\t\t\tclassName=\"flex items-center justify-start w-full p-4 hasHover\"
+ \t\t\t\t>
+";
+        let ev = citation_evidence(
+            "PR #244",
+            "already-fixed-on-main: PR #244 removed h-full from app/_components/TableRowLink.tsx:38; \
+             the hasHover class is untouched",
+            diff,
+        );
+        assert_eq!(
+            ev.paths,
+            vec![("app/_components/TableRowLink.tsx".to_string(), Some((1, 1)))]
+        );
+        assert!(
+            ev.absent.is_empty() && ev.present == 1,
+            "`hasHover` is on both sides and `h-full` is not identifier-shaped; nothing may read \
+             as absent here: {ev:?}"
+        );
+
+        // rain.dia#43, real: PR #48 DELETED script/BuildPointers.sol outright. A deletion writes
+        // `+++ /dev/null`, so keying files off `+++` would drop the file entirely and report the
+        // path the reason names as never touched.
+        let deleted = "\
+diff --git a/script/BuildPointers.sol b/script/BuildPointers.sol
+deleted file mode 100644
+--- a/script/BuildPointers.sol
++++ /dev/null
+@@ -1,3 +0,0 @@
+-contract BuildPointers is Script {
+-    function run() external {}
+-}
+";
+        let ev = citation_evidence(
+            "PR #48",
+            "already-fixed-on-main: PR #48 consolidated the entrypoints — script/BuildPointers.sol \
+             no longer exists on main",
+            deleted,
+        );
+        assert_eq!(
+            ev.paths,
+            vec![("script/BuildPointers.sol".to_string(), Some((0, 3)))],
+            "a deleted file is still a file the cited change touched: {ev:?}"
+        );
+    }
+
+    /// A reason argues about CURRENT MAIN as well as about the landing, so a symbol the cited change
+    /// never touched is ORDINARY. `raindex#1060` is the live case: the cited PR removed the guard,
+    /// and the file that carries the behaviour today was renamed after it. Both halves are true and
+    /// both are load-bearing — which is exactly why the absent list is REPORTED and never gated on.
+    #[test]
+    fn a_sound_reason_may_name_symbols_the_cited_change_never_touched() {
+        let diff = "\
+diff --git a/src/concrete/ob/OrderBook.sol b/src/concrete/ob/OrderBook.sol
+--- a/src/concrete/ob/OrderBook.sol
++++ b/src/concrete/ob/OrderBook.sol
+@@ -260,9 +260,7 @@ contract OrderBook {
+-            if (withdrawAmount > 0) {
+-                LibOrderBook.doPost(post);
+-            }
++            LibOrderBook.doPost(post);
+";
+        let ev = citation_evidence(
+            "PR #1959",
+            "already-fixed-on-main: MERGED PR #1959 removed the `if (withdrawAmount > 0)` wrapper \
+             around LibOrderBook.doPost; RaindexV6.sol:291 now runs it unconditionally, proven by \
+             testRaindexWithdrawalEvalZeroAmountEvalNoop",
+            diff,
+        );
+        assert!(
+            ev.present >= 2
+                && ev
+                    .absent
+                    .contains(&"testRaindexWithdrawalEvalZeroAmountEvalNoop".to_string()),
+            "the guard symbols are in the cited diff and the current-main test is not — BOTH are \
+             honest, and neither may refuse the flag: {ev:?}"
+        );
+        // …and the gate must AGREE. This is the flag the disconnected check would most plausibly
+        // get wrong: every path it names is untouched by the cited PR (the file was renamed after
+        // it merged), so a path-only rule refuses a sound, vetter-upheld flag. The symbols are what
+        // save it, and that is exactly why the rule is the conjunction.
+        assert!(
+            !citation_disconnected(&ev),
+            "raindex#1060 names ONLY paths the cited PR does not touch, and is a good flag — a \
+             path-only rule would convert a valid close into rework: {ev:?}"
+        );
+    }
+
+    /// `raindex#573`, real: the reason cites `bb83031` — which is
+    /// "Merge pull request #2810 … fix/build-script-name", touching `foundry.toml`,
+    /// `script/Build.sol` and three siblings. It is cited as the fix for a VAULT DETAIL ROUTING bug
+    /// whose reason names `VaultDetail.svelte`. The sha is simply where `main` was when the
+    /// producer looked, and the four `bb83031` flags plus `raindex#928`'s `7ba0fa8` are every
+    /// commit-anchored flag on record.
+    ///
+    /// This is a bare `file:line` claim wearing a sha: the recency gate refuses those outright as
+    /// `FixAnchor::Missing`, and appending a recent main sha converts the refusal into a vacuous
+    /// pass, because every recent main sha post-dates the issue.
+    #[test]
+    fn a_citation_containing_nothing_the_reason_names_is_not_a_landing() {
+        let bb83031 = "\
+diff --git a/foundry.toml b/foundry.toml
+--- a/foundry.toml
++++ b/foundry.toml
+@@ -3,3 +3,3 @@ src = 'src'
+-build_script = 'BuildPointers.sol'
++build_script = 'Build.sol'
+ out = 'out'
+";
+        let ev = citation_evidence(
+            "commit bb83031",
+            "already-fixed-on-main: the global orderbook-address setting this bug depends on no \
+             longer exists — vault detail is addressed per-orderbook and data is fetched with \
+             raindexClient.getVault(chainId, raindexAddress, id) \
+             (packages/ui-components/src/lib/components/detail/VaultDetail.svelte:55) at bb83031",
+            bb83031,
+        );
+        assert_eq!(
+            ev.paths,
+            vec![(
+                "packages/ui-components/src/lib/components/detail/VaultDetail.svelte".to_string(),
+                None
+            )],
+            "the one path the reason names is NOT in the cited commit at all: {ev:?}"
+        );
+        assert_eq!(ev.present, 0, "and none of its symbols are either: {ev:?}");
+        assert!(
+            citation_disconnected(&ev),
+            "nothing the reason names occurs in the change it credits, so the two are about \
+             different code: {ev:?}"
+        );
+    }
+
+    /// **The hard constraint, restated for the GATE.** `rain.dia#22` is the flag #192 was filed
+    /// for — a genuinely wrong citation — and it was CLOSED on the merits with the correction
+    /// recorded. A gate that refused it would convert that ruling into rework, so this pins that it
+    /// does not: the cited PR touches the file the reason names, which is all "connected" asks.
+    ///
+    /// That is the check's own boundary, stated as a test. It catches a citation about DIFFERENT
+    /// CODE; it does not, cannot and must not adjudicate whether a citation about the RIGHT code is
+    /// the right change. The second is the human's job and it is why `/ncc` step 5 exists.
+    #[test]
+    fn the_gate_does_not_refuse_the_flag_that_issue_192_was_filed_for() {
+        let ev = citation_evidence("PR #48", DIA22_REASON, DIA22_CITED_DIFF);
+        assert_eq!(ev.present, 0, "no named symbol is in PR #48: {ev:?}");
+        assert!(
+            !citation_disconnected(&ev),
+            "rain.dia#22 cites a PR that DOES touch the file it names (+2/-2) — the citation is \
+             wrong about which change landed the tests, and that is a correction for the record, \
+             never a refusal: {ev:?}"
+        );
+    }
+
+    /// A reason that names nothing checkable is not evidence of anything, in either direction. This
+    /// is `raindex#928`'s shape (`tauri-app/` and `packages/webapp` are directories, so neither is
+    /// a path by the extension rule) and it is the gate's known MISS — 4 of the 5 read-at-sha flags
+    /// are caught, not 5. Refusing here instead would mean refusing every reason whose prose the
+    /// extractor happens not to understand, which is a far larger and much less visible class.
+    #[test]
+    fn a_reason_naming_nothing_checkable_is_never_refused() {
+        let ev = citation_evidence(
+            "commit 7ba0fa8",
+            "already-fixed-on-main: the tauri desktop app this bug was filed against is deleted \
+             from the repo (tauri-app/ existed at 7ba0fa8, absent on current main)",
+            "diff --git a/x/y.ts b/x/y.ts\n--- a/x/y.ts\n+++ b/x/y.ts\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(ev.paths.is_empty() && ev.present == 0 && ev.absent.is_empty());
+        assert!(
+            !citation_disconnected(&ev),
+            "an EMPTY check is not a failed check — a gate that refuses on no evidence refuses \
+             everything it cannot parse: {ev:?}"
+        );
+    }
+
+    /// One named thing being present is enough, and it is enough on EITHER side. A path the change
+    /// touches carries it; so does a symbol in its changed lines with no path named at all
+    /// (`st0x.deploy#248`'s shape). Both are pinned because the two halves are separate `&&` terms
+    /// and either could be dropped without the other noticing.
+    #[test]
+    fn one_named_thing_present_is_enough_from_either_half() {
+        let diff = "\
+diff --git a/src/Only.sol b/src/Only.sol
+--- a/src/Only.sol
++++ b/src/Only.sol
+@@ -1,2 +1,2 @@
+-uint256 constant THE_PIN = 0;
++uint256 constant THE_PIN = 1;
+";
+        // Path named and touched, symbol absent -> connected.
+        let by_path = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 fixed src/Only.sol; someOtherThing is unrelated",
+            diff,
+        );
+        assert!(
+            by_path.present == 0 && !citation_disconnected(&by_path),
+            "{by_path:?}"
+        );
+        // No path named, symbol present -> connected.
+        let by_symbol = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 set THE_PIN to its live value",
+            diff,
+        );
+        assert!(
+            by_symbol.paths.is_empty() && !citation_disconnected(&by_symbol),
+            "{by_symbol:?}"
+        );
+        // Neither -> disconnected.
+        let neither = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 fixed src/Elsewhere.sol via someOtherThing",
+            diff,
+        );
+        assert!(citation_disconnected(&neither), "{neither:?}");
+    }
+
+    /// The refusal is the gate's whole user interface: a producer that cannot tell what to do next
+    /// re-writes the same reason. It has to carry the evidence that produced it, name the shape
+    /// that causes it, and name BOTH exits — the real fix, and the rename case that is the one
+    /// honest way a sound flag trips this.
+    #[test]
+    fn the_unsupported_refusal_names_the_shape_and_both_ways_out() {
+        let ev = citation_evidence(
+            "commit bb83031",
+            "already-fixed-on-main: fixed in packages/ui/src/VaultDetail.svelte:55 at bb83031",
+            "diff --git a/foundry.toml b/foundry.toml\n--- a/foundry.toml\n+++ b/foundry.toml\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        let msg = citation_unsupported_refusal("o/r", "573", &ev);
+        assert!(msg.contains("refusing to flag o/r#573"), "{msg}");
+        assert!(msg.contains("commit bb83031"), "{msg}");
+        assert!(
+            msg.contains("packages/ui/src/VaultDetail.svelte"),
+            "the refusal names what went unmatched, or the producer has to guess: {msg}"
+        );
+        assert!(
+            msg.contains("Citation evidence"),
+            "it carries the evidence line that produced it: {msg}"
+        );
+        assert!(
+            msg.contains("citing the sha you READ main at"),
+            "the cause is named because it is one the producer keeps writing: {msg}"
+        );
+        assert!(
+            msg.contains("has since been renamed"),
+            "the rename escape must be on the page, or a sound flag gets a refusal and no move: \
+             {msg}"
+        );
+        assert!(
+            msg.contains("`invalid`/`duplicate`/`wont-fix`"),
+            "the other exit is the honest category: {msg}"
+        );
+    }
+
+    /// An UNREADABLE diff must not refuse. The anchor already resolved to a date one gate earlier,
+    /// so a failure here is a transient `gh` read — failing closed on it turns a network blip into
+    /// a producer cycle, which is the cost this whole design is written to avoid.
+    #[test]
+    fn an_unreadable_citation_does_not_refuse_the_flag() {
+        assert_eq!(
+            citation_support_gate("o/r", "1", &CitationRead::Unreadable("PR #7".into())),
+            0
+        );
+        assert_eq!(
+            citation_support_gate("o/r", "1", &CitationRead::NotCited),
+            0
+        );
+    }
+
+    /// **The gate REFUSES.** Everything else here checks what `citation_disconnected` DECIDES; this
+    /// is the only test that checks the decision reaches an exit code. Without it the whole gate
+    /// could be reduced to a bare `eprintln!` with the suite still green — a mutation returning `0`
+    /// in place of the refusal survived until this test existed.
+    ///
+    /// The code is asserted through [`CITATION_UNSUPPORTED_EXIT`] AND pinned to 5, because a caller
+    /// that has to tell this from the recency refusal (4) by reading the message is one that will
+    /// not.
+    #[test]
+    fn the_gate_refuses_a_disconnected_citation_with_its_own_exit_code() {
+        let ev = citation_evidence(
+            "commit bb83031",
+            "already-fixed-on-main: fixed in packages/ui/src/VaultDetail.svelte:55 at bb83031",
+            "diff --git a/foundry.toml b/foundry.toml\n--- a/foundry.toml\n+++ b/foundry.toml\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(citation_disconnected(&ev), "fixture must be disconnected");
+        assert_eq!(
+            citation_support_gate("o/r", "573", &CitationRead::Read(ev)),
+            CITATION_UNSUPPORTED_EXIT,
+            "a disconnected citation must REFUSE, not merely report"
+        );
+        assert_eq!(
+            CITATION_UNSUPPORTED_EXIT, 5,
+            "distinct from the recency refusal (4): different finding, different fix"
+        );
+        // …and a CONNECTED one passes the SAME call, or the gate is "always refuse" wearing a
+        // predicate.
+        let ok = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 fixed src/Only.sol",
+            "diff --git a/src/Only.sol b/src/Only.sol\n--- a/src/Only.sol\n+++ b/src/Only.sol\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert_eq!(
+            citation_support_gate("o/r", "1", &CitationRead::Read(ok)),
+            0
+        );
+    }
+
+    /// ONE named path being touched carries the citation, even beside others the cited change never
+    /// saw — so the path half is `all` untouched, never `any`.
+    ///
+    /// This is the commonest sound shape there is: the fix lands in the source file, and the reason
+    /// also names the test that covers the behaviour today, added by a different commit. Reading it
+    /// as `any` refuses that flag — a valid close turned into rework, the one thing this design is
+    /// forbidden to do. A mutation to `any` survived until this test existed, because no flag on
+    /// record happens to name two paths with a mix, so the live queue could not have caught it.
+    #[test]
+    fn one_touched_path_carries_the_citation_even_beside_untouched_ones() {
+        let ev = citation_evidence(
+            "commit abc1234",
+            "already-fixed-on-main: commit abc1234 fixed src/Fixed.sol; the behaviour is covered \
+             on main by test/Fixed.t.sol:12",
+            "diff --git a/src/Fixed.sol b/src/Fixed.sol\n--- a/src/Fixed.sol\n+++ b/src/Fixed.sol\n@@ -1 +1 @@\n-was\n+now\n",
+        );
+        assert_eq!(
+            ev.paths,
+            vec![
+                ("src/Fixed.sol".to_string(), Some((1, 1))),
+                ("test/Fixed.t.sol".to_string(), None)
+            ],
+            "one named path is touched and one is not: {ev:?}"
+        );
+        assert_eq!(ev.present, 0, "and no symbol carries it either: {ev:?}");
+        assert!(
+            !citation_disconnected(&ev),
+            "the cited change contains one of the things the reason names, so the two are about \
+             the same code — `any` here would refuse a sound flag: {ev:?}"
+        );
+    }
+
+    /// The noise floor. Everything here reads as an identifier by SHAPE and is not a thing a diff
+    /// can be asked about, so an evidence line that reported it would train its readers to skip the
+    /// line — which is the same outcome as not writing one.
+    #[test]
+    fn the_symbol_scan_drops_paths_pipeline_field_names_and_prose() {
+        let paths = reason_paths(
+            "already-fixed-on-main: PR #7 fixed app/_components/TableRowLink.tsx:38 and \
+             packages/ui/src/Detail.svelte:89-92,141-146 vs issue createdAt 2024-12-10; grep over \
+             *.svelte/*.ts found nothing, see https://github.com/o/r/pull/7 and script/ and \
+             origin/main",
+        );
+        assert_eq!(
+            paths,
+            vec![
+                "app/_components/TableRowLink.tsx".to_string(),
+                "packages/ui/src/Detail.svelte".to_string()
+            ],
+            "line anchors are stripped; a glob, a URL, a bare directory and a ref are not paths"
+        );
+        let syms = reason_symbols(
+            "PR #7 landed TableRowLink and _components per createdAt/mergedAt; \
+             LibDiaStringV3Test in test/src/lib/dia/LibDiaStringV3Test.t.sol; the file:line is fine \
+             at 70a76a0 on 2026-07-20; doPost is real",
+            &[
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                "app/_components/TableRowLink.tsx".to_string(),
+            ],
+        );
+        assert_eq!(
+            syms,
+            vec!["doPost".to_string()],
+            "every symbol inside a named path is dropped, and so are the pipeline field words, a \
+             short sha, a date and prose: {syms:?}"
+        );
+        // `_components` is identifier-shaped but occurs in NO named path here, so it survives —
+        // the exclusion is about the paths this reason actually named, not a word list.
+        assert!(reason_symbols("_components moved", &[]).contains(&"_components".to_string()));
+    }
+
+    /// An anchor that will not fetch must still put a LINE on the record. Silence is the failure
+    /// #192 is about: a verdict with no evidence beside it is indistinguishable from one whose
+    /// evidence was checked and held.
+    #[test]
+    fn an_unreadable_citation_says_so_rather_than_printing_nothing() {
+        let s = citation_unreadable("PR #48");
+        assert!(s.contains("PR #48"), "{s}");
+        assert!(s.contains("NOT a verdict"), "{s}");
+        assert!(s.contains("NOTHING about this citation was checked"), "{s}");
+    }
+
+    /// A reason with nothing checkable in it must SAY that, for the same reason. The alternative is
+    /// a line that trails off after the file count and reads like a clean bill.
+    #[test]
+    fn a_reason_naming_nothing_checkable_says_that_too() {
+        let s = citation_stamp(&citation_evidence(
+            "PR #2420",
+            "already-fixed-on-main: PR #2420 deleted the desktop app",
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n",
+        ));
+        assert!(
+            s.contains("names no path or symbol its diff can be checked against"),
+            "{s}"
+        );
+    }
+
+    /// `diff_churn` walks by HUNK COUNTS, not by sniffing the first byte. An added line whose own
+    /// content begins `++` renders as `+++…`, and a sniffing parser reads it as a file header —
+    /// which would silently split one file's churn across two entries.
+    #[test]
+    fn diff_churn_counts_by_hunk_and_survives_a_line_that_looks_like_a_header() {
+        let d = "\
+diff --git a/a.c b/a.c
+--- a/a.c
++++ b/a.c
+@@ -1,2 +1,3 @@
+ ctx
+-old
+++++weird
++tail
+";
+        let c = diff_churn(d);
+        assert_eq!(c.files, vec![("a.c".to_string(), 2, 1)]);
+        assert!(c.changed.contains("++weird"), "{:?}", c.changed);
+        assert!(
+            c.changed.contains("old"),
+            "the removed side is searchable too"
+        );
+    }
+
     #[test]
     fn producer_state_plan_guards_human_and_dedups() {
         let body = "🤖 ai:producer\nBlocked-infra: missing FLARE_RPC_URL";
@@ -24855,6 +34610,8 @@ mod queue_tests {
             unvetted: 0,
             open_threads: 0,
             fetch_error: 0,
+            rate_limited: 0,
+            archived_repo: 0,
         }
     }
 
@@ -24877,6 +34634,45 @@ mod queue_tests {
         );
         assert!(out
             .contains("\n    60  r#1  basis-1\n        https://github.com/rainlanguage/r/pull/1"));
+    }
+
+    /// #206: an `ai:ready` PR an archived repo froze is not presentable — nothing can merge,
+    /// relabel or comment on it — and the header SAYS SO. Absent from the header, the difference
+    /// between `raw` and `presentable` would have no explanation and a reader would go looking for
+    /// a PR that was never withheld by anybody.
+    #[test]
+    fn the_header_names_the_rows_an_archived_repo_froze() {
+        let mut c = qc(5, 0, 0, 0, 0);
+        c.archived_repo = 2;
+        let out = render_queue(&[], &c, 0);
+        assert!(
+            out.contains(", 2 archived-repo"),
+            "the archived count is missing from:\n{out}"
+        );
+        // …and it is its OWN segment: an archived row is not a draft and not a human override,
+        // which is what `excluded` counts.
+        assert!(!out.contains("excluded"), "header:\n{out}");
+        // Zero is silent — a count of nothing is noise, and every other segment here is written
+        // the same way.
+        assert!(
+            !render_queue(&[], &qc(5, 0, 0, 0, 0), 0).contains("archived-repo"),
+            "an empty archived set must add nothing to the header"
+        );
+    }
+
+    /// The plain-text surfaces share one note, and it is EMPTY at zero for the same reason the
+    /// header segment is absent at zero.
+    #[test]
+    fn the_archived_note_is_silent_at_zero_and_states_the_count_above_it() {
+        assert_eq!(archived_note(0), "");
+        assert_eq!(
+            archived_note(1),
+            " (1 withheld: archived repo, unactionable)"
+        );
+        assert_eq!(
+            archived_note(29),
+            " (29 withheld: archived repo, unactionable)"
+        );
     }
 
     // The vetted-at-head gate: green+mergeable is NOT enough — an ai:vetter comment must pin the
@@ -25207,10 +35003,23 @@ mod open_threads_tests {
     // and "could not read" is its own outcome, never folded into clean or into dirty.
     #[test]
     fn queue_routing_is_fail_closed_and_three_way() {
-        assert_eq!(thread_route(Some(0)), ThreadRoute::Present);
-        assert_eq!(thread_route(Some(1)), ThreadRoute::OpenThreads);
-        assert_eq!(thread_route(Some(9)), ThreadRoute::OpenThreads);
-        assert_eq!(thread_route(None), ThreadRoute::FetchError);
+        assert_eq!(thread_route(Ok(0)), ThreadRoute::Present);
+        assert_eq!(thread_route(Ok(1)), ThreadRoute::OpenThreads);
+        assert_eq!(thread_route(Ok(9)), ThreadRoute::OpenThreads);
+        // The route CARRIES the reason (#129): "GitHub asked us to slow down" and "this PR is
+        // unreadable" are different facts, and a single `FetchError` could not say which.
+        assert_eq!(
+            thread_route(Err(GhFailure::Unknown)),
+            ThreadRoute::Failed(GhFailure::Unknown)
+        );
+        assert_eq!(
+            thread_route(Err(GhFailure::RateLimited {
+                retry_after: Some(9)
+            })),
+            ThreadRoute::Failed(GhFailure::RateLimited {
+                retry_after: Some(9)
+            })
+        );
     }
 
     // T6: PAGING — the total is every page summed, and each page after the first is fetched with
@@ -25221,8 +35030,8 @@ mod open_threads_tests {
         let total = total_unresolved(|cursor| {
             seen.borrow_mut().push(cursor.map(String::from));
             match cursor {
-                None => Some(page(json!([{"isResolved": false}]), true, "C1")),
-                Some("C1") => Some(page(
+                None => Ok(page(json!([{"isResolved": false}]), true, "C1")),
+                Some("C1") => Ok(page(
                     json!([{"isResolved": false}, {"isResolved": true}, {"isResolved": false}]),
                     false,
                     "",
@@ -25230,7 +35039,7 @@ mod open_threads_tests {
                 Some(other) => panic!("unexpected cursor {other}"),
             }
         });
-        assert_eq!(total, Some(3), "both pages must be counted");
+        assert_eq!(total, Ok(3), "both pages must be counted");
         assert_eq!(
             *seen.borrow(),
             vec![None, Some("C1".to_string())],
@@ -25243,10 +35052,12 @@ mod open_threads_tests {
     #[test]
     fn total_is_none_when_a_later_page_is_unreadable() {
         let total = total_unresolved(|cursor| match cursor {
-            None => Some(page(json!([{"isResolved": false}]), true, "C1")),
-            Some(_) => None,
+            None => Ok(page(json!([{"isResolved": false}]), true, "C1")),
+            // A page that FETCHED but did not carry the shape is `Malformed`, and the walk hands
+            // that reason out rather than a bare "unreadable" (#129).
+            Some(_) => Err(GhFailure::Malformed),
         });
-        assert_eq!(total, None);
+        assert_eq!(total, Err(GhFailure::Malformed));
     }
 
     // T8: a cursor that never terminates stops at the page cap and reports UNKNOWN, not the
@@ -25256,10 +35067,11 @@ mod open_threads_tests {
         let calls = Cell::new(0usize);
         let total = total_unresolved(|_| {
             calls.set(calls.get() + 1);
-            Some(page(json!([{"isResolved": false}]), true, "SAME"))
+            Ok(page(json!([{"isResolved": false}]), true, "SAME"))
         });
         assert_eq!(
-            total, None,
+            total,
+            Err(GhFailure::Unknown),
             "a non-terminating cursor must not yield a total"
         );
         assert_eq!(calls.get(), MAX_THREAD_PAGES, "paging must be bounded");
@@ -25275,7 +35087,7 @@ mod open_threads_tests {
     // `ready` verdict while a thread is open.
     #[test]
     fn vet_gate_excludes_a_pr_with_an_unresolved_thread() {
-        let (action, _, row) = gate_open_threads(vet_row(), || Some(1));
+        let (action, _, row) = gate_open_threads(vet_row(), || Ok(1));
         assert_eq!(action, VetAction::SkipOpenThreads);
         assert_eq!(row["action"], json!("skip-open-threads"));
         assert_eq!(row["unresolvedThreads"], json!(1));
@@ -25285,20 +35097,32 @@ mod open_threads_tests {
     // PRs, or vetting stops entirely.
     #[test]
     fn vet_gate_passes_a_pr_with_zero_unresolved_threads() {
-        let (action, prio, row) = gate_open_threads(vet_row(), || Some(0));
+        let (action, prio, row) = gate_open_threads(vet_row(), || Ok(0));
         assert_eq!(action, VetAction::Vet);
         assert_eq!(prio, 0);
         assert_eq!(row["action"], json!("vet"));
         assert_eq!(row["unresolvedThreads"], json!(0));
     }
 
-    // T11: an unreadable thread state is fail-closed (not vetted), and stays DISTINGUISHABLE from
-    // a verified zero on the row.
+    // T11: an unread thread state is fail-closed (not vetted), and stays DISTINGUISHABLE from a
+    // verified zero on the row — for EVERY typed reason it could not be read. The vetter has no
+    // rate-limit move of its own (the retry already happened inside the fetch), so all of them
+    // collapse to the same skip HERE while `--queue`, which does have a move, keeps them apart.
     #[test]
-    fn vet_gate_fails_closed_on_unknown_thread_state() {
-        let (action, _, row) = gate_open_threads(vet_row(), || None);
-        assert_eq!(action, VetAction::SkipOpenThreads);
-        assert_eq!(row["unresolvedThreads"], json!(null));
+    fn vet_gate_fails_closed_on_every_unread_thread_state() {
+        for f in [
+            GhFailure::Unknown,
+            GhFailure::RateLimited {
+                retry_after: Some(5),
+            },
+            GhFailure::NotFound,
+            GhFailure::Unauthorized,
+            GhFailure::Malformed,
+        ] {
+            let (action, _, row) = gate_open_threads(vet_row(), || Err(f));
+            assert_eq!(action, VetAction::SkipOpenThreads, "{f:?}");
+            assert_eq!(row["unresolvedThreads"], json!(null), "{f:?}");
+        }
     }
 
     // T12: a row that ALREADY skips costs no GraphQL round-trip — the gate only asks about PRs
@@ -25315,7 +35139,7 @@ mod open_threads_tests {
                 (skip, 4, json!({"pr": "o/r#1", "action": skip.as_str()})),
                 || {
                     called.set(true);
-                    Some(7)
+                    Ok(7)
                 },
             );
             assert!(!called.get(), "{skip:?} must not trigger a thread query");
@@ -27005,9 +36829,64 @@ fn repo_root_path(rel: &str) -> std::path::PathBuf {
         .join(rel)
 }
 
+/// TEST HELPER: this crate's own source, embedded at COMPILE time.
+///
+/// `include_str!` resolves against the file it is written in, so unlike every runtime conformance
+/// read in this crate it cannot come back empty — there is no "not checked out" bail for it to
+/// pass by, in the flake build sandbox or anywhere else. That is why the gate over it is written
+/// against this rather than `repo_root_text("pr-review-report-rs/src/main.rs")`: a guard whose job
+/// is to stop tests passing vacuously must not be able to pass vacuously itself.
+#[cfg(test)]
+const CRATE_SOURCE: &str = include_str!("main.rs");
+
 #[cfg(test)]
 mod repo_root_tests {
     use super::{repo_root_path, repo_root_text};
+
+    /// TEST HELPER: the TOP-LEVEL item a line sits in — the name a hit is reported under, because
+    /// a line number moves with every edit above it and a name does not. A free function or the
+    /// module, never the test fn inside it: the granularity that matters is which item owns the
+    /// code, and one name per module keeps the expected set readable.
+    ///
+    /// Column 0 IS the test — `strip_prefix` runs on the unindented line — so anything nested
+    /// resolves to the item it is nested in.
+    fn enclosing_item(line: &str) -> Option<String> {
+        let decl = line
+            .strip_prefix("pub(crate) ")
+            .or_else(|| line.strip_prefix("pub "))
+            .unwrap_or(line);
+        let name: String = [
+            "fn ", "mod ", "impl ", "struct ", "enum ", "trait ", "const ", "static ",
+        ]
+        .into_iter()
+        .find_map(|kw| decl.strip_prefix(kw))?
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// TEST HELPER: every top-level item whose CODE contains `needle`, in source order, once each.
+    ///
+    /// Comment lines are skipped. This file documents the very bug the gate below catches, quoting
+    /// the shape in prose so a reader knows it when they see it, and a scan that cannot tell a
+    /// description from a call would make writing that description impossible.
+    fn items_whose_code_contains(needle: &str) -> Vec<String> {
+        let mut item = String::from("<above the first item>");
+        let mut hits: Vec<String> = Vec::new();
+        for line in super::CRATE_SOURCE.lines() {
+            if let Some(name) = enclosing_item(line) {
+                item = name;
+            }
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if line.contains(needle) && !hits.contains(&item) {
+                hits.push(item.clone());
+            }
+        }
+        hits
+    }
 
     /// The guard on the guard. Every conformance test over a repo-root file is written to bail
     /// gracefully when the file is absent, so if the LOOKUP goes wrong they all pass by not
@@ -27036,6 +36915,151 @@ mod repo_root_tests {
             repo_root_text("README.md"),
             std::fs::read_to_string(repo_root_path("README.md")).ok()
         );
+    }
+
+    /// #143: four prompt-pinning tests asserted NOTHING for months, every one of them the same
+    /// shape — a repo-root file reached by a path the test built itself, resolving against the
+    /// crate directory where that file has never been, with the graceful "not checked out" bail
+    /// swallowing the miss. Routing those four through [`repo_root_text`] fixed those four. It
+    /// left the SHAPE writable, and the fifth one is whatever gets added next — `settings_tests`
+    /// gains prompt-pinning tests faster than any other module in this file.
+    ///
+    /// Rust cannot take `std::fs` away from a test module, so the line is drawn over the crate's
+    /// own source instead: the repo root is resolved in exactly ONE place, and no filesystem call
+    /// is handed a path literal. Both halves fail LOUDLY at the call site that reintroduced the
+    /// shape, which is the property the swallowed bail never had.
+    ///
+    /// The needles are ASSEMBLED from parts rather than spelled out, so this test's own source is
+    /// not a hit for the shapes it hunts. The alternative — exempting the scanner from the scan —
+    /// puts the hole in the one function a person reads to learn what the rule is.
+    ///
+    /// Scope is `src/main.rs`. Each integration test under `tests/` carries its own resolver
+    /// because a binary crate's `#[cfg(test)]` items are not importable from one; that is a
+    /// property of the crate layout, and it is why this pins "one place" across the unit-test
+    /// tree rather than across the repository.
+    #[test]
+    fn the_repo_root_is_resolved_in_one_place_and_no_read_takes_a_path_literal() {
+        let manifest_dir = format!("env!(\"{}\")", ["CARGO", "MANIFEST", "DIR"].join("_"));
+        assert_eq!(
+            items_whose_code_contains(&manifest_dir),
+            ["repo_root_path", "repo_root_tests"],
+            "the crate directory is read by `repo_root_path`, and by the test above that pins \
+             where it looks — nowhere else. A second one is a second resolver, and #143 is what \
+             one that got the `/../` wrong cost: four tests, silent, for months"
+        );
+
+        let mut offenders = Vec::new();
+        for call in [
+            "fs::read_to_string",
+            "fs::read",
+            "fs::read_dir",
+            "fs::write",
+            "fs::metadata",
+            "fs::canonicalize",
+            "fs::copy",
+            "fs::rename",
+            "fs::create_dir_all",
+            "fs::remove_file",
+            "fs::remove_dir_all",
+            "File::open",
+            "File::create",
+        ] {
+            for item in items_whose_code_contains(&format!("{call}(\"")) {
+                offenders.push(format!("{item}: {call}(\"…\")"));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a filesystem call takes a path LITERAL, which is #143's bare relative read whatever \
+             the literal names: {offenders:?}. A repo-root file goes through `repo_root_text` / \
+             `repo_root_path`; every other path in this crate is built from a value"
+        );
+    }
+
+    /// #206 IS A CLASS, NOT AN INSTANCE, and this is what makes the class hold.
+    ///
+    /// The bug was found in `next_close_candidate` and fixing only that would have left the same
+    /// hole in every other org-wide enumeration — measured on 2026-08-05, `worklist`/`human-queue`
+    /// were carrying 4 frozen PRs and the producer's backlog 29 frozen issues. So the rule is
+    /// stated over the SOURCE: every item that builds an org-scoped search must also withhold
+    /// archived repos, and an item that does not must be named here with its reason.
+    ///
+    /// This is the gate a future enumeration trips. Adding a search and forgetting the filter
+    /// fails it; DELETING a filter from one that has it fails it too, which is what makes it a
+    /// mutation-killing test rather than a list somebody has to remember to update.
+    #[test]
+    fn every_org_wide_enumeration_withholds_archived_repos() {
+        // Assembled, so this test's own source is not a hit for the shape it hunts — the same
+        // move the filesystem gate above makes, for the same reason.
+        let scope = format!("org_owner{}", "_args()");
+        let filter = format!("withhold_arch{}", "ived(");
+
+        // The enumerations that FEED a queue, a state-load or a dashboard. Every one of these
+        // hands rows to something that then tries to transition them.
+        let filtered = [
+            "coverage_uncovered",
+            "human_queue_mode",
+            "presentable_queue",
+            "unvetted_fetch",
+            "worklist_rows",
+        ];
+        // …and every other item that names the org scope, each with the reason it is not here.
+        let exempt = [
+            // The accessor itself.
+            "org_owner_args",
+            // PURE argv builders. Their live callers — `flagged_open_issues` for the first — do
+            // the withholding, which is why the filter is not visible in the builder.
+            "flagged_open_issues_args",
+            // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
+            // both populations are empty in scope, and neither OFFERS work: a per-PR edit that
+            // fails is already reported as a failed edit rather than queued as a task.
+            "migrate_reject_mode",
+            "retire_blocked_infra_mode",
+            // A test.
+            "next_close_candidate_tests",
+        ];
+        let mut want: Vec<&str> = filtered.iter().chain(exempt.iter()).copied().collect();
+        want.sort_unstable();
+        let mut got = items_whose_code_contains(&scope);
+        got.sort_unstable();
+        assert_eq!(
+            got, want,
+            "an item names the org search scope and is neither filtered nor exempted. Every \
+             org-wide enumeration either withholds archived repos or says here why it need not — \
+             #206 is the bug where one of them did neither"
+        );
+
+        let withholds = items_whose_code_contains(&filter);
+        for item in filtered {
+            assert!(
+                withholds.contains(&item.to_string()),
+                "`{item}` enumerates org-wide but does not withhold archived repos — its rows can \
+                 include a repo that refuses every transition this FSM owns (#206). \
+                 Withholding items: {withholds:?}"
+            );
+        }
+
+        // The close-candidate pair takes the OTHER route, and it is a route rather than an
+        // exception: the two inboxes do not drop frozen rows at the search, they classify them
+        // through `cc_gate` as `RepoArchived` — one variant, one classifier, both surfaces. That
+        // is only sound if the set actually reaches the classifier, so the read is pinned here.
+        let reads = items_whose_code_contains(&format!("archived_re{}", "pos()"));
+        assert!(
+            reads.contains(&"flagged_open_issues".to_string()),
+            "`flagged_open_issues` is the ONE search behind both close-candidate inboxes; if it \
+             stops reading the archived set, `cc_gate` is handed `false` for every issue and the \
+             `RepoArchived` state becomes unreachable. Reading items: {reads:?}"
+        );
+        // …and the classifier is where the decision is made, in both of them.
+        let classifies = items_whose_code_contains(&format!("cc_ga{}", "te("));
+        for item in ["cc_row", "next_close_candidate_fetch"] {
+            assert!(
+                classifies.contains(&item.to_string()),
+                "`{item}` must classify through `cc_gate`, or the vetter's close-candidate inbox \
+                 and the human's can disagree about which flags are actionable. Classifying \
+                 items: {classifies:?}"
+            );
+        }
     }
 }
 
@@ -27084,6 +37108,27 @@ fn producer_step(prompt: &str, step: &str) -> String {
     )
 }
 
+/// The PREAMBLE of `campaign-prompt.txt` — its FIRST PARAGRAPH, everything above the first blank
+/// line. The run budget lives there rather than in a numbered step, so [`producer_step`] cannot
+/// reach it. The paragraphs that follow it (the shell shapes, the one-shot rule) are as far outside
+/// this section as they are outside a step, which is the point: a `!contains` is only worth
+/// anything against a haystack that stops where the rule it is about stops.
+///
+/// PANICS on an empty first paragraph, for [`prompt_section`]'s reason: a section returned as `""`
+/// makes every NEGATIVE assertion against it pass vacuously.
+#[cfg(test)]
+fn producer_preamble(prompt: &str) -> String {
+    let out: Vec<&str> = prompt
+        .lines()
+        .take_while(|l| !l.trim().is_empty())
+        .collect();
+    assert!(
+        !out.is_empty(),
+        "campaign-prompt.txt has no preamble paragraph"
+    );
+    out.join("\n")
+}
+
 /// A `- **<NAME>…**` bullet of `review-prompt.txt` — the vetter's per-PR gates. A bullet ends at
 /// the next bullet OR at the end of the list, i.e. the next numbered step at column 0.
 #[cfg(test)]
@@ -27099,7 +37144,7 @@ fn vetter_bullet(prompt: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod prompt_section_tests {
-    use super::{producer_step, vetter_bullet};
+    use super::{producer_preamble, producer_step, vetter_bullet};
 
     /// Shaped like the real prompts: top-level items at column 0, indented continuations, and the
     /// SAME phrase present in neighbours — which is what a whole-file `contains` cannot tell apart.
@@ -27170,11 +37215,49 @@ mod prompt_section_tests {
     fn a_missing_bullet_panics_too() {
         vetter_bullet(VETTER, "QA GATE");
     }
+
+    /// The preamble is the FIRST PARAGRAPH and only that: the rules above the numbered steps are
+    /// several paragraphs, and a `!contains` assertion is only worth anything if the haystack stops
+    /// where the rule it is about stops. It is joined back with newlines rather than flattened,
+    /// because a rule re-wrapped across lines must read the same to a `contains` either way.
+    #[test]
+    fn the_preamble_is_the_first_paragraph_and_stops_at_the_blank_line() {
+        const PROMPT: &str = "\
+RUN BUDGET: at most 3 WORK ITEMS
+FAN OUT BY DEFAULT, and here is why
+   \nSHELL SHAPES: a LATER paragraph
+
+ONE-SHOT, NOT A LOOP
+";
+        let preamble = producer_preamble(PROMPT);
+        assert_eq!(
+            preamble, "RUN BUDGET: at most 3 WORK ITEMS\nFAN OUT BY DEFAULT, and here is why",
+            "a wrapped paragraph is joined back with its own newlines, not flattened"
+        );
+        // A whitespace-only line ENDS the paragraph — it is blank to a reader, and a separator that
+        // only counts when it is byte-empty would silently swallow the paragraphs after it.
+        assert!(
+            !preamble.contains("SHELL SHAPES"),
+            "the paragraph ends at the first blank line, however that line is spelled: {preamble}"
+        );
+        assert!(
+            !preamble.contains("ONE-SHOT"),
+            "later paragraphs are outside the preamble: {preamble}"
+        );
+    }
+
+    /// The guard on the guard, as for the sections above: a prompt whose first paragraph is gone
+    /// must turn the test RED rather than hand back `""`, against which every `!contains` passes.
+    #[test]
+    #[should_panic(expected = "campaign-prompt.txt has no preamble paragraph")]
+    fn a_missing_preamble_panics_rather_than_yielding_an_empty_haystack() {
+        producer_preamble("\nRUN BUDGET: at most 3 WORK ITEMS\n");
+    }
 }
 
 #[cfg(test)]
 mod settings_tests {
-    use super::{producer_step, repo_root_text, vetter_bullet};
+    use super::{producer_preamble, producer_step, repo_root_text, vetter_bullet};
     use serde_json::Value;
 
     // The producer AND vetter are one-shot crons that must never park themselves — ScheduleWakeup and
@@ -27184,9 +37267,8 @@ mod settings_tests {
     // a filtered src that omits them, so the read is skipped there; the rs-test gate (cargo test at the
     // repo root) has the files and enforces the assertion.
     fn read_json(rel: &str) -> Option<Value> {
-        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
-        let text = std::fs::read_to_string(&path).ok()?;
-        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+        let text = repo_root_text(rel)?;
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {rel}: {e}")))
     }
 
     fn perm_list(rel: &str, which: &str) -> Option<Vec<String>> {
@@ -27393,6 +37475,85 @@ mod settings_tests {
         );
     }
 
+    // The rework is the producer's most common output and its record: a `git push` in Bash moves
+    // a PR head and leaves nothing any reader can join to a PR, so the prompt has to name the tool
+    // at every place it tells the producer to push to one of its own PR branches.
+    #[test]
+    fn the_producer_prompt_pushes_to_its_prs_through_the_tool() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("`mcp__fsm__push` TOOL"),
+            "the prompt must name the push tool: without it the rework — the producer's most \
+             common item — records nothing at all"
+        );
+        assert!(
+            prompt.contains("PUSHING IS A TOOL"),
+            "step 7's permitted-mutation list must say the push is a tool, not a bare `git push`"
+        );
+        // The force-push ban is NOT what this replaces, and the prompt must keep stating it: the
+        // tool covers the producer's own PR branches, and Bash git is still reachable.
+        assert!(prompt.contains("NEVER force-push in ANY form or spelling"));
+    }
+
+    /// #116: the prompt told the producer to verify Solidity through a HARDCODED
+    /// `github:rainlanguage/rainix#sol-shell` while naming "the repo's" toolchain for Rust and TS.
+    /// That flake tracks rainix HEAD and no repo's CI runs it, so a green local `forge fmt` was
+    /// never a claim about CI — cyclofinance/cyclo.sol#42 spent its one back-off attempt on a diff
+    /// the repo's own pinned `forge fmt --check` could not accept.
+    ///
+    /// Asserted on the STEPS that verify, not on the whole file: the same URL in step 1 is the
+    /// startup health check ("does nix work here"), which is a different question and stays.
+    #[test]
+    fn the_verify_steps_take_the_solidity_toolchain_from_the_repos_own_ci() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        for step in ["4", "3d"] {
+            let text = producer_step(&prompt, step);
+            assert!(
+                text.contains("pr-review-report sol-toolchain"),
+                "step {step} verifies Solidity and must resolve the toolchain per clone: {text}"
+            );
+            assert!(
+                !text.contains("nix develop github:rainlanguage/rainix#sol-shell -c"),
+                "step {step} still hardcodes the health-check flake as a verification shell, \
+                 which is #116 exactly"
+            );
+        }
+
+        // The rule is only actionable if the step says what to do when there is NO single answer.
+        // A silent fallback to some other shell reintroduces the skew leaving nothing to read
+        // afterwards, which is the half of #116 that outlives the parked PR.
+        let step4 = producer_step(&prompt, "4");
+        assert!(
+            step4.contains("Exit 3") && step4.contains("RECORD"),
+            "step 4 must route the unresolvable checkout to the run record, not to a fallback: \
+             {step4}"
+        );
+
+        // `foreign` is the exit-3 mode that is NOT "nothing to match", and reading it as `absent`
+        // is the worst available error: four org repos gate Solidity on a non-nix forge, one of
+        // them `forge fmt --check` on NIGHTLY. The step has to name the mode and say what makes
+        // it different, or the producer meets it and treats it as a free choice of shell.
+        assert!(
+            step4.contains("`foreign`"),
+            "step 4 must name the foreign mode, not fold it into the exit-3 list: {step4}"
+        );
+        assert!(
+            step4.contains("NOT \"nothing to match\""),
+            "step 4 must say what makes `foreign` different from `absent`: {step4}"
+        );
+
+        // Step 1's health-check use of the same URL is a DIFFERENT question and must survive: the
+        // negative above is one careless widening away from deleting the environment assertion.
+        assert!(
+            producer_step(&prompt, "1").contains("sol-shell"),
+            "step 1's startup health check still asks whether nix can realise a rainix shell"
+        );
+    }
+
     /// #135/#136: retiring `ai:relink` only works if the work it named became something the
     /// producer can DO. The verdict is gone from the vetter's vocabulary, so the producer's prompt
     /// has to teach the reject-handling that replaces it — and name the tool, not a `gh pr edit`.
@@ -27425,6 +37586,188 @@ mod settings_tests {
         assert!(
             prompt.contains("There is no `ai:relink` verdict any more"),
             "…and it must say so, so a producer that saw the old label knows it is dead"
+        );
+    }
+
+    /// #183. The 3-item cap is a RISK bound, and the paragraph that states it also decides how the
+    /// run is SHAPED — so it has to say which shape is the default and why. Run `20260804T114433Z`
+    /// read the cap, dispatched nothing, and paid 264k cached tokens per tool call against the
+    /// dispatching run's 75k. The prompt named both options and gave the model no way to weigh
+    /// them: the cost asymmetry is a property of the harness, underivable from the work.
+    #[test]
+    fn the_producer_prompt_makes_fan_out_the_default_and_says_why() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let budget = producer_preamble(&prompt);
+
+        // THE CAP'S UNIT. "fan-out for the 3" numerically couples agents to the cap, and the
+        // disclaimer beside it contrasted items with EFFORT — never with AGENTS — so the question
+        // "may this item take two agents?" had no answer in the text.
+        assert!(
+            !prompt.contains("Use the Workflow/Task sub-agent fan-out for the 3"),
+            "the cap must not be phrased so that the fan-out is sized by the item count"
+        );
+        assert!(
+            budget.contains("THE CAP COUNTS ITEMS AND COUNTS NOTHING ELSE")
+                && budget.contains("not agents"),
+            "the cap must rule agents out of the count explicitly: {budget}"
+        );
+        assert!(
+            budget.contains("a sub-agent's own dispatches count for nothing"),
+            "a sub-agent that fans out further is the case that blurs the count: {budget}"
+        );
+
+        // THE DEFAULT, AND THE MECHANISM THAT JUSTIFIES IT. The reason has to be the mechanism, not
+        // the two examples, or it cannot be applied to a case this paragraph does not enumerate.
+        assert!(
+            budget.contains("FAN OUT BY DEFAULT"),
+            "the prompt must state a default rather than offer two equal options: {budget}"
+        );
+        assert!(
+            budget.contains("a sub-agent carries its OWN context")
+                && budget.contains("re-reads its entire history on every turn"),
+            "the REASON is the context asymmetry — state it, so it generalizes: {budget}"
+        );
+        for run in ["20260802T130003Z", "20260804T114433Z"] {
+            assert!(
+                budget.contains(run),
+                "the rule carries its measurement, like every other rule in this prompt: {run}"
+            );
+        }
+
+        // INLINE IS STILL CORRECT SOMEWHERE. A default that reads as a mandate would break the one
+        // pass the prompt has always run serially.
+        assert!(
+            budget.contains("WORK INLINE where an item is NOT independent"),
+            "dependence on the main loop's state is the case inline exists for: {budget}"
+        );
+        assert!(
+            producer_step(&prompt, "4")
+                .contains("Run it INLINE + serial in your per-issue clone (no Workflow fan-out)"),
+            "step 4's adversarial-mutation pass is named inline and must stay that way"
+        );
+
+        // DISPATCHING IS NOT FINISHING. The dispatching run closed its own turn intending to
+        // synthesize later, and the ONE-SHOT rule two paragraphs down says there is no later.
+        assert!(
+            budget.contains("DISPATCHING IS NOT FINISHING"),
+            "a default that fans out must still name the run summary as the run's own: {budget}"
+        );
+    }
+
+    /// TEST HELPER: the `SHELL SHAPES …` paragraph and its indented bullets, ending at the blank
+    /// line before the next top-level paragraph. Placement is the invariant being asserted — the
+    /// same sentence sitting in some other part of a 75 KB prompt is a different instruction, and
+    /// the paragraph is what #174 established as the one place these rules live.
+    fn shell_shapes_paragraph(prompt: &str) -> &str {
+        let start = prompt
+            .find("SHELL SHAPES THE PERMISSION LAYER REFUSES")
+            .expect("campaign-prompt.txt must carry the SHELL SHAPES paragraph (#174)");
+        let rest = &prompt[start..];
+        match rest.find("\n\n") {
+            Some(end) => &rest[..end],
+            None => rest,
+        }
+    }
+
+    /// #180: a chain of allow-listed commands came back as "This Bash command contains multiple
+    /// operations. The following parts require approval: pr-review-report worklist --json, head -5
+    /// /tmp/claude-1000/wl.err" — and the producer read that as its allow-list failing, reissued
+    /// the command bare, and paid the round trip. Probed against the harness, the chain is not the
+    /// trigger and neither is the allow-list: ONE part was refused for a `/tmp` path, and the
+    /// message prints the named part with its redirection stripped, so the disqualifier is invisible
+    /// in the only text the producer gets to read. The prompt has to say what that message means,
+    /// or the next run makes the same wrong inference from the same evidence.
+    #[test]
+    fn the_producer_prompt_reads_a_multi_part_refusal_as_a_path_problem() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let para = shell_shapes_paragraph(&prompt);
+
+        assert!(
+            para.contains("CHAINING IS NOT THE PROBLEM"),
+            "the paragraph must say chaining is not itself refused — 4,232 accepted calls carry \
+             `;`, `&&`, `|` and redirections, so a producer that stops chaining pays for nothing: \
+             {para}"
+        );
+        assert!(
+            para.contains("with its redirection stripped off"),
+            "the message hides the disqualifier; unless the prompt says so, a named part that is \
+             allow-listed reads as a broken allow-list, which is exactly what #180 concluded"
+        );
+        assert!(
+            para.contains("DO NOT reissue it bare"),
+            "reissuing bare is the recovery the traces show, and it fixes nothing a corrected \
+             path would not have fixed"
+        );
+        assert!(
+            para.contains("{{SCRATCH_DIR}}") && para.contains("`/tmp/…` is outside both"),
+            "every byte the producer writes goes to the scratch dir: `/tmp` is outside both \
+             `--add-dir` roots, which is what refused `2>/tmp/wl.err` and `head -5 /tmp/wl.err`"
+        );
+        assert!(
+            para.contains("**Read tool**"),
+            "the one `/tmp` path the harness itself hands back — a backgrounded command's output \
+             file — is reachable, but only with the Read tool; `head` on it is refused by path"
+        );
+        assert!(
+            para.contains("keep `cd` out of every call that writes"),
+            "a `cd` anywhere in a redirecting command is refused on the `cd`, absolute targets \
+             included — two of the four post-#174 occurrences were that shape"
+        );
+    }
+
+    /// #170: the waiting rule was already in this paragraph and the runs broke it anyway, because
+    /// the only idiom it gave — `until grep -q '<marker>' <output-file>` — needs a LOCAL FILE, and
+    /// the wait the runs actually do is on GitHub. So they probed one turn at a time: 320 of one
+    /// run's 788 main-loop turns were nothing but `gh pr view --json headRefOid` / `gh pr checks`,
+    /// 60% of that run's whole enumeration bill, with three or more sub-agents live for 317 of
+    /// them. The paragraph has to carry the GitHub-side idiom too, or the rule stays unreachable
+    /// for the case that costs the money.
+    #[test]
+    fn the_waiting_rule_covers_the_github_side_wait_and_not_only_a_local_file() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let para = shell_shapes_paragraph(&prompt);
+        // The RULE, not merely the token. A mutation pass found that asserting
+        // `contains("pr-review-report await")` survives deleting the instruction, because the
+        // worked example further down the paragraph carries the same string — so the assertion
+        // held while the sentence that tells a run what to do was gone.
+        assert!(
+            para.contains("WAITING ON GITHUB IS `pr-review-report await`"),
+            "the paragraph must STATE the rule, not merely mention the subcommand in an example: \
+             {para}"
+        );
+        assert!(
+            para.contains("@<sha-before-the-push>") || para.contains("@<sha>"),
+            "the push half is what 412 of the measured probes were reading; an example that omits \
+             it teaches only half the wait: {para}"
+        );
+        // The anti-pattern has to be named as such. "Use await" alone leaves the per-turn probe a
+        // reasonable-looking alternative, and it is the one the runs reach for by default.
+        assert!(
+            para.contains("gh pr view --json headRefOid"),
+            "the paragraph must name the probe it is displacing, or the displacement is advice: \
+             {para}"
+        );
+        // ONE-SHOT's own CI sentence used to prescribe raw `gh pr checks` polling — the exact
+        // shape measured. A rule in one paragraph and its counter-example in the next is how the
+        // per-turn probe stayed defensible.
+        let one_shot = prompt
+            .split("\n\n")
+            .find(|p| p.contains("ONE-SHOT, NOT A LOOP"))
+            .expect("campaign-prompt.txt must carry the ONE-SHOT paragraph");
+        assert!(
+            one_shot.contains("pr-review-report await"),
+            "the one place the prompt tells a run to wait for CI must name the bounded wait: \
+             {one_shot}"
+        );
+        assert!(
+            !one_shot.contains("`gh pr checks` / `gh run watch`"),
+            "ONE-SHOT must not still offer the per-probe poll as the way to wait: {one_shot}"
         );
     }
 
@@ -27701,6 +38044,145 @@ mod settings_tests {
         );
     }
 
+    /// #192, the VETTER half — the deeper one. The flag on `rain.dia#22` was upheld by a note that
+    /// reproduced the producer's specifics in the producer's own words, and on the record that is
+    /// indistinguishable from a note whose author opened the cited diff. `citationEvidence` is what
+    /// the tool now hands the vetter; this pins the prompt that makes the vetter USE it.
+    ///
+    /// SCOPED to the bullet, on the pattern above: `citationEvidence` and `rain.dia#22` both appear
+    /// elsewhere in this prompt's neighbourhood, so a whole-file `contains` would keep passing over
+    /// a gutted bullet.
+    #[test]
+    fn the_vetter_prompt_makes_the_note_say_what_it_read() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let gate = vetter_bullet(&prompt, "PROVENANCE");
+        assert!(
+            gate.contains("citationEvidence"),
+            "the vetter must be told the field EXISTS by name, or it reads the flag and stops: \
+             {gate}"
+        );
+        // The instruction that actually changes the record. Without it the field is one more thing
+        // to skim past, and the note stays a restatement.
+        assert!(
+            gate.contains("**So OPEN the cited diff and make your note say what you found there**"),
+            "the bullet's whole point is the NOTE — a field nobody is told to write from changes \
+             nothing: {gate}"
+        );
+        assert!(
+            gate.contains("indistinguishable from one that never opened anything"),
+            "the vetter has to be told WHY restating fails, not merely that it is discouraged: \
+             {gate}"
+        );
+        // THE HARD CONSTRAINT, in the prompt. Handing the vetter a new machine-checkable signal
+        // without this sentence is exactly how a check that improves evidence turns into a check
+        // that rejects sound flags — which is the outcome the ruling on rain.dia#22 forbids.
+        assert!(
+            gate.contains("it is never on its own a reason to reject"),
+            "the evidence line is EVIDENCE; a bullet that let it stand as a ground would convert \
+             correct closes into rework: {gate}"
+        );
+        assert!(
+            gate.contains("that is `uphold` with the correction IN YOUR NOTE"),
+            "a wrong citation under a RIGHT outcome is a correction on the record, not a reject — \
+             this is the rain.dia#22 ruling stated to the actor that would otherwise re-litigate \
+             it: {gate}"
+        );
+        // The two false-alarm shapes, named. A vetter that does not know these are ordinary will
+        // read every one of them as a defect.
+        assert!(
+            gate.contains("argues about CURRENT MAIN as well as about the landing"),
+            "a sound reason names current-main symbols the cited change never touched: {gate}"
+        );
+        assert!(
+            gate.contains("a fix by DELETION leaves its evidence on the removed side"),
+            "four of the seven live already-fixed flags are fixed-by-removal — a vetter reading \
+             only the added side would call them all unsupported: {gate}"
+        );
+        assert!(
+            gate.contains("rain.dia#22"),
+            "the rule carries the incident it was written from: {gate}"
+        );
+        // The vetter's surface is eight MCP tools with no Bash, no `gh` and no `git`, and NONE of
+        // them returns a commit diff. "Open the cited diff" is therefore executable for a PR anchor
+        // and impossible for a commit one — and an instruction a role cannot perform gets answered
+        // in prose, which is the exact defect this bullet exists to end. So it has to name which
+        // read reaches which anchor and require the note to SAY which one it made. (CLAUDE.md: a
+        // gate on one edge needs a transition on the other.)
+        assert!(
+            gate.contains("**AND NAME THE READ YOU MADE"),
+            "a note that does not say WHICH read it made cannot be told apart from one that made \
+             none: {gate}"
+        );
+        assert!(
+            gate.contains("call `pr_context` on the cited PR"),
+            "the PR anchor's read must be named as the typed tool that performs it: {gate}"
+        );
+        assert!(
+            gate.contains("no tool on this surface returns a commit diff"),
+            "a commit anchor is UNREACHABLE from this surface, and the bullet must say so rather \
+             than mandate a read the strict-MCP profile denies: {gate}"
+        );
+        assert!(
+            gate.contains("Claiming a read you could not perform"),
+            "the failure mode the commit case invites has to be named, or the vetter writes as \
+             though it opened something: {gate}"
+        );
+    }
+
+    /// #192, the PRODUCER half. The evidence line is written onto the flag at flag time, which is
+    /// where a bad citation is cheapest to catch — and, since #191, where it does the most damage:
+    /// `flag_grounds` reads the reason back off this comment and a cited landing switches the
+    /// `covered-by-open-pr` block OFF.
+    #[test]
+    fn the_producer_prompt_says_the_flag_carries_its_citation_evidence() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step = producer_step(&prompt, "7a");
+        assert!(
+            step.contains("CITATION EVIDENCE IS APPENDED TO YOUR FLAG, AND YOU READ IT BACK"),
+            "the producer has to know the line exists AND that reading it is the point: {step}"
+        );
+        // The guarantee that REPLACED "it never refuses on that". The evidence line is still
+        // report-only in every reading but one, and the prompt has to state the boundary exactly:
+        // a producer told "this can refuse" without being told WHEN starts writing reasons that
+        // dodge a gate it has to guess at, which is the token-gaming failure #192 warned about.
+        assert!(
+            step.contains("It refuses on exactly ONE reading of that line, and only this one"),
+            "the boundary must be stated as a boundary — 'sometimes refuses' is what makes a \
+             producer write to the gate instead of to the truth: {step}"
+        );
+        assert!(
+            step.contains("A partial miss NEVER refuses"),
+            "the report/refuse split is the whole #192 ruling and the producer has to know which \
+             side it is on: {step}"
+        );
+        assert!(
+            step.contains("NOT TOUCHED BY IT"),
+            "the producer is told the exact phrase that means it cited the wrong change, because \
+             that phrase is what it will actually see: {step}"
+        );
+        assert!(
+            step.contains("re-flag with it"),
+            "naming the defect without naming the move leaves the producer with a finding and no \
+             transition: {step}"
+        );
+        // The read-at-sha shape itself, named, with the move. This is the defect the gate exists
+        // for and the producer is the only actor that can avoid writing it.
+        assert!(
+            step.contains("DO NOT CITE THE SHA YOU READ MAIN AT"),
+            "the gate refuses a shape the producer will otherwise keep writing, because it looks \
+             like a valid anchor and passes the recency check: {step}"
+        );
+        assert!(
+            step.contains("cite a path or symbol THAT CHANGE ITSELF contains"),
+            "a rename is the one honest way to trip this gate, so the escape has to be on the \
+             page or a sound flag has a refusal and no move: {step}"
+        );
+    }
+
     /// #140, producer side. The two prompts are deliberately symmetric: step 5 governs the PR the
     /// producer OPENS and 7a the close-candidate flag it FILES, and both offered a free-text
     /// why-not. Narrowing only the vetter would leave the producer writing waivers that are now
@@ -27792,6 +38274,50 @@ mod settings_tests {
         );
     }
 
+    /// #142: the enforcement point stays at the vetter and at step 3c, so 3c's list has to be the
+    /// list the tool computes. A path enumeration written into the step is a SECOND definition of
+    /// `is_ui_path` that drifts from the first while reading as though it agrees — the drift that
+    /// left `cyclo.site`'s `src/lib/components/*.svelte` outside both, which is where every PR
+    /// #140 was filed about lived.
+    #[test]
+    fn step_3c_takes_its_list_from_the_tool_and_not_from_a_path_list_of_its_own() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step3c = producer_step(&prompt, "3c");
+
+        assert!(
+            step3c.contains("`worklist` ROWS WHOSE `nextAction` IS `screenshot-3c`"),
+            "3c's list must BE the tool's rows, named as such: {step3c}"
+        );
+        assert!(
+            step3c.contains("`is_ui_path` is the ONE definition"),
+            "3c must say which side owns the definition, or a reader re-derives it here: {step3c}"
+        );
+        // `unknown` routes here too, and a step that only explains `yes` reads as though a PR whose
+        // file list could not be resolved does not need one.
+        assert!(
+            step3c.contains("`unknown` means nothing ruled UI out"),
+            "3c must say what `unknown` means, since it is half of what routes a PR here: {step3c}"
+        );
+        // A filename is not how a shot is recognised — that is the whole of the #155/#156 defect.
+        assert!(
+            step3c.contains("do not go looking for one particular filename"),
+            "3c must not send the producer hunting a filename shape: {step3c}"
+        );
+        // …and the old shape must be gone from the PROMPT, not merely overridden further down.
+        assert!(
+            !prompt.contains("a PR that already has `shots/<n>.png` is done"),
+            "the filename-shaped marker test must be gone, not shadowed by a later sentence"
+        );
+        // 3c reads its fleet through the tool like every other step: a per-PR `gh pr view` here is
+        // the loose transition CLAUDE.md's north star is about, and it is what re-derived the list.
+        assert!(
+            !step3c.contains("gh pr view"),
+            "3c must not enumerate its own fleet with raw gh: {step3c}"
+        );
+    }
+
     // MCP mode's whole claim is that a non-FSM operation is UNREPRESENTABLE: no Bash at all, so no
     // raw `gh`/`git`, and no prefix-matched deny-list to route around.
     #[test]
@@ -27807,6 +38333,221 @@ mod settings_tests {
         assert!(
             !allow.iter().any(|a| a == "Bash" || a.starts_with("Bash(")),
             "MCP mode must not allow any Bash form"
+        );
+    }
+
+    /// The subagent TYPE, read out of each file rather than compared against a literal on both
+    /// sides: a rename that touched only one would leave the run dispatching a type the harness
+    /// never registered, and `Agent` with an unknown `subagent_type` is a failed dispatch, not a
+    /// briefed one. Two literals asserted separately cannot see that — both would still be found.
+    fn type_between(text: &str, open: &str, close: &str) -> Option<String> {
+        let at = text.find(open)? + open.len();
+        let end = at + text[at..].find(close)?;
+        let name = &text[at..end];
+        (!name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'))
+        .then(|| name.to_string())
+    }
+
+    /// The type the RUNNER registers: the sole key of the `--agents` object it builds.
+    fn worker_type_defined(sh: &str) -> Option<String> {
+        type_between(sh, "'{\"", "\":{\"description\"")
+    }
+
+    /// The type the PRODUCER PROMPT dispatches: the value of the `Agent` call's `subagent_type`.
+    fn worker_type_dispatched(prompt: &str) -> Option<String> {
+        type_between(prompt, "subagent_type: \"", "\"")
+    }
+
+    /// #200: a dispatched sub-agent starts with NO prompt, so the run's standing rules reach it
+    /// only if something puts them there. The channel is `--agents`, whose JSON the harness loads
+    /// straight into each worker — which is why the main loop pays none of those bytes. Assert the
+    /// whole chain, because any one link missing degrades silently into the old improvised brief:
+    /// the brief file is read, it becomes the `prompt` of a defined type, that JSON reaches
+    /// `claude`, and the type is the one the producer prompt actually dispatches.
+    #[test]
+    fn the_runner_hands_every_dispatched_worker_the_standing_brief() {
+        let (Some(sh), Some(prompt)) = (
+            repo_root_text("campaign-run.sh"),
+            repo_root_text("campaign-prompt.txt"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            sh.contains("campaign-worker-prompt.txt"),
+            "the runner must build the worker brief from campaign-worker-prompt.txt"
+        );
+        assert!(
+            sh.contains("--rawfile brief"),
+            "the brief must be read as RAW TEXT into the JSON — hand-escaping prompt prose into a \
+             JSON string literal is what keeps it unreadable and undiffable"
+        );
+        assert!(
+            sh.contains("--agents \"$AGENTS_JSON\""),
+            "the built brief must reach `claude` — without the flag the JSON is computed and \
+             thrown away, and every worker is briefed by whatever the main loop improvises"
+        );
+        let (Some(in_runner), Some(in_prompt)) =
+            (worker_type_defined(&sh), worker_type_dispatched(&prompt))
+        else {
+            panic!(
+                "both the runner's `--agents` JSON and the producer prompt must name the worker \
+                 type; a type defined but never dispatched briefs nobody"
+            );
+        };
+        assert_eq!(
+            in_runner, in_prompt,
+            "the type the runner DEFINES and the type the prompt DISPATCHES must be the same \
+             string: an `Agent` call naming an unregistered type is a failed dispatch"
+        );
+    }
+
+    /// A brief that cannot be built must END the run. Dispatch would still work without it, which
+    /// is precisely the hazard: the workers would go back to improvised briefing and nothing in
+    /// the trace would say the rules had stopped reaching them.
+    #[test]
+    fn a_missing_worker_brief_aborts_the_run_rather_than_dispatching_without_one() {
+        let Some(sh) = repo_root_text("campaign-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            sh.contains("no campaign-worker-prompt.txt in"),
+            "an absent brief must abort with a message naming the file, not fall through"
+        );
+        assert!(
+            sh.contains("grep -q '[^[:space:]]' \"$DIR/campaign-worker-prompt.txt\""),
+            "the guard's condition must be CONTENT, not existence: an empty or whitespace-only \
+             brief passes both `-f` and `-s` and then builds valid JSON carrying an empty prompt, \
+             which registers the type and briefs nobody"
+        );
+        assert!(
+            sh.contains("could not build the worker brief"),
+            "a jq failure must abort too — an empty --agents value registers no type at all"
+        );
+    }
+
+    /// The two rules the improvised dispatch prompts never carried, and which the measurement in
+    /// #200 says are 68% of the sub-agent cold-start bucket: 142 of the 362 GitHub reads dispatched
+    /// agents made were a `gh pr checks` probe per turn, and 72 were a re-read of a subject already
+    /// in that agent's own context. Neither is about state the worker lacks — both are about a
+    /// standing rule that never reached it.
+    #[test]
+    fn the_worker_brief_holds_the_two_rules_the_dispatch_prompts_never_carried() {
+        let Some(brief) = repo_root_text("campaign-worker-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            brief.contains("READ YOUR SUBJECT ONCE"),
+            "the brief must state the read-once rule"
+        );
+        assert!(
+            brief.contains("WAIT IN ONE CALL"),
+            "the brief must state the one-call wait rule"
+        );
+        // …and NAME THE MECHANISM. `Monitor` alone is the pre-#197 rule, which `campaign-prompt`
+        // had all along and which did not stop the spin-wait: its only idiom (`until grep -q
+        // <marker> <file>`) needs a LOCAL FILE, and there is none for "have the checks reported".
+        // A worker told to wait with `Monitor` and nothing else meets that same dead end and
+        // improvises the same probe-per-turn, which is the 142 calls this brief exists to remove.
+        assert!(
+            brief.contains("pr-review-report await"),
+            "the wait rule must name `await`: a rule whose only mechanism is `Monitor` was \
+             measured as unsatisfiable for a GitHub-side wait, and stating it again changes nothing"
+        );
+        assert!(
+            brief.contains("head-unchanged"),
+            "the brief must name the per-subject states a worker DISPATCHES OFF — without them \
+             `await` is a call whose answer the worker has to guess at, and `head-unchanged` in \
+             particular is the phantom-green guard: an unmoved head is never settled by the old \
+             head's checks"
+        );
+        assert!(
+            brief.contains("never the bare `until grep -q"),
+            "the idiom that does not reach GitHub must be forbidden BY NAME: it is the one a \
+             worker reaches for when told only that waiting is `Monitor`"
+        );
+        assert!(
+            brief.contains("NEVER a `gh pr checks`"),
+            "stating the wait rule is not enough — the brief must name the per-probe poll it \
+             replaces, because that is the shape the runs reached for on their own"
+        );
+        // The whole reason the dispatch prompt may now carry only the item: the prohibitions and
+        // the write tools it used to retype live HERE. Dropping one silently un-teaches it.
+        for tool in [
+            "mcp__fsm__clone_create",
+            "mcp__fsm__clone_release",
+            "mcp__fsm__push",
+            "mcp__fsm__open_pr",
+        ] {
+            assert!(
+                brief.contains(tool),
+                "the brief must name {tool}: the dispatch prompt no longer does"
+            );
+        }
+        assert!(
+            brief.contains("Never `gh pr create`") && brief.contains("never force-push"),
+            "the prohibitions move with the tools or they move nowhere"
+        );
+    }
+
+    /// The fix must not become the thing #200 warns about. The brief is bytes in EVERY worker's
+    /// context on EVERY one of its turns, so it is the one part of this change that can silently
+    /// cost more than it saves — and it would be invisible, because the calls it removes leave the
+    /// trace while the cost moves into cache reads.
+    ///
+    /// The ceiling is derived, not picked. Across the retained traces the 40 dispatched agents ran
+    /// 7,922 turns between them, so one byte present in every worker costs 7922/4 tokens of cache
+    /// read at the $0.4996/MTok those traces imply — $0.000989 per byte. The waste the brief is
+    /// aimed at is $18.23 ($15.73 of spin-wait plus $2.50 of retyped boilerplate leaving the main
+    /// loop), which breaks even at 18,424 bytes. 4,096 keeps a 4.5x margin over break-even while
+    /// leaving room to state a rule properly.
+    #[test]
+    fn the_worker_brief_stays_inside_its_context_budget() {
+        const BRIEF_BYTE_CEILING: usize = 4096;
+        let Some(brief) = repo_root_text("campaign-worker-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            brief.len() <= BRIEF_BYTE_CEILING,
+            "the worker brief is {} bytes, over the {BRIEF_BYTE_CEILING}-byte ceiling: it is \
+             re-read on every turn of every dispatched agent, so growth here is the regression \
+             this change exists to avoid",
+            brief.len()
+        );
+    }
+
+    /// The other half of #200's answer, and the one that is counter-intuitive: the dispatch must
+    /// carry the ITEM and NOT the fleet. Of the 148 first-reads dispatched agents made, none could
+    /// have been answered from a `worklist` row — they asked for `body`, `comments`, `state`,
+    /// `headRefName`, `createdAt`, none of which is on one. Pasting the fleet in would buy nothing
+    /// and be re-read on every turn of every worker, so the prompt has to forbid it outright.
+    #[test]
+    fn the_producer_prompt_dispatches_the_briefed_type_and_pastes_no_fleet_state() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("subagent_type: \"pr-worker\""),
+            "the FAN OUT rule must name the briefed type in the form the `Agent` call takes"
+        );
+        assert!(
+            prompt.contains("DO NOT PASTE FLEET STATE INTO A DISPATCH"),
+            "the prompt must forbid the obvious fix, which measures as a loss"
+        );
+        assert!(
+            prompt.contains(
+                "not one of the 148 first-reads they made could have been answered \
+                 from a row"
+            ),
+            "the prohibition must carry its evidence: without the measurement it reads as \
+             stinginess and the next run talks itself out of it"
+        );
+        assert!(
+            prompt.contains("PUT ONLY THE ITEM IN THE PROMPT"),
+            "the prompt must say what a dispatch DOES carry, or dropping the boilerplate just \
+             drops the rules"
         );
     }
 
@@ -32075,6 +42816,56 @@ mod cli_tests {
     }
 
     #[test]
+    fn preflight_capabilities_are_opt_in_per_runner() {
+        // Bare `preflight` is the vetter's call and must keep asking ONLY the PATH question: the
+        // vetter builds nothing, so realising a Solidity shell for it would spend a nix evaluation
+        // on a capability it never uses — and a gate that costs a runner something for nothing is
+        // the gate that gets switched off.
+        assert_eq!(
+            parse(&["prr", "preflight"]),
+            Cmd::Preflight {
+                gh_auth: false,
+                sol_shell: false
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "preflight", "--gh-auth", "--sol-shell"]),
+            Cmd::Preflight {
+                gh_auth: true,
+                sol_shell: true
+            },
+            "the producer's call — campaign-run.sh passes both"
+        );
+        assert_eq!(
+            parse(&["prr", "preflight", "--gh-auth"]),
+            Cmd::Preflight {
+                gh_auth: true,
+                sol_shell: false
+            },
+            "each capability is independently askable"
+        );
+    }
+
+    #[test]
+    fn state_load_cli() {
+        assert_eq!(
+            parse(&["prr", "state-load"]),
+            Cmd::StateLoad {
+                json: false,
+                no_cache: false
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "state-load", "--json", "--no-cache"]),
+            Cmd::StateLoad {
+                json: true,
+                no_cache: true
+            },
+            "the fleet half reads through worklist's cache, so it takes worklist's bypass too"
+        );
+    }
+
+    #[test]
     fn trace_outcome_cli() {
         assert_eq!(
             parse(&["prr", "trace-outcome", "/t.jsonl"]),
@@ -32121,6 +42912,14 @@ mod cli_tests {
     #[test]
     fn distill_trace_cli() {
         assert_eq!(parse(&["prr", "distill-trace"]), Cmd::DistillTrace);
+        assert_eq!(
+            parse(&["prr", "sol-toolchain-audit", "/runs/x.jsonl"]),
+            Cmd::SolToolchainAudit {
+                trace: "/runs/x.jsonl".to_string()
+            },
+            "the audit is a SEPARATE subcommand from `sol-toolchain`; a spelling clap resolves to \
+             the lookup would ask a trace file which toolchain it is checked with"
+        );
     }
 
     // The name the user settings.json wires as a PreToolUse hook. It takes no arguments — the whole
@@ -32506,7 +43305,8 @@ mod cli_tests {
             queue_history_line(snap, "2026-07-27T10:00:00Z").unwrap(),
             r#"{"ts":"2026-07-27T10:00:00Z","counts":{"ready":3,"design":1}}"#
         );
-        // Only `counts` is carried over; anything else in the snapshot is dropped.
+        // Only `counts` (and, when present, `ages` — below) is carried over; anything else in the
+        // snapshot is dropped.
         let parsed: Value = serde_json::from_str(&queue_history_line(snap, "t").unwrap()).unwrap();
         assert_eq!(
             parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
@@ -32525,22 +43325,71 @@ mod cli_tests {
         assert!(queue_history_line("not json", "t").is_none());
     }
 
+    // A snapshot carrying `ages` (rain-org-health#140 / #165) emits it VERBATIM beside `counts` —
+    // same rollup, one more block — so the dashboard's age series reads from the same lines its
+    // count series already does.
+    #[test]
+    fn queue_history_line_carries_ages_beside_counts() {
+        let snap = r#"{"counts":{"ready":3},"ages":{"openIssues":{"meanDays":333.8,"medianDays":99.0,"oldestDays":1654.5}}}"#;
+        let line = queue_history_line(snap, "2026-07-31T10:00:00Z").unwrap();
+        let parsed: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["ts", "counts", "ages"]
+        );
+        // Carried VERBATIM, every key: this function knows nothing about which population the
+        // block describes or which statistics it holds, so a renaming or an added statistic on the
+        // producing side needs no change here.
+        assert_eq!(
+            parsed["ages"],
+            serde_json::json!({"openIssues": {"meanDays": 333.8, "medianDays": 99.0, "oldestDays": 1654.5}})
+        );
+    }
+
+    // Absence-not-null, in BOTH directions: a snapshot without `ages` (every commit predating the
+    // key) emits a line without the key, and a pathological `"ages": null` is dropped rather than
+    // forwarded — the dashboard's degradation contract is a MISSING field, and `null` would be a
+    // third shape every reader would have to handle.
+    #[test]
+    fn queue_history_line_omits_ages_when_the_snapshot_has_none() {
+        for snap in [
+            r#"{"counts":{"ready":3}}"#,
+            r#"{"counts":{"ready":3},"ages":null}"#,
+        ] {
+            let line = queue_history_line(snap, "t").unwrap();
+            let parsed: Value = serde_json::from_str(&line).unwrap();
+            assert!(
+                parsed.get("ages").is_none(),
+                "line for {snap} must carry NO ages key, got {line}"
+            );
+        }
+    }
+
     // ---- distill-trace: the jq distiller, with its truncation widths now under test ----
 
     #[test]
     fn distill_tool_use_prefers_command_then_description_then_input() {
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"tool_use","name":"Bash","input":{"command":"gh pr list","description":"ignored"}}]}});
-        assert_eq!(distill_event(&ev), vec!["  ▸ Bash  gh pr list"]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  ▸ Bash  gh pr list"]
+        );
 
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"tool_use","name":"Read","input":{"description":"read a file"}}]}});
-        assert_eq!(distill_event(&ev), vec!["  ▸ Read  read a file"]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  ▸ Read  read a file"]
+        );
 
         // Neither key: the whole input object, as jq's `(.input|tostring)` did.
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"tool_use","name":"X","input":{"a":1}}]}});
-        assert_eq!(distill_event(&ev), vec![r#"  ▸ X  {"a":1}"#]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec![r#"  ▸ X  {"a":1}"#]
+        );
     }
 
     #[test]
@@ -32548,7 +43397,7 @@ mod cli_tests {
         let long = "x".repeat(500);
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"text","text":long}]}});
-        let out = &distill_event(&ev)[0];
+        let out = &TraceDistiller::default().distill(&ev)[0];
         assert_eq!(
             out.chars().count(),
             4 + 200,
@@ -32557,14 +43406,14 @@ mod cli_tests {
 
         let long = "y".repeat(1000);
         let ev = serde_json::json!({"type":"result","subtype":"success","result":long});
-        let out = &distill_event(&ev)[0];
+        let out = &TraceDistiller::default().distill(&ev)[0];
         assert!(out.ends_with(&"y".repeat(800)));
         assert_eq!(out.chars().count(), "  ⟹ SUCCESS: ".chars().count() + 800);
 
         // Newlines become spaces so one event stays one log line.
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"text","text":"a\nb\nc"}]}});
-        assert_eq!(distill_event(&ev), vec!["  · a b c"]);
+        assert_eq!(TraceDistiller::default().distill(&ev), vec!["  · a b c"]);
     }
 
     // jq sliced CODEPOINTS (`.[0:200]`). Clipping bytes instead would split a multi-byte glyph
@@ -32573,16 +43422,22 @@ mod cli_tests {
     fn distill_clips_multibyte_text_by_character() {
         let ev = serde_json::json!({"type":"assistant","message":{"content":[
             {"type":"text","text":"é".repeat(300)}]}});
-        let out = &distill_event(&ev)[0];
+        let out = &TraceDistiller::default().distill(&ev)[0];
         assert_eq!(out.chars().filter(|c| *c == 'é').count(), 200);
     }
 
     #[test]
     fn distill_result_defaults_subtype_and_uppercases_it() {
         let ev = serde_json::json!({"type":"result","result":"done"});
-        assert_eq!(distill_event(&ev), vec!["  ⟹ DONE: done"]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  ⟹ DONE: done"]
+        );
         let ev = serde_json::json!({"type":"result","subtype":"error_max_turns","result":""});
-        assert_eq!(distill_event(&ev), vec!["  ⟹ ERROR_MAX_TURNS: "]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  ⟹ ERROR_MAX_TURNS: "]
+        );
     }
 
     #[test]
@@ -32591,11 +43446,255 @@ mod cli_tests {
             {"type":"text","text":"thinking"},
             {"type":"tool_use","name":"Bash","input":{"command":"ls"}},
             {"type":"thinking","thinking":"hidden"}]}});
-        assert_eq!(distill_event(&ev), vec!["  · thinking", "  ▸ Bash  ls"]);
+        assert_eq!(
+            TraceDistiller::default().distill(&ev),
+            vec!["  · thinking", "  ▸ Bash  ls"]
+        );
 
         // `user`/`system` events produced nothing under the jq filter either.
-        assert!(distill_event(&serde_json::json!({"type":"user"})).is_empty());
-        assert!(distill_event(&serde_json::json!({"type":"system","subtype":"init"})).is_empty());
+        assert!(TraceDistiller::default()
+            .distill(&serde_json::json!({"type":"user"}))
+            .is_empty());
+        assert!(TraceDistiller::default()
+            .distill(&serde_json::json!({"type":"system","subtype":"init"}))
+            .is_empty());
+    }
+
+    // ---- attribution: which agent produced the line ----
+
+    /// A trace interleaves every agent's events, so the log is only readable if each line says
+    /// whose it is. This is the shape run `20260802T130003Z` actually has: two dispatches, then
+    /// their calls arriving alternately.
+    #[test]
+    fn distill_tags_each_line_with_the_agent_that_produced_it() {
+        let mut d = TraceDistiller::default();
+        let dispatch = |id: &str, desc: &str| {
+            serde_json::json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":"Agent","id":id,"input":{"description":desc}}]}})
+        };
+        let call = |parent: Value, cmd: &str| {
+            serde_json::json!({"type":"assistant","parent_tool_use_id":parent,
+                "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":cmd}}]}})
+        };
+
+        // The dispatching line carries the tag it CREATES — the only place a reader can bind a tag
+        // to the work it was sent to do.
+        assert_eq!(
+            d.distill(&dispatch("toolu_1", "Rework cyclo.site 400")),
+            vec!["  ▸ Agent  [a1] Rework cyclo.site 400"]
+        );
+        assert_eq!(
+            d.distill(&dispatch("toolu_2", "Rework rain.flare 186")),
+            vec!["  ▸ Agent  [a2] Rework rain.flare 186"]
+        );
+        // …and the sub-agents' own calls carry it, however they interleave.
+        assert_eq!(
+            d.distill(&call(serde_json::json!("toolu_2"), "git -C /w/flare fetch")),
+            vec!["  [a2] ▸ Bash  git -C /w/flare fetch"]
+        );
+        assert_eq!(
+            d.distill(&call(serde_json::json!("toolu_1"), "git -C /w/cyclo fetch")),
+            vec!["  [a1] ▸ Bash  git -C /w/cyclo fetch"]
+        );
+        // A tag is stable across the whole stream, not re-minted per event.
+        assert_eq!(
+            d.distill(&call(serde_json::json!("toolu_2"), "git -C /w/flare push")),
+            vec!["  [a2] ▸ Bash  git -C /w/flare push"]
+        );
+        // Narration is attributed the same way — a sub-agent's reasoning is not the run's.
+        let text = serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_1",
+            "message":{"content":[{"type":"text","text":"regenerating"}]}});
+        assert_eq!(d.distill(&text), vec!["  [a1] · regenerating"]);
+        // The main loop is never tagged: a run that dispatches nothing reads exactly as before.
+        assert_eq!(
+            d.distill(&call(Value::Null, "gh pr list")),
+            vec!["  ▸ Bash  gh pr list"]
+        );
+    }
+
+    /// An id that never appeared as a dispatch (a trace joined mid-stream, or a `Task` spelling the
+    /// dispatch scan missed) still groups: an unnamed tag beats no tag.
+    #[test]
+    fn distill_tags_a_subagent_whose_dispatch_was_never_seen() {
+        let mut d = TraceDistiller::default();
+        let orphan = |cmd: &str| {
+            serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_x",
+                "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":cmd}}]}})
+        };
+        assert_eq!(d.distill(&orphan("ls")), vec!["  [a1] ▸ Bash  ls"]);
+        assert_eq!(d.distill(&orphan("pwd")), vec!["  [a1] ▸ Bash  pwd"]);
+        // An absent and an empty id are both the main loop — an empty string is not an agent.
+        let ev = serde_json::json!({"type":"assistant","parent_tool_use_id":"",
+            "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"id"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Bash  id"]);
+    }
+
+    /// A dispatched task reports back as a `result` event with NO `parent_tool_use_id` — only
+    /// `origin.kind` distinguishes it. Untagged, the run's own answer is one of a dozen
+    /// indistinguishable `⟹ SUCCESS` lines, and the run summary is the line a human reads.
+    #[test]
+    fn distill_marks_a_task_report_apart_from_the_runs_own_result() {
+        let mut d = TraceDistiller::default();
+        let task = serde_json::json!({"type":"result","subtype":"success",
+            "origin":{"kind":"task-notification"},"result":"threads resolved"});
+        assert_eq!(
+            d.distill(&task),
+            vec!["  [task] ⟹ SUCCESS: threads resolved"]
+        );
+
+        let own = serde_json::json!({"type":"result","subtype":"success","result":"run summary"});
+        assert_eq!(d.distill(&own), vec!["  ⟹ SUCCESS: run summary"]);
+
+        // An origin of some other kind is not a task report.
+        let other = serde_json::json!({"type":"result","subtype":"success",
+            "origin":{"kind":"something-else"},"result":"x"});
+        assert_eq!(d.distill(&other), vec!["  ⟹ SUCCESS: x"]);
+    }
+
+    /// `parent_tool_use_id` is on more than sub-agent events: a `tool_progress` for a BACKGROUND
+    /// BASH TASK carries one and renders nothing. Minting a tag there burns a number no line ever
+    /// wears and shifts every later agent off dispatch order — run `20260802T130003Z`'s 18
+    /// dispatches would read a2..a20.
+    #[test]
+    fn distill_mints_no_tag_for_an_event_that_renders_nothing() {
+        let mut d = TraceDistiller::default();
+        // A background task's progress, and an assistant turn of pure thinking: both parented,
+        // both silent.
+        assert!(d
+            .distill(&serde_json::json!({"type":"tool_progress","parent_tool_use_id":"toolu_bg"}))
+            .is_empty());
+        assert!(d
+            .distill(
+                &serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_bg",
+                "message":{"content":[{"type":"thinking","thinking":"hidden"}]}})
+            )
+            .is_empty());
+        // …so the first agent actually dispatched is still a1.
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_1","input":{"description":"first"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Agent  [a1] first"]);
+    }
+
+    /// The tag is added OUTSIDE the clip, so the widths above stay the widths of the content —
+    /// a tagged line must not be a shorter line.
+    #[test]
+    fn distill_tags_do_not_eat_into_the_clip_widths() {
+        let mut d = TraceDistiller::default();
+        let long = "x".repeat(500);
+        let ev = serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_1",
+            "message":{"content":[{"type":"text","text":long}]}});
+        let out = &d.distill(&ev)[0];
+        assert!(out.starts_with("  [a1] · "));
+        assert_eq!(out.chars().filter(|c| *c == 'x').count(), 200);
+
+        // Same for a dispatch line: the description clips to 200, then the tag goes on.
+        let long = "y".repeat(500);
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_2","input":{"description":long}}]}});
+        let out = &d.distill(&ev)[0];
+        assert!(out.starts_with("  ▸ Agent  [a2] "));
+        assert_eq!(out.chars().filter(|c| *c == 'y').count(), 200);
+    }
+
+    /// `Task` is the other spelling of the dispatch tool, and a run whose dispatches arrive under
+    /// it must read exactly like an `Agent` one — the tag minted on the call is still the only
+    /// binding between `a1` and the work that agent was sent to do. Both spellings feed ONE
+    /// numbering: they name the same kind of thing, so a reader counts one sequence.
+    #[test]
+    fn distill_tags_a_task_spelled_dispatch_like_an_agent_one() {
+        let mut d = TraceDistiller::default();
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Task","id":"toolu_1","input":{"description":"Resolve threads"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Task  [a1] Resolve threads"]);
+        let call = serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_1",
+            "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"gh pr view 12"}}]}});
+        assert_eq!(d.distill(&call), vec!["  [a1] ▸ Bash  gh pr view 12"]);
+
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_2","input":{"description":"Rework 400"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Agent  [a2] Rework 400"]);
+    }
+
+    /// A sub-agent may dispatch further, and the line that does it is BOTH ends at once: it wears
+    /// the tag of the agent that ran it and carries the tag it creates. The DISPATCHER numbers
+    /// first — an agent cannot exist before the one that spawned it, so reading the two numbers off
+    /// one line tells a reader which way the nesting goes.
+    #[test]
+    fn distill_numbers_a_nested_dispatch_after_the_agent_that_made_it() {
+        let mut d = TraceDistiller::default();
+        let outer = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"t1","input":{"description":"cyclo.site batch"}}]}});
+        assert_eq!(d.distill(&outer), vec!["  ▸ Agent  [a1] cyclo.site batch"]);
+        let inner = serde_json::json!({"type":"assistant","parent_tool_use_id":"t1","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"t2","input":{"description":"screenshot 431"}}]}});
+        assert_eq!(
+            d.distill(&inner),
+            vec!["  [a1] ▸ Agent  [a2] screenshot 431"]
+        );
+        let leaf = serde_json::json!({"type":"assistant","parent_tool_use_id":"t2",
+            "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"npm run build"}}]}});
+        assert_eq!(d.distill(&leaf), vec!["  [a2] ▸ Bash  npm run build"]);
+
+        // Same order when the dispatcher's OWN tag is minted by this very line, which is the case
+        // that fixes which end numbers first: the owner of the line, then what the line creates.
+        let mut d = TraceDistiller::default();
+        let ev = serde_json::json!({"type":"assistant","parent_tool_use_id":"unseen","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"made-here","input":{"description":"sub"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  [a1] ▸ Agent  [a2] sub"]);
+    }
+
+    /// `parent_tool_use_id` is the whole of the attribution, so a value that is not a string names
+    /// no agent and must not conjure one: the line stays the main loop's, and no number is spent.
+    /// The tag also sits OUTSIDE the glyph, which is what keeps it unforgeable — a main-loop line
+    /// whose own text opens `[a1] ` renders that text AFTER the `·`, never before it.
+    #[test]
+    fn distill_never_invents_an_agent_from_a_malformed_parent_or_from_line_text() {
+        let mut d = TraceDistiller::default();
+        for parent in [
+            serde_json::json!(7),
+            serde_json::json!(true),
+            serde_json::json!({"id": "toolu_1"}),
+            serde_json::json!(["toolu_1"]),
+        ] {
+            let ev = serde_json::json!({"type":"assistant","parent_tool_use_id":parent,
+                "message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}});
+            assert_eq!(d.distill(&ev), vec!["  ▸ Bash  ls"], "parent {parent}");
+        }
+        // Nothing was minted for any of them, so the first real dispatch is still a1.
+        let ev = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_1","input":{"description":"first"}}]}});
+        assert_eq!(d.distill(&ev), vec!["  ▸ Agent  [a1] first"]);
+
+        let looks_tagged = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"[a1] is still running"}]}});
+        assert_eq!(d.distill(&looks_tagged), vec!["  · [a1] is still running"]);
+        let really_tagged = serde_json::json!({"type":"assistant","parent_tool_use_id":"toolu_1",
+            "message":{"content":[{"type":"text","text":"is still running"}]}});
+        assert_eq!(d.distill(&really_tagged), vec!["  [a1] · is still running"]);
+    }
+
+    /// An id is what binds a tag to an agent, and an EMPTY one binds nothing: an event parented to
+    /// `""` is the main loop, so no line can ever wear the tag such a dispatch would mint. Minting
+    /// it anyway spends a number on nothing and pushes every later agent off dispatch order — the
+    /// same harm the `tool_progress` case is guarded against. A missing id and an empty one are
+    /// therefore the same thing: render the call, name no agent.
+    #[test]
+    fn distill_mints_no_tag_for_a_dispatch_with_no_usable_id() {
+        let mut d = TraceDistiller::default();
+        let empty = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"","input":{"description":"empty id"}}]}});
+        assert_eq!(d.distill(&empty), vec!["  ▸ Agent  empty id"]);
+        let missing = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","input":{"description":"no id at all"}}]}});
+        assert_eq!(d.distill(&missing), vec!["  ▸ Agent  no id at all"]);
+        let non_string = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":7,"input":{"description":"numeric id"}}]}});
+        assert_eq!(d.distill(&non_string), vec!["  ▸ Agent  numeric id"]);
+
+        // …so the first dispatch that CAN be attributed is a1, not a4.
+        let real = serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Agent","id":"toolu_1","input":{"description":"rain.flare 186"}}]}});
+        assert_eq!(d.distill(&real), vec!["  ▸ Agent  [a1] rain.flare 186"]);
     }
 
     // The pre-conversion `--foo` dispatch forms are gone: clap must REJECT them as unknown args
@@ -33047,6 +44146,43 @@ mod worklist_tests {
         let row = worklist_row("o/r", &detail);
         assert_eq!(row["nextAction"], "screenshot-3c");
         assert_eq!(row["markers"]["uiTouch"], "yes");
+        assert_eq!(row["markers"]["screenshotSettled"], false);
+    }
+
+    /// #142: a posted shot settles the requirement WHATEVER step 5 named the file. Matching
+    /// `shots/<number>.png` settles it only for raindex, and on 2026-08-04 that left
+    /// `rain-org-health#155`/`#156` — both carrying `shots/rain-org-health-<n>.png` — routed to
+    /// `screenshot-3c` on every run, which is also what held them out of `green-ready`.
+    #[test]
+    fn worklist_row_a_posted_shot_settles_the_requirement_whatever_the_file_is_called() {
+        let with_shot = |name: &str| {
+            json!({
+                "number": 155, "headRefOid": "H",
+                "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+                "mergeStateStatus": "CLEAN", "labels": [],
+                "files": [{"path":"site/metrics.html"}], "changedFiles": 1,
+                "comments": [{"author": {"login": "thedavidmeister"}, "body": format!(
+                    "🤖 ai:producer\n\n![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/{name})"
+                )}],
+            })
+        };
+        for name in [
+            "shots/rain-org-health-155.png",
+            "shots/155.png",
+            "shots/rain-org-health-155-after.png",
+            "shots/roh-remove-overview.png",
+        ] {
+            let row = worklist_row("rainlanguage/rain-org-health", &with_shot(name));
+            assert_eq!(row["markers"]["screenshotSettled"], true, "{name}");
+            assert_eq!(row["nextAction"], "green-ready", "{name}");
+        }
+        // An UNTRUSTED author's shot settles nothing: the marker is public body text, so trust is
+        // by author here exactly as it is everywhere else.
+        let mut spoofed = with_shot("shots/rain-org-health-155.png");
+        spoofed["comments"][0]["author"]["login"] = json!("passer-by");
+        let row = worklist_row("rainlanguage/rain-org-health", &spoofed);
+        assert_eq!(row["markers"]["screenshotSettled"], false);
+        assert_eq!(row["nextAction"], "screenshot-3c");
     }
 
     /// #147: a file list that is not known to be whole means the PR MAY touch UI, so the screenshot
@@ -33299,6 +44435,258 @@ mod worklist_tests {
         assert!(!cache_fresh("t1", "nochecks", 100, "t1", 200, 10800));
         // past ttl -> MISS
         assert!(!cache_fresh("t1", "green", 100, "t1", 100 + 10800, 10800));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `state-load`: the groupings a producer run opens on.
+//
+// Every grouping here was derived from what the producer traces DO, not from what seemed useful:
+// the `nextAction` histogram and the actionable list appear in 7 of 7 runs, the approved set in 7
+// of 7 (as a separate `gh search prs --review approved` whose answer was empty every time), and
+// the audit backlog by severity in 4 of 7. Groupings asked for by 3 runs or fewer are deliberately
+// absent.
+//
+// The label/repository shape tests are not defensive padding. Four separate runs spent 2–4 calls
+// each failing to parse `uncovered-issues` output (`startswith() requires string inputs`;
+// `string ("") and object ({"color":"5...) cannot be added`), and one of them accepted
+// `audit-backlog total: 0` for a backlog that actually held 46 issues. A shell re-derivation can
+// be silently wrong; that is the argument for computing it here, so it is also the thing to pin.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod state_load_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A worklist row as `fleet_digest` reads it — only the fields the digest keys on.
+    fn row(action: &str, review: &str) -> Value {
+        json!({"repo": "o/r", "number": 1, "nextAction": action, "reviewDecision": review})
+    }
+
+    fn issue(labels: &[&str]) -> Value {
+        json!({
+            "number": 1,
+            "url": "u",
+            "title": "t",
+            "repository": {"name": "r", "nameWithOwner": "o/r"},
+            "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn the_histogram_states_every_action_including_the_zeroes() {
+        // `group_by` omits an empty class, so "deploy is absent, therefore zero" is an inference
+        // the caller had to make. Stating the zero is the difference between an answer and a hint.
+        let d = fleet_digest(&[row("needs-3b", ""), row("needs-3b", ""), row("wait", "")]);
+        assert_eq!(d["total"], 3);
+        assert_eq!(d["byAction"]["needs-3b"], 2);
+        assert_eq!(d["byAction"]["wait"], 1);
+        for a in ALL_ACTIONS {
+            assert!(
+                d["byAction"].get(a).is_some(),
+                "every action is named, {a} was not"
+            );
+        }
+        assert_eq!(d["byAction"]["deploy"], 0);
+        assert_eq!(d["byAction"]["parked-skip"], 0);
+    }
+
+    #[test]
+    fn only_the_actions_that_name_work_are_enumerated() {
+        // The bulk of the fleet is `parked-skip` + `green-ready` + `wait` — 70–95% of it across the
+        // measured runs — and no run ever acts on one. Enumerating them is what made the raw list
+        // 123 KB.
+        let rows: Vec<Value> = ALL_ACTIONS.iter().map(|a| row(a, "")).collect();
+        let d = fleet_digest(&rows);
+        let listed: Vec<String> = d["actionable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["nextAction"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(listed, ACTIONABLE_ACTIONS.map(String::from).to_vec());
+        for skipped in ["green-ready", "wait", "parked-skip"] {
+            assert!(
+                !listed.contains(&skipped.to_string()),
+                "{skipped} must be counted, not enumerated"
+            );
+        }
+    }
+
+    #[test]
+    fn the_approved_set_comes_off_the_row_and_not_off_a_second_search() {
+        // `reviewDecision` was already in `WORKLIST_DETAIL_FIELDS` and thrown away, so every run
+        // paid a `gh search prs --review approved` round trip for a field the tool held.
+        let d = fleet_digest(&[
+            row("green-ready", "APPROVED"),
+            row("needs-3b", "APPROVED"),
+            row("green-ready", "REVIEW_REQUIRED"),
+            row("green-ready", ""),
+        ]);
+        assert_eq!(d["approved"].as_array().unwrap().len(), 2);
+        // An approved row is repeated in full rather than referenced: 2z works it FIRST, and it is
+        // usually also actionable, so a reference would be a second lookup into the same result.
+        assert_eq!(d["approved"][1]["nextAction"], "needs-3b");
+        assert!(
+            d["actionable"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["nextAction"] == "needs-3b"),
+            "and it still appears under its action"
+        );
+        // Nothing but APPROVED is approved — CHANGES_REQUESTED is a review too.
+        for other in ["CHANGES_REQUESTED", "REVIEW_REQUIRED", "", "approved"] {
+            assert!(
+                fleet_digest(&[row("green-ready", other)])["approved"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty(),
+                "{other} is not APPROVED"
+            );
+        }
+    }
+
+    #[test]
+    fn the_audit_set_is_the_audit_labels_and_a_pass_number() {
+        assert!(is_audit_labelled(&["audit".to_string()]));
+        assert!(is_audit_labelled(&["mutation-test".to_string()]));
+        for n in ["pass0", "pass4", "pass6", "pass12"] {
+            assert!(is_audit_labelled(&[n.to_string()]), "{n}");
+        }
+        // `passN` is a prefix PLUS a digit run. A label that merely starts with those four letters
+        // is not an audit finding, and the shell reads that shipped said it was.
+        for not in ["pass", "passing", "password", "passN", "bug", "enhancement"] {
+            assert!(!is_audit_labelled(&[not.to_string()]), "{not}");
+        }
+        assert!(is_audit_labelled(&["bug".to_string(), "audit".to_string()]));
+        assert!(!is_audit_labelled(&[]));
+    }
+
+    #[test]
+    fn severity_is_worst_first_and_absent_is_a_bucket() {
+        assert_eq!(issue_severity(&["low".to_string()]), "low");
+        assert_eq!(
+            issue_severity(&["low".to_string(), "critical".to_string()]),
+            "critical",
+            "worst wins, whatever order GitHub returns the labels in"
+        );
+        assert_eq!(
+            issue_severity(&["medium".to_string(), "high".to_string()]),
+            "high"
+        );
+        assert_eq!(
+            issue_severity(&["audit".to_string()]),
+            SEVERITY_NONE,
+            "an audit finding nobody severity-rated is still work"
+        );
+    }
+
+    #[test]
+    fn the_backlog_counts_the_general_set_and_lists_the_audit_one() {
+        let issues = vec![
+            issue(&["audit", "medium"]),
+            issue(&["audit", "critical"]),
+            issue(&["pass3", "low"]),
+            issue(&["mutation-test"]),
+            issue(&["bug"]),
+            issue(&["enhancement"]),
+        ];
+        let b = backlog_digest(&issues);
+        assert_eq!(b["uncovered"], 6);
+        assert_eq!(b["general"], 2);
+        assert_eq!(b["audit"]["total"], 4);
+        assert_eq!(b["audit"]["bySeverity"]["critical"], 1);
+        assert_eq!(b["audit"]["bySeverity"]["medium"], 1);
+        assert_eq!(b["audit"]["bySeverity"]["low"], 1);
+        assert_eq!(b["audit"]["bySeverity"][SEVERITY_NONE], 1);
+        assert_eq!(b["audit"]["bySeverity"]["high"], 0);
+        // The listed rows are worst-first: the row ORDER is the order the backlog is worked in.
+        let sevs: Vec<&str> = b["audit"]["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["severity"].as_str().unwrap())
+            .collect();
+        assert_eq!(sevs, vec!["critical", "medium", "low", SEVERITY_NONE]);
+        // Only the audit set is listed — the general set is a number, because it runs to ~650.
+        assert_eq!(b["audit"]["issues"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn a_label_is_read_from_either_shape_gh_returns_it_in() {
+        // Objects (`gh search issues --json labels`) and bare strings both. Assuming one shape is
+        // what made four runs re-run the same query until it parsed.
+        assert_eq!(
+            issue_label_names(&json!({"labels": [{"name": "audit"}, {"name": "low"}]})),
+            vec!["audit".to_string(), "low".to_string()]
+        );
+        assert_eq!(
+            issue_label_names(&json!({"labels": ["audit", "low"]})),
+            vec!["audit".to_string(), "low".to_string()]
+        );
+        assert!(issue_label_names(&json!({})).is_empty());
+        assert!(issue_label_names(&json!({"labels": []})).is_empty());
+        // …and the digest agrees across both shapes, which is the property that matters.
+        assert_eq!(
+            backlog_digest(&[json!({"labels": ["audit", "high"]})])["audit"]["bySeverity"]["high"],
+            1
+        );
+    }
+
+    #[test]
+    fn a_repo_is_read_from_either_shape_gh_returns_it_in() {
+        assert_eq!(
+            issue_repo(&json!({"repository": {"nameWithOwner": "o/r"}})),
+            "o/r"
+        );
+        assert_eq!(issue_repo(&json!({"repository": "o/r"})), "o/r");
+        assert_eq!(issue_repo(&json!({})), "");
+        // The listed row carries the slug, so a caller never has to know which shape it came from.
+        let b = backlog_digest(&[issue(&["audit"])]);
+        assert_eq!(b["audit"]["issues"][0]["repo"], "o/r");
+    }
+
+    #[test]
+    fn an_empty_state_load_is_an_answer_not_a_gap() {
+        let d = fleet_digest(&[]);
+        assert_eq!(d["total"], 0);
+        assert!(d["actionable"].as_array().unwrap().is_empty());
+        assert!(d["approved"].as_array().unwrap().is_empty());
+        assert_eq!(d["byAction"]["needs-3b"], 0);
+        let b = backlog_digest(&[]);
+        assert_eq!(b["uncovered"], 0);
+        assert_eq!(b["general"], 0);
+        assert_eq!(b["audit"]["total"], 0);
+        assert_eq!(b["audit"]["bySeverity"]["critical"], 0);
+    }
+
+    #[test]
+    fn the_row_carries_the_review_decision_the_digest_keys_on() {
+        // The seam: `worklist_row` must emit what `fleet_digest` reads, or the approved set is
+        // silently empty for every fleet.
+        let detail = json!({
+            "number": 1, "headRefOid": "H", "reviewDecision": "APPROVED",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [], "comments": [],
+            "files": [], "changedFiles": 0
+        });
+        let r = worklist_row("o/r", &detail);
+        assert_eq!(r["reviewDecision"], "APPROVED");
+        assert_eq!(fleet_digest(&[r])["approved"].as_array().unwrap().len(), 1);
+        // A PR with no review at all reads as not approved, never as absent-and-therefore-anything.
+        let detail = json!({
+            "number": 1, "headRefOid": "H",
+            "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+            "mergeStateStatus": "CLEAN", "labels": [], "comments": [],
+            "files": [], "changedFiles": 0
+        });
+        let r = worklist_row("o/r", &detail);
+        assert_eq!(r["reviewDecision"], "");
+        assert!(fleet_digest(&[r])["approved"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 }
 
@@ -33869,13 +45257,42 @@ mod subject_ref_tests {
                 "issues",
                 "backlog",
             )],
+            // The open-issue population is WIDER than the backlog above and overlaps it: the same
+            // backlog issue, plus one an open PR covers and one flagged `ai:close-candidate` —
+            // both of which `producer_backlog` excludes and the ages deliberately include. Ages
+            // 2/10/40 days, so median 10 and mean (2+10+40)/3 = 17.3 DIFFER, and a mutant that
+            // computed one where the other belongs cannot pass.
+            Some(&[
+                OpenIssue {
+                    subject: sref("rainlanguage/rain.math.float", 42, "issues", "backlog"),
+                    created_ms: Some(DOC_NOW_MS - 10 * 86_400_000),
+                },
+                OpenIssue {
+                    subject: sref(
+                        "rainlanguage/raindex",
+                        981,
+                        "issues",
+                        "covered by an open PR",
+                    ),
+                    created_ms: Some(DOC_NOW_MS - 40 * 86_400_000),
+                },
+                OpenIssue {
+                    subject: sref("rainlanguage/raindex", 700, "issues", "flagged"),
+                    created_ms: Some(DOC_NOW_MS - 2 * 86_400_000),
+                },
+            ]),
             &[(
                 sref("rainlanguage/raindex", 99, "pull", "leaking pr"),
                 "blocked on a deploy".to_string(),
             )],
             2,
+            &[sref("rainlanguage/rain.webapp", 354, "pull", "frozen pr")],
+            DOC_NOW_MS,
         )
     }
+
+    /// The fixture's "now": 2026-07-31T00:00:00Z, fixed so every age in `doc()` is deterministic.
+    const DOC_NOW_MS: i64 = 1_785_456_000_000;
 
     /// The top-level arrays holding subject references, by JSON pointer. `leaks` is here too: it is
     /// a subject reference with one EXTRA key, not a different shape.
@@ -33886,6 +45303,7 @@ mod subject_ref_tests {
         "/closeCandidateUnvetted",
         "/closeCandidateUpheld",
         "/uncoveredIssues",
+        "/archivedRepoPrs",
         "/leaks",
     ];
 
@@ -33992,8 +45410,21 @@ mod subject_ref_tests {
         }]);
         let (ccu, ccu_n) = issue_state_pair(vec![]);
         let (ccup, ccup_n) = issue_state_pair(vec![]);
-        let with_residue =
-            human_queue_doc(&buckets, &lanes, &[], ccu, ccu_n, ccup, ccup_n, &[], &[], 1);
+        let with_residue = human_queue_doc(
+            &buckets,
+            &lanes,
+            &[],
+            ccu,
+            ccu_n,
+            ccup,
+            ccup_n,
+            &[],
+            None,
+            &[],
+            1,
+            &[],
+            DOC_NOW_MS,
+        );
         assert_eq!(
             with_residue.pointer("/counts/blockedDeploy"),
             Some(&json!(1))
@@ -34053,34 +45484,16 @@ mod subject_ref_tests {
     // fetch is added. A missing meta row keeps the entry (never silently shrink the backlog) with
     // an empty url: an unknown link is reported unknown, never guessed.
     #[test]
-    fn producer_backlog_refs_carry_the_url_from_the_coverage_meta() {
-        let mut meta: std::collections::HashMap<(String, u64), Value> =
-            std::collections::HashMap::new();
-        meta.insert(
-            ("rainlanguage/raindex".into(), 512),
-            json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
-                   "title": "backlog issue", "labels": []}),
-        );
-        // Excluded: an `ai:close-candidate` issue is the human's queue, not the producer's.
-        meta.insert(
-            ("rainlanguage/raindex".into(), 700),
-            json!({"url": "https://github.com/rainlanguage/raindex/issues/700",
-                   "title": "flagged", "labels": [{"name": "ai:close-candidate"}]}),
-        );
-        let open = vec![
-            ("rainlanguage/raindex".to_string(), 512),
-            ("rainlanguage/raindex".to_string(), 700),
-            // No meta row at all — kept, with no fabricated link.
-            ("rainlanguage/rain.math.float".to_string(), 3),
-        ];
-        let refs = producer_backlog_refs(&open, &meta);
+    fn producer_backlog_carries_the_url_from_the_coverage_meta() {
+        let (open, meta) = coverage_fixture();
+        let backlog = producer_backlog(&open, &meta);
         assert_eq!(
-            refs.len(),
+            backlog.len(),
             2,
             "the close-candidate issue is excluded, the meta-less one is not"
         );
         assert_eq!(
-            refs[0],
+            backlog[0],
             SubjectRef::new(
                 "rainlanguage/raindex",
                 512,
@@ -34088,11 +45501,468 @@ mod subject_ref_tests {
                 "backlog issue"
             )
         );
-        assert_eq!(refs[1].repo, "rainlanguage/rain.math.float");
+        assert_eq!(backlog[1].repo, "rainlanguage/rain.math.float");
         assert_eq!(
-            refs[1].url, "",
+            backlog[1].url, "",
             "no meta means no link — never a guessed one"
         );
+    }
+
+    // ── org-wide open-issue ages (#165 / rain-org-health#140) ──────────────────────────────────
+    // The population is EVERY open issue, which is WIDER than the producer backlog: the human
+    // asked for the average age of all issues, and a metric narrowed to the producer's share
+    // cannot see an issue that has sat behind an open PR or a `human:*` ruling for six months.
+
+    /// The `(issue keys, meta)` pair the population builders take, as [`coverage_uncovered`]
+    /// produces it.
+    type CoverageRows = (
+        Vec<(String, u64)>,
+        std::collections::HashMap<(String, u64), Value>,
+    );
+
+    /// One `gh search issues` payload shaped like the live one, shared by the population tests so
+    /// the two populations are read from the SAME rows — which is the property under test.
+    ///
+    /// Three open issues: a plain one, one flagged `ai:close-candidate` (excluded from the
+    /// backlog, INCLUDED in the open-issue population), and one with no meta row at all.
+    fn coverage_fixture() -> CoverageRows {
+        let mut meta: std::collections::HashMap<(String, u64), Value> =
+            std::collections::HashMap::new();
+        meta.insert(
+            ("rainlanguage/raindex".into(), 512),
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
+                   "title": "backlog issue", "labels": [],
+                   "createdAt": "2026-07-21T00:00:00Z"}),
+        );
+        meta.insert(
+            ("rainlanguage/raindex".into(), 700),
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/700",
+                   "title": "flagged", "labels": [{"name": "ai:close-candidate"}],
+                   "createdAt": "2026-07-01T00:00:00Z"}),
+        );
+        let open = vec![
+            ("rainlanguage/raindex".to_string(), 512),
+            ("rainlanguage/raindex".to_string(), 700),
+            // No meta row at all — kept, with no fabricated link and no fabricated age.
+            ("rainlanguage/rain.math.float".to_string(), 3),
+        ];
+        (open, meta)
+    }
+
+    // The population the ages measure is EVERY open issue — no coverage filter, no label filter —
+    // read from the same rows, with `createdAt` parsed off each. Contrast with the test above,
+    // which drops the flagged issue: same input, two populations, and this is the wide one.
+    #[test]
+    fn open_issues_are_every_open_issue_with_created_at_from_the_same_row() {
+        let (open, meta) = coverage_fixture();
+        let all = open_issues(&open, &meta);
+        assert_eq!(
+            all.len(),
+            3,
+            "no narrowing at all: the close-candidate issue and the meta-less one both count"
+        );
+        assert_eq!(
+            all.iter().map(|i| i.subject.number).collect::<Vec<_>>(),
+            vec![512, 700, 3],
+            "order is GitHub's, unshuffled"
+        );
+        assert_eq!(
+            all[0].subject,
+            SubjectRef::new(
+                "rainlanguage/raindex",
+                512,
+                "https://github.com/rainlanguage/raindex/issues/512",
+                "backlog issue"
+            )
+        );
+        assert_eq!(
+            all[0].created_ms,
+            iso_to_epoch_ms("2026-07-21T00:00:00Z"),
+            "createdAt parses through the same reader GitHub timestamps use everywhere here"
+        );
+        // The flagged issue — excluded from the backlog, present here WITH its age. This is the
+        // whole point of the rescope.
+        assert_eq!(all[1].subject.number, 700);
+        assert_eq!(all[1].created_ms, iso_to_epoch_ms("2026-07-01T00:00:00Z"));
+        assert_eq!(all[2].subject.repo, "rainlanguage/rain.math.float");
+        assert_eq!(
+            all[2].subject.url, "",
+            "no meta means no link — never a guessed one"
+        );
+        assert_eq!(
+            all[2].created_ms, None,
+            "no meta means no age either — the member still counts, it just contributes none"
+        );
+    }
+
+    // The WIRING, which is where the rescope could silently revert: the age population must be
+    // built from `all` and the backlog from `uncovered`. One word apart, both compile, and taking
+    // `uncovered` for the ages is exactly the narrowing this rescope undoes — so the field choice
+    // is asserted here rather than left at a call site no test reaches.
+    #[test]
+    fn populations_take_the_ages_from_all_and_the_backlog_from_uncovered() {
+        let (_, meta) = coverage_fixture();
+        let org = OrgIssues {
+            // Every open issue: the plain one, the flagged one, the meta-less one.
+            all: vec![
+                ("rainlanguage/raindex".to_string(), 512),
+                ("rainlanguage/raindex".to_string(), 700),
+                ("rainlanguage/rain.math.float".to_string(), 3),
+            ],
+            // An open PR covers 512, so the backlog is strictly narrower on BOTH axes: coverage
+            // removes 512 and the `ai:close-candidate` label removes 700.
+            uncovered: vec![
+                ("rainlanguage/raindex".to_string(), 700),
+                ("rainlanguage/rain.math.float".to_string(), 3),
+            ],
+            meta,
+            // #206: the archived count rides ON the population struct rather than beside it, so
+            // "how many issues" and "how many were withheld" can never come from two reads that
+            // disagree — the same argument that put `all` and `uncovered` in one struct.
+            archived_repo: 4,
+        };
+        assert_eq!(org.archived_repo, 4);
+        let (backlog, open) = org.populations();
+        assert_eq!(
+            open.iter().map(|i| i.subject.number).collect::<Vec<_>>(),
+            vec![512, 700, 3],
+            "the ages measure `all` — every open issue, covered and flagged ones included"
+        );
+        assert_eq!(
+            backlog.iter().map(|s| s.number).collect::<Vec<_>>(),
+            vec![3],
+            "the backlog narrows `uncovered` further by label"
+        );
+        assert!(
+            open.len() > backlog.len(),
+            "the age population is WIDER than the backlog — swapping the two fields inverts this"
+        );
+    }
+
+    /// The fixture-builder for a member whose only relevant field is its age.
+    fn aged(days_ago_ms: i64, now_ms: i64) -> OpenIssue {
+        OpenIssue {
+            subject: sref("o/r", 1, "issues", "t"),
+            created_ms: Some(now_ms - days_ago_ms),
+        }
+    }
+    const DAY_MS: i64 = 86_400_000;
+
+    // MEAN AND MEDIAN ARE BOTH EMITTED AND THEY ARE DIFFERENT NUMBERS. This population is chosen
+    // so no two of the three statistics coincide: mean 30, median 10, oldest 100. A mutant that
+    // emits the median where the mean belongs (or the reverse) cannot survive it, and neither can
+    // one that reports the oldest as either.
+    #[test]
+    fn issue_age_stats_report_mean_and_median_and_oldest_as_three_distinct_numbers() {
+        let now = DOC_NOW_MS;
+        // (2 + 8 + 10 + 30 + 100) / 5 = 30; the middle of five is 10.
+        let b = vec![
+            aged(2 * DAY_MS, now),
+            aged(8 * DAY_MS, now),
+            aged(10 * DAY_MS, now),
+            aged(30 * DAY_MS, now),
+            aged(100 * DAY_MS, now),
+        ];
+        let a = issue_age_stats(&b, now).expect("a population with ages HAS ages");
+        assert_eq!(a.mean, 30.0);
+        assert_eq!(a.median, 10.0);
+        assert_eq!(a.oldest, 100.0);
+        // Emitted key-by-key, all three, no hierarchy: the renderer picks, this binary does not.
+        assert_eq!(
+            a.to_json(),
+            json!({"meanDays": 30.0, "medianDays": 10.0, "oldestDays": 100.0})
+        );
+    }
+
+    // The mean is the SUM over the COUNT, not a shortcut that happens to agree on symmetric input:
+    // this population is skewed hard (four fresh issues and one from 2022), so a mean confused
+    // with a median, a midpoint, or a trimmed anything lands nowhere near 200.4.
+    #[test]
+    fn issue_age_stats_mean_is_dragged_by_the_long_tail_the_median_ignores() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            aged(DAY_MS, now),
+            aged(2 * DAY_MS, now),
+            aged(3 * DAY_MS, now),
+            aged(4 * DAY_MS, now),
+            aged(1000 * DAY_MS, now),
+        ];
+        let a = issue_age_stats(&b, now).unwrap();
+        // (1 + 2 + 3 + 4 + 1000) / 5 = 202.0, against a median of 3.
+        assert_eq!(a.mean, 202.0);
+        assert_eq!(a.median, 3.0);
+        assert_eq!(a.oldest, 1000.0);
+        assert!(
+            a.mean > a.median * 60.0,
+            "the divergence IS the signal both statistics exist to show"
+        );
+    }
+
+    #[test]
+    fn issue_age_stats_median_is_the_middle_of_an_odd_population() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            aged(2 * DAY_MS, now),
+            aged(10 * DAY_MS, now),
+            aged(40 * DAY_MS, now),
+        ];
+        let a = issue_age_stats(&b, now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (17.3, 10.0, 40.0));
+    }
+
+    #[test]
+    fn issue_age_stats_median_is_the_mean_of_the_two_middles_of_an_even_population() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            aged(2 * DAY_MS, now),
+            aged(10 * DAY_MS, now),
+            aged(20 * DAY_MS, now),
+            aged(40 * DAY_MS, now),
+        ];
+        // median (10 + 20) / 2 = 15; mean (2 + 10 + 20 + 40) / 4 = 18.
+        let a = issue_age_stats(&b, now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (18.0, 15.0, 40.0));
+    }
+
+    #[test]
+    fn issue_age_stats_round_to_one_decimal() {
+        let now = DOC_NOW_MS;
+        // 36 hours = 1.5 days exactly; 8h = 0.333… days, which must round to 0.3, not truncate
+        // elsewhere or ship 15 decimals into the JSON.
+        let a = issue_age_stats(&[aged(36 * 3_600_000, now)], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (1.5, 1.5, 1.5));
+        let a = issue_age_stats(&[aged(8 * 3_600_000, now)], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (0.3, 0.3, 0.3));
+        // Rounding happens ONCE, at the END — the members are averaged at full precision and only
+        // the result is rounded. Most populations cannot tell the two orders apart (rounding
+        // errors cancel), so this one is chosen because they DISAGREE: 0.04, 0.04 and 0.14 days
+        // average to 0.0733 → 0.1, while rounding each member first gives 0.0, 0.0 and 0.1, whose
+        // average is 0.0333 → 0.0. An implementation that rounded per member would report a mean
+        // of 0.0 for a population where no member is younger than an hour.
+        let b = vec![
+            aged((0.04 * 86_400_000.0) as i64, now),
+            aged((0.04 * 86_400_000.0) as i64, now),
+            aged((0.14 * 86_400_000.0) as i64, now),
+        ];
+        let a = issue_age_stats(&b, now).unwrap();
+        assert_eq!(
+            a.mean, 0.1,
+            "the mean is rounded, not the members it averages"
+        );
+    }
+
+    #[test]
+    fn issue_age_stats_of_one_member_is_that_member_three_times() {
+        let now = DOC_NOW_MS;
+        let a = issue_age_stats(&[aged(7 * DAY_MS, now)], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (7.0, 7.0, 7.0));
+    }
+
+    // An empty population has NO age — `None`, so the caller omits the field entirely. Zero would
+    // claim a fresh population, which is the opposite of what an empty one means.
+    #[test]
+    fn issue_age_stats_of_an_empty_population_is_none_not_zero() {
+        assert!(issue_age_stats(&[], DOC_NOW_MS).is_none());
+    }
+
+    // Members without a parseable createdAt contribute no age; when NO member carries one there is
+    // nothing honest to emit and the answer is again `None`, never a fabricated 0.
+    #[test]
+    fn issue_age_stats_ignore_members_without_created_at_and_none_when_all_lack_it() {
+        let now = DOC_NOW_MS;
+        let ageless = || OpenIssue {
+            subject: sref("o/r", 2, "issues", "no meta"),
+            created_ms: None,
+        };
+        assert!(issue_age_stats(&[ageless()], now).is_none());
+        // The aged member alone decides all three stats — the mean is over ONE member, not two,
+        // so an age-less row cannot halve it. The age-less one still COUNTS in the population
+        // (asserted against `counts.openIssues` in the doc tests below).
+        let a = issue_age_stats(&[aged(10 * DAY_MS, now), ageless()], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (10.0, 10.0, 10.0));
+    }
+
+    // Clock skew: a createdAt after "now" clamps to 0.0 — an age is never negative, and a negative
+    // member would drag the MEAN below zero even where it never became the median or the oldest.
+    #[test]
+    fn issue_age_stats_clamp_future_created_at_to_zero() {
+        let now = DOC_NOW_MS;
+        let future = OpenIssue {
+            subject: sref("o/r", 3, "issues", "from the future"),
+            created_ms: Some(now + DAY_MS),
+        };
+        let a = issue_age_stats(&[future], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (0.0, 0.0, 0.0));
+        // And beside a real member: mean (0 + 10) / 2 = 5, never (−1 + 10) / 2 = 4.5.
+        let future = OpenIssue {
+            subject: sref("o/r", 3, "issues", "from the future"),
+            created_ms: Some(now + DAY_MS),
+        };
+        let a = issue_age_stats(&[future, aged(10 * DAY_MS, now)], now).unwrap();
+        assert_eq!(a.mean, 5.0);
+    }
+
+    // The oldest NUMBER and the oldest ISSUE come out of the same row, so the daily review's link
+    // always points at the issue the number describes.
+    #[test]
+    fn issue_age_stats_name_the_issue_the_oldest_number_measures() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            OpenIssue {
+                subject: sref("o/r", 1, "issues", "recent"),
+                created_ms: Some(now - 5 * DAY_MS),
+            },
+            OpenIssue {
+                subject: sref("o/r", 981, "issues", "the 2024 straggler"),
+                created_ms: Some(now - 800 * DAY_MS),
+            },
+            OpenIssue {
+                subject: sref("o/r", 2, "issues", "middling"),
+                created_ms: Some(now - 50 * DAY_MS),
+            },
+        ];
+        let a = issue_age_stats(&b, now).unwrap();
+        assert_eq!(a.oldest, 800.0);
+        assert_eq!(
+            a.oldest_subject.number, 981,
+            "the tail number and the tail issue must be the same row"
+        );
+        // The review block renders that issue, not the first or the last of the input.
+        let rendered = review_open_issue_ages(&b, now);
+        assert!(rendered.contains("mean 285.0d"), "{rendered}");
+        assert!(rendered.contains("median 50.0d"), "{rendered}");
+        assert!(rendered.contains("oldest 800.0d"), "{rendered}");
+        assert!(rendered.contains("the 2024 straggler"), "{rendered}");
+        assert!(
+            rendered.contains("All open issues — org-wide: 3"),
+            "the population size is printed beside the ages: {rendered}"
+        );
+    }
+
+    // The review reports the SIZE even when it cannot report an age, and says so in words rather
+    // than printing a 0 that would read as "all brand new".
+    #[test]
+    fn the_review_reports_the_population_size_when_no_member_has_an_age() {
+        let ageless = vec![OpenIssue {
+            subject: sref("o/r", 9, "issues", "no createdAt"),
+            created_ms: None,
+        }];
+        let rendered = review_open_issue_ages(&ageless, DOC_NOW_MS);
+        assert!(
+            rendered.contains("All open issues — org-wide: 1") && rendered.contains("no age"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("0.0d"),
+            "no age must never render as a zero age: {rendered}"
+        );
+    }
+
+    // The emitted block: a SIBLING of `counts` (an age is not a count), over the WIDE population —
+    // and `counts.openIssues` counts that same population, so the size and the ages cannot
+    // describe different sets of issues.
+    #[test]
+    fn the_doc_emits_ages_beside_counts_over_the_open_issue_population() {
+        let d = doc();
+        // doc()'s open-issue population is 3 members aged 10/40/2 days at DOC_NOW_MS:
+        // mean (10 + 40 + 2) / 3 = 17.333… → 17.3, median 10, oldest 40.
+        assert_eq!(d["ages"]["openIssues"]["meanDays"], json!(17.3));
+        assert_eq!(d["ages"]["openIssues"]["medianDays"], json!(10.0));
+        assert_eq!(d["ages"]["openIssues"]["oldestDays"], json!(40.0));
+        assert_eq!(
+            d["counts"]["openIssues"],
+            json!(3),
+            "the count counts the same population the ages measure"
+        );
+        // The WIDE population is not the backlog: the backlog holds one issue, the open-issue
+        // population three. A metric that had silently kept the narrow population would report 1
+        // here and a median of 10 with no mean to contradict it.
+        assert_eq!(d["counts"]["uncoveredIssues"], json!(1));
+        assert_ne!(
+            d["counts"]["openIssues"], d["counts"]["uncoveredIssues"],
+            "the age population is deliberately WIDER than the producer backlog"
+        );
+        assert!(
+            d["counts"].get("ages").is_none()
+                && d["counts"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .all(|k| !k.contains("Days")),
+            "ages live BESIDE counts, never inside it"
+        );
+        // No age is emitted under the OLD name — a field named for a population it no longer
+        // holds is exactly the defect #114 was about.
+        assert!(
+            d["ages"].get("uncoveredIssues").is_none(),
+            "the ages are named for the population they measure"
+        );
+    }
+
+    // Absence-not-null on the snapshot itself: a population whose members all lack a createdAt
+    // (and an empty one) emits NO `ages` key while still emitting its SIZE. The dashboard's
+    // documented degradation handles a missing field; a null or a zero would be a lie it would
+    // faithfully draw.
+    #[test]
+    fn the_doc_omits_ages_when_no_open_issue_has_an_age() {
+        let empty: Vec<OpenIssue> = vec![];
+        let ageless = vec![OpenIssue {
+            subject: sref("o/r", 9, "issues", "no createdAt"),
+            created_ms: None,
+        }];
+        for (open, want_count) in [(&empty, 0u64), (&ageless, 1u64)] {
+            let d = doc_with_open(Some(open));
+            assert!(
+                d.get("ages").is_none(),
+                "no age to report ⇒ the key is ABSENT, got {:?}",
+                d.get("ages")
+            );
+            assert_eq!(
+                d["counts"]["openIssues"],
+                json!(want_count),
+                "the count is independent of whether ages are reportable"
+            );
+        }
+    }
+
+    // A FAILED coverage read is not an empty org. #199 gave the gh failure a type precisely so it
+    // could not silently read as an empty answer, and `counts.openIssues: 0` on a rate-limited
+    // tick would be exactly that — a dashboard point claiming every issue closed at once. Both the
+    // count and the ages are OMITTED, which is the one shape that says "not known".
+    #[test]
+    fn the_doc_omits_the_open_issue_count_entirely_when_the_coverage_read_failed() {
+        let d = doc_with_open(None);
+        assert!(
+            d.get("ages").is_none(),
+            "an unreadable population has no ages"
+        );
+        assert!(
+            d["counts"].get("openIssues").is_none(),
+            "an unreadable population must not be reported as zero open issues, got {:?}",
+            d["counts"].get("openIssues")
+        );
+        // The distinction is the point: an EMPTY population still reports its size.
+        let empty = doc_with_open(Some(&[]));
+        assert_eq!(empty["counts"]["openIssues"], json!(0));
+    }
+
+    /// A minimal snapshot whose only interesting input is the open-issue population.
+    fn doc_with_open(open: Option<&[OpenIssue]>) -> Value {
+        human_queue_doc(
+            &std::collections::BTreeMap::new(),
+            &lanes_doc(&[]),
+            &[],
+            json!([]),
+            0,
+            json!([]),
+            0,
+            &[],
+            open,
+            &[],
+            0,
+            &[],
+            DOC_NOW_MS,
+        )
     }
 
     // The human-readable daily review prints the same resolved url. It renders
@@ -34437,8 +46307,10 @@ mod human_rule_tests {
         let (anchor, ..) = record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
         assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
         // The same anchor string the vetter's own comment carries — one re-flag stales both.
-        assert!(cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x")
-            .contains("close-candidate @2026-07-17T21:23:11Z"));
+        assert!(
+            cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x", None)
+                .contains("close-candidate @2026-07-17T21:23:11Z")
+        );
     }
 
     // With no LIVE flag the ruling is on the ISSUE AS FILED, and it says so. That wording is the
@@ -35326,9 +47198,8 @@ mod marketplace_tests {
     use serde_json::json;
 
     fn read_json(rel: &str) -> Option<Value> {
-        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
-        let text = std::fs::read_to_string(&path).ok()?;
-        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+        let text = repo_root_text(rel)?;
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {rel}: {e}")))
     }
 
     // The whole point: installers read the LISTING, so a listing that names a different version
@@ -35516,11 +47387,7 @@ mod marketplace_tests {
     // or it is listed with no description and no argument hint.
     #[test]
     fn every_shipped_command_carries_its_frontmatter() {
-        let dir = format!(
-            "{}/../plugins/human-fsm/commands",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = std::fs::read_dir(repo_root_path("plugins/human-fsm/commands")) else {
             return; // not checked out (nix build sandbox)
         };
         // The MCP grants are resolved against what this repo ACTUALLY ships — the plugin's own
@@ -35944,11 +47811,7 @@ mod marketplace_tests {
     // legal shape again.
     #[test]
     fn nr_grants_the_two_reads_the_source_it_audits_and_the_lens() {
-        let path = format!(
-            "{}/../plugins/human-fsm/commands/nr.md",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -36286,6 +48149,50 @@ mod vetter_state_load_tests {
         assert_eq!(doc["skipped"].as_array().unwrap().len(), 3);
     }
 
+    /// #206: a PR in an archived repo is not vettable — `record_verdict` writes a label and a
+    /// comment and a read-only repo refuses both — so it never reaches `prs`, and it is reported
+    /// under its own name rather than folded into an existing skip that means something else.
+    #[test]
+    fn a_pr_in_an_archived_repo_is_withheld_from_the_vet_queue_and_named() {
+        let rows = vec![
+            (
+                VetAction::Vet,
+                0,
+                json!({"pr": "rainlanguage/raindex#1", "action": "vet"}),
+            ),
+            (
+                VetAction::SkipArchivedRepo,
+                4,
+                json!({
+                    "pr": "rainlanguage/rain.webapp#354",
+                    "url": "https://github.com/rainlanguage/rain.webapp/pull/354",
+                    "action": VetAction::SkipArchivedRepo.as_str(),
+                    "why": ARCHIVED_REPO_WHY,
+                }),
+            ),
+        ];
+        let doc = unvetted_doc(&rows, false, None);
+        // Not offered.
+        assert_eq!(doc["counts"]["vet"], json!(1));
+        assert_eq!(doc["prs"][0]["pr"], json!("rainlanguage/raindex#1"));
+        assert_eq!(doc["prs"].as_array().unwrap().len(), 1);
+        // Counted, under its own key — never folded into `skipHumanDecided` (nobody decided) or
+        // `skipVettedAtHead` (nothing was vetted).
+        assert_eq!(doc["counts"]["skipArchivedRepo"], json!(1));
+        assert_eq!(doc["counts"]["skipHumanDecided"], json!(0));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(0));
+        // …and named, UNCONDITIONALLY: `include_skipped` is false here and the row is still there,
+        // because this skip says the machine can never move the PR at all.
+        assert_eq!(
+            doc["archivedRepo"][0]["pr"],
+            json!("rainlanguage/rain.webapp#354")
+        );
+        assert_eq!(doc["archivedRepo"][0]["why"], json!(ARCHIVED_REPO_WHY));
+        assert!(doc.get("skipped").is_none());
+        // `open` still counts it: the population the state-load read is the whole population.
+        assert_eq!(doc["counts"]["open"], json!(2));
+    }
+
     #[test]
     fn empty_state_load_is_a_well_formed_empty_doc() {
         let doc = unvetted_doc(&[], false, None);
@@ -36294,6 +48201,8 @@ mod vetter_state_load_tests {
         assert_eq!(doc["prs"], json!([]));
         // Present-and-empty, not absent: "nothing was withheld for threads" is an answer.
         assert_eq!(doc["openThreads"], json!([]));
+        assert_eq!(doc["counts"]["skipArchivedRepo"], json!(0));
+        assert_eq!(doc["archivedRepo"], json!([]));
         assert_eq!(doc["more"], json!(0));
     }
 
@@ -37331,7 +49240,8 @@ mod mcp_tests {
                 include_skipped: true,
                 limit: 25,
             },
-            McpCall::CloneList,
+            McpCall::CloneList { include_all: false },
+            McpCall::CloneList { include_all: true },
         ];
         for c in &calls {
             assert_eq!(
@@ -37353,54 +49263,166 @@ mod mcp_tests {
         assert!(e.contains("max_diff_bytes must be an integer in"), "{e}");
     }
 
-    // The advice each refusal gives must be advice that can work. With one fixed budget it is:
-    // lowering the named argument lowers the payload against an allowance that does not move.
+    /// The SMALLEST argument object each tool validates. One arm per tool, rather than one union
+    /// blob, because two tools disagree about the type of a shared name (`issue` is `owner/repo#n`
+    /// to the flag tools and a bare number to `weaken_closes`) — and because the arms double as a
+    /// statement of what a minimal call to each transition looks like.
+    fn minimal_args(name: &str) -> Value {
+        match name {
+            "unvetted"
+            | "next_ready"
+            | "next_close_candidate"
+            | "unvetted_close_candidates"
+            | "clone_list"
+            | "clone_gc" => json!({}),
+            "pr_context" | "pr_checkout" => json!({"pr": "o/r#1"}),
+            "record_verdict" => json!({
+                "pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b",
+                "covered": [{"path": "src/lib.rs"}]
+            }),
+            "close_candidate_context" => json!({"issue": "o/r#1"}),
+            "record_close_candidate_verdict" => {
+                json!({"issue": "o/r#1", "verdict": "uphold", "note": "n"})
+            }
+            "human_rule" => json!({"pr": "o/r#1", "ruling": "reject", "note": "n"}),
+            "human_rule_issue" => json!({"issue": "o/r#1", "ruling": "reject", "note": "n"}),
+            "human_close" => json!({"subject": "o/r#1", "note": "n"}),
+            "clone_create" => json!({"repo": "o/r", "name": "x", "branch": "b"}),
+            "clone_release" | "push" => json!({"clone": "x"}),
+            "open_pr" => {
+                json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md"})
+            }
+            "repair_qa_block" => json!({"pr": "o/r#1", "block_file": "/b.md"}),
+            "weaken_closes" => json!({"pr": "o/r#1", "issue": 5}),
+            _ => panic!("{name} has no minimal-args arm — add one when you add a tool"),
+        }
+    }
+
+    /// The profile that LISTS this tool, so a refusal can be driven through the real server rather
+    /// than through `oversize_result_error` in isolation.
+    fn profile_listing(name: &str) -> McpProfile {
+        [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human]
+            .into_iter()
+            .find(|p| p.tool_names().contains(&name))
+            .unwrap_or_else(|| panic!("{name} is on no profile"))
+    }
+
+    // The advice each refusal gives must be advice that can work — and #117 is what it looks like
+    // when it cannot: `clone_list`, whose schema was `{"properties": {}}`, was told to "lower
+    // `limit`" by a catch-all that asserted every non-`pr_context` tool had one. The producer had no
+    // second call to make, so it improvised `ls -d …/*/ | wc -l` and reported a COUNT in place of a
+    // state load.
+    //
+    // The old version of this test asserted "each" while naming three tools by hand, which is why
+    // the one tool that could never satisfy the property sat outside it. This one walks the
+    // ADVERTISED TABLE, so a tool added tomorrow is inside it on the day it is added.
     #[test]
     fn each_refusal_names_an_argument_that_actually_narrows_it() {
-        let too_big = FakeExec {
-            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
-            ..FakeExec::ok()
-        };
-        let load = text(&too_big.handle(&call("unvetted", json!({}))).unwrap());
-        assert!(load.contains("Re-call NARROWER: lower `limit`."), "{load}");
-        let ctx = text(
-            &too_big
-                .handle(&call(
-                    "pr_context",
-                    json!({"pr": "o/r#1", "max_diff_bytes": 1_000}),
-                ))
-                .unwrap(),
+        let all = mcp_all_tools();
+        let tools = all.as_array().unwrap();
+        for t in tools {
+            let name = t["name"].as_str().unwrap();
+            let f = FakeExec {
+                profile: profile_listing(name),
+                reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
+                ..FakeExec::ok()
+            };
+            let resp = f.handle(&call(name, minimal_args(name))).unwrap();
+            assert!(
+                is_error(&resp),
+                "{name}: an over-budget result must be refused"
+            );
+            let msg = text(&resp);
+            assert!(
+                msg.contains("over the") && msg.contains("byte budget"),
+                "{name} was refused for some OTHER reason, so this test proved nothing: {msg}"
+            );
+            // Whatever it advises, it forbids the improvisation. Both #78 and #117 ended in one.
+            assert!(
+                msg.contains("Do NOT improvise a substitute read"),
+                "{name}: {msg}"
+            );
+            match narrowing_argument(name) {
+                Some(arg) => {
+                    assert!(
+                        msg.contains(&format!("Re-call NARROWER: lower `{arg}`")),
+                        "{name}: {msg}"
+                    );
+                    // THE property: the argument the refusal names is one the tool's own schema
+                    // advertises. Same table entry, so the two cannot disagree.
+                    assert!(
+                        t["inputSchema"]["properties"][&arg].is_object(),
+                        "{name}'s refusal names `{arg}`, which its schema does not advertise: {}",
+                        t["inputSchema"]
+                    );
+                }
+                None => {
+                    assert!(
+                        msg.contains("NO argument makes this call smaller"),
+                        "{name}: {msg}"
+                    );
+                    assert!(!msg.contains("Re-call NARROWER"), "{name}: {msg}");
+                    // The catch-all's answer specifically: a tool with no narrowing argument must
+                    // never be told to lower one.
+                    assert!(!msg.contains("`limit`"), "{name}: {msg}");
+                    // …and the `None` text must be about THIS tool, not about the one whose case it
+                    // was originally written for.
+                    assert!(
+                        msg.contains(&format!("`{name}` accepts none")),
+                        "{name}: {msg}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            tools.len(),
+            20,
+            "a tool was added or removed — check it against this property, then update the count"
         );
-        assert!(
-            ctx.contains("Re-call NARROWER: lower `max_diff_bytes`."),
-            "{ctx}"
-        );
-        // `next_ready` accepts a REAL `limit`, so the advice is one the caller can follow — and it
-        // is followable to a fix rather than to another refusal, because rows are independent and
-        // dropping one strictly removes its bytes. (It cannot reach this refusal in practice: the
-        // per-field caps put a full page under the budget by construction. Both halves matter —
-        // #117 is what a tool whose refusal names an argument it does not accept looks like.)
-        let human = FakeExec {
-            profile: McpProfile::Human,
-            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
-            ..FakeExec::ok()
-        };
-        let nr = text(
-            &human
-                .handle(&call("next_ready", json!({"limit": 3})))
-                .unwrap(),
-        );
-        assert!(nr.contains("Re-call NARROWER: lower `limit`."), "{nr}");
-        assert!(
-            mcp_all_tools()
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|t| t["name"] == json!("next_ready"))
-                .unwrap()["inputSchema"]["properties"]["limit"]
-                .is_object(),
-            "the argument the refusal names must be one the schema advertises"
-        );
+    }
+
+    // The other direction of the same drift. A tool that advertises one of the two arguments this
+    // server narrows with, and declares nothing, would get the truthful-but-useless `None` refusal
+    // — safe, but a page the caller could have re-asked for smaller and was not told to.
+    #[test]
+    fn a_tool_advertising_a_narrowing_argument_must_declare_it() {
+        for t in mcp_all_tools().as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            let props = &t["inputSchema"]["properties"];
+            for arg in ["limit", "max_diff_bytes"] {
+                if props[arg].is_object() {
+                    assert_eq!(
+                        narrowing_argument(name).as_deref(),
+                        Some(arg),
+                        "{name} advertises `{arg}` but its refusal does not name it"
+                    );
+                }
+            }
+        }
+    }
+
+    // The declaration is OURS, not MCP's: it must not reach the wire, where it would be an
+    // unrecognised key on every tool object and preamble bytes on every API call.
+    #[test]
+    fn the_narrowing_declaration_never_reaches_the_listed_schema() {
+        let declared = mcp_all_tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t.get(TOOL_NARROWS_KEY).is_some())
+            .count();
+        assert_eq!(declared, 5, "five tools narrow; the rest genuinely cannot");
+        for profile in [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human] {
+            for t in mcp_tools(profile).as_array().unwrap() {
+                assert!(
+                    t.get(TOOL_NARROWS_KEY).is_none(),
+                    "{profile:?} listed {} with the declaration attached",
+                    t["name"]
+                );
+                // …and the listing is otherwise intact.
+                assert!(t["name"].is_string() && t["inputSchema"]["type"] == json!("object"));
+            }
+        }
     }
 
     /// A `pr_context` input whose metadata is `meta_bytes`-ish and whose diff is `diff` bytes long.
@@ -37558,6 +49580,10 @@ mod mcp_tests {
                 "clone_release",
                 "clone_list",
                 "clone_gc",
+                // The REWORK edge. A moved head on an existing PR is the outcome of two of the
+                // four kinds of work the run budget counts, and a `git push` in Bash records
+                // none of it — the first capped run's three items were all this shape.
+                "push",
                 // The producer's OUTPUT edge. It is a tool so the run's own trace records WHICH
                 // task produced WHICH PR — a `gh pr create` inside Bash leaves a shell string that
                 // no reader can join a work item on.
@@ -37597,16 +49623,18 @@ mod mcp_tests {
             "clone_create",
             "clone_gc",
             "clone_list",
-            // The vetter judging a PR must not be able to OPEN one either: an actor that can
-            // produce the thing it judges has no judgement left to make.
+            // The vetter judging a PR must not be able to OPEN one either — nor to MOVE ITS HEAD,
+            // which would un-vet the very PR it is judging: an actor that can produce the thing it
+            // judges has no judgement left to make.
             "open_pr",
+            "push",
             "repair_qa_block",
             "weaken_closes",
         ] {
             let resp = v
                 .handle(&call(
                     producer_only,
-                    json!({"repo": "o/r", "name": "x", "branch": "b", "head": "b", "title": "t", "body_file": "/b.md", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
+                    json!({"repo": "o/r", "name": "x", "clone": "x", "branch": "b", "head": "b", "title": "t", "body_file": "/b.md", "pr": "o/r#1", "issue": 5, "block_file": "/b.md"}),
                 ))
                 .unwrap();
             assert!(is_error(&resp), "{producer_only} must not exist for vetter");
@@ -38309,6 +50337,177 @@ mod mcp_tests {
         assert_eq!(exits.len(), all.len(), "two refusals share an exit code");
     }
 
+    // --- push: the REWORK edge ------------------------------------------------------------------
+
+    /// THE JOIN, and the whole reason this tool exists rather than a parser over `git push` command
+    /// strings: a PR is named ONLY when its head IS the commit this call pushed. `--head <branch>`
+    /// answers on a NAME, and a name is what handed a read-only clone of `main` a real closed PR in
+    /// #175; the sha is what makes the record a statement about the effect that just happened.
+    #[test]
+    fn a_push_names_a_pr_only_when_that_prs_head_is_the_commit_it_pushed() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let other = "fedcba9876543210fedcba9876543210fedcba98";
+        let pr = |n: u64, head: &str| json!({"number": n, "headRefOid": head, "url": format!("https://github.com/o/r/pull/{n}")});
+
+        let moved = PushedPr::Moved {
+            pr: 369,
+            url: "https://github.com/o/r/pull/369".to_string(),
+        };
+        assert_eq!(pushed_pr(sha, Some(&json!([pr(369, sha)]))), moved);
+        // Same branch, different head: something else moved it, so this call owns nothing.
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([pr(369, other)]))) else {
+            panic!("a PR at another head must not be claimed");
+        };
+        assert!(why.contains("not the commit this call pushed"), "{why}");
+        // No PR on the branch at all — the ordinary shape of a branch pushed before `open_pr`.
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([]))) else {
+            panic!("no PR means no item");
+        };
+        assert!(why.contains("no open PR"), "{why}");
+        // An UNREADABLE answer is NOT "no PR": a producer told its reworked branch has no PR
+        // would open a second one. Distinct reason, distinct next move.
+        for unreadable in [None, Some(json!({"message": "Bad credentials"}))] {
+            let PushedPr::None(why) = pushed_pr(sha, unreadable.as_ref()) else {
+                panic!("an unreadable answer must claim nothing");
+            };
+            assert!(why.contains("could not be read"), "{why}");
+        }
+        // Two PRs at one head is a real shape (one branch, two bases). Picking one is a guess.
+        let PushedPr::None(why) = pushed_pr(sha, Some(&json!([pr(369, sha), pr(370, sha)]))) else {
+            panic!("an ambiguous head must not be resolved");
+        };
+        assert!(why.contains("2 open PRs"), "{why}");
+        // A row that names no usable number is not a PR reference.
+        for malformed in [
+            json!({"headRefOid": sha}),
+            json!({"number": 0, "headRefOid": sha}),
+        ] {
+            assert!(
+                matches!(pushed_pr(sha, Some(&json!([malformed]))), PushedPr::None(_)),
+                "{malformed}"
+            );
+        }
+        // Sha comparison is case-insensitive: git and the API differ on hex casing, and a case
+        // mismatch would silently drop every work item.
+        assert_eq!(
+            pushed_pr(&sha.to_uppercase(), Some(&json!([pr(369, sha)]))),
+            moved
+        );
+    }
+
+    /// The force-push ban stops being a rule this path can break: the argv is a constant shape with
+    /// no flags, and the one argument that could smuggle a force spelling in is refused.
+    #[test]
+    fn the_push_transition_cannot_spell_a_force_push() {
+        assert_eq!(
+            push_args("2026-08-04-issue-184"),
+            vec![
+                "push".to_string(),
+                "origin".to_string(),
+                "HEAD:refs/heads/2026-08-04-issue-184".to_string()
+            ]
+        );
+        for arg in push_args("b") {
+            for force in ["--force", "-f", "--force-with-lease", "--force-if-includes"] {
+                assert!(!arg.contains(force), "{arg} carries {force}");
+            }
+        }
+        // A leading `+` IS the force spelling of a refspec, and a `:` would make the argument a
+        // refspec rather than a branch — both refused before any push exists.
+        for bad in ["+b", "b:c", "refs/heads/b:refs/heads/c", "-b", "", "a b"] {
+            assert!(push_branch(bad).is_err(), "{bad:?} must be refused");
+        }
+        assert_eq!(push_branch("  b  ").as_deref(), Ok("b"));
+    }
+
+    /// The remote ref BEFORE, so "this call moved the head" is a comparison. An absent ref is a new
+    /// branch, not a failure.
+    #[test]
+    fn the_remote_ref_is_read_as_a_sha_or_as_absent() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            ls_remote_sha(&format!("{sha}\trefs/heads/b\n")).as_deref(),
+            Some(sha)
+        );
+        assert_eq!(ls_remote_sha(""), None);
+        assert_eq!(ls_remote_sha("\n\n"), None);
+    }
+
+    /// The path guard is the clone lifecycle's, so "push from somewhere that is not a work clone"
+    /// is not expressible — and a refused argument reaches no effect.
+    #[test]
+    fn push_refuses_every_argument_it_could_not_act_on() {
+        let f = FakeExec::producer().with_roots(&["/work"]);
+        for bad in [
+            json!({}),                              // no clone named
+            json!({"clone": "../etc"}),             // traversal
+            json!({"clone": "/elsewhere/repo"}),    // outside every root
+            json!({"clone": "/work"}),              // the root itself
+            json!({"clone": "a/b"}),                // not a direct child
+            json!({"clone": "c", "branch": "+b"}),  // the force spelling
+            json!({"clone": "c", "branch": "a:b"}), // a refspec, not a branch
+            json!({"clone": "c", "branch": ""}),    // no branch at all
+        ] {
+            let resp = f.handle(&call("push", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+        }
+        assert!(f.calls().is_empty(), "no refusal reached an effect");
+
+        // The accepted shapes: a bare name, and a name plus the remote branch to move.
+        f.handle(&call("push", json!({"clone": "cyclo.site-pr369"})))
+            .unwrap();
+        f.handle(&call(
+            "push",
+            json!({"clone": "/work/issue-pr-cron-pr168", "branch": "2026-07-31-issue-162"}),
+        ))
+        .unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                McpCall::Push {
+                    root: "/work".to_string(),
+                    name: "cyclo.site-pr369".to_string(),
+                    branch: None
+                },
+                McpCall::Push {
+                    root: "/work".to_string(),
+                    name: "issue-pr-cron-pr168".to_string(),
+                    branch: Some("2026-07-31-issue-162".to_string())
+                },
+            ]
+        );
+    }
+
+    /// Six refusals, six different things to do next — and the one where the effect MAY have
+    /// happened says so, because a caller that retried it would push again against a remote it
+    /// cannot describe.
+    #[test]
+    fn the_push_refusals_are_six_distinct_things_to_do_next() {
+        let all = [
+            PushRefusal::CloneUnusable("no work clone \"x\" under /work".to_string()),
+            PushRefusal::DetachedHead,
+            PushRefusal::NoOriginSlug("/srv/git/bare.git".to_string()),
+            PushRefusal::StateUnreadable("`git ls-remote origin` failed".to_string()),
+            PushRefusal::PushFailed("! [rejected] non-fast-forward".to_string()),
+            PushRefusal::HeadUnconfirmed {
+                want: "aaa".to_string(),
+                got: "bbb".to_string(),
+            },
+        ];
+        let mut exits: Vec<i32> = all.iter().map(|r| r.exit()).collect();
+        exits.sort_unstable();
+        exits.dedup();
+        assert_eq!(exits.len(), all.len(), "two refusals share an exit code");
+
+        // A failed push left the remote alone; an unreadable state pushed nothing at all; an
+        // unconfirmed head is neither, and must not be retried.
+        assert!(all[4].render("c").contains("remote is UNCHANGED"));
+        assert!(all[3].render("c").contains("NOTHING was pushed"));
+        let unconfirmed = all[5].render("c");
+        assert!(unconfirmed.contains("do NOT re-push"), "{unconfirmed}");
+        assert!(unconfirmed.contains("NO work item"), "{unconfirmed}");
+    }
+
     #[test]
     fn clone_gc_bounds_its_age_cap() {
         let f = FakeExec::producer();
@@ -38559,7 +50758,320 @@ mod mcp_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // --- the listing: counts that never truncate, rows that may -----------------------------------
+
+    // The four buckets must PARTITION the box, and they must be the ladder `release_decision` walks
+    // — not a re-derivation of it. A clone counted under a reason that does not match the decision
+    // is a caller told to commit changes on a clone that is actually holding unpushed commits.
+    #[test]
+    fn clone_hold_is_release_decisions_own_ladder_as_a_discriminant() {
+        for (unpushed, dirt, want) in [
+            (None, Some(""), Some("unknown")),
+            (None, Some("?? a"), Some("unknown")), // unknown push state OUTRANKS dirt
+            (Some(3), Some(""), Some("unpushed")),
+            (Some(3), Some("?? a"), Some("unpushed")), // unpushed OUTRANKS dirt
+            (Some(0), None, Some("unknown")),          // `git status` failed
+            (Some(0), Some("?? a\n M b"), Some("uncommitted")),
+            (Some(0), Some(""), None),
+        ] {
+            let s = st(unpushed, dirt);
+            assert_eq!(clone_hold(&s), want, "{unpushed:?}/{dirt:?}");
+            // …and it agrees with the decision it is derived from, in both directions.
+            assert_eq!(
+                clone_hold(&s).is_none(),
+                release_decision(&s, false).is_ok(),
+                "{unpushed:?}/{dirt:?}"
+            );
+        }
+        // Every discriminant it can return is a key `clone_list` counts under, so the counts can
+        // never lose a clone to a bucket nobody prints.
+        for h in CLONE_HOLDS {
+            assert!(!h.is_empty());
+        }
+        assert!(!CLONE_HOLDS.contains(&CLONE_RELEASABLE));
+    }
+
+    // The rows the budget drops are the ones a caller acts on LAST. An unreadable clone might be
+    // holding anything; an unpushed one is holding work that exists nowhere else; a dirty one is
+    // usually build output; a releasable one is the answer to no question.
+    #[test]
+    fn a_listing_is_truncated_from_the_least_interesting_end() {
+        let ranks: Vec<u8> = [Some("unknown"), Some("unpushed"), Some("uncommitted"), None]
+            .into_iter()
+            .map(clone_row_rank)
+            .collect();
+        assert_eq!(ranks, vec![0, 1, 2, 3]);
+        // An unrecognised discriminant sorts with the releasable ones rather than jumping the
+        // queue — a new hold word must be ADDED to the ladder to be treated as one.
+        assert_eq!(clone_row_rank(Some("something-new")), 3);
+
+        // …and the fit keeps a PREFIX of whatever order it is handed, so that order is the whole of
+        // the truncation policy.
+        let rows: Vec<Value> = (0..2_000)
+            .map(|i| serde_json::json!({"name": format!("clone-{i}"), "held": "unpushed"}))
+            .collect();
+        let mut doc = serde_json::Map::new();
+        fit_clone_rows(&mut doc, "clones", &rows);
+        let kept = doc["clones"].as_array().unwrap();
+        assert!(
+            !kept.is_empty() && kept.len() < rows.len(),
+            "{}",
+            kept.len()
+        );
+        assert_eq!(kept.as_slice(), &rows[..kept.len()]);
+        assert_eq!(doc["listed"], serde_json::json!(kept.len()));
+        assert_eq!(doc["omitted"], serde_json::json!(rows.len() - kept.len()));
+    }
+
+    // THE requirement of #117: no clone result can exceed the budget, whatever the box holds. The
+    // guard measured 60,237 bytes at ~289 clones and 38,229 at a smaller count; a fixed row cap
+    // would not have covered either, because a row's size is a clone NAME and a BRANCH name.
+    #[test]
+    fn a_clone_result_can_never_exceed_the_ceiling() {
+        for (count, width) in [
+            (0, 10),
+            (5, 10),
+            (289, 200),   // the box #117 was found on
+            (5_000, 60),  // ~20x that box
+            (50, 40_000), // one row bigger than the whole budget
+            (2, 4_000_000),
+        ] {
+            let rows: Vec<Value> = (0..count)
+                .map(|i| {
+                    serde_json::json!({
+                        "name": format!("c{i}"),
+                        "branch": "b".repeat(width),
+                        "held": "uncommitted",
+                    })
+                })
+                .collect();
+            let mut doc = serde_json::Map::new();
+            doc.insert(
+                "roots".to_string(),
+                clone_roots_echo(&["/home/x/code".into()]),
+            );
+            doc.insert("total".to_string(), Value::from(count));
+            fit_clone_rows(&mut doc, "clones", &rows);
+            let len = Value::Object(doc.clone()).to_string().len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "{count} rows x {width} produced {len} bytes, over {MCP_MAX_RESULT_BYTES}"
+            );
+            // The split is always STATED, so what is missing is a number rather than an inference.
+            let listed = doc["listed"].as_u64().unwrap() as usize;
+            assert_eq!(listed, doc["clones"].as_array().unwrap().len());
+            assert_eq!(doc["omitted"].as_u64().unwrap() as usize, count - listed);
+            // A row too big for the budget on its own omits itself rather than being clipped into
+            // something that reads like a whole row.
+            if width < MCP_MAX_RESULT_BYTES && count > 0 {
+                assert!(listed > 0, "{count} rows x {width} fitted nothing");
+            }
+        }
+        // The roots echo is the one part of the envelope that is not a number, so it is the one
+        // part that has to be bounded before the row fit can promise anything.
+        let absurd = "/".to_string() + &"r".repeat(100_000);
+        let echo = clone_roots_echo(&[absurd.clone(), absurd]);
+        assert!(
+            echo.to_string().len() <= 2 * (CLONE_ECHO_BYTES * 2 + 8),
+            "{}",
+            echo.to_string().len()
+        );
+    }
+
+    // The whole box as counts, the held ones as rows. Real clones, because the four states are
+    // states of a real `git` working tree and a stub would assert our belief about git instead.
+    #[test]
+    fn a_clone_listing_states_the_whole_box_and_lists_what_is_held() {
+        let root = tmp_root("listing");
+        let rs = root.to_string_lossy().to_string();
+        // `unknown`: a directory with a `.git` that is not a repository at all.
+        mk_clone(&root, "d-unknown");
+        // `releasable`: a real repo, no commits, nothing untracked.
+        let clean = root.join("a-clean");
+        std::fs::create_dir_all(&clean).unwrap();
+        if git_run(&clean, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // no git in this sandbox
+        }
+        // `uncommitted`: a real repo with an untracked file.
+        let dirty = root.join("b-dirty");
+        std::fs::create_dir_all(&dirty).unwrap();
+        git_run(&dirty, &["init", "-q"]).unwrap();
+        std::fs::write(dirty.join("f.txt"), "x").unwrap();
+        // `unpushed`: a real repo with a commit on no remote.
+        let wip = root.join("c-wip");
+        std::fs::create_dir_all(&wip).unwrap();
+        git_run(&wip, &["init", "-q"]).unwrap();
+        let _ = git_run(&wip, &["config", "user.email", "t@t"]);
+        let _ = git_run(&wip, &["config", "user.name", "t"]);
+        std::fs::write(wip.join("f.txt"), "work").unwrap();
+        git_run(&wip, &["add", "-A"]).unwrap();
+        git_run(
+            &wip,
+            &["-c", "commit.gpgsign=false", "commit", "-qm", "wip"],
+        )
+        .unwrap();
+
+        let held = clone_list_exec(std::slice::from_ref(&rs), false).unwrap();
+        // The counts cover the WHOLE box and every state has a key, at zero or not.
+        assert_eq!(held["total"], json!(4));
+        assert_eq!(held["counts"]["unknown"], json!(1));
+        assert_eq!(held["counts"]["unpushed"], json!(1));
+        assert_eq!(held["counts"]["uncommitted"], json!(1));
+        assert_eq!(held["counts"][CLONE_RELEASABLE], json!(1));
+        let sum: u64 = ["unknown", "unpushed", "uncommitted", CLONE_RELEASABLE]
+            .iter()
+            .map(|k| held["counts"][k].as_u64().unwrap())
+            .sum();
+        assert_eq!(
+            sum, 4,
+            "the counts must partition the box: {}",
+            held["counts"]
+        );
+
+        // The rows are the HELD ones, worst first, and the releasable one is counted, not listed.
+        assert_eq!(held["include"], json!("held"));
+        assert_eq!(held["matched"], json!(3));
+        assert_eq!(held["listed"], json!(3));
+        assert_eq!(held["omitted"], json!(0));
+        let names: Vec<&str> = held["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["d-unknown", "c-wip", "b-dirty"]);
+        let row = &held["clones"][1];
+        assert_eq!(row["held"], json!("unpushed"));
+        assert_eq!(row["releasable"], json!(false));
+        assert_eq!(row["unpushed"], json!(1));
+        assert_eq!(row["root"], json!(rs));
+        assert!(row["ageDays"].is_u64() && row["branch"].is_string());
+
+        // `include: all` adds the releasable one, LAST, and changes no count.
+        let all = clone_list_exec(std::slice::from_ref(&rs), true).unwrap();
+        assert_eq!(all["counts"], held["counts"]);
+        assert_eq!(all["total"], json!(4));
+        assert_eq!(all["include"], json!("all"));
+        assert_eq!(all["matched"], json!(4));
+        let all_names: Vec<&str> = all["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(all_names, vec!["d-unknown", "c-wip", "b-dirty", "a-clean"]);
+        assert_eq!(all["clones"][3]["held"], json!(null));
+        assert_eq!(all["clones"][3]["releasable"], json!(true));
+
+        // An unreadable root contributes nothing rather than aborting the listing.
+        let with_missing = clone_list_exec(&[rs, "/no/such/root".to_string()], false).unwrap();
+        assert_eq!(with_missing["total"], json!(4));
+        assert_eq!(with_missing["roots"].as_array().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A refused `include` reaches no effect, and is refused rather than quietly read as the default
+    // — a listing the caller believes is the whole box and is not is #117's failure with the guard
+    // on the other side of it.
+    #[test]
+    fn clone_list_include_is_refused_rather_than_reinterpreted() {
+        let f = FakeExec::producer();
+        for bad in [
+            json!({"include": "everything"}),
+            json!({"include": 1}),
+            json!({"include": ["all"]}),
+        ] {
+            let resp = f.handle(&call("clone_list", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+            assert!(text(&resp).contains("include must be"), "{}", text(&resp));
+        }
+        assert!(f.calls().is_empty(), "a refused include reached an effect");
+        for (args, want) in [
+            (json!({}), false),
+            (json!({"include": "held"}), false),
+            (json!({"include": " all "}), true),
+        ] {
+            f.handle(&call("clone_list", args.clone())).unwrap();
+            assert_eq!(
+                *f.calls().last().unwrap(),
+                McpCall::CloneList { include_all: want },
+                "{args}"
+            );
+        }
+        // The schema advertises exactly the two words the guard accepts.
+        let all = mcp_all_tools();
+        let t = all
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == json!("clone_list"))
+            .unwrap();
+        assert_eq!(
+            t["inputSchema"]["properties"]["include"]["enum"],
+            json!(["held", "all"])
+        );
+    }
+
     // --- the sweep --------------------------------------------------------------------------------
+
+    // The sweep's rows are the account of an IRREVERSIBLE act, so the budget must never be paid for
+    // out of them. What it drops is `kept` rows — clones that are still on disk and can be listed
+    // again — and never an error or a deletion.
+    #[test]
+    fn a_sweep_report_keeps_its_account_of_what_it_destroyed() {
+        assert_eq!(gc_outcome_rank("error"), 0);
+        assert_eq!(gc_outcome_rank("deleted"), 1);
+        assert_eq!(gc_outcome_rank("would-delete"), 1);
+        assert_eq!(gc_outcome_rank("kept"), 2);
+        // An outcome nobody has taught it about sorts with `kept`, so a new word can only ever LOSE
+        // priority — never silently outrank a deletion.
+        assert_eq!(gc_outcome_rank("quarantined"), 2);
+
+        let mut recs: Vec<GcRecord> = (0..400)
+            .map(|i| GcRecord {
+                root: "/w".to_string(),
+                name: format!("clone-{i}"),
+                outcome: if i == 399 {
+                    "deleted"
+                } else if i == 398 {
+                    "error"
+                } else {
+                    "kept"
+                },
+                reason: "uncommitted changes".repeat(6),
+                bytes: 1_234_567,
+            })
+            .collect();
+        recs.sort_by_key(|r| gc_outcome_rank(r.outcome));
+        assert_eq!(
+            recs.iter().map(|r| r.outcome).take(2).collect::<Vec<_>>(),
+            vec!["error", "deleted"]
+        );
+        let rows: Vec<Value> = recs
+            .iter()
+            .map(|r| serde_json::json!({"name": r.name, "outcome": r.outcome, "reason": r.reason}))
+            .collect();
+        let mut doc = serde_json::Map::new();
+        doc.insert("scanned".to_string(), Value::from(recs.len()));
+        fit_clone_rows(&mut doc, "clones", &rows);
+        assert!(Value::Object(doc.clone()).to_string().len() <= MCP_MAX_RESULT_BYTES);
+        assert!(
+            doc["omitted"].as_u64().unwrap() > 0,
+            "this fixture must truncate"
+        );
+        // …and the two rows that record what happened survived the truncation.
+        let kept: Vec<&str> = doc["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["outcome"].as_str().unwrap())
+            .collect();
+        assert_eq!(kept[0], "error");
+        assert_eq!(kept[1], "deleted");
+        // The whole-sweep figures are never the thing that gets dropped.
+        assert_eq!(doc["scanned"], json!(400));
+    }
 
     #[test]
     fn the_sweep_only_considers_git_clones_directly_under_a_root() {
@@ -39277,18 +51789,156 @@ mod closure_gate_tests {
         }
         let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
         assert_eq!(
-            preflight_report(&path),
+            preflight_report(&path, &[]),
             0,
             "a PATH carrying every declared tool satisfies preflight"
         );
         // Drop one and the same code says so — this is the exact question `closure-preflight`
         // asks of each runner's baked PATH, so the two cannot answer differently.
         std::fs::remove_file(bin.join(HARNESS_TOOLS[0].bin)).unwrap();
-        assert_eq!(preflight_report(&path), CLOSURE_UNSATISFIED);
+        assert_eq!(preflight_report(&path, &[]), CLOSURE_UNSATISFIED);
         assert_eq!(
-            preflight_report(&std::ffi::OsString::new()),
+            preflight_report(&std::ffi::OsString::new(), &[]),
             CLOSURE_UNSATISFIED,
             "an empty environment resolves nothing"
+        );
+    }
+
+    #[test]
+    fn an_unsatisfied_capability_fails_a_path_that_carries_every_tool() {
+        let s = Scratch::new("preflight-caps");
+        let bin = s.bindir("bin");
+        for t in HARNESS_TOOLS {
+            s.stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        assert_eq!(
+            preflight_report(&path, &[(CAP_GH_AUTH, None), (CAP_SOL_SHELL, None)]),
+            0,
+            "every tool present and every capability holding is the passing case"
+        );
+        // The capability is the POINT: `gh` resolving from PATH is exactly the state in which an
+        // expired token still ends the run, so a satisfied tool list must not carry the verdict.
+        assert_eq!(
+            preflight_report(
+                &path,
+                &[
+                    (CAP_GH_AUTH, Some("expired".to_string())),
+                    (CAP_SOL_SHELL, None)
+                ]
+            ),
+            CLOSURE_UNSATISFIED
+        );
+        assert_eq!(
+            preflight_report(&path, &[(CAP_SOL_SHELL, Some("no forge".to_string()))]),
+            CLOSURE_UNSATISFIED
+        );
+    }
+
+    #[test]
+    fn a_capability_reaches_the_runners_missing_list_by_name() {
+        // The runner scrapes `missing=` and passes it to `run-metrics --preflight-missing`, which
+        // is what makes the abort a recorded ToolingFailure rather than a silent exit. A capability
+        // that failed the gate but never reached that line would abort a run the record could not
+        // explain.
+        let s = Scratch::new("preflight-missing-line");
+        let bin = s.bindir("bin");
+        for t in HARNESS_TOOLS {
+            s.stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        let (code, lines, missing) =
+            preflight_lines(&path, &[(CAP_GH_AUTH, Some("expired".to_string()))]);
+        assert_eq!(code, CLOSURE_UNSATISFIED);
+        assert_eq!(missing, vec![CAP_GH_AUTH.to_string()]);
+        assert!(
+            lines.iter().any(|l| l == &format!("missing={CAP_GH_AUTH}")),
+            "the machine-readable line names the capability: {lines:?}"
+        );
+        assert_eq!(
+            classify_outcome(
+                "",
+                CLOSURE_UNSATISFIED,
+                false,
+                &[CAP_GH_AUTH.to_string()],
+                &InfraRecord::default()
+            ),
+            TraceOutcome::ToolingFailure,
+            "and a run aborted on one records as a tooling failure, never as ok or skipped"
+        );
+    }
+
+    // ---- capability verdicts, over the probe output they are given ----
+
+    #[test]
+    fn a_gh_that_cannot_answer_fails_the_gate() {
+        assert_eq!(
+            gh_auth_unsatisfied(Some(0), "  ✓ Logged in to github.com account x\n"),
+            None,
+            "logged in, and no scopes line to contradict it"
+        );
+        let why = gh_auth_unsatisfied(Some(1), "You are not logged into any GitHub hosts.\n")
+            .expect("a non-zero gh auth status is unsatisfied");
+        assert!(why.contains("exited 1"), "{why}");
+        assert!(
+            why.contains("not logged into"),
+            "the reason quotes gh: {why}"
+        );
+        let why = gh_auth_unsatisfied(None, "No such file or directory (os error 2)")
+            .expect("a gh that could not be spawned is unsatisfied");
+        assert!(why.contains("did not run"), "{why}");
+    }
+
+    #[test]
+    fn a_token_short_of_a_write_scope_fails_the_gate_and_names_the_scope() {
+        let ok = "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n";
+        assert_eq!(gh_auth_unsatisfied(Some(0), ok), None);
+        let why = gh_auth_unsatisfied(Some(0), "  - Token scopes: 'gist', 'repo'\n")
+            .expect("a token without `workflow` cannot dispatch the deploy workflow");
+        assert!(why.contains("workflow"), "{why}");
+        assert!(
+            !why.contains("repo,"),
+            "it names only what is LACKING: {why}"
+        );
+        // `public_repo` is not `repo`, and a substring read would have said it was.
+        let why = gh_auth_unsatisfied(Some(0), "  - Token scopes: 'public_repo', 'workflow'\n")
+            .expect("public_repo cannot write the pipeline's labels and comments");
+        assert!(why.contains("repo"), "{why}");
+    }
+
+    #[test]
+    fn no_scopes_line_is_not_evidence_of_a_missing_scope() {
+        // gh omits the line for token kinds that carry no classic scopes. Inferring a failure from
+        // its absence would abort a run whose token is fine, which is the one way this gate gets
+        // switched off.
+        assert_eq!(gh_token_scopes("  ✓ Logged in to github.com\n"), None);
+        assert_eq!(
+            gh_auth_unsatisfied(Some(0), "  ✓ Logged in to github.com\n"),
+            None
+        );
+        assert_eq!(
+            gh_token_scopes("  - Token scopes: none\n"),
+            Some(vec![]),
+            "a line that says `none` IS evidence, and reads as no scopes at all"
+        );
+        assert!(gh_auth_unsatisfied(Some(0), "  - Token scopes: none\n").is_some());
+    }
+
+    #[test]
+    fn the_sol_shell_probe_is_its_exit_status() {
+        assert_eq!(sol_shell_unsatisfied(Some(0), "forge Version: 1.3.0"), None);
+        assert_eq!(
+            sol_shell_unsatisfied(Some(0), "some other banner"),
+            None,
+            "a working forge that reworded its banner still works"
+        );
+        let why = sol_shell_unsatisfied(Some(1), "error: unable to download 'rainix'\n")
+            .expect("a shell that cannot be realised is unsatisfied");
+        assert!(why.contains("exited 1"), "{why}");
+        assert!(why.contains("unable to download"), "{why}");
+        assert!(
+            sol_shell_unsatisfied(None, "nix not found").is_some(),
+            "a nix that could not be spawned is unsatisfied"
         );
     }
 
@@ -40996,7 +53646,7 @@ mod weaken_closes_tests {
 mod work_tokens_tests {
     use super::{
         agent_tokens, pr_outcome, render_work_tokens, run_work, task_work_items,
-        work_tokens_report, AgentSpend, PrOutcome, RunWork, TaskWork, WorkItem,
+        work_tokens_report, AgentSpend, PrOutcome, RunWork, TaskWork, WorkItem, WorkItemKind,
     };
     use serde_json::{json, Value};
 
@@ -41036,6 +53686,24 @@ mod work_tokens_tests {
         json!({"repo":slug,"pr":pr,"url":"u","closes":closes})
     }
 
+    /// A `push` CALL issued by `parent` — the REWORK edge, which the main loop issues as often as
+    /// a subagent does.
+    fn push_call(tool_id: &str, parent: Option<&str>) -> String {
+        json!({"type":"assistant","parent_tool_use_id":parent,"message":{
+            "id": format!("c_{tool_id}"),
+            "content":[{"type":"tool_use","name":"mcp__fsm__push","id":tool_id,
+                        "input":{"clone":"cyclo.site-pr369"}}]}})
+        .to_string()
+    }
+    /// What `push_apply` answers with: the PR whose head it moved, or a null `pr` and the reason.
+    fn push_result_body(slug: &str, pr: Option<u64>) -> Value {
+        match pr {
+            Some(n) => json!({"repo":slug,"pr":n,"url":"u","branch":"b","head":"abc","moved":true}),
+            None => json!({"repo":slug,"pr":Value::Null,"branch":"b","head":"abc","moved":false,
+                           "prNote":"the remote ref was already at this commit"}),
+        }
+    }
+
     /// THE JOIN: an `open_pr` call lands its work item on the TASK that issued it, keyed by the
     /// same `parent_tool_use_id` the spend is grouped by. Without that the metric has no
     /// denominator at all.
@@ -41058,6 +53726,7 @@ mod work_tokens_tests {
                 slug: "rainlanguage/rain.solmem".to_string(),
                 pr: 76,
                 closes: vec![63],
+                kind: WorkItemKind::Opened,
             }])
         );
         assert_eq!(items.len(), 1, "nothing lands on the main loop");
@@ -41191,10 +53860,14 @@ mod work_tokens_tests {
         }
     }
     fn item(pr: u64) -> WorkItem {
+        item_of(pr, WorkItemKind::Opened)
+    }
+    fn item_of(pr: u64, kind: WorkItemKind) -> WorkItem {
         WorkItem {
             slug: "o/r".to_string(),
             pr,
             closes: vec![],
+            kind,
         }
     }
     fn one_run(tasks: Vec<TaskWork>) -> RunWork {
@@ -41204,6 +53877,7 @@ mod work_tokens_tests {
             tasks,
             main_usd: 10.0,
             main_tokens: 100,
+            main_items: Vec::new(),
             output_usd: 5.0,
             output_tokens: 50,
         }
@@ -41405,6 +54079,196 @@ mod work_tokens_tests {
         });
         assert_eq!(asked, vec!["o/r#76".to_string()]);
         assert_eq!(run.tasks[0].items[0].1, PrOutcome::AwaitingHuman);
+    }
+
+    /// THE SECOND EMITTER. A rework's outcome is a moved head on a PR that already exists, so its
+    /// record is the `push` that moved it — and it is a work item of its own KIND, not an `open_pr`
+    /// with a different shape.
+    #[test]
+    fn a_push_that_moved_a_prs_head_is_a_typed_rework_item() {
+        let trace = [
+            dispatch("toolu_A", "cyclo.site 369 rework"),
+            push_call("toolu_p", Some("toolu_A")),
+            open_pr_result(
+                "toolu_p",
+                push_result_body("cyclofinance/cyclo.site", Some(369)),
+                false,
+            ),
+        ]
+        .join("\n");
+        assert_eq!(
+            task_work_items(&trace).get("toolu_A"),
+            Some(&vec![WorkItem {
+                slug: "cyclofinance/cyclo.site".to_string(),
+                pr: 369,
+                closes: vec![],
+                kind: WorkItemKind::Reworked,
+            }])
+        );
+
+        // A push that names NO PR is not a work item. `push` answers with a null `pr` for every
+        // push it could not tie to a head — nothing moved, no PR on the branch, two PRs at that
+        // head — and each of those is a defensible nothing rather than a guess.
+        let unattributed = [
+            dispatch("toolu_A", "t"),
+            push_call("toolu_p", Some("toolu_A")),
+            open_pr_result(
+                "toolu_p",
+                push_result_body("cyclofinance/cyclo.site", None),
+                false,
+            ),
+        ]
+        .join("\n");
+        assert!(task_work_items(&unattributed).is_empty());
+    }
+
+    /// The KIND is the TRANSITION's, never the payload's: a result cannot claim to be a kind of
+    /// work it is not the record of. And it is matched past the server prefix, like `open_pr`.
+    #[test]
+    fn the_kind_of_work_comes_from_the_transition_that_recorded_it() {
+        for name in ["mcp__fsm__push", "mcp__producer__push", "push"] {
+            let mut body = push_result_body("o/r", Some(9));
+            body["kind"] = json!("opened");
+            let trace = [
+                dispatch("toolu_A", "t"),
+                json!({"type":"assistant","parent_tool_use_id":"toolu_A","message":{"id":"c1",
+                    "content":[{"type":"tool_use","name":name,"id":"toolu_p","input":{}}]}})
+                .to_string(),
+                open_pr_result("toolu_p", body, false),
+            ]
+            .join("\n");
+            assert_eq!(
+                task_work_items(&trace).get("toolu_A").unwrap()[0].kind,
+                WorkItemKind::Reworked,
+                "{name}"
+            );
+        }
+    }
+
+    /// ONE PR IS ONE ITEM. A PR opened and then pushed to is one unit of work under two
+    /// transitions; counting the transitions would inflate the denominator and make the metric
+    /// look better the more times a PR was touched.
+    #[test]
+    fn one_pr_is_one_work_item_however_many_transitions_touched_it() {
+        let opened_then_pushed = [
+            dispatch("toolu_A", "t"),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 76, vec![63]), false),
+            push_call("toolu_p", Some("toolu_A")),
+            open_pr_result("toolu_p", push_result_body("o/r", Some(76)), false),
+        ]
+        .join("\n");
+        let items = task_work_items(&opened_then_pushed);
+        let one = items.get("toolu_A").unwrap();
+        assert_eq!(one.len(), 1, "{one:?}");
+        assert_eq!(one[0].kind, WorkItemKind::Opened, "the stronger claim wins");
+        assert_eq!(one[0].closes, vec![63], "the linkage survives the merge");
+
+        // …in either order, and a DIFFERENT PR is still a second item.
+        let pushed_then_opened = [
+            dispatch("toolu_A", "t"),
+            push_call("toolu_p", Some("toolu_A")),
+            open_pr_result("toolu_p", push_result_body("o/r", Some(76)), false),
+            open_pr_call("toolu_c", Some("toolu_A")),
+            open_pr_result("toolu_c", pr_result("o/r", 76, vec![63]), false),
+            push_call("toolu_p2", Some("toolu_A")),
+            open_pr_result("toolu_p2", push_result_body("o/r", Some(77)), false),
+        ]
+        .join("\n");
+        let two = task_work_items(&pushed_then_opened);
+        let two = two.get("toolu_A").unwrap();
+        assert_eq!(two.len(), 2, "{two:?}");
+        assert_eq!(two[0].kind, WorkItemKind::Opened);
+        assert_eq!(two[1].pr, 77);
+        assert_eq!(two[1].kind, WorkItemKind::Reworked);
+    }
+
+    /// BLIND SPOT 1. The main loop is an ACTOR: a run that dispatched nothing and did its work
+    /// inline produced work items, and dropping them made the whole run invisible — which is
+    /// exactly what happened to the first capped run, whose 3 items were all inline reworks.
+    #[test]
+    fn the_main_loop_carries_the_work_items_it_produced_inline() {
+        let inline = [
+            spend("m_main", None, 1_000_000),
+            push_call("toolu_p", None),
+            open_pr_result(
+                "toolu_p",
+                push_result_body("cyclofinance/cyclo.site", Some(369)),
+                false,
+            ),
+        ]
+        .join("\n");
+        let run = run_work("20260804T114433Z", "producer", &inline, &mut |_| {
+            PrOutcome::AwaitingHuman
+        });
+        assert!(run.tasks.is_empty(), "it dispatched nothing");
+        assert_eq!(run.main_items.len(), 1);
+        assert_eq!(run.main_items[0].0.pr, 369);
+        assert_eq!(run.main_tokens, 1_000_000, "its spend is still its own");
+        assert!(run.has_actor(), "a run that worked inline is in the corpus");
+
+        // A run with spend and NO record is NOT in the corpus. Admitting it would charge its whole
+        // spend to churn on the strength of an absence — the inference this metric refuses.
+        let silent = [spend("m_main", None, 1_000_000)].join("\n");
+        let quiet = run_work("r", "producer", &silent, &mut |_| PrOutcome::Merged);
+        assert!(!quiet.has_actor());
+    }
+
+    /// BLIND SPOT 1, at the report. An inline item counts in the DENOMINATOR like any other; its
+    /// cost is NOT charged to a bucket, because the main loop's spend is orchestration and inline
+    /// work in one number and the trace holds no boundary between them. The report says so.
+    #[test]
+    fn an_inline_item_is_in_the_denominator_and_carries_no_per_item_cost() {
+        let runs = [RunWork {
+            run_id: "20260804T114433Z".to_string(),
+            role: "producer".to_string(),
+            tasks: Vec::new(),
+            main_usd: 60.0,
+            main_tokens: 109_000_000,
+            main_items: vec![
+                (item_of(369, WorkItemKind::Reworked), PrOutcome::Merged),
+                (
+                    item_of(400, WorkItemKind::Reworked),
+                    PrOutcome::AwaitingHuman,
+                ),
+            ],
+            output_usd: 2.9,
+            output_tokens: 160_556,
+        }];
+        let r = work_tokens_report(&runs, &[]);
+        assert_eq!(
+            r["buckets"]["landed"]["items"],
+            json!(1),
+            "in the denominator"
+        );
+        assert_eq!(r["buckets"]["delivered-awaiting-human"]["items"], json!(1));
+        // …and NOT in the bucket's cost: every dollar of it is the main loop's.
+        assert_eq!(r["buckets"]["landed"]["usd"], json!(0.0));
+        assert_eq!(r["buckets"]["landed"]["tasks"], json!(0));
+        assert_eq!(r["mainLoopUsd"], json!(60.0));
+        assert_eq!(r["corpus"]["inlineItems"], json!(2));
+        assert_eq!(r["corpus"]["inlineRuns"], json!(1));
+        assert_eq!(r["corpus"]["itemsByKind"]["reworked"], json!(2));
+        // The headline still works, because it was always TOTAL over items: 60 + 2.9 over one.
+        assert_eq!(r["totalUsd"], json!(62.9));
+        assert_eq!(r["usdPerLandedItem"], json!(62.9));
+        assert_eq!(r["usdPerDeliveredItem"], json!(31.45));
+        // The run names its inline items rather than only counting them.
+        assert_eq!(r["runs"][0]["inlineItems"][0]["pr"], json!("o/r#369"));
+        assert_eq!(r["runs"][0]["inlineItems"][0]["kind"], json!("reworked"));
+
+        let text = render_work_tokens(&r);
+        assert!(text.contains("0 tasks, 2 inline items"), "{text}");
+        assert!(text.contains("2 reworked"), "{text}");
+        // THE CAVEAT #184 asks for: a whole-run number must not be presented as a per-item one.
+        let notes = r["notes"].as_array().unwrap();
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.as_str().unwrap().contains("NO per-item cost")),
+            "{notes:?}"
+        );
+        assert!(text.contains("NO per-item cost"), "in both renderings");
     }
 
     /// Every input-side class is summed, because the question is what landing COST — and a reader
