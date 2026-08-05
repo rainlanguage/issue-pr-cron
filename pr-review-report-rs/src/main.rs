@@ -54077,6 +54077,28 @@ mod delegation_111_tests {
             HEAD,
         );
         assert_eq!(design_delegation(&spoofed, HEAD), Delegation::Parked);
+        // An EMPTY pin names no tree either. `Rework note @: …` and `Rework note @   : …` carry
+        // the marker and the `@` but nothing to compare a head against, so they parse to NO
+        // anchor and fail-safe to parked at every head — the same answer as the unpinned legacy
+        // shape, for the same reason. The distinction that matters is against `Executed`: a note
+        // that read as pinned-but-empty would name a head no push can ever match, so the FIRST
+        // push past it would classify the delegation as executed and let the re-vet clear a
+        // `human:design` no producer was ever ordered to work.
+        assert_eq!(rework_note_anchor("Rework note @: do X"), None);
+        assert_eq!(rework_note_anchor("Rework note @   : do X"), None);
+        for body in ["Rework note @: do X", "Rework note @   : do X"] {
+            let blank_pin = pr(&[], vec![trusted(body)], HEAD);
+            assert_eq!(
+                design_delegation(&blank_pin, HEAD),
+                Delegation::Parked,
+                "{body} is not an order at the current head"
+            );
+            assert_eq!(
+                design_delegation(&blank_pin, OLD),
+                Delegation::Parked,
+                "{body} is not an executed delegation once the head moves"
+            );
+        }
     }
 
     // ---- MODEL: the narrowed sacred gate --------------------------------------------------------
