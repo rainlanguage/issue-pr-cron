@@ -1789,6 +1789,70 @@ driving one skipped. The other two are still bash and still untested —
 [#10](https://github.com/rainlanguage/issue-pr-cron/issues/10) tracks giving
 them the same treatment.
 
+### The Solidity toolchain rule is checked AFTER the run, not blocked during it
+
+`sol-toolchain <dir>`
+([#195](https://github.com/rainlanguage/issue-pr-cron/issues/195)) gave the
+producer a way to ASK which toolchain a checkout's own CI judges it with.
+Nothing read the answer back, so the rule about it was prose with no check — and
+a rule with no check cannot report its own violation. That is how
+[#116](https://github.com/rainlanguage/issue-pr-cron/issues/116) was found: a
+parked PR whose one permitted back-off attempt had gone on a diff that could
+never pass. Note what #116 was **not**: the prompt said
+`github:rainlanguage/rainix#sol-shell` and the producer ran exactly that. The
+rule was wrong, not the compliance. So the thing to build is not a bigger
+prompt, it is a way for the next wrong rule to announce itself.
+
+`sol-toolchain-audit <trace>` is that. It reads the run's **own trace**: the
+`sol-toolchain` call and its output are recorded there, next to the
+`nix develop` lines that came after, so the comparison is between what the run
+was told and what the run then ran. It reports, per Solidity check, `matched` /
+`skew` / `unasked` / `unmatchable`, plus its own two blind spots — an invocation
+that names no checkout, and one that enters the working directory's flake
+without naming that directory. `campaign-run.sh` runs it after `run-metrics` and
+appends the report to the run log. Exit 3 on any skew or unasked; the blind
+spots and `unmatchable` change no exit code.
+
+**A blocking `PreToolUse` hook was the alternative, and the measurement is what
+decided against it.** Over the 21 retained traces (4,574 Bash calls, 508 `nix`
+invocations):
+
+| Measured                                                  | Count                                          |
+| --------------------------------------------------------- | ---------------------------------------------- |
+| Solidity checks (`is_sol_check`, so no `soldeer install`) | **197**, across **23 work clones** in 5 runs   |
+| …that named no checkout, so nothing could resolve one     | 8 — every one a `forge --version` health check |
+| …run in a shell that checkout's own CI does **not** run   | **170** of the 189 resolvable                  |
+| Busiest single run                                        | 73 checks                                      |
+
+So the exposure is not small, and "nothing, with a number" is not the answer
+here. But it is also **tens of checks per run, concentrated in a handful of
+clones** — which is exactly the shape that makes per-call resolution the wrong
+place to pay. A hook would resolve on the Bash call (73 resolutions on the
+busiest run, each a `RAINIX_SHA` read out of the reusable at a floating ref, so
+two GitHub reads apiece) where the audit resolves nothing at all, because the
+answer is already in the trace. And a hook must fail OPEN when that network read
+fails, or a blip stops the run — which means the guard is absent exactly when
+the network is flaky, while the audit's verdict is computed from a file after
+the fact and cannot be lost that way. What the audit gives up is real: it does
+not prevent the wasted attempt inside the run it audits. It moves the discovery
+of the next wrong rule from a parked PR weeks later to the end of the run that
+obeyed it.
+
+Reproduce the table with the shipped subcommand:
+
+```
+for f in runs/*.jsonl; do pr-review-report sol-toolchain-audit "$f"; done
+```
+
+Every retained trace predates #195, so none of them ever called `sol-toolchain`
+and all 189 resolvable checks report `unasked` — which is the honest verdict for
+a run that had no way to ask. The `skew` column above is the same corpus
+re-audited with each clone's live `sol-toolchain` answer injected ahead of it,
+which is what turns `unasked` into a comparison. The skew is not notional: every
+rainix-pin repo's CI runs `RAINIX_SHA` `53e96a7d` (2026-07-10), and the
+`github:rainlanguage/rainix#sol-shell` those runs used floats on a rainix HEAD
+37 commits and 20 days ahead of it.
+
 ### Why the producer has no interpreter
 
 Measured over 18 producer traces
