@@ -15241,6 +15241,39 @@ fn ruling_work_report(work: &RulingWork, note_deduped: bool) -> &'static str {
     }
 }
 
+/// Everything a ruling's disposition contributes to the transition, from the already-fetched
+/// subject: the work-order comment a delegation posts (pinned to the ruling's own `anchor`),
+/// whether that exact body is already on the record, and the report tail naming the disposition.
+/// One read, no writes.
+///
+/// The PR and the issue transition differ only in which subject they fetched, so deciding this
+/// once is what keeps the two reports from describing the same disposition differently.
+fn ruling_work_parts(
+    subject: &Value,
+    anchor: &str,
+    work: &RulingWork,
+) -> (Option<String>, bool, &'static str) {
+    let body = match work {
+        RulingWork::Delegate(order) => Some(rework_note_comment(anchor, order)),
+        _ => None,
+    };
+    let note_deduped = body
+        .as_deref()
+        .is_some_and(|b| rework_note_recorded(subject, b));
+    let work_tail = ruling_work_report(work, note_deduped);
+    (body, note_deduped, work_tail)
+}
+
+/// PURE: the dry run's work-order line — the body it would post, the skip a deduped order gets
+/// instead, or nothing at all for a ruling that carries no order.
+fn dry_run_work_line(body: Option<&str>, note_deduped: bool) -> String {
+    match body {
+        Some(b) if !note_deduped => format!("\n  work order: {}", b.replace('\n', " / ")),
+        Some(_) => "\n  work order: skip (identical order already posted)".to_string(),
+        None => String::new(),
+    }
+}
+
 /// PURE: the usage refusal for a ruling verb outside a subject's vocabulary.
 fn human_ruling_vocab_error(set: &[&'static str], ruling: &str, subject: &str) -> (i32, String) {
     (
@@ -15398,14 +15431,7 @@ fn human_rule_pr_apply(
             } => (anchor, supersedes, clears, has_target, skip_comment),
         };
     let comment = human_rule_comment(&anchor, ruling.trim(), note);
-    let rework_body = match work {
-        RulingWork::Delegate(order) => Some(rework_note_comment(&anchor, order)),
-        _ => None,
-    };
-    let note_deduped = rework_body
-        .as_deref()
-        .is_some_and(|b| rework_note_recorded(&prj, b));
-    let work_tail = ruling_work_report(work, note_deduped);
+    let (rework_body, note_deduped, work_tail) = ruling_work_parts(&prj, &anchor, work);
     if dry_run {
         return Ok(format!(
             "[dry-run] {}\n  comment: {}{}",
@@ -15424,11 +15450,7 @@ fn human_rule_pr_apply(
             } else {
                 comment.replace('\n', " / ")
             },
-            match &rework_body {
-                Some(b) if !note_deduped => format!("\n  work order: {}", b.replace('\n', " / ")),
-                Some(_) => "\n  work order: skip (identical order already posted)".to_string(),
-                None => String::new(),
-            }
+            dry_run_work_line(rework_body.as_deref(), note_deduped)
         ));
     }
     human_rule_write(
@@ -15539,14 +15561,7 @@ fn human_rule_issue_apply(
         } => (anchor, supersedes, clears, has_target, skip_comment),
     };
     let comment = human_rule_comment(&anchor, ruling.trim(), note);
-    let rework_body = match work {
-        RulingWork::Delegate(order) => Some(rework_note_comment(&anchor, order)),
-        _ => None,
-    };
-    let note_deduped = rework_body
-        .as_deref()
-        .is_some_and(|b| rework_note_recorded(&j, b));
-    let work_tail = ruling_work_report(work, note_deduped);
+    let (rework_body, note_deduped, work_tail) = ruling_work_parts(&j, &anchor, work);
     if dry_run {
         return Ok(format!(
             "[dry-run] {}\n  comment: {}{}",
@@ -15565,11 +15580,7 @@ fn human_rule_issue_apply(
             } else {
                 comment.replace('\n', " / ")
             },
-            match &rework_body {
-                Some(b) if !note_deduped => format!("\n  work order: {}", b.replace('\n', " / ")),
-                Some(_) => "\n  work order: skip (identical order already posted)".to_string(),
-                None => String::new(),
-            }
+            dry_run_work_line(rework_body.as_deref(), note_deduped)
         ));
     }
     human_rule_write(
