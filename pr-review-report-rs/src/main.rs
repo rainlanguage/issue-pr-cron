@@ -5144,6 +5144,31 @@ fn sol_toolchain_lines(
     }
 }
 
+/// PURE: the workflows to classify, and the FIRST read failure among them.
+///
+/// Split out of the directory walk so "a read failure is not an absence" is testable without a
+/// filesystem that can be made to fail on demand. A single unreadable FILE counts, not just an
+/// unreadable directory: it could be the one workflow that gates the repo, and dropping it
+/// silently is indistinguishable from the repo having no Solidity CI.
+fn collect_workflows<I>(reads: I) -> (Vec<(String, String)>, Option<String>)
+where
+    I: IntoIterator<Item = Result<(String, String), String>>,
+{
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut unreadable = None;
+    for r in reads {
+        match r {
+            Ok(wf) => out.push(wf),
+            Err(why) => {
+                unreadable = Some(why);
+                break;
+            }
+        }
+    }
+    out.sort();
+    (out, unreadable)
+}
+
 /// `sol-toolchain`: print the `nix develop` prefix this checkout's OWN Solidity checks run in.
 ///
 /// The impure half — the directory walk and the one contents read — is here; every judgment is
@@ -5172,35 +5197,29 @@ fn sol_toolchain_mode(dir: &str) -> i32 {
     // rather than swallowed — including a single unreadable FILE, which would silently drop the
     // one workflow that gates the repo.
     let wf_dir = std::path::Path::new(dir).join(".github/workflows");
-    let mut workflows: Vec<(String, String)> = Vec::new();
-    let mut unreadable: Option<String> = None;
-    match std::fs::read_dir(&wf_dir) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // no workflows at all: `absent`
-        Err(e) => unreadable = Some(format!("{}: {e}", wf_dir.display())),
-        Ok(entries) => {
-            for e in entries {
-                let e = match e {
-                    Ok(e) => e,
-                    Err(err) => {
-                        unreadable = Some(format!("{}: {err}", wf_dir.display()));
-                        break;
-                    }
-                };
+    let reads: Vec<Result<(String, String), String>> = match std::fs::read_dir(&wf_dir) {
+        // No workflow directory at all is an honest `absent`, not a read failure.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => vec![Err(format!("{}: {e}", wf_dir.display()))],
+        Ok(entries) => entries
+            .map(|e| {
+                let e = e.map_err(|err| format!("{}: {err}", wf_dir.display()))?;
                 let name = e.file_name().to_string_lossy().into_owned();
                 if !(name.ends_with(".yaml") || name.ends_with(".yml")) {
-                    continue;
+                    return Ok(None);
                 }
-                match std::fs::read_to_string(e.path()) {
-                    Ok(text) => workflows.push((name, text)),
-                    Err(err) => {
-                        unreadable = Some(format!("{}: {err}", e.path().display()));
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    workflows.sort();
+                let text = std::fs::read_to_string(e.path())
+                    .map_err(|err| format!("{}: {err}", e.path().display()))?;
+                Ok(Some((name, text)))
+            })
+            .filter_map(|r: Result<Option<(String, String)>, String>| match r {
+                Ok(Some(wf)) => Some(Ok(wf)),
+                Ok(None) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect(),
+    };
+    let (workflows, unreadable) = collect_workflows(reads);
     let toolchains = sol_toolchains(&workflows);
     let has_flake = std::path::Path::new(dir).join("flake.nix").is_file();
     if unreadable.is_some() {
@@ -5234,9 +5253,10 @@ fn sol_toolchain_mode(dir: &str) -> i32 {
 #[cfg(test)]
 mod sol_toolchain_tests {
     use super::{
-        agreed_rainix_sha, flake_ref_is_pinned, foreign_sol_toolchain, is_sol_check, names_token,
-        nix_develop_step, rainix_sha, rainix_sol_reusable_ref, sol_toolchain_lines, sol_toolchains,
-        strip_yaml_comment, workflow_gates_a_push, SolToolchain,
+        agreed_rainix_sha, collect_workflows, flake_ref_is_pinned, foreign_sol_toolchain,
+        is_sol_check, names_token, nix_develop_step, rainix_sha, rainix_sol_reusable_ref,
+        sol_toolchain_lines, sol_toolchains, strip_yaml_comment, workflow_gates_a_push,
+        SolToolchain,
     };
 
     /// cyclofinance/cyclo.sol's `rainix.yaml`, the workflow the parked PR was fighting: a matrix of
@@ -5769,6 +5789,37 @@ jobs:
     /// An unreadable checkout yields the same EMPTY toolchain list a repo with no Solidity CI
     /// does. Reporting both as `absent` is this subcommand's own failure mode wearing its own
     /// clothes — knowing nothing is not the same as knowing nothing gates it.
+    /// One unreadable FILE is enough, and it must not be swallowed. The file that fails to read
+    /// could be the only workflow that gates the repo, and dropping it leaves an empty list
+    /// indistinguishable from a repo with no Solidity CI — `absent`, reported confidently.
+    #[test]
+    fn a_single_unreadable_workflow_file_is_reported_not_dropped() {
+        let ok = |n: &str| Ok((n.to_string(), "on: [push]\n".to_string()));
+        let (wfs, unreadable) = collect_workflows(vec![
+            ok("a.yaml"),
+            Err("b.yaml: permission denied".to_string()),
+            ok("c.yaml"),
+        ]);
+        assert_eq!(
+            unreadable.as_deref(),
+            Some("b.yaml: permission denied"),
+            "a file that could not be read is a fact, not a gap to close over"
+        );
+        assert!(
+            wfs.len() < 3,
+            "the read stopped at the failure rather than pretending to a full picture: {wfs:?}"
+        );
+
+        // All-readable is the ordinary path and reports nothing.
+        let (wfs, unreadable) = collect_workflows(vec![ok("b.yaml"), ok("a.yaml")]);
+        assert_eq!(unreadable, None);
+        assert_eq!(
+            wfs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            ["a.yaml", "b.yaml"],
+            "sorted, so the report is stable across filesystem ordering"
+        );
+    }
+
     #[test]
     fn an_unreadable_checkout_is_not_absent() {
         let (code, out) = sol_toolchain_lines(
