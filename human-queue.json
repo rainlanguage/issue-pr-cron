@@ -905,20 +905,8 @@
     },
     "leak": {
       "leak": {
-        "count": 3,
+        "count": 1,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 168,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/168",
-            "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 156,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
-            "title": "Draw the open-issue population's size, mean and median age as its own band"
-          },
           {
             "repo": "rainlanguage/flow",
             "number": 475,
@@ -1122,7 +1110,7 @@
         ]
       },
       "un-vetted": {
-        "count": 28,
+        "count": 27,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1135,12 +1123,6 @@
             "number": 82,
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/82",
             "title": "feat(audit): hot-key custody rule — the deploy key deploys and holds NOTHING (#81)"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 109,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/109",
-            "title": "Refuse to consume a sentinel stack that lies above the allocated memory pointer"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1902,6 +1884,12 @@
   ],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 157,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/157",
+      "title": "Stale hardcoded population figures remain in dashboard.test.js comments"
+    },
+    {
       "repo": "S01-Issuer/s01.ops",
       "number": 192,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/192",
@@ -2074,12 +2062,6 @@
       "number": 109,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/109",
       "title": "A gc for FSM state: find and heal the states no transition produces"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 140,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/140",
-      "title": "Sparkline issue age, not just queue size — the count cannot tell turnover from stagnation"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -5524,20 +5506,6 @@
   ],
   "leaks": [
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 168,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/pull/168",
-      "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle",
-      "reason": "🤖 ai:producer  Correction to my previous note: the version slot was **not** yours to decide after all — CI settled it. The `a plugin change bumps its version` gate went red at `24f1252`:  > plugins/human-fsm changed but plugins/human-fsm/.claude-plugin/plugin.json is still 0.7.0. Bump it (and the marketplace entry to match)  Both sides had independently bumped to 0.7.0, so the merge took that line cleanly and the version stopped moving relative to `main` — which is exactly what the gate measures. Since `main` shipped 0.7.0 with different content, this branch's release is **0.8.0**; both files bumped at `35abfd5`, and `plugin-version-lockstep` reports `ok human-fsm 0.8.0` locally."
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 156,
-      "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
-      "title": "Draw the open-issue population's size, mean and median age as its own band",
-      "reason": "🤖 ai:producer  Screenshot backfill of the changed section — the `untouched (no PR)` backlog box in the producer-action row. Rendered `site/pipeline.html` at PR head `e8e679a` against this PR's merge base `162f5b7`, with the repo's pinned harness (`nix run .#screenshot`, headless chromium + bundled dejavu fontconfig), 1300px light theme.  ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/rain-org-health-156.png)  **Fixture, and why.** The recording half (https://github.com/rainlanguage/issue-pr-cron/pull/167) is still open, so the live artifacts carry no `ages` at all — I checked: 0 of 181 lines in the live `human-queue-history.jsonl`. Rendered against live data this section is invisible by design, which is a worthless screenshot. So both variants are served from the **live** `human-queue.json` + `human-queue-history.jsonl` (fetched today) with an `ages.uncoveredIssues` block added to the newest 60 history lines and to the snapshot — median drifting 36.0 → 41.5 then dropping to 33.4 on the newest point, oldest ~795d. Only the two URL constants were repointed at the local copies; no render code was touched.  **What the render confirms.**  - After shows the labelled line `median 33.4d` under `untouched (no PR)`, unit attached — before shows no such line. - The sparkline gains a second, visibly **dashed and thinner** series; before is a single solid line. - The magnified panel is the same SVG enlarged by CSS so it re-renders as vector (not an upscaled bitmap): solid = the 620-item queue, dashed = the median age, each with its own endpoint dot, and the two clearly do not share a y-scale — the age line rises into a peak and falls off at the end while the count line stays roughly flat across the same window.  One honest note on the axis: both series happen to span nearly the whole chart here rather than the age line starting mid-window. That is not the fixture flattering itself — `counts.uncoveredIssues` is itself a recently-added key, present on only 64 of the 181 history lines (earliest `2026-07-26T06:22Z`), so the shared time axis starts about where my injected ages start. The short-line-from-mid-window case is the one the tests cover. "
-    },
-    {
       "repo": "cyclofinance/cyclo.site",
       "number": 412,
       "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
@@ -5582,23 +5550,23 @@
     "closeCandidateIssues": 5,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 5,
-    "leaks": 7,
-    "totalProducerPrs": 154,
+    "leaks": 5,
+    "totalProducerPrs": 151,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 599,
-    "unvetted": 28,
+    "unvetted": 27,
     "reject": 65,
     "relink": 0,
     "closeCandidatePrs": 4,
     "humanReject": 0,
     "humanDesign": 6,
     "humanCloseCandidate": 0,
-    "openIssues": 769
+    "openIssues": 767
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.2,
-      "medianDays": 99.0,
+      "meanDays": 317.0,
+      "medianDays": 99.1,
       "oldestDays": 1654.6
     }
   }
