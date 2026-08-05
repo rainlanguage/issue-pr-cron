@@ -442,11 +442,14 @@ Three fields are worth their own note:
   prod-pin check) and is owed a lifecycle migration, which is the producer's
   `flag-blocked-on --blocked-by <migration ref>` route. Of the six open PRs
   carrying the marker on 2026-07-29, all six had it in the body and one also had
-  it in the title, so title-matching would have found one of six. It is the same
-  predicate the producer's own migration routing reads, shared rather than
-  re-derived, so "the producer flags this blocked on the migration" and "the
-  human sees a repo that needs migrating" cannot be answered differently — and a
-  retitle cannot move the signal.
+  it in the title, so title-matching would have found one of six. It is built
+  from the same two SHAPE predicates the producer's own migration routing reads,
+  shared rather than re-derived, so the two can never disagree about whether the
+  repo is legacy-shaped — and a retitle cannot move the signal. They diverge on
+  exactly one further input, deliberately: the producer also reads whether the
+  old choreography deploy-confirmed the CURRENT head and declines to flag when
+  it did, while this row stays head-blind, because that confirmation resolved
+  one head's pins and left the repo's shape untouched.
 
 It cannot be refused for size. Every variable-length field is capped, so a full
 page's worst case is arithmetic the compiler checks
