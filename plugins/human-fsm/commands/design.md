@@ -47,11 +47,17 @@ raw `gh`, no marker to mistype. Both records pin the same sha, so they go stale
 together when the producer pushes the rework.
 
 **If it refuses with `is an ISSUE, not a pull request`**, run the command that
-refusal names, with the same NOTE and the same disposition flag:
+refusal names, with the same NOTE and **the same disposition you chose above** —
+the issue side takes the same two spellings and refuses a bare call the same
+way, so carry the one you picked rather than the one you read first:
 
 ```
 pr-review-report human-rule-issue <slug> <n> design <NOTE> --rework <WORK ORDER>
+pr-review-report human-rule-issue <slug> <n> design <NOTE> --park
 ```
+
+The two are not interchangeable: `--rework` posts the trusted work order beside
+the ruling, `--park` posts no order at all. Copy out the one you chose.
 
 On an issue carrying a **live** producer close-candidate flag this is refused on
 purpose: `human:design` there would strand the flag, since every AI transition
