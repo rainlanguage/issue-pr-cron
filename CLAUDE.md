@@ -116,9 +116,9 @@ transition functions:
 | `sol-toolchain-audit <trace>`                                                   | the CHECK on the rule above (#203): every Solidity check the run ran, against the toolchain `sol-toolchain` named for that checkout — `matched` / `skew` / `unasked` / `unmatchable`, plus the audit's own two blind spots (an invocation naming no checkout, one entering the working directory's flake without naming it). Read out of the run's OWN trace, where the answer and the `nix develop` that followed are both recorded, so it costs no network read and cannot stop a run. Exit 3 on skew or unasked; `campaign-run.sh` appends it to the run log                                       |
 | `unvetted_close_candidates` (MCP)                                               | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `record_close_candidate_verdict` (MCP)                                          | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `human-rule <owner/repo> <n> <ruling> "<note>"`                                 | the HUMAN's PR ruling: label + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling). Park-or-delegate is chosen HERE (#111) and belongs to two verbs only: `reject` REQUIRES `--rework "<order>"` / `--rework-file <path>`, which emits the trusted `Rework note` work order in the same call; `design` takes exactly one of `--rework` / `--park` (the explicit pure park); a bare reject/design refuses, and `close-candidate` refuses both flags — the verb is its own disposition, and its refusal names `human-close`                                                        |
+| `human-rule <owner/repo> <n> <ruling> "<note>"`                                 | the HUMAN's PR ruling: label + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling). Park-or-delegate is chosen HERE (#111) and belongs to two verbs only: `reject` REQUIRES `--rework "<order>"` / `--rework-file <path>`, which emits the trusted `Rework note` work order in the same call; `design` takes exactly one of `--rework` / `--park` (the explicit pure park); a bare reject/design refuses; there is no close verb — deciding a close IS executing one, which is `human-close` (#213)                                                                              |
 | `human-rule-issue <owner/repo> <n> <ruling> "<note>"`                           | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed. `reject` / `design` take the same disposition flags on the same terms; `close-candidate` / `keep-open` refuse them                                                                                                                                                                                                                                                                                                                                                                     |
-| `human-close <owner/repo> <n> "<note>"`                                         | the HUMAN's TERMINAL edge on either subject: rule `close-candidate`, retire the pending `ai:close-candidate`, close — ONE transition (#94)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `human-close <owner/repo> <n> "<note>"`                                         | the HUMAN's TERMINAL edge on either subject: record the `close-candidate` ruling comment, close, retire the pending `ai:close-candidate` — ONE transition, in that tear-safe order (#94, #213)                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `record-close-candidate-verdict <owner/repo> <n> <v> …`                         | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `require-qa-block`                                                              | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session — including the ones with no MCP surface, which is the only population still reaching for `gh pr create` now `open_pr` exists                                                                                                                                                                                                                                                                                                             |
 | `open_pr` (MCP)                                                                 | the PRODUCER'S OUTPUT EDGE: open the PR for a pushed branch, assigned, with a typed `closes` linkage and a body `carries_qa_block` has already accepted — and a RESULT carrying the PR number, so the trace holds `{agent, repo, issue, PR}` as typed data                                                                                                                                                                                                                                                                                                                                            |
@@ -307,16 +307,15 @@ it finds is a different PR's code.
 - **Human decisions protect AUTHORSHIP, and a ruling is an INPUT (#111).** No AI
   actor ever writes a `human:*` label, and none removes one as an OVERRIDE of
   the human: a native `APPROVED`/`CHANGES_REQUESTED` review, a `👤 human` ruling
-  pinned to the CURRENT head, an absolutely-parking label
-  (`human:close-candidate`, retired `human:reject`), or an un-executed
-  `human:design` is never overwritten by the vetter — `--record-verdict` refuses
-  (exit 3), closing the TOCTOU race. But absolute parking was the ruled-out
-  overreaction: a ruling is an input the machine EXECUTES. A delegated
-  `human:design` (its trusted `Rework note` pinned at head) is the producer's
-  work order; once executed (the push moves the head past the pin) the PR is
-  un-vetted and the verdict that re-judges it clears the spent label —
-  clearing-by-execution, the completion of what the human asked, not an
-  override. Pure parking survives only as the explicit `--park` spelling.
+  pinned to the CURRENT head, an absolutely-parking label (the retired
+  `human:reject`), or an un-executed `human:design` is never overwritten by the
+  vetter — `--record-verdict` refuses (exit 3), closing the TOCTOU race. But
+  absolute parking was the ruled-out overreaction: a ruling is an input the
+  machine EXECUTES. A delegated `human:design` (its trusted `Rework note` pinned
+  at head) is the producer's work order; once executed (the push moves the head
+  past the pin) the PR is un-vetted and the verdict that re-judges it clears the
+  spent label — clearing-by-execution, the completion of what the human asked,
+  not an override. Pure parking survives only as the explicit `--park` spelling.
 - **A reject is ONE state, and the ruler rides on the comment (#133).**
   `ai:reject` and `human:reject` demanded the same move from the same actor, so
   they are one state: `ai:reject`, whoever ruled. The label says what the work
@@ -356,23 +355,29 @@ it finds is a different PR's code.
   checked against a diff that is not there is not checked, and a guard that
   silently stops firing is this very failure one level up, inside the thing
   built to prevent it.
-- **The human's TERMINAL edge is a transition too.** `gh issue close` knows
-  nothing about the FSM, so a hand-close left `ai:close-candidate` attached: 74
-  closed subjects org-wide (55 issues, 19 PRs) carried it when #94 was filed, a
-  state no modeled transition produces. `human-close` is that edge as ONE
-  transition — comment, `human:close-candidate`, retire the pending flag, close,
-  in that order, with the close LAST because a closed subject reads as moot to
-  every ruling plan. It retires `ai:close-candidate` and no other `ai:*` label:
-  that one means "a human still has to ACT", and closing is the act. Chaining a
-  ruling tool with a Bash `gh close` would put the order and the flag clear in a
-  prompt, which is exactly the half that was wrong every time.
-- **A ruling names its POPULATION.** `ai:close-candidate` covers two separately
-  sized sets — `closeCandidateIssues` (a producer claim on an issue) and
-  `lanes.vetter-verdicts.ai:close-candidate` (the vetter's own verdict on a PR).
-  Every human transition takes a full `owner/repo#n`; where it can act on either
-  it READS the subject's `url` rather than trusting which command was typed, and
-  where it cannot it refuses by naming what was referenced and printing the
-  command that fits — in both directions.
+- **The human's TERMINAL edge is a transition too — decide+do, no state between
+  (#213).** `gh issue close` knows nothing about the FSM, so a hand-close left
+  `ai:close-candidate` attached: 74 closed subjects org-wide (55 issues, 19 PRs)
+  carried it when #94 was filed, a state no modeled transition produces.
+  `human-close` is that edge as ONE transition — the pinned `👤 human` ruling
+  comment, the close, then the flag retirement, in that order, writing NO label:
+  the comment alone is the durable intent, and a tear between it and the close
+  is the torn-close signature the vetter's state-load completes. It retires
+  `ai:close-candidate` and no other `ai:*` label: that one means "a human still
+  has to ACT", and closing is the act. Chaining a ruling tool with a Bash
+  `gh close` would put the order and the flag clear in a prompt, which is
+  exactly the half that was wrong every time.
+- **A ruling names its POPULATION.** `ai:close-candidate` is ONE machine over
+  both subject types (#211/#212), but on a PR the label has two distinct
+  origins: a PRODUCER FLAG (a claim the vetter judges, whose reject returns the
+  PR to the vet queue) or the VETTER'S OWN `close` verdict (already judged — the
+  human's, via `human-close`; `record-close-candidate-verdict` refuses it
+  because no producer claim exists there to judge). The inventories are the
+  mixed `closeCandidateUnvetted` / `closeCandidateUpheld` arrays — no lane holds
+  a flagged PR. Every human transition takes a full `owner/repo#n`; where it can
+  act on either subject it READS the subject's `url` rather than trusting which
+  command was typed, and where it cannot it refuses by naming what was
+  referenced and printing the command that fits — in both directions.
 - **A human ruling is a transition too, and it pins to what it ruled on.**
   `human-rule` / `human-rule-issue` are the only sanctioned way to write a
   `human:*` label: raw `gh issue edit --add-label` binds to nothing and, on an

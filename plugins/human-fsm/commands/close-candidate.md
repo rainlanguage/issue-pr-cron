@@ -26,11 +26,13 @@ Run **exactly one** command, and nothing else.
 pr-review-report human-close <slug> <n> <NOTE>
 ```
 
-One transition, in a fail-safe order the binary owns: post the `👤 human` ruling
-comment pinned to the head sha (a PR) or to the live producer flag (an issue),
-apply `human:close-candidate`, retire the pending `ai:close-candidate`, then
-close. It resolves PR-or-issue **by lookup**, so the reference alone decides
-which population it acts on and neither you nor this command ever guesses.
+One transition — decide+do, no state between: post the `👤 human` ruling comment
+pinned to the head sha (a PR) or to the live producer flag (an issue), close,
+then retire the pending `ai:close-candidate`. The comment alone is the durable
+intent; a tear between it and the close is completed by the vetter's own
+state-load. It resolves PR-or-issue **by lookup**, so the reference alone
+decides which population it acts on and neither you nor this command ever
+guesses.
 
 On a subject that is already closed it clears a stale `ai:close-candidate` and
 writes no ruling — the close is already on the record, and a reason dated today
@@ -42,10 +44,13 @@ would not be one.
 pr-review-report record-close-candidate-verdict <slug> <n> reject <NOTE>
 ```
 
-This drops `ai:close-candidate` and returns the issue to the producer's
-uncovered queue, which may re-flag it on better evidence. It is **issue-only** —
-a producer flag is a claim on an issue; on a PR the same label is the vetter's
-own `close` verdict, and the tool will say so and name the moves that do apply.
+This drops `ai:close-candidate` and returns the subject to its own queue — an
+issue to the producer's uncovered backlog, a PR to the vet queue — either free
+to be re-flagged on better evidence. It judges a producer FLAG on either subject
+type; the one PR it refuses is the one whose label is the vetter's own `close`
+verdict (no producer claim exists there to judge — that PR is yours to `uphold`
+above, or to send back with `/reject`), and the refusal says so and names the
+moves that do apply.
 
 If you mean "this must **never** be flagged again" rather than "not on this
 evidence", that is the sacred ruling `/keep-open`, not this.
