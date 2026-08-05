@@ -16171,11 +16171,16 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
     // whole document, because the prose says `gh issue close` in order to FORBID it — a substring
     // scan cannot tell a prohibition from an instruction, and the first version of this check
     // failed on its own warning.
+    //
+    // The opening fence's INFO STRING is dropped with the fence it belongs to: ```` ```text ```` is
+    // markdown telling a renderer how to highlight the block, not a line anyone runs. Reading it as
+    // one would refuse a language tag as "not a transition of this binary", which is a lint on the
+    // markdown wearing this contract's error message.
     let runnable: Vec<&str> = text
         .split("```")
         .skip(1)
         .step_by(2)
-        .flat_map(|b| b.lines())
+        .flat_map(|b| b.lines().skip(1))
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
@@ -47777,6 +47782,46 @@ mod marketplace_tests {
             "```\npr-review-report human-close a/b 1 n\n```",
         );
         assert_eq!(command_check(&sub, &grantable), Ok(CommandKind::Subcommand));
+    }
+
+    // A fence's LANGUAGE TAG is markdown for a renderer, not a line the caller runs, so the
+    // runnable-line rule looks PAST it — and only past it. Both halves are asserted, because
+    // "ignore the info string" is one careless edit away from "ignore the first command": a tagged
+    // block of legal transitions passes, and a tagged block hiding a raw state change is refused
+    // exactly as an untagged one is.
+    #[test]
+    fn a_fence_language_tag_is_markdown_and_buys_a_command_nothing() {
+        let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
+        let grant = "Bash(pr-review-report human-rule:*)";
+        let order = "pr-review-report human-rule o/r 1 design note --park";
+        // Every spelling of the same block agrees — the tag changes nothing about what runs.
+        for fence in ["```", "```text", "```console", "```sh"] {
+            assert_eq!(
+                command_check(
+                    &command(grant, &format!("{fence}\n{order}\n```")),
+                    &grantable
+                ),
+                Ok(CommandKind::Subcommand),
+                "{fence} is a fence, not a transition"
+            );
+        }
+        // A raw state change is still a raw state change under a tag — smuggled in BELOW a legal
+        // transition, which is the only shape that reaches this refusal at all.
+        let raw = command_check(
+            &command(
+                grant,
+                &format!("```text\n{order}\ngh pr edit 1 --add-label human:design\n```"),
+            ),
+            &grantable,
+        )
+        .unwrap_err();
+        assert!(raw.contains("is not a transition of this binary"), "{raw}");
+        // And a block whose only line IS the tag still runs nothing.
+        let empty = command_check(&command(grant, "```text\n```"), &grantable).unwrap_err();
+        assert!(
+            empty.contains("names no pr-review-report transition"),
+            "{empty}"
+        );
     }
 
     // Permitting a SET is where this check could quietly stop working: resolving only the first

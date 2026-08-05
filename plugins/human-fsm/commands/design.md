@@ -21,7 +21,7 @@ REFUSES a bare call rather than parking by accident:
   The producer works it per your order, and the label clears itself through the
   ordinary rework → un-vetted → re-vet flow:
 
-  ```
+  ```text
   pr-review-report human-rule <slug> <n> design <NOTE> --rework <WORK ORDER>
   ```
 
@@ -29,7 +29,7 @@ REFUSES a bare call rather than parking by accident:
   answer) → park, explicitly. Parked means parked: no AI actor touches the
   subject until you supersede your own ruling:
 
-  ```
+  ```text
   pr-review-report human-rule <slug> <n> design <NOTE> --park
   ```
 
@@ -51,7 +51,7 @@ refusal names, with the same NOTE and **the same disposition you chose above** �
 the issue side takes the same two spellings and refuses a bare call the same
 way, so carry the one you picked rather than the one you read first:
 
-```
+```text
 pr-review-report human-rule-issue <slug> <n> design <NOTE> --rework <WORK ORDER>
 pr-review-report human-rule-issue <slug> <n> design <NOTE> --park
 ```

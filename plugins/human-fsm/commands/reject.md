@@ -22,7 +22,7 @@ infer an owner or a repo.**
 
 Run:
 
-```
+```text
 pr-review-report human-rule <slug> <n> reject <RULING NOTE> --rework <WORK ORDER>
 ```
 
@@ -56,7 +56,7 @@ state.
 exact command for the other subject. Run that one, with the same NOTE and the
 same `--rework`:
 
-```
+```text
 pr-review-report human-rule-issue <slug> <n> reject <RULING NOTE> --rework <WORK ORDER>
 ```
 
