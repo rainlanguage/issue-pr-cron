@@ -567,9 +567,12 @@ by never reaching the flags that have decayed most.
 has not judged is `counts.unvetted`, not a row: a flag the vetter would REJECT
 never reaches a human at all, because the reject strips the label, so presenting
 one early spends judgement on the vetter's turn. And `strandedFlags` names two
-states no AI transition will ever clear — a label with no producer comment
-behind it (the vetter skips it for ever as `skip-no-flag`) and a `reject` whose
-label removal did not land. Both sat invisible until this tool counted them.
+states that park an issue with nothing consuming them — a label with no producer
+comment behind it, and a `reject` whose label is live anyway. Both sat invisible
+until this tool counted them, and counting is all it does: **the vetter's
+state-load is what CLEARS them** (#179), so a flag still listed here is a
+clearance that has not run yet or could not write. See
+[the stranded-flag clearance](#the-stranded-flag-clearance).
 
 The cap is 3 for `next_ready`'s reason and the argument is stronger: there, a
 human who reads a row and does not merge leaves the PR in the queue, whereas
