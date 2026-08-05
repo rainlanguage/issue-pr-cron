@@ -2540,6 +2540,7 @@ mod parallel_queue_tests {
             open_threads: 0,
             fetch_error: 0,
             rate_limited: 0,
+            archived_repo: 0,
         }
     }
 
@@ -20344,6 +20345,10 @@ fn next_ready_doc(rows: Vec<Value>, counts: &QueueCounts, presentable: usize) ->
             // Its OWN key, for the same reason it is its own header segment: a caller reading
             // `fetchError` must not have a rate-limited row folded into it (#129).
             "rateLimited": counts.rate_limited,
+            // `ai:ready` PRs an ARCHIVED repo froze (#206). Reported for the reason every other
+            // withheld count here is: this tool hands the human ONE PR at a time, so a row it
+            // drops is a row the human has no other way to learn about.
+            "archivedRepo": counts.archived_repo,
         },
         "next": rows,
     })
@@ -20811,6 +20816,7 @@ mod next_ready_tests {
             unvetted: usize::MAX,
             open_threads: usize::MAX,
             fetch_error: usize::MAX,
+            archived_repo: usize::MAX,
         };
         let len = next_ready_doc(rows, &counts, usize::MAX).to_string().len();
         assert!(
@@ -20859,9 +20865,10 @@ mod next_ready_tests {
             open_threads: 0,
             fetch_error: 0,
             rate_limited: 0,
+            archived_repo: 0,
         };
-        // Fourteen numeric fields in the envelope: eleven counts plus the three queue figures.
-        let env_len = next_ready_doc(vec![], &counts, 0).to_string().len() + 14 * NR_MAX_DIGITS;
+        // Fifteen numeric fields in the envelope: twelve counts plus the three queue figures.
+        let env_len = next_ready_doc(vec![], &counts, 0).to_string().len() + 15 * NR_MAX_DIGITS;
         assert!(
             env_len <= NR_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NR_ENVELOPE_BYTES} allowed"
@@ -21062,6 +21069,7 @@ mod next_ready_tests {
             unvetted: 4,
             open_threads: 1,
             fetch_error: 0,
+            archived_repo: 0,
         };
         let doc = next_ready_doc(vec![json!({"pr": "o/r#1"})], &counts, 3);
         assert_eq!(doc["counts"]["unvetted"], json!(4));
@@ -22680,6 +22688,8 @@ mod next_close_candidate_tests {
             counts,
             stranded: vec![],
             more_stranded: 0,
+            archived: vec![],
+            more_archived: 0,
             errors: vec![],
             more_errors: 0,
         }
@@ -22690,12 +22700,13 @@ mod next_close_candidate_tests {
     #[test]
     fn the_envelope_states_what_the_page_left_behind() {
         let w = withheld(FlagQueueCounts {
-            flagged: 9,
+            flagged: 10,
             presentable: 5,
             unvetted: 2,
             no_flag: 1,
             human_ruled: 1,
             rejected_still_flagged: 0,
+            archived_repo: 1,
             fetch_errors: 0,
         });
         let doc = next_close_candidate_doc(vec![json!({"issue": "o/r#7"})], &w);
@@ -22703,6 +22714,8 @@ mod next_close_candidate_tests {
         assert_eq!(doc["queue"]["returned"], json!(1));
         assert_eq!(doc["queue"]["more"], json!(4));
         // The counts partition the search: nothing is in two buckets and nothing is in none.
+        // `archivedRepo` is one of the parts (#206) — a flag withheld for a reason that is not in
+        // this list is a flag the sum cannot account for, which is how a silent drop would look.
         let c = &doc["counts"];
         let parts: u64 = [
             "presentable",
@@ -22710,6 +22723,7 @@ mod next_close_candidate_tests {
             "noProducerFlag",
             "humanRuled",
             "vetterRejectedStillFlagged",
+            "archivedRepo",
             "fetchErrors",
         ]
         .iter()
@@ -22809,10 +22823,13 @@ mod next_close_candidate_tests {
                     no_flag: usize::MAX,
                     human_ruled: usize::MAX,
                     rejected_still_flagged: usize::MAX,
+                    archived_repo: usize::MAX,
                     fetch_errors: usize::MAX,
                 },
                 stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
                 more_stranded: usize::MAX,
+                archived: (0..NCC_MAX_ARCHIVED).map(|_| entry.clone()).collect(),
+                more_archived: usize::MAX,
                 errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
                 more_errors: usize::MAX,
             },
@@ -22852,11 +22869,12 @@ mod next_close_candidate_tests {
              {NCC_WITHHELD_FIXED_BYTES} allowed"
         );
 
-        // Twelve numeric fields in the envelope: seven counts, three queue figures, two overflows.
+        // Fifteen numeric fields in the envelope: eight counts, three queue figures, three
+        // overflows.
         let env_len = next_close_candidate_doc(vec![], &withheld(FlagQueueCounts::default()))
             .to_string()
             .len()
-            + 12 * NCC_MAX_DIGITS;
+            + 15 * NCC_MAX_DIGITS;
         assert!(
             env_len <= NCC_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NCC_ENVELOPE_BYTES} allowed"
@@ -33601,6 +33619,7 @@ diff --git a/a.c b/a.c
             open_threads: 0,
             fetch_error: 0,
             rate_limited: 0,
+            archived_repo: 0,
         }
     }
 
@@ -43901,6 +43920,7 @@ mod subject_ref_tests {
                 "blocked on a deploy".to_string(),
             )],
             2,
+            &[sref("rainlanguage/rain.webapp", 354, "pull", "frozen pr")],
         )
     }
 
@@ -43913,6 +43933,7 @@ mod subject_ref_tests {
         "/closeCandidateUnvetted",
         "/closeCandidateUpheld",
         "/uncoveredIssues",
+        "/archivedRepoPrs",
         "/leaks",
     ];
 
