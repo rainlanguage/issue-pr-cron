@@ -5907,6 +5907,1271 @@ fn preflight_lines(
 }
 
 // ---------------------------------------------------------------------------------------------
+// Which Solidity toolchain a checkout's OWN CI runs in (#116).
+//
+// [`SOL_SHELL_FLAKE`] above belongs to the STARTUP health check, and only there: it asks "can this
+// box realise a rainix shell and run forge at all", against whatever rainix HEAD is. It is not an
+// answer to "will this satisfy that repo's CI", and spending it as one is what parked
+// cyclofinance/cyclo.sol#42 — a `forge fmt` at rainix HEAD produced a diff the repo's own pinned
+// `forge fmt --check` rejected, and the single permitted back-off attempt went with it.
+//
+// There is no org-wide answer to substitute for it, which is why this is COMPUTED per checkout
+// instead of written into the prompt. Measured over the 45 foundry repos in the pipeline's org
+// scope, the org's Solidity checks come in two shapes and they want opposite things:
+//
+//   the rainix REUSABLES (`uses: rainlanguage/rainix/.github/workflows/rainix-sol*.yaml@<ref>`,
+//   35 repos) run every step as `nix develop github:rainlanguage/rainix/<RAINIX_SHA>#sol-shell -c`.
+//   The pin is declared in the REUSABLE at `<ref>`; the calling repo's flake.lock is never read by
+//   those checks, so matching it would be a second mismatch in the other direction.
+//
+//   a repo-local workflow (`run: nix develop -c rainix-sol-static`, 4 repos — cyclo.sol among
+//   them) runs the CALLING repo's flake at its own flake.lock pin. That is where "use the repo's
+//   own toolchain" is exactly right, and it is the shape the parked PR was fighting.
+//
+// The remaining repos gate no Solidity check on a push at all. Reporting that is the point rather
+// than a gap: a silent fall back to the health-check flake is how the skew gets reintroduced
+// without leaving a trace anyone can read afterwards.
+// ---------------------------------------------------------------------------------------------
+
+/// The `uses:` prefix that identifies a rainix Solidity reusable. The `workflows/` segment is part
+/// of the match: `rainlanguage/rainix/.github/actions/…` composites are referenced by these same
+/// workflows and pin no toolchain of their own.
+const RAINIX_SOL_REUSABLE: &str = "rainlanguage/rainix/.github/workflows/rainix-sol";
+
+/// The reusables that DECLARE the `RAINIX_SHA` a rainix-hosted Solidity check runs at. The umbrella
+/// `rainix-sol.yaml` a consumer usually names carries no pin — it delegates to these — so the
+/// resolution reads the leaves whatever the consumer wrote.
+const RAINIX_SOL_LEAVES: [&str; 2] = ["rainix-sol-static.yaml", "rainix-sol-test.yaml"];
+
+/// The dev shell a rainix Solidity check runs in. `sol-shell` and `default` share one
+/// `sol-build-inputs` (foundry-bin, slither, solc) in rainix's flake, so at a given rev they are
+/// the same Solidity toolchain and `sol-shell` is merely the slimmer closure.
+const SOL_SHELL_ATTR: &str = "#sol-shell";
+
+/// Exit code for "this checkout has no single Solidity toolchain to verify against". Its own code,
+/// not 1, because the caller must RECORD the fact rather than read it as a failed lookup — an
+/// unrecorded fallback to some other shell is the state #116 exists about.
+const SOL_TOOLCHAIN_UNRESOLVED: i32 = 3;
+
+/// A toolchain some Solidity check in a checkout runs in.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SolToolchain {
+    /// A rainix reusable pinned at this git ref. The `nix develop` argument is the `RAINIX_SHA`
+    /// declared inside the reusable AT that ref — a network read, so it is deliberately not
+    /// carried here: this type stays a pure function of the checkout.
+    Reusable(String),
+    /// `nix develop` with no flake argument: the checkout's OWN flake, at its own flake.lock pin.
+    RepoFlake,
+    /// A flake reference written into the workflow verbatim, e.g. `github:rainlanguage/rainix
+    /// #sol-shell`. Unpinned spellings of this are the same standing skew #116 reports, sitting in
+    /// a consumer's CI instead of in the producer's prompt.
+    Explicit(String),
+    /// A Solidity toolchain acquired WITHOUT nix — the `foundry-rs/foundry-toolchain` action, or
+    /// `foundryup`. Carries the acquisition verbatim.
+    ///
+    /// This is not a nix shell and there is no `nix develop` that enters it, so the producer
+    /// cannot match it and must SAY so. Folding it into "no toolchain to match" is a false
+    /// negative in the worst possible place: `rain.will-overflow` gates `forge fmt --check` on
+    /// foundry NIGHTLY, which is further from any shell the producer can open than the widest
+    /// rainix pin gap, so it is #116's failure mode at its largest sitting in the bucket that
+    /// says there is no failure mode here.
+    Foreign(String),
+}
+
+impl SolToolchain {
+    /// How the report names this toolchain on a `check:` line.
+    fn describe(&self) -> String {
+        match self {
+            SolToolchain::Reusable(r) => format!("rainix reusable @{r}"),
+            SolToolchain::RepoFlake => {
+                "the repo's own flake (nix develop, no flake argument)".into()
+            }
+            SolToolchain::Explicit(f) => format!("explicit flake {f}"),
+            SolToolchain::Foreign(how) => format!("NOT NIX — {how}"),
+        }
+    }
+
+    /// Whether a `nix develop` can enter this toolchain at all. The producer's next move turns on
+    /// this and on nothing else: a nix toolchain it can match, a foreign one it can only name.
+    fn is_nix(&self) -> bool {
+        !matches!(self, SolToolchain::Foreign(_))
+    }
+}
+
+/// PURE: whether a name appears in `line` as a whole word, so `push` does not match `pushed` and
+/// `pull_request` does not match a job called `pull_request_target_helper`.
+fn names_token(line: &str, token: &str) -> bool {
+    let boundary = |c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let mut rest = line;
+    while let Some(at) = rest.find(token) {
+        let before = rest[..at].chars().next_back().is_none_or(boundary);
+        let after = rest[at + token.len()..].chars().next().is_none_or(boundary);
+        if before && after {
+            return true;
+        }
+        rest = &rest[at + token.len()..];
+    }
+    false
+}
+
+/// Every spelling of the workflow trigger key. YAML 1.1 reads a bare `on` as the BOOLEAN true, so
+/// formatters quote it (`"on":`, `'on':`) and a round trip through a 1.1 loader can emit `true:`.
+/// GitHub accepts all four. None of the org's 45 Solidity repos writes anything but `on:` today,
+/// and the cost of being wrong is a silent misclassification into "no toolchain here" — the same
+/// false negative the `Foreign` variant exists to end — so the spellings are handled rather than
+/// assumed away.
+const WORKFLOW_TRIGGER_KEYS: [&str; 4] = ["on:", "\"on\":", "'on':", "true:"];
+
+/// PURE: `line` with any trailing `#` comment removed.
+///
+/// A comment inside the `on:` block is prose about the workflow, not a trigger — `# runs on push`
+/// would otherwise read as a gate. Only a `#` at the start of the content or after whitespace
+/// counts, so a `#` inside a branch glob or a path is left alone.
+fn strip_yaml_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (i, _) in line.match_indices('#') {
+        if i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t' {
+            return &line[..i];
+        }
+    }
+    line
+}
+
+/// PURE: whether this workflow gates a PUSH or a PULL REQUEST — i.e. whether it is a check a PR
+/// has to satisfy.
+///
+/// Only the `on:` block is read. Top-level keys sit at column zero, so the block runs from the
+/// trigger line to the next column-zero key; `workflow_dispatch` and `schedule` workflows gate
+/// nothing a PR can see and their toolchains are not the producer's problem.
+fn workflow_gates_a_push(text: &str) -> bool {
+    let mut in_on = false;
+    for raw in text.lines() {
+        // Stripped FIRST, and that order is the whole point: a comment is not a key at ANY
+        // indentation, so a column-zero `# gate every branch` sitting between `on:` and `push:`
+        // must not close the block it is inside. Reading `raw` here made it do exactly that, and
+        // the result was a `mode: absent` on a repo that gates every branch.
+        let line = strip_yaml_comment(raw);
+        // A column-zero key CLOSES whatever block was open and opens its own, so this single
+        // assignment is the whole boundary: a `push` under `jobs:` cannot make a dispatch-only
+        // workflow look like a gate, and `on: [push]` is still read off the trigger line itself.
+        if !line.starts_with([' ', '\t']) && !line.trim().is_empty() {
+            in_on = WORKFLOW_TRIGGER_KEYS.iter().any(|k| line.starts_with(k));
+        }
+        if in_on && (names_token(line, "push") || names_token(line, "pull_request")) {
+            return true;
+        }
+    }
+    false
+}
+
+/// PURE: whether an explicit flake reference names an immutable revision.
+///
+/// `github:owner/repo#attr` floats with that repo's default branch; `github:owner/repo/<rev>#attr`
+/// does not. An unpinned one still reproduces CI's TEXT exactly — it is what the workflow says —
+/// but the two runs resolve it at different moments, which is the same moving target that parked
+/// cyclofinance/cyclo.sol#42. Anything that is not a `github:` URL is left alone: a local path is
+/// whatever is on disk, and calling that unpinned would warn about every ordinary checkout.
+fn flake_ref_is_pinned(flake: &str) -> bool {
+    let Some(rest) = flake.strip_prefix("github:") else {
+        return true;
+    };
+    let path = rest.split('#').next().unwrap_or("");
+    path.split('/').filter(|s| !s.is_empty()).count() >= 3
+}
+
+/// PURE: the git ref a `uses:` line pins a rainix Solidity reusable at, if that is what it is.
+fn rainix_sol_reusable_ref(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once("uses:")?;
+    let spec = rest.split_whitespace().next()?;
+    let (_, git_ref) = spec.strip_prefix(RAINIX_SOL_REUSABLE)?.split_once('@')?;
+    (!git_ref.is_empty()).then(|| git_ref.to_string())
+}
+
+/// PURE: whether a command run inside a dev shell is a Solidity CHECK — one whose verdict, or
+/// whose committed output, depends on which toolchain realised the shell.
+///
+/// `forge soldeer install` is excluded deliberately: it fetches the dependency versions the lock
+/// names, so it produces the same tree out of any forge and says nothing about the checks.
+fn is_sol_check(cmd: &str) -> bool {
+    let cmd = cmd.trim();
+    if cmd.starts_with("forge soldeer") {
+        return false;
+    }
+    ["forge", "slither", "solc", "rainix-sol"]
+        .iter()
+        .any(|p| cmd.starts_with(p))
+}
+
+/// PURE: the toolchain and command of a `nix develop … -c <cmd>` step, if the line is one.
+///
+/// Both spellings of the flag are accepted (`-c` and `--command`), and the flake reference is the
+/// single non-flag word before it — absent for the repo's own flake, which is the whole
+/// distinction this function exists to make.
+fn nix_develop_step(line: &str) -> Option<(SolToolchain, String)> {
+    let (_, rest) = line.split_once("nix develop")?;
+    let mut flake: Option<&str> = None;
+    let mut words = rest.split_whitespace();
+    let mut cmd = String::new();
+    for w in words.by_ref() {
+        if w == "-c" || w == "--command" {
+            cmd = words.collect::<Vec<_>>().join(" ");
+            break;
+        }
+        if !w.starts_with('-') {
+            flake = Some(w);
+        }
+    }
+    if cmd.is_empty() {
+        return None;
+    }
+    let toolchain = match flake {
+        None | Some(".") => SolToolchain::RepoFlake,
+        Some(f) => SolToolchain::Explicit(f.to_string()),
+    };
+    Some((toolchain, cmd))
+}
+
+/// PURE: a Solidity toolchain this line ACQUIRES without nix, if it acquires one.
+///
+/// Acquisition is the signal and the INVOCATION deliberately is not. A bare `forge` in a `run:`
+/// says nothing on its own — st0x.deploy's `multisig-artifact.yaml` opens
+/// `nix develop --command bash -c '` and calls `forge` on the NEXT line, so reading invocations
+/// line by line would report a nix repo as foreign. Naming the installer has no such ambiguity:
+/// these two lines mean "this job's forge did not come from a flake" and nothing else.
+///
+/// KNOWN BOUND: a third way of getting forge — a hand-rolled curl, a container image with it
+/// baked in — is not recognised and the workflow reads as gating nothing. That is the same false
+/// negative this function narrows, one step further out, and `a_third_way_of_getting_forge_is_a_
+/// known_blind_spot` names it so the limit is on the record rather than in someone's head.
+fn foreign_sol_toolchain(line: &str) -> Option<String> {
+    let line = strip_yaml_comment(line);
+    if let Some((_, rest)) = line.split_once("foundry-rs/foundry-toolchain@") {
+        let ver = rest.split_whitespace().next().unwrap_or("");
+        return Some(format!("foundry-rs/foundry-toolchain@{ver}"));
+    }
+    ["foundryup", "foundry.paradigm.xyz"]
+        .iter()
+        .find(|n| line.contains(**n))
+        .map(|n| (*n).to_string())
+}
+
+/// PURE: the `version:` a `foundry-toolchain` step asks for, read off the `with:` block that
+/// follows it. `nightly` is the value that matters — it is unpinned AND it moves daily, so it is
+/// the widest possible gap from any shell the producer can open, and the report must say it out
+/// loud rather than leave the reader to go and look.
+fn foundry_toolchain_version(text: &str, from: usize) -> Option<String> {
+    for line in text.lines().skip(from).take(6) {
+        let line = strip_yaml_comment(line);
+        if let Some((_, v)) = line.split_once("version:") {
+            let v = v.trim().trim_matches(['"', '\'']);
+            return (!v.is_empty()).then(|| v.to_string());
+        }
+        // A following step ends the `with:` block; anything after it belongs to something else.
+        if line.trim_start().starts_with("- ") {
+            break;
+        }
+    }
+    None
+}
+
+/// PURE: every distinct Solidity toolchain the checkout's own PUSH/PR-gating workflows run in,
+/// each with the workflows that name it. Sorted and deduplicated, so the report is stable.
+///
+/// `workflows` is `(filename, text)` for each file under `.github/workflows`.
+///
+/// A step whose command is a `${{ … }}` expression (the `task:` matrix the org's repo-local
+/// workflows use — `nix develop -c ${{ matrix.task }}`) is counted as a Solidity check when the
+/// workflow names a `rainix-sol` task anywhere. The expression is not evaluated: naming one is
+/// what a matrix over `rainix-sol-{test,static,legal}` does, and any other reading of that file
+/// would have to run GitHub's expression engine to improve on it.
+fn sol_toolchains(workflows: &[(String, String)]) -> Vec<(SolToolchain, Vec<String>)> {
+    let mut found: Vec<(SolToolchain, String)> = Vec::new();
+    for (name, text) in workflows {
+        if !workflow_gates_a_push(text) {
+            continue;
+        }
+        let matrix_names_sol = text.contains("rainix-sol");
+        for (n, raw) in text.lines().enumerate() {
+            // Stripped ONCE here rather than in each parser, so a COMMENTED-OUT step cannot
+            // register as a toolchain. A `# uses: …rainix-sol.yaml@main` above a live
+            // `nix develop -c rainix-sol-static` used to make a one-toolchain repo report
+            // `mode: conflict` — an invented disagreement, reported with exit 3.
+            let line = strip_yaml_comment(raw);
+            if let Some(git_ref) = rainix_sol_reusable_ref(line) {
+                found.push((SolToolchain::Reusable(git_ref), name.clone()));
+            }
+            if let Some(how) = foreign_sol_toolchain(line) {
+                let how = match foundry_toolchain_version(text, n + 1) {
+                    Some(v) => format!("{how} (version: {v})"),
+                    None => how,
+                };
+                found.push((SolToolchain::Foreign(how), name.clone()));
+            }
+            if let Some((toolchain, cmd)) = nix_develop_step(line) {
+                let expression = cmd.starts_with("${{");
+                if is_sol_check(&cmd) || (expression && matrix_names_sol) {
+                    found.push((toolchain, name.clone()));
+                }
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    let mut out: Vec<(SolToolchain, Vec<String>)> = Vec::new();
+    for (toolchain, wf) in found {
+        match out.last_mut() {
+            Some((t, wfs)) if *t == toolchain => wfs.push(wf),
+            _ => out.push((toolchain, vec![wf])),
+        }
+    }
+    out
+}
+
+/// PURE: the `RAINIX_SHA` a rainix reusable declares, if it declares one.
+fn rainix_sha(text: &str) -> Option<String> {
+    let line = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("RAINIX_SHA:"))?;
+    let (_, v) = line.split_once("RAINIX_SHA:")?;
+    let v = v.trim().trim_matches(['"', '\'']);
+    (!v.is_empty()).then(|| v.to_string())
+}
+
+/// PURE: the one pin the leaf reusables agree on at a ref.
+///
+/// Disagreement is an error and not a pick. The leaves run DIFFERENT checks — `rainix-sol-static`
+/// formats and lints, `rainix-sol-test` runs the suite — so two pins mean two toolchains gating one
+/// PR, and choosing either one silently reproduces #116 one layer further in.
+fn agreed_rainix_sha(leaves: &[(&str, Option<String>)]) -> Result<String, String> {
+    let mut seen: Vec<(&str, &str)> = Vec::new();
+    for (file, sha) in leaves {
+        if let Some(s) = sha {
+            seen.push((file, s));
+        }
+    }
+    let Some((_, first)) = seen.first() else {
+        return Err("no rainix Solidity reusable at that ref declares a RAINIX_SHA".into());
+    };
+    if let Some((file, other)) = seen.iter().find(|(_, s)| s != first) {
+        return Err(format!(
+            "the rainix Solidity reusables at that ref disagree: {} pins {first}, {file} pins {other}",
+            seen[0].0
+        ));
+    }
+    Ok((*first).to_string())
+}
+
+/// PURE: the report a resolved toolchain prints, and the exit code that goes with it.
+///
+/// `pin` is what the network read returned for a [`SolToolchain::Reusable`] — `Ok(sha)`, or `Err`
+/// carrying why it could not be resolved. Every decision is here, over already-taken readings, so
+/// the whole verdict is testable without a checkout and without a network.
+///
+/// `unreadable` is why the workflow read is a PARAMETER and not a silent empty list: a directory
+/// that could not be read produces the same empty `toolchains` a repo with no Solidity CI does,
+/// and reporting both as `absent` is this subcommand's own failure mode wearing its own clothes.
+fn sol_toolchain_lines(
+    dir: &str,
+    has_flake: bool,
+    toolchains: &[(SolToolchain, Vec<String>)],
+    pin: Option<Result<String, String>>,
+    unreadable: Option<String>,
+) -> (i32, Vec<String>) {
+    if let Some(why) = unreadable {
+        return (
+            SOL_TOOLCHAIN_UNRESOLVED,
+            vec![
+                "mode: unreadable".to_string(),
+                format!(
+                    "error: this checkout's workflows could not be read ({why}), so NOTHING is \
+                     known about what gates it — which is not the same as knowing nothing gates \
+                     it. Fix the checkout and ask again; do not record this as `absent`."
+                ),
+            ],
+        );
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for (toolchain, wfs) in toolchains {
+        for wf in wfs {
+            lines.push(format!(
+                "check: .github/workflows/{wf}  {}",
+                toolchain.describe()
+            ));
+        }
+    }
+    lines.push(format!(
+        "flake: {}",
+        if has_flake { "present" } else { "ABSENT" }
+    ));
+
+    let (mode, verdict) = match toolchains {
+        [] => (
+            "absent",
+            Err(
+                "no push/PR-gating Solidity check in this checkout, so there is no CI toolchain to \
+                 match. Record that in the run and say which shell you used instead."
+                    .to_string(),
+            ),
+        ),
+        [(one, _)] => match one {
+            SolToolchain::RepoFlake if !has_flake => (
+                "repo-flake",
+                Err(format!(
+                    "{dir} has no flake.nix, yet its checks run `nix develop` with no flake \
+                     argument. Nothing here can be reproduced locally — record it."
+                )),
+            ),
+            SolToolchain::RepoFlake => ("repo-flake", Ok(format!("nix develop {dir} -c"))),
+            SolToolchain::Explicit(f) => {
+                // The command IS what CI runs, so it is still the right thing to run — but an
+                // unpinned ref resolves at TWO different moments and a floating answer handed
+                // over as an authoritative one is #116 in miniature. Warn; do not withhold the
+                // only correct action.
+                if !flake_ref_is_pinned(f) {
+                    lines.push(format!(
+                        "warn: {f} names no revision, so it floats with that repo's default \
+                         branch — CI resolved it when CI ran and you resolve it now. Matching \
+                         text is not matching toolchain; say so if an exact check reds."
+                    ));
+                }
+                ("explicit", Ok(format!("nix develop {f} -c")))
+            }
+            SolToolchain::Foreign(how) => (
+                "foreign",
+                Err(format!(
+                    "this checkout's Solidity checks run on {how}, which is NOT a nix shell — \
+                     there is no `nix develop` that enters it, so you cannot verify against what \
+                     CI will actually judge. This is NOT `absent`: there IS a toolchain here and \
+                     it is one you cannot match, so an exact check (`forge fmt --check`, \
+                     `forge snapshot --check`) can red on a diff that is correct in every shell \
+                     you can open. Say so on the PR, naming that toolchain, and expect the \
+                     mismatch instead of spending a back-off attempt discovering it."
+                )),
+            ),
+            SolToolchain::Reusable(git_ref) => (
+                "rainix-pin",
+                match pin {
+                    Some(Ok(sha)) => Ok(format!(
+                        "nix develop github:rainlanguage/rainix/{sha}{SOL_SHELL_ATTR} -c"
+                    )),
+                    Some(Err(why)) => Err(format!("the pin at @{git_ref} is unreadable: {why}")),
+                    None => Err(format!("the pin at @{git_ref} was not read")),
+                },
+            ),
+        },
+        many => (
+            "conflict",
+            Err(format!(
+                "this checkout's own push/PR checks run {} different Solidity toolchains (above). \
+                 A `forge fmt` that satisfies one can fail another, so there is no single answer \
+                 to give — verify against the toolchain of the CHECK you are fixing and say \
+                 which.{}",
+                many.len(),
+                if many.iter().all(|(t, _)| t.is_nix()) {
+                    ""
+                } else {
+                    " At least one of them is NOT a nix shell (marked above), so for that one \
+                     there is no shell to verify in at all — name it on the PR rather than \
+                     treating its check as reproducible."
+                }
+            )),
+        ),
+    };
+    lines.insert(0, format!("mode: {mode}"));
+    match verdict {
+        Ok(v) => {
+            lines.push(format!("verify: {v}"));
+            (0, lines)
+        }
+        Err(why) => {
+            lines.push(format!("error: {why}"));
+            (SOL_TOOLCHAIN_UNRESOLVED, lines)
+        }
+    }
+}
+
+/// PURE: the workflows to classify, and the FIRST read failure among them.
+///
+/// Split out of the directory walk so "a read failure is not an absence" is testable without a
+/// filesystem that can be made to fail on demand. A single unreadable FILE counts, not just an
+/// unreadable directory: it could be the one workflow that gates the repo, and dropping it
+/// silently is indistinguishable from the repo having no Solidity CI.
+fn collect_workflows<I>(reads: I) -> (Vec<(String, String)>, Option<String>)
+where
+    I: IntoIterator<Item = Result<(String, String), String>>,
+{
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut unreadable = None;
+    for r in reads {
+        match r {
+            Ok(wf) => out.push(wf),
+            Err(why) => {
+                unreadable = Some(why);
+                break;
+            }
+        }
+    }
+    out.sort();
+    (out, unreadable)
+}
+
+/// `sol-toolchain`: print the `nix develop` prefix this checkout's OWN Solidity checks run in.
+///
+/// The impure half — the directory walk and the one contents read — is here; every judgment is
+/// [`sol_toolchains`] and [`sol_toolchain_lines`].
+fn sol_toolchain_mode(dir: &str) -> i32 {
+    let say = |code: i32, lines: Vec<String>| {
+        for l in &lines {
+            println!("{l}");
+        }
+        code
+    };
+    // The printed command carries `dir` verbatim, so a relative one only reproduces CI from the
+    // directory it was typed in — and that command IS this subcommand's whole deliverable. The
+    // contract is enforced here rather than asserted in a doc comment.
+    let dir = match std::fs::canonicalize(dir) {
+        Ok(p) => p.to_string_lossy().into_owned(),
+        Err(e) => {
+            let (c, l) = sol_toolchain_lines("", false, &[], None, Some(format!("{dir}: {e}")));
+            return say(c, l);
+        }
+    };
+    let dir = dir.as_str();
+
+    // A directory that cannot be read yields the same empty list as a repo with no Solidity CI.
+    // Distinguishing them is the entire point of this subcommand, so the read failure is carried
+    // rather than swallowed — including a single unreadable FILE, which would silently drop the
+    // one workflow that gates the repo.
+    let wf_dir = std::path::Path::new(dir).join(".github/workflows");
+    let reads: Vec<Result<(String, String), String>> = match std::fs::read_dir(&wf_dir) {
+        // No workflow directory at all is an honest `absent`, not a read failure.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => vec![Err(format!("{}: {e}", wf_dir.display()))],
+        Ok(entries) => entries
+            .map(|e| {
+                let e = e.map_err(|err| format!("{}: {err}", wf_dir.display()))?;
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !(name.ends_with(".yaml") || name.ends_with(".yml")) {
+                    return Ok(None);
+                }
+                let text = std::fs::read_to_string(e.path())
+                    .map_err(|err| format!("{}: {err}", e.path().display()))?;
+                Ok(Some((name, text)))
+            })
+            .filter_map(|r: Result<Option<(String, String)>, String>| match r {
+                Ok(Some(wf)) => Some(Ok(wf)),
+                Ok(None) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect(),
+    };
+    let (workflows, unreadable) = collect_workflows(reads);
+    let toolchains = sol_toolchains(&workflows);
+    let has_flake = std::path::Path::new(dir).join("flake.nix").is_file();
+    if unreadable.is_some() {
+        let (c, l) = sol_toolchain_lines(dir, has_flake, &[], None, unreadable);
+        return say(c, l);
+    }
+
+    // One network read, and only for the shape that needs it: the pin lives in the reusable, so a
+    // checkout cannot answer this on its own however hard it is parsed.
+    let pin = match toolchains.as_slice() {
+        [(SolToolchain::Reusable(git_ref), _)] => {
+            let leaves: Vec<(&str, Option<String>)> = RAINIX_SOL_LEAVES
+                .iter()
+                .map(|f| {
+                    let path = format!(
+                        "repos/rainlanguage/rainix/contents/.github/workflows/{f}?ref={git_ref}"
+                    );
+                    let text = gh_text(&["api", &path, "-H", "Accept: application/vnd.github.raw"]);
+                    (*f, text.as_deref().and_then(rainix_sha))
+                })
+                .collect();
+            Some(agreed_rainix_sha(&leaves))
+        }
+        _ => None,
+    };
+
+    let (code, lines) = sol_toolchain_lines(dir, has_flake, &toolchains, pin, None);
+    say(code, lines)
+}
+
+#[cfg(test)]
+mod sol_toolchain_tests {
+    use super::{
+        agreed_rainix_sha, collect_workflows, flake_ref_is_pinned, foreign_sol_toolchain,
+        is_sol_check, names_token, nix_develop_step, rainix_sha, rainix_sol_reusable_ref,
+        sol_toolchain_lines, sol_toolchains, strip_yaml_comment, workflow_gates_a_push,
+        SolToolchain,
+    };
+
+    /// cyclofinance/cyclo.sol's `rainix.yaml`, the workflow the parked PR was fighting: a matrix of
+    /// `rainix-sol-*` tasks, each run through the REPO's own flake.
+    const REPO_FLAKE_WF: &str = "\
+name: Rainix CI
+on: [push]
+jobs:
+  rainix:
+    strategy:
+      matrix:
+        task: [rainix-sol-test, rainix-sol-static, rainix-sol-legal]
+    steps:
+      - run: nix develop -c rainix-sol-prelude
+      - name: Run ${{ matrix.task }}
+        run: nix develop -c ${{ matrix.task }}
+";
+
+    /// The shape 35 of the org's 45 foundry repos use: the umbrella reusable, pinned `@main`.
+    const REUSABLE_WF: &str = "\
+name: Rainix CI
+on: [push]
+jobs:
+  standard-sol:
+    uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main
+    secrets: inherit
+";
+
+    /// rainlanguage/rain.will-overflow's `test.yml`, verbatim: `on: [push]`, and it gates
+    /// `forge fmt --check` on a foundry installed by ACTION at `nightly`. No flake is involved
+    /// anywhere, so there is no shell the producer can enter to reproduce that check.
+    const FOREIGN_WF: &str = "\
+name: test
+
+on: [push]
+
+jobs:
+  check:
+    name: Foundry project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Run Forge fmt
+        run: forge fmt --check
+";
+
+    /// S01-Issuer/st0x.deploy's `git-clean.yaml`: also `on: [push]`, and it formats with an
+    /// UNPINNED rainix beside the pinned reusable above.
+    const HARDCODED_WF: &str = "\
+name: Git is clean
+on: [push]
+jobs:
+  git-clean:
+    steps:
+      - run: nix develop github:rainlanguage/rainix#sol-shell -c forge soldeer install
+      - run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt
+";
+
+    fn wfs(items: &[(&str, &str)]) -> Vec<(String, String)> {
+        items
+            .iter()
+            .map(|(n, t)| (n.to_string(), t.to_string()))
+            .collect()
+    }
+
+    fn report(
+        toolchains: &[(SolToolchain, Vec<String>)],
+        has_flake: bool,
+        pin: Option<Result<String, String>>,
+    ) -> (i32, String) {
+        let (code, lines) = sol_toolchain_lines("/w/clone", has_flake, toolchains, pin, None);
+        (code, lines.join("\n"))
+    }
+
+    #[test]
+    fn a_token_match_is_a_whole_word() {
+        assert!(names_token("on: [push]", "push"));
+        assert!(names_token("  push:", "push"));
+        assert!(!names_token("    - pushed-tags", "push"));
+        assert!(!names_token("on: workflow_dispatch:", "push"));
+        assert!(names_token("  pull_request:", "pull_request"));
+    }
+
+    /// The gate that keeps `manual-sol-artifacts.yaml` out of the answer. Those files run
+    /// `nix develop -c rainix-sol-artifacts` against the repo's flake and are dispatched by hand;
+    /// counting them would report a second toolchain on repos whose PR checks have exactly one,
+    /// turning 20-odd repos into false conflicts.
+    #[test]
+    fn only_a_push_or_pr_triggered_workflow_gates_anything() {
+        assert!(workflow_gates_a_push("on: [push]\njobs:\n"));
+        assert!(workflow_gates_a_push(
+            "on:\n  push:\n    branches: [main]\njobs:\n"
+        ));
+        assert!(workflow_gates_a_push("on:\n  pull_request:\njobs:\n"));
+        assert!(!workflow_gates_a_push("on: workflow_dispatch:\njobs:\n"));
+        assert!(!workflow_gates_a_push(
+            "on:\n  workflow_dispatch:\n    inputs:\n      network:\njobs:\n  push-it:\n"
+        ));
+        assert!(!workflow_gates_a_push(
+            "on:\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n"
+        ));
+    }
+
+    /// A `push` named OUTSIDE the `on:` block must not make a dispatch-only workflow look like a
+    /// gate. `manual-broadcast.yaml` and friends have jobs and steps that say `push` all over.
+    #[test]
+    fn a_push_after_the_on_block_does_not_count() {
+        assert!(!workflow_gates_a_push(
+            "on: workflow_dispatch:\njobs:\n  deploy:\n    steps:\n      - run: git push\n"
+        ));
+    }
+
+    #[test]
+    fn a_rainix_sol_reusable_is_recognised_with_its_ref() {
+        assert_eq!(
+            rainix_sol_reusable_ref(
+                "    uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main"
+            ),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            rainix_sol_reusable_ref(
+                "    uses: rainlanguage/rainix/.github/workflows/rainix-sol-static.yaml@v2"
+            ),
+            Some("v2".to_string())
+        );
+        // A composite ACTION under the same owner pins no toolchain of its own.
+        assert_eq!(
+            rainix_sol_reusable_ref("      - uses: rainlanguage/rainix/.github/actions/cache@main"),
+            None
+        );
+        // The RUST reusables are a different toolchain and a different question.
+        assert_eq!(
+            rainix_sol_reusable_ref(
+                "    uses: rainlanguage/rainix/.github/workflows/rainix-rs-static.yaml@main"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_nix_develop_step_is_read_for_its_flake_and_its_command() {
+        assert_eq!(
+            nix_develop_step("      - run: nix develop -c rainix-sol-static"),
+            Some((SolToolchain::RepoFlake, "rainix-sol-static".to_string()))
+        );
+        // `.` is the repo's own flake spelled out, not a third thing.
+        assert_eq!(
+            nix_develop_step("      - run: nix develop . -c forge test"),
+            Some((SolToolchain::RepoFlake, "forge test".to_string()))
+        );
+        assert_eq!(
+            nix_develop_step("      - run: nix develop --command rainix-sol-prelude"),
+            Some((SolToolchain::RepoFlake, "rainix-sol-prelude".to_string()))
+        );
+        assert_eq!(
+            nix_develop_step(
+                "        run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt"
+            ),
+            Some((
+                SolToolchain::Explicit("github:rainlanguage/rainix#sol-shell".to_string()),
+                "forge fmt".to_string()
+            ))
+        );
+        // No command: `nix develop` alone opens a shell and checks nothing.
+        assert_eq!(nix_develop_step("      - run: nix develop"), None);
+        assert_eq!(nix_develop_step("      - run: npm ci"), None);
+    }
+
+    /// The exclusion that keeps a dependency FETCH from being read as a toolchain the checks care
+    /// about. `forge soldeer install` resolves the versions `soldeer.lock` names out of any forge,
+    /// so rain.metadata's `subgraph-test.yaml` — `on: [push]`, and it installs through an unpinned
+    /// rainix — is not a second gating toolchain.
+    #[test]
+    fn a_soldeer_install_is_not_a_solidity_check() {
+        assert!(!is_sol_check("forge soldeer install"));
+        assert!(is_sol_check("forge fmt --check"));
+        assert!(is_sol_check("forge test -vvv"));
+        assert!(is_sol_check("slither ."));
+        assert!(is_sol_check("rainix-sol-static"));
+        assert!(!is_sol_check("npm run lint"));
+    }
+
+    #[test]
+    fn a_repo_local_matrix_workflow_resolves_to_the_repos_own_flake() {
+        assert_eq!(
+            sol_toolchains(&wfs(&[("rainix.yaml", REPO_FLAKE_WF)])),
+            vec![(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])]
+        );
+    }
+
+    /// The majority shape. The repo HAS a flake and it is not the answer: these checks never read
+    /// it, so `nix develop <dir>` here would be a fresh mismatch in the opposite direction from the
+    /// one #116 reports.
+    #[test]
+    fn a_reusable_consumer_resolves_to_the_reusables_ref_not_its_own_flake() {
+        assert_eq!(
+            sol_toolchains(&wfs(&[("rainix-sol.yaml", REUSABLE_WF)])),
+            vec![(
+                SolToolchain::Reusable("main".to_string()),
+                vec!["rainix-sol.yaml".to_string()]
+            )]
+        );
+    }
+
+    /// A dispatch-only workflow contributes nothing even when it runs Solidity through a different
+    /// flake — which is the case on ~20 of the org's repos.
+    #[test]
+    fn a_dispatch_only_workflow_contributes_no_toolchain() {
+        let manual = "on: workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: nix develop -c rainix-sol-artifacts\n";
+        assert_eq!(
+            sol_toolchains(&wfs(&[
+                ("rainix-sol.yaml", REUSABLE_WF),
+                ("manual.yaml", manual)
+            ])),
+            vec![(
+                SolToolchain::Reusable("main".to_string()),
+                vec!["rainix-sol.yaml".to_string()]
+            )]
+        );
+    }
+
+    /// S01-Issuer/st0x.deploy as it stands: a pinned reusable and an unpinned `forge fmt`, both on
+    /// push. Two toolchains formatting one repo is a real disagreement, so the answer is that there
+    /// is no single answer — not a quiet pick between them.
+    #[test]
+    fn two_gating_toolchains_are_reported_as_a_conflict_not_resolved_to_one() {
+        let found = sol_toolchains(&wfs(&[
+            ("git-clean.yaml", HARDCODED_WF),
+            ("rainix-sol.yaml", REUSABLE_WF),
+        ]));
+        assert_eq!(found.len(), 2);
+        let (code, out) = report(&found, true, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: conflict"), "{out}");
+        assert!(out.contains("2 different Solidity toolchains"), "{out}");
+        assert!(
+            !out.contains("verify:"),
+            "a conflict must offer no command: {out}"
+        );
+    }
+
+    #[test]
+    fn a_declared_pin_is_read_off_the_reusable() {
+        assert_eq!(
+            rainix_sha("name: x\nenv:\n  RAINIX_SHA: 53e96a7d0a97\njobs:\n"),
+            Some("53e96a7d0a97".to_string())
+        );
+        assert_eq!(
+            rainix_sha("env:\n  RAINIX_SHA: \"abc\"\n"),
+            Some("abc".to_string())
+        );
+        assert_eq!(rainix_sha("name: x\njobs:\n"), None);
+        assert_eq!(rainix_sha("env:\n  RAINIX_SHA:\n"), None);
+    }
+
+    #[test]
+    fn the_leaves_must_agree_on_the_pin() {
+        assert_eq!(
+            agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", Some("aaa".into()))]),
+            Ok("aaa".to_string())
+        );
+        // One unreadable leaf is not a disagreement.
+        assert_eq!(
+            agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", None)]),
+            Ok("aaa".to_string())
+        );
+        let err =
+            agreed_rainix_sha(&[("static", Some("aaa".into())), ("test", Some("bbb".into()))])
+                .unwrap_err();
+        assert!(err.contains("disagree"), "{err}");
+        assert!(agreed_rainix_sha(&[("static", None), ("test", None)]).is_err());
+    }
+
+    #[test]
+    fn the_repo_flake_verdict_names_the_checkout_and_not_a_flake_url() {
+        let (code, out) = report(
+            &[(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])],
+            true,
+            None,
+        );
+        assert_eq!(code, 0);
+        assert!(out.contains("mode: repo-flake"), "{out}");
+        assert!(out.contains("verify: nix develop /w/clone -c"), "{out}");
+        assert!(!out.contains("github:"), "{out}");
+    }
+
+    /// The resolved pin must reach the command. A report that named the ref but not the SHA would
+    /// leave the reader to do the lookup this subcommand exists to do.
+    #[test]
+    fn the_reusable_verdict_carries_the_resolved_sha_into_the_command() {
+        let (code, out) = report(
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["w.yaml".to_string()],
+            )],
+            true,
+            Some(Ok("53e96a7d0a97d7c7c75c3b2412521324776fdac6".into())),
+        );
+        assert_eq!(code, 0);
+        assert_eq!(
+            out.lines().last(),
+            Some(
+                "verify: nix develop github:rainlanguage/rainix/53e96a7d0a97d7c7c75c3b2412521324776fdac6#sol-shell -c"
+            )
+        );
+    }
+
+    /// An unreadable pin fails LOUD. Falling back to the health-check flake here is exactly the
+    /// silent substitution #116 is about, and it would print a command that looks authoritative.
+    #[test]
+    fn an_unreadable_pin_offers_no_command_at_all() {
+        let (code, out) = report(
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["w.yaml".to_string()],
+            )],
+            true,
+            Some(Err("404".into())),
+        );
+        assert_eq!(code, 3);
+        assert!(
+            out.contains("error: the pin at @main is unreadable: 404"),
+            "{out}"
+        );
+        assert!(!out.contains("verify:"), "{out}");
+    }
+
+    #[test]
+    fn a_non_nix_gating_toolchain_is_never_reported_as_no_toolchain() {
+        let found = sol_toolchains(&wfs(&[("test.yml", FOREIGN_WF)]));
+        assert_eq!(
+            found,
+            vec![(
+                SolToolchain::Foreign(
+                    "foundry-rs/foundry-toolchain@v1 (version: nightly)".to_string()
+                ),
+                vec!["test.yml".to_string()]
+            )],
+            "rain.will-overflow gates `forge fmt --check` on foundry nightly — reading that as \
+             `absent` is the false negative this variant exists to end"
+        );
+        let (code, out) = report(&found, false, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: foreign"), "{out}");
+        assert!(!out.contains("mode: absent"), "{out}");
+        // The producer's next move turns on the DIFFERENCE, so the report must carry it in words
+        // and not only in a mode label a reader could skim past.
+        assert!(out.contains("NOT a nix shell"), "{out}");
+        assert!(out.contains("NOT `absent`"), "{out}");
+        assert!(
+            out.contains("nightly"),
+            "the toolchain must be NAMED, not just refused: {out}"
+        );
+        assert!(
+            !out.contains("verify:"),
+            "there is no shell to offer: {out}"
+        );
+    }
+
+    /// The two unresolvable modes must not read alike. `absent` means "nothing to match, use what
+    /// you like and record it"; `foreign` means "something to match that you CANNOT enter". A
+    /// change that collapses either into the other is the defect, so the texts are asserted
+    /// DISJOINT rather than each merely non-empty.
+    #[test]
+    fn absent_and_foreign_say_different_things() {
+        let (_, absent) = report(&[], false, None);
+        let (_, foreign) = report(
+            &[(
+                SolToolchain::Foreign("foundry-rs/foundry-toolchain@v1".into()),
+                vec!["test.yml".to_string()],
+            )],
+            false,
+            None,
+        );
+        assert_ne!(absent, foreign);
+        assert!(absent.contains("no CI toolchain to match"), "{absent}");
+        assert!(!foreign.contains("no CI toolchain to match"), "{foreign}");
+        assert!(foreign.contains("NOT a nix shell"), "{foreign}");
+        assert!(!absent.contains("NOT a nix shell"), "{absent}");
+    }
+
+    /// A repo can gate on a nix toolchain AND a foreign one at once. That is still a conflict, but
+    /// the advice differs: one side has no shell to verify in at all, so the conflict text has to
+    /// say so instead of implying both are reproducible.
+    #[test]
+    fn a_conflict_that_includes_a_foreign_toolchain_says_one_side_is_unreachable() {
+        let mixed = sol_toolchains(&wfs(&[
+            ("rainix-sol.yaml", REUSABLE_WF),
+            ("test.yml", FOREIGN_WF),
+        ]));
+        assert_eq!(mixed.len(), 2);
+        let (code, out) = report(&mixed, true, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: conflict"), "{out}");
+        assert!(out.contains("NOT a nix shell"), "{out}");
+
+        // …and an all-nix conflict must NOT carry that sentence, or it says nothing.
+        let all_nix = sol_toolchains(&wfs(&[
+            ("git-clean.yaml", HARDCODED_WF),
+            ("rainix-sol.yaml", REUSABLE_WF),
+        ]));
+        let (_, nix_out) = report(&all_nix, true, None);
+        assert!(nix_out.contains("mode: conflict"), "{nix_out}");
+        assert!(!nix_out.contains("NOT a nix shell"), "{nix_out}");
+    }
+
+    #[test]
+    fn a_foreign_acquisition_is_recognised_by_the_installer_not_the_invocation() {
+        assert_eq!(
+            foreign_sol_toolchain("      - uses: foundry-rs/foundry-toolchain@v1"),
+            Some("foundry-rs/foundry-toolchain@v1".to_string())
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: foundryup --version nightly"),
+            Some("foundryup".to_string())
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: curl -L https://foundry.paradigm.xyz | bash"),
+            Some("foundry.paradigm.xyz".to_string())
+        );
+        // A bare `forge` says nothing: st0x.deploy opens `nix develop --command bash -c '` and
+        // calls forge on the NEXT line, so an invocation-based reading would call a nix repo
+        // foreign.
+        assert_eq!(
+            foreign_sol_toolchain("            forge script script/X.s.sol \\"),
+            None
+        );
+        assert_eq!(
+            foreign_sol_toolchain("      - run: nix develop -c forge fmt"),
+            None
+        );
+        // A comment mentioning the action is prose, not an acquisition.
+        assert_eq!(
+            foreign_sol_toolchain("      # we dropped foundryup for nix"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_column_zero_comment_does_not_close_the_trigger_block() {
+        // YAML permits a comment at any indentation. Reading the RAW line for the block boundary
+        // made this workflow — which gates every branch — report `mode: absent`.
+        assert!(workflow_gates_a_push(
+            "on:\n# gate every branch\n  push:\njobs:\n"
+        ));
+        // …and the boundary still has to close on a real column-zero KEY.
+        assert!(!workflow_gates_a_push(
+            "on:\n  workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: git push\n"
+        ));
+    }
+
+    /// A commented-out step is not a toolchain. Reading it as one invents a `conflict` on a repo
+    /// that has exactly one — an exit-3 refusal manufactured out of a comment.
+    #[test]
+    fn a_commented_out_step_registers_no_toolchain() {
+        let wf = "\
+on: [push]
+jobs:
+  a:
+    steps:
+      # uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main
+      # - run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt
+      - run: nix develop -c rainix-sol-static
+";
+        assert_eq!(
+            sol_toolchains(&wfs(&[("rainix.yaml", wf)])),
+            vec![(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])],
+            "only the LIVE step is a toolchain"
+        );
+    }
+
+    #[test]
+    fn an_unpinned_explicit_flake_still_gets_its_command_but_is_flagged_as_floating() {
+        let (code, out) = report(
+            &[(
+                SolToolchain::Explicit("github:rainlanguage/rainix#sol-shell".into()),
+                vec!["git-clean.yaml".to_string()],
+            )],
+            true,
+            None,
+        );
+        // The command IS what CI runs, so withholding it would deny the only correct action.
+        assert_eq!(code, 0);
+        assert!(
+            out.contains("verify: nix develop github:rainlanguage/rainix#sol-shell -c"),
+            "{out}"
+        );
+        // …but it floats, and handing a moving target over as authoritative is #116 in miniature.
+        assert!(
+            out.contains("warn:") && out.contains("names no revision"),
+            "{out}"
+        );
+
+        // A PINNED explicit ref resolves to one thing forever and must NOT carry the warning.
+        let (code, pinned) = report(
+            &[(
+                SolToolchain::Explicit("github:rainlanguage/rainix/53e96a7d#sol-shell".into()),
+                vec!["git-clean.yaml".to_string()],
+            )],
+            true,
+            None,
+        );
+        assert_eq!(code, 0);
+        assert!(!pinned.contains("warn:"), "{pinned}");
+    }
+
+    #[test]
+    fn a_flake_ref_is_pinned_only_when_it_names_a_revision() {
+        assert!(!flake_ref_is_pinned("github:rainlanguage/rainix#sol-shell"));
+        assert!(!flake_ref_is_pinned("github:rainlanguage/rainix"));
+        assert!(flake_ref_is_pinned(
+            "github:rainlanguage/rainix/53e96a7d#sol-shell"
+        ));
+        assert!(flake_ref_is_pinned(
+            "github:rainlanguage/rainix/main#sol-shell"
+        ));
+        // Not a github URL: a local path is whatever is on disk, and warning about every ordinary
+        // checkout would make the warning worth nothing.
+        assert!(flake_ref_is_pinned("/w/clone"));
+        assert!(flake_ref_is_pinned(".#sol-shell"));
+    }
+
+    /// An unreadable checkout yields the same EMPTY toolchain list a repo with no Solidity CI
+    /// does. Reporting both as `absent` is this subcommand's own failure mode wearing its own
+    /// clothes — knowing nothing is not the same as knowing nothing gates it.
+    /// One unreadable FILE is enough, and it must not be swallowed. The file that fails to read
+    /// could be the only workflow that gates the repo, and dropping it leaves an empty list
+    /// indistinguishable from a repo with no Solidity CI — `absent`, reported confidently.
+    #[test]
+    fn a_single_unreadable_workflow_file_is_reported_not_dropped() {
+        let ok = |n: &str| Ok((n.to_string(), "on: [push]\n".to_string()));
+        let (wfs, unreadable) = collect_workflows(vec![
+            ok("a.yaml"),
+            Err("b.yaml: permission denied".to_string()),
+            ok("c.yaml"),
+        ]);
+        assert_eq!(
+            unreadable.as_deref(),
+            Some("b.yaml: permission denied"),
+            "a file that could not be read is a fact, not a gap to close over"
+        );
+        assert!(
+            wfs.len() < 3,
+            "the read stopped at the failure rather than pretending to a full picture: {wfs:?}"
+        );
+
+        // All-readable is the ordinary path and reports nothing.
+        let (wfs, unreadable) = collect_workflows(vec![ok("b.yaml"), ok("a.yaml")]);
+        assert_eq!(unreadable, None);
+        assert_eq!(
+            wfs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            ["a.yaml", "b.yaml"],
+            "sorted, so the report is stable across filesystem ordering"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_checkout_is_not_absent() {
+        let (code, out) = sol_toolchain_lines(
+            "/w/clone",
+            false,
+            &[],
+            None,
+            Some("/w/clone/.github/workflows: permission denied".into()),
+        );
+        let out = out.join("\n");
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: unreadable"), "{out}");
+        assert!(!out.contains("mode: absent"), "{out}");
+        assert!(out.contains("do not record this as `absent`"), "{out}");
+        assert!(!out.contains("verify:"), "{out}");
+
+        let (_, absent) = report(&[], false, None);
+        assert!(!absent.contains("mode: unreadable"), "{absent}");
+    }
+
+    /// The bound, named so it is on the record rather than in someone's head: a third way of
+    /// getting forge is NOT recognised, and such a repo still reads as `absent`. Narrowing the
+    /// blind spot is not the same as closing it, and the honest place to say so is a test.
+    #[test]
+    fn a_third_way_of_getting_forge_is_a_known_blind_spot() {
+        let container = "on: [push]\njobs:\n  t:\n    container: ghcr.io/acme/forge:1\n    steps:\n      - run: forge test\n";
+        assert_eq!(sol_toolchains(&wfs(&[("test.yml", container)])), vec![]);
+    }
+
+    #[test]
+    fn a_quoted_or_boolean_on_key_is_still_the_trigger_block() {
+        // YAML 1.1 reads bare `on` as true, so these are the spellings a formatter can emit.
+        for key in ["on:", "\"on\":", "'on':", "true:"] {
+            assert!(
+                workflow_gates_a_push(&format!("name: x\n{key} [push]\njobs:\n")),
+                "{key} is the trigger block and must be read as one"
+            );
+            assert!(
+                !workflow_gates_a_push(&format!(
+                    "name: x\n{key} workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: git push\n"
+                )),
+                "{key}: a push outside the trigger block still gates nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn a_comment_inside_the_trigger_block_is_not_a_trigger() {
+        assert!(!workflow_gates_a_push(
+            "on:\n  # runs on push once we migrate\n  workflow_dispatch:\njobs:\n"
+        ));
+        // Whitespace before the `#` is left where it is: only the COMMENT has to go, and
+        // `names_token` reads words, not columns.
+        assert_eq!(strip_yaml_comment("  push:  # every branch"), "  push:  ");
+        assert_eq!(strip_yaml_comment("# all of it"), "");
+        // A `#` that is not a comment introducer stays: flake attrs and branch globs contain them.
+        assert_eq!(
+            strip_yaml_comment("        run: nix develop .#sol-shell -c forge fmt"),
+            "        run: nix develop .#sol-shell -c forge fmt"
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_no_gating_solidity_check_says_so_rather_than_guessing() {
+        let (code, out) = report(&[], false, None);
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: absent"), "{out}");
+        assert!(out.contains("flake: ABSENT"), "{out}");
+        assert!(!out.contains("verify:"), "{out}");
+    }
+
+    /// The issue's "repo with no dev shell" case, and the reason `flake:` is reported at all: the
+    /// checks say `nix develop` and there is no flake to develop. Nothing can be reproduced, and
+    /// that is a fact for the run record, not a fallback.
+    #[test]
+    fn a_repo_flake_verdict_without_a_flake_is_an_error_not_a_command() {
+        let (code, out) = report(
+            &[(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])],
+            false,
+            None,
+        );
+        assert_eq!(code, 3);
+        assert!(out.contains("has no flake.nix"), "{out}");
+        assert!(!out.contains("verify:"), "{out}");
+    }
+
+    /// Every report names the workflow it read the toolchain out of, so a wrong answer is
+    /// traceable to a file rather than to this function's judgment.
+    #[test]
+    fn every_toolchain_is_reported_with_the_workflow_that_names_it() {
+        let (_, out) = report(
+            &[(
+                SolToolchain::Reusable("main".into()),
+                vec!["rainix-sol.yaml".to_string()],
+            )],
+            true,
+            Some(Ok("abc".into())),
+        );
+        assert!(
+            out.contains("check: .github/workflows/rainix-sol.yaml  rainix reusable @main"),
+            "{out}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The closure gates (#85).
 //
 // [`HARNESS_TOOLS`] is a DECLARATION. These three subcommands are what make it true of the thing
@@ -25227,6 +26492,16 @@ enum Cmd {
         #[arg(long)]
         sol_shell: bool,
     },
+    /// Print the `nix develop` prefix a CHECKOUT's own Solidity checks run in, so a local `forge`
+    /// is the one its CI will judge with. Exit 3 when the checkout has no single answer.
+    ///
+    /// The pipeline's Solidity repos split two ways and want opposite things — the rainix
+    /// reusables run at a `RAINIX_SHA` the REUSABLE pins, repo-local workflows run the CALLING
+    /// repo's flake — so this is read off the checkout rather than fixed anywhere.
+    SolToolchain {
+        /// The work clone to resolve. Absolute: it lands verbatim in the printed command.
+        dir: String,
+    },
     /// CI gate: every `HARNESS_TOOLS` entry resolves from EACH model runner's own baked PATH.
     /// Exit 12 if a closure is missing one, 2 if a runner could not be built or read.
     ClosurePreflight {
@@ -28951,6 +30226,7 @@ fn main() {
             skipped.as_deref().zip(skip_reason.as_deref()),
         ),
         Cmd::Preflight { gh_auth, sol_shell } => preflight_mode(gh_auth, sol_shell),
+        Cmd::SolToolchain { dir } => sol_toolchain_mode(&dir),
         Cmd::ClosurePreflight { flake } => closure_preflight_mode(&flake),
         Cmd::ClosureRender { flake } => closure_render_mode(&flake),
         Cmd::ClosureSurface { flake } => closure_surface_mode(&flake),
@@ -33617,6 +34893,63 @@ mod settings_tests {
         // The force-push ban is NOT what this replaces, and the prompt must keep stating it: the
         // tool covers the producer's own PR branches, and Bash git is still reachable.
         assert!(prompt.contains("NEVER force-push in ANY form or spelling"));
+    }
+
+    /// #116: the prompt told the producer to verify Solidity through a HARDCODED
+    /// `github:rainlanguage/rainix#sol-shell` while naming "the repo's" toolchain for Rust and TS.
+    /// That flake tracks rainix HEAD and no repo's CI runs it, so a green local `forge fmt` was
+    /// never a claim about CI — cyclofinance/cyclo.sol#42 spent its one back-off attempt on a diff
+    /// the repo's own pinned `forge fmt --check` could not accept.
+    ///
+    /// Asserted on the STEPS that verify, not on the whole file: the same URL in step 1 is the
+    /// startup health check ("does nix work here"), which is a different question and stays.
+    #[test]
+    fn the_verify_steps_take_the_solidity_toolchain_from_the_repos_own_ci() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        for step in ["4", "3d"] {
+            let text = producer_step(&prompt, step);
+            assert!(
+                text.contains("pr-review-report sol-toolchain"),
+                "step {step} verifies Solidity and must resolve the toolchain per clone: {text}"
+            );
+            assert!(
+                !text.contains("nix develop github:rainlanguage/rainix#sol-shell -c"),
+                "step {step} still hardcodes the health-check flake as a verification shell, \
+                 which is #116 exactly"
+            );
+        }
+
+        // The rule is only actionable if the step says what to do when there is NO single answer.
+        // A silent fallback to some other shell reintroduces the skew leaving nothing to read
+        // afterwards, which is the half of #116 that outlives the parked PR.
+        let step4 = producer_step(&prompt, "4");
+        assert!(
+            step4.contains("Exit 3") && step4.contains("RECORD"),
+            "step 4 must route the unresolvable checkout to the run record, not to a fallback: \
+             {step4}"
+        );
+
+        // `foreign` is the exit-3 mode that is NOT "nothing to match", and reading it as `absent`
+        // is the worst available error: four org repos gate Solidity on a non-nix forge, one of
+        // them `forge fmt --check` on NIGHTLY. The step has to name the mode and say what makes
+        // it different, or the producer meets it and treats it as a free choice of shell.
+        assert!(
+            step4.contains("`foreign`"),
+            "step 4 must name the foreign mode, not fold it into the exit-3 list: {step4}"
+        );
+        assert!(
+            step4.contains("NOT \"nothing to match\""),
+            "step 4 must say what makes `foreign` different from `absent`: {step4}"
+        );
+
+        // Step 1's health-check use of the same URL is a DIFFERENT question and must survive: the
+        // negative above is one careless widening away from deleting the environment assertion.
+        assert!(
+            producer_step(&prompt, "1").contains("sol-shell"),
+            "step 1's startup health check still asks whether nix can realise a rainix shell"
+        );
     }
 
     /// #135/#136: retiring `ai:relink` only works if the work it named became something the
