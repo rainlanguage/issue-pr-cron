@@ -16346,12 +16346,13 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // The failure shapes differ, and deliberately: `backlog` degrades to empty (its count is
     // legacy and the dashboard reads it), while `open` stays `None` so the new count and the ages
     // are OMITTED rather than reported as an org with zero open issues.
-    let coverage = coverage_uncovered();
-    let backlog: Vec<SubjectRef> = coverage
-        .as_ref()
-        .map(|c| producer_backlog(&c.uncovered, &c.meta))
-        .unwrap_or_default();
-    let open: Option<Vec<OpenIssue>> = coverage.as_ref().map(|c| open_issues(&c.all, &c.meta));
+    let (backlog, open): (Vec<SubjectRef>, Option<Vec<OpenIssue>>) = match coverage_uncovered() {
+        Some(c) => {
+            let (backlog, open) = c.populations();
+            (backlog, Some(open))
+        }
+        None => (Vec::new(), None),
+    };
 
     if json_out {
         let doc = human_queue_doc(
@@ -29057,6 +29058,23 @@ struct OrgIssues {
     /// The raw `gh search issues` row for every member of `all` — so for every member of
     /// `uncovered` too, since `uncovered` is a subset. Keyed the way both lists are.
     meta: std::collections::HashMap<(String, u64), Value>,
+}
+
+impl OrgIssues {
+    /// The two populations `human-queue` reports on, each built from the field that DEFINES it:
+    /// the producer backlog narrows `uncovered`, the age population takes `all` whole.
+    ///
+    /// The choice of field IS the whole difference between the two metrics, so it is made here, in
+    /// one tested function, rather than at the call site: `open_issues(&c.uncovered, …)` differs
+    /// from `open_issues(&c.all, …)` by one word, compiles either way, and silently re-narrows the
+    /// org-wide ages back to the producer's share. That narrowing is not hypothetical — it is what
+    /// #165 originally shipped, and what this rescope undoes.
+    fn populations(&self) -> (Vec<SubjectRef>, Vec<OpenIssue>) {
+        (
+            producer_backlog(&self.uncovered, &self.meta),
+            open_issues(&self.all, &self.meta),
+        )
+    }
 }
 
 /// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter,
@@ -43505,7 +43523,12 @@ mod subject_ref_tests {
             cc_unvetted_n,
             cc_upheld,
             cc_upheld_n,
-            &[sref("rainlanguage/rain.math.float", 42, "issues", "backlog")],
+            &[sref(
+                "rainlanguage/rain.math.float",
+                42,
+                "issues",
+                "backlog",
+            )],
             // The open-issue population is WIDER than the backlog above and overlaps it: the same
             // backlog issue, plus one an open PR covers and one flagged `ai:close-candidate` —
             // both of which `producer_backlog` excludes and the ages deliberately include. Ages
@@ -43517,7 +43540,12 @@ mod subject_ref_tests {
                     created_ms: Some(DOC_NOW_MS - 10 * 86_400_000),
                 },
                 OpenIssue {
-                    subject: sref("rainlanguage/raindex", 981, "issues", "covered by an open PR"),
+                    subject: sref(
+                        "rainlanguage/raindex",
+                        981,
+                        "issues",
+                        "covered by an open PR",
+                    ),
                     created_ms: Some(DOC_NOW_MS - 40 * 86_400_000),
                 },
                 OpenIssue {
@@ -43700,15 +43728,19 @@ mod subject_ref_tests {
     // asked for the average age of all issues, and a metric narrowed to the producer's share
     // cannot see an issue that has sat behind an open PR or a `human:*` ruling for six months.
 
+    /// The `(issue keys, meta)` pair the population builders take, as [`coverage_uncovered`]
+    /// produces it.
+    type CoverageRows = (
+        Vec<(String, u64)>,
+        std::collections::HashMap<(String, u64), Value>,
+    );
+
     /// One `gh search issues` payload shaped like the live one, shared by the population tests so
     /// the two populations are read from the SAME rows — which is the property under test.
     ///
     /// Three open issues: a plain one, one flagged `ai:close-candidate` (excluded from the
     /// backlog, INCLUDED in the open-issue population), and one with no meta row at all.
-    fn coverage_fixture() -> (
-        Vec<(String, u64)>,
-        std::collections::HashMap<(String, u64), Value>,
-    ) {
+    fn coverage_fixture() -> CoverageRows {
         let mut meta: std::collections::HashMap<(String, u64), Value> =
             std::collections::HashMap::new();
         meta.insert(
@@ -43778,6 +43810,45 @@ mod subject_ref_tests {
         );
     }
 
+    // The WIRING, which is where the rescope could silently revert: the age population must be
+    // built from `all` and the backlog from `uncovered`. One word apart, both compile, and taking
+    // `uncovered` for the ages is exactly the narrowing this rescope undoes — so the field choice
+    // is asserted here rather than left at a call site no test reaches.
+    #[test]
+    fn populations_take_the_ages_from_all_and_the_backlog_from_uncovered() {
+        let (_, meta) = coverage_fixture();
+        let org = OrgIssues {
+            // Every open issue: the plain one, the flagged one, the meta-less one.
+            all: vec![
+                ("rainlanguage/raindex".to_string(), 512),
+                ("rainlanguage/raindex".to_string(), 700),
+                ("rainlanguage/rain.math.float".to_string(), 3),
+            ],
+            // An open PR covers 512, so the backlog is strictly narrower on BOTH axes: coverage
+            // removes 512 and the `ai:close-candidate` label removes 700.
+            uncovered: vec![
+                ("rainlanguage/raindex".to_string(), 700),
+                ("rainlanguage/rain.math.float".to_string(), 3),
+            ],
+            meta,
+        };
+        let (backlog, open) = org.populations();
+        assert_eq!(
+            open.iter().map(|i| i.subject.number).collect::<Vec<_>>(),
+            vec![512, 700, 3],
+            "the ages measure `all` — every open issue, covered and flagged ones included"
+        );
+        assert_eq!(
+            backlog.iter().map(|s| s.number).collect::<Vec<_>>(),
+            vec![3],
+            "the backlog narrows `uncovered` further by label"
+        );
+        assert!(
+            open.len() > backlog.len(),
+            "the age population is WIDER than the backlog — swapping the two fields inverts this"
+        );
+    }
+
     /// The fixture-builder for a member whose only relevant field is its age.
     fn aged(days_ago_ms: i64, now_ms: i64) -> OpenIssue {
         OpenIssue {
@@ -43820,7 +43891,7 @@ mod subject_ref_tests {
     fn issue_age_stats_mean_is_dragged_by_the_long_tail_the_median_ignores() {
         let now = DOC_NOW_MS;
         let b = vec![
-            aged(1 * DAY_MS, now),
+            aged(DAY_MS, now),
             aged(2 * DAY_MS, now),
             aged(3 * DAY_MS, now),
             aged(4 * DAY_MS, now),
@@ -43881,7 +43952,10 @@ mod subject_ref_tests {
             aged((0.06 * 86_400_000.0) as i64, now),
         ];
         let a = issue_age_stats(&b, now).unwrap();
-        assert_eq!(a.mean, 0.1, "the mean is rounded, not the members it averages");
+        assert_eq!(
+            a.mean, 0.1,
+            "the mean is rounded, not the members it averages"
+        );
     }
 
     #[test]
