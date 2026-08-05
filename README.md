@@ -22,7 +22,6 @@ stateDiagram-v2
     state "ai:reject — needs rework" as reject
     state "ai:design" as design
     state "ai:close-candidate (PR)" as close
-    state "ai:blocked-deploy" as bdeploy
     state "ai:blocked-on" as bon
     state "run ended · infra down" as infradown
     state "human:design" as hdesign
@@ -65,14 +64,16 @@ stateDiagram-v2
     reject --> close : producer judges it not worth doing
     reject --> unvetted : linkage reject · producer weaken-closes Closes→Refs
 
-    %% producer deploy + blocked hand-offs. blocked-deploy waits on a human; blocked-on sits with
-    %% the VETTER (#161): the flag carries typed --blocked-by refs (refused without one) and the
-    %% vetter's state-load clears it the run after every dep merges/closes → fresh re-vet.
-    ready --> ready : producer deploy · red prod-pin → green
-    ready --> bdeploy : flag-blocked-deploy · deploy FAILED
-    unvetted --> bon : flag-blocked-on --blocked-by owner/repo#n · waiting on dependency PRs
+    %% blocked hand-off. blocked-on sits with the VETTER (#161): the flag carries typed
+    %% --blocked-by refs (refused without one) and the vetter's state-load clears it the run after
+    %% every dep merges/closes → fresh re-vet. ai:blocked-deploy is RETIRED (#162): under the
+    %% split release lifecycle NO merge waits on a deploy, so a deploy-shaped block (red prod-pin,
+    %% legacy redeploy marker) is evidence the REPO has not migrated — flagged blocked-on with the
+    %% repo's migration issue/PR as its typed dep (filed if none exists), never a deploy. The
+    %% residue PRs still carrying the retired label stay visible in human-queue until each is
+    %% re-flagged (or unblocked) by an eyes-on human pass.
+    unvetted --> bon : flag-blocked-on --blocked-by owner/repo#n · waiting on dependency PRs, incl. the repo's lifecycle migration
     unvetted --> design : flag-design · anything a human must answer or supply
-    bdeploy --> unvetted : human resolves deploy → re-work
     bon --> unvetted : vetter clears · every typed dep merged/closed → re-vet fresh
 
     %% infra down is NOT a PR state — the RUN ends and no PR is touched (#108)
@@ -444,8 +445,8 @@ order the reader had to remember, and being wrong about any one of them changes
 the decision. `next_ready` returns them together: the vetter's own sha-bound
 verdict **note** (the reasoning, not the label), `headRefOid` and `baseRefName`,
 the CI rollup with failing checks **named**, whether CodeRabbit actually
-reviewed, the unresolved-thread count **qualified by that**, and any
-deploy-before-merge gate.
+reviewed, the unresolved-thread count **qualified by that**, and the legacy
+deploy signal (`legacyDeploySignal` — never a merge gate, see below).
 
 **Which** PR is not a second question. `--queue` already ranks the presentable
 set cheapest-first; `next_ready` answers a prefix of that same ranked list, from
@@ -470,13 +471,22 @@ Three fields are worth their own note:
 - **`reviewThreads.meaning` qualifies the count.** Zero unresolved threads under
   a rate-limited review means no thread was _opened_, which is what an absent
   review looks like — `vacuous-no-review-behind-it`, not `clean`.
-- **The deploy gate is read from the body and the trusted comments, never the
-  title.** Of the six open PRs carrying `REQUIRES redeploy at land` on
-  2026-07-29, all six had it in the body and one also had it in the title, so
-  title-matching would have found one of six. It is the same predicate the
-  producer's own deploy routing reads, shared rather than re-derived, so "the
-  producer must deploy this" and "the human must not plain-merge this" cannot be
-  answered differently — and a retitle cannot move the gate.
+- **The legacy deploy signal is never a merge gate (#162), and it is read from
+  the body and the trusted comments, never the title.** Under the split release
+  lifecycle no merge waits on a deploy, so `repo-not-migrated` does not say
+  "deploy before merging" — it says the PR's repo still has the pre-split
+  premerge deploy shape (the legacy `REQUIRES redeploy at land` marker, or a red
+  prod-pin check) and is owed a lifecycle migration, which is the producer's
+  `flag-blocked-on --blocked-by <migration ref>` route. Of the six open PRs
+  carrying the marker on 2026-07-29, all six had it in the body and one also had
+  it in the title, so title-matching would have found one of six. It is built
+  from the same two SHAPE predicates the producer's own migration routing reads,
+  shared rather than re-derived, so the two can never disagree about whether the
+  repo is legacy-shaped — and a retitle cannot move the signal. They diverge on
+  exactly one further input, deliberately: the producer also reads whether the
+  old choreography deploy-confirmed the CURRENT head and declines to flag when
+  it did, while this row stays head-blind, because that confirmation resolved
+  one head's pins and left the repo's shape untouched.
 
 It cannot be refused for size. Every variable-length field is capped, so a full
 page's worst case is arithmetic the compiler checks
@@ -1330,8 +1340,12 @@ grouped into four lanes so the dashboard can show where PRs pile up:
 - **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:design`,
   `ai:close-candidate`, plus the RETIRED `ai:relink` for as long as any PR still
   carries it (#135).
-- **producer-blocked** — `ai:blocked-deploy`, plus the RETIRED
-  `ai:blocked-infra` for as long as any PR still carries it (#108).
+- **producer-blocked** — the RETIRED `ai:blocked-deploy` (#162) and
+  `ai:blocked-infra` (#108), each for as long as any PR still carries it. The
+  blocked-deploy residue is deliberately **not** vet-lifecycle: the #164
+  clearance reads exactly `ai:blocked-on` typed refs, which this residue does
+  not have — its exit is an eyes-on human pass that re-flags each PR blocked-on
+  its repo's migration, or unblocks it outright.
 - **human-decisions** — `human:design`, `human:close-candidate`, plus the
   RETIRED `human:reject` for as long as any PR still carries it (#133). That
   last count is the migration's progress meter: `migrate-reject` moves those PRs
@@ -1650,13 +1664,15 @@ failed; a consumer just could not render a link.
 
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
-`blocked-deploy`, or `blocked-on`. The first three plus `ready` (the merge
-queue) are the **human-gated states** — the daily review queue, a plain label
-search, no prose scraping. `blocked-on` is **not** human-gated (#161): its next
-mover is the vetter, whose state-load clears it automatically — see below.
-`design` is the **total-function fallback**: a situation the producer cannot
-classify is by definition one a human has to look at, and `design` already means
-exactly that.
+or `blocked-on`. The first two plus `ready` (the merge queue) are the
+**human-gated states** — the daily review queue, a plain label search, no prose
+scraping. `blocked-on` is **not** human-gated (#161): its next mover is the
+vetter, whose state-load clears it automatically — see below. (`blocked-deploy`
+is RETIRED — #162: no merge waits on a deploy under the split release lifecycle,
+so a deploy-shaped block is a repo-migration dependency expressed as
+`blocked-on`.) `design` is the **total-function fallback**: a situation the
+producer cannot classify is by definition one a human has to look at, and
+`design` already means exactly that.
 
 ### `ai:blocked-on` sits with the vetter (#161)
 

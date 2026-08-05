@@ -192,12 +192,6 @@
         "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
       },
       {
-        "repo": "rainlanguage/rain.dia",
-        "number": 60,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/60",
-        "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 410,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
@@ -519,7 +513,7 @@
         "repo": "S01-Issuer/st0x.deploy",
         "number": 250,
         "url": "https://github.com/S01-Issuer/st0x.deploy/pull/250",
-        "title": "feat(deploy): deterministic V4 authoriser clone, pinned up-front (proposal, closes #248)"
+        "title": "feat(deploy): deterministic-clone toolchain + deterministic V4 authoriser deploy capability (#292 step 1)"
       },
       {
         "repo": "rainlanguage/rainlang-codemirror",
@@ -840,12 +834,6 @@
         "title": "pi constant word"
       },
       {
-        "repo": "rainlanguage/rain.webapp",
-        "number": 354,
-        "url": "https://github.com/rainlanguage/rain.webapp/pull/354",
-        "title": "Boolean GUI presets emit rainlang 1/0 + Storybook preset-buttons story (rainix#262 pilot)"
-      },
-      {
         "repo": "rainlanguage/raindex",
         "number": 2719,
         "url": "https://github.com/rainlanguage/raindex/pull/2719",
@@ -920,16 +908,16 @@
         "count": 3,
         "prs": [
           {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 156,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
-            "title": "Draw the uncovered-issues median age beside its queue-size sparkline"
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 168,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/168",
+            "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle"
           },
           {
             "repo": "rainlanguage/rain-org-health",
-            "number": 155,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/155",
-            "title": "dash(nav): Metrics tab moves to third position on every page"
+            "number": 156,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
+            "title": "Draw the open-issue population's size, mean and median age as its own band"
           },
           {
             "repo": "rainlanguage/flow",
@@ -1134,8 +1122,20 @@
         ]
       },
       "un-vetted": {
-        "count": 35,
+        "count": 28,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 204,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/204",
+            "title": "Refuse a body/block path that is not this caller's own: absolute AND named for its subject"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 82,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/82",
+            "title": "feat(audit): hot-key custody rule — the deploy key deploys and holds NOTHING (#81)"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 109,
@@ -1143,46 +1143,10 @@
             "title": "Refuse to consume a sentinel stack that lies above the allocated memory pointer"
           },
           {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 108,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/108",
-            "title": "test(extend): pin which unsafeExtend branch each test executes"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 107,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/107",
-            "title": "test(flatten): pin the empty-inner-array boundary deterministically"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 168,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/168",
-            "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 167,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/167",
-            "title": "Emit uncovered-issues age stats (median/oldest days) beside counts"
-          },
-          {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 166,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/166",
             "title": "human-rule delegates in one call, and human:* protects authorship only — rulings are inputs the machine executes"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 106,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/106",
-            "title": "[A02] refuse sentinel scans over word unaligned stack bounds"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 105,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/105",
-            "title": "test(uint256): bring the uint256 suite to parity with the bytes32 one"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1327,43 +1291,19 @@
             "number": 125,
             "url": "https://github.com/rainlanguage/rain.flare/pull/125",
             "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
-          },
-          {
-            "repo": "rainlanguage/rain.uniswap",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.uniswap/pull/31",
-            "title": "2024 06 23 sushi v3"
-          },
-          {
-            "repo": "rainlanguage/rain-protocol",
-            "number": 675,
-            "url": "https://github.com/rainlanguage/rain-protocol/pull/675",
-            "title": "remove ob"
-          },
-          {
-            "repo": "rainlanguage/rain-protocol",
-            "number": 613,
-            "url": "https://github.com/rainlanguage/rain-protocol/pull/613",
-            "title": "add generic errors for integrity operand overflow and underflow"
           }
         ]
       }
     },
     "vetter-verdicts": {
       "ai:close-candidate": {
-        "count": 5,
+        "count": 4,
         "prs": [
           {
             "repo": "rainlanguage/rain.dia",
             "number": 63,
             "url": "https://github.com/rainlanguage/rain.dia/pull/63",
             "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/60",
-            "title": "fix(op): fail closed on input arity in LibOpDiaPrice.run"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1499,7 +1439,7 @@
         ]
       },
       "ai:reject": {
-        "count": 66,
+        "count": 65,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1547,7 +1487,7 @@
             "repo": "S01-Issuer/st0x.deploy",
             "number": 250,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/250",
-            "title": "feat(deploy): deterministic V4 authoriser clone, pinned up-front (proposal, closes #248)"
+            "title": "feat(deploy): deterministic-clone toolchain + deterministic V4 authoriser deploy capability (#292 step 1)"
           },
           {
             "repo": "rainlanguage/rainlang-codemirror",
@@ -1868,12 +1808,6 @@
             "title": "pi constant word"
           },
           {
-            "repo": "rainlanguage/rain.webapp",
-            "number": 354,
-            "url": "https://github.com/rainlanguage/rain.webapp/pull/354",
-            "title": "Boolean GUI presets emit rainlang 1/0 + Storybook preset-buttons story (rainix#262 pilot)"
-          },
-          {
             "repo": "rainlanguage/raindex",
             "number": 2719,
             "url": "https://github.com/rainlanguage/raindex/pull/2719",
@@ -1903,40 +1837,10 @@
   },
   "closeCandidateIssues": [
     {
-      "repo": "rainlanguage/rain.dia",
-      "number": 43,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/43",
-      "title": "[AUDIT-M14] [medium] Dual pointer-codegen entrypoints BuildPointers.sol and Build.sol"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/40",
-      "title": "[AUDIT-M12] [medium] LibOpDiaPrice.run does not validate staleAfter is a Float"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 22,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/22",
-      "title": "[AUDIT-L06] [low] intOrAStringToString empty and max-31 round-trips untested"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 6,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/6",
-      "title": "[AUDIT-M01] [medium] LibOpDiaPrice.run does not fail-closed on input arity"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 248,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/rain.erc4626.words",
-      "number": 93,
-      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/93",
-      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -1958,66 +1862,18 @@
     },
     {
       "repo": "rainlanguage/raindex",
-      "number": 981,
-      "url": "https://github.com/rainlanguage/raindex/issues/981",
-      "title": "add back button for desktop app"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 243,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/243",
-      "title": "Order table styling not working on Firefox"
-    },
-    {
-      "repo": "rainlanguage/raindex",
       "number": 960,
       "url": "https://github.com/rainlanguage/raindex/issues/960",
       "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
-      "title": "i was asked to infinite approve quick on deposit"
     }
   ],
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [
     {
-      "repo": "rainlanguage/rain.dia",
-      "number": 43,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/43",
-      "title": "[AUDIT-M14] [medium] Dual pointer-codegen entrypoints BuildPointers.sol and Build.sol"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/40",
-      "title": "[AUDIT-M12] [medium] LibOpDiaPrice.run does not validate staleAfter is a Float"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 22,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/22",
-      "title": "[AUDIT-L06] [low] intOrAStringToString empty and max-31 round-trips untested"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 6,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/6",
-      "title": "[AUDIT-M01] [medium] LibOpDiaPrice.run does not fail-closed on input arity"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 248,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/rain.erc4626.words",
-      "number": 93,
-      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/93",
-      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -2039,71 +1895,119 @@
     },
     {
       "repo": "rainlanguage/raindex",
-      "number": 981,
-      "url": "https://github.com/rainlanguage/raindex/issues/981",
-      "title": "add back button for desktop app"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 243,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/243",
-      "title": "Order table styling not working on Firefox"
-    },
-    {
-      "repo": "rainlanguage/raindex",
       "number": 960,
       "url": "https://github.com/rainlanguage/raindex/issues/960",
       "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/139",
-      "title": "i was asked to infinite approve quick on deposit"
     }
   ],
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 45,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/45",
-      "title": "URGENT: www.s01issuer.com serves a stale Vercel build — none of the corrected site exists on the public domain"
+      "number": 192,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/192",
+      "title": "Tokka collateral-onboarding requirements — room additions + evidence build-out"
     },
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 38,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/38",
-      "title": "URGENT — retail secondary access opens next week: PRIIPs KID must be signed off and published FIRST"
+      "number": 191,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/191",
+      "title": "Debt burn-down: lint (31 errors), typecheck (12 errors), legal-worker watermarking"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 208,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/208",
+      "title": "interactively-agented PRs carry no state label, so no queue lists them and they rot unseen — 14 of 60 open"
+    },
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 83,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/83",
+      "title": "no dimension checks responsive image delivery: a single-source <img src> ships one resolution to every viewport"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 550,
+      "url": "https://github.com/rainlanguage/rainlang/issues/550",
+      "title": "rainlang is untyped, so whether a word can validate its own operand is an accident of the encoding"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/9",
+      "title": "the restore rule is scoped to the first probe, but every restore discards uncommitted work — three agents lost edits mid-pass"
     },
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 24,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/24",
-      "title": "Beyond markdown: facts to validated records, registers generated, verification continuous"
+      "number": 183,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/183",
+      "title": "rwa.xyz integration — market data on S01 assets + get ST0x listed"
     },
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 20,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/20",
-      "title": "Token Terms template v1.36.0 — conform to the approved Base Prospectus before any generation"
+      "number": 176,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/176",
+      "title": "Agent Access API — named keys, resource-scoped grants, evidence-grade audit (final design)"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 293,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/293",
+      "title": "Hash-only and address-only pins across the repo: embed runtime bytecode on every deployed-artifact pin (ruling from #250)"
+    },
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 80,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/80",
+      "title": "Audit skill: address+codehash-only pins of EXTERNAL deployed artifacts escape both pin rules — require embedded runtime bytecode on every pin"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 189,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/189",
+      "title": "durationMs understates some runs by up to 2.8x, and dispatch count does not predict the error"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 292,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/292",
+      "title": "Deterministic authoriser clones everywhere: chain-invariant address, pinned up-front, migrate Base off the nonce-based clone"
     },
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 10,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/10",
-      "title": "CI/CD: real checks on PRs — Actions gate, Vercel account mapping, lint/check debt burn-down, branch protection"
+      "number": 126,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/126",
+      "title": "Metrics indexer scope + one source of truth for token counts (site review M2/M3)"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 176,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/176",
+      "title": "vetter: an expired OAuth session is logged as SUCCESS and recorded as a generic error"
     },
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 7,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/7",
-      "title": "Site is stale against the ingested primary documents — passport set, Greece, dates, statuses"
+      "number": 83,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/83",
+      "title": "2027 base prospectus re-approval — scope list (funds/ETPs, immutability fix, new format)"
+    },
+    {
+      "repo": "rainlanguage/rain.local-db.remote",
+      "number": 15,
+      "url": "https://github.com/rainlanguage/rain.local-db.remote/issues/15",
+      "title": "Split `secrets.SSH_KEY`: one key is both root SSH to prod hosts and the age identity decrypting runtime.env.age"
     },
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 2,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/2",
-      "title": "Legal & regulatory portal — v4 blockers, live exposures and go/no-go gates"
+      "number": 81,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/81",
+      "title": "Prospectus accuracy audit — do we need an Art 23 supplement? (insolvency, upgradeability, KID statement, funds)"
+    },
+    {
+      "repo": "S01-Issuer/s01.ops",
+      "number": 78,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/78",
+      "title": "Registry → legal process: a new ST0x asset must trigger the issuance pipeline; metadata replaced by info packs"
     },
     {
       "repo": "rainlanguage/rain-org-health",
@@ -2122,18 +2026,6 @@
       "number": 149,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/149",
       "title": "Screenshot publication is a loose transition: the producer pushes a PNG to another repo and hand-types the marker, with no `pr-review-report` subcommand"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 143,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/143",
-      "title": "Four prompt-pinning tests assert nothing: a bare relative read resolves against the crate root under `cargo test`, so the file is never found"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/142",
-      "title": "Decide the screenshot gate at PR-OPEN: the evidence channel does not exist before `gh pr create`, and the visual-PR classifier misses the cases that caused #140"
     },
     {
       "repo": "cyclofinance/cyclo.site",
@@ -2161,12 +2053,6 @@
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 129,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/129",
-      "title": "gh_json collapses every failure into None, so a rate limit is indistinguishable from a missing PR"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
       "number": 125,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/125",
       "title": "next_ready reads mergeable and calls it clean, so a ruleset-BLOCKED PR is presented as unblocked"
@@ -2185,21 +2071,15 @@
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 117,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/117",
-      "title": "clone_list is over budget above ~172 clones and its refusal names a `limit` it does not accept"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 116,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/116",
-      "title": "Producer verifies Solidity with a hardcoded rainix at HEAD, not the repo's pinned flake"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
       "number": 109,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/109",
       "title": "A gc for FSM state: find and heal the states no transition produces"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 140,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/140",
+      "title": "Sparkline issue age, not just queue size — the count cannot tell turnover from stagnation"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -3262,6 +3142,12 @@
       "number": 2788,
       "url": "https://github.com/rainlanguage/raindex/issues/2788",
       "title": "Allow the order input token to be optional"
+    },
+    {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 93,
+      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/93",
+      "title": "Rounding direction of convertToAssets is undocumented and untested; no proof it favors the non-interactive party"
     },
     {
       "repo": "rainlanguage/rain.erc4626.words",
@@ -4584,12 +4470,6 @@
       "title": "show total collateral locked and total cy* to unlock per token"
     },
     {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 341,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/341",
-      "title": "Option to provide custom rpc url while deploying strategies to fetch onchain data"
-    },
-    {
       "repo": "cyclofinance/cyclo.site",
       "number": 213,
       "url": "https://github.com/cyclofinance/cyclo.site/issues/213",
@@ -4638,12 +4518,6 @@
       "title": "test https://cow.fi/mev-blocker"
     },
     {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 302,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/302",
-      "title": "need CI to flag basic issues with the integrity and deployability of the yaml"
-    },
-    {
       "repo": "rainlanguage/docs.rainlang.xyz",
       "number": 71,
       "url": "https://github.com/rainlanguage/docs.rainlang.xyz/issues/71",
@@ -4654,12 +4528,6 @@
       "number": 263,
       "url": "https://github.com/rainlanguage/rain.solver/issues/263",
       "title": "try to use https://blinklabs.xyz/ to avoid front running that causes expensive reverts"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 270,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/270",
-      "title": "Approve transaction is mined but no block confirmation is received"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -4674,34 +4542,10 @@
       "title": "define canary order scope of work and purpose and generally when/where/why/how about it"
     },
     {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 222,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/222",
-      "title": "Would be good to have a transaction store, similar to the one in SFT site."
-    },
-    {
       "repo": "rainlanguage/raindex-tg-bot",
       "number": 3,
       "url": "https://github.com/rainlanguage/raindex-tg-bot/issues/3",
       "title": "Ensure raindex tg bot is in typescript"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 217,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/217",
-      "title": "show codemirror modal on the strat page"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 216,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/216",
-      "title": "Slow to perform getAddOrderCallData from transactionData.ts"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 192,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/192",
-      "title": "have a local db"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -4710,28 +4554,10 @@
       "title": "have a local db"
     },
     {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 151,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/151",
-      "title": "ability to set the vault id, so multiple strats can point at the same capital"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 936,
       "url": "https://github.com/rainlanguage/raindex/issues/936",
       "title": "clicking on all the accounts in the orders page also turns on \"all accounts\" which includes accounts that aren't in the list"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 145,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/145",
-      "title": "ability to see other people's orders"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/142",
-      "title": "ability to sort table by headings on my strats page"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -4764,18 +4590,6 @@
       "title": "add `balance` field to `erc20` entity in subgraph"
     },
     {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 83,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/83",
-      "title": "Add deposit/withdraw history to strategy page"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 69,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/69",
-      "title": "i deployed a strat but it didn't show up under \"my strategies\""
-    },
-    {
       "repo": "rainlanguage/dotrain",
       "number": 134,
       "url": "https://github.com/rainlanguage/dotrain/issues/134",
@@ -4798,18 +4612,6 @@
       "number": 901,
       "url": "https://github.com/rainlanguage/raindex/issues/901",
       "title": "Add official RP4 addresses to deployment CI as env"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 41,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/41",
-      "title": "New file structure for strats and subdomains"
-    },
-    {
-      "repo": "rainlanguage/rain.webapp",
-      "number": 25,
-      "url": "https://github.com/rainlanguage/rain.webapp/issues/25",
-      "title": "some kind of domain switcher navigation so users can move easily between subdomains"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -4908,12 +4710,6 @@
       "title": "Generate ABIs rather than hardcode"
     },
     {
-      "repo": "rainlanguage/rain.uniswap",
-      "number": 35,
-      "url": "https://github.com/rainlanguage/rain.uniswap/issues/35",
-      "title": "organise the tests better so we can cover many networks easily for a given dex"
-    },
-    {
       "repo": "rainlanguage/rainlang",
       "number": 252,
       "url": "https://github.com/rainlanguage/rainlang/issues/252",
@@ -4924,18 +4720,6 @@
       "number": 126,
       "url": "https://github.com/rainlanguage/rain.solver/issues/126",
       "title": "exex spike"
-    },
-    {
-      "repo": "rainlanguage/rain.uniswap",
-      "number": 27,
-      "url": "https://github.com/rainlanguage/rain.uniswap/issues/27",
-      "title": "infer the outputs from the rainlang rather than needing an operand for it for timestamps"
-    },
-    {
-      "repo": "rainlanguage/rain.uniswap",
-      "number": 23,
-      "url": "https://github.com/rainlanguage/rain.uniswap/issues/23",
-      "title": "`UniswapWords` incompatible with pancakeswap v3."
     },
     {
       "repo": "rainlanguage/raindex",
@@ -4962,22 +4746,10 @@
       "title": "interfaces for pointers"
     },
     {
-      "repo": "rainlanguage/rain.uniswap",
-      "number": 21,
-      "url": "https://github.com/rainlanguage/rain.uniswap/issues/21",
-      "title": "rain.uniswap is not deployed on flare properly - no meta emitted and wrong factory addresses"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 671,
       "url": "https://github.com/rainlanguage/raindex/issues/671",
       "title": "inject order counterparty into context grid for simulations"
-    },
-    {
-      "repo": "rainlanguage/rain.uniswap",
-      "number": 20,
-      "url": "https://github.com/rainlanguage/rain.uniswap/issues/20",
-      "title": "Uniswap subparser deployments for different protocols."
     },
     {
       "repo": "rainlanguage/rain.internal",
@@ -5520,18 +5292,6 @@
       "title": "Make cache expiration configurable or default to never expire"
     },
     {
-      "repo": "rainlanguage/rainlang-vscode",
-      "number": 29,
-      "url": "https://github.com/rainlanguage/rainlang-vscode/issues/29",
-      "title": "add native parser parsing process to the extension"
-    },
-    {
-      "repo": "rainlanguage/rainlang-vscode",
-      "number": 28,
-      "url": "https://github.com/rainlanguage/rainlang-vscode/issues/28",
-      "title": "adopt rebinds with reading directly from frontmatter"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 236,
       "url": "https://github.com/rainlanguage/raindex/issues/236",
@@ -5734,52 +5494,48 @@
       "number": 1,
       "url": "https://github.com/rainlanguage/rain.datacontract/issues/1",
       "title": "https://eips.ethereum.org/EIPS/eip-3540"
+    }
+  ],
+  "archivedRepoPrs": [
+    {
+      "repo": "rainlanguage/rain.webapp",
+      "number": 354,
+      "url": "https://github.com/rainlanguage/rain.webapp/pull/354",
+      "title": "Boolean GUI presets emit rainlang 1/0 + Storybook preset-buttons story (rainix#262 pilot)"
+    },
+    {
+      "repo": "rainlanguage/rain.uniswap",
+      "number": 31,
+      "url": "https://github.com/rainlanguage/rain.uniswap/pull/31",
+      "title": "2024 06 23 sushi v3"
     },
     {
       "repo": "rainlanguage/rain-protocol",
-      "number": 599,
-      "url": "https://github.com/rainlanguage/rain-protocol/issues/599",
-      "title": "Update fuzz test for combine tier"
+      "number": 675,
+      "url": "https://github.com/rainlanguage/rain-protocol/pull/675",
+      "title": "remove ob"
     },
     {
       "repo": "rainlanguage/rain-protocol",
-      "number": 537,
-      "url": "https://github.com/rainlanguage/rain-protocol/issues/537",
-      "title": "Check if able to specify rounding , and it rounds correctly in scale18 Op . Check if able to retrieve  scale from the stack"
-    },
-    {
-      "repo": "rainlanguage/rain-protocol",
-      "number": 453,
-      "url": "https://github.com/rainlanguage/rain-protocol/issues/453",
-      "title": "Struct interfaces from typechain"
-    },
-    {
-      "repo": "rainlanguage/rain-protocol",
-      "number": 359,
-      "url": "https://github.com/rainlanguage/rain-protocol/issues/359",
-      "title": "Inexistent Validation of Distributor Status"
-    },
-    {
-      "repo": "rainlanguage/rain-protocol",
-      "number": 311,
-      "url": "https://github.com/rainlanguage/rain-protocol/issues/311",
-      "title": "Potential User-Defined Value Type"
+      "number": 613,
+      "url": "https://github.com/rainlanguage/rain-protocol/pull/613",
+      "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
   "leaks": [
     {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 156,
-      "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
-      "title": "Draw the uncovered-issues median age beside its queue-size sparkline",
-      "reason": "🤖 ai:producer  Screenshot backfill of the changed section — the `untouched (no PR)` backlog box in the producer-action row. Rendered `site/pipeline.html` at PR head `e8e679a` against this PR's merge base `162f5b7`, with the repo's pinned harness (`nix run .#screenshot`, headless chromium + bundled dejavu fontconfig), 1300px light theme.  ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/rain-org-health-156.png)  **Fixture, and why.** The recording half (https://github.com/rainlanguage/issue-pr-cron/pull/167) is still open, so the live artifacts carry no `ages` at all — I checked: 0 of 181 lines in the live `human-queue-history.jsonl`. Rendered against live data this section is invisible by design, which is a worthless screenshot. So both variants are served from the **live** `human-queue.json` + `human-queue-history.jsonl` (fetched today) with an `ages.uncoveredIssues` block added to the newest 60 history lines and to the snapshot — median drifting 36.0 → 41.5 then dropping to 33.4 on the newest point, oldest ~795d. Only the two URL constants were repointed at the local copies; no render code was touched.  **What the render confirms.**  - After shows the labelled line `median 33.4d` under `untouched (no PR)`, unit attached — before shows no such line. - The sparkline gains a second, visibly **dashed and thinner** series; before is a single solid line. - The magnified panel is the same SVG enlarged by CSS so it re-renders as vector (not an upscaled bitmap): solid = the 620-item queue, dashed = the median age, each with its own endpoint dot, and the two clearly do not share a y-scale — the age line rises into a peak and falls off at the end while the count line stays roughly flat across the same window.  One honest note on the axis: both series happen to span nearly the whole chart here rather than the age line starting mid-window. That is not the fixture flattering itself — `counts.uncoveredIssues` is itself a recently-added key, present on only 64 of the 181 history lines (earliest `2026-07-26T06:22Z`), so the shared time axis starts about where my injected ages start. The short-line-from-mid-window case is the one the tests cover. "
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 168,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/pull/168",
+      "title": "Retire ai:blocked-deploy: deploys never block merges under the split lifecycle",
+      "reason": "🤖 ai:producer  Correction to my previous note: the version slot was **not** yours to decide after all — CI settled it. The `a plugin change bumps its version` gate went red at `24f1252`:  > plugins/human-fsm changed but plugins/human-fsm/.claude-plugin/plugin.json is still 0.7.0. Bump it (and the marketplace entry to match)  Both sides had independently bumped to 0.7.0, so the merge took that line cleanly and the version stopped moving relative to `main` — which is exactly what the gate measures. Since `main` shipped 0.7.0 with different content, this branch's release is **0.8.0**; both files bumped at `35abfd5`, and `plugin-version-lockstep` reports `ok human-fsm 0.8.0` locally."
     },
     {
       "repo": "rainlanguage/rain-org-health",
-      "number": 155,
-      "url": "https://github.com/rainlanguage/rain-org-health/pull/155",
-      "title": "dash(nav): Metrics tab moves to third position on every page",
-      "reason": "🤖 ai:producer  Screenshot backfill for the nav reorder. Rendered `site/metrics.html` at PR head `d724d5b` against this PR's own merge base `b618355` (not current `master`, which has drifted) using the repo's pinned harness — `nix run .#screenshot`, headless chromium with the bundled dejavu fontconfig — at 1300px, light theme.  `metrics.html` is the page that carries the moved tab itself, so one page shows both halves of the claim: the new order *and* that the `active` underline travels with the tab. The other four nav-bearing pages take the byte-identical one-line change (`before`/`after` of this file differ only by the `Repositories` line moving, both 47920 bytes).  ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/rain-org-health-155.png)  Before: Pipeline · Audit · Repositories · **Metrics** · Deployments — Metrics 4th. After: Pipeline · Audit · **Metrics** · Repositories · Deployments — Metrics 3rd, still underlined as the active tab. "
+      "number": 156,
+      "url": "https://github.com/rainlanguage/rain-org-health/pull/156",
+      "title": "Draw the open-issue population's size, mean and median age as its own band",
+      "reason": "🤖 ai:producer  Screenshot backfill of the changed section — the `untouched (no PR)` backlog box in the producer-action row. Rendered `site/pipeline.html` at PR head `e8e679a` against this PR's merge base `162f5b7`, with the repo's pinned harness (`nix run .#screenshot`, headless chromium + bundled dejavu fontconfig), 1300px light theme.  ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/rain-org-health-156.png)  **Fixture, and why.** The recording half (https://github.com/rainlanguage/issue-pr-cron/pull/167) is still open, so the live artifacts carry no `ages` at all — I checked: 0 of 181 lines in the live `human-queue-history.jsonl`. Rendered against live data this section is invisible by design, which is a worthless screenshot. So both variants are served from the **live** `human-queue.json` + `human-queue-history.jsonl` (fetched today) with an `ages.uncoveredIssues` block added to the newest 60 history lines and to the snapshot — median drifting 36.0 → 41.5 then dropping to 33.4 on the newest point, oldest ~795d. Only the two URL constants were repointed at the local copies; no render code was touched.  **What the render confirms.**  - After shows the labelled line `median 33.4d` under `untouched (no PR)`, unit attached — before shows no such line. - The sparkline gains a second, visibly **dashed and thinner** series; before is a single solid line. - The magnified panel is the same SVG enlarged by CSS so it re-renders as vector (not an upscaled bitmap): solid = the 620-item queue, dashed = the median age, each with its own endpoint dot, and the two clearly do not share a y-scale — the age line rises into a peak and falls off at the end while the count line stays roughly flat across the same window.  One honest note on the axis: both series happen to span nearly the whole chart here rather than the age line starting mid-window. That is not the fixture flattering itself — `counts.uncoveredIssues` is itself a recently-added key, present on only 64 of the 181 history lines (earliest `2026-07-26T06:22Z`), so the shared time axis starts about where my injected ages start. The short-line-from-mid-window case is the one the tests cover. "
     },
     {
       "repo": "cyclofinance/cyclo.site",
@@ -5823,18 +5579,27 @@
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
-    "closeCandidateIssues": 13,
+    "closeCandidateIssues": 5,
     "closeCandidateUnvetted": 0,
-    "closeCandidateUpheld": 13,
+    "closeCandidateUpheld": 5,
     "leaks": 7,
-    "totalProducerPrs": 163,
-    "uncoveredIssues": 617,
-    "unvetted": 35,
-    "reject": 66,
+    "totalProducerPrs": 154,
+    "archivedRepoPrs": 4,
+    "uncoveredIssues": 599,
+    "unvetted": 28,
+    "reject": 65,
     "relink": 0,
-    "closeCandidatePrs": 5,
+    "closeCandidatePrs": 4,
     "humanReject": 0,
     "humanDesign": 6,
-    "humanCloseCandidate": 0
+    "humanCloseCandidate": 0,
+    "openIssues": 769
+  },
+  "ages": {
+    "openIssues": {
+      "meanDays": 316.2,
+      "medianDays": 99.0,
+      "oldestDays": 1654.6
+    }
   }
 }
