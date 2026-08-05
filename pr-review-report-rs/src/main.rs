@@ -7199,10 +7199,15 @@ const SOL_AUDIT_SKEW: i32 = 3;
 /// PURE: a path or flake reference as this audit compares them — unquoted, with any trailing slash
 /// removed, so `"/w/clone"` and `/w/clone/` name the same checkout.
 fn audit_ref(raw: &str) -> String {
-    let trimmed = raw.trim().trim_matches(|c| c == '\'' || c == '"');
+    let trimmed = raw.trim().trim_matches(['\'', '"']);
     let stripped = trimmed.trim_end_matches('/');
     // A lone `/` is not a checkout, but stripping it to nothing would silently drop the reference.
-    if stripped.is_empty() { trimmed } else { stripped }.to_string()
+    if stripped.is_empty() {
+        trimmed
+    } else {
+        stripped
+    }
+    .to_string()
 }
 
 /// PURE: the checkout a `pr-review-report sol-toolchain <dir>` command asks about.
@@ -7282,7 +7287,7 @@ fn runs_sol_check(inner: &str) -> bool {
         .any(|stage| {
             let s = stage
                 .trim()
-                .trim_start_matches(|c| c == '\'' || c == '"' || c == '(')
+                .trim_start_matches(['\'', '"', '('])
                 .trim_start();
             is_sol_check(strip_env_prefix(s))
         })
@@ -7720,9 +7725,20 @@ mod sol_audit_tests {
     /// The check is inside the quotes. Reading only the first word after `-c` sees `bash`.
     #[test]
     fn a_check_wrapped_in_bash_c_is_still_a_check() {
-        assert!(runs_sol_check("bash -c 'cd /w/clone && forge test 2>&1 | tail -3'"));
-        assert!(runs_sol_check("env CI=true FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge fmt --check"));
-        assert!(!runs_sol_check("bash -c 'cd /w/clone && forge soldeer install'"));
+        // A wrapped command with NO shell operator in it. This is what the unwrapping is FOR:
+        // splitting on `&&`/`|` already reaches inside the quotes of a chained one, so a test that
+        // only uses a chained command passes with the unwrapping deleted.
+        assert!(runs_sol_check("bash -c 'forge fmt --check'"));
+        assert!(runs_sol_check("sh -c \"forge test\""));
+        assert!(runs_sol_check(
+            "bash -c 'cd /w/clone && forge test 2>&1 | tail -3'"
+        ));
+        assert!(runs_sol_check(
+            "env CI=true FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge fmt --check"
+        ));
+        assert!(!runs_sol_check(
+            "bash -c 'cd /w/clone && forge soldeer install'"
+        ));
         assert!(!runs_sol_check("npm ci"));
     }
 
@@ -7773,6 +7789,35 @@ mod sol_audit_tests {
                 call("cd /w/clone && nix develop -c forge test"),
             ]),
             vec![SolAudit::Matched]
+        );
+    }
+
+    /// `sol-toolchain` CANONICALISES the checkout before printing it, so a question asked with a
+    /// path that resolves through a symlink gets an answer that does not spell it the same way.
+    /// Both name the same directory and therefore the same flake, and reporting that as skew would
+    /// be the audit's own normalisation showing up as a fault in the run.
+    #[test]
+    fn a_repo_flake_answer_matches_the_checkout_however_the_question_spelled_it() {
+        let out = "mode: repo-flake\nflake: present\nverify: nix develop /canonical/clone -c\n";
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", out),
+                call("cd /w/clone && nix develop -c forge test"),
+            ]),
+            vec![SolAudit::Matched]
+        );
+        // The equivalence is for a PATH answer only. A checkout that enters its own flake when its
+        // CI runs a pinned rainix is the mirrored mistake #195's text names, and must still report.
+        assert_eq!(
+            findings(&[
+                asked("/w/clone", PINNED),
+                call("cd /w/clone && nix develop -c forge test"),
+            ]),
+            vec![SolAudit::Skew {
+                dir: "/w/clone".into(),
+                used: "/w/clone".into(),
+                named: "github:rainlanguage/rainix/deadbeef#sol-shell".into(),
+            }]
         );
     }
 
