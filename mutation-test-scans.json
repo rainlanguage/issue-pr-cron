@@ -19,5 +19,12 @@
   "publishedTag": null,
   "scope": "the human's TERMINAL close edge (human_close_plan/human_close_steps/human_close_report/human_close_apply), the gh step seam (rule_step_argv/rule_step_failure), the two subject-type redirections (CcVerdictPlan::NotAnIssue, pr_view_failed_error) and the marketplace gate (plugin_version_check/plugin_version_lockstep_mode) + the shipped commands' content invariant",
   "summary": "22/22 mutants killed, 0 survivors, one per behaviour with the whole suite run each time and the source restored between runs; the command-content invariant is checked by a PLANTED loose `gh` fence rather than by mutating the test's own assertion; the gh subprocess seam is now covered as argv (previously recorded as untested)"
+ },
+ {
+  "timestamp": "2026-08-04T15:20:00Z",
+  "commit": "a545537305e368f6657529277da82a37874c6c1a",
+  "publishedTag": null,
+  "scope": "#117 (scanned on the branch atop this base) — the over-budget refusal's advice (narrowing_argument/oversize_result_error/TOOL_NARROWS_KEY + the mcp_tools strip) and the two unbounded clone reads it exposed (fit_clone_rows/clone_hold/clone_row_rank/clone_list_exec, gc_outcome_rank/clone_gc_exec)",
+  "summary": "10/10 mutants killed, 0 survivors, one per behaviour with the whole suite run each time and the source restored between runs; the base behaviour of narrowing_argument (the pre-#117 `_ => Some(\"limit\")` catch-all) was restored as a mutation and killed, so the rewritten table-walking test is pinned to the defect rather than to a compile failure; one no-op mutation was discarded rather than recorded as a survivor (`.or(Some(\"limit\"))` appended after a `?` chain that short-circuits before it)"
  }
 ]

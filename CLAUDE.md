@@ -254,6 +254,30 @@ the run that leaks, so an end-of-run `clone_release` cannot be the mechanism —
 which means the midnight `gc` line must name **every** clone root (`WORK_DIR`
 _and_ the install dir), not just the first.
 
+**A refusal must be a move the caller can make.** The over-budget error names
+the argument that shrinks the result, and that argument is **declared on the
+tool's own table entry** next to the schema advertising it, so the two cannot
+disagree; a tool that declares none is told "NO argument makes this call
+smaller" instead. It used to be a match over the call whose catch-all answered
+`Some("limit")` for everything that was not `pr_context` — two of the seventeen
+variants reaching it actually had one. `clone_list`, whose input schema was
+`{}`, was told to lower a `limit` it did not accept, so the producer improvised
+`ls -d …/*/ | wc -l` and reported a **count** where a state load belonged (#117)
+— the same shape as #78, arriving through the guard written to stop #78. **The
+advice a caller cannot follow is worse than a stated truncation**, because the
+substitute it provokes is unstated; so both branches now forbid improvising, and
+the "each refusal names a real argument" test walks the advertised tool table
+instead of naming tools by hand.
+
+**So an unbounded read is fixed in the read.** A tool whose result grows with
+the box fits itself to the budget rather than waiting to be refused.
+`clone_list` and `clone_gc` state the whole population as **counts that never
+truncate** and offer their per-clone rows to the budget in the order a caller
+acts on them — unreadable state, then unpushed commits, then dirty trees, then
+releasable; for the sweep, errors and deletions before anything it kept — with
+`listed`/`omitted` saying how many rows were taken. The sample shrinks; the
+accounting does not.
+
 **One result budget, and it must be under the harness's ceiling.** Every tool
 result is checked against the same 36,000 bytes — `pr_context` included, which
 used to get `max_diff_bytes + 32,000` (up to 332,000, about six times what the

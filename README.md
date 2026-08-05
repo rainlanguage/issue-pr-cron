@@ -752,6 +752,33 @@ harness refused it, and the vetter improvised a fallback that silently dropped
 the whole open-threads accounting; the run log looked normal. A partial
 state-load cannot say what it is missing, so the tool refuses to produce one.
 
+**A refusal is only a redirect while a narrowing move exists** (#117). The
+argument each refusal names is declared on the tool's own table entry, beside
+the schema that has to advertise it, and a tool that declares none is told so —
+`narrowing_argument` used to be a match over the call whose catch-all was
+`Some("limit")`, which asserted a `limit` for seventeen variants of which two
+had one. `clone_list` was the one that bit: an empty input schema, a refusal
+saying "lower `limit`", and a producer with no second call to make, which
+improvised `ls -d …/*/ | wc -l` and reported **289 clones / 214G** where a state
+load belonged — every field the tool exists to carry (`branch`, `unpushed`,
+`uncommitted`, `ageDays`, `releasable`) gone, and nothing in the run saying so.
+The advice a caller cannot follow provokes the improvisation the refusal exists
+to prevent, so the prohibition on improvising is now in **both** branches, and
+`each_refusal_names_an_argument_that_actually_narrows_it` walks the advertised
+tool table rather than three tools named by hand.
+
+**Which is why an unbounded read is a bug in the read, not a case for the
+guard.** A tool whose result grows with the box or the queue fits itself to the
+budget the way `pr_context` does. `clone_list` and `clone_gc` state the whole
+population as **counts that are never truncated** and offer their per-clone rows
+to the budget in the order a caller acts on them — unreadable state first, then
+unpushed commits, then dirty trees, then releasable — with `listed`/`omitted`
+saying exactly how many rows the budget took. So the sample is the thing that
+shrinks and the accounting is not, which is the difference between a truncation
+that says what it is missing and a partial state-load that cannot. On the box
+#117 was found on, `clone_list` went from 38,492 bytes **refused** to 25,358
+bytes carrying all 139 held clones out of 242.
+
 **The budget must be lower than what the harness accepts, and that is the
 mechanism, not a preference.** If the harness is the thing that speaks, what
 comes back is untyped and arrives with `is_error` **unset** — so every rule
