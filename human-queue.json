@@ -1110,14 +1110,8 @@
         ]
       },
       "un-vetted": {
-        "count": 25,
+        "count": 24,
         "prs": [
-          {
-            "repo": "rainlanguage/claude-audit-skills",
-            "number": 82,
-            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/82",
-            "title": "feat(audit): hot-key custody rule — the deploy key deploys and holds NOTHING (#81)"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 104,
@@ -1811,30 +1805,6 @@
       "number": 248,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1060,
-      "url": "https://github.com/rainlanguage/raindex/issues/1060",
-      "title": "withdraw2 task not being executed when withdrawAmount is <= 0"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1042,
-      "url": "https://github.com/rainlanguage/raindex/issues/1042",
-      "title": "GStreamer and the Embedded video in the homepage causes local build to freeze"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1039,
-      "url": "https://github.com/rainlanguage/raindex/issues/1039",
-      "title": "Unable to install linux release on ubunut24"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 960,
-      "url": "https://github.com/rainlanguage/raindex/issues/960",
-      "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
     }
   ],
   "closeCandidateUnvetted": [],
@@ -1844,33 +1814,45 @@
       "number": 248,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
       "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1060,
-      "url": "https://github.com/rainlanguage/raindex/issues/1060",
-      "title": "withdraw2 task not being executed when withdrawAmount is <= 0"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1042,
-      "url": "https://github.com/rainlanguage/raindex/issues/1042",
-      "title": "GStreamer and the Embedded video in the homepage causes local build to freeze"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1039,
-      "url": "https://github.com/rainlanguage/raindex/issues/1039",
-      "title": "Unable to install linux release on ubunut24"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 960,
-      "url": "https://github.com/rainlanguage/raindex/issues/960",
-      "title": "\"user not connected\" when trying to deposit using ledger directly (not via wallet connect)"
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 159,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/159",
+      "title": "Retire the human:close-candidate box: close-candidate renders as two states, unvetted and upheld"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 213,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/213",
+      "title": "human:close-candidate splits decide-from-do, a phase no other state models: fuse close rulings into human-close, machinery completes tears"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 158,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/158",
+      "title": "Render one upheld close-candidate box: retire ai:close-candidate (PRs), fold its history"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 212,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/212",
+      "title": "Upheld close-candidates are one human inbox: merge closeCandidateUpheld and the vetted-PR lane state"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 211,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/211",
+      "title": "Close-candidate vetting misses PR-shaped flags: gh search issues scopes to type:issue"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 210,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/210",
+      "title": "A close-candidate reason can cite a commit hash nothing verifies — two flags cited different hashes for the same PR"
+    },
     {
       "repo": "rainlanguage/rain-org-health",
       "number": 157,
@@ -5535,26 +5517,26 @@
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
-    "closeCandidateIssues": 5,
+    "closeCandidateIssues": 1,
     "closeCandidateUnvetted": 0,
-    "closeCandidateUpheld": 5,
+    "closeCandidateUpheld": 1,
     "leaks": 5,
-    "totalProducerPrs": 149,
+    "totalProducerPrs": 148,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 599,
-    "unvetted": 25,
+    "uncoveredIssues": 605,
+    "unvetted": 24,
     "reject": 65,
     "relink": 0,
     "closeCandidatePrs": 4,
     "humanReject": 0,
     "humanDesign": 6,
     "humanCloseCandidate": 0,
-    "openIssues": 765
+    "openIssues": 766
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.0,
-      "medianDays": 99.2,
+      "meanDays": 314.4,
+      "medianDays": 99.3,
       "oldestDays": 1654.8
     }
   }
