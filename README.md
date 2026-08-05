@@ -111,12 +111,12 @@ and `human:keep-open` appeared in the binary only as strings it **read and
 refused on**, so the one actor whose decisions everything else treats as sacred
 was also the only one improvising raw `gh issue edit --add-label`.
 
-| Transition                                                                  | The move it makes                                                                                                       |
-| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>"`                             | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111), and the flags that choose it are `reject`'s and `design`'s alone: `reject` REQUIRES `--rework "<order>"`, `design` takes exactly one of `--rework` / `--park` |
-| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"`                       | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` carry the same disposition flags, `close-candidate` / `keep-open` refuse them                                                                              |
-| `human-close <owner/repo> <n> "<note>"`                                     | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition                         |
-| `record-close-candidate-verdict <owner/repo> <issue>`                       | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)                               |
+| Transition                                             | The move it makes                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design` / `close-candidate`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111), and the flags that choose it are `reject`'s and `design`'s alone: `reject` REQUIRES `--rework "<order>"`, `design` takes exactly one of `--rework` / `--park` |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those three plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` carry the same disposition flags, `close-candidate` / `keep-open` refuse them                                                                               |
+| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: rule, retire the pending flag, close — one transition                                                                                                                                                                                        |
+| `record-close-candidate-verdict <owner/repo> <issue>`  | the vetter's flag verdict, now reachable from a terminal too (the refusal above names it)                                                                                                                                                                                              |
 
 **A ruling can delegate, not only park (#111).** The ruling and the work order
 are two records with their own shapes — the ruling is provenance (_a human
@@ -135,14 +135,13 @@ close-candidate, not a park); `design` takes exactly one of `--rework` /
 The other two verbs take neither flag and say so: `close-candidate` is a decided
 close whose refusal names `human-close` as its consumer, and `keep-open` is a
 standing constraint — the verb is its own disposition, so a second spelling of
-it would only be a way to mean something else by accident.
-What the human namespace protects is **authorship only**: no AI actor writes a
-`human:*` label, and none removes one as an override — but a ruling is an input
-the machine executes, so the producer's state-load picks a delegated
-`human:design` up as a work order (`worklist` routes it `rework-ruling`), the
-push moves the head, and the vetter's next verdict clears the spent label as the
-**completion** of the ruling through the ordinary rework → un-vetted → re-vet
-flow.
+it would only be a way to mean something else by accident. What the human
+namespace protects is **authorship only**: no AI actor writes a `human:*` label,
+and none removes one as an override — but a ruling is an input the machine
+executes, so the producer's state-load picks a delegated `human:design` up as a
+work order (`worklist` routes it `rework-ruling`), the push moves the head, and
+the vetter's next verdict clears the spent label as the **completion** of the
+ruling through the ordinary rework → un-vetted → re-vet flow.
 
 The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
 (PRs) and `HUMAN_RULING_LABELS` (issues), the same constants every AI transition
