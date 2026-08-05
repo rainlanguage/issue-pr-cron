@@ -338,25 +338,46 @@ const GH_RATE_LIMIT_BACKOFF_SECS: [u64; 2] = [2, 8];
 /// can disagree.
 const GH_RATE_LIMIT_ATTEMPTS: usize = GH_RATE_LIMIT_BACKOFF_SECS.len() + 1;
 
-/// Ceiling on ONE wait, whatever `Retry-After` asked for. A limit that wants longer than this is
+/// The longest this process will EVER sleep waiting out a rate limit. A window longer than this is
 /// not something a queue render sits through: the candidate is reported rate-limited — a state the
 /// header now names — and the run stays responsive.
 const GH_RATE_LIMIT_MAX_SLEEP_SECS: u64 = 30;
 
-/// PURE: how long to wait before the retry that FOLLOWS `attempt` (0-based), or `None` once the
-/// budget is spent.
+/// The fallback table can never exceed the ceiling, asserted at COMPILE time rather than clamped at
+/// run time. A clamp would silently shorten a wait somebody deliberately lengthened; this fails the
+/// build instead, and it is what lets [`rate_limit_backoff`] treat "over the ceiling" as a fact
+/// about GitHub's `Retry-After` alone.
+const _: () = {
+    let mut i = 0;
+    while i < GH_RATE_LIMIT_BACKOFF_SECS.len() {
+        assert!(GH_RATE_LIMIT_BACKOFF_SECS[i] <= GH_RATE_LIMIT_MAX_SLEEP_SECS);
+        i += 1;
+    }
+};
+
+/// PURE: how long to wait before the retry that FOLLOWS `attempt` (0-based), or `None` for "do not
+/// retry at all" — the budget is spent, or GitHub named a window this process will not sit through.
 ///
-/// GitHub's own `Retry-After` wins wherever it gave one — it knows when the window opens, and a
-/// guess can only be too short (more of the traffic being objected to) or too long (a stalled run)
-/// — clamped to [`GH_RATE_LIMIT_MAX_SLEEP_SECS`] so a mistaken or hostile header cannot park the
-/// process.
+/// GitHub's own `Retry-After` wins wherever it gave one: it knows when the window opens, and a
+/// guess can only be too short (more of the traffic being objected to) or too long (a stalled run).
+///
+/// SO A WINDOW OVER [`GH_RATE_LIMIT_MAX_SLEEP_SECS`] STOPS THE RETRIES — it is NOT clamped and
+/// retried anyway. Clamping produces exactly the too-short guess named above: `Retry-After: 60`
+/// would wait 30s and then send a request that CANNOT succeed, because the window has not opened,
+/// adding traffic to the limit that caused it. Against a SECONDARY limit — the one a concurrent
+/// burst draws, and the whole reason #129 exists — an early retry deepens the limit it is answering.
+/// The ceiling therefore protects the run by REPORTING, never by waiting less and asking again.
 fn rate_limit_backoff(attempt: usize, retry_after: Option<u64>) -> Option<std::time::Duration> {
     let fallback = *GH_RATE_LIMIT_BACKOFF_SECS.get(attempt)?;
-    Some(std::time::Duration::from_secs(
-        retry_after
-            .unwrap_or(fallback)
-            .min(GH_RATE_LIMIT_MAX_SLEEP_SECS),
-    ))
+    let Some(asked) = retry_after else {
+        // Nothing was named, so there is no window to respect — only this binary's own guess, which
+        // the compile-time assertion above holds under the ceiling.
+        return Some(std::time::Duration::from_secs(fallback));
+    };
+    if asked > GH_RATE_LIMIT_MAX_SLEEP_SECS {
+        return None;
+    }
+    Some(std::time::Duration::from_secs(asked))
 }
 
 /// Retry `call` for as long as it fails with [`GhFailure::RateLimited`], waiting as
@@ -703,17 +724,19 @@ mod gh_failure_tests {
 
     // ── the retry policy ──────────────────────────────────────────────────────────────────────
 
-    // GitHub's own `Retry-After` wins where it gave one, and is CLAMPED, so a mistaken or hostile
-    // header cannot park the process. The budget is the backoff table's length.
+    // GitHub's own `Retry-After` wins where it gave one, EXACTLY — never rounded down. The budget
+    // is the backoff table's length, and a `Retry-After` does not extend it.
     #[test]
-    fn the_backoff_honours_retry_after_clamps_it_and_runs_out() {
+    fn the_backoff_honours_retry_after_exactly_and_runs_out() {
         assert_eq!(
             rate_limit_backoff(0, None),
             Some(Duration::from_secs(GH_RATE_LIMIT_BACKOFF_SECS[0]))
         );
         assert_eq!(rate_limit_backoff(0, Some(5)), Some(Duration::from_secs(5)));
+        // Exactly at the ceiling still waits — the boundary is inclusive, so the give-up rule below
+        // cannot be read as "at or over".
         assert_eq!(
-            rate_limit_backoff(0, Some(86_400)),
+            rate_limit_backoff(0, Some(GH_RATE_LIMIT_MAX_SLEEP_SECS)),
             Some(Duration::from_secs(GH_RATE_LIMIT_MAX_SLEEP_SECS))
         );
         assert_eq!(
@@ -721,6 +744,68 @@ mod gh_failure_tests {
             None,
             "the budget is spent, and a Retry-After does not extend it"
         );
+    }
+
+    // A window LONGER than this process will sit through stops the retries — it is NOT clamped and
+    // retried anyway. Clamping would send a request into a window GitHub said has not opened: it
+    // cannot succeed, and it adds traffic to the very limit that produced the header. Against a
+    // secondary limit that deepens the limit being answered.
+    #[test]
+    fn a_window_over_the_ceiling_stops_retrying_rather_than_waiting_less() {
+        let over = GH_RATE_LIMIT_MAX_SLEEP_SECS + 1;
+        assert_eq!(rate_limit_backoff(0, Some(over)), None);
+        assert_eq!(rate_limit_backoff(0, Some(86_400)), None);
+        // …at EVERY attempt, not just the first: a later attempt must not become the retry the
+        // first one refused.
+        for attempt in 0..GH_RATE_LIMIT_BACKOFF_SECS.len() {
+            assert_eq!(rate_limit_backoff(attempt, Some(over)), None, "{attempt}");
+        }
+    }
+
+    // The same fact through the driver, which is where it costs a request: ONE call, NO sleep, and
+    // the rate limit reported with GitHub's own window intact so the caller can say why.
+    #[test]
+    fn a_long_window_costs_exactly_one_call_and_no_sleep() {
+        let asked = GH_RATE_LIMIT_MAX_SLEEP_SECS * 2;
+        let calls = std::cell::Cell::new(0usize);
+        let waits = std::cell::RefCell::new(Vec::new());
+        let got: Result<u8, GhFailure> = retrying_rate_limit(
+            || {
+                calls.set(calls.get() + 1);
+                Err(GhFailure::RateLimited {
+                    retry_after: Some(asked),
+                })
+            },
+            |d| waits.borrow_mut().push(d),
+        );
+        assert_eq!(
+            calls.get(),
+            1,
+            "the window is not open; asking again cannot help"
+        );
+        assert!(waits.borrow().is_empty(), "nothing is slept off");
+        assert_eq!(
+            got,
+            Err(GhFailure::RateLimited {
+                retry_after: Some(asked)
+            }),
+            "the window GitHub named survives to the caller"
+        );
+    }
+
+    // The fallback table is held under the ceiling at COMPILE time, so the `None` above is a fact
+    // about GitHub's header alone and never about this binary's own guess. Restated here because a
+    // const assertion is invisible in a test report.
+    #[test]
+    fn every_fallback_wait_is_under_the_ceiling() {
+        for (i, secs) in GH_RATE_LIMIT_BACKOFF_SECS.iter().enumerate() {
+            assert!(*secs <= GH_RATE_LIMIT_MAX_SLEEP_SECS, "entry {i} is {secs}");
+            assert_eq!(
+                rate_limit_backoff(i, None),
+                Some(Duration::from_secs(*secs)),
+                "a fallback wait is never refused"
+            );
+        }
     }
 
     /// Run `outcomes` through the retry driver, recording every wait instead of taking it.
@@ -1581,6 +1666,23 @@ fn apply_outcome(out: CandidateOutcome, rows: &mut Vec<PresentablePr>, counts: &
 /// `Unauthorized` means the rest of the queue is unreadable too. Counting it would print a short
 /// queue that reads as complete — the falsely-empty queue the search-layer abort already refuses,
 /// arriving one layer lower down.
+///
+/// WHY ONE UNREADABLE REPO DOES NOT KILL THE RUN. The obvious objection is that a bare 403 might be
+/// a PER-REPO permission denial — a repo transferred out, access revoked, a private repo the token
+/// no longer sees — and aborting on one of those would turn a single inaccessible repo into a dead
+/// run. MEASURED: it does not reach here. GitHub masks a repository the token cannot see as **404 /
+/// `NOT_FOUND`**, not 403, and deliberately so — a 403 would leak the repo's existence. `gh api
+/// repos/github/github` (a repository that certainly exists and this token certainly cannot read)
+/// answers `{"message":"Not Found",…,"status":"404"}`, and the same query through `gh api graphql`
+/// answers `errors[].type == "NOT_FOUND"`. Both land on [`GhFailure::NotFound`], which
+/// [`failure_outcome`] routes to `FetchError`: the candidate is DROPPED AND COUNTED and the
+/// enumeration continues. That path is pinned by
+/// `a_repo_the_token_cannot_read_is_counted_not_aborted`.
+///
+/// What is left producing a bare 403 is token-wide or org-wide by nature — bad credentials, a scope
+/// the token lacks for this endpoint, SAML SSO or an IP allow list — and every one of them fails the
+/// next candidate identically. Aborting is right for those, and #129's own Check asks for it: a loud
+/// abort naming the cause beats a queue silently missing every row it could not read.
 fn queue_abort(out: &CandidateOutcome) -> Option<String> {
     match out {
         CandidateOutcome::Unauthorized => Some(
@@ -2155,6 +2257,36 @@ mod parallel_queue_tests {
         let (rows, c) = folded_one(CandidateOutcome::Unauthorized);
         assert!(rows.is_empty());
         assert_eq!(c, [0; 9]);
+    }
+
+    // ONE UNREADABLE REPO MUST NOT KILL THE RUN. GitHub masks a repository the token cannot see as
+    // 404 / NOT_FOUND rather than 403 — deliberately, since a 403 would leak that the repo exists.
+    // MEASURED against the live API: `gh api repos/github/github` (exists, unreadable by this
+    // token) answers `"status":"404"`, and the same subject through `gh api graphql` answers
+    // `errors[].type == "NOT_FOUND"`. So a per-repo denial arrives as `NotFound`, is counted as a
+    // fetch error, and the enumeration CONTINUES.
+    //
+    // This is asserted from the classifier inward — the real response bodies, not a hand-made
+    // `GhFailure` — because the whole question is which class those bodies produce. Reclassify
+    // either of them as `Unauthorized` and one inaccessible repo becomes a dead run: the
+    // falsely-short queue in a different costume.
+    #[test]
+    fn a_repo_the_token_cannot_read_is_counted_not_aborted() {
+        let masked_rest = br#"{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/repos#get-a-repository","status":"404"}"#;
+        let masked_graphql = br#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"Could not resolve to a Repository with the name 'github/github'."}]}"#;
+        for body in [masked_rest.as_slice(), masked_graphql.as_slice()] {
+            let (head, rest) = split_http_head(body);
+            let failure = classify_gh_failure(head.as_ref(), rest);
+            assert_eq!(failure, GhFailure::NotFound, "{:?}", body);
+            let out = failure_outcome(failure);
+            assert!(
+                queue_abort(&out).is_none(),
+                "an unreadable repo must not abort the enumeration"
+            );
+            let (rows, c) = folded_one(out);
+            assert!(rows.is_empty());
+            assert_eq!(c, [0, 0, 0, 0, 0, 0, 0, 1, 0], "counted as a fetch error");
+        }
     }
 
     // The header names the two apart. An operator reading "rate-limited" re-runs; one reading
