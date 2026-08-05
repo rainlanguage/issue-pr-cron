@@ -1321,6 +1321,58 @@ counts are derived from a single document, so `counts.X == X.len()` holds by
 construction. These are ISSUE states, so — like `closeCandidateIssues` — they
 are **not** in `lanes`, which groups PRs.
 
+### How OLD the work is: `ages`
+
+A queue's SIZE cannot tell turnover from stagnation — twelve issues all week
+looks identical whether that is twelve fresh ones each day or the same twelve
+since 2024. So each snapshot carries an `ages` block **beside** `counts`, and
+`queue-history-line` carries it into the rollup, which is `{ts, counts[, ages]}`
+with `ages` optional (rain-org-health#140, #165):
+
+```json
+"counts": { …, "openIssues": 802 },
+"ages": {
+  "openIssues": { "meanDays": 333.8, "medianDays": 99.0, "oldestDays": 1654.5 }
+}
+```
+
+**The population is EVERY open issue in the org scope** — deliberately WIDER
+than `counts.uncoveredIssues`, which narrows to the producer's share. The
+inclusions are the point: an issue covered by an open PR, parked behind a
+`human:*` ruling, or flagged `ai:close-candidate` is stagnating exactly as hard
+as an untouched one, and a metric scoped to the producer cannot see any of it.
+Live on 2026-08-05 the two differ by 180 issues (802 against 622).
+
+**All three statistics are emitted as equals**, and the RENDERER chooses. The
+mean and the median answer different questions and their DIVERGENCE is itself
+the signal: tracking each other says the backlog ages uniformly, a mean far
+ahead of its median says a long tail is doing the work, and `oldestDays` says
+how long that tail is. Live, the mean runs 3.4× the median, so reporting either
+one alone would have hidden which case the org is in.
+
+An age is not a count, so it does not live in `counts` — but the population's
+SIZE is, and `counts.openIssues` is it, read from the same one list
+(`open_issues` is the only site that builds it) so the number of issues and the
+age of those issues can never describe different sets.
+
+Three absences, all deliberate:
+
+- a member whose `createdAt` is missing or unparseable still **counts**; it just
+  contributes no age;
+- a population with no readable age at all emits **no `ages` key** — not `null`,
+  not `0`, which would claim a set of brand-new issues — and
+  `queue-history-line` drops a pathological `"ages": null` rather than
+  forwarding a third shape both sides would have to handle;
+- a **failed** coverage read emits neither `ages` nor `counts.openIssues`, where
+  an EMPTY population still reports its size. `counts.openIssues: 0` on a
+  rate-limited tick is a dashboard point claiming every issue closed at once —
+  the empty-answer reading of a gh failure that #199 typed the failure to
+  prevent.
+
+The `createdAt` comes from the field list of the coverage computation's existing
+`gh search issues`, so the block is arithmetic on an already-retrieved payload,
+never a per-issue fetch.
+
 ### Opening a PR is a transition: `open_pr`
 
 Opening the PR — the one move that **is** a new PR's output — was a

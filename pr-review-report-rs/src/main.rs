@@ -8848,7 +8848,8 @@ fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
     0
 }
 
-/// One `{ts, counts}` rollup line for human-queue-history.jsonl, from a human-queue.json snapshot.
+/// One `{ts, counts[, ages]}` rollup line for human-queue-history.jsonl, from a human-queue.json
+/// snapshot.
 ///
 /// Replaces `jq -c --arg ts "$ts" '{ts: $ts, counts: .counts}'` in refresh-human-queue.sh and the
 /// per-commit `select(.counts != null) | …` in backfill-human-queue-history.sh — one implementation
@@ -8857,13 +8858,23 @@ fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
 ///
 /// Returns None when the snapshot has no `counts` (the backfill's `select`): early commits of
 /// human-queue.json predate the key, and those commits must be skipped, not emitted as null.
+///
+/// `ages` (rain-org-health#140 / #165) rides along exactly when the snapshot carries it — a
+/// snapshot without one (every commit predating the key, and any refresh whose backlog had no age
+/// to report) emits a line WITHOUT the key, never `"ages": null`. The dashboard's degradation
+/// contract is a missing field, and a null would be a third shape both sides would have to handle.
 fn queue_history_line(snapshot: &str, ts: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(snapshot).ok()?;
     let counts = doc.get("counts")?;
     if counts.is_null() {
         return None;
     }
-    let line = serde_json::json!({ "ts": ts, "counts": counts });
+    let mut line = serde_json::json!({ "ts": ts, "counts": counts });
+    if let Some(ages) = doc.get("ages").filter(|a| !a.is_null()) {
+        line.as_object_mut()
+            .expect("the rollup line is an object")
+            .insert("ages".into(), ages.clone());
+    }
     Some(serde_json::to_string(&line).unwrap())
 }
 
@@ -15859,7 +15870,7 @@ fn close_candidate_issue_refs(found: &[Value]) -> Vec<SubjectRef> {
 ///
 /// An issue whose meta is missing is kept (a missing row must not silently shrink the backlog) with
 /// an empty url, because there is no honest link to emit for it — never a `/issues/<n>` guess.
-fn producer_backlog_refs(
+fn producer_backlog(
     open: &[(String, u64)],
     meta: &std::collections::HashMap<(String, u64), Value>,
 ) -> Vec<SubjectRef> {
@@ -15877,6 +15888,133 @@ fn producer_backlog_refs(
         .collect()
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// OPEN-ISSUE AGES (#165 / rain-org-health#140) — how old the work is, org-wide.
+//
+// The FSM panel sparklines every queue's SIZE over time, and a size cannot tell turnover from
+// stagnation: a queue holding twelve issues all week looks identical whether those are twelve
+// fresh ones each day or the same twelve since 2024.
+//
+// THE POPULATION IS EVERY OPEN ISSUE IN THE ORG SCOPE. Not the producer backlog — not narrowed by
+// coverage, not narrowed by label. Deliberately WIDER than `counts.uncoveredIssues`, and the
+// inclusions are the point: an issue that has been "covered" by an open PR for six months, or
+// parked behind a `human:*` ruling, or sitting flagged `ai:close-candidate`, is stagnating exactly
+// as hard as an untouched one, and a metric scoped to the producer's share cannot see any of it.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// One open issue: its subject reference plus its `createdAt` as epoch ms, BOTH read from the SAME
+/// `gh search issues` row.
+///
+/// The pair is why `counts.openIssues` and `ages.openIssues` cannot describe different sets of
+/// issues: [`open_issues`] is the ONE site that builds this list, and the count, the statistics and
+/// the oldest-issue link the daily review prints are three reads of that one list. A `createdAt`
+/// fetched separately from the population could silently age a different set than the count counts.
+///
+/// `created_ms` is `None` when the meta row is missing or its `createdAt` does not parse. The issue
+/// still COUNTS (a missing row must never shrink the population); it just contributes no age.
+struct OpenIssue {
+    subject: SubjectRef,
+    created_ms: Option<i64>,
+}
+
+/// PURE: EVERY open issue in the configured org scope, paired with its creation time — the
+/// population the age statistics measure.
+///
+/// There is no filter here, and that is the whole design: the only narrowing GitHub already did is
+/// `--state open` on the search, and any further narrowing would be a second definition of "the
+/// org's issues" for the metric to disagree with [`producer_backlog`] about.
+fn open_issues(
+    all: &[(String, u64)],
+    meta: &std::collections::HashMap<(String, u64), Value>,
+) -> Vec<OpenIssue> {
+    all.iter()
+        .map(|(slug, num)| {
+            let row = meta.get(&(slug.clone(), *num));
+            let field = |k: &str| {
+                row.and_then(|m| m.get(k))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            };
+            OpenIssue {
+                subject: SubjectRef::new(slug, *num, field("url"), field("title")),
+                created_ms: row
+                    .and_then(|m| m.get("createdAt"))
+                    .and_then(|v| v.as_str())
+                    .and_then(iso_to_epoch_ms),
+            }
+        })
+        .collect()
+}
+
+/// The age of a population of open issues, in DAYS to one decimal.
+///
+/// MEAN AND MEDIAN ARE BOTH EMITTED, AS EQUALS — neither is the fallback for the other. Issue-age
+/// distributions are badly skewed: measured over the live org scope on 2026-08-05 the mean was
+/// 333.8 days against a median of 99.0, because a handful of 2022-era issues drag the mean by most
+/// of a year while the typical open issue is a few months old. That divergence is not a reason to
+/// pick one — it is ITSELF the signal. A mean and a median that track each other say the backlog
+/// ages uniformly; a mean running far ahead of its median says a long tail is doing the work, and
+/// `oldest` says how long that tail is. Reporting only one of the three hides which of those the
+/// org is looking at, and the renderer, not this binary, chooses what to draw.
+struct IssueAges {
+    mean: f64,
+    median: f64,
+    oldest: f64,
+    /// The member `oldest` measures, carried out of the SAME sorted row rather than re-derived, so
+    /// the tail number and the tail issue the daily review names can never disagree. Not emitted
+    /// in the JSON — rain-org-health#140's contract is the three numbers.
+    oldest_subject: SubjectRef,
+}
+
+impl IssueAges {
+    /// The emitted block: the three numbers, no hierarchy among them.
+    fn to_json(&self) -> Value {
+        serde_json::json!({
+            "meanDays": self.mean,
+            "medianDays": self.median,
+            "oldestDays": self.oldest,
+        })
+    }
+}
+
+/// PURE: the age statistics over the population members that carry a parseable `createdAt`, or
+/// `None` when none do.
+///
+/// Absence is the honest empty value: an empty population HAS no age, and emitting `0` would claim
+/// a set of brand-new issues, which is the opposite of what "no issues" means (rain-org-health#140).
+///
+/// A `createdAt` after `now_ms` (clock skew between GitHub and this host) clamps to 0.0 — an age is
+/// never negative. Rounding happens once, at the end, on the three emitted numbers, so no
+/// intermediate is rounded twice.
+fn issue_age_stats(issues: &[OpenIssue], now_ms: i64) -> Option<IssueAges> {
+    let mut aged: Vec<(f64, &SubjectRef)> = issues
+        .iter()
+        .filter_map(|i| {
+            i.created_ms
+                .map(|c| (((now_ms - c) as f64 / 86_400_000.0).max(0.0), &i.subject))
+        })
+        .collect();
+    if aged.is_empty() {
+        return None;
+    }
+    aged.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let n = aged.len();
+    let mean = aged.iter().map(|(d, _)| *d).sum::<f64>() / n as f64;
+    let median = if n % 2 == 1 {
+        aged[n / 2].0
+    } else {
+        (aged[n / 2 - 1].0 + aged[n / 2].0) / 2.0
+    };
+    let (oldest, oldest_subject) = aged[n - 1];
+    let tenth = |d: f64| (d * 10.0).round() / 10.0;
+    Some(IssueAges {
+        mean: tenth(mean),
+        median: tenth(median),
+        oldest: tenth(oldest),
+        oldest_subject: oldest_subject.clone(),
+    })
+}
+
 /// PURE: clip to `n` CHARACTERS. Titles and leak reasons carry unicode (em-dash, middle-dot,
 /// emoji), so a byte-index slice would panic mid-codepoint.
 fn clip_chars(s: &str, n: usize) -> String {
@@ -15891,6 +16029,33 @@ fn clip_chars(s: &str, n: usize) -> String {
 /// close-candidate ISSUE — the same guess #114 removes from the JSON.
 fn review_subject_block(s: &SubjectRef, clip_to: usize) -> String {
     format!("   {}\n      {}", s.url, clip_chars(&s.title, clip_to))
+}
+
+/// PURE: the daily review's org-wide open-issue age block — the population SIZE, then the three
+/// age numbers, then the oldest issue NAMED rather than merely measured.
+///
+/// Mirrors the JSON exactly: the size is always reported (a population whose rows carry no readable
+/// `createdAt` still has one), the ages only when there is an age to report. The no-age case says
+/// so in words rather than printing a `0`, which would read as "all brand new" — the same lie the
+/// JSON avoids by omitting the block.
+///
+/// The oldest issue's link comes out of [`IssueAges`] itself, not from a second scan of `open`, so
+/// the number on this line and the issue on the next can never name different issues.
+fn review_open_issue_ages(open: &[OpenIssue], now_ms: i64) -> String {
+    match issue_age_stats(open, now_ms) {
+        Some(a) => format!(
+            "▓▓ All open issues — org-wide: {}  (mean {:.1}d, median {:.1}d, oldest {:.1}d)\n{}\n",
+            open.len(),
+            a.mean,
+            a.median,
+            a.oldest,
+            review_subject_block(&a.oldest_subject, 66)
+        ),
+        None => format!(
+            "▓▓ All open issues — org-wide: {}  (no age reported)\n",
+            open.len()
+        ),
+    }
 }
 
 /// PURE: the two lines the leak section prints — the leaking PR's resolved url + clipped title,
@@ -15921,14 +16086,21 @@ fn human_queue_doc(
     cc_upheld: Value,
     cc_upheld_n: usize,
     backlog: &[SubjectRef],
+    // Every open issue in the org scope (#165), or None when the coverage read FAILED. The
+    // distinction is load-bearing and is why this is not a plain slice: an empty population and an
+    // unreadable one both have no ages, but an empty one honestly has `counts.openIssues: 0` while
+    // an unreadable one must emit no count at all rather than claim the org has no open issues
+    // (#199 typed the gh failure precisely so it could not read as an empty answer).
+    open: Option<&[OpenIssue]>,
     leaks: &[(SubjectRef, String)],
     total_producer_prs: usize,
+    now_ms: i64,
 ) -> Value {
     let bmap: serde_json::Map<String, Value> = buckets
         .iter()
         .map(|(k, v)| (k.clone(), Value::Array(SubjectRef::array(v))))
         .collect();
-    serde_json::json!({
+    let mut doc = serde_json::json!({
         "states": bmap,
         "lanes": lanes,
         "closeCandidateIssues": SubjectRef::array(close_issues),
@@ -15976,7 +16148,28 @@ fn human_queue_doc(
             "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
             "humanCloseCandidate": lane_state_count(lanes, "human-decisions", "human:close-candidate"),
         }
-    })
+    });
+    if let Some(open) = open {
+        // The org-wide open-issue count goes in `counts` beside the queue counts, and the ages go
+        // in a SIBLING `ages` block, never inside `counts` — `counts` is named for what it holds
+        // and an age is not a count (rain-org-health#140 / #165). Both read the SAME `open` list,
+        // which [`open_issues`] is the only site to build: the number of issues and the age of
+        // those issues cannot describe different populations.
+        doc["counts"]["openIssues"] = Value::from(open.len());
+        // ABSENT, not null and not zero, when no member carries a parseable `createdAt` — the
+        // dashboard's documented degradation for a missing field is no spark, never a broken box,
+        // and a `0` would claim a set of brand-new issues. Note this is independent of the count
+        // above: a population whose rows all lack `createdAt` still HAS a size.
+        if let Some(ages) = issue_age_stats(open, now_ms) {
+            doc.as_object_mut()
+                .expect("human_queue_doc is an object")
+                .insert(
+                    "ages".into(),
+                    serde_json::json!({ "openIssues": ages.to_json() }),
+                );
+        }
+    }
+    doc
 }
 
 /// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
@@ -16179,9 +16372,22 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // previously invisible on the FSM dashboard. Same coverage computation as `uncovered-issues`
     // (via `coverage_uncovered`); `is_producer_backlog` narrows it to the producer's share. A gh
     // failure leaves it empty rather than aborting the whole queue render — it is additive.
-    let backlog: Vec<SubjectRef> = coverage_uncovered()
-        .map(|(open, meta)| producer_backlog_refs(&open, &meta))
-        .unwrap_or_default();
+    //
+    // The SAME read also yields the org-wide open-issue population the ages measure (#165) — the
+    // unnarrowed `all`, which is what makes an issue parked behind an open PR or a `human:*`
+    // ruling visible to the age metric while `backlog` deliberately excludes it. One `gh search
+    // issues`, two populations, no second query.
+    //
+    // The failure shapes differ, and deliberately: `backlog` degrades to empty (its count is
+    // legacy and the dashboard reads it), while `open` stays `None` so the new count and the ages
+    // are OMITTED rather than reported as an org with zero open issues.
+    let (backlog, open): (Vec<SubjectRef>, Option<Vec<OpenIssue>>) = match coverage_uncovered() {
+        Some(c) => {
+            let (backlog, open) = c.populations();
+            (backlog, Some(open))
+        }
+        None => (Vec::new(), None),
+    };
 
     if json_out {
         let doc = human_queue_doc(
@@ -16193,8 +16399,12 @@ fn human_queue_mode(json_out: bool) -> i32 {
             cc_upheld,
             cc_upheld_n,
             &backlog,
+            open.as_deref(),
             &leaks,
             prs.len(),
+            // The one impure input to the age arithmetic: "now", taken once so every emitted
+            // age in this snapshot measures against the same instant.
+            now_unix() * 1000,
         );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
@@ -16228,6 +16438,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
         "▓▓ Producer backlog — untouched issues, no open PR (excl. human-gated / close-candidate): {}",
         backlog.len()
     );
+    // Org-wide open-issue age (#165) — the WIDER population, printed right under the backlog it is
+    // deliberately wider than, so the human reading the daily review sees the two side by side and
+    // cannot mistake one for the other. Mean and median both, because a mean far ahead of its
+    // median is the long tail announcing itself, and the oldest issue is named rather than just
+    // measured: an unactionable "1654.5 days" becomes a link to click.
+    if let Some(open) = open.as_deref() {
+        print!("{}", review_open_issue_ages(open, now_unix() * 1000));
+    }
     // vet-lifecycle
     show_lane(
         "UN-VETTED — the vetter owes a verdict",
@@ -28978,7 +29196,12 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
     let Some(rows) = worklist_rows(use_cache) else {
         return 1;
     };
-    let Some((open, meta)) = coverage_uncovered() else {
+    let Some(OrgIssues {
+        uncovered: open,
+        meta,
+        ..
+    }) = coverage_uncovered()
+    else {
         return 1;
     };
     let issues: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
@@ -29059,19 +29282,50 @@ fn action_rank(a: &str) -> u8 {
     }
 }
 
-/// The uncovered-coverage result: the uncovered issues (repo, number) paired with a lookup from
-/// (repo, number) to each issue's meta.
-type UncoveredCoverage = (
-    Vec<(String, u64)>,
-    std::collections::HashMap<(String, u64), Value>,
-);
+/// What one org-wide issue search plus one open-PR search know: every open issue, which of them no
+/// open PR covers, and the raw search row behind each.
+///
+/// `all` and `uncovered` are two populations of DIFFERENT widths and every consumer wants exactly
+/// one of them — `uncovered-issues` and the producer backlog narrow to `uncovered`, the org-wide
+/// age stats (#165) measure `all`. They are named fields rather than tuple positions because they
+/// have the same type: a swapped position would compile, run, and silently report the wrong
+/// population, which is the whole failure mode the age work is here to avoid.
+struct OrgIssues {
+    /// EVERY open issue in the configured org scope, in the order GitHub returned them. No
+    /// coverage filter, no label filter — the widest population this binary knows.
+    all: Vec<(String, u64)>,
+    /// The subset of `all` that no open PR's `closingIssuesReferences` covers.
+    uncovered: Vec<(String, u64)>,
+    /// The raw `gh search issues` row for every member of `all` — so for every member of
+    /// `uncovered` too, since `uncovered` is a subset. Keyed the way both lists are.
+    meta: std::collections::HashMap<(String, u64), Value>,
+}
 
-/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter)
-/// and the covered set from open PRs' native `closingIssuesReferences`, then return the uncovered
-/// issues (no covering open PR) with their meta. `None` on a gh failure — callers MUST abort rather
-/// than report a false-empty set. Both `uncovered-issues` and the `human-queue` producer-backlog
-/// count read this ONE computation, so their coverage semantics can never drift.
-fn coverage_uncovered() -> Option<UncoveredCoverage> {
+impl OrgIssues {
+    /// The two populations `human-queue` reports on, each built from the field that DEFINES it:
+    /// the producer backlog narrows `uncovered`, the age population takes `all` whole.
+    ///
+    /// The choice of field IS the whole difference between the two metrics, so it is made here, in
+    /// one tested function, rather than at the call site: `open_issues(&c.uncovered, …)` differs
+    /// from `open_issues(&c.all, …)` by one word, compiles either way, and silently re-narrows the
+    /// org-wide ages back to the producer's share. That narrowing is not hypothetical — it is what
+    /// #165 originally shipped, and what this rescope undoes.
+    fn populations(&self) -> (Vec<SubjectRef>, Vec<OpenIssue>) {
+        (
+            producer_backlog(&self.uncovered, &self.meta),
+            open_issues(&self.all, &self.meta),
+        )
+    }
+}
+
+/// Shared coverage computation: fetch open issues (org-scoped, WITH labels so callers can filter,
+/// and WITH `createdAt` so the issue age stats are arithmetic on this same payload — one more
+/// field on this one query, never a per-issue fetch) and the covered set from open PRs' native
+/// `closingIssuesReferences`, then return every open issue, the uncovered subset, and the meta.
+/// `None` on a gh failure — callers MUST abort or omit rather than report a false-empty set. Every
+/// org-wide issue population in this binary reads this ONE computation, so no two of them can
+/// disagree about what is open or what is covered.
+fn coverage_uncovered() -> Option<OrgIssues> {
     // open issues
     let mut isearch: Vec<String> = vec!["search".into(), "issues".into()];
     isearch.extend(org_owner_args());
@@ -29082,7 +29336,7 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
             "--limit",
             "1000",
             "--json",
-            "number,repository,url,title,labels",
+            "number,repository,url,title,labels,createdAt",
         ]
         .iter()
         .map(|s| s.to_string()),
@@ -29123,7 +29377,12 @@ fn coverage_uncovered() -> Option<UncoveredCoverage> {
         meta.insert(k, it.clone());
     }
 
-    Some((uncovered(&issues, &covered), meta))
+    let no_open_pr = uncovered(&issues, &covered);
+    Some(OrgIssues {
+        all: issues,
+        uncovered: no_open_pr,
+        meta,
+    })
 }
 
 /// True when an uncovered issue belongs to the PRODUCER's untouched backlog: NOT already flagged
@@ -29144,7 +29403,12 @@ fn is_producer_backlog(meta: &Value) -> bool {
 }
 
 fn uncovered_issues_mode(json_out: bool) -> i32 {
-    let Some((open, meta)) = coverage_uncovered() else {
+    let Some(OrgIssues {
+        uncovered: open,
+        meta,
+        ..
+    }) = coverage_uncovered()
+    else {
         return 1;
     };
     if json_out {
@@ -41830,7 +42094,8 @@ mod cli_tests {
             queue_history_line(snap, "2026-07-27T10:00:00Z").unwrap(),
             r#"{"ts":"2026-07-27T10:00:00Z","counts":{"ready":3,"design":1}}"#
         );
-        // Only `counts` is carried over; anything else in the snapshot is dropped.
+        // Only `counts` (and, when present, `ages` — below) is carried over; anything else in the
+        // snapshot is dropped.
         let parsed: Value = serde_json::from_str(&queue_history_line(snap, "t").unwrap()).unwrap();
         assert_eq!(
             parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
@@ -41847,6 +42112,46 @@ mod cli_tests {
         // `git show` of a commit where the file did not exist yields empty output.
         assert!(queue_history_line("", "t").is_none());
         assert!(queue_history_line("not json", "t").is_none());
+    }
+
+    // A snapshot carrying `ages` (rain-org-health#140 / #165) emits it VERBATIM beside `counts` —
+    // same rollup, one more block — so the dashboard's age series reads from the same lines its
+    // count series already does.
+    #[test]
+    fn queue_history_line_carries_ages_beside_counts() {
+        let snap = r#"{"counts":{"ready":3},"ages":{"openIssues":{"meanDays":333.8,"medianDays":99.0,"oldestDays":1654.5}}}"#;
+        let line = queue_history_line(snap, "2026-07-31T10:00:00Z").unwrap();
+        let parsed: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["ts", "counts", "ages"]
+        );
+        // Carried VERBATIM, every key: this function knows nothing about which population the
+        // block describes or which statistics it holds, so a renaming or an added statistic on the
+        // producing side needs no change here.
+        assert_eq!(
+            parsed["ages"],
+            serde_json::json!({"openIssues": {"meanDays": 333.8, "medianDays": 99.0, "oldestDays": 1654.5}})
+        );
+    }
+
+    // Absence-not-null, in BOTH directions: a snapshot without `ages` (every commit predating the
+    // key) emits a line without the key, and a pathological `"ages": null` is dropped rather than
+    // forwarded — the dashboard's degradation contract is a MISSING field, and `null` would be a
+    // third shape every reader would have to handle.
+    #[test]
+    fn queue_history_line_omits_ages_when_the_snapshot_has_none() {
+        for snap in [
+            r#"{"counts":{"ready":3}}"#,
+            r#"{"counts":{"ready":3},"ages":null}"#,
+        ] {
+            let line = queue_history_line(snap, "t").unwrap();
+            let parsed: Value = serde_json::from_str(&line).unwrap();
+            assert!(
+                parsed.get("ages").is_none(),
+                "line for {snap} must carry NO ages key, got {line}"
+            );
+        }
     }
 
     // ---- distill-trace: the jq distiller, with its truncation widths now under test ----
@@ -43655,13 +43960,41 @@ mod subject_ref_tests {
                 "issues",
                 "backlog",
             )],
+            // The open-issue population is WIDER than the backlog above and overlaps it: the same
+            // backlog issue, plus one an open PR covers and one flagged `ai:close-candidate` —
+            // both of which `producer_backlog` excludes and the ages deliberately include. Ages
+            // 2/10/40 days, so median 10 and mean (2+10+40)/3 = 17.3 DIFFER, and a mutant that
+            // computed one where the other belongs cannot pass.
+            Some(&[
+                OpenIssue {
+                    subject: sref("rainlanguage/rain.math.float", 42, "issues", "backlog"),
+                    created_ms: Some(DOC_NOW_MS - 10 * 86_400_000),
+                },
+                OpenIssue {
+                    subject: sref(
+                        "rainlanguage/raindex",
+                        981,
+                        "issues",
+                        "covered by an open PR",
+                    ),
+                    created_ms: Some(DOC_NOW_MS - 40 * 86_400_000),
+                },
+                OpenIssue {
+                    subject: sref("rainlanguage/raindex", 700, "issues", "flagged"),
+                    created_ms: Some(DOC_NOW_MS - 2 * 86_400_000),
+                },
+            ]),
             &[(
                 sref("rainlanguage/raindex", 99, "pull", "leaking pr"),
                 "blocked on a deploy".to_string(),
             )],
             2,
+            DOC_NOW_MS,
         )
     }
+
+    /// The fixture's "now": 2026-07-31T00:00:00Z, fixed so every age in `doc()` is deterministic.
+    const DOC_NOW_MS: i64 = 1_785_456_000_000;
 
     /// The top-level arrays holding subject references, by JSON pointer. `leaks` is here too: it is
     /// a subject reference with one EXTRA key, not a different shape.
@@ -43797,34 +44130,16 @@ mod subject_ref_tests {
     // fetch is added. A missing meta row keeps the entry (never silently shrink the backlog) with
     // an empty url: an unknown link is reported unknown, never guessed.
     #[test]
-    fn producer_backlog_refs_carry_the_url_from_the_coverage_meta() {
-        let mut meta: std::collections::HashMap<(String, u64), Value> =
-            std::collections::HashMap::new();
-        meta.insert(
-            ("rainlanguage/raindex".into(), 512),
-            json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
-                   "title": "backlog issue", "labels": []}),
-        );
-        // Excluded: an `ai:close-candidate` issue is the human's queue, not the producer's.
-        meta.insert(
-            ("rainlanguage/raindex".into(), 700),
-            json!({"url": "https://github.com/rainlanguage/raindex/issues/700",
-                   "title": "flagged", "labels": [{"name": "ai:close-candidate"}]}),
-        );
-        let open = vec![
-            ("rainlanguage/raindex".to_string(), 512),
-            ("rainlanguage/raindex".to_string(), 700),
-            // No meta row at all — kept, with no fabricated link.
-            ("rainlanguage/rain.math.float".to_string(), 3),
-        ];
-        let refs = producer_backlog_refs(&open, &meta);
+    fn producer_backlog_carries_the_url_from_the_coverage_meta() {
+        let (open, meta) = coverage_fixture();
+        let backlog = producer_backlog(&open, &meta);
         assert_eq!(
-            refs.len(),
+            backlog.len(),
             2,
             "the close-candidate issue is excluded, the meta-less one is not"
         );
         assert_eq!(
-            refs[0],
+            backlog[0],
             SubjectRef::new(
                 "rainlanguage/raindex",
                 512,
@@ -43832,11 +44147,462 @@ mod subject_ref_tests {
                 "backlog issue"
             )
         );
-        assert_eq!(refs[1].repo, "rainlanguage/rain.math.float");
+        assert_eq!(backlog[1].repo, "rainlanguage/rain.math.float");
         assert_eq!(
-            refs[1].url, "",
+            backlog[1].url, "",
             "no meta means no link — never a guessed one"
         );
+    }
+
+    // ── org-wide open-issue ages (#165 / rain-org-health#140) ──────────────────────────────────
+    // The population is EVERY open issue, which is WIDER than the producer backlog: the human
+    // asked for the average age of all issues, and a metric narrowed to the producer's share
+    // cannot see an issue that has sat behind an open PR or a `human:*` ruling for six months.
+
+    /// The `(issue keys, meta)` pair the population builders take, as [`coverage_uncovered`]
+    /// produces it.
+    type CoverageRows = (
+        Vec<(String, u64)>,
+        std::collections::HashMap<(String, u64), Value>,
+    );
+
+    /// One `gh search issues` payload shaped like the live one, shared by the population tests so
+    /// the two populations are read from the SAME rows — which is the property under test.
+    ///
+    /// Three open issues: a plain one, one flagged `ai:close-candidate` (excluded from the
+    /// backlog, INCLUDED in the open-issue population), and one with no meta row at all.
+    fn coverage_fixture() -> CoverageRows {
+        let mut meta: std::collections::HashMap<(String, u64), Value> =
+            std::collections::HashMap::new();
+        meta.insert(
+            ("rainlanguage/raindex".into(), 512),
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/512",
+                   "title": "backlog issue", "labels": [],
+                   "createdAt": "2026-07-21T00:00:00Z"}),
+        );
+        meta.insert(
+            ("rainlanguage/raindex".into(), 700),
+            json!({"url": "https://github.com/rainlanguage/raindex/issues/700",
+                   "title": "flagged", "labels": [{"name": "ai:close-candidate"}],
+                   "createdAt": "2026-07-01T00:00:00Z"}),
+        );
+        let open = vec![
+            ("rainlanguage/raindex".to_string(), 512),
+            ("rainlanguage/raindex".to_string(), 700),
+            // No meta row at all — kept, with no fabricated link and no fabricated age.
+            ("rainlanguage/rain.math.float".to_string(), 3),
+        ];
+        (open, meta)
+    }
+
+    // The population the ages measure is EVERY open issue — no coverage filter, no label filter —
+    // read from the same rows, with `createdAt` parsed off each. Contrast with the test above,
+    // which drops the flagged issue: same input, two populations, and this is the wide one.
+    #[test]
+    fn open_issues_are_every_open_issue_with_created_at_from_the_same_row() {
+        let (open, meta) = coverage_fixture();
+        let all = open_issues(&open, &meta);
+        assert_eq!(
+            all.len(),
+            3,
+            "no narrowing at all: the close-candidate issue and the meta-less one both count"
+        );
+        assert_eq!(
+            all.iter().map(|i| i.subject.number).collect::<Vec<_>>(),
+            vec![512, 700, 3],
+            "order is GitHub's, unshuffled"
+        );
+        assert_eq!(
+            all[0].subject,
+            SubjectRef::new(
+                "rainlanguage/raindex",
+                512,
+                "https://github.com/rainlanguage/raindex/issues/512",
+                "backlog issue"
+            )
+        );
+        assert_eq!(
+            all[0].created_ms,
+            iso_to_epoch_ms("2026-07-21T00:00:00Z"),
+            "createdAt parses through the same reader GitHub timestamps use everywhere here"
+        );
+        // The flagged issue — excluded from the backlog, present here WITH its age. This is the
+        // whole point of the rescope.
+        assert_eq!(all[1].subject.number, 700);
+        assert_eq!(all[1].created_ms, iso_to_epoch_ms("2026-07-01T00:00:00Z"));
+        assert_eq!(all[2].subject.repo, "rainlanguage/rain.math.float");
+        assert_eq!(
+            all[2].subject.url, "",
+            "no meta means no link — never a guessed one"
+        );
+        assert_eq!(
+            all[2].created_ms, None,
+            "no meta means no age either — the member still counts, it just contributes none"
+        );
+    }
+
+    // The WIRING, which is where the rescope could silently revert: the age population must be
+    // built from `all` and the backlog from `uncovered`. One word apart, both compile, and taking
+    // `uncovered` for the ages is exactly the narrowing this rescope undoes — so the field choice
+    // is asserted here rather than left at a call site no test reaches.
+    #[test]
+    fn populations_take_the_ages_from_all_and_the_backlog_from_uncovered() {
+        let (_, meta) = coverage_fixture();
+        let org = OrgIssues {
+            // Every open issue: the plain one, the flagged one, the meta-less one.
+            all: vec![
+                ("rainlanguage/raindex".to_string(), 512),
+                ("rainlanguage/raindex".to_string(), 700),
+                ("rainlanguage/rain.math.float".to_string(), 3),
+            ],
+            // An open PR covers 512, so the backlog is strictly narrower on BOTH axes: coverage
+            // removes 512 and the `ai:close-candidate` label removes 700.
+            uncovered: vec![
+                ("rainlanguage/raindex".to_string(), 700),
+                ("rainlanguage/rain.math.float".to_string(), 3),
+            ],
+            meta,
+        };
+        let (backlog, open) = org.populations();
+        assert_eq!(
+            open.iter().map(|i| i.subject.number).collect::<Vec<_>>(),
+            vec![512, 700, 3],
+            "the ages measure `all` — every open issue, covered and flagged ones included"
+        );
+        assert_eq!(
+            backlog.iter().map(|s| s.number).collect::<Vec<_>>(),
+            vec![3],
+            "the backlog narrows `uncovered` further by label"
+        );
+        assert!(
+            open.len() > backlog.len(),
+            "the age population is WIDER than the backlog — swapping the two fields inverts this"
+        );
+    }
+
+    /// The fixture-builder for a member whose only relevant field is its age.
+    fn aged(days_ago_ms: i64, now_ms: i64) -> OpenIssue {
+        OpenIssue {
+            subject: sref("o/r", 1, "issues", "t"),
+            created_ms: Some(now_ms - days_ago_ms),
+        }
+    }
+    const DAY_MS: i64 = 86_400_000;
+
+    // MEAN AND MEDIAN ARE BOTH EMITTED AND THEY ARE DIFFERENT NUMBERS. This population is chosen
+    // so no two of the three statistics coincide: mean 30, median 10, oldest 100. A mutant that
+    // emits the median where the mean belongs (or the reverse) cannot survive it, and neither can
+    // one that reports the oldest as either.
+    #[test]
+    fn issue_age_stats_report_mean_and_median_and_oldest_as_three_distinct_numbers() {
+        let now = DOC_NOW_MS;
+        // (2 + 8 + 10 + 30 + 100) / 5 = 30; the middle of five is 10.
+        let b = vec![
+            aged(2 * DAY_MS, now),
+            aged(8 * DAY_MS, now),
+            aged(10 * DAY_MS, now),
+            aged(30 * DAY_MS, now),
+            aged(100 * DAY_MS, now),
+        ];
+        let a = issue_age_stats(&b, now).expect("a population with ages HAS ages");
+        assert_eq!(a.mean, 30.0);
+        assert_eq!(a.median, 10.0);
+        assert_eq!(a.oldest, 100.0);
+        // Emitted key-by-key, all three, no hierarchy: the renderer picks, this binary does not.
+        assert_eq!(
+            a.to_json(),
+            json!({"meanDays": 30.0, "medianDays": 10.0, "oldestDays": 100.0})
+        );
+    }
+
+    // The mean is the SUM over the COUNT, not a shortcut that happens to agree on symmetric input:
+    // this population is skewed hard (four fresh issues and one from 2022), so a mean confused
+    // with a median, a midpoint, or a trimmed anything lands nowhere near 200.4.
+    #[test]
+    fn issue_age_stats_mean_is_dragged_by_the_long_tail_the_median_ignores() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            aged(DAY_MS, now),
+            aged(2 * DAY_MS, now),
+            aged(3 * DAY_MS, now),
+            aged(4 * DAY_MS, now),
+            aged(1000 * DAY_MS, now),
+        ];
+        let a = issue_age_stats(&b, now).unwrap();
+        // (1 + 2 + 3 + 4 + 1000) / 5 = 202.0, against a median of 3.
+        assert_eq!(a.mean, 202.0);
+        assert_eq!(a.median, 3.0);
+        assert_eq!(a.oldest, 1000.0);
+        assert!(
+            a.mean > a.median * 60.0,
+            "the divergence IS the signal both statistics exist to show"
+        );
+    }
+
+    #[test]
+    fn issue_age_stats_median_is_the_middle_of_an_odd_population() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            aged(2 * DAY_MS, now),
+            aged(10 * DAY_MS, now),
+            aged(40 * DAY_MS, now),
+        ];
+        let a = issue_age_stats(&b, now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (17.3, 10.0, 40.0));
+    }
+
+    #[test]
+    fn issue_age_stats_median_is_the_mean_of_the_two_middles_of_an_even_population() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            aged(2 * DAY_MS, now),
+            aged(10 * DAY_MS, now),
+            aged(20 * DAY_MS, now),
+            aged(40 * DAY_MS, now),
+        ];
+        // median (10 + 20) / 2 = 15; mean (2 + 10 + 20 + 40) / 4 = 18.
+        let a = issue_age_stats(&b, now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (18.0, 15.0, 40.0));
+    }
+
+    #[test]
+    fn issue_age_stats_round_to_one_decimal() {
+        let now = DOC_NOW_MS;
+        // 36 hours = 1.5 days exactly; 8h = 0.333… days, which must round to 0.3, not truncate
+        // elsewhere or ship 15 decimals into the JSON.
+        let a = issue_age_stats(&[aged(36 * 3_600_000, now)], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (1.5, 1.5, 1.5));
+        let a = issue_age_stats(&[aged(8 * 3_600_000, now)], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (0.3, 0.3, 0.3));
+        // Rounding happens ONCE, at the END — the members are averaged at full precision and only
+        // the result is rounded. Most populations cannot tell the two orders apart (rounding
+        // errors cancel), so this one is chosen because they DISAGREE: 0.04, 0.04 and 0.14 days
+        // average to 0.0733 → 0.1, while rounding each member first gives 0.0, 0.0 and 0.1, whose
+        // average is 0.0333 → 0.0. An implementation that rounded per member would report a mean
+        // of 0.0 for a population where no member is younger than an hour.
+        let b = vec![
+            aged((0.04 * 86_400_000.0) as i64, now),
+            aged((0.04 * 86_400_000.0) as i64, now),
+            aged((0.14 * 86_400_000.0) as i64, now),
+        ];
+        let a = issue_age_stats(&b, now).unwrap();
+        assert_eq!(
+            a.mean, 0.1,
+            "the mean is rounded, not the members it averages"
+        );
+    }
+
+    #[test]
+    fn issue_age_stats_of_one_member_is_that_member_three_times() {
+        let now = DOC_NOW_MS;
+        let a = issue_age_stats(&[aged(7 * DAY_MS, now)], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (7.0, 7.0, 7.0));
+    }
+
+    // An empty population has NO age — `None`, so the caller omits the field entirely. Zero would
+    // claim a fresh population, which is the opposite of what an empty one means.
+    #[test]
+    fn issue_age_stats_of_an_empty_population_is_none_not_zero() {
+        assert!(issue_age_stats(&[], DOC_NOW_MS).is_none());
+    }
+
+    // Members without a parseable createdAt contribute no age; when NO member carries one there is
+    // nothing honest to emit and the answer is again `None`, never a fabricated 0.
+    #[test]
+    fn issue_age_stats_ignore_members_without_created_at_and_none_when_all_lack_it() {
+        let now = DOC_NOW_MS;
+        let ageless = || OpenIssue {
+            subject: sref("o/r", 2, "issues", "no meta"),
+            created_ms: None,
+        };
+        assert!(issue_age_stats(&[ageless()], now).is_none());
+        // The aged member alone decides all three stats — the mean is over ONE member, not two,
+        // so an age-less row cannot halve it. The age-less one still COUNTS in the population
+        // (asserted against `counts.openIssues` in the doc tests below).
+        let a = issue_age_stats(&[aged(10 * DAY_MS, now), ageless()], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (10.0, 10.0, 10.0));
+    }
+
+    // Clock skew: a createdAt after "now" clamps to 0.0 — an age is never negative, and a negative
+    // member would drag the MEAN below zero even where it never became the median or the oldest.
+    #[test]
+    fn issue_age_stats_clamp_future_created_at_to_zero() {
+        let now = DOC_NOW_MS;
+        let future = OpenIssue {
+            subject: sref("o/r", 3, "issues", "from the future"),
+            created_ms: Some(now + DAY_MS),
+        };
+        let a = issue_age_stats(&[future], now).unwrap();
+        assert_eq!((a.mean, a.median, a.oldest), (0.0, 0.0, 0.0));
+        // And beside a real member: mean (0 + 10) / 2 = 5, never (−1 + 10) / 2 = 4.5.
+        let future = OpenIssue {
+            subject: sref("o/r", 3, "issues", "from the future"),
+            created_ms: Some(now + DAY_MS),
+        };
+        let a = issue_age_stats(&[future, aged(10 * DAY_MS, now)], now).unwrap();
+        assert_eq!(a.mean, 5.0);
+    }
+
+    // The oldest NUMBER and the oldest ISSUE come out of the same row, so the daily review's link
+    // always points at the issue the number describes.
+    #[test]
+    fn issue_age_stats_name_the_issue_the_oldest_number_measures() {
+        let now = DOC_NOW_MS;
+        let b = vec![
+            OpenIssue {
+                subject: sref("o/r", 1, "issues", "recent"),
+                created_ms: Some(now - 5 * DAY_MS),
+            },
+            OpenIssue {
+                subject: sref("o/r", 981, "issues", "the 2024 straggler"),
+                created_ms: Some(now - 800 * DAY_MS),
+            },
+            OpenIssue {
+                subject: sref("o/r", 2, "issues", "middling"),
+                created_ms: Some(now - 50 * DAY_MS),
+            },
+        ];
+        let a = issue_age_stats(&b, now).unwrap();
+        assert_eq!(a.oldest, 800.0);
+        assert_eq!(
+            a.oldest_subject.number, 981,
+            "the tail number and the tail issue must be the same row"
+        );
+        // The review block renders that issue, not the first or the last of the input.
+        let rendered = review_open_issue_ages(&b, now);
+        assert!(rendered.contains("mean 285.0d"), "{rendered}");
+        assert!(rendered.contains("median 50.0d"), "{rendered}");
+        assert!(rendered.contains("oldest 800.0d"), "{rendered}");
+        assert!(rendered.contains("the 2024 straggler"), "{rendered}");
+        assert!(
+            rendered.contains("All open issues — org-wide: 3"),
+            "the population size is printed beside the ages: {rendered}"
+        );
+    }
+
+    // The review reports the SIZE even when it cannot report an age, and says so in words rather
+    // than printing a 0 that would read as "all brand new".
+    #[test]
+    fn the_review_reports_the_population_size_when_no_member_has_an_age() {
+        let ageless = vec![OpenIssue {
+            subject: sref("o/r", 9, "issues", "no createdAt"),
+            created_ms: None,
+        }];
+        let rendered = review_open_issue_ages(&ageless, DOC_NOW_MS);
+        assert!(
+            rendered.contains("All open issues — org-wide: 1") && rendered.contains("no age"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("0.0d"),
+            "no age must never render as a zero age: {rendered}"
+        );
+    }
+
+    // The emitted block: a SIBLING of `counts` (an age is not a count), over the WIDE population —
+    // and `counts.openIssues` counts that same population, so the size and the ages cannot
+    // describe different sets of issues.
+    #[test]
+    fn the_doc_emits_ages_beside_counts_over_the_open_issue_population() {
+        let d = doc();
+        // doc()'s open-issue population is 3 members aged 10/40/2 days at DOC_NOW_MS:
+        // mean (10 + 40 + 2) / 3 = 17.333… → 17.3, median 10, oldest 40.
+        assert_eq!(d["ages"]["openIssues"]["meanDays"], json!(17.3));
+        assert_eq!(d["ages"]["openIssues"]["medianDays"], json!(10.0));
+        assert_eq!(d["ages"]["openIssues"]["oldestDays"], json!(40.0));
+        assert_eq!(
+            d["counts"]["openIssues"],
+            json!(3),
+            "the count counts the same population the ages measure"
+        );
+        // The WIDE population is not the backlog: the backlog holds one issue, the open-issue
+        // population three. A metric that had silently kept the narrow population would report 1
+        // here and a median of 10 with no mean to contradict it.
+        assert_eq!(d["counts"]["uncoveredIssues"], json!(1));
+        assert_ne!(
+            d["counts"]["openIssues"], d["counts"]["uncoveredIssues"],
+            "the age population is deliberately WIDER than the producer backlog"
+        );
+        assert!(
+            d["counts"].get("ages").is_none()
+                && d["counts"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .all(|k| !k.contains("Days")),
+            "ages live BESIDE counts, never inside it"
+        );
+        // No age is emitted under the OLD name — a field named for a population it no longer
+        // holds is exactly the defect #114 was about.
+        assert!(
+            d["ages"].get("uncoveredIssues").is_none(),
+            "the ages are named for the population they measure"
+        );
+    }
+
+    // Absence-not-null on the snapshot itself: a population whose members all lack a createdAt
+    // (and an empty one) emits NO `ages` key while still emitting its SIZE. The dashboard's
+    // documented degradation handles a missing field; a null or a zero would be a lie it would
+    // faithfully draw.
+    #[test]
+    fn the_doc_omits_ages_when_no_open_issue_has_an_age() {
+        let empty: Vec<OpenIssue> = vec![];
+        let ageless = vec![OpenIssue {
+            subject: sref("o/r", 9, "issues", "no createdAt"),
+            created_ms: None,
+        }];
+        for (open, want_count) in [(&empty, 0u64), (&ageless, 1u64)] {
+            let d = doc_with_open(Some(open));
+            assert!(
+                d.get("ages").is_none(),
+                "no age to report ⇒ the key is ABSENT, got {:?}",
+                d.get("ages")
+            );
+            assert_eq!(
+                d["counts"]["openIssues"],
+                json!(want_count),
+                "the count is independent of whether ages are reportable"
+            );
+        }
+    }
+
+    // A FAILED coverage read is not an empty org. #199 gave the gh failure a type precisely so it
+    // could not silently read as an empty answer, and `counts.openIssues: 0` on a rate-limited
+    // tick would be exactly that — a dashboard point claiming every issue closed at once. Both the
+    // count and the ages are OMITTED, which is the one shape that says "not known".
+    #[test]
+    fn the_doc_omits_the_open_issue_count_entirely_when_the_coverage_read_failed() {
+        let d = doc_with_open(None);
+        assert!(
+            d.get("ages").is_none(),
+            "an unreadable population has no ages"
+        );
+        assert!(
+            d["counts"].get("openIssues").is_none(),
+            "an unreadable population must not be reported as zero open issues, got {:?}",
+            d["counts"].get("openIssues")
+        );
+        // The distinction is the point: an EMPTY population still reports its size.
+        let empty = doc_with_open(Some(&[]));
+        assert_eq!(empty["counts"]["openIssues"], json!(0));
+    }
+
+    /// A minimal snapshot whose only interesting input is the open-issue population.
+    fn doc_with_open(open: Option<&[OpenIssue]>) -> Value {
+        human_queue_doc(
+            &std::collections::BTreeMap::new(),
+            &lanes_doc(&[]),
+            &[],
+            json!([]),
+            0,
+            json!([]),
+            0,
+            &[],
+            open,
+            &[],
+            0,
+            DOC_NOW_MS,
+        )
     }
 
     // The human-readable daily review prints the same resolved url. It renders

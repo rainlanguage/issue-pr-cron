@@ -2,7 +2,7 @@
 # Regenerate the FSM-conformance snapshot (human-queue.json) and commit it to main so the
 # rain-org-health dashboard can fetch it at runtime from the raw URL — no site redeploy for data.
 # The snapshot itself is OVERWRITE (point-in-time); alongside it we APPEND one rollup line per
-# changed refresh to human-queue-history.jsonl ({ts, counts}, mirroring metrics/runs.jsonl) so the
+# changed refresh to human-queue-history.jsonl ({ts, counts[, ages]}, mirroring metrics/runs.jsonl) so the
 # dashboard can render per-state inventory over time (Theory-of-Constraints flow panel;
 # rain-org-health#32). This tick is also what publishes metrics/runs.jsonl itself (#160): the
 # model runners append rows but never push, and during a usage-gate pause they are the ONLY thing
@@ -129,7 +129,7 @@ if [ "$snapshot_changed" -eq 0 ] && [ "$metrics_changed" -eq 0 ]; then
   exit 0
 fi
 
-# Append one rollup line {ts, counts} to the append-only history so the dashboard can
+# Append one rollup line {ts, counts[, ages]} to the append-only history so the dashboard can
 # render per-state inventory over time (Theory-of-Constraints flow panel;
 # rain-org-health#32). One line per CHANGED snapshot, mirroring metrics/runs.jsonl — so it stays
 # gated on the SNAPSHOT having moved: a metrics-only tick appends no history line, or an idle
