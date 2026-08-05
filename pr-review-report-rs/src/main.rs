@@ -34420,8 +34420,30 @@ mod settings_tests {
             brief.contains("WAIT IN ONE CALL"),
             "the brief must state the one-call wait rule"
         );
+        // …and NAME THE MECHANISM. `Monitor` alone is the pre-#197 rule, which `campaign-prompt`
+        // had all along and which did not stop the spin-wait: its only idiom (`until grep -q
+        // <marker> <file>`) needs a LOCAL FILE, and there is none for "have the checks reported".
+        // A worker told to wait with `Monitor` and nothing else meets that same dead end and
+        // improvises the same probe-per-turn, which is the 142 calls this brief exists to remove.
         assert!(
-            brief.contains("never a `gh pr checks`"),
+            brief.contains("pr-review-report await"),
+            "the wait rule must name `await`: a rule whose only mechanism is `Monitor` was \
+             measured as unsatisfiable for a GitHub-side wait, and stating it again changes nothing"
+        );
+        assert!(
+            brief.contains("head-unchanged"),
+            "the brief must name the per-subject states a worker DISPATCHES OFF — without them \
+             `await` is a call whose answer the worker has to guess at, and `head-unchanged` in \
+             particular is the phantom-green guard: an unmoved head is never settled by the old \
+             head's checks"
+        );
+        assert!(
+            brief.contains("never the bare `until grep -q"),
+            "the idiom that does not reach GitHub must be forbidden BY NAME: it is the one a \
+             worker reaches for when told only that waiting is `Monitor`"
+        );
+        assert!(
+            brief.contains("NEVER a `gh pr checks`"),
             "stating the wait rule is not enough — the brief must name the per-probe poll it \
              replaces, because that is the shape the runs reached for on their own"
         );

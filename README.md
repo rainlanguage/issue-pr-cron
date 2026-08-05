@@ -1756,6 +1756,17 @@ between them, so a byte present in every worker costs $0.000989 across the
 retained era, and the $18.23 it targets breaks even at 18,424 bytes.
 `the_worker_brief_stays_inside_its_context_budget` holds it at 4,096.
 
+At 3,777 bytes the brief costs $3.74 and the boilerplate it displaces is worth
+$4.08 ($1.58 worker-side, $2.50 main-loop-side), so the **byte ledger alone is
++$0.34 — near enough a wash**, and the case rests on the $15.74 of spin-wait the
+rules remove. That is deliberate rather than an erosion: 883 of those bytes are
+what naming `pr-review-report await` costs, and they are what makes the wait
+rule reachable at all. #197 measured that `Monitor` on its own is not — its only
+idiom needs a local file, and there is none for "have the checks reported" — so
+a rule stating only "waiting is `Monitor`" is a rule a worker meets a dead end
+at and improvises around, which is the $12.60 line. $0.87 to make $12.60 of
+instruction executable is the whole trade.
+
 ## PreToolUse guards — what a prompt cannot hold
 
 A prompt is advice and a permission deny-list is prefix-matched, so some
