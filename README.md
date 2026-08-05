@@ -1361,11 +1361,15 @@ Four properties are deliberate:
   concurrent agents are routinely the same path. That is how one PR's body came
   to be written from another PR's file, silently, with exit 0
   ([#202](https://github.com/rainlanguage/issue-pr-cron/issues/202)). So when
-  `closes` names an issue, the file NAME must carry that number — matched on the
-  basename and at digit boundaries, because a scratch directory's own timestamp
-  would otherwise satisfy every subject and `pr-body-163.md` is issue 163's
-  file. An open with no `closes` is the deliberate partial-coverage case, has no
-  number to be named for, and is held to the absolute half alone.
+  `closes` names an issue, the file NAME must be that issue's: the FIRST number
+  in the basename, taken whole, IS the subject. The basename, because a scratch
+  directory's own timestamp would otherwise satisfy every subject; taken whole,
+  because `pr-body-163.md` is issue 163's file; the first one, because a name
+  two subjects could both claim (`pr-body-62-63.md`) is the collision rather
+  than a defence against it — while a suffix after the number is free, so
+  `pr-body-63-v2.md` is still 63's. An open with no `closes` is the deliberate
+  partial-coverage case, has no number to be named for, and is held to the
+  absolute half alone.
 - **`closes` is a number, not prose.** The tool writes the canonical `Closes #N`
   line only when [`closing_keywords`](#the-linkage-repair-weaken-closes) says
   the body does not already close that issue, and the result reports every issue

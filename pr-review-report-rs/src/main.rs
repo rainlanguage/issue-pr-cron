@@ -21902,7 +21902,7 @@ fn mcp_all_tools() -> Value {
                     "repo": {"type": "string", "description": "owner/repo"},
                     "head": {"type": "string", "description": "The branch holding the work, ALREADY PUSHED to that repo."},
                     "title": {"type": "string", "description": "PR title."},
-                    "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body, and NAMED FOR the issue `closes` names — .../pr-body-63.md. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body, and NAMED FOR the issue `closes` names — .../pr-body-63.md, the FIRST number in the file name being that issue. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name — or one another issue could equally claim — is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
                     "closes": {"type": "integer", "description": "The issue this PR closes. Omit for a partial fix — then say `Refs #N` in the body yourself."},
                     "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
                 },
@@ -21928,7 +21928,7 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "pr": {"type": "string", "description": "owner/repo#number"},
-                    "block_file": {"type": "string", "description": "ABSOLUTE path to the file holding the section-8 block, and NAMED FOR this PR — .../qa-block-63.md. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "block_file": {"type": "string", "description": "ABSOLUTE path to the file holding the section-8 block, and NAMED FOR this PR — .../qa-block-63.md, the FIRST number in the file name being this PR. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name — or one another PR could equally claim — is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
                     "replace": {"type": "boolean", "description": "Replace an existing `## QA` section — only once the evidence has actually been re-run."},
                     "dry_run": {"type": "boolean", "description": "Report the plan without writing."}
                 },
@@ -24105,10 +24105,14 @@ enum BodyPathFault {
 /// NAMED FOR ITS SUBJECT, because absolute is not unique. `SCRATCH_DIR` is per RUN
 /// (`campaign-run.sh`), and every worker a run dispatches is handed that SAME directory, so two
 /// absolute paths chosen by two concurrent agents are routinely the same path — which is how one
-/// PR's body came to be written from another PR's file. A file name carrying the subject's own
-/// number is what makes those paths differ by construction, and it is already the name
-/// `campaign-prompt.txt` prescribes (`pr-body-<N>.md`, `qa-block-<n>.md`), so this refuses only a
-/// caller that departed from it.
+/// PR's body came to be written from another PR's file. What makes those paths differ by
+/// construction is a file name that resolves to exactly ONE subject, so the grammar is
+/// POSITIONAL rather than a search: the FIRST number in the base name IS the subject, and
+/// anything after it is free. That is already the name `campaign-prompt.txt` prescribes
+/// (`pr-body-<N>.md`, `qa-block-<n>.md` — a letters-and-hyphens prefix, then the number), so this
+/// refuses only a caller that departed from it. `pr-body-63-v2.md` is still 63's; `pr-body-62-63.md`
+/// is 62's and is refused for 63, because a name two subjects could both claim IS the collision,
+/// not a defence against it.
 ///
 /// `subject` is `None` where the call names no number the file could be named for — `open_pr`
 /// without `closes`, a deliberate partial-coverage open — and there only the absolute half is
@@ -24129,19 +24133,22 @@ fn body_path_fault(path: &str, subject: Option<u64>) -> Option<BodyPathFault> {
     }
 }
 
-/// PURE: whether `name` carries `n` as a number in its own right rather than as digits inside a
-/// longer one. `qa-block-63.md` names 63; `qa-block-163.md` and `qa-block-632.md` name something
-/// else, and accepting either would hand back exactly the neighbouring-file collision this is
-/// about.
+/// PURE: whether `name` NAMES `n` — its FIRST run of digits, taken whole, is `n`'s decimal
+/// spelling. `qa-block-63.md` and `pr-body-63-v2.md` name 63, a suffix after the number being
+/// free. `qa-block-163.md` and `qa-block-632.md` name other PRs, because digits inside a longer
+/// number are not that number. `pr-body-62-63.md` names 62 and nothing else: carrying `n`
+/// somewhere further along is not naming it, and treating it as if it were would make one file
+/// two subjects' at once — exactly the neighbouring-file collision this is about.
 fn names_number(name: &str, n: u64) -> bool {
     let needle = n.to_string();
-    let bytes = name.as_bytes();
-    name.match_indices(&needle).any(|(i, _)| {
-        let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
-        let end = i + needle.len();
-        let after_ok = end == bytes.len() || !bytes[end].is_ascii_digit();
-        before_ok && after_ok
-    })
+    let Some(start) = name.find(|c: char| c.is_ascii_digit()) else {
+        return false;
+    };
+    let rest = &name[start..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end] == needle
 }
 
 impl BodyPathFault {
@@ -24158,9 +24165,10 @@ impl BodyPathFault {
                 let n = subject.map(|n| n.to_string()).unwrap_or_default();
                 format!(
                     "{arg} {path:?} is absolute but not UNIQUE — every worker a run dispatches is \
-                     handed the SAME scratch directory, so a generic name is a file another agent \
-                     is also writing. Name the file for what it is written to: put {n} in the \
-                     file name, as campaign-prompt.txt prescribes."
+                     handed the SAME scratch directory, so a name that is generic, or that \
+                     another subject could equally claim, is a file another agent is also \
+                     writing. The FIRST number in the file name is what it is written to: name it \
+                     pr-body-{n}.md or qa-block-{n}.md, as campaign-prompt.txt prescribes."
                 )
             }
         }
@@ -24223,10 +24231,49 @@ mod body_path_tests {
             "/run/scratch/qa-block-63.md",
             "/run/scratch/63.md",
             "/run/scratch/pr-body-63-v2.md",
-            "/run/scratch/pr-body-62-63.md",
         ] {
             assert_eq!(body_path_fault(path, Some(63)), None, "{path} names 63");
         }
+    }
+
+    /// The neighbour the OTHER way round: `pr-body-62-63.md` carries 63, and carrying is not
+    /// naming. Its first number is 62, so it is 62's file — one name, one subject, which is the
+    /// only thing that keeps two workers in the one scratch dir off the same file. A name valid
+    /// for both of them would be the collision itself.
+    ///
+    /// The rule that refuses it is POSITIONAL and not a count of the numbers in the name: a count
+    /// would refuse `pr-body-63-v2.md`, which names 63 and no one else.
+    #[test]
+    fn a_name_whose_first_number_is_another_subject_is_that_subject_s_file() {
+        assert_eq!(
+            body_path_fault("/run/scratch/pr-body-62-63.md", Some(63)),
+            Some(BodyPathFault::Unnamed),
+            "62-63 is 62's file, not 63's"
+        );
+        assert_eq!(
+            body_path_fault("/run/scratch/pr-body-62-63.md", Some(62)),
+            None
+        );
+        // A suffix after the subject is not a second subject, and is not a second claimant.
+        assert_eq!(
+            body_path_fault("/run/scratch/pr-body-63-v2.md", Some(63)),
+            None
+        );
+        assert_eq!(
+            body_path_fault("/run/scratch/pr-body-63-v2.md", Some(2)),
+            Some(BodyPathFault::Unnamed),
+            "the 2 of -v2 is a suffix, and PR 2 does not get to claim 63's file"
+        );
+    }
+
+    /// The refusal has to tell a caller holding `pr-body-62-63.md` for 63 what to type instead —
+    /// "put 63 in the file name" would describe a name it already wrote.
+    #[test]
+    fn the_unnamed_refusal_says_which_number_the_name_must_lead_with() {
+        let un =
+            BodyPathFault::Unnamed.message("body_file", "/run/scratch/pr-body-62-63.md", Some(63));
+        assert!(un.contains("FIRST number"), "{un}");
+        assert!(un.contains("pr-body-63.md"), "{un}");
     }
 
     /// `qa-block-163.md` is the file for PR 163, sitting in the same directory — the NEIGHBOUR this
