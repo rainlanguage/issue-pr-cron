@@ -1784,7 +1784,11 @@ mod archived_repos_tests {
     /// difference as "not archived" — the one direction that fails open.
     #[test]
     fn slugs_are_lowercased_so_the_two_apis_spellings_agree() {
-        let v = page(json!([{"nameWithOwner": "RainLanguage/Rain.Webapp"}]), false, json!(null));
+        let v = page(
+            json!([{"nameWithOwner": "RainLanguage/Rain.Webapp"}]),
+            false,
+            json!(null),
+        );
         assert_eq!(
             archived_repos_page(&v),
             Ok((vec!["rainlanguage/rain.webapp".to_string()], None))
@@ -1814,7 +1818,11 @@ mod archived_repos_tests {
             // The connection is there but the node list is not.
             json!({"data": {"repositoryOwner": {"repositories": {"pageInfo": {"hasNextPage": false}}}}}),
             // A node with no slug — one unaddressable repo must not silently shrink the set.
-            page(json!([{"nameWithOwner": "o/r"}, {"id": "x"}]), false, json!(null)),
+            page(
+                json!([{"nameWithOwner": "o/r"}, {"id": "x"}]),
+                false,
+                json!(null),
+            ),
             // `hasNextPage` with nothing to page WITH would silently truncate the set.
             page(json!([{"nameWithOwner": "o/r"}]), true, json!(null)),
             page(json!([{"nameWithOwner": "o/r"}]), true, json!("")),
@@ -1868,7 +1876,9 @@ mod archived_repos_tests {
             hit_slug,
         );
         assert_eq!(
-            live.iter().map(|h| h["number"].as_u64()).collect::<Vec<_>>(),
+            live.iter()
+                .map(|h| h["number"].as_u64())
+                .collect::<Vec<_>>(),
             vec![Some(1), Some(2)]
         );
         assert_eq!(frozen.len(), 1);
@@ -1880,8 +1890,11 @@ mod archived_repos_tests {
     #[test]
     fn an_empty_archived_set_withholds_nothing() {
         let hits = vec![json!({"number": 1, "repository": {"nameWithOwner": "o/r"}})];
-        let (live, frozen) =
-            withhold_archived(hits.clone(), &ArchivedRepos::from_slugs::<[&str; 0], _>([]), hit_slug);
+        let (live, frozen) = withhold_archived(
+            hits.clone(),
+            &ArchivedRepos::from_slugs::<[&str; 0], _>([]),
+            hit_slug,
+        );
         assert_eq!(live, hits);
         assert!(frozen.is_empty());
     }
@@ -1926,10 +1939,10 @@ mod archived_repos_tests {
         assert!(msg.starts_with("error:"), "{msg}");
         assert!(msg.contains("Unauthorized"), "{msg}");
         assert!(msg.contains("aborting"), "{msg}");
-        assert!(
-            archived_read_error(GhFailure::RateLimited { retry_after: Some(3) })
-                .contains("RateLimited"),
-        );
+        assert!(archived_read_error(GhFailure::RateLimited {
+            retry_after: Some(3)
+        })
+        .contains("RateLimited"),);
     }
 }
 
@@ -19068,13 +19081,8 @@ fn unvetted_close_candidates_fetch(
             }));
             continue;
         };
-        let (gate, action, mut row) = cc_row(
-            &slug,
-            num,
-            title,
-            &detail,
-            archived_repos.contains(&slug),
-        );
+        let (gate, action, mut row) =
+            cc_row(&slug, num, title, &detail, archived_repos.contains(&slug));
         // Filed and counted, never vetted and never CLEARED: an archived repo refuses the label
         // removal a clearance is, so attempting one would fail on every run for ever (#206).
         if gate == CcGate::RepoArchived {
@@ -22333,7 +22341,10 @@ mod next_close_candidate_tests {
     fn the_gate_reads_the_verdict_word_not_the_label_still_being_there() {
         let at = "2026-07-20T09:00:00Z";
         let parts = |w: &str| Some((at.to_string(), w.to_string()));
-        assert_eq!(cc_gate(false, false, at, parts("uphold")), CcGate::Presentable);
+        assert_eq!(
+            cc_gate(false, false, at, parts("uphold")),
+            CcGate::Presentable
+        );
         assert_eq!(
             cc_gate(false, false, at, parts("reject")),
             CcGate::RejectedStillFlagged
@@ -22362,11 +22373,21 @@ mod next_close_candidate_tests {
         let first = "2026-07-20T09:00:00Z";
         let second = "2026-07-25T09:00:00Z";
         assert_eq!(
-            cc_gate(false, false, second, Some((first.to_string(), "uphold".into()))),
+            cc_gate(
+                false,
+                false,
+                second,
+                Some((first.to_string(), "uphold".into()))
+            ),
             CcGate::Unvetted
         );
         assert_eq!(
-            cc_gate(false, false, first, Some((first.to_string(), "uphold".into()))),
+            cc_gate(
+                false,
+                false,
+                first,
+                Some((first.to_string(), "uphold".into()))
+            ),
             CcGate::Presentable
         );
     }
@@ -22457,13 +22478,8 @@ mod next_close_candidate_tests {
         assert_ne!(action, CC_CLEAR_REJECTED);
         assert_ne!(action, "vet");
         // The same issue in a LIVE repo is a different row entirely — the flag itself is fine.
-        let (live_gate, live_action, _) = cc_row(
-            "rainlanguage/rain.webapp",
-            139,
-            "t",
-            &detail,
-            false,
-        );
+        let (live_gate, live_action, _) =
+            cc_row("rainlanguage/rain.webapp", 139, "t", &detail, false);
         assert_ne!(live_gate, CcGate::RepoArchived);
         assert_ne!(live_action, CC_SKIP_ARCHIVED);
     }
