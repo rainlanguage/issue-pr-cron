@@ -8238,9 +8238,9 @@ const CHANGED_FILE_READER_FIELD_LISTS: [(&str, &str); 3] = [
 #[cfg(test)]
 mod changed_file_tests {
     use super::{
-        changed_files_from_rest, changed_files_from_view, inject_changed_files, is_ui_path,
-        refetch_total, touches_ui, ChangedFile, ChangedFileSet, UiTouch,
-        CHANGED_FILE_READER_FIELD_LISTS,
+        changed_files_from_rest, changed_files_from_view, embeds_screenshot, inject_changed_files,
+        is_ui_path, refetch_total, screenshot_settled, touches_ui, ChangedFile, ChangedFileSet,
+        UiTouch, CHANGED_FILE_READER_FIELD_LISTS,
     };
     use serde_json::{json, Value};
 
@@ -8521,21 +8521,106 @@ mod changed_file_tests {
         assert_eq!(touches_ui(&ChangedFileSet::Complete(vec![])), UiTouch::No);
     }
 
-    /// The path convention itself, unchanged by #147 and pinned so the tri-state refactor cannot
-    /// have quietly widened or narrowed it.
+    /// The path convention itself, pinned so neither the tri-state read nor a later edit can
+    /// quietly widen or narrow it.
     #[test]
-    fn the_ui_path_convention_is_webapp_ui_components_and_site_html() {
+    fn the_ui_path_convention_is_the_frontend_packages_the_site_tree_and_the_render_extensions() {
         for yes in [
             "packages/webapp/src/Foo.svelte",
             "apps/packages/webapp/x.ts",
             "packages/ui-components/src/Bar.svelte",
+            "packages/ui-components/src/lib/services/historicalOrderCharts.ts",
             "site/index.html",
+            // The dashboard's DATA is what its panels draw, so a change to it changes the render.
+            "site/health.json",
+            "site/style.css",
+            // The three extensions, wherever a repo keeps them. `cyclo.site` keeps its components
+            // here, which is where both of #140's PRs lived.
+            "src/lib/components/Input.svelte",
+            "src/lib/components/RewardsInfo.svelte",
+            "docs/site/index.html",
+            "app/assets/theme.css",
         ] {
             assert!(is_ui_path(yes), "{yes} must be a UI path");
         }
-        for no in ["src/lib.rs", "site/style.css", "docs/site/index.html"] {
+        // Nothing that reaches no rendered surface. The three are EXTENSIONS and `site/` is a
+        // PREFIX, so a directory merely named `html`, a crate merely named `site`, a SvelteKit
+        // build directory and a sourcemap are all outside — each of which a substring test for the
+        // same strings would pull in.
+        for no in [
+            "src/lib.rs",
+            "src/html/parser.rs",
+            "crates/site/mod.rs",
+            "prelude.site",
+            "src/.svelte-kit/generated/root.js",
+            "build/app.css.map",
+            "tmp/index.html.bak",
+            "README.md",
+        ] {
             assert!(!is_ui_path(no), "{no} must not be a UI path");
         }
+    }
+
+    /// #142: the shot filename has no single shape (`shots/<pr>.png` for raindex,
+    /// `shots/<repo>-<pr>.png` elsewhere, per-view suffixes, and shots naming no PR at all), so the
+    /// BRANCH is what identifies one — the same thing the vetter's SCREENSHOT GATE accepts.
+    #[test]
+    fn a_shot_is_recognised_by_its_branch_url_and_not_by_a_filename_shape() {
+        let url = |name: &str| {
+            format!(
+                "🤖 ai:producer\n\n![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/{name})"
+            )
+        };
+        for name in [
+            "shots/2722.png",                     // raindex, the bare-number spelling
+            "shots/rain-org-health-155.png",      // every other repo, repo-qualified
+            "shots/cyclo.site-403-after.png",     // one PR, several views
+            "shots/roh-remove-overview.png",      // no PR number in the name at all
+            "rain-org-health/pr-67/pipeline.png", // not under shots/ at all
+            "shots/UPPER.PNG",
+        ] {
+            assert!(
+                embeds_screenshot(&url(name)),
+                "{name} is a shot on the branch"
+            );
+        }
+        // A MENTION of the branch is not an image. Step 5 tells the producer to "push the PNG to
+        // the raindex 'pr-screenshots' orphan branch", so this sentence is one the producer writes.
+        for prose in [
+            "🤖 ai:producer pushed nothing to pr-screenshots/ yet",
+            "see the pr-screenshots/shots/ directory",
+            "https://github.com/rainlanguage/raindex/tree/pr-screenshots/shots",
+            "![](https://example.com/shots/155.png)",
+        ] {
+            assert!(!embeds_screenshot(prose), "{prose} embeds no screenshot");
+        }
+        // Markdown and query strings do not hide the extension.
+        assert!(embeds_screenshot(
+            "[link](https://raw.githubusercontent.com/o/r/pr-screenshots/shots/x.png)"
+        ));
+        assert!(embeds_screenshot(
+            "https://raw.githubusercontent.com/o/r/pr-screenshots/shots/x.png?raw=1"
+        ));
+    }
+
+    /// Both halves of step 5's rule settle the question, and nothing else does.
+    #[test]
+    fn the_screenshot_question_is_settled_by_a_shot_or_by_the_exact_waiver_marker() {
+        let shot = "🤖 ai:producer ![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/shots/cyclo.site-432.png)".to_string();
+        let waiver = "🤖 ai:producer screenshot pending (manual): mounted RewardsCard.svelte, it \
+                      throws without a query context"
+            .to_string();
+        assert!(screenshot_settled(std::slice::from_ref(&shot)));
+        assert!(screenshot_settled(std::slice::from_ref(&waiver)));
+        assert!(screenshot_settled(&["unrelated note".to_string(), shot]));
+        assert!(!screenshot_settled(&[]));
+        // A differently-worded sentence waives nothing — step 5 says the marker is EXACT.
+        assert!(!screenshot_settled(&[
+            "🤖 ai:producer no screenshot: the change is pixel-identical".to_string()
+        ]));
+        assert!(!screenshot_settled(&[
+            "🤖 ai:producer screenshot to follow".to_string()
+        ]));
     }
 
     /// A field list that fetches `files` without `changedFiles` produces a page nothing says is a
@@ -10136,13 +10221,25 @@ fn cc_vetted_at_flag(issue: &Value, flag_at: &str) -> bool {
 
 /// The sha-bound verdict comment's issue-side twin: pins the flag being judged, so the record says
 /// WHICH claim was reviewed rather than merely that a review happened.
-fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str) -> String {
+///
+/// `citation` is the machine's own read of the cited diff, appended the way [`lens_stamp`] is
+/// appended to a PR verdict and for the same reason: the vetter writes the NOTE, the tool writes
+/// what was READ, and the vetter cannot author or omit the second. #192 is the case this closes —
+/// a verdict that reproduced the producer's specifics in the producer's own words, which on the
+/// record is indistinguishable from one that opened the diff. It still is indistinguishable as
+/// PROSE; what changes is that the facts now sit beside it, so a restatement that contradicts them
+/// is visible without anyone re-deriving anything.
+fn cc_verdict_comment(flag_at: &str, verdict: &str, note: &str, citation: Option<&str>) -> String {
     let tail = if note.trim().is_empty() {
         String::new()
     } else {
         format!(" — {}", note.trim())
     };
-    format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict}{tail}")
+    let stamp = match citation {
+        Some(c) => format!("\n{c}"),
+        None => String::new(),
+    };
+    format!("🤖 ai:vetter\nReviewed close-candidate @{flag_at}: {verdict}{tail}{stamp}")
 }
 
 /// The close-candidate recording decision, computed PURELY from the fetched issue JSON — the same
@@ -10355,6 +10452,460 @@ fn recency_exit_code(slug: &str, issue: &str, what: &str, landed: &str, filed: &
     }
 }
 
+/// Field names the PIPELINE ITSELF puts in a producer's mouth. `campaign-prompt.txt` step 7a tells
+/// the producer to weigh its evidence against the issue's `createdAt`, so reasons say
+/// "vs issue createdAt 2024-12-10" — an identifier by shape, prose by role, and never a thing a
+/// repository's diff contains. Excluded from [`reason_symbols`] so the evidence line does not open
+/// by reporting the pipeline's own vocabulary as missing from the code.
+const CITATION_FIELD_WORDS: [&str; 6] = [
+    "createdAt",
+    "mergedAt",
+    "closedAt",
+    "updatedAt",
+    "headRefOid",
+    "closingIssuesReferences",
+];
+
+/// How many reason-named paths / absent symbols one evidence line prints before it summarises. A
+/// close-candidate reason can name a dozen of each, and an evidence line longer than the claim it
+/// annotates is one nobody reads.
+const CITATION_MAX_LISTED: usize = 4;
+
+/// PURE: the repository paths a close-candidate reason names.
+///
+/// A path is a whitespace token with a `/` whose last segment carries an extension. The trailing
+/// `:27` / `:89-92,141-146` line anchors producers write are stripped (they address a line, not a
+/// file), URLs are skipped (a link cites a page, not a tree path), and a token carrying `*` is a
+/// SHELL GLOB out of a quoted grep command — `*.svelte/*.ts/*.html/*.js` is one token by this
+/// tokenizer and names no file at all.
+fn reason_paths(reason: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in reason.split_whitespace() {
+        if tok.contains("://") || tok.contains('*') {
+            continue;
+        }
+        // `file.ts:34-40` — a line anchor only when what follows the colon is a NUMBER. A
+        // `Closes:` or a bare `note: x` keeps its whole token and simply fails the tests below.
+        let head = match tok.split_once(':') {
+            Some((h, t)) if t.starts_with(|c: char| c.is_ascii_digit()) => h,
+            _ => tok,
+        };
+        let head = head
+            .trim_start_matches(['(', '[', '<', '"', '\'', '`'])
+            .trim_end_matches([',', ';', ':', ')', ']', '>', '"', '\'', '`', '.']);
+        if !head.contains('/') {
+            continue;
+        }
+        let base = head.rsplit('/').next().unwrap_or_default();
+        // A dotfile is not an extension, and a segment with no dot is a DIRECTORY — `script/` and
+        // `origin/main` are both real tokens in live reasons and neither addresses a file.
+        if base.starts_with('.') || !base.contains('.') {
+            continue;
+        }
+        let head = head.to_string();
+        if !out.contains(&head) {
+            out.push(head);
+        }
+    }
+    out
+}
+
+/// PURE: is this token shaped like a code identifier rather than a word of English?
+///
+/// An underscore, or a lower→upper transition. That admits `testRoundTripEmpty`,
+/// `STOX_PROD_AUTHORISER_V4_CLONE` and the mixed-case body of a checksummed address, and rejects
+/// prose, dates (`2026-07-20` tokenizes to three runs), and short commit shas (`70a76a0` is all
+/// lower). Four characters is the floor because `file`, `line` and `main` are words.
+fn identifier_shaped(tok: &str) -> bool {
+    if tok.len() < 4 {
+        return false;
+    }
+    if tok.contains('_') {
+        return tok.chars().any(|c| c.is_ascii_alphabetic());
+    }
+    tok.chars()
+        .zip(tok.chars().skip(1))
+        .any(|(a, b)| a.is_ascii_lowercase() && b.is_ascii_uppercase())
+}
+
+/// PURE: the code symbols a close-candidate reason names, minus everything a diff cannot be asked
+/// about.
+///
+/// **A symbol that occurs inside a reason-named PATH is dropped**, and that exclusion is what makes
+/// the check mean anything. A file's own name is not in its contents, so `TableRowLink` from
+/// `app/_components/TableRowLink.tsx` would read as "absent from the diff" for every correct flag
+/// ever written — while the churn on that path is reported directly, and better, beside it. It is
+/// also what keeps the check honest in the other direction: on `rain.dia#22` the reason names
+/// `LibDia.t.sol`, and counting `LibDia` (which the cited import-rewrite does touch) as a hit was
+/// enough to make that flag's citation look supported.
+fn reason_symbols(reason: &str, paths: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in reason.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+        if !identifier_shaped(tok)
+            || CITATION_FIELD_WORDS.contains(&tok)
+            || paths.iter().any(|p| p.contains(tok))
+            || out.iter().any(|s| s == tok)
+        {
+            continue;
+        }
+        out.push(tok.to_string());
+    }
+    out.sort();
+    out
+}
+
+/// PURE: per-file churn plus the changed-line bodies of a unified diff.
+///
+/// Hunk COUNTS drive the walk for the reason [`diff_new_lines`] gives: an added line whose own
+/// content starts with `++` renders as `+++…`, and a parser that sniffs the marker reads it as a
+/// file header.
+///
+/// Files are keyed off the `diff --git` header rather than `+++`, because a DELETION writes
+/// `+++ /dev/null` and deletions are most of what this is asked about — four of the seven live
+/// `already-fixed-on-main` flags are fixed-by-removal.
+///
+/// Both sides land in `changed`: the evidence a fix leaves behind is an ADDED line only when the fix
+/// added something. `h-full` (rain.webapp#243), `script/BuildPointers.sol` (rain.dia#43) and the
+/// whole `tauri-app/` tree (raindex#1039/#1042/#960) appear on the removed side and nowhere else.
+struct DiffChurn {
+    /// `(path, added, removed)` in the order the diff presents them.
+    files: Vec<(String, usize, usize)>,
+    /// Every added and removed line body, joined — what a named symbol is looked for in.
+    changed: String,
+}
+
+fn diff_churn(diff: &str) -> DiffChurn {
+    let mut files: Vec<(String, usize, usize)> = Vec::new();
+    let mut changed = String::new();
+    let (mut old_left, mut new_left) = (0u64, 0u64);
+    for raw in diff.lines() {
+        if old_left > 0 || new_left > 0 {
+            // Inside a hunk: byte 0 is the marker, so slicing at 1 is always on a char boundary.
+            match raw.as_bytes().first().copied() {
+                Some(b'+') if new_left > 0 => {
+                    if let Some(f) = files.last_mut() {
+                        f.1 += 1;
+                    }
+                    changed.push_str(&raw[1..]);
+                    changed.push('\n');
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'-') if old_left > 0 => {
+                    if let Some(f) = files.last_mut() {
+                        f.2 += 1;
+                    }
+                    changed.push_str(&raw[1..]);
+                    changed.push('\n');
+                    old_left -= 1;
+                    continue;
+                }
+                // A context line, and its degenerate form: git writes " " for an empty context
+                // line, but tools that strip trailing whitespace leave a bare "".
+                Some(b' ') | None if old_left > 0 && new_left > 0 => {
+                    old_left -= 1;
+                    new_left -= 1;
+                    continue;
+                }
+                Some(b'\\') => continue, // "\ No newline at end of file"
+                _ => {
+                    // Counts exhausted or the diff is malformed: leave hunk state and re-read this
+                    // line as a header.
+                    old_left = 0;
+                    new_left = 0;
+                }
+            }
+        }
+        if let Some(rest) = raw.strip_prefix("diff --git ") {
+            if let Some(p) = diff_git_new_path(rest) {
+                files.push((p, 0, 0));
+            }
+            continue;
+        }
+        if let Some((_, old_count, new_count)) = hunk_header(raw) {
+            old_left = old_count;
+            new_left = new_count;
+        }
+    }
+    DiffChurn { files, changed }
+}
+
+/// What the CITED change's own diff contains, next to what the reason says it contains.
+///
+/// Every field is a FACT about the diff. None of them is a verdict, and #192's measurement is why:
+/// across the 21 close-candidate flags in the live and closed queues that cite a fetchable anchor,
+/// no threshold on any of these separates the sound citations from the one unsound one. See
+/// [`citation_stamp`].
+#[derive(Debug, PartialEq)]
+struct CitationEvidence {
+    /// How the anchor reads to a human — `PR #48`, `commit 70a76a0`.
+    anchor: String,
+    /// How many files the cited change touches at all.
+    files: usize,
+    /// Each path the reason names, with the cited change's `(added, removed)` on it — `None` when
+    /// the cited change does not touch that path.
+    paths: Vec<(String, Option<(usize, usize)>)>,
+    /// How many reason-named symbols the cited change's changed lines DO contain.
+    present: usize,
+    /// The reason-named symbols they do not.
+    absent: Vec<String>,
+}
+
+/// PURE: [`CitationEvidence`] for one reason against one cited diff.
+fn citation_evidence(anchor: &str, reason: &str, diff: &str) -> CitationEvidence {
+    let churn = diff_churn(diff);
+    let named = reason_paths(reason);
+    let symbols = reason_symbols(reason, &named);
+    let absent: Vec<String> = symbols
+        .iter()
+        .filter(|s| !churn.changed.contains(s.as_str()))
+        .cloned()
+        .collect();
+    CitationEvidence {
+        anchor: anchor.to_string(),
+        files: churn.files.len(),
+        paths: named
+            .into_iter()
+            .map(|p| {
+                let hit = churn
+                    .files
+                    .iter()
+                    .find(|(f, _, _)| *f == p)
+                    .map(|(_, a, r)| (*a, *r));
+                (p, hit)
+            })
+            .collect(),
+        present: symbols.len() - absent.len(),
+        absent,
+    }
+}
+
+/// PURE: render [`CitationEvidence`] as the one line that goes on the record.
+///
+/// **This is EVIDENCE, never a gate, and the line says so in its own text.** #192 proposed gating a
+/// flag on whether a reason-named symbol appears as an added line in the cited diff, calling it
+/// decisive. Measured over every close-candidate flag in the live and closed queues carrying a
+/// fetchable anchor, it is not: `already-fixed-on-main` reasons routinely name symbols the cited
+/// change never touched, because the reason argues about CURRENT MAIN as well as about the landing
+/// — `raindex#1060` names the guard the cited PR removed AND the renamed file and test that carry
+/// the behaviour today, and only the first pair is in that PR. Refusing on a miss would have blocked
+/// eleven sound flags to catch the one unsound one, which is precisely the rework the ruling on
+/// `rain.dia#22` forbids. So the tool computes the facts, writes them where a reader cannot miss
+/// them, and refuses nothing.
+///
+/// What it buys is that a restatement stops being indistinguishable from a check. On `rain.dia#22`
+/// this line reads `test/src/lib/dia/LibDiaStringV3Test.t.sol +2/-2` and
+/// `0 of 3 named symbols in its changed lines; absent: testRoundTrip, testRoundTrip31Bytes,
+/// testRoundTripEmpty` — sitting directly beneath a note asserting that PR landed two functions
+/// occupying about ten lines of it. Nobody has to judge that; they only have to read it.
+fn citation_stamp(ev: &CitationEvidence) -> String {
+    let mut s = format!(
+        "Citation evidence (machine-read from the cited diff; NOT a verdict) — {} changes {} file{}.",
+        ev.anchor,
+        ev.files,
+        if ev.files == 1 { "" } else { "s" }
+    );
+    if !ev.paths.is_empty() {
+        let shown: Vec<String> = ev
+            .paths
+            .iter()
+            .take(CITATION_MAX_LISTED)
+            .map(|(p, hit)| match hit {
+                Some((a, r)) => format!("{p} +{a}/-{r}"),
+                None => format!("{p} NOT TOUCHED BY IT"),
+            })
+            .collect();
+        s.push_str(&format!(" Paths this reason names: {}", shown.join("; ")));
+        if ev.paths.len() > CITATION_MAX_LISTED {
+            s.push_str(&format!(
+                " (+{} more)",
+                ev.paths.len() - CITATION_MAX_LISTED
+            ));
+        }
+        s.push('.');
+    }
+    let total = ev.present + ev.absent.len();
+    if total > 0 {
+        s.push_str(&format!(
+            " Symbols this reason names: {} of {total} in its changed lines",
+            ev.present
+        ));
+        if !ev.absent.is_empty() {
+            let shown: Vec<&str> = ev
+                .absent
+                .iter()
+                .take(CITATION_MAX_LISTED)
+                .map(String::as_str)
+                .collect();
+            s.push_str(&format!("; absent: {}", shown.join(", ")));
+            if ev.absent.len() > CITATION_MAX_LISTED {
+                s.push_str(&format!(
+                    " (+{} more)",
+                    ev.absent.len() - CITATION_MAX_LISTED
+                ));
+            }
+        }
+        s.push('.');
+    }
+    if ev.paths.is_empty() && total == 0 {
+        s.push_str(" This reason names no path or symbol its diff can be checked against.");
+    }
+    s
+}
+
+/// The cited change's own unified diff, and how the anchor reads. The impure half of the citation
+/// check: ONE fetch, off the anchor [`already_fixed_recency_gate`] already made the flag carry.
+///
+/// A commit is read through the diff media type rather than the JSON `files` array for the reason
+/// the PR side is read with `gh pr diff`: the array is capped (100 entries on a PR, 300 on a
+/// commit) and `raindex#2420` alone is 188 files. Every fact this check reports comes out of the
+/// diff TEXT, so no cap can silently shrink the answer.
+fn citation_diff(slug: &str, anchor: &FixAnchor) -> Option<(String, String)> {
+    match anchor {
+        FixAnchor::Pr(n) => {
+            gh_text(&["pr", "diff", n, "-R", slug]).map(|d| (format!("PR #{n}"), d))
+        }
+        FixAnchor::Commit(sha) => gh_text(&[
+            "api",
+            &format!("repos/{slug}/commits/{sha}"),
+            "-H",
+            "Accept: application/vnd.github.diff",
+        ])
+        .map(|d| (format!("commit {sha}"), d)),
+        FixAnchor::Missing | FixAnchor::NotApplicable => None,
+    }
+}
+
+/// What ONE citation read produced. Typed so the evidence line and the support gate are two PURE
+/// readings of the SAME fetch — the alternative is two `gh` round trips that can disagree.
+enum CitationRead {
+    /// The reason cites no anchor to read.
+    NotCited,
+    /// An anchor that would not fetch, carrying how it reads to a human.
+    Unreadable(String),
+    Read(CitationEvidence),
+}
+
+/// The citation read for one reason: ONE `gh` call, at the impure boundary.
+fn citation_read(slug: &str, reason: &str) -> CitationRead {
+    let anchor = already_fixed_anchor(reason);
+    match citation_diff(slug, &anchor) {
+        Some((label, diff)) => CitationRead::Read(citation_evidence(&label, reason, &diff)),
+        None => match anchor {
+            FixAnchor::Pr(n) => CitationRead::Unreadable(format!("PR #{n}")),
+            FixAnchor::Commit(sha) => CitationRead::Unreadable(format!("commit {sha}")),
+            FixAnchor::Missing | FixAnchor::NotApplicable => CitationRead::NotCited,
+        },
+    }
+}
+
+/// PURE: the evidence line for a read, or `None` when the reason cites no anchor.
+///
+/// An anchor that will not fetch is NOT `None`: silence is the failure mode this whole check exists
+/// to end, so the line still lands and says the diff could not be read.
+fn citation_line_of(read: &CitationRead) -> Option<String> {
+    match read {
+        CitationRead::NotCited => None,
+        CitationRead::Unreadable(anchor) => Some(citation_unreadable(anchor)),
+        CitationRead::Read(ev) => Some(citation_stamp(ev)),
+    }
+}
+
+/// PURE: the line for an anchor whose diff would not fetch.
+fn citation_unreadable(anchor: &str) -> String {
+    format!(
+        "Citation evidence (machine-read from the cited diff; NOT a verdict) — {anchor}: its diff \
+         could not be read, so NOTHING about this citation was checked."
+    )
+}
+
+/// PURE: is NOTHING the reason names present in the change it cites?
+///
+/// **This is the one thing about a citation that is decidable, and it is deliberately the weakest
+/// possible reading of "wrong".** Not "some path is untouched" and not "some symbol is missing" —
+/// each of those is ordinary in a sound reason, because an `already-fixed-on-main` claim argues
+/// about CURRENT MAIN as well as about the landing. `raindex#1060` names the guard its cited PR
+/// removed AND the renamed file that carries the behaviour today; the paths miss and the symbols
+/// hit, and it is a good flag. Only the CONJUNCTION is a finding: the reason named something, and
+/// not one of those things — no path, no symbol — occurs anywhere in the change it says did the
+/// work. Then the citation and the claim are about different code.
+///
+/// A reason that names nothing checkable returns `false`. There is no evidence either way, and
+/// inventing a refusal out of an empty check is how a guard starts costing more than it saves.
+fn citation_disconnected(ev: &CitationEvidence) -> bool {
+    let named = ev.paths.len() + ev.present + ev.absent.len();
+    named > 0 && ev.present == 0 && ev.paths.iter().all(|(_, churn)| churn.is_none())
+}
+
+/// The exit code `--flag-close-candidate` refuses a DISCONNECTED citation with. Distinct from the
+/// recency refusal (4) because it is a different finding with a different fix — 4 says the cited
+/// change is too OLD to be the fix, 5 says it is not ABOUT the thing claimed — and a caller that
+/// has to tell them apart by reading the message is one that will not.
+const CITATION_UNSUPPORTED_EXIT: i32 = 5;
+
+/// Enforce that an `already-fixed-on-main` reason cites a change its own claim touches.
+///
+/// **This closes an EVASION of a guard that already exists.** `already_fixed_recency_gate` refuses a
+/// bare `file:line` outright ([`FixAnchor::Missing`]) because "this code is on main today" is not
+/// "a change landed that fixed this". Appending the sha the tree was READ at converts that same
+/// unsupported claim into a `Commit` anchor that always post-dates the issue, so the date check
+/// passes vacuously and the refusal never fires. Measured on the close-candidate queues, that is
+/// the shape of every commit-anchored flag on record: `raindex#588`/`#574`/`#573`/`#570` all cite
+/// `bb83031`, which is "Merge pull request #2810 … fix/build-script-name" and touches
+/// `foundry.toml`, `script/Build.sol` and three siblings — not one of the Svelte components those
+/// four reasons are about. `raindex#928` cites `7ba0fa8` in the words "tauri-app/ existed **at**
+/// 7ba0fa8", naming the state BEFORE the deletion it credits.
+///
+/// An UNREADABLE diff does not refuse. The anchor already resolved to a date one gate ago, so a
+/// failure here is a transient `gh` read, and failing closed on it would turn a network blip into a
+/// producer cycle. The evidence line still says nothing was checked.
+fn citation_support_gate(slug: &str, issue: &str, read: &CitationRead) -> i32 {
+    let CitationRead::Read(ev) = read else {
+        return 0;
+    };
+    if !citation_disconnected(ev) {
+        return 0;
+    }
+    eprintln!("{}", citation_unsupported_refusal(slug, issue, ev));
+    CITATION_UNSUPPORTED_EXIT
+}
+
+/// PURE: the refusal message. Split out so every word of it is testable without a network, and
+/// because this is the whole user interface of the gate — a producer that cannot tell what to do
+/// next re-flags the same reason.
+fn citation_unsupported_refusal(slug: &str, issue: &str, ev: &CitationEvidence) -> String {
+    let named = if ev.paths.is_empty() {
+        format!("the {} symbol(s) it names", ev.present + ev.absent.len())
+    } else {
+        format!(
+            "the path(s) it names ({})",
+            ev.paths
+                .iter()
+                .take(CITATION_MAX_LISTED)
+                .map(|(p, _)| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "refusing to flag {slug}#{issue}: {} does not touch {named}, and its changed lines contain \
+         none of the symbols this reason names.\n\
+         {}\n\
+         A change that contains NOTHING the claim is about cannot be the change that resolved it. \
+         The usual cause is citing the sha you READ main at rather than the change that fixed it — \
+         \"…Foo.svelte:40 at abc1234\" dates a tree, and every recent main sha post-dates the \
+         issue, so the recency check passes without meaning anything.\n\
+         Find the change that actually landed the fix (`git log -S'<the line>' -- <file>`, or the \
+         merged PR) and cite THAT. If the fix genuinely landed under a path or name that has since \
+         been renamed, cite a path or symbol the change ITSELF contains — that is better \
+         provenance anyway. If no such change exists, the issue is probably still live, or the \
+         honest category is `invalid`/`duplicate`/`wont-fix`, which name no landing and are not \
+         checked here.",
+        ev.anchor,
+        citation_stamp(ev)
+    )
+}
+
 /// `--flag-close-candidate <owner/repo> <issue> "<reason>" [--dry-run]`: the SOLE sanctioned way the
 /// producer flags a closeable ISSUE — applies the `ai:close-candidate` label + a trusted
 /// `🤖 ai:producer` reason comment, replacing the old local close-candidates.jsonl. GitHub state is
@@ -10365,6 +10916,15 @@ fn recency_exit_code(slug: &str, issue: &str, what: &str, landed: &str, filed: &
 /// An `already-fixed-on-main` reason additionally must carry a commit sha or merged PR number whose
 /// date POST-DATES the issue (exit 4). "This code is on main today" is not the same claim as "this
 /// issue is fixed": evidence that predates the report cannot be the fix.
+///
+/// It must ALSO cite a change its own claim touches ([`citation_support_gate`], exit 5) — a change
+/// containing nothing the reason names cannot be the change that resolved it.
+///
+/// The flag it writes then CARRIES [`citation_line_of`] — what the cited change's own diff contains,
+/// beside what the reason says it contains. Written here rather than only at vet time because
+/// [`flag_grounds`] reads this comment back off the issue: a reason citing a merged PR sets
+/// `cites-a-landing`, which switches the `covered-by-open-pr` block OFF, so an unchecked citation
+/// does not merely mislead an audit trail — it suppresses a live gate on the human's queue.
 fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: bool) -> i32 {
     if reason.trim().is_empty() {
         eprintln!(
@@ -10389,6 +10949,18 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
     let gate = already_fixed_recency_gate(slug, issue, reason, &j);
     if gate != 0 {
         return gate;
+    }
+    // The cited change is read ONCE and used twice — the support gate below, and the evidence line
+    // on the comment. Two reads could disagree about the same citation, and this one is a network
+    // fetch of a diff that is 828 KB for `raindex#2420`.
+    //
+    // Ordered with the recency gate rather than after the plan, because both answer the same
+    // question about the same string: can what this reason CITES be the fix it claims? Neither
+    // depends on the issue's label state.
+    let cited = citation_read(slug, reason);
+    let support = citation_support_gate(slug, issue, &cited);
+    if support != 0 {
+        return support;
     }
     let state = j.get("state").and_then(|s| s.as_str()).unwrap_or("");
     let labels: Vec<String> = j
@@ -10429,7 +11001,16 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
             post_comment,
         } => (add_label, post_comment),
     };
-    let comment = format!("🤖 ai:producer\nClose-candidate: {reason}");
+    // Its own line, BELOW the claim: `flag_reason` reads the `Close-candidate:` line and nothing
+    // else, so the evidence travels with the flag without becoming part of what the producer
+    // asserted or of what the vetter is asked to judge.
+    //
+    // Read off the SAME `cited` the support gate judged, so the line on the record and the decision
+    // that let it be written can never be about different fetches.
+    let comment = match citation_line_of(&cited) {
+        Some(ev) => format!("🤖 ai:producer\nClose-candidate: {reason}\n{ev}"),
+        None => format!("🤖 ai:producer\nClose-candidate: {reason}"),
+    };
 
     if dry_run {
         println!("[dry-run] flag {slug}#{issue} ai:close-candidate");
@@ -14362,10 +14943,110 @@ fn default_branch_of(dir: &std::path::Path) -> Result<String, String> {
         .ok_or_else(|| "could not determine the repo's default branch — pass `base`".to_string())
 }
 
-/// Every work clone under every configured root, with the state that decides whether it is
-/// releasable. Read-only: the answer to "what is on this box and who owns it".
-fn clone_list_exec(roots: &[String]) -> Result<Value, String> {
-    let mut out = Vec::new();
+/// Byte cap on each clone-root path and each sweep error a clone tool echoes back. The roots are
+/// the environment's (`clone_roots`), never a caller's, so this clips nothing in practice — it is
+/// what makes the envelope of a clone result a BOUNDED size, which is the half [`fit_clone_rows`]
+/// cannot supply.
+const CLONE_ECHO_BYTES: usize = 300;
+
+/// PURE: the roots a clone result echoes, each clipped to [`CLONE_ECHO_BYTES`].
+fn clone_roots_echo(roots: &[String]) -> Value {
+    Value::Array(
+        roots
+            .iter()
+            .map(|r| Value::from(clip_field(r, CLONE_ECHO_BYTES)))
+            .collect(),
+    )
+}
+
+/// PURE: pack as many of `rows` into `doc` under `key` as [`MCP_MAX_RESULT_BYTES`] has room for,
+/// and STATE the split as `listed` / `omitted`.
+///
+/// This is what makes a per-clone listing safe on a box of any size. The alternative shapes both
+/// fail on the box this was measured on: an uncapped list is refused outright (#117 —
+/// `clone_list` produced 60,237 bytes against a 36,000-byte budget and the producer replaced a
+/// state load with `ls | wc -l`), and a fixed row cap either truncates a small box needlessly or
+/// still overflows a large one, because a row's size is a clone NAME and a BRANCH name, neither of
+/// which has a length this crate controls.
+///
+/// It is a truncation, and a truncation is only acceptable because the counts around it are NOT:
+/// every caller of this gets whole-population figures in the same document, so the omitted rows
+/// are a sample that was dropped rather than state that went unmentioned. `omitted` says exactly
+/// how many.
+///
+/// TERMINATION / POSTCONDITION: the base length is measured with both counters at `usize::MAX` —
+/// the widest they can serialise — and with the row array empty, so the finished document is at
+/// most `base + Σ rows + commas`, which is the quantity the loop compares against the budget. Rows
+/// are only ever added while that sum stays under, so `doc.to_string().len() <= MCP_MAX_RESULT_BYTES`
+/// holds whenever the empty-row envelope does.
+fn fit_clone_rows(doc: &mut serde_json::Map<String, Value>, key: &str, rows: &[Value]) {
+    doc.insert("listed".to_string(), Value::from(usize::MAX));
+    doc.insert("omitted".to_string(), Value::from(usize::MAX));
+    doc.insert(key.to_string(), Value::Array(Vec::new()));
+    let mut used = Value::Object(doc.clone()).to_string().len();
+    let mut kept: Vec<Value> = Vec::new();
+    for row in rows {
+        // The row's own bytes, plus the comma that joins it to the row before it.
+        let cost = row.to_string().len() + usize::from(!kept.is_empty());
+        if used + cost > MCP_MAX_RESULT_BYTES {
+            break;
+        }
+        used += cost;
+        kept.push(row.clone());
+    }
+    doc.insert("listed".to_string(), Value::from(kept.len()));
+    doc.insert("omitted".to_string(), Value::from(rows.len() - kept.len()));
+    doc.insert(key.to_string(), Value::Array(kept));
+}
+
+/// The four states a clone can be in, as the names `clone_list` counts and reports them under.
+/// They PARTITION the box: [`clone_hold`] returns the first that applies, in the order
+/// [`release_decision`] itself tests them, so the counts always sum to the number of clones.
+const CLONE_HOLDS: [&str; 3] = ["unknown", "unpushed", "uncommitted"];
+const CLONE_RELEASABLE: &str = "releasable";
+
+/// PURE: WHY this clone cannot be released right now, as a TYPED discriminant — `None` when it can.
+///
+/// Derived from the same ladder as [`release_decision`] (unknown push state, then unpushed commits,
+/// then uncommitted changes) rather than from its message, so a caller grouping clones by reason is
+/// grouping by the decision and not by a sentence that may be reworded.
+fn clone_hold(s: &LocalCloneState) -> Option<&'static str> {
+    match s.unpushed {
+        None => return Some("unknown"),
+        Some(n) if n > 0 => return Some("unpushed"),
+        Some(_) => {}
+    }
+    match &s.dirt {
+        None => Some("unknown"),
+        Some(d) if !d.is_empty() => Some("uncommitted"),
+        Some(_) => None,
+    }
+}
+
+/// PURE: the order a listing is truncated in — the clones whose state is unreadable first, then the
+/// ones holding commits nobody else has, then merely dirty ones, then the releasable ones. Within a
+/// class, OLDEST first. So the rows the budget drops are always the ones a caller acts on last.
+fn clone_row_rank(hold: Option<&str>) -> u8 {
+    match hold {
+        Some("unknown") => 0,
+        Some("unpushed") => 1,
+        Some("uncommitted") => 2,
+        _ => 3,
+    }
+}
+
+/// Every work clone under every configured root: the whole box as COUNTS, plus the rows that name a
+/// decision. Read-only: the answer to "what is on this box and who owns it".
+///
+/// The counts are the load-bearing half and they are never truncated, which is what lets the rows
+/// be. `include` chooses which rows are offered to the budget — the held ones by default, because
+/// the question this tool is called for is why something is still here (`campaign-prompt.txt`'s gc
+/// step names it for exactly that) and a releasable clone is the answer to no question. `"all"`
+/// offers every row, still ordered so that the ones the budget drops are the boring ones.
+fn clone_list_exec(roots: &[String], include_all: bool) -> Result<Value, String> {
+    let mut rows = Vec::new();
+    let mut counts: std::collections::HashMap<&'static str, usize> =
+        std::collections::HashMap::new();
     for root in roots {
         let Ok(entries) = std::fs::read_dir(root) else {
             continue;
@@ -14378,29 +15059,77 @@ fn clone_list_exec(roots: &[String]) -> Result<Value, String> {
         for dir in dirs {
             let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("?");
             let state = local_clone_state(&dir);
-            out.push(serde_json::json!({
-                "name": name,
-                "root": root,
-                "branch": state.branch,
-                "unpushed": state.unpushed,
-                "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
-                "ageDays": clone_age_days(&dir),
-                "releasable": release_decision(&state, false).is_ok(),
-            }));
+            let hold = clone_hold(&state);
+            *counts.entry(hold.unwrap_or(CLONE_RELEASABLE)).or_default() += 1;
+            let age = clone_age_days(&dir);
+            rows.push((
+                clone_row_rank(hold),
+                std::cmp::Reverse(age),
+                name.to_string(),
+                serde_json::json!({
+                    "name": name,
+                    "root": clip_field(root, CLONE_ECHO_BYTES),
+                    "branch": state.branch,
+                    "unpushed": state.unpushed,
+                    "uncommitted": state.dirt.as_deref().map(|d| d.lines().count()),
+                    "ageDays": age,
+                    "releasable": hold.is_none(),
+                    "held": hold,
+                }),
+            ));
         }
     }
-    Ok(serde_json::json!({"roots": roots, "clones": out}))
+    let total = rows.len();
+    rows.sort_by(|a, b| (a.0, a.1, &a.2).cmp(&(b.0, b.1, &b.2)));
+    let offered: Vec<Value> = rows
+        .into_iter()
+        .filter(|(rank, ..)| include_all || *rank != clone_row_rank(None))
+        .map(|(.., row)| row)
+        .collect();
+    let mut doc = serde_json::Map::new();
+    doc.insert("roots".to_string(), clone_roots_echo(roots));
+    doc.insert("total".to_string(), Value::from(total));
+    doc.insert(
+        "counts".to_string(),
+        Value::Object(
+            CLONE_HOLDS
+                .into_iter()
+                .chain([CLONE_RELEASABLE])
+                // Every state gets a key even at zero, so an absent class is never something a
+                // caller has to infer from silence.
+                .map(|k| {
+                    (
+                        k.to_string(),
+                        Value::from(counts.get(k).copied().unwrap_or(0)),
+                    )
+                })
+                .collect(),
+        ),
+    );
+    doc.insert(
+        "include".to_string(),
+        Value::from(if include_all { "all" } else { "held" }),
+    );
+    doc.insert("matched".to_string(), Value::from(offered.len()));
+    fit_clone_rows(&mut doc, "clones", &offered);
+    Ok(Value::Object(doc))
 }
 
 /// The unattended sweep, as a tool. Same decision function as the CLI (`gc_decision`), across every
 /// configured root, returning what it did instead of printing it — STDOUT is the MCP protocol.
+///
+/// Its per-clone records go through the same budget fit `clone_list` uses, and for a sharper reason:
+/// this call has already DELETED things by the time the result is built, so an over-budget refusal
+/// would discard the only account of what it destroyed. The rows are ordered so the ones the budget
+/// drops are the `kept` ones — a clone that is still there and can be listed again — and never an
+/// `error` or a deletion.
 fn clone_gc_exec(roots: &[String], max_age_days: u64, dry_run: bool) -> Result<Value, String> {
     let mut recs = Vec::new();
     let mut errors = Vec::new();
     for root in roots {
         match gc_clones_sweep(root, max_age_days, dry_run, &mut |_r| {}) {
             Ok(mut r) => recs.append(&mut r),
-            Err(e) => errors.push(e),
+            Err(e) => errors.push(Value::from(clip_field(&e, CLONE_ECHO_BYTES))),
         }
     }
     let freed: u64 = recs.iter().map(|r| r.bytes).sum();
@@ -14408,20 +15137,38 @@ fn clone_gc_exec(roots: &[String], max_age_days: u64, dry_run: bool) -> Result<V
         .iter()
         .filter(|r| r.outcome == "deleted" || r.outcome == "would-delete")
         .count();
-    Ok(serde_json::json!({
-        "dryRun": dry_run,
-        "roots": roots,
-        "scanned": recs.len(),
-        "deleted": deleted,
-        "kept": recs.len() - deleted,
-        "bytesReclaimed": freed,
-        "reclaimed": human_bytes(freed),
-        "errors": errors,
-        "clones": recs.iter().map(|r| serde_json::json!({
-            "name": r.name, "root": r.root, "outcome": r.outcome,
-            "reason": r.reason, "bytes": r.bytes,
-        })).collect::<Vec<_>>(),
-    }))
+    recs.sort_by_key(|r| gc_outcome_rank(r.outcome));
+    let rows: Vec<Value> = recs
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.name, "root": clip_field(&r.root, CLONE_ECHO_BYTES),
+                "outcome": r.outcome, "reason": r.reason, "bytes": r.bytes,
+            })
+        })
+        .collect();
+    let mut doc = serde_json::Map::new();
+    doc.insert("dryRun".to_string(), Value::from(dry_run));
+    doc.insert("roots".to_string(), clone_roots_echo(roots));
+    doc.insert("scanned".to_string(), Value::from(recs.len()));
+    doc.insert("deleted".to_string(), Value::from(deleted));
+    doc.insert("kept".to_string(), Value::from(recs.len() - deleted));
+    doc.insert("bytesReclaimed".to_string(), Value::from(freed));
+    doc.insert("reclaimed".to_string(), Value::from(human_bytes(freed)));
+    doc.insert("errors".to_string(), Value::Array(errors));
+    fit_clone_rows(&mut doc, "clones", &rows);
+    Ok(Value::Object(doc))
+}
+
+/// PURE: the order sweep records are truncated in — what FAILED first, then what was destroyed, then
+/// what was left alone. The first two are the account of an irreversible act; the third can be read
+/// again from `clone_list` at any time.
+fn gc_outcome_rank(outcome: &str) -> u8 {
+    match outcome {
+        "error" => 0,
+        "deleted" | "would-delete" => 1,
+        _ => 2,
+    }
 }
 
 // --- --deploy: the SOLE, constrained way the producer triggers a sanctioned Zoltu deploy ---------
@@ -15489,10 +16236,20 @@ fn unvetted_close_candidates_fetch(
 
 /// PURE: the judging bundle for ONE flagged issue — the claim, and everything needed to test it.
 /// The issue-side twin of [`pr_context_doc`]; comments are the TRUSTED ones only.
-fn close_candidate_context_doc(slug: &str, num: u64, detail: &Value) -> Value {
+///
+/// `citationEvidence` is [`citation_line`]'s read of the cited diff, handed in by the fetch. It is
+/// here rather than only on the verdict the vetter writes because the vetter has to SEE it to
+/// engage with it, and a flag posted before this check existed carries none in its own body.
+fn close_candidate_context_doc(
+    slug: &str,
+    num: u64,
+    detail: &Value,
+    citation: Option<&str>,
+) -> Value {
     let flag = last_close_candidate_flag(detail);
     let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
     serde_json::json!({
+        "citationEvidence": citation.unwrap_or(""),
         "issue": format!("{slug}#{num}"),
         "url": detail.get("url").and_then(|v| v.as_str()).unwrap_or(""),
         "title": detail.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -15524,7 +16281,15 @@ fn close_candidate_context_fetch(slug: &str, num: u64) -> Result<Value, String> 
         "number,title,body,url,state,createdAt,labels,comments",
     ])
     .ok_or_else(|| format!("error: `gh issue view {slug}#{num}` failed"))?;
-    Ok(close_candidate_context_doc(slug, num, &detail))
+    let citation = last_close_candidate_flag(&detail)
+        .map(|(_, body)| flag_reason(&body))
+        .and_then(|reason| citation_line_of(&citation_read(slug, &reason)));
+    Ok(close_candidate_context_doc(
+        slug,
+        num,
+        &detail,
+        citation.as_deref(),
+    ))
 }
 
 /// The close-candidate verdict write — the issue-side twin of [`record_verdict_apply`]. `uphold`
@@ -15613,7 +16378,20 @@ fn record_cc_verdict_apply(
             skip_comment,
         } => (flag_at, remove_label, skip_comment),
     };
-    let comment = cc_verdict_comment(&flag_at, verdict, note);
+    // Recomputed here rather than lifted off the flag body: a flag posted before this check existed
+    // carries no evidence line, and those are the whole existing queue. The read is of the SAME
+    // reason the vetter judged, so the two cannot be about different citations.
+    // Skipped when the comment is a dedup no-op, for the reason `flag_close_candidate_mode` skips
+    // it: nothing is written, so the diff read buys nothing. `dry_run` still pays, likewise — a
+    // dry run exists to show the comment that would be posted.
+    let citation = (!skip)
+        .then(|| {
+            last_close_candidate_flag(&j)
+                .map(|(_, body)| flag_reason(&body))
+                .and_then(|reason| citation_line_of(&citation_read(slug, &reason)))
+        })
+        .flatten();
+    let comment = cc_verdict_comment(&flag_at, verdict, note, citation.as_deref());
 
     if dry_run {
         return Ok(format!(
@@ -18381,7 +19159,7 @@ mod next_close_candidate_tests {
     fn vetter(flag_at: &str, verdict: &str, note: &str) -> Value {
         json!({
             "author": {"login": TRUSTED_AUTHOR},
-            "body": cc_verdict_comment(flag_at, verdict, note),
+            "body": cc_verdict_comment(flag_at, verdict, note, None),
         })
     }
 
@@ -18432,7 +19210,7 @@ mod next_close_candidate_tests {
             ("reject", ""),
             ("uphold", "—"),
         ] {
-            let body = cc_verdict_comment(at, verdict, note);
+            let body = cc_verdict_comment(at, verdict, note, None);
             assert_eq!(
                 cc_verdict_parts(&body),
                 Some((at.to_string(), verdict.to_string())),
@@ -19480,8 +20258,15 @@ impl McpProfile {
     }
 }
 
+/// The tool table's own declaration of [`narrowing_argument`]'s answer. It lives ON the tool, beside
+/// the schema that has to advertise it, so the refusal and the schema cannot come to disagree about
+/// which arguments a tool accepts — which is the whole of #117. It is NOT part of the MCP tool
+/// object, so [`mcp_tools`] strips it before listing.
+const TOOL_NARROWS_KEY: &str = "narrows";
+
 /// The TOOL SURFACE. Descriptions are one line each on purpose: every schema here is re-sent in the
-/// preamble of every API call, so the surface must replace more prose than it adds.
+/// preamble of every API call, so the surface must replace more prose than it adds — which is also
+/// why [`TOOL_NARROWS_KEY`] comes off here rather than riding along in every preamble.
 fn mcp_tools(profile: McpProfile) -> Value {
     let names = profile.tool_names();
     let all = mcp_all_tools();
@@ -19490,10 +20275,15 @@ fn mcp_tools(profile: McpProfile) -> Value {
         names
             .iter()
             .map(|n| {
-                all.iter()
+                let mut t = all
+                    .iter()
                     .find(|t| t["name"] == Value::String((*n).to_string()))
                     .unwrap_or_else(|| panic!("profile names an undefined tool {n:?}"))
-                    .clone()
+                    .clone();
+                if let Some(o) = t.as_object_mut() {
+                    o.remove(TOOL_NARROWS_KEY);
+                }
+                t
             })
             .collect(),
     )
@@ -19503,6 +20293,7 @@ fn mcp_all_tools() -> Value {
     serde_json::json!([
         {
             "name": "unvetted",
+            "narrows": "limit",
             "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
@@ -19514,6 +20305,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "next_ready",
+            "narrows": "limit",
             "description": "The next ai:ready PR to rule on, cheapest-first off the same queue: the vetter's sha-bound verdict note, headRefOid, baseRefName, CI rollup with failing checks named, whether CodeRabbit actually reviewed (only `reviewed` is coverage — rate-limited/queued are green checks with no review, making 0 unresolved threads vacuous), unresolved threads, and any deploy-before-merge gate.",
             "inputSchema": {
                 "type": "object",
@@ -19524,6 +20316,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "next_close_candidate",
+            "narrows": "limit",
             "description": "The next ai:close-candidate flag to rule on, OLDEST FLAG FIRST (the flag parks the issue — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per flag: the issue's title/state/labels/createdAt, the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, the vetter's verdict pinned to that flag (`atFlag` false means it judged a superseded claim), and whether an OPEN PR claims to close the issue. Coverage is always reported; `openPr.blocksClose` pairs it with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `strandedFlags` are the ones no AI transition will ever clear.",
             "inputSchema": {
                 "type": "object",
@@ -19534,6 +20327,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "pr_context",
+            "narrows": "max_diff_bytes",
             "description": "Everything needed to judge one PR: title, body, files, additions/deletions, headRefOid, ci, mergeable, the full diff, every linked issue's title/body/labels, and the trusted ai:vetter/ai:producer comments.",
             "inputSchema": {
                 "type": "object",
@@ -19583,6 +20377,7 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "unvetted_close_candidates",
+            "narrows": "limit",
             "description": "State-load: ONE PAGE of the producer close-candidate flags on open issues to vet. Per issue: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag issues are excluded.",
             "inputSchema": {
                 "type": "object",
@@ -19682,8 +20477,13 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "clone_list",
-            "description": "Every work clone on this box: name, branch, unpushed/uncommitted counts, age, and whether it is releasable now.",
-            "inputSchema": {"type": "object", "properties": {}}
+            "description": "Every work clone on this box, as COUNTS plus the rows that name a decision. `counts` partitions the WHOLE box — releasable / unpushed / uncommitted / unknown, zeroes stated — and is never truncated. Rows carry name, root, branch, unpushed/uncommitted counts, age, `releasable`, and `held` (the typed reason it is not; null when it is), unreadable state first, then unpushed, then dirty, oldest first within each. `listed`/`omitted` say how many rows the budget fitted and how many it left — only ever the least interesting ones, and never a count.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "include": {"type": "string", "enum": ["held", "all"], "description": "Which clones get a ROW: the held ones (default — why is this still here) or all of them. The counts cover the whole box either way."}
+                }
+            }
         },
         {
             "name": "clone_gc",
@@ -19842,7 +20642,12 @@ enum McpCall {
         name: String,
         discard_uncommitted: bool,
     },
-    CloneList,
+    /// `include_all` widens the ROWS to the releasable clones as well. It is not a narrowing
+    /// argument and the tool has none: [`fit_clone_rows`] already keeps every result inside the
+    /// budget, so there is nothing for a caller to lower.
+    CloneList {
+        include_all: bool,
+    },
     CloneGc {
         max_age_days: u64,
         dry_run: bool,
@@ -19974,27 +20779,43 @@ fn call_result_budget(_call: &McpCall) -> usize {
     MCP_MAX_RESULT_BYTES
 }
 
-/// PURE: which argument actually makes THIS call's result fit.
+/// PURE: which argument actually makes THIS TOOL's result fit — read off the tool's own table entry
+/// ([`TOOL_NARROWS_KEY`]), never guessed from the call.
 ///
-/// Every answer here is now truthful because [`call_result_budget`] does not move with the argument:
-/// lowering the named argument lowers the payload against a FIXED allowance, so narrowing strictly
-/// converges. While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument
-/// was advice that could not work — budget and content fell together and the caller could loop for
-/// ever — which is why the fix is the budget, not the wording.
-/// `next_ready` gets an arm of its own rather than falling through the catch-all. The catch-all
-/// would answer `limit` — which happens to be true here — but a tool whose refusal is correct only
-/// because a default guessed right is a tool that inherits #117 the day the default changes. The
-/// catch-all itself is #117's to fix (it advises `limit` to `clone_list`, which has none, making
-/// [`oversize_result_error`]'s truthful `None` branch unreachable); this arm keeps `next_ready` out
-/// of that blast radius. For this tool the refusal is doubly sound: `limit` is real AND lowering it
-/// strictly removes whole rows, against a budget the row caps already keep it under. Both human
-/// gates share the arm, because both are true of both.
-fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
-    match call {
-        McpCall::PrContext { .. } => Some("max_diff_bytes"),
-        McpCall::NextReady { .. } | McpCall::NextCloseCandidate { .. } => Some("limit"),
-        _ => Some("limit"),
-    }
+/// It is keyed by NAME, and that is the fix for #117. The answer used to come from a match over
+/// [`McpCall`] whose catch-all was `Some("limit")`, so every tool without an arm of its own was
+/// ASSERTED to take a `limit`: of the seventeen variants that reached it, exactly two did.
+/// `clone_list` is the one that bit — schema `{"properties": {}}`, refusal "lower `limit`" — and a
+/// refusal naming an argument the tool does not accept is advice the caller cannot follow, so the
+/// producer improvised `ls -d …/*/ | wc -l` and reported a COUNT where a state load belonged. That
+/// is the exact failure [`oversize_result_error`] exists to prevent, arriving through the guard
+/// meant to prevent it.
+///
+/// Reading the declaration off the tool table means the refusal and the advertised schema are the
+/// same datum: `each_refusal_names_an_argument_that_actually_narrows_it` walks the whole table and
+/// requires every declared name to be a property the tool advertises, so a tool added without one
+/// gets the truthful `None` rather than a `limit` that does not exist. The default is now the SAFE
+/// answer instead of the confident one.
+///
+/// What the table cannot derive is which of a tool's arguments narrows: `clone_gc` accepts
+/// `dry_run` and `max_age_days` and neither changes the size of the result, and `pr_context`
+/// accepts `pr` as well as `max_diff_bytes`. So the property is DECLARED beside the schema rather
+/// than inferred from a property name — inference would be a convention hidden in a spelling, and
+/// the first tool with a `limit` that does not narrow would revive #117 silently.
+///
+/// Every declared answer is also one that CONVERGES, because [`call_result_budget`] does not move
+/// with the argument: lowering the named argument lowers the payload against a FIXED allowance.
+/// While `pr_context`'s budget still scaled with `max_diff_bytes`, naming that argument was advice
+/// that could not work — budget and content fell together and the caller could loop for ever —
+/// which is why that fix was the budget and not the wording.
+fn narrowing_argument(name: &str) -> Option<String> {
+    mcp_all_tools()
+        .as_array()?
+        .iter()
+        .find(|t| t["name"] == Value::String(name.to_string()))?
+        .get(TOOL_NARROWS_KEY)?
+        .as_str()
+        .map(std::string::ToString::to_string)
 }
 
 /// PURE: the over-budget refusal. It is an ERROR, not a truncation and not a spill, and it names the
@@ -20002,20 +20823,34 @@ fn narrowing_argument(call: &McpCall) -> Option<&'static str> {
 /// improvised one. (#78: the vetter met an over-budget state-load, invented a fallback that dropped
 /// the open-threads accounting, and nothing in the run said so.) When NO argument makes it smaller
 /// it says that instead, and names the only honest move left.
+///
+/// The prohibition on improvising sits in the HEAD, shared by both branches. It used to sit only in
+/// the `None` branch, on the reasoning that a caller told to re-call narrower has somewhere to go —
+/// but #117 is what happens when it does not: the advice was followable-looking and wrong, and the
+/// caller improvised anyway. A refusal a caller cannot act on is worse than a stated truncation,
+/// because the substitute it provokes is unstated.
+///
+/// The `None` text is TOOL-GENERAL. It used to describe `max_diff_bytes` and end "record NO verdict
+/// for this PR", which was `pr_context`'s case written into the branch every other tool reaches —
+/// so fixing the catch-all alone would only have routed `clone_list` from one untruth to another.
 fn oversize_result_error(name: &str, len: usize, budget: usize, narrow: Option<&str>) -> String {
     let head = format!(
         "error: tool `{name}` produced {len} bytes, over the {budget}-byte budget one tool result \
          must fit in. Nothing was truncated or spilled — a partial state-load cannot say what it is \
-         missing. "
+         missing. Do NOT improvise a substitute read: a shell command that answers part of this \
+         question drops the rest silently, and the run then carries a fragment nothing declares as \
+         one. "
     );
     match narrow {
-        Some(arg) => format!("{head}Re-call NARROWER: lower `{arg}`."),
+        Some(arg) => format!(
+            "{head}Re-call NARROWER: lower `{arg}` — it is an argument this tool accepts, and the \
+             budget does not move with it, so a smaller value is a strictly smaller result."
+        ),
         None => format!(
-            "{head}NO argument makes this call smaller — `max_diff_bytes` caps the diff and raises \
-             this budget by the same amount, so this result is over budget on its METADATA alone. \
-             Do not retry it with a different `max_diff_bytes` expecting a different answer, and do \
-             not improvise a substitute read: record NO verdict for this PR and name it in your run \
-             summary."
+            "{head}NO argument makes this call smaller: `{name}` accepts none that shrinks its \
+             result, so re-calling it with different arguments cannot change this answer. Record \
+             NOTHING from it and name this call, by tool name, in your run summary — an unanswered \
+             read is a reportable state, and it is the only honest move left."
         ),
     }
 }
@@ -20249,7 +21084,18 @@ fn validate_call(
             };
             Ok(McpCall::Push { root, name, branch })
         }
-        "clone_list" => Ok(McpCall::CloneList),
+        // `include` is REFUSED rather than clamped to a default when it is not one of the two
+        // words, for the reason `state_load_limit` refuses an out-of-range page: a silently
+        // reinterpreted argument leaves the caller believing it asked for something it did not get.
+        "clone_list" => {
+            let include_all = match args.get("include") {
+                None | Some(Value::Null) => false,
+                Some(Value::String(s)) if s.trim() == "all" => true,
+                Some(Value::String(s)) if s.trim() == "held" => false,
+                Some(v) => return Err(format!("include must be \"held\" or \"all\", not {v}")),
+            };
+            Ok(McpCall::CloneList { include_all })
+        }
         "clone_gc" => {
             let max_age_days = match args.get("max_age_days") {
                 None | Some(Value::Null) => GC_MAX_AGE_DEFAULT,
@@ -20417,16 +21263,21 @@ fn mcp_handle(
             let out = match validate_call(profile, roots, name, &args) {
                 Err(e) => tool_result(e, true),
                 Ok(call) => {
-                    // The budget AND the narrowing advice are read off the VALIDATED call, before the
-                    // effect runs, because `exec` consumes it — and because both are properties of
-                    // what was asked for.
+                    // The budget is read off the VALIDATED call, before the effect runs, because
+                    // `exec` consumes it — and because it is a property of what was asked for. The
+                    // narrowing advice is read off the tool NAME instead (#117), so it survives the
+                    // call being consumed and comes from the same table entry as the schema.
                     let budget = call_result_budget(&call);
-                    let narrow = narrowing_argument(&call);
                     match exec(call) {
                         // A result over budget is THIS server's error to raise. Handing it back and
                         // letting the harness reject it is what left the vetter improvising (#78).
                         Ok(text) if text.len() > budget => tool_result(
-                            oversize_result_error(name, text.len(), budget, narrow),
+                            oversize_result_error(
+                                name,
+                                text.len(),
+                                budget,
+                                narrowing_argument(name).as_deref(),
+                            ),
                             true,
                         ),
                         Ok(text) => tool_result(text, false),
@@ -20529,7 +21380,9 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             name,
             discard_uncommitted,
         } => clone_release_exec(&root, &name, discard_uncommitted).map(|d| d.to_string()),
-        McpCall::CloneList => clone_list_exec(&roots).map(|d| d.to_string()),
+        McpCall::CloneList { include_all } => {
+            clone_list_exec(&roots, include_all).map(|d| d.to_string())
+        }
         McpCall::CloneGc {
             max_age_days,
             dry_run,
@@ -24363,6 +25216,26 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Wait — in ONE turn, inside `Monitor` — until every named PR has SETTLED: its checks have all
+    /// reported, and (with `@<sha>`) a push has moved its head off `<sha>`. Replaces the per-turn
+    /// `gh pr view --json headRefOid` / `gh pr checks` probing that was 60% of the enumeration
+    /// cost #170 measured. Exit 3 = the deadline stopped it; the report still names every subject.
+    Await {
+        /// `owner/repo#n`, or `owner/repo#n@<sha>` to also wait for a push off `<sha>`. Repeatable
+        /// — the whole in-flight set is ONE wait, which is what makes it one turn.
+        #[arg(required = true)]
+        refs: Vec<String>,
+        /// Give up after this many seconds and REPORT where each subject got to. A wait always
+        /// polls once, so 0 is a snapshot.
+        #[arg(long, default_value_t = 900)]
+        timeout_secs: u64,
+        /// Seconds between passes. Refused below 1: a zero interval is an API hammer, and clamping
+        /// it silently would hide the caller's mistake.
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..))]
+        interval_secs: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Has a MERGED PR referencing this issue landed SINCE it was filed? The candidate-selection
     /// question `uncovered-issues` cannot answer, since that split is computed from OPEN PRs only.
     /// Takes ISSUE refs (should this be worked at all) and PR refs (is this open PR superseded —
@@ -25065,10 +25938,33 @@ impl UiTouch {
 }
 
 /// PURE: does this path fall under the screenshot requirement?
+///
+/// Deliberately WIDE, because of what the answer is USED for: it ROUTES a PR to `screenshot-3c`,
+/// where step 3c's own next sentence is the narrowing — read the diff, and a change that only
+/// touches `<script>`/store/load/pure-logic with no visible effect is skipped. So a path that
+/// fires here costs one diff read, which is the price [`UiTouch::Unknown`] is already set at.
+///
+/// A gate that REFUSED a `gh pr create` on this answer would price it at the PR, and no path rule
+/// is precise enough to carry that. Measured over the 681 PRs the producer has opened since the
+/// cron's first commit: 116 change a `.svelte`/`.css`/`.html` file, and 32 of those change no
+/// markup, style or template line at all — while 5 of that same 32 carry a screenshot the producer
+/// judged necessary anyway (a `<script>` constant can be the string a user reads). Both directions
+/// are wrong, so which side of the line a diff falls on is a JUDGEMENT about the rendered surface.
+/// It lives in step 3c and in the vetter's SCREENSHOT GATE, and this function only decides who is
+/// asked to make it (#142).
+///
+/// The families: raindex's two frontend packages; everything published as rain-org-health's
+/// dashboard, its DATA included (`site/health.json` is what the panels draw, and a scanner change
+/// that rewrites it changes the render); and the three extensions a rendered surface is written in
+/// wherever a repo keeps it — `cyclo.site` keeps its components under `src/lib/components/`. Of
+/// the 35 PRs in that corpus carrying a screenshot the producer pushed, these families see all 35.
 fn is_ui_path(p: &str) -> bool {
     p.contains("packages/webapp")
         || p.contains("packages/ui-components")
-        || (p.starts_with("site/") && p.ends_with(".html"))
+        || p.starts_with("site/")
+        || p.ends_with(".svelte")
+        || p.ends_with(".css")
+        || p.ends_with(".html")
 }
 
 /// PURE: the screenshot requirement's read of a changed-file set.
@@ -25095,6 +25991,52 @@ fn touches_ui(set: &ChangedFileSet) -> UiTouch {
             }
         }
     }
+}
+
+/// The orphan branch every screenshot is pushed to (campaign-prompt step 5). A raw URL on it is
+/// what an embedded shot IS, so the branch segment — not a filename shape — is what identifies one.
+const SCREENSHOT_BRANCH_SEGMENT: &str = "pr-screenshots/";
+
+/// PURE: does a TRUSTED comment on this PR settle the screenshot question?
+///
+/// Either half of step 5's rule settles it: a shot embedded from the `pr-screenshots` branch, or
+/// the exact `screenshot pending (manual)` waiver marker. Whether a waiver's REASON is any good is
+/// the vetter's judgement and stays there — this only reports that an answer was given.
+///
+/// The shot half matches the URL and never a filename, because the filename has no single shape:
+/// step 5 names a raindex shot `shots/<pr>.png` and every other repo's `shots/<repo>-<pr>.png`, and
+/// the branch also holds per-view suffixes (`shots/cyclo.site-403-after.png`) and shots carrying no
+/// PR number at all (`shots/roh-remove-overview.png`). A trusted comment ON THIS PR embedding a
+/// shot from that branch is this PR's shot — which is the subject the vetter's SCREENSHOT GATE
+/// names as well (`pr-screenshots/…png` in a trusted comment), so the producer's routing and the
+/// vetter's verdict are answering one question rather than one of them matching a filename the
+/// other never mentions. Matching `shots/<number>.png` instead agrees only for raindex: on
+/// 2026-08-04
+/// `rain-org-health#155` and `#156` each carried `shots/rain-org-health-<n>.png` and every run
+/// re-routed them to `screenshot-3c`, which is also what kept them out of `green-ready` (#142).
+fn screenshot_settled(trusted: &[String]) -> bool {
+    trusted
+        .iter()
+        .any(|c| c.contains("screenshot pending (manual)") || embeds_screenshot(c))
+}
+
+/// PURE: does this comment embed a screenshot from the `pr-screenshots` branch?
+///
+/// A URL, not a mention: the branch segment has to be followed, inside one unbroken run of URL
+/// characters, by a `.png`. Prose naming the branch ("push the PNG to the pr-screenshots branch" —
+/// which step 5 says, so the producer quotes it) names no image and settles nothing.
+fn embeds_screenshot(comment: &str) -> bool {
+    comment
+        .match_indices(SCREENSHOT_BRANCH_SEGMENT)
+        .any(|(i, _)| {
+            comment[i + SCREENSHOT_BRANCH_SEGMENT.len()..]
+                .split(|c: char| {
+                    c.is_whitespace() || matches!(c, ')' | ']' | '(' | '[' | '"' | '\'' | '<' | '>')
+                })
+                .next()
+                .map(|tail| tail.split(['?', '#']).next().unwrap_or(tail))
+                .is_some_and(|path| path.to_ascii_lowercase().ends_with(".png"))
+        })
 }
 
 /// Derive a PR's signals + next_action from its detail JSON (pure given the JSON).
@@ -25160,13 +26102,12 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         })
         .unwrap_or(false);
     let parked = design_flicked || handed_off;
-    // UI PR missing a screenshot: touches a webapp/ui/site path AND no shots/<n>.png marker
+    // UI PR missing a screenshot: touches a path under the screenshot requirement AND no trusted
+    // comment settles the question.
     let ui = touches_ui(&changed_files_from_view(detail));
     let num = detail.get("number").and_then(|v| v.as_u64()).unwrap_or(0);
-    let has_shot = trusted.iter().any(|c| {
-        c.contains(&format!("shots/{num}.png")) || c.contains("screenshot pending (manual)")
-    });
-    let ui_missing_screenshot = ui != UiTouch::No && !has_shot;
+    let shot_settled = screenshot_settled(&trusted);
+    let ui_missing_screenshot = ui != UiTouch::No && !shot_settled;
 
     let labels: Vec<String> = detail
         .get("labels")
@@ -25214,7 +26155,10 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
             "designFlicked": design_flicked,
             "handedOff": handed_off,
             "has3bAttempt": has_3b_attempt,
-            "screenshotPending": has_shot,
+            // TRUE means the screenshot question is answered on this PR — a shot is embedded, or
+            // the waiver marker is present. It is what suppresses `screenshot-3c`, so a name that
+            // read as "a shot is still owed" said the opposite of what the value gates.
+            "screenshotSettled": shot_settled,
             // Reported, not just consumed: `unknown` is the case where the screenshot requirement
             // applies because the file list could not be ruled out, and a producer told to post a
             // shot has to be able to see that that is why.
@@ -25783,6 +26727,1045 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
         }
     }
     0
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// AWAIT — the fleet-side wait, in ONE turn (#170).
+//
+// #170 was filed as "worklist did not displace per-PR enumeration" and offered two causes: the
+// prompt is not binding, or the row is missing fields. Classifying all 1,124 `gh pr view` /
+// `gh pr checks` / `gh issue view` calls in `runs/*.jsonl` says it is NEITHER. Only 35 of them
+// (2.2% of the attributable cost) re-fetch a field the row already carries. The largest class —
+// 622 calls, $46 of $78, 60% — is the main loop SPIN-WAITING on GitHub: in 20260729T170004Z, 320
+// of 788 main-loop turns did nothing but probe `gh pr view --json headRefOid` and `gh pr checks`
+// on two to four PRs, and 317 of those 320 ran with three or more sub-agents live. The run was
+// waiting for delegates to push and for CI to report.
+//
+// SO THE COST IS TURNS, NOT PAYLOAD. Each of those probes returns ~46 bytes and costs a full
+// re-read of the main loop's context — $43.92 of the $46.28 is the turn, not the answer. Widening
+// the worklist row cannot touch it (the row is not what is missing) and neither can a firmer
+// instruction to call `worklist` (it had already been called). The only thing that helps is
+// collapsing the whole wait into ONE turn.
+//
+// `campaign-prompt.txt` already says waiting is `Monitor`, but the only idiom it gives is
+// `until grep -q '<done-marker>' <output-file>` — which needs a LOCAL FILE. There is no local file
+// for "cyclo.site#294's checks have reported", so the rule was unreachable for exactly the wait
+// the runs actually do, and they hand-rolled it one turn at a time instead. That is the gap this
+// closes: `await` is a bounded, in-process poll that a single `Monitor` call can hold.
+//
+// Two conditions, because the traces show two waits, usually together: 412 of the probes read
+// `headRefOid` (has the delegate's push landed?) and the rest read the check rollup (has CI
+// reported?). `owner/repo#n@<sha>` expresses the first, and it GATES the second — see
+// [`await_state`], where an unmoved head is reported as such no matter what the checks say,
+// because those checks belong to the old head.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// The `gh pr view --json` field list `await` polls with. Deliberately the SMALLEST list that
+/// answers both questions: a poll runs tens of times per wait, and unlike `worklist` it is not
+/// building a row anybody reads — only the FINAL states are reported. Pinned as a constant and
+/// conformance-tested against [`await_state`]'s reads for [`WORKLIST_DETAIL_FIELDS`]'s reason.
+const AWAIT_DETAIL_FIELDS: &str = "headRefOid,statusCheckRollup";
+
+/// One subject of an `await`: the PR to wait on, and — when the caller is waiting for a PUSH to
+/// land — the head sha it must move OFF.
+#[derive(Clone, Debug, PartialEq)]
+struct AwaitRef {
+    owner: String,
+    repo: String,
+    num: u64,
+    from_head: Option<String>,
+}
+
+impl AwaitRef {
+    fn label(&self) -> String {
+        format!("{}/{}#{}", self.owner, self.repo, self.num)
+    }
+}
+
+/// PURE: `owner/repo#n`, or `owner/repo#n@<sha>` to also wait for the head to move off `<sha>`.
+///
+/// The sha half is validated as HEX rather than taken as given. A baseline that cannot be a sha is
+/// a baseline nothing will ever equal, so [`head_moved`] would report "moved" on the first poll and
+/// the whole wait would silently do nothing — a typo that costs a phantom-green PR rather than an
+/// error message. Seven is git's own minimum abbreviation.
+fn parse_await_ref(r: &str) -> Option<AwaitRef> {
+    let (subject, from_head) = match r.split_once('@') {
+        Some((s, sha)) => {
+            if sha.len() < 7 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+                return None;
+            }
+            (s, Some(sha.to_string()))
+        }
+        None => (r, None),
+    };
+    let (owner, repo, num) = parse_subject_ref(subject)?;
+    Some(AwaitRef {
+        owner,
+        repo,
+        num,
+        from_head,
+    })
+}
+
+/// PURE: has `head` moved off `baseline`?
+///
+/// Compared as PREFIXES in both directions, so a short sha read out of a log matches the full one
+/// GitHub returns — the same equivalence [`deploy_confirmed_at_head`] already accepts, and the
+/// reason it exists there is the reason it is needed here. An EMPTY head is not a move: an
+/// unreadable head must never be mistaken for a push that landed.
+fn head_moved(head: &str, baseline: &str) -> bool {
+    !(head.starts_with(baseline) || baseline.starts_with(head))
+}
+
+/// Where one subject stands at the moment it was polled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AwaitState {
+    /// Nothing more is coming: the push (if one was awaited) landed, and every check has reported.
+    Settled,
+    /// Still at the sha the caller said it was waiting to move off — the push has not landed.
+    HeadUnchanged,
+    /// Checks are still in flight.
+    ChecksPending,
+    /// The head carries NO checks yet, and the grace period for them to appear has not run out.
+    /// Not settled: see [`await_state`].
+    ChecksUnregistered,
+    /// The read failed, or the document did not carry what the poll asked for.
+    Unreadable,
+}
+
+impl AwaitState {
+    fn as_str(self) -> &'static str {
+        match self {
+            AwaitState::Settled => "settled",
+            AwaitState::HeadUnchanged => "head-unchanged",
+            AwaitState::ChecksPending => "checks-pending",
+            AwaitState::ChecksUnregistered => "checks-unregistered",
+            AwaitState::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// How long an EMPTY check rollup is read as "the checks have not appeared yet" rather than "this
+/// repo has no CI".
+///
+/// `NoChecks` is the `nochecks` is not `passed` trap: an empty rollup is a true statement about the
+/// document and a false answer to "is anything still coming", because GitHub registers a push's
+/// checks seconds AFTER the push. Both readings are right sometimes and there is no field that
+/// distinguishes them, so the only honest discriminator is TIME — and it has to be bounded in both
+/// directions, since settling instantly is a phantom green and never settling hangs every repo that
+/// genuinely has no CI. Two minutes is an order of magnitude beyond the observed registration
+/// window while still ending a no-CI wait long before the default deadline.
+///
+/// The grace is timed from the moment a subject became ELIGIBLE (see [`await_head_ready`]), never
+/// from the start of the wait: a head that moves at minute ten must still get its full grace, and
+/// timing from the start would hand it a phantom green precisely when a push had just landed.
+const AWAIT_CHECKS_GRACE_SECS: u64 = 120;
+
+/// PURE: the head gate on its own — `Some(true)` when the checks in this document are the ones the
+/// caller is waiting on, `Some(false)` while the head has not moved off the named baseline, `None`
+/// when the document could not be read.
+///
+/// Split out of [`await_state`] because the poll loop has to know WHEN a subject became eligible in
+/// order to time [`AWAIT_CHECKS_GRACE_SECS`] from that moment.
+fn await_head_ready(detail: Option<&Value>, baseline: Option<&str>) -> Option<bool> {
+    let head = detail?.get("headRefOid").and_then(|v| v.as_str())?;
+    Some(match baseline {
+        Some(b) => head_moved(head, b),
+        None => true,
+    })
+}
+
+/// PURE: one subject's state, from the document one poll fetched.
+///
+/// Three things here are decisions rather than mechanics, and each one is a way this could report
+/// a wait as OVER when it is not — which is the only expensive direction. A wait that ends late
+/// costs one bounded timeout; a wait that ends early hands the run a PR it then treats as finished.
+///
+///  1. AN UNMOVED HEAD OUTRANKS THE CHECKS. When the caller named a baseline sha and the head is
+///     still on it, the rollup being green describes the PREVIOUS head — the phantom green the
+///     prompt's STALE-CI GUARD is about. So the checks are not even consulted.
+///  2. AN EMPTY ROLLUP IS NOT GREEN UNTIL THE GRACE RUNS OUT — see [`AWAIT_CHECKS_GRACE_SECS`].
+///     This is NOT scoped to the `@sha` case: a caller that names no baseline is waiting on checks
+///     it believes are already running, and "they have not been created yet" is the same wrong
+///     answer whether or not this process is the one that saw the push.
+///  3. AN UNREADABLE SUBJECT IS NOT SETTLED. A failed read is not an answer, the same way
+///     [`count_unresolved_page`] returns `None` rather than a silent zero.
+fn await_state(
+    detail: Option<&Value>,
+    baseline: Option<&str>,
+    checks_grace_expired: bool,
+) -> AwaitState {
+    match await_head_ready(detail, baseline) {
+        None => return AwaitState::Unreadable,
+        Some(false) => return AwaitState::HeadUnchanged,
+        Some(true) => {}
+    }
+    let Some(detail) = detail else {
+        return AwaitState::Unreadable;
+    };
+    // Key presence, not value shape: the poll ASKED for this field, so a document without it is a
+    // document that did not answer. `null` is an answer (no checks) and reaches `classify_ci`.
+    let Some(rollup) = detail.get("statusCheckRollup") else {
+        return AwaitState::Unreadable;
+    };
+    match classify_ci(rollup) {
+        Ci::Pending => AwaitState::ChecksPending,
+        Ci::NoChecks if !checks_grace_expired => AwaitState::ChecksUnregistered,
+        _ => AwaitState::Settled,
+    }
+}
+
+/// How many CONSECUTIVE unreadable polls of one subject end the wait.
+///
+/// An unreadable subject never settles, so without a bound a wait on one runs the full deadline —
+/// and since `gh_json` collapses every failure to `None` (#129, PR 199), a RATE LIMIT arrives here
+/// as `Unreadable` and the wait answers it by making 45 more calls per subject into the limit that
+/// caused it. Ending on the FIRST one instead would be worse in the other direction: a single 502
+/// would abort a legitimate wait, which is the case
+/// `an_unreadable_subject_does_not_end_the_wait` pins.
+///
+/// So the discriminator is PERSISTENCE, which is the right one here precisely BECAUSE the cause is
+/// not knowable: whatever a read failure means, one that survives five consecutive polls is not a
+/// blip, and the wait cannot answer it by asking again. At the 20-second default that is 100
+/// seconds of continuous failure. When #199 lands and read failures carry a TYPE, this budget is
+/// where a rate limit can start honouring its reset header and a 404 can become terminal on the
+/// first poll — the structure is what makes that a refinement rather than a rewrite, so nothing
+/// here tries to guess the cause from an error string in the meantime.
+const AWAIT_UNREADABLE_LIMIT: u32 = 5;
+
+/// Why a wait stopped. A bare `timed_out: bool` could not say "we gave up because a subject stayed
+/// unreadable", which is a different thing for the caller to do something about than a deadline —
+/// and a caller that cannot tell them apart re-derives the difference from the per-subject lines,
+/// which is the kind of re-derivation this whole tool exists to remove.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AwaitStop {
+    AllSettled,
+    Deadline,
+    Unreadable,
+}
+
+impl AwaitStop {
+    fn as_str(self) -> &'static str {
+        match self {
+            AwaitStop::AllSettled => "all-settled",
+            AwaitStop::Deadline => "deadline",
+            AwaitStop::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// What one `await` ended up with: every subject's last-polled state, and what stopped the wait.
+#[derive(Debug, PartialEq)]
+struct AwaitOutcome {
+    rows: Vec<(AwaitRef, AwaitState)>,
+    polls: u32,
+    stop: AwaitStop,
+}
+
+impl AwaitOutcome {
+    fn settled(&self) -> bool {
+        self.stop == AwaitStop::AllSettled
+    }
+}
+
+/// Per-subject state the loop carries ACROSS polls. Everything else about a subject is a pure
+/// function of the document in front of it; these two are not, and both exist to bound a wait that
+/// would otherwise run to the deadline.
+#[derive(Default)]
+struct AwaitProgress {
+    /// Clock at the first poll where this subject's head test passed — when its checks became the
+    /// ones being waited on, and therefore when [`AWAIT_CHECKS_GRACE_SECS`] starts.
+    eligible_since: Option<u64>,
+    /// Consecutive polls this subject has come back [`AwaitState::Unreadable`].
+    unreadable_streak: u32,
+}
+
+/// The wait itself, with its clock, its reads and its sleeping injected — so every branch that
+/// decides WHEN A WAIT ENDS is testable without a network or a real second passing.
+///
+/// EVERY SUBJECT IS RE-FETCHED ON EVERY POLL, INCLUDING ONES ALREADY SETTLED, AND THAT IS THE
+/// POINT. The exit condition is "all settled AT ONCE", not "each has settled at least once", so a
+/// green PR that receives another push goes back to `checks-pending` and holds the wait open. The
+/// difference is not hypothetical: in run `20260729T170004Z`, which is the run this subcommand was
+/// derived from, `cyclofinance/cyclo.site#294` was pushed at 17:42:40Z and AGAIN at 18:01:08Z
+/// inside one wait, and `#409` at 17:33:37Z and 17:43:05Z. Under settle-once both would have been
+/// reported finished on the first green, and the second push's CI — the CI that describes the code
+/// a human would then be shown — would never have been looked at. Caching a settled subject to
+/// save API calls buys back exactly the staleness the `@sha` gate above exists to prevent, one
+/// dimension over: that gate refuses a verdict from a stale HEAD, this refuses one from a stale
+/// MOMENT. The cost is real but it is quota, not tokens, and the turn count — the thing #170 is
+/// about — is 1 either way.
+///
+/// Three orderings carry the rest of the correctness:
+///
+///  * THE SETTLE CHECK COMES BEFORE EVERY REASON TO GIVE UP, so a fleet that settles on the very
+///    poll that exhausts the budget is reported settled. The deadline bounds the wait; it does not
+///    overrule an answer already in hand.
+///  * THE UNREADABLE BUDGET COMES BEFORE THE DEADLINE, because when both are true the specific
+///    reason is the useful one and stopping sooner is the whole point of having it.
+///  * A FULL PASS ALWAYS HAPPENS FIRST, so `--timeout-secs 0` is a single snapshot rather than a
+///    report of nothing, and the sleep only ever happens between passes — never after the last one,
+///    where it would be pure latency.
+fn await_poll(
+    refs: &[AwaitRef],
+    timeout_secs: u64,
+    interval_secs: u64,
+    now: &mut dyn FnMut() -> u64,
+    fetch: &mut dyn FnMut(&AwaitRef) -> Option<Value>,
+    sleep: &mut dyn FnMut(u64),
+) -> AwaitOutcome {
+    let start = now();
+    let mut progress: Vec<AwaitProgress> = refs.iter().map(|_| AwaitProgress::default()).collect();
+    let mut polls = 0u32;
+    loop {
+        let at = now();
+        let mut rows: Vec<(AwaitRef, AwaitState)> = Vec::with_capacity(refs.len());
+        let mut stalled = false;
+        for (r, p) in refs.iter().zip(progress.iter_mut()) {
+            let detail = fetch(r);
+            let baseline = r.from_head.as_deref();
+            if await_head_ready(detail.as_ref(), baseline) == Some(true)
+                && p.eligible_since.is_none()
+            {
+                p.eligible_since = Some(at);
+            }
+            let grace_expired = p
+                .eligible_since
+                .is_some_and(|since| at.saturating_sub(since) >= AWAIT_CHECKS_GRACE_SECS);
+            let state = await_state(detail.as_ref(), baseline, grace_expired);
+            if state == AwaitState::Unreadable {
+                p.unreadable_streak += 1;
+                if p.unreadable_streak >= AWAIT_UNREADABLE_LIMIT {
+                    stalled = true;
+                }
+            } else {
+                p.unreadable_streak = 0;
+            }
+            rows.push((r.clone(), state));
+        }
+        polls += 1;
+        let stop = if rows.iter().all(|(_, s)| *s == AwaitState::Settled) {
+            AwaitStop::AllSettled
+        } else if stalled {
+            AwaitStop::Unreadable
+        } else if now().saturating_sub(start) >= timeout_secs {
+            AwaitStop::Deadline
+        } else {
+            sleep(interval_secs);
+            continue;
+        };
+        return AwaitOutcome { rows, polls, stop };
+    }
+}
+
+/// PURE: the report. One line per subject plus one summary line, because the caller's next move is
+/// decided per PR — a bare "timed out" would send it straight back to the per-PR probing this
+/// subcommand exists to replace.
+fn await_report(out: &AwaitOutcome) -> String {
+    let mut s = String::new();
+    for (r, st) in &out.rows {
+        s.push_str(&format!("{} {}\n", r.label(), st.as_str()));
+    }
+    let unsettled = out
+        .rows
+        .iter()
+        .filter(|(_, st)| *st != AwaitState::Settled)
+        .count();
+    s.push_str(&format!(
+        "{} of {} settled after {} poll(s){}\n",
+        out.rows.len() - unsettled,
+        out.rows.len(),
+        out.polls,
+        match out.stop {
+            AwaitStop::AllSettled => "",
+            AwaitStop::Deadline => " — TIMED OUT",
+            AwaitStop::Unreadable => " — GAVE UP: a subject stayed unreadable",
+        }
+    ));
+    s
+}
+
+/// PURE: the machine-readable form of the same answer.
+fn await_json(out: &AwaitOutcome) -> Value {
+    serde_json::json!({
+        "settled": out.settled(),
+        "stop": out.stop.as_str(),
+        "polls": out.polls,
+        "subjects": out.rows.iter().map(|(r, st)| serde_json::json!({
+            "repo": format!("{}/{}", r.owner, r.repo),
+            "number": r.num,
+            "fromHead": r.from_head,
+            "state": st.as_str(),
+        })).collect::<Vec<Value>>(),
+    })
+}
+
+/// Exit code for an `await` the deadline stopped. Distinct from a usage error (2) because the
+/// caller acts on it: a timeout is a real answer about a fleet that is still moving, and the
+/// per-subject lines say which parts of it.
+const AWAIT_TIMED_OUT: i32 = 3;
+
+/// Exit code for an `await` that gave up because a subject stayed unreadable. Distinct from the
+/// deadline (3) because the two ask for different next moves: a deadline says the fleet is still
+/// working, this says the tool could not see it — often the rate limit that would also spoil
+/// whatever the caller does next.
+const AWAIT_UNREADABLE: i32 = 4;
+
+fn await_mode(refs: &[String], timeout_secs: u64, interval_secs: u64, json_out: bool) -> i32 {
+    let mut subjects = Vec::new();
+    for r in refs {
+        let Some(a) = parse_await_ref(r) else {
+            eprintln!(
+                "error: {r:?} is not an await reference — the form is `owner/repo#n`, or \
+                 `owner/repo#n@<sha>` to wait for a push off `<sha>` (sha: 7+ hex digits)"
+            );
+            return 2;
+        };
+        subjects.push(a);
+    }
+    let out = await_poll(
+        &subjects,
+        timeout_secs,
+        interval_secs,
+        &mut || now_unix() as u64,
+        &mut |r| {
+            gh_json(&[
+                "pr",
+                "view",
+                &r.num.to_string(),
+                "-R",
+                &format!("{}/{}", r.owner, r.repo),
+                "--json",
+                AWAIT_DETAIL_FIELDS,
+            ])
+        },
+        &mut |secs| std::thread::sleep(std::time::Duration::from_secs(secs)),
+    );
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&await_json(&out)).unwrap_or_else(|_| "{}".into())
+        );
+    } else {
+        print!("{}", await_report(&out));
+    }
+    match out.stop {
+        AwaitStop::AllSettled => 0,
+        AwaitStop::Deadline => AWAIT_TIMED_OUT,
+        AwaitStop::Unreadable => AWAIT_UNREADABLE,
+    }
+}
+
+#[cfg(test)]
+mod await_tests {
+    use super::{
+        await_head_ready, await_json, await_poll, await_report, await_state, head_moved,
+        parse_await_ref, AwaitRef, AwaitState, AwaitStop, AWAIT_CHECKS_GRACE_SECS,
+        AWAIT_DETAIL_FIELDS, AWAIT_UNREADABLE_LIMIT,
+    };
+    use serde_json::{json, Value};
+
+    fn r(s: &str) -> AwaitRef {
+        parse_await_ref(s).unwrap_or_else(|| panic!("{s} should parse"))
+    }
+
+    /// A PR document as `AWAIT_DETAIL_FIELDS` returns it.
+    fn doc(head: &str, checks: Value) -> Value {
+        json!({"headRefOid": head, "statusCheckRollup": checks})
+    }
+    fn green() -> Value {
+        json!([{"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}])
+    }
+    fn pending() -> Value {
+        json!([{"name": "test", "status": "IN_PROGRESS"}])
+    }
+    fn red() -> Value {
+        json!([{"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}])
+    }
+
+    // --- parse_await_ref -------------------------------------------------------------------
+
+    #[test]
+    fn a_bare_ref_waits_on_checks_alone() {
+        assert_eq!(
+            r("o/repo#12"),
+            AwaitRef {
+                owner: "o".into(),
+                repo: "repo".into(),
+                num: 12,
+                from_head: None
+            }
+        );
+    }
+
+    #[test]
+    fn an_at_sha_ref_also_waits_for_the_push() {
+        assert_eq!(r("o/repo#12@abc1234").from_head.as_deref(), Some("abc1234"));
+    }
+
+    /// A baseline that cannot be a sha is a baseline nothing ever equals, so the wait would end on
+    /// its first poll having done nothing. Both malformed shapes are refused at parse time, where
+    /// the caller still gets told.
+    #[test]
+    fn a_baseline_that_is_not_a_sha_is_refused_rather_than_silently_never_matching() {
+        assert_eq!(
+            parse_await_ref("o/repo#12@abc123"),
+            None,
+            "6 hex is too short"
+        );
+        assert_eq!(parse_await_ref("o/repo#12@nothex1"), None, "not hex");
+        assert_eq!(
+            parse_await_ref("o/repo#12@"),
+            None,
+            "an empty sha names nothing"
+        );
+    }
+
+    #[test]
+    fn a_malformed_subject_is_refused() {
+        assert_eq!(parse_await_ref("no-slug#1"), None);
+        assert_eq!(parse_await_ref("o/repo"), None);
+        assert_eq!(parse_await_ref("o/repo#notanumber"), None);
+    }
+
+    // --- head_moved ------------------------------------------------------------------------
+
+    #[test]
+    fn a_head_matched_by_either_prefix_direction_has_not_moved() {
+        assert!(
+            !head_moved("abc1234def", "abc1234"),
+            "short baseline, full head"
+        );
+        assert!(
+            !head_moved("abc1234", "abc1234def"),
+            "full baseline, short head"
+        );
+        assert!(!head_moved("abc1234", "abc1234"), "exact");
+        assert!(head_moved("fff0000", "abc1234"));
+    }
+
+    /// An unreadable head must never read as a push that landed.
+    #[test]
+    fn an_empty_head_has_not_moved() {
+        assert!(!head_moved("", "abc1234"));
+    }
+
+    // --- await_state -----------------------------------------------------------------------
+
+    #[test]
+    fn checks_that_have_all_reported_are_settled_whether_green_or_red() {
+        assert_eq!(
+            await_state(Some(&doc("h", green())), None, false),
+            AwaitState::Settled
+        );
+        assert_eq!(
+            await_state(Some(&doc("h", red())), None, false),
+            AwaitState::Settled,
+            "a red IS the answer — the wait is for the checks to report, not to pass"
+        );
+    }
+
+    #[test]
+    fn checks_still_running_are_pending() {
+        assert_eq!(
+            await_state(Some(&doc("h", pending())), None, false),
+            AwaitState::ChecksPending
+        );
+    }
+
+    /// THE PHANTOM-GREEN GUARD. Until the push lands, the rollup describes the PREVIOUS head, so a
+    /// green one is not an answer about the work being waited for.
+    #[test]
+    fn an_unmoved_head_outranks_the_checks_however_they_read() {
+        for checks in [green(), red(), pending(), json!([])] {
+            assert_eq!(
+                await_state(Some(&doc("abc1234def", checks)), Some("abc1234"), false),
+                AwaitState::HeadUnchanged,
+                "checks on the old head can never settle a wait for a push"
+            );
+        }
+    }
+
+    #[test]
+    fn a_moved_head_lets_the_checks_decide() {
+        assert_eq!(
+            await_state(Some(&doc("fff0000", green())), Some("abc1234"), false),
+            AwaitState::Settled
+        );
+    }
+
+    /// GitHub registers a push's checks seconds after the push. An empty rollup in that window is
+    /// `NoChecks` about the document and "nothing has started yet" about the world.
+    #[test]
+    fn an_empty_rollup_right_after_an_awaited_push_is_not_settled() {
+        assert_eq!(
+            await_state(Some(&doc("fff0000", json!([]))), Some("abc1234"), false),
+            AwaitState::ChecksUnregistered
+        );
+    }
+
+    /// …and an empty rollup with NO push awaited gets the same grace, because the caller is waiting
+    /// on checks it believes are already running and "not created yet" is the same wrong answer
+    /// either way. The `nochecks` is not `passed` trap is closed by design here, not by telling the
+    /// prompt to always pass `@sha` — an instruction the design does not support is exactly the
+    /// failure this whole subcommand was built to diagnose.
+    #[test]
+    fn an_empty_rollup_is_ungraded_until_the_grace_runs_out_with_or_without_a_baseline() {
+        for baseline in [None, Some("abc1234")] {
+            let head = if baseline.is_some() { "fff0000" } else { "h" };
+            assert_eq!(
+                await_state(Some(&doc(head, json!([]))), baseline, false),
+                AwaitState::ChecksUnregistered,
+                "inside the grace, an empty rollup is not an answer (baseline={baseline:?})"
+            );
+            assert_eq!(
+                await_state(Some(&doc(head, json!([]))), baseline, true),
+                AwaitState::Settled,
+                "once the grace is out, a repo with no CI must not hang the wait \
+                 (baseline={baseline:?})"
+            );
+        }
+    }
+
+    /// The gate the grace clock is timed from, on its own.
+    #[test]
+    fn the_head_gate_reports_readable_moved_and_unmoved_separately() {
+        assert_eq!(await_head_ready(Some(&doc("h", green())), None), Some(true));
+        assert_eq!(
+            await_head_ready(Some(&doc("fff0000", green())), Some("abc1234")),
+            Some(true)
+        );
+        assert_eq!(
+            await_head_ready(Some(&doc("abc1234def", green())), Some("abc1234")),
+            Some(false)
+        );
+        assert_eq!(await_head_ready(None, None), None);
+        assert_eq!(await_head_ready(Some(&json!({})), None), None);
+    }
+
+    #[test]
+    fn a_failed_read_is_unreadable_never_settled() {
+        assert_eq!(await_state(None, None, false), AwaitState::Unreadable);
+        assert_eq!(
+            await_state(None, Some("abc1234"), false),
+            AwaitState::Unreadable
+        );
+    }
+
+    /// CONFORMANCE: every field `AWAIT_DETAIL_FIELDS` fetches is one `await_state` cannot answer
+    /// without. Asserted by REMOVAL from an otherwise-settled document, so a field that stopped
+    /// being load-bearing — or one that quietly started being read without being fetched — turns
+    /// this red instead of costing a poll per call forever.
+    #[test]
+    fn every_awaited_field_is_load_bearing_and_its_absence_is_unreadable() {
+        let fields: Vec<&str> = AWAIT_DETAIL_FIELDS.split(',').collect();
+        assert_eq!(fields, vec!["headRefOid", "statusCheckRollup"]);
+        assert_eq!(
+            await_state(Some(&doc("h", green())), None, false),
+            AwaitState::Settled,
+            "the full document settles, or the removals below prove nothing"
+        );
+        for f in fields {
+            let mut d = doc("h", green());
+            d.as_object_mut().expect("object").remove(f);
+            assert_eq!(
+                await_state(Some(&d), None, false),
+                AwaitState::Unreadable,
+                "a document missing {f} did not answer the poll"
+            );
+        }
+    }
+
+    /// `null` is GitHub ANSWERING "no checks", which is different from the key being absent — so it
+    /// takes the empty-rollup grace like any other no-checks answer, and never `Unreadable`, which
+    /// is what an absent key gets.
+    #[test]
+    fn a_null_rollup_is_an_answer_not_a_malformed_document() {
+        assert_eq!(
+            await_state(Some(&doc("h", Value::Null)), None, false),
+            AwaitState::ChecksUnregistered
+        );
+        assert_eq!(
+            await_state(Some(&doc("h", Value::Null)), None, true),
+            AwaitState::Settled
+        );
+    }
+
+    // --- await_poll ------------------------------------------------------------------------
+
+    /// A poll harness: canned documents per pass (the last pass repeats once exhausted), a clock
+    /// that advances ONLY when the loop sleeps — so elapsed time is a pure function of the sleeps
+    /// the code chose — and a record of every sleep.
+    struct Harness {
+        passes: Vec<Vec<Option<Value>>>,
+        slept: Vec<u64>,
+        /// Total document reads. The only way to pin "every subject, every pass" — no assertion
+        /// about STATES can tell a re-fetch from a cached settled subject.
+        fetches: usize,
+    }
+    impl Harness {
+        fn new(passes: Vec<Vec<Option<Value>>>) -> Self {
+            Harness {
+                passes,
+                slept: Vec::new(),
+                fetches: 0,
+            }
+        }
+    }
+
+    /// The clock advances ONLY when the loop sleeps, so elapsed time is a pure function of the
+    /// sleeps the code chose and a deadline assertion is exact rather than approximate. That makes
+    /// a wait that stops sleeping run forever, so the fetch counter is the harness's own
+    /// termination proof: it PANICS rather than hanging, which is how "this change removed the
+    /// only thing that advances the deadline" arrives as a red test instead of a stuck suite.
+    const RUNAWAY: usize = 10_000;
+
+    fn run(h: &mut Harness, refs: &[AwaitRef], timeout: u64, interval: u64) -> super::AwaitOutcome {
+        use std::cell::{Cell, RefCell};
+        let passes = std::mem::take(&mut h.passes);
+        let pass = Cell::new(0usize);
+        let idx = Cell::new(0usize);
+        let fetches = Cell::new(0usize);
+        let clock = Cell::new(0u64);
+        let slept = RefCell::new(Vec::new());
+        let out = await_poll(
+            refs,
+            timeout,
+            interval,
+            &mut || clock.get(),
+            &mut |_| {
+                fetches.set(fetches.get() + 1);
+                assert!(
+                    fetches.get() < RUNAWAY,
+                    "await_poll did not terminate: {} fetches without reaching the deadline or \
+                     settling — nothing is advancing the clock",
+                    fetches.get()
+                );
+                let p = passes
+                    .get(pass.get().min(passes.len() - 1))
+                    .expect("a pass");
+                let v = p.get(idx.get()).cloned().flatten();
+                idx.set(idx.get() + 1);
+                if idx.get() == p.len() {
+                    idx.set(0);
+                    pass.set(pass.get() + 1);
+                }
+                v
+            },
+            &mut |secs| {
+                slept.borrow_mut().push(secs);
+                clock.set(clock.get() + secs);
+            },
+        );
+        h.slept = slept.into_inner();
+        h.fetches = fetches.get();
+        out
+    }
+
+    #[test]
+    fn a_fleet_already_settled_polls_once_and_never_sleeps() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", green())),
+            Some(doc("h2", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(out.polls, 1);
+        assert!(h.slept.is_empty(), "no wait means no sleep: {:?}", h.slept);
+    }
+
+    #[test]
+    fn a_wait_keeps_polling_until_the_last_subject_settles() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h", pending())), Some(doc("h2", green()))],
+            vec![Some(doc("h", pending())), Some(doc("h2", green()))],
+            vec![Some(doc("h", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(out.polls, 3);
+        assert_eq!(
+            h.slept,
+            vec![20, 20],
+            "one sleep BETWEEN passes, none after the last"
+        );
+    }
+
+    #[test]
+    fn the_deadline_stops_a_wait_and_the_report_still_names_every_subject() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", pending())),
+            Some(doc("h2", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 40, 20);
+        assert_eq!(out.stop, AwaitStop::Deadline);
+        assert_eq!(out.rows[0].1, AwaitState::ChecksPending);
+        assert_eq!(
+            out.rows[1].1,
+            AwaitState::Settled,
+            "a timeout still reports the settled ones"
+        );
+    }
+
+    /// The settle check runs BEFORE the deadline check, so an answer already in hand is not
+    /// overruled by the clock reaching the budget on the very same pass.
+    #[test]
+    fn settling_exactly_at_the_deadline_is_settled_not_timed_out() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h", pending()))],
+            vec![Some(doc("h", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1")], 20, 20);
+        assert!(
+            out.settled(),
+            "the clock hits the budget on the pass that settles; the answer wins"
+        );
+        assert_eq!(out.polls, 2);
+    }
+
+    /// A full pass always happens first, so a zero budget is a SNAPSHOT rather than a report of
+    /// nothing — and it never sleeps.
+    #[test]
+    fn a_zero_timeout_is_one_snapshot_pass() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let out = run(&mut h, &[r("o/a#1")], 0, 20);
+        assert_eq!(out.stop, AwaitStop::Deadline);
+        assert_eq!(out.polls, 1);
+        assert!(h.slept.is_empty());
+    }
+
+    /// An unreadable subject holds the wait open rather than ending it, which is what makes a
+    /// transient API failure cost time instead of a false answer.
+    #[test]
+    fn an_unreadable_subject_does_not_end_the_wait() {
+        let mut h = Harness::new(vec![vec![None], vec![Some(doc("h", green()))]]);
+        let out = run(&mut h, &[r("o/a#1")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(out.polls, 2);
+    }
+
+    /// …but only for as long as it could still be transient. Without this the wait runs the whole
+    /// deadline making calls, which for the case that produces most unreadables — a rate limit —
+    /// means answering the limit by spending more of it.
+    #[test]
+    fn a_subject_that_stays_unreadable_ends_the_wait_early() {
+        let mut h = Harness::new(vec![vec![None]]);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, 20);
+        assert_eq!(out.stop, AwaitStop::Unreadable);
+        assert_eq!(
+            out.polls, AWAIT_UNREADABLE_LIMIT,
+            "it gives up ON the poll that hits the budget, not a poll later"
+        );
+        assert_eq!(out.rows[0].1, AwaitState::Unreadable);
+    }
+
+    /// The streak is CONSECUTIVE, so a subject that reads once between failures has not stalled —
+    /// otherwise a flaky-but-working API would be indistinguishable from a dead one.
+    #[test]
+    fn a_readable_poll_resets_the_unreadable_streak() {
+        let mut passes: Vec<Vec<Option<Value>>> = Vec::new();
+        for _ in 0..(AWAIT_UNREADABLE_LIMIT - 1) {
+            passes.push(vec![None]);
+        }
+        passes.push(vec![Some(doc("h", pending()))]); // one good read resets it
+        for _ in 0..(AWAIT_UNREADABLE_LIMIT - 1) {
+            passes.push(vec![None]);
+        }
+        passes.push(vec![Some(doc("h", green()))]);
+        let mut h = Harness::new(passes);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, 20);
+        assert_eq!(
+            out.stop,
+            AwaitStop::AllSettled,
+            "two sub-budget runs of failures either side of a good read must not add up"
+        );
+    }
+
+    /// THE EXIT CONDITION IS "ALL SETTLED AT ONCE", NOT "EACH SETTLED ONCE". A subject that has
+    /// already gone green is polled again on every pass, so another push puts it back to
+    /// `checks-pending` and the wait continues.
+    ///
+    /// This is measured behaviour, not a preference: in `20260729T170004Z`, `cyclo.site#294` was
+    /// pushed at 17:42:40Z and again at 18:01:08Z inside ONE wait, and `#409` at 17:33:37Z and
+    /// 17:43:05Z. Settle-once would have reported both finished on the first green and never looked
+    /// at the second push's CI.
+    #[test]
+    fn a_settled_subject_that_is_pushed_again_re_opens_the_wait() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            // #1 has been pushed again — its checks restart while #2 is still going
+            vec![Some(doc("h1b", pending())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1b", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 3,
+            "the wait did not stop when the first subject went green on pass 1"
+        );
+    }
+
+    /// …and the mechanism that makes the above possible: EVERY subject is fetched on EVERY pass.
+    /// Counting the fetches is what pins it — an implementation that cached settled subjects to
+    /// save API calls would still satisfy every state assertion in this module.
+    #[test]
+    fn every_subject_is_fetched_on_every_poll_including_settled_ones() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1", green())), Some(doc("h2", pending()))],
+            vec![Some(doc("h1", green())), Some(doc("h2", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.polls, 3);
+        assert_eq!(
+            h.fetches, 6,
+            "3 passes x 2 subjects: the already-green subject is re-read every time, because a \
+             verdict from a stale MOMENT is the same defect as one from a stale HEAD"
+        );
+    }
+
+    /// The empty-rollup grace is timed from ELIGIBILITY, not from the start of the wait: a head
+    /// that moves late must still get its full grace, or the push that just landed is exactly the
+    /// one handed a phantom green.
+    #[test]
+    fn the_checks_grace_starts_when_the_head_moves_not_when_the_wait_does() {
+        let interval = AWAIT_CHECKS_GRACE_SECS; // one sleep is a whole grace period
+        let mut h = Harness::new(vec![
+            // long enough that a grace timed from the START would already be spent
+            vec![Some(doc("abc1234", json!([])))],
+            vec![Some(doc("abc1234", json!([])))],
+            // the push lands, with no checks registered yet
+            vec![Some(doc("fff0000", json!([])))],
+            vec![Some(doc("fff0000", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1@abc1234")], 100_000, interval);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 4,
+            "pass 3 saw the moved head with an empty rollup and must NOT have settled it"
+        );
+    }
+
+    /// …and the other half: with nothing left to wait for, the grace expires and a repo that simply
+    /// has no CI stops the wait instead of running the deadline.
+    #[test]
+    fn an_empty_rollup_settles_once_the_grace_is_spent() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", json!([])))]]);
+        let out = run(&mut h, &[r("o/a#1")], 100_000, AWAIT_CHECKS_GRACE_SECS);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 2,
+            "pass 1 is inside the grace, pass 2 is past it — a no-CI repo costs one grace, \
+             not one deadline"
+        );
+    }
+
+    // --- reporting -------------------------------------------------------------------------
+
+    /// THREE subjects, not two, and the split is deliberately UNEVEN: with one settled and one not,
+    /// the settled count and the unsettled count are the same number, so a summary reporting the
+    /// wrong one of them would still read correctly. A mutation pass found exactly that — inverting
+    /// `rows.len() - unsettled` to `unsettled` survived the even fixture.
+    #[test]
+    fn the_report_names_each_subject_and_counts_the_settled() {
+        let mut h = Harness::new(vec![vec![
+            Some(doc("h", pending())),
+            Some(doc("h2", green())),
+            Some(doc("h3", green())),
+        ]]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2"), r("o/c#3")], 0, 20);
+        let text = await_report(&out);
+        assert!(text.contains("o/a#1 checks-pending"), "{text}");
+        assert!(text.contains("o/b#2 settled"), "{text}");
+        assert!(text.contains("o/c#3 settled"), "{text}");
+        assert!(
+            text.contains("2 of 3 settled after 1 poll(s) — TIMED OUT"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_json_form_carries_the_same_answer() {
+        let mut h = Harness::new(vec![vec![Some(doc("fff0000", green()))]]);
+        let out = run(&mut h, &[r("o/a#1@abc1234")], 900, 20);
+        let v = await_json(&out);
+        assert_eq!(v["settled"], true);
+        assert_eq!(v["stop"], "all-settled");
+        assert_eq!(v["subjects"][0]["repo"], "o/a");
+        assert_eq!(v["subjects"][0]["number"], 1);
+        assert_eq!(v["subjects"][0]["fromHead"], "abc1234");
+        assert_eq!(v["subjects"][0]["state"], "settled");
+    }
+
+    /// The stop reason is on the machine-readable form as a NAME, so a caller distinguishes "the
+    /// fleet is still working" from "the tool could not see it" without re-deriving either from
+    /// the per-subject rows.
+    #[test]
+    fn the_json_form_names_each_way_a_wait_can_stop() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let v = await_json(&run(&mut h, &[r("o/a#1")], 0, 20));
+        assert_eq!(v["settled"], false);
+        assert_eq!(v["stop"], "deadline");
+
+        let mut h = Harness::new(vec![vec![None]]);
+        let v = await_json(&run(&mut h, &[r("o/a#1")], 100_000, 20));
+        assert_eq!(v["settled"], false);
+        assert_eq!(v["stop"], "unreadable");
+    }
+
+    /// …and the human-readable form says which one too, because "TIMED OUT" on a wait that gave up
+    /// after five failed reads would send the reader looking for slow CI that is not there.
+    #[test]
+    fn the_report_distinguishes_a_deadline_from_giving_up_on_a_read() {
+        let mut h = Harness::new(vec![vec![Some(doc("h", pending()))]]);
+        let text = await_report(&run(&mut h, &[r("o/a#1")], 0, 20));
+        assert!(text.contains("— TIMED OUT"), "{text}");
+
+        let mut h = Harness::new(vec![vec![None]]);
+        let text = await_report(&run(&mut h, &[r("o/a#1")], 100_000, 20));
+        assert!(text.contains("o/a#1 unreadable"), "{text}");
+        assert!(
+            text.contains("— GAVE UP: a subject stayed unreadable"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("TIMED OUT"),
+            "a read the tool gave up on is not a deadline: {text}"
+        );
+    }
+
+    #[test]
+    fn await_parses_many_refs_and_refuses_an_interval_of_zero() {
+        use clap::Parser;
+        let cmd = super::Cli::try_parse_from([
+            "prr",
+            "await",
+            "o/a#1",
+            "o/b#2@abc1234",
+            "--timeout-secs",
+            "60",
+            "--json",
+        ])
+        .expect("refs parse")
+        .command;
+        assert_eq!(
+            cmd,
+            super::Cmd::Await {
+                refs: vec!["o/a#1".to_string(), "o/b#2@abc1234".to_string()],
+                timeout_secs: 60,
+                interval_secs: 20,
+                json: true,
+            }
+        );
+        assert!(
+            super::Cli::try_parse_from(["prr", "await", "o/a#1", "--interval-secs", "0"]).is_err(),
+            "a zero interval hammers the API; clap refuses it rather than the code clamping silently"
+        );
+        assert!(
+            super::Cli::try_parse_from(["prr", "await"]).is_err(),
+            "a wait on nothing is a usage error"
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -26865,6 +28848,12 @@ fn main() {
         Cmd::UsageGate => usage_gate_mode(),
         Cmd::Worklist { json, no_cache } => worklist_mode(json, !no_cache),
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
+        Cmd::Await {
+            refs,
+            timeout_secs,
+            interval_secs,
+            json,
+        } => await_mode(&refs, timeout_secs, interval_secs, json),
         Cmd::AlreadyFixed { refs, json } => already_fixed_mode(&refs, json),
         Cmd::StateLoad { json, no_cache } => state_load_mode(json, !no_cache),
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
@@ -27581,12 +29570,40 @@ mod queue_tests {
     #[test]
     fn cc_verdict_comment_pins_the_flag_it_judged() {
         assert_eq!(
-            cc_verdict_comment("2026-07-20T09:00:00Z", "reject", "evidence predates the issue"),
+            cc_verdict_comment(
+                "2026-07-20T09:00:00Z",
+                "reject",
+                "evidence predates the issue",
+                None
+            ),
             "🤖 ai:vetter\nReviewed close-candidate @2026-07-20T09:00:00Z: reject — evidence predates the issue"
         );
         assert_eq!(
-            cc_verdict_comment("T", "uphold", "   "),
+            cc_verdict_comment("T", "uphold", "   ", None),
             "🤖 ai:vetter\nReviewed close-candidate @T: uphold"
+        );
+    }
+
+    /// #192. The citation evidence is the TOOL'S line, on its own line BELOW the vetter's — the
+    /// issue-side twin of `lens_stamp`. The vetter authors the note and nothing else, so a verdict
+    /// that merely restates the producer still lands beside what the cited diff actually contains.
+    #[test]
+    fn a_cc_verdict_carries_the_machines_citation_read_under_the_vetters_note() {
+        let body = cc_verdict_comment("T", "uphold", "pins the two named cases", Some("EV"));
+        assert_eq!(
+            body,
+            "🤖 ai:vetter\nReviewed close-candidate @T: uphold — pins the two named cases\nEV"
+        );
+        // The pin parse must survive the extra line, or every verdict carrying evidence reads as
+        // NO verdict — the flag would look un-vetted and the human's queue would lose the row.
+        assert_eq!(
+            cc_verdict_parts(&body),
+            Some(("T".to_string(), "uphold".to_string()))
+        );
+        // And an empty note still leaves the stamp on its own line rather than glued to the verb.
+        assert_eq!(
+            cc_verdict_comment("T", "reject", "", Some("EV")),
+            "🤖 ai:vetter\nReviewed close-candidate @T: reject\nEV"
         );
     }
 
@@ -27970,6 +29987,545 @@ mod queue_tests {
                 "2024"
             ),
             1
+        );
+    }
+
+    /// `rain.dia#22`, byte-for-byte from the flag and from `gh pr diff 48`. It is the whole of #192
+    /// in one fixture: the reason names the file the cited PR really does touch, and the cited PR's
+    /// touch on it is an IMPORT REWRITE that contains neither function the reason says it landed.
+    const DIA22_REASON: &str = "already-fixed-on-main: merged PR #48 (commit 70a76a0, merged \
+         2026-07-20) split LibDia.t.sol and landed test/src/lib/dia/LibDiaStringV3Test.t.sol, which \
+         pins exactly the two cases this issue names — testRoundTripEmpty (line 27) and \
+         testRoundTrip31Bytes (line 32) — plus a fuzz testRoundTrip over every length 0..31";
+
+    /// PR #48's real shape on that file: two import lines swapped, nothing else.
+    const DIA22_CITED_DIFF: &str = "\
+diff --git a/test/src/lib/dia/LibDiaStringV3Test.t.sol b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+--- a/test/src/lib/dia/LibDiaStringV3Test.t.sol
++++ b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+@@ -4,8 +4,8 @@ pragma solidity =0.8.25;
+ import {Test} from \"forge-std/Test.sol\";
+-import {LibDia} from \"src/lib/LibDia.sol\";
+-import {IntOrAString} from \"rain.intorastring/lib/LibIntOrAString.sol\";
++import {LibDia} from \"../../../../src/lib/LibDia.sol\";
++import {IntOrAString} from \"../../../../lib/rain.intorastring/src/lib/LibIntOrAString.sol\";
+ contract LibDiaStringV3Test is Test {
+";
+
+    /// PR #33's real shape on the same file: the tests themselves.
+    const DIA22_REAL_FIX_DIFF: &str = "\
+diff --git a/test/src/lib/dia/LibDiaStringV3Test.t.sol b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+--- a/test/src/lib/dia/LibDiaStringV3Test.t.sol
++++ b/test/src/lib/dia/LibDiaStringV3Test.t.sol
+@@ -25,3 +25,9 @@ contract LibDiaStringV3Test is Test {
+     }
++    function testRoundTripEmpty() external pure {
++        assertEq(LibDia.intOrAStringToString(LibDia.stringToIntOrAString(\"\")), \"\");
++    }
++    function testRoundTrip31Bytes() external pure {
++        assertEq(bytes(THIRTY_ONE).length, 31);
++    }
+";
+
+    /// #192's CORE. The same reason against the PR it cited and against the PR that really landed
+    /// the tests: the file is the same, the path churn and the symbols are not.
+    ///
+    /// This is the whole discriminator, and it is why the path alone was never enough — #48 DOES
+    /// touch the file the reason names.
+    #[test]
+    fn citation_evidence_separates_the_cited_pr_from_the_one_that_landed_the_change() {
+        let bad = citation_evidence("PR #48", DIA22_REASON, DIA22_CITED_DIFF);
+        assert_eq!(
+            bad.paths,
+            vec![(
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                Some((2, 2))
+            )],
+            "the cited PR's touch on the named file is an import rewrite, and the churn says so"
+        );
+        assert_eq!(bad.present, 0);
+        assert_eq!(
+            bad.absent,
+            vec![
+                "testRoundTrip",
+                "testRoundTrip31Bytes",
+                "testRoundTripEmpty"
+            ],
+            "not one function the reason says PR #48 landed is in PR #48's changed lines"
+        );
+
+        let good = citation_evidence("PR #33", DIA22_REASON, DIA22_REAL_FIX_DIFF);
+        assert_eq!(
+            good.paths,
+            vec![(
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                Some((6, 0))
+            )]
+        );
+        assert!(
+            good.absent.is_empty() && good.present == 3,
+            "the PR that added the tests contains every symbol the reason names: {good:?}"
+        );
+    }
+
+    /// The rendered line is what a human and the vetter actually read, so the DAMNING facts have to
+    /// survive rendering — and the header has to say it is not a verdict, because nothing in this
+    /// check refuses anything.
+    #[test]
+    fn the_citation_stamp_prints_the_churn_and_names_the_absent_symbols() {
+        let s = citation_stamp(&citation_evidence("PR #48", DIA22_REASON, DIA22_CITED_DIFF));
+        assert!(s.contains("NOT a verdict"), "{s}");
+        assert!(s.contains("PR #48 changes 1 file."), "{s}");
+        assert!(
+            s.contains("test/src/lib/dia/LibDiaStringV3Test.t.sol +2/-2"),
+            "{s}"
+        );
+        assert!(s.contains("0 of 3 in its changed lines"), "{s}");
+        assert!(
+            s.contains("absent: testRoundTrip, testRoundTrip31Bytes, testRoundTripEmpty"),
+            "{s}"
+        );
+    }
+
+    /// **The hard constraint, as a test.** A fix by DELETION leaves its evidence on the REMOVED
+    /// side, and four of the seven live `already-fixed-on-main` flags are that shape
+    /// (`rain.webapp#243`'s `h-full`, `rain.dia#43`'s deleted `BuildPointers.sol`, raindex#1039 /
+    /// #1042 / #960's deleted `tauri-app/` tree). #192 proposed looking at ADDED lines; that would
+    /// have reported every one of them as unsupported.
+    #[test]
+    fn a_fix_by_removal_counts_as_evidence_because_the_diff_carries_it_on_the_removed_side() {
+        // rain.webapp#243, real: PR #244 removed `h-full` from the cell anchor.
+        let diff = "\
+diff --git a/app/_components/TableRowLink.tsx b/app/_components/TableRowLink.tsx
+--- a/app/_components/TableRowLink.tsx
++++ b/app/_components/TableRowLink.tsx
+@@ -35,7 +35,7 @@ export const TableCellLink = () => {
+ \t\t\t\t<a
+-\t\t\t\t\tclassName=\"flex items-center justify-start h-full w-full p-4 hasHover\"
++\t\t\t\t\tclassName=\"flex items-center justify-start w-full p-4 hasHover\"
+ \t\t\t\t>
+";
+        let ev = citation_evidence(
+            "PR #244",
+            "already-fixed-on-main: PR #244 removed h-full from app/_components/TableRowLink.tsx:38; \
+             the hasHover class is untouched",
+            diff,
+        );
+        assert_eq!(
+            ev.paths,
+            vec![("app/_components/TableRowLink.tsx".to_string(), Some((1, 1)))]
+        );
+        assert!(
+            ev.absent.is_empty() && ev.present == 1,
+            "`hasHover` is on both sides and `h-full` is not identifier-shaped; nothing may read \
+             as absent here: {ev:?}"
+        );
+
+        // rain.dia#43, real: PR #48 DELETED script/BuildPointers.sol outright. A deletion writes
+        // `+++ /dev/null`, so keying files off `+++` would drop the file entirely and report the
+        // path the reason names as never touched.
+        let deleted = "\
+diff --git a/script/BuildPointers.sol b/script/BuildPointers.sol
+deleted file mode 100644
+--- a/script/BuildPointers.sol
++++ /dev/null
+@@ -1,3 +0,0 @@
+-contract BuildPointers is Script {
+-    function run() external {}
+-}
+";
+        let ev = citation_evidence(
+            "PR #48",
+            "already-fixed-on-main: PR #48 consolidated the entrypoints — script/BuildPointers.sol \
+             no longer exists on main",
+            deleted,
+        );
+        assert_eq!(
+            ev.paths,
+            vec![("script/BuildPointers.sol".to_string(), Some((0, 3)))],
+            "a deleted file is still a file the cited change touched: {ev:?}"
+        );
+    }
+
+    /// A reason argues about CURRENT MAIN as well as about the landing, so a symbol the cited change
+    /// never touched is ORDINARY. `raindex#1060` is the live case: the cited PR removed the guard,
+    /// and the file that carries the behaviour today was renamed after it. Both halves are true and
+    /// both are load-bearing — which is exactly why the absent list is REPORTED and never gated on.
+    #[test]
+    fn a_sound_reason_may_name_symbols_the_cited_change_never_touched() {
+        let diff = "\
+diff --git a/src/concrete/ob/OrderBook.sol b/src/concrete/ob/OrderBook.sol
+--- a/src/concrete/ob/OrderBook.sol
++++ b/src/concrete/ob/OrderBook.sol
+@@ -260,9 +260,7 @@ contract OrderBook {
+-            if (withdrawAmount > 0) {
+-                LibOrderBook.doPost(post);
+-            }
++            LibOrderBook.doPost(post);
+";
+        let ev = citation_evidence(
+            "PR #1959",
+            "already-fixed-on-main: MERGED PR #1959 removed the `if (withdrawAmount > 0)` wrapper \
+             around LibOrderBook.doPost; RaindexV6.sol:291 now runs it unconditionally, proven by \
+             testRaindexWithdrawalEvalZeroAmountEvalNoop",
+            diff,
+        );
+        assert!(
+            ev.present >= 2
+                && ev
+                    .absent
+                    .contains(&"testRaindexWithdrawalEvalZeroAmountEvalNoop".to_string()),
+            "the guard symbols are in the cited diff and the current-main test is not — BOTH are \
+             honest, and neither may refuse the flag: {ev:?}"
+        );
+        // …and the gate must AGREE. This is the flag the disconnected check would most plausibly
+        // get wrong: every path it names is untouched by the cited PR (the file was renamed after
+        // it merged), so a path-only rule refuses a sound, vetter-upheld flag. The symbols are what
+        // save it, and that is exactly why the rule is the conjunction.
+        assert!(
+            !citation_disconnected(&ev),
+            "raindex#1060 names ONLY paths the cited PR does not touch, and is a good flag — a \
+             path-only rule would convert a valid close into rework: {ev:?}"
+        );
+    }
+
+    /// `raindex#573`, real: the reason cites `bb83031` — which is
+    /// "Merge pull request #2810 … fix/build-script-name", touching `foundry.toml`,
+    /// `script/Build.sol` and three siblings. It is cited as the fix for a VAULT DETAIL ROUTING bug
+    /// whose reason names `VaultDetail.svelte`. The sha is simply where `main` was when the
+    /// producer looked, and the four `bb83031` flags plus `raindex#928`'s `7ba0fa8` are every
+    /// commit-anchored flag on record.
+    ///
+    /// This is a bare `file:line` claim wearing a sha: the recency gate refuses those outright as
+    /// `FixAnchor::Missing`, and appending a recent main sha converts the refusal into a vacuous
+    /// pass, because every recent main sha post-dates the issue.
+    #[test]
+    fn a_citation_containing_nothing_the_reason_names_is_not_a_landing() {
+        let bb83031 = "\
+diff --git a/foundry.toml b/foundry.toml
+--- a/foundry.toml
++++ b/foundry.toml
+@@ -3,3 +3,3 @@ src = 'src'
+-build_script = 'BuildPointers.sol'
++build_script = 'Build.sol'
+ out = 'out'
+";
+        let ev = citation_evidence(
+            "commit bb83031",
+            "already-fixed-on-main: the global orderbook-address setting this bug depends on no \
+             longer exists — vault detail is addressed per-orderbook and data is fetched with \
+             raindexClient.getVault(chainId, raindexAddress, id) \
+             (packages/ui-components/src/lib/components/detail/VaultDetail.svelte:55) at bb83031",
+            bb83031,
+        );
+        assert_eq!(
+            ev.paths,
+            vec![(
+                "packages/ui-components/src/lib/components/detail/VaultDetail.svelte".to_string(),
+                None
+            )],
+            "the one path the reason names is NOT in the cited commit at all: {ev:?}"
+        );
+        assert_eq!(ev.present, 0, "and none of its symbols are either: {ev:?}");
+        assert!(
+            citation_disconnected(&ev),
+            "nothing the reason names occurs in the change it credits, so the two are about \
+             different code: {ev:?}"
+        );
+    }
+
+    /// **The hard constraint, restated for the GATE.** `rain.dia#22` is the flag #192 was filed
+    /// for — a genuinely wrong citation — and it was CLOSED on the merits with the correction
+    /// recorded. A gate that refused it would convert that ruling into rework, so this pins that it
+    /// does not: the cited PR touches the file the reason names, which is all "connected" asks.
+    ///
+    /// That is the check's own boundary, stated as a test. It catches a citation about DIFFERENT
+    /// CODE; it does not, cannot and must not adjudicate whether a citation about the RIGHT code is
+    /// the right change. The second is the human's job and it is why `/ncc` step 5 exists.
+    #[test]
+    fn the_gate_does_not_refuse_the_flag_that_issue_192_was_filed_for() {
+        let ev = citation_evidence("PR #48", DIA22_REASON, DIA22_CITED_DIFF);
+        assert_eq!(ev.present, 0, "no named symbol is in PR #48: {ev:?}");
+        assert!(
+            !citation_disconnected(&ev),
+            "rain.dia#22 cites a PR that DOES touch the file it names (+2/-2) — the citation is \
+             wrong about which change landed the tests, and that is a correction for the record, \
+             never a refusal: {ev:?}"
+        );
+    }
+
+    /// A reason that names nothing checkable is not evidence of anything, in either direction. This
+    /// is `raindex#928`'s shape (`tauri-app/` and `packages/webapp` are directories, so neither is
+    /// a path by the extension rule) and it is the gate's known MISS — 4 of the 5 read-at-sha flags
+    /// are caught, not 5. Refusing here instead would mean refusing every reason whose prose the
+    /// extractor happens not to understand, which is a far larger and much less visible class.
+    #[test]
+    fn a_reason_naming_nothing_checkable_is_never_refused() {
+        let ev = citation_evidence(
+            "commit 7ba0fa8",
+            "already-fixed-on-main: the tauri desktop app this bug was filed against is deleted \
+             from the repo (tauri-app/ existed at 7ba0fa8, absent on current main)",
+            "diff --git a/x/y.ts b/x/y.ts\n--- a/x/y.ts\n+++ b/x/y.ts\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(ev.paths.is_empty() && ev.present == 0 && ev.absent.is_empty());
+        assert!(
+            !citation_disconnected(&ev),
+            "an EMPTY check is not a failed check — a gate that refuses on no evidence refuses \
+             everything it cannot parse: {ev:?}"
+        );
+    }
+
+    /// One named thing being present is enough, and it is enough on EITHER side. A path the change
+    /// touches carries it; so does a symbol in its changed lines with no path named at all
+    /// (`st0x.deploy#248`'s shape). Both are pinned because the two halves are separate `&&` terms
+    /// and either could be dropped without the other noticing.
+    #[test]
+    fn one_named_thing_present_is_enough_from_either_half() {
+        let diff = "\
+diff --git a/src/Only.sol b/src/Only.sol
+--- a/src/Only.sol
++++ b/src/Only.sol
+@@ -1,2 +1,2 @@
+-uint256 constant THE_PIN = 0;
++uint256 constant THE_PIN = 1;
+";
+        // Path named and touched, symbol absent -> connected.
+        let by_path = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 fixed src/Only.sol; someOtherThing is unrelated",
+            diff,
+        );
+        assert!(
+            by_path.present == 0 && !citation_disconnected(&by_path),
+            "{by_path:?}"
+        );
+        // No path named, symbol present -> connected.
+        let by_symbol = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 set THE_PIN to its live value",
+            diff,
+        );
+        assert!(
+            by_symbol.paths.is_empty() && !citation_disconnected(&by_symbol),
+            "{by_symbol:?}"
+        );
+        // Neither -> disconnected.
+        let neither = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 fixed src/Elsewhere.sol via someOtherThing",
+            diff,
+        );
+        assert!(citation_disconnected(&neither), "{neither:?}");
+    }
+
+    /// The refusal is the gate's whole user interface: a producer that cannot tell what to do next
+    /// re-writes the same reason. It has to carry the evidence that produced it, name the shape
+    /// that causes it, and name BOTH exits — the real fix, and the rename case that is the one
+    /// honest way a sound flag trips this.
+    #[test]
+    fn the_unsupported_refusal_names_the_shape_and_both_ways_out() {
+        let ev = citation_evidence(
+            "commit bb83031",
+            "already-fixed-on-main: fixed in packages/ui/src/VaultDetail.svelte:55 at bb83031",
+            "diff --git a/foundry.toml b/foundry.toml\n--- a/foundry.toml\n+++ b/foundry.toml\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        let msg = citation_unsupported_refusal("o/r", "573", &ev);
+        assert!(msg.contains("refusing to flag o/r#573"), "{msg}");
+        assert!(msg.contains("commit bb83031"), "{msg}");
+        assert!(
+            msg.contains("packages/ui/src/VaultDetail.svelte"),
+            "the refusal names what went unmatched, or the producer has to guess: {msg}"
+        );
+        assert!(
+            msg.contains("Citation evidence"),
+            "it carries the evidence line that produced it: {msg}"
+        );
+        assert!(
+            msg.contains("citing the sha you READ main at"),
+            "the cause is named because it is one the producer keeps writing: {msg}"
+        );
+        assert!(
+            msg.contains("has since been renamed"),
+            "the rename escape must be on the page, or a sound flag gets a refusal and no move: \
+             {msg}"
+        );
+        assert!(
+            msg.contains("`invalid`/`duplicate`/`wont-fix`"),
+            "the other exit is the honest category: {msg}"
+        );
+    }
+
+    /// An UNREADABLE diff must not refuse. The anchor already resolved to a date one gate earlier,
+    /// so a failure here is a transient `gh` read — failing closed on it turns a network blip into
+    /// a producer cycle, which is the cost this whole design is written to avoid.
+    #[test]
+    fn an_unreadable_citation_does_not_refuse_the_flag() {
+        assert_eq!(
+            citation_support_gate("o/r", "1", &CitationRead::Unreadable("PR #7".into())),
+            0
+        );
+        assert_eq!(
+            citation_support_gate("o/r", "1", &CitationRead::NotCited),
+            0
+        );
+    }
+
+    /// **The gate REFUSES.** Everything else here checks what `citation_disconnected` DECIDES; this
+    /// is the only test that checks the decision reaches an exit code. Without it the whole gate
+    /// could be reduced to a bare `eprintln!` with the suite still green — a mutation returning `0`
+    /// in place of the refusal survived until this test existed.
+    ///
+    /// The code is asserted through [`CITATION_UNSUPPORTED_EXIT`] AND pinned to 5, because a caller
+    /// that has to tell this from the recency refusal (4) by reading the message is one that will
+    /// not.
+    #[test]
+    fn the_gate_refuses_a_disconnected_citation_with_its_own_exit_code() {
+        let ev = citation_evidence(
+            "commit bb83031",
+            "already-fixed-on-main: fixed in packages/ui/src/VaultDetail.svelte:55 at bb83031",
+            "diff --git a/foundry.toml b/foundry.toml\n--- a/foundry.toml\n+++ b/foundry.toml\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(citation_disconnected(&ev), "fixture must be disconnected");
+        assert_eq!(
+            citation_support_gate("o/r", "573", &CitationRead::Read(ev)),
+            CITATION_UNSUPPORTED_EXIT,
+            "a disconnected citation must REFUSE, not merely report"
+        );
+        assert_eq!(
+            CITATION_UNSUPPORTED_EXIT, 5,
+            "distinct from the recency refusal (4): different finding, different fix"
+        );
+        // …and a CONNECTED one passes the SAME call, or the gate is "always refuse" wearing a
+        // predicate.
+        let ok = citation_evidence(
+            "PR #1",
+            "already-fixed-on-main: PR #1 fixed src/Only.sol",
+            "diff --git a/src/Only.sol b/src/Only.sol\n--- a/src/Only.sol\n+++ b/src/Only.sol\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert_eq!(
+            citation_support_gate("o/r", "1", &CitationRead::Read(ok)),
+            0
+        );
+    }
+
+    /// ONE named path being touched carries the citation, even beside others the cited change never
+    /// saw — so the path half is `all` untouched, never `any`.
+    ///
+    /// This is the commonest sound shape there is: the fix lands in the source file, and the reason
+    /// also names the test that covers the behaviour today, added by a different commit. Reading it
+    /// as `any` refuses that flag — a valid close turned into rework, the one thing this design is
+    /// forbidden to do. A mutation to `any` survived until this test existed, because no flag on
+    /// record happens to name two paths with a mix, so the live queue could not have caught it.
+    #[test]
+    fn one_touched_path_carries_the_citation_even_beside_untouched_ones() {
+        let ev = citation_evidence(
+            "commit abc1234",
+            "already-fixed-on-main: commit abc1234 fixed src/Fixed.sol; the behaviour is covered \
+             on main by test/Fixed.t.sol:12",
+            "diff --git a/src/Fixed.sol b/src/Fixed.sol\n--- a/src/Fixed.sol\n+++ b/src/Fixed.sol\n@@ -1 +1 @@\n-was\n+now\n",
+        );
+        assert_eq!(
+            ev.paths,
+            vec![
+                ("src/Fixed.sol".to_string(), Some((1, 1))),
+                ("test/Fixed.t.sol".to_string(), None)
+            ],
+            "one named path is touched and one is not: {ev:?}"
+        );
+        assert_eq!(ev.present, 0, "and no symbol carries it either: {ev:?}");
+        assert!(
+            !citation_disconnected(&ev),
+            "the cited change contains one of the things the reason names, so the two are about \
+             the same code — `any` here would refuse a sound flag: {ev:?}"
+        );
+    }
+
+    /// The noise floor. Everything here reads as an identifier by SHAPE and is not a thing a diff
+    /// can be asked about, so an evidence line that reported it would train its readers to skip the
+    /// line — which is the same outcome as not writing one.
+    #[test]
+    fn the_symbol_scan_drops_paths_pipeline_field_names_and_prose() {
+        let paths = reason_paths(
+            "already-fixed-on-main: PR #7 fixed app/_components/TableRowLink.tsx:38 and \
+             packages/ui/src/Detail.svelte:89-92,141-146 vs issue createdAt 2024-12-10; grep over \
+             *.svelte/*.ts found nothing, see https://github.com/o/r/pull/7 and script/ and \
+             origin/main",
+        );
+        assert_eq!(
+            paths,
+            vec![
+                "app/_components/TableRowLink.tsx".to_string(),
+                "packages/ui/src/Detail.svelte".to_string()
+            ],
+            "line anchors are stripped; a glob, a URL, a bare directory and a ref are not paths"
+        );
+        let syms = reason_symbols(
+            "PR #7 landed TableRowLink and _components per createdAt/mergedAt; \
+             LibDiaStringV3Test in test/src/lib/dia/LibDiaStringV3Test.t.sol; the file:line is fine \
+             at 70a76a0 on 2026-07-20; doPost is real",
+            &[
+                "test/src/lib/dia/LibDiaStringV3Test.t.sol".to_string(),
+                "app/_components/TableRowLink.tsx".to_string(),
+            ],
+        );
+        assert_eq!(
+            syms,
+            vec!["doPost".to_string()],
+            "every symbol inside a named path is dropped, and so are the pipeline field words, a \
+             short sha, a date and prose: {syms:?}"
+        );
+        // `_components` is identifier-shaped but occurs in NO named path here, so it survives —
+        // the exclusion is about the paths this reason actually named, not a word list.
+        assert!(reason_symbols("_components moved", &[]).contains(&"_components".to_string()));
+    }
+
+    /// An anchor that will not fetch must still put a LINE on the record. Silence is the failure
+    /// #192 is about: a verdict with no evidence beside it is indistinguishable from one whose
+    /// evidence was checked and held.
+    #[test]
+    fn an_unreadable_citation_says_so_rather_than_printing_nothing() {
+        let s = citation_unreadable("PR #48");
+        assert!(s.contains("PR #48"), "{s}");
+        assert!(s.contains("NOT a verdict"), "{s}");
+        assert!(s.contains("NOTHING about this citation was checked"), "{s}");
+    }
+
+    /// A reason with nothing checkable in it must SAY that, for the same reason. The alternative is
+    /// a line that trails off after the file count and reads like a clean bill.
+    #[test]
+    fn a_reason_naming_nothing_checkable_says_that_too() {
+        let s = citation_stamp(&citation_evidence(
+            "PR #2420",
+            "already-fixed-on-main: PR #2420 deleted the desktop app",
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n",
+        ));
+        assert!(
+            s.contains("names no path or symbol its diff can be checked against"),
+            "{s}"
+        );
+    }
+
+    /// `diff_churn` walks by HUNK COUNTS, not by sniffing the first byte. An added line whose own
+    /// content begins `++` renders as `+++…`, and a sniffing parser reads it as a file header —
+    /// which would silently split one file's churn across two entries.
+    #[test]
+    fn diff_churn_counts_by_hunk_and_survives_a_line_that_looks_like_a_header() {
+        let d = "\
+diff --git a/a.c b/a.c
+--- a/a.c
++++ b/a.c
+@@ -1,2 +1,3 @@
+ ctx
+-old
+++++weird
++tail
+";
+        let c = diff_churn(d);
+        assert_eq!(c.files, vec![("a.c".to_string(), 2, 1)]);
+        assert!(c.changed.contains("++weird"), "{:?}", c.changed);
+        assert!(
+            c.changed.contains("old"),
+            "the removed side is searchable too"
         );
     }
 
@@ -30349,9 +32905,64 @@ fn repo_root_path(rel: &str) -> std::path::PathBuf {
         .join(rel)
 }
 
+/// TEST HELPER: this crate's own source, embedded at COMPILE time.
+///
+/// `include_str!` resolves against the file it is written in, so unlike every runtime conformance
+/// read in this crate it cannot come back empty — there is no "not checked out" bail for it to
+/// pass by, in the flake build sandbox or anywhere else. That is why the gate over it is written
+/// against this rather than `repo_root_text("pr-review-report-rs/src/main.rs")`: a guard whose job
+/// is to stop tests passing vacuously must not be able to pass vacuously itself.
+#[cfg(test)]
+const CRATE_SOURCE: &str = include_str!("main.rs");
+
 #[cfg(test)]
 mod repo_root_tests {
     use super::{repo_root_path, repo_root_text};
+
+    /// TEST HELPER: the TOP-LEVEL item a line sits in — the name a hit is reported under, because
+    /// a line number moves with every edit above it and a name does not. A free function or the
+    /// module, never the test fn inside it: the granularity that matters is which item owns the
+    /// code, and one name per module keeps the expected set readable.
+    ///
+    /// Column 0 IS the test — `strip_prefix` runs on the unindented line — so anything nested
+    /// resolves to the item it is nested in.
+    fn enclosing_item(line: &str) -> Option<String> {
+        let decl = line
+            .strip_prefix("pub(crate) ")
+            .or_else(|| line.strip_prefix("pub "))
+            .unwrap_or(line);
+        let name: String = [
+            "fn ", "mod ", "impl ", "struct ", "enum ", "trait ", "const ", "static ",
+        ]
+        .into_iter()
+        .find_map(|kw| decl.strip_prefix(kw))?
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// TEST HELPER: every top-level item whose CODE contains `needle`, in source order, once each.
+    ///
+    /// Comment lines are skipped. This file documents the very bug the gate below catches, quoting
+    /// the shape in prose so a reader knows it when they see it, and a scan that cannot tell a
+    /// description from a call would make writing that description impossible.
+    fn items_whose_code_contains(needle: &str) -> Vec<String> {
+        let mut item = String::from("<above the first item>");
+        let mut hits: Vec<String> = Vec::new();
+        for line in super::CRATE_SOURCE.lines() {
+            if let Some(name) = enclosing_item(line) {
+                item = name;
+            }
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if line.contains(needle) && !hits.contains(&item) {
+                hits.push(item.clone());
+            }
+        }
+        hits
+    }
 
     /// The guard on the guard. Every conformance test over a repo-root file is written to bail
     /// gracefully when the file is absent, so if the LOOKUP goes wrong they all pass by not
@@ -30379,6 +32990,65 @@ mod repo_root_tests {
         assert_eq!(
             repo_root_text("README.md"),
             std::fs::read_to_string(repo_root_path("README.md")).ok()
+        );
+    }
+
+    /// #143: four prompt-pinning tests asserted NOTHING for months, every one of them the same
+    /// shape — a repo-root file reached by a path the test built itself, resolving against the
+    /// crate directory where that file has never been, with the graceful "not checked out" bail
+    /// swallowing the miss. Routing those four through [`repo_root_text`] fixed those four. It
+    /// left the SHAPE writable, and the fifth one is whatever gets added next — `settings_tests`
+    /// gains prompt-pinning tests faster than any other module in this file.
+    ///
+    /// Rust cannot take `std::fs` away from a test module, so the line is drawn over the crate's
+    /// own source instead: the repo root is resolved in exactly ONE place, and no filesystem call
+    /// is handed a path literal. Both halves fail LOUDLY at the call site that reintroduced the
+    /// shape, which is the property the swallowed bail never had.
+    ///
+    /// The needles are ASSEMBLED from parts rather than spelled out, so this test's own source is
+    /// not a hit for the shapes it hunts. The alternative — exempting the scanner from the scan —
+    /// puts the hole in the one function a person reads to learn what the rule is.
+    ///
+    /// Scope is `src/main.rs`. Each integration test under `tests/` carries its own resolver
+    /// because a binary crate's `#[cfg(test)]` items are not importable from one; that is a
+    /// property of the crate layout, and it is why this pins "one place" across the unit-test
+    /// tree rather than across the repository.
+    #[test]
+    fn the_repo_root_is_resolved_in_one_place_and_no_read_takes_a_path_literal() {
+        let manifest_dir = format!("env!(\"{}\")", ["CARGO", "MANIFEST", "DIR"].join("_"));
+        assert_eq!(
+            items_whose_code_contains(&manifest_dir),
+            ["repo_root_path", "repo_root_tests"],
+            "the crate directory is read by `repo_root_path`, and by the test above that pins \
+             where it looks — nowhere else. A second one is a second resolver, and #143 is what \
+             one that got the `/../` wrong cost: four tests, silent, for months"
+        );
+
+        let mut offenders = Vec::new();
+        for call in [
+            "fs::read_to_string",
+            "fs::read",
+            "fs::read_dir",
+            "fs::write",
+            "fs::metadata",
+            "fs::canonicalize",
+            "fs::copy",
+            "fs::rename",
+            "fs::create_dir_all",
+            "fs::remove_file",
+            "fs::remove_dir_all",
+            "File::open",
+            "File::create",
+        ] {
+            for item in items_whose_code_contains(&format!("{call}(\"")) {
+                offenders.push(format!("{item}: {call}(\"…\")"));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a filesystem call takes a path LITERAL, which is #143's bare relative read whatever \
+             the literal names: {offenders:?}. A repo-root file goes through `repo_root_text` / \
+             `repo_root_path`; every other path in this crate is built from a value"
         );
     }
 }
@@ -30587,9 +33257,8 @@ mod settings_tests {
     // a filtered src that omits them, so the read is skipped there; the rs-test gate (cargo test at the
     // repo root) has the files and enforces the assertion.
     fn read_json(rel: &str) -> Option<Value> {
-        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
-        let text = std::fs::read_to_string(&path).ok()?;
-        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+        let text = repo_root_text(rel)?;
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {rel}: {e}")))
     }
 
     fn perm_list(rel: &str, which: &str) -> Option<Vec<String>> {
@@ -30983,6 +33652,58 @@ mod settings_tests {
         );
     }
 
+    /// #170: the waiting rule was already in this paragraph and the runs broke it anyway, because
+    /// the only idiom it gave — `until grep -q '<marker>' <output-file>` — needs a LOCAL FILE, and
+    /// the wait the runs actually do is on GitHub. So they probed one turn at a time: 320 of one
+    /// run's 788 main-loop turns were nothing but `gh pr view --json headRefOid` / `gh pr checks`,
+    /// 60% of that run's whole enumeration bill, with three or more sub-agents live for 317 of
+    /// them. The paragraph has to carry the GitHub-side idiom too, or the rule stays unreachable
+    /// for the case that costs the money.
+    #[test]
+    fn the_waiting_rule_covers_the_github_side_wait_and_not_only_a_local_file() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let para = shell_shapes_paragraph(&prompt);
+        // The RULE, not merely the token. A mutation pass found that asserting
+        // `contains("pr-review-report await")` survives deleting the instruction, because the
+        // worked example further down the paragraph carries the same string — so the assertion
+        // held while the sentence that tells a run what to do was gone.
+        assert!(
+            para.contains("WAITING ON GITHUB IS `pr-review-report await`"),
+            "the paragraph must STATE the rule, not merely mention the subcommand in an example: \
+             {para}"
+        );
+        assert!(
+            para.contains("@<sha-before-the-push>") || para.contains("@<sha>"),
+            "the push half is what 412 of the measured probes were reading; an example that omits \
+             it teaches only half the wait: {para}"
+        );
+        // The anti-pattern has to be named as such. "Use await" alone leaves the per-turn probe a
+        // reasonable-looking alternative, and it is the one the runs reach for by default.
+        assert!(
+            para.contains("gh pr view --json headRefOid"),
+            "the paragraph must name the probe it is displacing, or the displacement is advice: \
+             {para}"
+        );
+        // ONE-SHOT's own CI sentence used to prescribe raw `gh pr checks` polling — the exact
+        // shape measured. A rule in one paragraph and its counter-example in the next is how the
+        // per-turn probe stayed defensible.
+        let one_shot = prompt
+            .split("\n\n")
+            .find(|p| p.contains("ONE-SHOT, NOT A LOOP"))
+            .expect("campaign-prompt.txt must carry the ONE-SHOT paragraph");
+        assert!(
+            one_shot.contains("pr-review-report await"),
+            "the one place the prompt tells a run to wait for CI must name the bounded wait: \
+             {one_shot}"
+        );
+        assert!(
+            !one_shot.contains("`gh pr checks` / `gh run watch`"),
+            "ONE-SHOT must not still offer the per-probe poll as the way to wait: {one_shot}"
+        );
+    }
+
     /// The vetter's prompt is where the verdict vocabulary is TAUGHT, and a prompt still offering
     /// `relink` would spend a whole run's tool calls discovering the guard refuses it.
     #[test]
@@ -31165,6 +33886,145 @@ mod settings_tests {
         );
     }
 
+    /// #192, the VETTER half — the deeper one. The flag on `rain.dia#22` was upheld by a note that
+    /// reproduced the producer's specifics in the producer's own words, and on the record that is
+    /// indistinguishable from a note whose author opened the cited diff. `citationEvidence` is what
+    /// the tool now hands the vetter; this pins the prompt that makes the vetter USE it.
+    ///
+    /// SCOPED to the bullet, on the pattern above: `citationEvidence` and `rain.dia#22` both appear
+    /// elsewhere in this prompt's neighbourhood, so a whole-file `contains` would keep passing over
+    /// a gutted bullet.
+    #[test]
+    fn the_vetter_prompt_makes_the_note_say_what_it_read() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let gate = vetter_bullet(&prompt, "PROVENANCE");
+        assert!(
+            gate.contains("citationEvidence"),
+            "the vetter must be told the field EXISTS by name, or it reads the flag and stops: \
+             {gate}"
+        );
+        // The instruction that actually changes the record. Without it the field is one more thing
+        // to skim past, and the note stays a restatement.
+        assert!(
+            gate.contains("**So OPEN the cited diff and make your note say what you found there**"),
+            "the bullet's whole point is the NOTE — a field nobody is told to write from changes \
+             nothing: {gate}"
+        );
+        assert!(
+            gate.contains("indistinguishable from one that never opened anything"),
+            "the vetter has to be told WHY restating fails, not merely that it is discouraged: \
+             {gate}"
+        );
+        // THE HARD CONSTRAINT, in the prompt. Handing the vetter a new machine-checkable signal
+        // without this sentence is exactly how a check that improves evidence turns into a check
+        // that rejects sound flags — which is the outcome the ruling on rain.dia#22 forbids.
+        assert!(
+            gate.contains("it is never on its own a reason to reject"),
+            "the evidence line is EVIDENCE; a bullet that let it stand as a ground would convert \
+             correct closes into rework: {gate}"
+        );
+        assert!(
+            gate.contains("that is `uphold` with the correction IN YOUR NOTE"),
+            "a wrong citation under a RIGHT outcome is a correction on the record, not a reject — \
+             this is the rain.dia#22 ruling stated to the actor that would otherwise re-litigate \
+             it: {gate}"
+        );
+        // The two false-alarm shapes, named. A vetter that does not know these are ordinary will
+        // read every one of them as a defect.
+        assert!(
+            gate.contains("argues about CURRENT MAIN as well as about the landing"),
+            "a sound reason names current-main symbols the cited change never touched: {gate}"
+        );
+        assert!(
+            gate.contains("a fix by DELETION leaves its evidence on the removed side"),
+            "four of the seven live already-fixed flags are fixed-by-removal — a vetter reading \
+             only the added side would call them all unsupported: {gate}"
+        );
+        assert!(
+            gate.contains("rain.dia#22"),
+            "the rule carries the incident it was written from: {gate}"
+        );
+        // The vetter's surface is eight MCP tools with no Bash, no `gh` and no `git`, and NONE of
+        // them returns a commit diff. "Open the cited diff" is therefore executable for a PR anchor
+        // and impossible for a commit one — and an instruction a role cannot perform gets answered
+        // in prose, which is the exact defect this bullet exists to end. So it has to name which
+        // read reaches which anchor and require the note to SAY which one it made. (CLAUDE.md: a
+        // gate on one edge needs a transition on the other.)
+        assert!(
+            gate.contains("**AND NAME THE READ YOU MADE"),
+            "a note that does not say WHICH read it made cannot be told apart from one that made \
+             none: {gate}"
+        );
+        assert!(
+            gate.contains("call `pr_context` on the cited PR"),
+            "the PR anchor's read must be named as the typed tool that performs it: {gate}"
+        );
+        assert!(
+            gate.contains("no tool on this surface returns a commit diff"),
+            "a commit anchor is UNREACHABLE from this surface, and the bullet must say so rather \
+             than mandate a read the strict-MCP profile denies: {gate}"
+        );
+        assert!(
+            gate.contains("Claiming a read you could not perform"),
+            "the failure mode the commit case invites has to be named, or the vetter writes as \
+             though it opened something: {gate}"
+        );
+    }
+
+    /// #192, the PRODUCER half. The evidence line is written onto the flag at flag time, which is
+    /// where a bad citation is cheapest to catch — and, since #191, where it does the most damage:
+    /// `flag_grounds` reads the reason back off this comment and a cited landing switches the
+    /// `covered-by-open-pr` block OFF.
+    #[test]
+    fn the_producer_prompt_says_the_flag_carries_its_citation_evidence() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step = producer_step(&prompt, "7a");
+        assert!(
+            step.contains("CITATION EVIDENCE IS APPENDED TO YOUR FLAG, AND YOU READ IT BACK"),
+            "the producer has to know the line exists AND that reading it is the point: {step}"
+        );
+        // The guarantee that REPLACED "it never refuses on that". The evidence line is still
+        // report-only in every reading but one, and the prompt has to state the boundary exactly:
+        // a producer told "this can refuse" without being told WHEN starts writing reasons that
+        // dodge a gate it has to guess at, which is the token-gaming failure #192 warned about.
+        assert!(
+            step.contains("It refuses on exactly ONE reading of that line, and only this one"),
+            "the boundary must be stated as a boundary — 'sometimes refuses' is what makes a \
+             producer write to the gate instead of to the truth: {step}"
+        );
+        assert!(
+            step.contains("A partial miss NEVER refuses"),
+            "the report/refuse split is the whole #192 ruling and the producer has to know which \
+             side it is on: {step}"
+        );
+        assert!(
+            step.contains("NOT TOUCHED BY IT"),
+            "the producer is told the exact phrase that means it cited the wrong change, because \
+             that phrase is what it will actually see: {step}"
+        );
+        assert!(
+            step.contains("re-flag with it"),
+            "naming the defect without naming the move leaves the producer with a finding and no \
+             transition: {step}"
+        );
+        // The read-at-sha shape itself, named, with the move. This is the defect the gate exists
+        // for and the producer is the only actor that can avoid writing it.
+        assert!(
+            step.contains("DO NOT CITE THE SHA YOU READ MAIN AT"),
+            "the gate refuses a shape the producer will otherwise keep writing, because it looks \
+             like a valid anchor and passes the recency check: {step}"
+        );
+        assert!(
+            step.contains("cite a path or symbol THAT CHANGE ITSELF contains"),
+            "a rename is the one honest way to trip this gate, so the escape has to be on the \
+             page or a sound flag has a refusal and no move: {step}"
+        );
+    }
+
     /// #140, producer side. The two prompts are deliberately symmetric: step 5 governs the PR the
     /// producer OPENS and 7a the close-candidate flag it FILES, and both offered a free-text
     /// why-not. Narrowing only the vetter would leave the producer writing waivers that are now
@@ -31253,6 +34113,50 @@ mod settings_tests {
         assert!(
             !prompt.contains("NEITHER a screenshot NOR a stated why-not"),
             "7a's old open-ended bar must be gone, not shadowed by a stricter sentence above it"
+        );
+    }
+
+    /// #142: the enforcement point stays at the vetter and at step 3c, so 3c's list has to be the
+    /// list the tool computes. A path enumeration written into the step is a SECOND definition of
+    /// `is_ui_path` that drifts from the first while reading as though it agrees — the drift that
+    /// left `cyclo.site`'s `src/lib/components/*.svelte` outside both, which is where every PR
+    /// #140 was filed about lived.
+    #[test]
+    fn step_3c_takes_its_list_from_the_tool_and_not_from_a_path_list_of_its_own() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step3c = producer_step(&prompt, "3c");
+
+        assert!(
+            step3c.contains("`worklist` ROWS WHOSE `nextAction` IS `screenshot-3c`"),
+            "3c's list must BE the tool's rows, named as such: {step3c}"
+        );
+        assert!(
+            step3c.contains("`is_ui_path` is the ONE definition"),
+            "3c must say which side owns the definition, or a reader re-derives it here: {step3c}"
+        );
+        // `unknown` routes here too, and a step that only explains `yes` reads as though a PR whose
+        // file list could not be resolved does not need one.
+        assert!(
+            step3c.contains("`unknown` means nothing ruled UI out"),
+            "3c must say what `unknown` means, since it is half of what routes a PR here: {step3c}"
+        );
+        // A filename is not how a shot is recognised — that is the whole of the #155/#156 defect.
+        assert!(
+            step3c.contains("do not go looking for one particular filename"),
+            "3c must not send the producer hunting a filename shape: {step3c}"
+        );
+        // …and the old shape must be gone from the PROMPT, not merely overridden further down.
+        assert!(
+            !prompt.contains("a PR that already has `shots/<n>.png` is done"),
+            "the filename-shaped marker test must be gone, not shadowed by a later sentence"
+        );
+        // 3c reads its fleet through the tool like every other step: a per-PR `gh pr view` here is
+        // the loose transition CLAUDE.md's north star is about, and it is what re-derived the list.
+        assert!(
+            !step3c.contains("gh pr view"),
+            "3c must not enumerate its own fleet with raw gh: {step3c}"
         );
     }
 
@@ -36728,6 +39632,43 @@ mod worklist_tests {
         let row = worklist_row("o/r", &detail);
         assert_eq!(row["nextAction"], "screenshot-3c");
         assert_eq!(row["markers"]["uiTouch"], "yes");
+        assert_eq!(row["markers"]["screenshotSettled"], false);
+    }
+
+    /// #142: a posted shot settles the requirement WHATEVER step 5 named the file. Matching
+    /// `shots/<number>.png` settles it only for raindex, and on 2026-08-04 that left
+    /// `rain-org-health#155`/`#156` — both carrying `shots/rain-org-health-<n>.png` — routed to
+    /// `screenshot-3c` on every run, which is also what held them out of `green-ready`.
+    #[test]
+    fn worklist_row_a_posted_shot_settles_the_requirement_whatever_the_file_is_called() {
+        let with_shot = |name: &str| {
+            json!({
+                "number": 155, "headRefOid": "H",
+                "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
+                "mergeStateStatus": "CLEAN", "labels": [],
+                "files": [{"path":"site/metrics.html"}], "changedFiles": 1,
+                "comments": [{"author": {"login": "thedavidmeister"}, "body": format!(
+                    "🤖 ai:producer\n\n![](https://raw.githubusercontent.com/rainlanguage/raindex/pr-screenshots/{name})"
+                )}],
+            })
+        };
+        for name in [
+            "shots/rain-org-health-155.png",
+            "shots/155.png",
+            "shots/rain-org-health-155-after.png",
+            "shots/roh-remove-overview.png",
+        ] {
+            let row = worklist_row("rainlanguage/rain-org-health", &with_shot(name));
+            assert_eq!(row["markers"]["screenshotSettled"], true, "{name}");
+            assert_eq!(row["nextAction"], "green-ready", "{name}");
+        }
+        // An UNTRUSTED author's shot settles nothing: the marker is public body text, so trust is
+        // by author here exactly as it is everywhere else.
+        let mut spoofed = with_shot("shots/rain-org-health-155.png");
+        spoofed["comments"][0]["author"]["login"] = json!("passer-by");
+        let row = worklist_row("rainlanguage/rain-org-health", &spoofed);
+        assert_eq!(row["markers"]["screenshotSettled"], false);
+        assert_eq!(row["nextAction"], "screenshot-3c");
     }
 
     /// #147: a file list that is not known to be whole means the PR MAY touch UI, so the screenshot
@@ -38327,8 +41268,10 @@ mod human_rule_tests {
         let (anchor, ..) = record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
         assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
         // The same anchor string the vetter's own comment carries — one re-flag stales both.
-        assert!(cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x")
-            .contains("close-candidate @2026-07-17T21:23:11Z"));
+        assert!(
+            cc_verdict_comment("2026-07-17T21:23:11Z", "reject", "x", None)
+                .contains("close-candidate @2026-07-17T21:23:11Z")
+        );
     }
 
     // With no LIVE flag the ruling is on the ISSUE AS FILED, and it says so. That wording is the
@@ -39216,9 +42159,8 @@ mod marketplace_tests {
     use serde_json::json;
 
     fn read_json(rel: &str) -> Option<Value> {
-        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel);
-        let text = std::fs::read_to_string(&path).ok()?;
-        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {path}: {e}")))
+        let text = repo_root_text(rel)?;
+        Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {rel}: {e}")))
     }
 
     // The whole point: installers read the LISTING, so a listing that names a different version
@@ -39406,11 +42348,7 @@ mod marketplace_tests {
     // or it is listed with no description and no argument hint.
     #[test]
     fn every_shipped_command_carries_its_frontmatter() {
-        let dir = format!(
-            "{}/../plugins/human-fsm/commands",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = std::fs::read_dir(repo_root_path("plugins/human-fsm/commands")) else {
             return; // not checked out (nix build sandbox)
         };
         // The MCP grants are resolved against what this repo ACTUALLY ships — the plugin's own
@@ -39834,11 +42772,7 @@ mod marketplace_tests {
     // legal shape again.
     #[test]
     fn nr_grants_the_two_reads_the_source_it_audits_and_the_lens() {
-        let path = format!(
-            "{}/../plugins/human-fsm/commands/nr.md",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -41221,7 +44155,8 @@ mod mcp_tests {
                 include_skipped: true,
                 limit: 25,
             },
-            McpCall::CloneList,
+            McpCall::CloneList { include_all: false },
+            McpCall::CloneList { include_all: true },
         ];
         for c in &calls {
             assert_eq!(
@@ -41243,54 +44178,166 @@ mod mcp_tests {
         assert!(e.contains("max_diff_bytes must be an integer in"), "{e}");
     }
 
-    // The advice each refusal gives must be advice that can work. With one fixed budget it is:
-    // lowering the named argument lowers the payload against an allowance that does not move.
+    /// The SMALLEST argument object each tool validates. One arm per tool, rather than one union
+    /// blob, because two tools disagree about the type of a shared name (`issue` is `owner/repo#n`
+    /// to the flag tools and a bare number to `weaken_closes`) — and because the arms double as a
+    /// statement of what a minimal call to each transition looks like.
+    fn minimal_args(name: &str) -> Value {
+        match name {
+            "unvetted"
+            | "next_ready"
+            | "next_close_candidate"
+            | "unvetted_close_candidates"
+            | "clone_list"
+            | "clone_gc" => json!({}),
+            "pr_context" | "pr_checkout" => json!({"pr": "o/r#1"}),
+            "record_verdict" => json!({
+                "pr": "o/r#1", "verdict": "ready", "note": "n", "cost": 1, "basis": "b",
+                "covered": [{"path": "src/lib.rs"}]
+            }),
+            "close_candidate_context" => json!({"issue": "o/r#1"}),
+            "record_close_candidate_verdict" => {
+                json!({"issue": "o/r#1", "verdict": "uphold", "note": "n"})
+            }
+            "human_rule" => json!({"pr": "o/r#1", "ruling": "reject", "note": "n"}),
+            "human_rule_issue" => json!({"issue": "o/r#1", "ruling": "reject", "note": "n"}),
+            "human_close" => json!({"subject": "o/r#1", "note": "n"}),
+            "clone_create" => json!({"repo": "o/r", "name": "x", "branch": "b"}),
+            "clone_release" | "push" => json!({"clone": "x"}),
+            "open_pr" => {
+                json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "/b.md"})
+            }
+            "repair_qa_block" => json!({"pr": "o/r#1", "block_file": "/b.md"}),
+            "weaken_closes" => json!({"pr": "o/r#1", "issue": 5}),
+            _ => panic!("{name} has no minimal-args arm — add one when you add a tool"),
+        }
+    }
+
+    /// The profile that LISTS this tool, so a refusal can be driven through the real server rather
+    /// than through `oversize_result_error` in isolation.
+    fn profile_listing(name: &str) -> McpProfile {
+        [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human]
+            .into_iter()
+            .find(|p| p.tool_names().contains(&name))
+            .unwrap_or_else(|| panic!("{name} is on no profile"))
+    }
+
+    // The advice each refusal gives must be advice that can work — and #117 is what it looks like
+    // when it cannot: `clone_list`, whose schema was `{"properties": {}}`, was told to "lower
+    // `limit`" by a catch-all that asserted every non-`pr_context` tool had one. The producer had no
+    // second call to make, so it improvised `ls -d …/*/ | wc -l` and reported a COUNT in place of a
+    // state load.
+    //
+    // The old version of this test asserted "each" while naming three tools by hand, which is why
+    // the one tool that could never satisfy the property sat outside it. This one walks the
+    // ADVERTISED TABLE, so a tool added tomorrow is inside it on the day it is added.
     #[test]
     fn each_refusal_names_an_argument_that_actually_narrows_it() {
-        let too_big = FakeExec {
-            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
-            ..FakeExec::ok()
-        };
-        let load = text(&too_big.handle(&call("unvetted", json!({}))).unwrap());
-        assert!(load.contains("Re-call NARROWER: lower `limit`."), "{load}");
-        let ctx = text(
-            &too_big
-                .handle(&call(
-                    "pr_context",
-                    json!({"pr": "o/r#1", "max_diff_bytes": 1_000}),
-                ))
-                .unwrap(),
+        let all = mcp_all_tools();
+        let tools = all.as_array().unwrap();
+        for t in tools {
+            let name = t["name"].as_str().unwrap();
+            let f = FakeExec {
+                profile: profile_listing(name),
+                reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
+                ..FakeExec::ok()
+            };
+            let resp = f.handle(&call(name, minimal_args(name))).unwrap();
+            assert!(
+                is_error(&resp),
+                "{name}: an over-budget result must be refused"
+            );
+            let msg = text(&resp);
+            assert!(
+                msg.contains("over the") && msg.contains("byte budget"),
+                "{name} was refused for some OTHER reason, so this test proved nothing: {msg}"
+            );
+            // Whatever it advises, it forbids the improvisation. Both #78 and #117 ended in one.
+            assert!(
+                msg.contains("Do NOT improvise a substitute read"),
+                "{name}: {msg}"
+            );
+            match narrowing_argument(name) {
+                Some(arg) => {
+                    assert!(
+                        msg.contains(&format!("Re-call NARROWER: lower `{arg}`")),
+                        "{name}: {msg}"
+                    );
+                    // THE property: the argument the refusal names is one the tool's own schema
+                    // advertises. Same table entry, so the two cannot disagree.
+                    assert!(
+                        t["inputSchema"]["properties"][&arg].is_object(),
+                        "{name}'s refusal names `{arg}`, which its schema does not advertise: {}",
+                        t["inputSchema"]
+                    );
+                }
+                None => {
+                    assert!(
+                        msg.contains("NO argument makes this call smaller"),
+                        "{name}: {msg}"
+                    );
+                    assert!(!msg.contains("Re-call NARROWER"), "{name}: {msg}");
+                    // The catch-all's answer specifically: a tool with no narrowing argument must
+                    // never be told to lower one.
+                    assert!(!msg.contains("`limit`"), "{name}: {msg}");
+                    // …and the `None` text must be about THIS tool, not about the one whose case it
+                    // was originally written for.
+                    assert!(
+                        msg.contains(&format!("`{name}` accepts none")),
+                        "{name}: {msg}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            tools.len(),
+            20,
+            "a tool was added or removed — check it against this property, then update the count"
         );
-        assert!(
-            ctx.contains("Re-call NARROWER: lower `max_diff_bytes`."),
-            "{ctx}"
-        );
-        // `next_ready` accepts a REAL `limit`, so the advice is one the caller can follow — and it
-        // is followable to a fix rather than to another refusal, because rows are independent and
-        // dropping one strictly removes its bytes. (It cannot reach this refusal in practice: the
-        // per-field caps put a full page under the budget by construction. Both halves matter —
-        // #117 is what a tool whose refusal names an argument it does not accept looks like.)
-        let human = FakeExec {
-            profile: McpProfile::Human,
-            reply: Ok("x".repeat(MCP_MAX_RESULT_BYTES + 1_001)),
-            ..FakeExec::ok()
-        };
-        let nr = text(
-            &human
-                .handle(&call("next_ready", json!({"limit": 3})))
-                .unwrap(),
-        );
-        assert!(nr.contains("Re-call NARROWER: lower `limit`."), "{nr}");
-        assert!(
-            mcp_all_tools()
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|t| t["name"] == json!("next_ready"))
-                .unwrap()["inputSchema"]["properties"]["limit"]
-                .is_object(),
-            "the argument the refusal names must be one the schema advertises"
-        );
+    }
+
+    // The other direction of the same drift. A tool that advertises one of the two arguments this
+    // server narrows with, and declares nothing, would get the truthful-but-useless `None` refusal
+    // — safe, but a page the caller could have re-asked for smaller and was not told to.
+    #[test]
+    fn a_tool_advertising_a_narrowing_argument_must_declare_it() {
+        for t in mcp_all_tools().as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            let props = &t["inputSchema"]["properties"];
+            for arg in ["limit", "max_diff_bytes"] {
+                if props[arg].is_object() {
+                    assert_eq!(
+                        narrowing_argument(name).as_deref(),
+                        Some(arg),
+                        "{name} advertises `{arg}` but its refusal does not name it"
+                    );
+                }
+            }
+        }
+    }
+
+    // The declaration is OURS, not MCP's: it must not reach the wire, where it would be an
+    // unrecognised key on every tool object and preamble bytes on every API call.
+    #[test]
+    fn the_narrowing_declaration_never_reaches_the_listed_schema() {
+        let declared = mcp_all_tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t.get(TOOL_NARROWS_KEY).is_some())
+            .count();
+        assert_eq!(declared, 5, "five tools narrow; the rest genuinely cannot");
+        for profile in [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human] {
+            for t in mcp_tools(profile).as_array().unwrap() {
+                assert!(
+                    t.get(TOOL_NARROWS_KEY).is_none(),
+                    "{profile:?} listed {} with the declaration attached",
+                    t["name"]
+                );
+                // …and the listing is otherwise intact.
+                assert!(t["name"].is_string() && t["inputSchema"]["type"] == json!("object"));
+            }
+        }
     }
 
     /// A `pr_context` input whose metadata is `meta_bytes`-ish and whose diff is `diff` bytes long.
@@ -42626,7 +45673,320 @@ mod mcp_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // --- the listing: counts that never truncate, rows that may -----------------------------------
+
+    // The four buckets must PARTITION the box, and they must be the ladder `release_decision` walks
+    // — not a re-derivation of it. A clone counted under a reason that does not match the decision
+    // is a caller told to commit changes on a clone that is actually holding unpushed commits.
+    #[test]
+    fn clone_hold_is_release_decisions_own_ladder_as_a_discriminant() {
+        for (unpushed, dirt, want) in [
+            (None, Some(""), Some("unknown")),
+            (None, Some("?? a"), Some("unknown")), // unknown push state OUTRANKS dirt
+            (Some(3), Some(""), Some("unpushed")),
+            (Some(3), Some("?? a"), Some("unpushed")), // unpushed OUTRANKS dirt
+            (Some(0), None, Some("unknown")),          // `git status` failed
+            (Some(0), Some("?? a\n M b"), Some("uncommitted")),
+            (Some(0), Some(""), None),
+        ] {
+            let s = st(unpushed, dirt);
+            assert_eq!(clone_hold(&s), want, "{unpushed:?}/{dirt:?}");
+            // …and it agrees with the decision it is derived from, in both directions.
+            assert_eq!(
+                clone_hold(&s).is_none(),
+                release_decision(&s, false).is_ok(),
+                "{unpushed:?}/{dirt:?}"
+            );
+        }
+        // Every discriminant it can return is a key `clone_list` counts under, so the counts can
+        // never lose a clone to a bucket nobody prints.
+        for h in CLONE_HOLDS {
+            assert!(!h.is_empty());
+        }
+        assert!(!CLONE_HOLDS.contains(&CLONE_RELEASABLE));
+    }
+
+    // The rows the budget drops are the ones a caller acts on LAST. An unreadable clone might be
+    // holding anything; an unpushed one is holding work that exists nowhere else; a dirty one is
+    // usually build output; a releasable one is the answer to no question.
+    #[test]
+    fn a_listing_is_truncated_from_the_least_interesting_end() {
+        let ranks: Vec<u8> = [Some("unknown"), Some("unpushed"), Some("uncommitted"), None]
+            .into_iter()
+            .map(clone_row_rank)
+            .collect();
+        assert_eq!(ranks, vec![0, 1, 2, 3]);
+        // An unrecognised discriminant sorts with the releasable ones rather than jumping the
+        // queue — a new hold word must be ADDED to the ladder to be treated as one.
+        assert_eq!(clone_row_rank(Some("something-new")), 3);
+
+        // …and the fit keeps a PREFIX of whatever order it is handed, so that order is the whole of
+        // the truncation policy.
+        let rows: Vec<Value> = (0..2_000)
+            .map(|i| serde_json::json!({"name": format!("clone-{i}"), "held": "unpushed"}))
+            .collect();
+        let mut doc = serde_json::Map::new();
+        fit_clone_rows(&mut doc, "clones", &rows);
+        let kept = doc["clones"].as_array().unwrap();
+        assert!(
+            !kept.is_empty() && kept.len() < rows.len(),
+            "{}",
+            kept.len()
+        );
+        assert_eq!(kept.as_slice(), &rows[..kept.len()]);
+        assert_eq!(doc["listed"], serde_json::json!(kept.len()));
+        assert_eq!(doc["omitted"], serde_json::json!(rows.len() - kept.len()));
+    }
+
+    // THE requirement of #117: no clone result can exceed the budget, whatever the box holds. The
+    // guard measured 60,237 bytes at ~289 clones and 38,229 at a smaller count; a fixed row cap
+    // would not have covered either, because a row's size is a clone NAME and a BRANCH name.
+    #[test]
+    fn a_clone_result_can_never_exceed_the_ceiling() {
+        for (count, width) in [
+            (0, 10),
+            (5, 10),
+            (289, 200),   // the box #117 was found on
+            (5_000, 60),  // ~20x that box
+            (50, 40_000), // one row bigger than the whole budget
+            (2, 4_000_000),
+        ] {
+            let rows: Vec<Value> = (0..count)
+                .map(|i| {
+                    serde_json::json!({
+                        "name": format!("c{i}"),
+                        "branch": "b".repeat(width),
+                        "held": "uncommitted",
+                    })
+                })
+                .collect();
+            let mut doc = serde_json::Map::new();
+            doc.insert(
+                "roots".to_string(),
+                clone_roots_echo(&["/home/x/code".into()]),
+            );
+            doc.insert("total".to_string(), Value::from(count));
+            fit_clone_rows(&mut doc, "clones", &rows);
+            let len = Value::Object(doc.clone()).to_string().len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "{count} rows x {width} produced {len} bytes, over {MCP_MAX_RESULT_BYTES}"
+            );
+            // The split is always STATED, so what is missing is a number rather than an inference.
+            let listed = doc["listed"].as_u64().unwrap() as usize;
+            assert_eq!(listed, doc["clones"].as_array().unwrap().len());
+            assert_eq!(doc["omitted"].as_u64().unwrap() as usize, count - listed);
+            // A row too big for the budget on its own omits itself rather than being clipped into
+            // something that reads like a whole row.
+            if width < MCP_MAX_RESULT_BYTES && count > 0 {
+                assert!(listed > 0, "{count} rows x {width} fitted nothing");
+            }
+        }
+        // The roots echo is the one part of the envelope that is not a number, so it is the one
+        // part that has to be bounded before the row fit can promise anything.
+        let absurd = "/".to_string() + &"r".repeat(100_000);
+        let echo = clone_roots_echo(&[absurd.clone(), absurd]);
+        assert!(
+            echo.to_string().len() <= 2 * (CLONE_ECHO_BYTES * 2 + 8),
+            "{}",
+            echo.to_string().len()
+        );
+    }
+
+    // The whole box as counts, the held ones as rows. Real clones, because the four states are
+    // states of a real `git` working tree and a stub would assert our belief about git instead.
+    #[test]
+    fn a_clone_listing_states_the_whole_box_and_lists_what_is_held() {
+        let root = tmp_root("listing");
+        let rs = root.to_string_lossy().to_string();
+        // `unknown`: a directory with a `.git` that is not a repository at all.
+        mk_clone(&root, "d-unknown");
+        // `releasable`: a real repo, no commits, nothing untracked.
+        let clean = root.join("a-clean");
+        std::fs::create_dir_all(&clean).unwrap();
+        if git_run(&clean, &["init", "-q"]).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // no git in this sandbox
+        }
+        // `uncommitted`: a real repo with an untracked file.
+        let dirty = root.join("b-dirty");
+        std::fs::create_dir_all(&dirty).unwrap();
+        git_run(&dirty, &["init", "-q"]).unwrap();
+        std::fs::write(dirty.join("f.txt"), "x").unwrap();
+        // `unpushed`: a real repo with a commit on no remote.
+        let wip = root.join("c-wip");
+        std::fs::create_dir_all(&wip).unwrap();
+        git_run(&wip, &["init", "-q"]).unwrap();
+        let _ = git_run(&wip, &["config", "user.email", "t@t"]);
+        let _ = git_run(&wip, &["config", "user.name", "t"]);
+        std::fs::write(wip.join("f.txt"), "work").unwrap();
+        git_run(&wip, &["add", "-A"]).unwrap();
+        git_run(
+            &wip,
+            &["-c", "commit.gpgsign=false", "commit", "-qm", "wip"],
+        )
+        .unwrap();
+
+        let held = clone_list_exec(std::slice::from_ref(&rs), false).unwrap();
+        // The counts cover the WHOLE box and every state has a key, at zero or not.
+        assert_eq!(held["total"], json!(4));
+        assert_eq!(held["counts"]["unknown"], json!(1));
+        assert_eq!(held["counts"]["unpushed"], json!(1));
+        assert_eq!(held["counts"]["uncommitted"], json!(1));
+        assert_eq!(held["counts"][CLONE_RELEASABLE], json!(1));
+        let sum: u64 = ["unknown", "unpushed", "uncommitted", CLONE_RELEASABLE]
+            .iter()
+            .map(|k| held["counts"][k].as_u64().unwrap())
+            .sum();
+        assert_eq!(
+            sum, 4,
+            "the counts must partition the box: {}",
+            held["counts"]
+        );
+
+        // The rows are the HELD ones, worst first, and the releasable one is counted, not listed.
+        assert_eq!(held["include"], json!("held"));
+        assert_eq!(held["matched"], json!(3));
+        assert_eq!(held["listed"], json!(3));
+        assert_eq!(held["omitted"], json!(0));
+        let names: Vec<&str> = held["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["d-unknown", "c-wip", "b-dirty"]);
+        let row = &held["clones"][1];
+        assert_eq!(row["held"], json!("unpushed"));
+        assert_eq!(row["releasable"], json!(false));
+        assert_eq!(row["unpushed"], json!(1));
+        assert_eq!(row["root"], json!(rs));
+        assert!(row["ageDays"].is_u64() && row["branch"].is_string());
+
+        // `include: all` adds the releasable one, LAST, and changes no count.
+        let all = clone_list_exec(std::slice::from_ref(&rs), true).unwrap();
+        assert_eq!(all["counts"], held["counts"]);
+        assert_eq!(all["total"], json!(4));
+        assert_eq!(all["include"], json!("all"));
+        assert_eq!(all["matched"], json!(4));
+        let all_names: Vec<&str> = all["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(all_names, vec!["d-unknown", "c-wip", "b-dirty", "a-clean"]);
+        assert_eq!(all["clones"][3]["held"], json!(null));
+        assert_eq!(all["clones"][3]["releasable"], json!(true));
+
+        // An unreadable root contributes nothing rather than aborting the listing.
+        let with_missing = clone_list_exec(&[rs, "/no/such/root".to_string()], false).unwrap();
+        assert_eq!(with_missing["total"], json!(4));
+        assert_eq!(with_missing["roots"].as_array().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A refused `include` reaches no effect, and is refused rather than quietly read as the default
+    // — a listing the caller believes is the whole box and is not is #117's failure with the guard
+    // on the other side of it.
+    #[test]
+    fn clone_list_include_is_refused_rather_than_reinterpreted() {
+        let f = FakeExec::producer();
+        for bad in [
+            json!({"include": "everything"}),
+            json!({"include": 1}),
+            json!({"include": ["all"]}),
+        ] {
+            let resp = f.handle(&call("clone_list", bad.clone())).unwrap();
+            assert!(is_error(&resp), "{bad} must be refused");
+            assert!(text(&resp).contains("include must be"), "{}", text(&resp));
+        }
+        assert!(f.calls().is_empty(), "a refused include reached an effect");
+        for (args, want) in [
+            (json!({}), false),
+            (json!({"include": "held"}), false),
+            (json!({"include": " all "}), true),
+        ] {
+            f.handle(&call("clone_list", args.clone())).unwrap();
+            assert_eq!(
+                *f.calls().last().unwrap(),
+                McpCall::CloneList { include_all: want },
+                "{args}"
+            );
+        }
+        // The schema advertises exactly the two words the guard accepts.
+        let all = mcp_all_tools();
+        let t = all
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == json!("clone_list"))
+            .unwrap();
+        assert_eq!(
+            t["inputSchema"]["properties"]["include"]["enum"],
+            json!(["held", "all"])
+        );
+    }
+
     // --- the sweep --------------------------------------------------------------------------------
+
+    // The sweep's rows are the account of an IRREVERSIBLE act, so the budget must never be paid for
+    // out of them. What it drops is `kept` rows — clones that are still on disk and can be listed
+    // again — and never an error or a deletion.
+    #[test]
+    fn a_sweep_report_keeps_its_account_of_what_it_destroyed() {
+        assert_eq!(gc_outcome_rank("error"), 0);
+        assert_eq!(gc_outcome_rank("deleted"), 1);
+        assert_eq!(gc_outcome_rank("would-delete"), 1);
+        assert_eq!(gc_outcome_rank("kept"), 2);
+        // An outcome nobody has taught it about sorts with `kept`, so a new word can only ever LOSE
+        // priority — never silently outrank a deletion.
+        assert_eq!(gc_outcome_rank("quarantined"), 2);
+
+        let mut recs: Vec<GcRecord> = (0..400)
+            .map(|i| GcRecord {
+                root: "/w".to_string(),
+                name: format!("clone-{i}"),
+                outcome: if i == 399 {
+                    "deleted"
+                } else if i == 398 {
+                    "error"
+                } else {
+                    "kept"
+                },
+                reason: "uncommitted changes".repeat(6),
+                bytes: 1_234_567,
+            })
+            .collect();
+        recs.sort_by_key(|r| gc_outcome_rank(r.outcome));
+        assert_eq!(
+            recs.iter().map(|r| r.outcome).take(2).collect::<Vec<_>>(),
+            vec!["error", "deleted"]
+        );
+        let rows: Vec<Value> = recs
+            .iter()
+            .map(|r| serde_json::json!({"name": r.name, "outcome": r.outcome, "reason": r.reason}))
+            .collect();
+        let mut doc = serde_json::Map::new();
+        doc.insert("scanned".to_string(), Value::from(recs.len()));
+        fit_clone_rows(&mut doc, "clones", &rows);
+        assert!(Value::Object(doc.clone()).to_string().len() <= MCP_MAX_RESULT_BYTES);
+        assert!(
+            doc["omitted"].as_u64().unwrap() > 0,
+            "this fixture must truncate"
+        );
+        // …and the two rows that record what happened survived the truncation.
+        let kept: Vec<&str> = doc["clones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["outcome"].as_str().unwrap())
+            .collect();
+        assert_eq!(kept[0], "error");
+        assert_eq!(kept[1], "deleted");
+        // The whole-sweep figures are never the thing that gets dropped.
+        assert_eq!(doc["scanned"], json!(400));
+    }
 
     #[test]
     fn the_sweep_only_considers_git_clones_directly_under_a_root() {

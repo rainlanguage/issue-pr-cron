@@ -341,7 +341,7 @@ server is the vetter's **only** tool surface.
 | `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost — refused unless `covered` accounts for every changed file |
 | `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                                |
 | `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                                  |
-| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                        |
+| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels, the full flag body, any prior verdicts, and `citationEvidence` — the machine's read of the cited change's own diff                   |
 | `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                        |
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
@@ -487,6 +487,59 @@ same parse `flag-close-candidate` gates the write on, so the two cannot disagree
 about it. It is not a claim that the citation holds: whether the merged PR is
 really this issue's fix is `/ncc` step 5's check, and `pr_context` still carries
 no merged/state field for the human to confirm it with.
+
+**And a citation that cannot be what it claims is now on the record.** `grounds`
+says what a reason CITES; it never said the cited change bears on the claim, and
+that gap is `rain.dia#22`: the flag said merged PR #48 "landed
+`testRoundTripEmpty` (line 27) and `testRoundTrip31Bytes` (line 32)" when #48 is
+an import-path standardisation whose touch on that file is `+2/-2` — PR #33
+added those tests. The vetter upheld it by restating the citation, which on the
+record is indistinguishable from checking it. So `flag-close-candidate`,
+`close_candidate_context` and `record_close_candidate_verdict` all carry a
+**citation evidence** line, read from the cited change's own diff: how many
+files it touches, its `+a/-d` on every path the reason names, and which symbols
+the reason names its changed lines do not contain.
+
+**One reading of it DOES gate, and only one.** A reason that names paths or
+symbols and cites a change containing NOT ONE of them — no named path in its
+file list, no named symbol in its changed lines — is refused at write time
+(`flag-close-candidate`, exit 5). That closes an EVASION of a guard that already
+existed: `already_fixed_recency_gate` refuses a bare `file:line` outright,
+because "this code is on main today" is not "a change landed that fixed this" —
+and appending the sha the tree was READ at converts that same claim into a
+commit anchor that always post-dates the issue, so the date check passes
+vacuously. Every commit-anchored flag on record is that shape.
+`raindex#588`/`#574`/`#573`/ `#570` all cite `bb83031`, which is "Merge pull
+request #2810 … fix/build-script-name" and touches `foundry.toml`,
+`script/Build.sol` and three siblings — not one of the Svelte components those
+four reasons are about; `raindex#928` cites `7ba0fa8` in the words "tauri-app/
+existed **at** 7ba0fa8", naming the state BEFORE the deletion it credits.
+Replayed over every flag in the live and closed queues, the gate refuses 4 of
+those 5 and **nothing else** — `#928` names no path or symbol at all, and an
+empty check is not a failed one.
+
+**Every WEAKER reading still gates nothing, and that is a measurement rather
+than a preference.** Over every `ai:close-candidate` flag in the live and closed
+queues carrying a fetchable anchor (21 of them, 2026-08-04), no threshold on any
+of these signals separates the sound citations from the one unsound one.
+Requiring a named symbol in the cited diff's changed lines would have passed
+`rain.dia#22` — its reason names `LibDia.t.sol`, and the import rewrite does
+touch `LibDia` — while refusing eleven sound flags, because an
+`already-fixed-on-main` reason argues about CURRENT MAIN as well as about the
+landing, and four of the seven live ones are fixed by DELETION, whose evidence
+is on the removed side. `rain.dia#22` was CLOSED on the merits with the
+correction recorded, since rejecting it would have cost a producer cycle to
+reach the same answer; a check that converted that into rework would be the
+wrong fix for it. So a partial miss is reported and never refused, and
+`rain.dia#22` itself passes the gate — the PR it cites does touch the file it
+names, which is all "connected" asks. The gate catches a citation about
+DIFFERENT CODE; whether a citation about the RIGHT code is the right change
+stays the human's call at `/ncc` step 5.
+
+Nothing here touches `already_fixed_anchor` or `flag_grounds`. The parse that
+answers "what does this reason CITE" is unchanged, so `blocksClose` on the live
+queue is unchanged too — replaying all 11 open flags through the gate before and
+after moves not one of them.
 
 The one hole this opens is closed where it is opened: a reason whose anchor is
 **one of the covering PRs** is citing the thing in flight as the reason to
@@ -698,6 +751,33 @@ naming the argument to narrow** — never truncated, never spilled. On 2026-07-2
 harness refused it, and the vetter improvised a fallback that silently dropped
 the whole open-threads accounting; the run log looked normal. A partial
 state-load cannot say what it is missing, so the tool refuses to produce one.
+
+**A refusal is only a redirect while a narrowing move exists** (#117). The
+argument each refusal names is declared on the tool's own table entry, beside
+the schema that has to advertise it, and a tool that declares none is told so —
+`narrowing_argument` used to be a match over the call whose catch-all was
+`Some("limit")`, which asserted a `limit` for seventeen variants of which two
+had one. `clone_list` was the one that bit: an empty input schema, a refusal
+saying "lower `limit`", and a producer with no second call to make, which
+improvised `ls -d …/*/ | wc -l` and reported **289 clones / 214G** where a state
+load belonged — every field the tool exists to carry (`branch`, `unpushed`,
+`uncommitted`, `ageDays`, `releasable`) gone, and nothing in the run saying so.
+The advice a caller cannot follow provokes the improvisation the refusal exists
+to prevent, so the prohibition on improvising is now in **both** branches, and
+`each_refusal_names_an_argument_that_actually_narrows_it` walks the advertised
+tool table rather than three tools named by hand.
+
+**Which is why an unbounded read is a bug in the read, not a case for the
+guard.** A tool whose result grows with the box or the queue fits itself to the
+budget the way `pr_context` does. `clone_list` and `clone_gc` state the whole
+population as **counts that are never truncated** and offer their per-clone rows
+to the budget in the order a caller acts on them — unreadable state first, then
+unpushed commits, then dirty trees, then releasable — with `listed`/`omitted`
+saying exactly how many rows the budget took. So the sample is the thing that
+shrinks and the accounting is not, which is the difference between a truncation
+that says what it is missing and a partial state-load that cannot. On the box
+#117 was found on, `clone_list` went from 38,492 bytes **refused** to 25,358
+bytes carrying all 139 held clones out of 242.
 
 **The budget must be lower than what the harness accepts, and that is the
 mechanism, not a preference.** If the harness is the thing that speaks, what
@@ -1290,6 +1370,75 @@ The `require-qa-block` PreToolUse hook stays exactly as it is. It binds every
 session on the box, including the interactive ones with no MCP surface at all,
 which are the population it was filed about; it is simply redundant on the cron
 producer's path now.
+
+### There is no screenshot gate at PR-open, and that is a ruling (#142)
+
+The QA block is gated at `gh pr create`. The screenshot is **not**, and asking
+for the same shape there is the obvious next move — a gate at open is worth more
+than a reject after the fact, because the reject costs a round trip through the
+queue. The ruling is that the enforcement point **stays where it is**: the
+vetter's SCREENSHOT GATE rejects a UI PR with no visual evidence, and the
+producer's step 3c backfills its own open UI PRs on the next pass, so the round
+trip runs inside the pipeline rather than through a human.
+
+What settles it is that the two gates are not the same shape. `require-qa-block`
+reads a `## QA` heading and four evidence lines — a STRUCTURE, present or
+absent, and `carries_qa_block` decides it exactly. The screenshot rule's subject
+is _does a user see this change_, and nothing on a `gh pr create` command line
+answers that. Measured over the **681 PRs the producer has opened since the
+cron's first commit** (`rainlanguage`, `cyclofinance`, `S01-Issuer`), with the
+shots on raindex's `pr-screenshots` branch as ground truth for _the producer
+judged this one visual and rendered it_ — **35** such PRs:
+
+| classifier                                                     | fires on | catches (of 35) | fires with no markup/style/template line changed |
+| -------------------------------------------------------------- | -------- | --------------- | ------------------------------------------------ |
+| `packages/webapp` \| `packages/ui-components` \| `site/*.html` | 78       | 24              | —                                                |
+| any `.svelte` / `.css` / `.html`                               | 116      | 31              | **32 of 116**                                    |
+| both, plus the whole `site/` tree                              | 123      | 35              | —                                                |
+
+The narrow rule misses **all nine** shot-carrying `cyclo.site` PRs, which is the
+repo both of #140's incidents happened in — `cyclo.site` keeps its components in
+`src/lib/components/`. Widening to extensions flips the failure over: **32 of
+the 116** it fires on change no markup, style or template line at all — and **5
+of that same 32** carry a screenshot the producer judged necessary anyway,
+because a string a `<script>` block assigns can be the text a user reads
+(`cyclo.site#432` renders generic error copy in place of a raw one). The rule
+that catches all 35 fires on 123 PRs and cannot say which of them a user sees.
+So every available classifier is wrong in one direction or both, and a refusal
+at open would land that error on the PR — whose only escape is the
+`screenshot pending (manual)` marker, i.e. it would manufacture pressure to
+write the bogus waiver #140 exists to remove.
+
+The same imprecision is **cheap** one step later. `is_ui_path` is read to ROUTE
+a PR to `screenshot-3c`, where step 3c's own next sentence is the narrowing —
+read the diff, skip a change with no visible effect. A false positive there
+costs one diff read, which is the price `UiTouch::Unknown` is already set at;
+the same false positive at open costs the PR. That asymmetry is why the
+classifier is deliberately wide and the gate deliberately absent.
+
+Three things the measurement found broken are fixed rather than ruled on,
+because the ruling above depends on all of them working:
+
+- **`is_ui_path` names all three families** (the frontend packages, the whole
+  `site/` tree, and the `.svelte`/`.css`/`.html` extensions). The claim that
+  step 3c catches its own open UI PRs was false for `cyclo.site`: neither the
+  tool nor the step could see a single one of them.
+- **A shot is recognised by its branch URL, not by a filename.** Step 5 names a
+  raindex shot `shots/<pr>.png` and every other repo's `shots/<repo>-<pr>.png`,
+  and the branch also holds per-view suffixes and shots naming no PR at all, so
+  matching `shots/<number>.png` recognised raindex's spelling and nothing else.
+  On 2026-08-04 `rain-org-health#155` and `#156` each carried
+  `shots/rain-org-health-<n>.png` and `worklist` reported both as having no
+  screenshot — re-routing them to `screenshot-3c` every run, which is also what
+  held them out of `green-ready`. `screenshot_settled` matches the subject the
+  vetter's SCREENSHOT GATE names — a `pr-screenshots/…png` in a trusted comment
+  — so the two ends of the convention are answering one question instead of one
+  of them matching a filename the other never mentions.
+
+The other half of #142 — moving the evidence channel so the artifact is keyed to
+branch + head sha and the shot rides in the BODY at open — is what a gate would
+require and is not done, because the gate is not being built. Reopen it with the
+gate, not before.
 
 ### Pushing a rework is a transition: `push`
 
