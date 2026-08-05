@@ -10404,6 +10404,11 @@ fn label_meta(label: &str) -> (&'static str, &'static str) {
         // `ai:relink` is deliberately ABSENT (#135): this table is consulted only for a label a
         // transition is about to WRITE, and no transition writes that label any more. The one PR
         // still carrying it is cleared by re-recording the verdict as `reject`, which strips it.
+        // RETIRED (#162) and never ENSURED any more — no transition writes this label, so nothing
+        // reaches this row. It stays for the same reason the `human:reject` row does: the label
+        // still exists across the org on the residue PRs the eyes-on triage has not re-flagged,
+        // and a `label_meta` that forgot a live label is how its colour and description get
+        // silently rewritten org-wide by whatever writes it next.
         "ai:blocked-deploy" => (
             "d93f0b",
             "AI producer: blocked on a deploy it can't complete (human)",
@@ -13743,9 +13748,12 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
 }
 
 /// The human-facing noun for a producer state-transition comment (`<noun>: <reason>`).
+///
+/// `ai:blocked-deploy` is deliberately absent (#162): this table is consulted only when a
+/// transition WRITES a state comment, and no transition writes that state any more. The residue
+/// comments already posted keep their `Blocked-deploy:` noun as body text; nothing re-renders them.
 fn state_noun(label: &str) -> &'static str {
     match label {
-        "ai:blocked-deploy" => "Blocked-deploy",
         "ai:blocked-on" => "Blocked-on",
         "ai:design" => "Design-question",
         _ => "State",
@@ -13755,12 +13763,14 @@ fn state_noun(label: &str) -> &'static str {
 /// The producer's state labels — the states a hand-off can land in. `ai:ready` is the vetter's;
 /// the producer transitions to these via [`flag_state_mode`], never a bare prose note.
 ///
-/// WHO MOVES each is no longer uniform: `ai:design` and `ai:blocked-deploy` wait on a human, while
-/// `ai:blocked-on` sits with the VETTER (#161) — its typed deps are cleared automatically by the
-/// vetter's state-load, and [`classify_lane`] files it accordingly.
+/// WHO MOVES each is no longer uniform: `ai:design` waits on a human, while `ai:blocked-on` sits
+/// with the VETTER (#161) — its typed deps are cleared automatically by the vetter's state-load,
+/// and [`classify_lane`] files it accordingly.
 ///
-/// `ai:blocked-infra` was the fourth and is RETIRED (#108) — see [`RETIRED_STATE_LABEL`].
-const PRODUCER_STATE_LABELS: [&str; 3] = ["ai:design", "ai:blocked-deploy", "ai:blocked-on"];
+/// `ai:blocked-infra` was RETIRED by #108 ([`RETIRED_STATE_LABEL`]) and `ai:blocked-deploy` by
+/// #162 ([`RETIRED_BLOCKED_DEPLOY_LABEL`]) — under the split release lifecycle no merge waits on
+/// a deploy, so "blocked on a deploy" is not a state this machine can express.
+const PRODUCER_STATE_LABELS: [&str; 2] = ["ai:design", "ai:blocked-on"];
 
 /// RETIRED (#108). Never written again, and never PARKS a PR — [`next_action`] deliberately does not
 /// consult this, so a PR a pre-#108 run labelled re-enters the ordinary red/green lifecycle the next
@@ -13772,6 +13782,25 @@ const PRODUCER_STATE_LABELS: [&str; 3] = ["ai:design", "ai:blocked-deploy", "ai:
 /// since that strips every `ai:*` but the target — but a PR nothing transitions would keep it
 /// forever, which is exactly the trap #108 is about.)
 const RETIRED_STATE_LABEL: &str = "ai:blocked-infra";
+
+/// RETIRED (#162). `ai:blocked-deploy` parked a PR whose merge waited on a deploy, and under the
+/// split deploy/abstract release lifecycle that premise is gone: deploy repos freeze per-tag
+/// records and publish on `rainix-tag-release`, the on-chain deploy is a separate manual workflow
+/// dispatch decoupled from publishing (rainlanguage/rainix#282), and library repos never deploy —
+/// NO merge waits on a deploy anywhere. A PR that would earn this label is evidence of exactly one
+/// thing: its REPO has not migrated to the split lifecycle. The block is real but its object is
+/// the migration, so the live spelling is `flag-blocked-on --blocked-by <the repo's migration
+/// issue/PR>` — the ONE blocked state whose clearance the vetter already automates (#161).
+/// `flag-blocked-deploy` refuses naming exactly that (see
+/// [`retired_flag_blocked_deploy_refusal`]).
+///
+/// The constant stays while any PR still carries the label — the kept-while-nonzero contract every
+/// retirement has used (#108/#133/#135). Unlike [`RETIRED_STATE_LABEL`], residue here STILL PARKS
+/// ([`next_action`] consults it): the ruling is an eyes-on triage of each residue PR — a human
+/// re-flags it blocked-on its repo's migration, or unblocks it outright where the repo has since
+/// migrated — never an automatic re-derivation, which would be the auto-migration the ruling
+/// forbids. [`classify_lane`] keeps it visible (producer-blocked) until that pass empties it.
+const RETIRED_BLOCKED_DEPLOY_LABEL: &str = "ai:blocked-deploy";
 
 /// Pure plan for a producer state-transition ([`flag_state_mode`]). Mirrors [`verdict_plan`]'s guard —
 /// a `human:*` label OR a native GitHub review is sacred (refuse) — then the label move (strip every
@@ -13817,7 +13846,7 @@ fn producer_state_plan(pr_json: &Value, target: &str, comment_body: &str) -> Pro
     }
 }
 
-/// `flag-blocked-{deploy,on}` / `flag-design`: the producer's OWN state-transition — move a PR
+/// `flag-blocked-on` / `flag-design`: the producer's OWN state-transition — move a PR
 /// into exactly one modeled `ai:*` state carrying a `🤖 ai:producer` reason. This IS the FSM hand-off:
 /// the producer never narrates a hand-off as a standalone prose note; it transitions here and the
 /// prose rides as the reason. A human override (`human:*` label / native review) is sacred (exit 3);
@@ -14034,6 +14063,25 @@ fn flag_blocked_on_mode(
         }
     };
     flag_state_mode(slug, pr, "ai:blocked-on", reason, &refs, dry_run)
+}
+
+/// RETIRED (#162): the refusal `flag-blocked-deploy` prints instead of transitioning anything.
+///
+/// The subcommand still PARSES on purpose — the same reasoning as `flag-blocked-on`'s arity: a
+/// clap unknown-subcommand error names neither the WHY nor the repair, while this refusal teaches
+/// the caller the exact replacement move. It refuses unconditionally (`--dry-run` included):
+/// there is no plan to preview because there is no transition. Writes nothing, fetches nothing.
+fn retired_flag_blocked_deploy_refusal(slug: &str, pr: &str) -> String {
+    format!(
+        "REFUSED: `flag-blocked-deploy` is retired (#162) — under the split release lifecycle no \
+         merge waits on a deploy, so \"blocked on a deploy\" is not a state this machine can \
+         express. A deploy-shaped block on {slug}#{pr} is evidence the REPO has not migrated to \
+         the split lifecycle: flag the PR against that migration instead — \
+         `pr-review-report flag-blocked-on {slug} {pr} \"<why>\" --blocked-by <owner/repo#n of \
+         the repo's migration issue/PR>` — filing the migration issue first if none exists (the \
+         audit skill's lifecycle-split rule gives the finding shape). The vetter clears the flag \
+         automatically when the migration lands (#161)."
+    )
 }
 
 /// PURE: the LIVE blocked-on flag among the trusted `🤖 ai:producer` comment bodies — the most
@@ -14304,8 +14352,8 @@ mod blocked_on_tests {
         assert_eq!(parsed, refs, "write → read is the identity");
         // The other states keep the exact old two-line shape — no dep lines, ever.
         assert_eq!(
-            state_comment("ai:blocked-deploy", "deploy failed", &[]),
-            "🤖 ai:producer\nBlocked-deploy: deploy failed"
+            state_comment("ai:design", "version slot taken", &[]),
+            "🤖 ai:producer\nDesign-question: version slot taken"
         );
     }
 
@@ -15996,10 +16044,10 @@ fn print_transition_result(result: Result<String, (i32, String)>) -> i32 {
 // `human-queue --json` emits EVERY modeled state's inventory, not just the human-action ones, so the
 // dashboard can show where PRs pile up. Each producer PR lands in exactly ONE lane bucket by FSM
 // precedence (a human decision dominates a stale ai:* label; a blocked hand-off next — filed under
-// the lane of whoever moves it: the vetter for `ai:blocked-on` (#161), the producer for
-// `ai:blocked-deploy`; then an ai:ready PR whose verdict is not current at its head falls back to
-// un-vetted; then the other vetter verdicts; a label-less PR is a leak if the producer commented,
-// else un-vetted).
+// the lane of whoever moves it: the vetter for `ai:blocked-on` (#161), the producer for the
+// RETIRED blocked residue; then an ai:ready PR whose verdict is not current at its head falls back
+// to un-vetted; then the other vetter verdicts; a label-less PR is a leak if the producer
+// commented, else un-vetted).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The four FSM lanes, plus the `Leak` anti-lane (escaped the machine — not a modeled state).
@@ -16071,20 +16119,25 @@ fn classify_lane(
     if has(RETIRED_HUMAN_REJECT_LABEL) {
         return (Lane::HumanDecisions, RETIRED_HUMAN_REJECT_LABEL.to_string());
     }
-    for b in PRODUCER_STATE_LABELS {
-        if b != "ai:design" && has(b) {
-            // #161: `ai:blocked-on` files under the VETTER's lane — its next mover is the vetter,
-            // whose state-load clears the flag the run after every typed dep merges/closes and
-            // hands the PR straight back to vetting. `ai:blocked-deploy` still waits on a
-            // producer/human deploy resolution and stays producer-blocked. Same PRECEDENCE
-            // position for both: a blocked state still dominates a stale `ai:ready` label.
-            let lane = if b == "ai:blocked-on" {
-                Lane::VetLifecycle
-            } else {
-                Lane::ProducerBlocked
-            };
-            return (lane, b.to_string());
-        }
+    // RETIRED (#162) but still bucketed, at its old precedence: a blocked state dominates a stale
+    // `ai:ready` label. Deliberately producer-blocked and NOT vet-lifecycle — the #164 clearance
+    // reads exactly `ai:blocked-on` (typed refs the vetter can resolve), and this residue has
+    // neither the label nor the refs, so its next mover is the eyes-on triage that re-flags each
+    // PR blocked-on its repo's migration (or unblocks it outright). Dropping it here would
+    // reclassify the residue as `un-vetted` and hide the very thing that pass has to empty.
+    if has(RETIRED_BLOCKED_DEPLOY_LABEL) {
+        return (
+            Lane::ProducerBlocked,
+            RETIRED_BLOCKED_DEPLOY_LABEL.to_string(),
+        );
+    }
+    // #161: `ai:blocked-on` files under the VETTER's lane — its next mover is the vetter, whose
+    // state-load clears the flag the run after every typed dep merges/closes and hands the PR
+    // straight back to vetting. Same PRECEDENCE position as the retired blocked residue above: a
+    // blocked state still dominates a stale `ai:ready` label. (`ai:design`, the other live
+    // producer state, buckets with the verdict labels below — the vetter writes it too.)
+    if has("ai:blocked-on") {
+        return (Lane::VetLifecycle, "ai:blocked-on".to_string());
     }
     // The retired state (#108) is still bucketed so a PR a pre-#108 run parked stays VISIBLE in the
     // queue until `retire-blocked-infra` clears it — dropping it here would make thirteen PRs
@@ -16109,6 +16162,28 @@ fn classify_lane(
     } else {
         (Lane::VetLifecycle, "un-vetted".to_string())
     }
+}
+
+/// PURE: must [`human_queue_mode`] spend a `gh pr view` establishing whether this PR's `ai:ready`
+/// verdict is still current at its head?
+///
+/// Exactly when the answer CHANGES the lane, and that is a question for [`classify_lane`] rather
+/// than for a list of labels kept in step with it. `ready_vetted_at_head` is read in ONE place —
+/// the `ai:ready` branch — and every state ahead of that branch in the precedence order returns
+/// before it: a human decision, the retired reject, the retired blocked-deploy residue,
+/// `ai:blocked-on`, the retired blocked-infra residue. So the fetch is asked for directly:
+/// `Some(false)` is what a fetch that finds a STALE verdict yields, `None` is literally what the
+/// lookup yields when NO fetch was made, and when the two classify identically the call is dead
+/// weight — its result is written to a map nothing subsequently reads.
+///
+/// DERIVED, not mirrored, because the mirror had already drifted twice. The hand-written predicate
+/// this replaces was built from [`PRODUCER_STATE_LABELS`], and a retirement takes a label OUT of
+/// that array while leaving it ahead of `ai:ready` in [`classify_lane`] — so `ai:blocked-infra`
+/// (#108) and then `ai:blocked-deploy` (#162) each silently re-armed a fetch whose result nothing
+/// reads. Naming no label here means the next precedence change carries itself.
+fn needs_verdict_currency(labels: &[String], producer_commented: bool) -> bool {
+    classify_lane(labels, Some(false), producer_commented)
+        != classify_lane(labels, None, producer_commented)
 }
 
 /// PURE: is an UNLABELLED producer PR a leak, and with what reason? `trusted_bodies` is every
@@ -16568,7 +16643,12 @@ fn human_queue_doc(
             // Legacy label-based counts (UNCHANGED — the dashboard reads these).
             "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
             "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
-            "blockedDeploy": buckets.get("ai:blocked-deploy").map(|v| v.len()).unwrap_or(0),
+            // RETIRED (#162): no transition writes `ai:blocked-deploy` any more, so this counts
+            // down to 0 and stays there. The key is kept while it can be non-zero — the
+            // kept-while-nonzero contract — because each residue PR still needs its eyes-on
+            // triage: re-flagged `ai:blocked-on --blocked-by <the repo's migration>`, or unblocked
+            // outright where the repo has already migrated. Never auto-migrated.
+            "blockedDeploy": buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL).map(|v| v.len()).unwrap_or(0),
             "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
             "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
             "closeCandidateIssues": close_issues.len(),
@@ -16749,25 +16829,20 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
     }
 
-    // Verdict-currency check for ai:ready PRs: an ai:ready PR with no ai:vetter verdict current at
-    // its head is un-vetted, not ready (the established `queue`/`vetted_at_head` notion). Fetch
-    // only the ai:ready PRs that would actually reach the ai:ready lane branch (no dominating
-    // human:* / ai:blocked-* label) — one `gh pr view` each.
+    // Verdict-currency check: an `ai:ready` PR with no `ai:vetter` verdict current at its head is
+    // un-vetted, not ready (the established `queue`/`vetted_at_head` notion) — one `gh pr view`
+    // each. [`needs_verdict_currency`] picks which PRs are worth one by asking `classify_lane`
+    // whether the answer would move the PR at all, so the set of states that dominate `ai:ready`
+    // is not restated here and cannot drift from the precedence order that decides it.
     let leak_keys: std::collections::HashSet<(String, u64)> = leaks
         .iter()
         .map(|(s, _)| (s.repo.clone(), s.number))
         .collect();
-    let dominated = |labels: &[String]| {
-        let has = |name: &str| labels.iter().any(|l| l == name);
-        PR_SACRED_LABELS.iter().any(|h| has(h))
-            || PRODUCER_STATE_LABELS
-                .iter()
-                .any(|b| *b != "ai:design" && has(b))
-    };
     let mut ready_vetted: std::collections::HashMap<(String, u64), bool> =
         std::collections::HashMap::new();
     for (subject, labels) in &records {
-        if labels.iter().any(|l| l == "ai:ready") && !dominated(labels) {
+        let key = (subject.repo.clone(), subject.number);
+        if needs_verdict_currency(labels, leak_keys.contains(&key)) {
             if let Some(j) = gh_json(&[
                 "pr",
                 "view",
@@ -16778,10 +16853,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
                 "headRefOid,comments",
             ]) {
                 let head = j.get("headRefOid").and_then(|v| v.as_str()).unwrap_or("");
-                ready_vetted.insert(
-                    (subject.repo.clone(), subject.number),
-                    vetted_at_head(&j, head),
-                );
+                ready_vetted.insert(key, vetted_at_head(&j, head));
             }
         }
     }
@@ -16976,8 +17048,15 @@ fn human_queue_mode(json_out: bool) -> i32 {
         "ai:close-candidate",
     );
     // producer-blocked (`ai:blocked-on` prints with the vetter's group above — #161)
-    if let Some(v) = buckets.get("ai:blocked-deploy") {
-        show("BLOCKED-DEPLOY", v);
+    // RETIRED (#162) — no transition writes this label any more. Shown while any PR still carries
+    // it, so each residue PR stays visible until its eyes-on triage: re-flag it
+    // `ai:blocked-on --blocked-by <the repo's migration issue/PR>`, or unblock it outright where
+    // the repo has already migrated to the split release lifecycle.
+    if let Some(v) = buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL) {
+        show(
+            "BLOCKED-DEPLOY (RETIRED #162) — re-flag blocked-on the repo's migration, or unblock",
+            v,
+        );
     }
     if let Some(v) = buckets.get("ai:blocked-infra") {
         show("BLOCKED-INFRA", v);
@@ -18499,12 +18578,14 @@ fn failing_log_tail(slug: &str, run_id: u64, n: usize) -> Option<String> {
 }
 
 /// `--deploy <owner/repo> <pr> [--network <net>] [--dry-run]`: trigger the repo's sanctioned
-/// `manual-sol-artifacts` deploy FROM THE PR BRANCH (deploy-before-merge) and monitor it to
-/// completion. SINGLE attempt per invocation — on failure it surfaces the failing log tail and
-/// exits nonzero WITHOUT retrying (the "no fire-and-forget" rule: diagnose a failed deploy, never
-/// blind-retry). Zoltu CREATE2 is deterministic/idempotent, so a redeploy of identical bytecode is
-/// a safe no-op — no guard fights that. `--dry-run` prints the exact command and exits 0 without
-/// dispatching.
+/// `manual-sol-artifacts` deploy FROM THE PR BRANCH and monitor it to completion. A MANUAL tool on
+/// a human's word only (#162): the deploy-before-merge choreography that used to route the
+/// producer here is retired — no merge waits on a deploy, and a deploy-shaped block is flagged
+/// against the repo's migration instead. SINGLE attempt per invocation — on failure it surfaces
+/// the failing log tail and exits nonzero WITHOUT retrying (the "no fire-and-forget" rule:
+/// diagnose a failed deploy, never blind-retry). Zoltu CREATE2 is deterministic/idempotent, so a
+/// redeploy of identical bytecode is a safe no-op — no guard fights that. `--dry-run` prints the
+/// exact command and exits 0 without dispatching.
 fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i32 {
     // 1. Resolve the PR head ref/branch — deploy is FROM THE BRANCH.
     let Some(prj) = gh_json(&[
@@ -20746,7 +20827,7 @@ fn next_ready_row(f: &NextReadyFacts) -> Value {
     let check_count = rollup.as_array().map(|a| a.len()).unwrap_or(0);
     let note_full = last_vetter_comment(f.detail).unwrap_or_default();
     let note = clip_field(&note_full, NR_NOTE_BYTES);
-    let gate = deploy_gate(f.detail, head, ci, &failing_all);
+    let legacy_signal = legacy_deploy_signal(f.detail, ci, &failing_all);
     let meaning = thread_meaning(f.unresolved_threads, f.coverage);
     serde_json::json!({
         "pr": clip_field(&format!("{}#{}", f.slug, f.num), NR_PR_BYTES),
@@ -20789,7 +20870,9 @@ fn next_ready_row(f: &NextReadyFacts) -> Value {
             "unresolved": f.unresolved_threads,
             "meaning": meaning.as_str(),
         },
-        "deployGate": gate.as_str(),
+        // #162: never a merge gate — `repo-not-migrated` says the repo still has the legacy
+        // premerge deploy shape and is owed a lifecycle migration; the merge does not wait on it.
+        "legacyDeploySignal": legacy_signal.as_str(),
     })
 }
 
@@ -21017,29 +21100,27 @@ mod next_ready_tests {
         );
     }
 
-    // ── the deploy gate ───────────────────────────────────────────────────────────────────────
+    // ── the legacy deploy signal (#162 — never a merge gate) ──────────────────────────────────
     //
     // Detected from the BODY and the trusted comments — the SAME predicate the producer's own
-    // `next_action` routes its deploy case from — and deliberately NOT from the title.
+    // `next_action` routes its migration case from — and deliberately NOT from the title.
     //
-    // Measured on the 200 open PRs in the pipeline's orgs on 2026-07-29: SIX carry the flag, all
+    // Measured on the 200 open PRs in the pipeline's orgs on 2026-07-29: SIX carry the marker, all
     // six in the body, exactly one of them also in the title. Title-matching would have found one
     // of six. The title on that one is a redundant echo for a human scanning a list; the body is
-    // where the producer writes the flag and where the producer reads it back, so a human gate
-    // that read the title instead could tell a human "deploy first" about a PR the producer will
-    // never route to a deploy.
+    // where the producer wrote the marker, so a human row that read the title instead would call a
+    // repo "migrated" about a PR the producer routes to the migration flag.
     #[test]
-    fn the_deploy_gate_is_read_from_the_body_not_the_title() {
-        let head = "a".repeat(40);
+    fn the_legacy_deploy_signal_is_read_from_the_body_not_the_title() {
         let titled_only = json!({
             "title": format!("feat: bump — {REDEPLOY_MARKER}"),
             "body": "Closes #1\n\nA plain change.",
             "comments": [],
         });
         assert_eq!(
-            deploy_gate(&titled_only, &head, Ci::Green, &[]),
-            DeployGate::None,
-            "the title is not the signal — retitling must not be able to move this gate"
+            legacy_deploy_signal(&titled_only, Ci::Green, &[]),
+            LegacyDeploySignal::None,
+            "the title is not the signal — retitling must not be able to move it"
         );
 
         let in_body = json!({
@@ -21048,11 +21129,11 @@ mod next_ready_tests {
             "comments": [],
         });
         assert_eq!(
-            deploy_gate(&in_body, &head, Ci::Green, &[]),
-            DeployGate::DeployBeforeMerge
+            legacy_deploy_signal(&in_body, Ci::Green, &[]),
+            LegacyDeploySignal::RepoNotMigrated
         );
 
-        // …and a trusted comment counts too: the need is often discovered after the PR is opened.
+        // …and a trusted comment counts too: the need was often discovered after the PR opened.
         let in_comment = json!({
             "title": "feat: bump",
             "body": "Closes #1",
@@ -21060,11 +21141,11 @@ mod next_ready_tests {
                           "body": format!("🤖 ai:producer note — {REDEPLOY_MARKER}")}],
         });
         assert_eq!(
-            deploy_gate(&in_comment, &head, Ci::Green, &[]),
-            DeployGate::DeployBeforeMerge
+            legacy_deploy_signal(&in_comment, Ci::Green, &[]),
+            LegacyDeploySignal::RepoNotMigrated
         );
 
-        // An UNTRUSTED author cannot raise the gate on comment text alone — same provenance rule
+        // An UNTRUSTED author cannot raise the signal on comment text alone — same provenance rule
         // every other trust-bearing comment read goes through.
         let spoofed = json!({
             "title": "feat: bump",
@@ -21073,64 +21154,37 @@ mod next_ready_tests {
                           "body": format!("🤖 ai:producer note — {REDEPLOY_MARKER}")}],
         });
         assert_eq!(
-            deploy_gate(&spoofed, &head, Ci::Green, &[]),
-            DeployGate::None
+            legacy_deploy_signal(&spoofed, Ci::Green, &[]),
+            LegacyDeploySignal::None
+        );
+
+        // A red prod-pin check is the OTHER spelling of the same shape evidence.
+        let red_pin = json!({"title": "feat: bump", "body": "Closes #1", "comments": []});
+        assert_eq!(
+            legacy_deploy_signal(
+                &red_pin,
+                Ci::Red,
+                &["rainix-sol / test / testProdDeployArbitrum".to_string()]
+            ),
+            LegacyDeploySignal::RepoNotMigrated
         );
     }
 
-    // The gate CLEARS only on a deploy confirmed at THIS head. A confirmation from a prior head is
-    // the case that would ship undeployed bytecode: deploy-confirmed at A, push new bytecode to B,
-    // and a head-blind match reads B as already deployed.
+    // The signal reports REPO SHAPE, so it is deliberately head-BLIND: a deploy-confirmed note
+    // resolved one head's pins under the old choreography, but the repo that needed that
+    // choreography is still legacy-shaped and still owed its migration. (What the confirmation
+    // DOES suppress is the producer's flag action — head-scoped, tested with `worklist_row`.)
     #[test]
-    fn a_prior_heads_deploy_confirmation_does_not_clear_the_gate() {
+    fn a_deploy_confirmation_does_not_erase_the_repo_shape_signal() {
         let head = "b".repeat(40);
-        let older = "c".repeat(40);
-        let flagged = |note: &str| {
-            json!({
-                "body": format!("{REDEPLOY_MARKER}"),
-                "comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": note}],
-            })
-        };
+        let flagged = json!({
+            "body": format!("{REDEPLOY_MARKER}"),
+            "comments": [{"author": {"login": TRUSTED_AUTHOR},
+                          "body": format!("🤖 ai:producer deploy-confirmed at {head}")}],
+        });
         assert_eq!(
-            deploy_gate(
-                &flagged(&format!("🤖 ai:producer deploy-confirmed at {older}")),
-                &head,
-                Ci::Green,
-                &[]
-            ),
-            DeployGate::DeployBeforeMerge
-        );
-        assert_eq!(
-            deploy_gate(
-                &flagged(&format!("🤖 ai:producer deploy-confirmed at {head}")),
-                &head,
-                Ci::Green,
-                &[]
-            ),
-            DeployGate::DeployedAtHead
-        );
-        // A SHORT sha in the note still names this head.
-        assert_eq!(
-            deploy_gate(
-                &flagged(&format!(
-                    "🤖 ai:producer deploy-confirmed at {}",
-                    &head[..12]
-                )),
-                &head,
-                Ci::Green,
-                &[]
-            ),
-            DeployGate::DeployedAtHead
-        );
-        // An empty head can never read as deployed.
-        assert_eq!(
-            deploy_gate(
-                &flagged(&format!("🤖 ai:producer deploy-confirmed at {head}")),
-                "",
-                Ci::Green,
-                &[]
-            ),
-            DeployGate::DeployBeforeMerge
+            legacy_deploy_signal(&flagged, Ci::Green, &[]),
+            LegacyDeploySignal::RepoNotMigrated
         );
     }
 
@@ -21311,7 +21365,7 @@ mod next_ready_tests {
             slug: "",
             num: 0,
             // No rollup at all -> `nochecks`, the longest `ci_str`; CONFLICTING is the longest
-            // `merge_str`; the marker in the body makes the gate `deploy-before-merge`.
+            // `merge_str`; the marker in the body makes the signal `repo-not-migrated`.
             detail: &json!({"mergeable": "CONFLICTING", "body": REDEPLOY_MARKER}),
             cost: 0,
             basis: "",
@@ -21415,7 +21469,7 @@ mod next_ready_tests {
         assert_eq!(row["ci"]["checkCount"], json!(1));
         assert_eq!(row["cost"], json!(40));
         assert_eq!(row["costBasis"], json!("one-line pin"));
-        assert_eq!(row["deployGate"], json!("none"));
+        assert_eq!(row["legacyDeploySignal"], json!("none"));
         // The verdict is the vetter's OWN note — the reasoning, not the label — and the sha it was
         // pinned to is stated so the reader can see it describes THIS code.
         assert_eq!(row["verdict"]["sha"], json!(head));
@@ -23776,7 +23830,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_ready",
             "narrows": "limit",
-            "description": "The next ai:ready PR to rule on, cheapest-first off the same queue: the vetter's sha-bound verdict note, headRefOid, baseRefName, CI rollup with failing checks named, whether CodeRabbit actually reviewed (only `reviewed` is coverage — rate-limited/queued are green checks with no review, making 0 unresolved threads vacuous), unresolved threads, and any deploy-before-merge gate.",
+            "description": "The next ai:ready PR to rule on, cheapest-first off the same queue: the vetter's sha-bound verdict note, headRefOid, baseRefName, CI rollup with failing checks named, whether CodeRabbit actually reviewed (only `reviewed` is coverage — rate-limited/queued are green checks with no review, making 0 unresolved threads vacuous), unresolved threads, and the legacy deploy signal (`repo-not-migrated` = the repo still has the pre-split premerge deploy shape; never a merge gate — #162).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -28478,6 +28532,9 @@ enum Cmd {
         pr: String,
     },
     /// Trigger the repo's sanctioned Zoltu deploy (manual-sol-artifacts.yaml) for a PR's branch.
+    /// A MANUAL wrapper for the human's word only (#162): no pipeline route reaches it — the
+    /// producer's deploy choreography is retired, and a deploy-shaped block routes to
+    /// `flag-blocked-on --blocked-by <the repo's migration>` instead.
     Deploy {
         /// owner/repo
         slug: String,
@@ -28772,13 +28829,16 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Producer transition: flag a PR into ai:blocked-deploy (a deploy the producer can't complete).
+    /// RETIRED (#162): refuses, naming the replacement (`flag-blocked-on --blocked-by <the repo's
+    /// migration ref>`). Kept parseable so the refusal can teach — a clap unknown-subcommand error
+    /// names neither the why nor the repair. See [`retired_flag_blocked_deploy_refusal`].
     FlagBlockedDeploy {
         /// owner/repo
         slug: String,
         pr: String,
-        /// Reason (trailing words are joined).
+        /// Ignored — nothing is transitioned.
         reason: Vec<String>,
+        /// Ignored — there is no plan to preview.
         #[arg(long)]
         dry_run: bool,
     },
@@ -28963,8 +29023,10 @@ enum Cmd {
 /// producer knows WHICH PRs need action without re-deriving it from scratch each run.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum NextAction {
-    GreenReady,   // green + mergeable + no open threads -> present to the human (step 2z)
-    Deploy,       // red prod-pin/testProdDeploy*, or green "REQUIRES redeploy at land" (3b iv)
+    GreenReady, // green + mergeable + no open threads -> present to the human (step 2z)
+    // red prod-pin/testProdDeploy*, or "REQUIRES redeploy at land" residue: the repo has not
+    // migrated to the split release lifecycle (#162) -> flag blocked-on its migration (3b iv)
+    FlagMigration,
     Conflict3d,   // DIRTY/BEHIND -> resolve conflicts (3d)
     Coderabbit3e, // clean CI but unresolved review threads (3e)
     Screenshot3c, // UI PR missing its screenshot (3c)
@@ -28977,7 +29039,7 @@ impl NextAction {
     fn as_str(self) -> &'static str {
         match self {
             NextAction::GreenReady => "green-ready",
-            NextAction::Deploy => "deploy",
+            NextAction::FlagMigration => "flag-migration",
             NextAction::Conflict3d => "conflict-3d",
             NextAction::Coderabbit3e => "coderabbit-3e",
             NextAction::Screenshot3c => "screenshot-3c",
@@ -28994,7 +29056,12 @@ struct PrSignals {
     ci: Ci,
     merge_state: String,
     unresolved_threads: usize,
+    /// A deploy-shaped signal fired: the legacy `REQUIRES redeploy at land` marker, or a red
+    /// prod-pin check. Under #162 this is never a deploy to run — it is evidence the repo has not
+    /// migrated to the split release lifecycle, so the PR is blocked on that migration.
     has_deploy_trigger: bool,
+    /// A trusted deploy-confirmed note names the CURRENT head — the old choreography already
+    /// resolved this head's pins, so there is nothing left to flag the PR blocked on.
     deploy_done_at_head: bool,
     parked: bool,
     ui_missing_screenshot: bool,
@@ -29010,10 +29077,13 @@ struct PrSignals {
 }
 
 /// PURE FSM classifier: given a PR's derived signals, what should the producer do with it this run?
-/// Priority is deliberate: an outstanding deploy is the only thing that greens a prod-pin (and a green
-/// "REQUIRES redeploy" PR is not truly landable), so it leads. Then red PRs (fix, or if parked skip).
-/// A pending CI just waits. Clean-CI PRs route conflict > open-threads > missing-screenshot, else they
-/// are green-ready for the human. A `parked` flag only suppresses re-touching a STILL-RED PR — a PR
+/// Priority is deliberate. A human decision and a modeled `ai:*` state are STATES, not derivations,
+/// so they park FIRST and nothing below them re-derives a state from CI. Of the derived cases a
+/// deploy-shaped signal leads: it means the repo has not migrated to the split release lifecycle
+/// (#162) — no code fix can green a prod-pin there, and the flag-blocked-on hand-off is cheap and
+/// terminal, so it beats every CI route. Then red PRs (fix, or if parked skip). A pending
+/// CI just waits. Clean-CI PRs route conflict > open-threads > missing-screenshot, else they are
+/// green-ready for the human. A `parked` flag only suppresses re-touching a STILL-RED PR — a PR
 /// that has since gone green surfaces as green-ready regardless of past parking.
 fn next_action(s: &PrSignals) -> NextAction {
     // A human decision (`human:reject`/`human:design`/`human:close-candidate`) is SACRED and blocks
@@ -29024,17 +29094,26 @@ fn next_action(s: &PrSignals) -> NextAction {
     if s.has_human_override {
         return NextAction::ParkedSkip;
     }
-    // A PR the producer has already moved into a modeled human-gated state (design / blocked-* /
-    // close-candidate) is PARKED for a human — the label IS the state, so the producer does not
-    // re-touch it and does not re-derive a state from CI. Only un-labeled PRs fall through to the
-    // CI/mergeState classifier below.
+    // A PR the producer has already moved into a modeled state (design / blocked-on /
+    // close-candidate) is PARKED — the label IS the state, so the producer does not re-touch it
+    // and does not re-derive a state from CI. The RETIRED `ai:blocked-deploy` residue parks too
+    // (#162): its exit is the human's eyes-on triage (re-flag blocked-on the repo's migration, or
+    // unblock), and a producer that re-derived it from CI would perform exactly the auto-migration
+    // that ruling forbids. Contrast `ai:blocked-infra` (#108), which deliberately does NOT park.
+    // Only un-labeled PRs fall through to the CI/mergeState classifier below.
     if let Some(l) = &s.state_label {
-        if PRODUCER_STATE_LABELS.contains(&l.as_str()) || l == "ai:close-candidate" {
+        if PRODUCER_STATE_LABELS.contains(&l.as_str())
+            || l == "ai:close-candidate"
+            || l == RETIRED_BLOCKED_DEPLOY_LABEL
+        {
             return NextAction::ParkedSkip;
         }
     }
+    // #162: a deploy-shaped signal at an un-confirmed head is the MIGRATION case — flag the PR
+    // `ai:blocked-on --blocked-by <the repo's migration>`, never deploy-before-merge choreography.
+    // A head the old choreography already deploy-confirmed has nothing left to block on.
     if s.has_deploy_trigger && !s.deploy_done_at_head {
-        return NextAction::Deploy;
+        return NextAction::FlagMigration;
     }
     match s.ci {
         Ci::Red => {
@@ -29060,20 +29139,26 @@ fn next_action(s: &PrSignals) -> NextAction {
     }
 }
 
-/// The flag a producer puts on a PR whose bytecode changed, so its new deterministic Zoltu address
-/// is undeployed until someone redeploys it (campaign-prompt step 3b (iv)).
+/// The LEGACY marker a producer used to put on a PR whose bytecode changed, so its new
+/// deterministic Zoltu address read as undeployed until someone redeployed it.
+///
+/// RE-POINTED by #162: no new PR is flagged with it (the producer prompt no longer teaches it),
+/// and it gates nothing — under the split release lifecycle no merge waits on a deploy. It is
+/// still DETECTED because the marker firing on a live PR is evidence of exactly one thing: the
+/// repo has not migrated to the split lifecycle (a properly split repo has no premerge deploy
+/// shape for the marker to describe). The route for that evidence is the repo's MIGRATION —
+/// `flag-blocked-on --blocked-by <migration ref>` — never deploy-before-merge choreography.
 ///
 /// It lives in the PR BODY (or a trusted `🤖 ai:*` comment), NOT the title. That is the whole
 /// reason [`requires_redeploy`] reads those two and never `title`: a title is renamed by any
-/// rebase, retitle or squash-message edit, and a gate that a rename can drop is a gate that fails
-/// silently on the one PR class where failing silently means shipping undeployed bytecode. The
-/// title on such a PR usually echoes the flag — `rain.erc4626.words#254` is titled
-/// "… — REQUIRES redeploy at land" — but the echo is a convenience for a human scanning a list,
-/// not the signal.
+/// rebase, retitle or squash-message edit, and a signal a rename can drop is a signal that fails
+/// silently on the one PR class it exists to surface. The title on such a PR usually echoes the
+/// flag — `rain.erc4626.words#254` is titled "… — REQUIRES redeploy at land" — but the echo is a
+/// convenience for a human scanning a list, not the signal.
 const REDEPLOY_MARKER: &str = "REQUIRES redeploy at land";
 
-/// PURE: does this PR carry the redeploy flag at all? Body OR a trusted comment — the producer
-/// writes it into the body when it opens the PR, and into a comment when the need is discovered
+/// PURE: does this PR carry the legacy redeploy marker at all? Body OR a trusted comment — the
+/// producer wrote it into the body on open, and into a comment when the need was discovered
 /// after. Untrusted authors are filtered by [`trusted_comments`], so a third party cannot flag
 /// (or, more importantly, cannot be the only reason a PR looks flagged).
 fn requires_redeploy(detail: &Value) -> bool {
@@ -29087,9 +29172,11 @@ fn requires_redeploy(detail: &Value) -> bool {
             .any(|c| c.contains(REDEPLOY_MARKER))
 }
 
-/// PURE: a red prod-pin / `testProdDeploy*` check — the OTHER way a PR declares that its deployed
-/// bytecode is stale. Unlike the flag this one is derived from CI, so it can only fire while the PR
-/// is red.
+/// PURE: a red prod-pin / `testProdDeploy*` check — the OTHER deploy-shaped signal, and the
+/// definition of a legacy-shaped repo made executable: a premerge check that goes red until an
+/// on-chain deploy is the single-"current"-pin collision the split lifecycle dissolves (#162), so
+/// a repo where this fires has not migrated. Unlike the marker this one is derived from CI, so it
+/// can only fire while the PR is red.
 fn deploy_pin_red(ci: Ci, failing: &[String]) -> bool {
     ci == Ci::Red
         && failing.iter().any(|n| {
@@ -29098,13 +29185,19 @@ fn deploy_pin_red(ci: Ci, failing: &[String]) -> bool {
         })
 }
 
-/// PURE: has the outstanding redeploy actually been done AT THIS HEAD?
+/// PURE: did the OLD deploy choreography record a deploy AT THIS HEAD?
 ///
-/// HEAD-SCOPED on purpose. A bare `deploy-confirmed` from a PRIOR head must NOT count: a PR
-/// deploy-confirmed at head A, then pushed new bytecode (head B, flagged for redeploy), would read
-/// done, skip the redeploy, and reach a human as ready with UNDEPLOYED bytecode — which defeats
-/// deploy-before-merge. The producer's note embeds the head SHA precisely so this match works; a
-/// note that embedded the SHORT sha still counts, and an empty head can never read as deployed.
+/// What it suppresses changed with #162: it used to clear the deploy-before-merge gate; now it
+/// suppresses the MIGRATION flag ([`next_action`]'s `flag-migration`), because a head whose pins
+/// the old choreography already resolved leaves the PR nothing to be blocked on — flagging it
+/// blocked-on-migration would invent a block where the ruling says none exists.
+///
+/// Still HEAD-SCOPED on purpose. A bare `deploy-confirmed` from a PRIOR head must NOT count: a PR
+/// confirmed at head A, then pushed new bytecode (head B), is back to carrying a live legacy
+/// signal, and a head-blind match would silently swallow it. The producer's note embeds the head
+/// SHA precisely so this match works; a note that embedded a 12-char SHORT sha still counts (the
+/// prefix is fixed at 12, so a shorter abbreviation does not), and an empty head can never read as
+/// confirmed.
 fn deploy_confirmed_at_head(detail: &Value, head: &str) -> bool {
     if head.is_empty() {
         return false;
@@ -29116,41 +29209,41 @@ fn deploy_confirmed_at_head(detail: &Value, head: &str) -> bool {
     })
 }
 
-/// Whether a PR is DEPLOY-GATED, as one typed fact rather than three booleans a caller has to
-/// combine. Merging a `DeployBeforeMerge` PR as if it were ordinary is a production error — its
-/// new deterministic address is undeployed and no on-chain test goes red, so it READS green-ready
-/// when it is not.
+/// Whether a PR carries a deploy-shaped signal, as one typed fact. This REPLACED the deploy gate
+/// (#162): under the split release lifecycle NO merge waits on a deploy, so there is no
+/// deploy-before-merge value for a row to carry — the signal never blocks anything. What it still
+/// says is repo SHAPE: on a properly split repo neither signal exists, so a firing signal is
+/// evidence the repo has not migrated, and the route is the repo's migration
+/// (`flag-blocked-on --blocked-by <migration ref>`), never a deploy before the merge.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum DeployGate {
-    /// Nothing about this PR changes deployed bytecode.
+enum LegacyDeploySignal {
+    /// No deploy-shaped signal on this PR.
     None,
-    /// Flagged (or red on a prod pin) and NOT yet deployed at this head. Deploy first, then merge.
-    DeployBeforeMerge,
-    /// Flagged AND a trusted note records the deploy at THIS head. An ordinary merge from here.
-    DeployedAtHead,
+    /// The legacy redeploy marker or a red prod-pin check fired: this PR's repo still has the
+    /// premerge deploy shape the split lifecycle dissolves — it has not migrated.
+    RepoNotMigrated,
 }
 
-impl DeployGate {
+impl LegacyDeploySignal {
     fn as_str(self) -> &'static str {
         match self {
-            DeployGate::None => "none",
-            DeployGate::DeployBeforeMerge => "deploy-before-merge",
-            DeployGate::DeployedAtHead => "deployed-at-head",
+            LegacyDeploySignal::None => "none",
+            LegacyDeploySignal::RepoNotMigrated => "repo-not-migrated",
         }
     }
 }
 
-/// PURE: the deploy gate, composed from the three signals above. The producer's `next_action` reads
-/// the same three, so "the producer must deploy this" and "the human must not plain-merge this" can
-/// never be answered differently.
-fn deploy_gate(detail: &Value, head: &str, ci: Ci, failing: &[String]) -> DeployGate {
-    if !(requires_redeploy(detail) || deploy_pin_red(ci, failing)) {
-        return DeployGate::None;
-    }
-    if deploy_confirmed_at_head(detail, head) {
-        DeployGate::DeployedAtHead
+/// PURE: the legacy deploy signal, composed from the two shape signals above. The producer's
+/// `next_action` reads the SAME two, so the two sides can never disagree about the question this
+/// one answers: whether the REPO is legacy-SHAPED. They diverge on exactly one further input, and
+/// deliberately — `next_action` also consults [`deploy_confirmed_at_head`] and declines to flag a
+/// head the old choreography already resolved, while this stays head-BLIND: that note resolved one
+/// head's pins, the repo is legacy-shaped either way, and repo shape is what this reports.
+fn legacy_deploy_signal(detail: &Value, ci: Ci, failing: &[String]) -> LegacyDeploySignal {
+    if requires_redeploy(detail) || deploy_pin_red(ci, failing) {
+        LegacyDeploySignal::RepoNotMigrated
     } else {
-        DeployGate::DeployBeforeMerge
+        LegacyDeploySignal::None
     }
 }
 
@@ -29563,10 +29656,13 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         .unwrap_or("");
 
     // markers — best-effort triage signals (the producer re-confirms from the log when it acts).
-    // The three deploy signals are the SHARED ones the human's `next_ready` gate is composed from,
-    // so the producer's "must deploy" and the human's "must not plain-merge" cannot disagree.
+    // The deploy-shaped signals are the SHARED ones the human's `next_ready` legacy signal is
+    // composed from, so the producer and the human cannot disagree about whether the repo is
+    // legacy-SHAPED (#162). `deployDoneAtHead` is the producer's own EXTRA input, not a shape
+    // signal: it suppresses this run's flag at a head the old choreography already resolved, and
+    // the human's shape signal deliberately does not read it.
     let requires_redeploy = requires_redeploy(detail);
-    // a green PR flagged for redeploy, OR a red prod-pin check, is the deploy case
+    // the legacy marker, OR a red prod-pin check: the repo has not migrated (the MIGRATION case)
     let has_deploy_trigger = requires_redeploy || deploy_pin_red(ci, &failing);
     let trusted = trusted_comments(detail, None);
     let deploy_done_at_head = deploy_confirmed_at_head(detail, head);
@@ -30140,7 +30236,9 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
 /// Rank a nextAction string for sort (mirrors NextAction::rank; kept string-keyed for the Value rows).
 fn action_rank(a: &str) -> u8 {
     match a {
-        "deploy" => 0,
+        // The migration hand-off leads for the same reason the deploy did (#162): no code fix can
+        // green a prod-pin on an unmigrated repo, and the flag is cheap and terminal.
+        "flag-migration" => 0,
         "needs-3b" => 1,
         "conflict-3d" => 2,
         "coderabbit-3e" => 3,
@@ -32463,19 +32561,11 @@ fn main() {
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
         Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
         Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
-        Cmd::FlagBlockedDeploy {
-            slug,
-            pr,
-            reason,
-            dry_run,
-        } => flag_state_mode(
-            &slug,
-            &pr,
-            "ai:blocked-deploy",
-            &reason.join(" "),
-            &[],
-            dry_run,
-        ),
+        // RETIRED (#162): unconditional refusal — no fetch, no write, `--dry-run` included.
+        Cmd::FlagBlockedDeploy { slug, pr, .. } => {
+            eprintln!("{}", retired_flag_blocked_deploy_refusal(&slug, &pr));
+            2
+        }
         Cmd::FlagBlockedOn {
             slug,
             pr,
@@ -37705,6 +37795,97 @@ mod settings_tests {
         );
     }
 
+    /// #162: retiring `ai:blocked-deploy` only works if the producer prompt stops teaching the
+    /// deploy choreography AND teaches what replaces it — a deploy-shaped block is a
+    /// repo-migration dependency, flagged `ai:blocked-on` with the migration as its typed dep,
+    /// filing the migration issue when none exists. As with `ai:relink`, EXPLAINING that the old
+    /// state is gone is exactly what a prompt should do; what it may not do is instruct the old
+    /// moves.
+    #[test]
+    fn the_producer_prompt_routes_deploy_shaped_blocks_to_the_migration() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        // The old moves are no longer instructed anywhere in the prompt.
+        assert!(
+            !prompt.contains("flag-blocked-deploy <owner/repo>"),
+            "the retired transition must not be taught as a callable move (#162)"
+        );
+        assert!(
+            !prompt.contains("via `pr-review-report deploy`")
+                && !prompt.contains("deploy <owner/repo> <n>"),
+            "the producer deploy choreography is retired — the prompt must not route anyone to it"
+        );
+        for gone in [
+            "WAITING-DEPLOY",
+            "deploy-before-merge",
+            "deploy-BEFORE-merge",
+        ] {
+            assert!(
+                !prompt.contains(gone),
+                "`{gone}` is the retired choreography's vocabulary — it must not survive"
+            );
+        }
+        // …and the prompt says the state is dead rather than merely omitting it.
+        assert!(
+            prompt.contains("There is no blocked-deploy state and no producer deploy any more"),
+            "the prompt must say the state is gone, so a producer that saw the old label knows"
+        );
+        // The replacement lives in 3b (iv): migration dep + typed flag + filing the issue.
+        let step3b = producer_step(&prompt, "3b");
+        assert!(
+            step3b.contains("(iv) MIGRATION"),
+            "3b (iv) must BE the migration case, not a deploy case: {step3b}"
+        );
+        for needed in [
+            "HAS NOT MIGRATED",
+            "flag-blocked-on <owner/repo> <n>",
+            "--blocked-by <owner/repo#n of the migration issue/PR>",
+            "`gh issue create`",
+            "lifecycle-split finding",
+            "you deploy NOTHING",
+        ] {
+            assert!(
+                step3b.contains(needed),
+                "3b (iv) must carry {needed:?} — the replacement is only real if the prompt \
+                 teaches the whole move: {step3b}"
+            );
+        }
+        // The worklist vocabulary the prompt dispatches on matches the binary's.
+        assert!(
+            prompt.contains("`flag-migration`") && !prompt.contains("`deploy` (3b"),
+            "step 2's nextAction vocabulary must name flag-migration, not deploy"
+        );
+        // The conventions step no longer instructs writing the legacy marker on new PRs.
+        let step6 = producer_step(&prompt, "6");
+        assert!(
+            step6.contains("NO deploy flag of any kind"),
+            "step 6 must stop instructing the redeploy marker on bytecode PRs: {step6}"
+        );
+    }
+
+    /// #162, vetter side: a red prod-pin stopped being "awaiting its deploy" — it is repo-shape
+    /// evidence the producer routes to the migration. The vetter's incidental-red example must
+    /// say so, or the vetter keeps narrating a wait that no longer exists.
+    #[test]
+    fn the_vetter_prompt_reads_a_red_prod_pin_as_migration_evidence_not_a_deploy_wait() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            !prompt.contains("awaiting its deploy"),
+            "a prod pin does not await a deploy any more (#162)"
+        );
+        assert!(
+            prompt.contains("has not migrated to the split release lifecycle"),
+            "the incidental-red example must carry the re-pointed reading"
+        );
+        assert!(
+            prompt.contains("no merge waits on a deploy"),
+            "the ruling itself belongs in the prompt, so the reading is not a bare assertion"
+        );
+    }
+
     /// #141: `record_verdict` REFUSES a `ready` whose changed `.sol` files break the pragma
     /// convention, and a guard the prompt does not teach costs a whole run's tool calls to
     /// discover. Two halves have to be in the prompt for the refusal to be actionable: what the
@@ -41933,6 +42114,11 @@ mod cli_tests {
 
     #[test]
     fn fsm_state_subcommands_present() {
+        // `flag-blocked-deploy` is RETIRED (#162) but still PARSES — deliberately, unlike
+        // `flag-blocked-infra` below: the dispatcher refuses it with a message naming the
+        // replacement (`flag-blocked-on --blocked-by <the repo's migration ref>`), which a clap
+        // unknown-subcommand error could not do. The refusal itself is pinned in
+        // `retirement_tests`.
         assert!(matches!(
             parse(&[
                 "prr",
@@ -42105,23 +42291,25 @@ mod cli_tests {
     }
 
     // The reason is variadic + joined; --dry-run is a flag, not swallowed into the reason.
+    // (Pinned on `flag-design`, a LIVE state transition — `flag-blocked-deploy` still parses the
+    // same shape but is retired (#162) and refuses before any argument matters.)
     #[test]
-    fn flag_blocked_reason_is_variadic_and_dry_run_is_a_flag() {
+    fn flag_state_reason_is_variadic_and_dry_run_is_a_flag() {
         assert_eq!(
             parse(&[
                 "prr",
-                "flag-blocked-deploy",
+                "flag-design",
                 "o/r",
                 "1",
-                "dispatch",
-                "returned",
-                "422",
+                "version",
+                "slot",
+                "taken",
                 "--dry-run"
             ]),
-            Cmd::FlagBlockedDeploy {
+            Cmd::FlagDesign {
                 slug: "o/r".to_string(),
                 pr: "1".to_string(),
-                reason: s(&["dispatch", "returned", "422"]),
+                reason: s(&["version", "slot", "taken"]),
                 dry_run: true,
             }
         );
@@ -43548,17 +43736,20 @@ mod worklist_tests {
 
     #[test]
     fn modeled_state_label_short_circuits_to_parked() {
-        // A PR already in a human-gated state is parked for the human regardless of CI — even a
-        // deploy-trigger or a red-green signal does not override the label.
+        // A PR already in a modeled state is parked regardless of CI — even a deploy-trigger or a
+        // red-green signal does not override the label. `ai:blocked-deploy` is RETIRED (#162) and
+        // parks as RESIDUE: its exit is the human's eyes-on triage (re-flag blocked-on the repo's
+        // migration, or unblock), and re-deriving it from CI here would be the auto-migration the
+        // ruling forbids — the deliberate CONTRAST with `ai:blocked-infra` below.
         for label in [
             "ai:design",
-            "ai:blocked-deploy",
+            RETIRED_BLOCKED_DEPLOY_LABEL,
             "ai:blocked-on",
             "ai:close-candidate",
         ] {
             let mut s = sig(Ci::Green, "CLEAN");
             s.state_label = Some(label.to_string());
-            s.has_deploy_trigger = true; // would otherwise be Deploy
+            s.has_deploy_trigger = true; // would otherwise be FlagMigration
             assert_eq!(
                 next_action(&s),
                 NextAction::ParkedSkip,
@@ -43628,12 +43819,15 @@ mod worklist_tests {
         assert_eq!(next_action(&s), NextAction::ParkedSkip);
     }
 
+    // #162: a deploy-shaped trigger routes to the MIGRATION flag, never a deploy — even on a
+    // green PR (the legacy marker with green CI is the case that used to read "deploy first").
     #[test]
-    fn deploy_trigger_leads_even_when_green() {
+    fn deploy_trigger_routes_to_flag_migration_even_when_green() {
         let mut s = sig(Ci::Green, "CLEAN");
         s.has_deploy_trigger = true;
-        assert_eq!(next_action(&s), NextAction::Deploy);
-        // ...unless the deploy already succeeded at head -> back to green-ready.
+        assert_eq!(next_action(&s), NextAction::FlagMigration);
+        // ...unless the OLD choreography already deploy-confirmed this head — its pins are
+        // resolved, so there is nothing left to flag the PR blocked on → green-ready.
         s.deploy_done_at_head = true;
         assert_eq!(next_action(&s), NextAction::GreenReady);
     }
@@ -43743,8 +43937,9 @@ mod worklist_tests {
     #[test]
     fn worklist_row_deploy_done_must_be_head_scoped() {
         // A deploy-confirmed note at a PRIOR head (HEAD_A) must NOT mark the current head (HEAD_B)
-        // done: the PR pushed new bytecode (REQUIRES redeploy) and still needs the redeploy. Under
-        // the dropped un-head-scoped clause this returned green-ready with undeployed bytecode.
+        // done: the PR pushed new bytecode past the confirmation, so the legacy signal is live
+        // again and the PR routes to the migration flag (#162). A head-blind match would silently
+        // swallow it into green-ready.
         let detail = json!({
             "number": 7, "url": "", "title": "t", "headRefOid": "HEAD_B",
             "body": "REQUIRES redeploy at land",
@@ -43756,8 +43951,9 @@ mod worklist_tests {
             "comments": [{"author":{"login":"thedavidmeister"},
                           "body":"🤖 ai:producer deploy-confirmed at HEAD_A"}]
         });
-        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
-        // ...and WITH the note at the current head, the deploy IS done → green-ready.
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "flag-migration");
+        // ...and WITH the note at the current head, the old choreography already resolved this
+        // head's pins — nothing left to flag → green-ready.
         let detail = json!({
             "number": 7, "url": "", "title": "t", "headRefOid": "HEAD_B",
             "body": "REQUIRES redeploy at land",
@@ -43790,7 +43986,7 @@ mod worklist_tests {
                           "body":"🤖 ai:producer deploy-confirmed at abcdef012345"}]
         });
         assert_eq!(worklist_row("o/r", &done)["nextAction"], "green-ready");
-        // A short sha that does NOT prefix the head is not head-scoped → the redeploy still stands.
+        // A short sha that does NOT prefix the head is not head-scoped → the signal still stands.
         let notdone = json!({
             "number": 7, "url": "", "title": "t", "headRefOid": head,
             "body": "REQUIRES redeploy at land",
@@ -43802,7 +43998,10 @@ mod worklist_tests {
             "comments": [{"author":{"login":"thedavidmeister"},
                           "body":"🤖 ai:producer deploy-confirmed at 999999999999"}]
         });
-        assert_eq!(worklist_row("o/r", &notdone)["nextAction"], "deploy");
+        assert_eq!(
+            worklist_row("o/r", &notdone)["nextAction"],
+            "flag-migration"
+        );
     }
 
     #[test]
@@ -43828,25 +44027,99 @@ mod worklist_tests {
         assert!(is_producer_backlog(&json!({})));
     }
 
+    /// `action_rank` is string-keyed off `NextAction::as_str`, so a renamed action that missed
+    /// one side would silently sink to the parked-skip rank instead of leading the sort.
     #[test]
-    fn worklist_row_red_prodpin_is_deploy() {
+    fn flag_migration_leads_the_action_rank() {
+        assert_eq!(action_rank(NextAction::FlagMigration.as_str()), 0);
+        // The retired spelling must not secretly still be the ranked one.
+        assert_eq!(
+            action_rank("deploy"),
+            7,
+            "an unknown action files as parked"
+        );
+    }
+
+    #[test]
+    fn worklist_row_red_prodpin_is_flag_migration() {
         let detail = json!({
             "number": 1, "headRefOid": "H",
             "statusCheckRollup": [{"name":"rainix-sol / test / testProdDeployArbitrum",
                                    "conclusion":"FAILURE","status":"COMPLETED"}],
             "mergeStateStatus": "BLOCKED", "labels": [], "comments": []
         });
-        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "flag-migration");
     }
 
     #[test]
-    fn worklist_row_requires_redeploy_green_is_deploy() {
+    fn worklist_row_requires_redeploy_green_is_flag_migration() {
         let detail = json!({
             "number": 1, "headRefOid": "H", "body": "REQUIRES redeploy at land",
             "statusCheckRollup": [{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}],
             "mergeStateStatus": "CLEAN", "labels": [], "comments": []
         });
-        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "deploy");
+        assert_eq!(worklist_row("o/r", &detail)["nextAction"], "flag-migration");
+    }
+
+    /// The relationship [`legacy_deploy_signal`] documents, PINNED rather than only argued in
+    /// prose: the human's shape signal and the producer's migration flag are composed from the
+    /// SAME two shape inputs, so they can never disagree about whether the repo is legacy-shaped —
+    /// and they diverge on EXACTLY one further input, the deploy-confirmed head, which only the
+    /// producer consults. A future edit that adds a third input to one side breaks this.
+    #[test]
+    fn the_shape_signal_and_the_migration_flag_diverge_only_at_a_confirmed_head() {
+        let head_owned = "b".repeat(40);
+        let head = head_owned.as_str();
+        let fixture = |body: &str, rollup: serde_json::Value| {
+            json!({
+                "number": 1, "url": "", "title": "t", "headRefOid": head,
+                "body": body, "statusCheckRollup": rollup,
+                "mergeStateStatus": "CLEAN", "labels": [],
+                // A COMPLETE, empty file list: the screenshot gate reads "no UI" rather than "not
+                // known", so no fixture here can route to 3c instead of the case under test.
+                "files": [], "changedFiles": 0, "comments": []
+            })
+        };
+        let green = json!([{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}]);
+        let red_pin = json!([{"name":"rainix-sol / test / testProdDeployArbitrum",
+                              "conclusion":"FAILURE","status":"COMPLETED"}]);
+        let red_other = json!([{"name":"unit","conclusion":"FAILURE","status":"COMPLETED"}]);
+
+        // (fixture, does this repo read as legacy-SHAPED?) — both spellings of the shape evidence,
+        // and both ways of not being it (a plain green PR, and a red PR whose red is not a pin).
+        for (detail, shaped) in [
+            (fixture("a plain change", green.clone()), false),
+            (fixture(REDEPLOY_MARKER, green.clone()), true),
+            (fixture("a plain change", red_pin), true),
+            (fixture("a plain change", red_other.clone()), false),
+            (fixture(REDEPLOY_MARKER, red_other), true),
+        ] {
+            let rollup = detail.get("statusCheckRollup").unwrap();
+            let ci = classify_ci(rollup);
+            let failing = failing_check_names(rollup);
+            assert_eq!(
+                legacy_deploy_signal(&detail, ci, &failing) == LegacyDeploySignal::RepoNotMigrated,
+                shaped,
+                "the human's shape signal reads the wrong shape on {detail}"
+            );
+            assert_eq!(
+                worklist_row("o/r", &detail)["nextAction"] == "flag-migration",
+                shaped,
+                "the producer's flag disagrees with the shape signal on {detail}"
+            );
+        }
+
+        // The ONE deliberate divergence. A trusted deploy-confirmed note at THIS head resolved this
+        // head's pins, so the producer has nothing left to flag the PR blocked on — while the REPO
+        // is still legacy-shaped, and the human's row still says so.
+        let mut confirmed = fixture(REDEPLOY_MARKER, green);
+        confirmed["comments"] = json!([{"author":{"login":"thedavidmeister"},
+                                        "body": format!("🤖 ai:producer deploy-confirmed at {head}")}]);
+        assert_eq!(worklist_row("o/r", &confirmed)["nextAction"], "green-ready");
+        assert_eq!(
+            legacy_deploy_signal(&confirmed, Ci::Green, &[]),
+            LegacyDeploySignal::RepoNotMigrated
+        );
     }
 
     #[test]
@@ -44747,7 +45020,8 @@ mod fsm_completeness_tests {
         );
         // blocked states next — same PRECEDENCE, but the LANE names whoever moves each (#161):
         // the vetter's state-load clears `ai:blocked-on` when its typed deps merge/close, so it
-        // files with the vetter's work; `ai:blocked-deploy` still waits on a producer/human deploy.
+        // files with the vetter's work; the RETIRED `ai:blocked-deploy` residue (#162) waits on
+        // its eyes-on triage, so it stays with the producer-blocked group.
         assert_eq!(
             classify_lane(&s(&["ai:blocked-infra"]), None, false),
             (Lane::ProducerBlocked, "ai:blocked-infra".to_string())
@@ -44839,7 +45113,7 @@ mod fsm_completeness_tests {
             qpr(5, &["ai:relink"], None, false),          // ai:relink
             qpr(6, &["ai:design"], None, false),          // ai:design
             qpr(7, &["ai:close-candidate"], None, false), // ai:close-candidate (PR)
-            qpr(8, &["ai:blocked-deploy"], None, false),  // producer-blocked
+            qpr(8, &["ai:blocked-deploy"], None, false),  // producer-blocked (RETIRED residue #162)
             qpr(9, &["ai:blocked-infra"], None, false),
             qpr(10, &["ai:blocked-on"], None, false), // vet-lifecycle: the vetter clears it (#161)
             qpr(11, &["human:reject"], None, false),  // human decisions
@@ -45105,6 +45379,61 @@ mod subject_ref_tests {
                 );
             }
         }
+    }
+
+    /// The kept-while-nonzero contract on the RETIRED `ai:blocked-deploy` (#162): the emission
+    /// keeps the `blockedDeploy` key — 0 once the residue is triaged, never absent — because a
+    /// dashboard that stopped rendering the state would hide the PRs still owed their eyes-on
+    /// re-flag to `ai:blocked-on --blocked-by <the repo's migration>`.
+    #[test]
+    fn the_retired_blocked_deploy_count_keeps_its_key_and_counts_the_residue() {
+        // No residue bucket at all → the key is still there, and it is 0.
+        let empty = doc();
+        assert_eq!(
+            empty.pointer("/counts/blockedDeploy"),
+            Some(&json!(0)),
+            "the key must be KEPT at zero, not dropped: {:?}",
+            empty.get("counts")
+        );
+        // A residue PR still carrying the label → counted under the same key.
+        let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> =
+            std::collections::BTreeMap::new();
+        buckets.insert(
+            RETIRED_BLOCKED_DEPLOY_LABEL.into(),
+            vec![sref("rainlanguage/rainlang", 535, "pull", "residue pr")],
+        );
+        let lanes = lanes_doc(&[QueuePr {
+            subject: sref("rainlanguage/rainlang", 535, "pull", "residue pr"),
+            labels: vec![RETIRED_BLOCKED_DEPLOY_LABEL.to_string()],
+            ready_vetted_at_head: None,
+            producer_commented: false,
+        }]);
+        let (ccu, ccu_n) = issue_state_pair(vec![]);
+        let (ccup, ccup_n) = issue_state_pair(vec![]);
+        let with_residue = human_queue_doc(
+            &buckets,
+            &lanes,
+            &[],
+            ccu,
+            ccu_n,
+            ccup,
+            ccup_n,
+            &[],
+            None,
+            &[],
+            1,
+            &[],
+            DOC_NOW_MS,
+        );
+        assert_eq!(
+            with_residue.pointer("/counts/blockedDeploy"),
+            Some(&json!(1))
+        );
+        // …and the lanes agree it is producer-blocked, so the count and the lane cannot drift.
+        assert_eq!(
+            lane_state_count(&lanes, "producer-blocked", RETIRED_BLOCKED_DEPLOY_LABEL),
+            1
+        );
     }
 
     // The serialiser is the single point of truth: `to_json_with` ADDS to it, never replaces it.
@@ -52383,18 +52712,48 @@ mod infra_down_tests {
 
     // ---- the retirement ---------------------------------------------------------------------
 
-    /// `ai:blocked-infra` must not be reachable as a destination — not in the writable state set,
-    /// and not as a noun a transition could name.
+    /// A retired label must not be reachable as a destination — not in the writable state set,
+    /// and not as a noun a transition could name. `ai:blocked-infra` (#108) and
+    /// `ai:blocked-deploy` (#162) both hold it; the live set is exactly design + blocked-on.
     #[test]
-    fn the_retired_label_is_no_longer_a_destination() {
-        assert!(
-            !PRODUCER_STATE_LABELS.contains(&RETIRED_STATE_LABEL),
-            "the retired state must not be writable"
-        );
-        assert_eq!(PRODUCER_STATE_LABELS.len(), 3);
-        assert_eq!(state_noun(RETIRED_STATE_LABEL), "State");
-        for still_live in ["ai:design", "ai:blocked-deploy", "ai:blocked-on"] {
+    fn the_retired_labels_are_no_longer_destinations() {
+        for retired in [RETIRED_STATE_LABEL, RETIRED_BLOCKED_DEPLOY_LABEL] {
+            assert!(
+                !PRODUCER_STATE_LABELS.contains(&retired),
+                "the retired state {retired} must not be writable"
+            );
+            assert_eq!(state_noun(retired), "State");
+        }
+        assert_eq!(PRODUCER_STATE_LABELS.len(), 2);
+        for still_live in ["ai:design", "ai:blocked-on"] {
             assert!(PRODUCER_STATE_LABELS.contains(&still_live));
+        }
+    }
+
+    /// `flag-blocked-deploy` refuses (#162) — and the refusal TEACHES: it names the retirement,
+    /// the replacement transition with its typed-dep spelling, the migration object, and the
+    /// subject PR, so a producer that reaches for the old command leaves with the new move rather
+    /// than a bare error. Contrast `flag-blocked-infra`, which is gone from the surface entirely —
+    /// this one is kept parseable precisely so this message can be delivered.
+    #[test]
+    fn retired_flag_blocked_deploy_refuses_naming_the_replacement() {
+        let msg = retired_flag_blocked_deploy_refusal("o/r", "7");
+        assert!(msg.starts_with("REFUSED:"), "a refusal, not advice: {msg}");
+        assert!(msg.contains("#162"), "names its retirement: {msg}");
+        for needed in [
+            // The replacement transition, spelled runnably against THIS subject…
+            "pr-review-report flag-blocked-on o/r 7",
+            // …with its typed-dep argument and the migration as the dep's object…
+            "--blocked-by",
+            "migration issue/PR",
+            "filing the migration issue first if none exists",
+            // …and the ruling that retired the state.
+            "no merge waits on a deploy",
+        ] {
+            assert!(
+                msg.contains(needed),
+                "the refusal must carry {needed:?}: {msg}"
+            );
         }
     }
 
@@ -52416,6 +52775,94 @@ mod infra_down_tests {
             ),
             (Lane::HumanDecisions, "human:reject".to_string())
         );
+    }
+
+    /// The `ai:blocked-deploy` residue (#162) stays visible too — and PRODUCER-blocked, never
+    /// vet-lifecycle: the #164 clearance reads exactly `ai:blocked-on` (typed refs the vetter can
+    /// resolve), and this residue has neither the label nor the refs. Its next mover is the
+    /// eyes-on triage that re-flags each PR blocked-on its repo's migration or unblocks it.
+    #[test]
+    fn blocked_deploy_residue_is_producer_blocked_not_the_vetters_to_clear() {
+        assert_eq!(
+            classify_lane(&[RETIRED_BLOCKED_DEPLOY_LABEL.to_string()], None, false),
+            (
+                Lane::ProducerBlocked,
+                RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
+            )
+        );
+        // Its old precedence holds: a blocked residue still dominates a stale `ai:ready` label…
+        assert_eq!(
+            classify_lane(
+                &[
+                    "ai:ready".to_string(),
+                    RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
+                ],
+                Some(true),
+                false
+            ),
+            (
+                Lane::ProducerBlocked,
+                RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
+            )
+        );
+        // …and a human decision still dominates it.
+        assert_eq!(
+            classify_lane(
+                &[
+                    "human:design".to_string(),
+                    RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
+                ],
+                None,
+                false
+            ),
+            (Lane::HumanDecisions, "human:design".to_string())
+        );
+    }
+
+    /// `human-queue`'s verdict-currency fetch is spent on exactly the PRs whose LANE the answer
+    /// moves, and that set is derived from [`classify_lane`] rather than restated as a label list.
+    ///
+    /// The restated version is what drifted: it read [`PRODUCER_STATE_LABELS`], and a retirement
+    /// takes a label OUT of that array while leaving it AHEAD of `ai:ready` in the precedence
+    /// order — so `ai:blocked-infra` (#108) and `ai:blocked-deploy` (#162) each re-armed a
+    /// `gh pr view` per residue PR whose result `classify_lane` then never reads, the second of
+    /// them on a PR shaped exactly like
+    /// [`blocked_deploy_residue_is_producer_blocked_not_the_vetters_to_clear`]'s. Every dominating
+    /// state is asserted here, live and retired alike, so the next retirement cannot re-arm it.
+    #[test]
+    fn verdict_currency_is_fetched_only_where_it_can_change_the_lane() {
+        // The one PR the fetch exists for: `ai:ready` with nothing ahead of it.
+        assert!(needs_verdict_currency(&["ai:ready".to_string()], false));
+        // `ai:design` does NOT dominate — it buckets BELOW `ai:ready`, so the fetch still decides.
+        assert!(needs_verdict_currency(
+            &["ai:ready".to_string(), "ai:design".to_string()],
+            false
+        ));
+        // Everything that returns ahead of the `ai:ready` branch makes the call dead weight.
+        for dominating in [
+            "human:design",
+            "human:close-candidate",
+            RETIRED_HUMAN_REJECT_LABEL,
+            RETIRED_BLOCKED_DEPLOY_LABEL,
+            "ai:blocked-on",
+            RETIRED_STATE_LABEL,
+        ] {
+            let labels = vec!["ai:ready".to_string(), dominating.to_string()];
+            assert!(
+                !needs_verdict_currency(&labels, false),
+                "`{dominating}` dominates `ai:ready`, so its verdict-currency fetch is wasted"
+            );
+            // …and the reason it is wasted: skipping it changes nothing the queue emits.
+            assert_eq!(
+                classify_lane(&labels, None, false),
+                classify_lane(&labels, Some(false), false),
+                "skipping the fetch for `{dominating}` must not move the PR's lane"
+            );
+        }
+        // No `ai:ready` label at all: there is no verdict whose currency could matter.
+        assert!(!needs_verdict_currency(&["ai:reject".to_string()], false));
+        assert!(!needs_verdict_currency(&[], true));
+        assert!(!needs_verdict_currency(&[], false));
     }
 
     /// The one-shot's target list: every open PR the search names, and nothing it cannot identify.

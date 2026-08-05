@@ -276,9 +276,13 @@ changes the ruling:
   the truth about it.
 - **unresolved threads**, whose `meaning` is already qualified by the field
   above.
-- **the deploy-before-merge gate**, taken from the body and trusted producer
-  comments — never the title, where the marker appears in 1 of the 6 PRs that
-  carry it.
+- **the legacy deploy signal** (`legacyDeploySignal`), taken from the body and
+  trusted producer comments — never the title, where the marker appears in 1 of
+  the 6 PRs that carry it. It is **never a merge gate** (#162):
+  `repo-not-migrated` says the PR's repo still has the pre-split premerge deploy
+  shape and is owed a lifecycle migration — the producer's
+  `flag-blocked-on --blocked-by <migration ref>` route — not that anything must
+  be deployed before this merge.
 
 `queue.more` and `counts` frame the row: a PR you expected and did not get is
 usually in `unvetted`, where a verdict that is no longer current at the PR's
@@ -291,9 +295,10 @@ Print every field of the row. Then give the independent read — what the issue
 asked for, what the diff does, whether those two agree — then the audit lens's
 findings, each marked as the diff's own code or as surrounding context, and then
 say where the whole of that and the vetter's note diverge. Then say what it adds
-up to: whether anything blocks a merge, and if the deploy gate is set, that this
-is deploy-before-merge and **not** a plain merge, because landing it as if it
-were ordinary is a production error.
+up to: whether anything blocks a merge — and if the legacy deploy signal is
+`repo-not-migrated`, say that too, as repo health rather than as a gate: the
+merge does not wait on any deploy (#162), and what the signal asks for is the
+repo's migration to the split release lifecycle.
 
 **The lens's findings arrive under the scope they were formed at, stated.** Name
 the literal you declared — `pr:<number>`, with the number in it — or, where the
