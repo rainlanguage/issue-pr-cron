@@ -1110,8 +1110,20 @@
         ]
       },
       "un-vetted": {
-        "count": 24,
+        "count": 26,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 215,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/215",
+            "title": "Close-candidate flags cover both subject types, one upheld inbox, close is decide+do"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 160,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/160",
+            "title": "Close-candidate renders as two states: one mixed upheld inbox"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 104,
@@ -1818,34 +1830,16 @@
   ],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 159,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/159",
-      "title": "Retire the human:close-candidate box: close-candidate renders as two states, unvetted and upheld"
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 84,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/84",
+      "title": "Benchmark corpus + runner: prove the audit skill detects what it claims to, and catch regressions in it"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 213,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/213",
-      "title": "human:close-candidate splits decide-from-do, a phase no other state models: fuse close rulings into human-close, machinery completes tears"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 158,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/158",
-      "title": "Render one upheld close-candidate box: retire ai:close-candidate (PRs), fold its history"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 212,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/212",
-      "title": "Upheld close-candidates are one human inbox: merge closeCandidateUpheld and the vetted-PR lane state"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 211,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/211",
-      "title": "Close-candidate vetting misses PR-shaped flags: gh search issues scopes to type:issue"
+      "number": 214,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/214",
+      "title": "doctor: find and heal known bad states from a typed registry, instead of enshrining them as FSM states or ignoring them"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -5521,23 +5515,23 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 1,
     "leaks": 5,
-    "totalProducerPrs": 148,
+    "totalProducerPrs": 150,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 605,
-    "unvetted": 24,
+    "uncoveredIssues": 602,
+    "unvetted": 26,
     "reject": 65,
     "relink": 0,
     "closeCandidatePrs": 4,
     "humanReject": 0,
     "humanDesign": 6,
     "humanCloseCandidate": 0,
-    "openIssues": 766
+    "openIssues": 768
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.4,
+      "meanDays": 313.6,
       "medianDays": 99.3,
-      "oldestDays": 1654.8
+      "oldestDays": 1654.9
     }
   }
 }
