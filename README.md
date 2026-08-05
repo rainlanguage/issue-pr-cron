@@ -65,13 +65,15 @@ stateDiagram-v2
     reject --> close : producer judges it not worth doing
     reject --> unvetted : linkage reject · producer weaken-closes Closes→Refs
 
-    %% producer deploy + blocked hand-offs → human resolves → re-work
+    %% producer deploy + blocked hand-offs. blocked-deploy waits on a human; blocked-on sits with
+    %% the VETTER (#161): the flag carries typed --blocked-by refs (refused without one) and the
+    %% vetter's state-load clears it the run after every dep merges/closes → fresh re-vet.
     ready --> ready : producer deploy · red prod-pin → green
     ready --> bdeploy : flag-blocked-deploy · deploy FAILED
-    unvetted --> bon : flag-blocked-on · waiting on a dependency PR
+    unvetted --> bon : flag-blocked-on --blocked-by owner/repo#n · waiting on dependency PRs
     unvetted --> design : flag-design · anything a human must answer or supply
     bdeploy --> unvetted : human resolves deploy → re-work
-    bon --> unvetted : dependency merges → producer re-works
+    bon --> unvetted : vetter clears · every typed dep merged/closed → re-vet fresh
 
     %% infra down is NOT a PR state — the RUN ends and no PR is touched (#108)
     unvetted --> infradown : infra-down · environment is impeding the work
@@ -339,26 +341,28 @@ server is the vetter's **only** tool surface.
 | `record_verdict`                 | the PR write: `ai:<verdict>` label + `🤖 ai:vetter` comment bound to the head sha, stamped with the vet protocol, carrying the cost — refused unless `covered` accounts for every changed file |
 | `clone_release`                  | dispose of a checkout it is finished with (guarded — see below)                                                                                                                                |
 | `unvetted_close_candidates`      | state-load: ONE PAGE of the producer close-candidate flags to judge, each with its `flagAt` + stated evidence                                                                                  |
-| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels plus the full flag body and any prior verdicts                                                                                        |
+| `close_candidate_context`        | read one flag: the issue's title/body/`createdAt`/labels, the full flag body, any prior verdicts, and `citationEvidence` — the machine's read of the cited change's own diff                   |
 | `record_close_candidate_verdict` | the issue write: `uphold` (flag stands, queued for the human) or `reject` (strips `ai:close-candidate`)                                                                                        |
 
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
 `human-mcp.json`) serves `next_ready`, `pr_context`, `pr_checkout`,
-`clone_release`, `close_candidate_context`, `human_rule`, `human_rule_issue` and
-`human_close` — find the subject, read it, audit its source, rule on it, close
-it. `human_close` is a tool rather than something the caller composes for the
-reason above: the alternative is a transition half in a tool and half in a
-prompt, and that half was wrong on all 74 closed-and-still-flagged subjects. The
-subcommands above are for the human at a terminal; the profile is for **an agent
-acting on the human's behalf**, which is the case that actually went wrong in
-#86. A prompt rule cannot take a bypassable Bash away, and a `gh issue edit`
-that no tool offers is exactly what gets improvised; a profile makes the non-FSM
-operation _unavailable_. The vetter's inbox tools are deliberately absent — the
-human's inbox is `human-queue`, which renders whole org-wide sets and does not
-fit one tool result — and so is `record_close_candidate_verdict`, which is the
-vetter's authority and the very move `human_rule_issue` refuses on the human's
-behalf.
+`clone_release`, `next_close_candidate`, `close_candidate_context`,
+`human_rule`, `human_rule_issue` and `human_close` — find the subject, read it,
+audit its source, rule on it, close it. The human has **two** inboxes, so it has
+two "which is next" tools: `next_ready` for PRs and `next_close_candidate` for
+close-candidate flags (#173). `human_close` is a tool rather than something the
+caller composes for the reason above: the alternative is a transition half in a
+tool and half in a prompt, and that half was wrong on all 74
+closed-and-still-flagged subjects. The subcommands above are for the human at a
+terminal; the profile is for **an agent acting on the human's behalf**, which is
+the case that actually went wrong in #86. A prompt rule cannot take a bypassable
+Bash away, and a `gh issue edit` that no tool offers is exactly what gets
+improvised; a profile makes the non-FSM operation _unavailable_. The vetter's
+inbox tools are deliberately absent — the human's inbox is `human-queue`, which
+renders whole org-wide sets and does not fit one tool result — and so is
+`record_close_candidate_verdict`, which is the vetter's authority and the very
+move `human_rule_issue` refuses on the human's behalf.
 
 `pr_checkout` and `clone_release` are on it for `/nr`'s sake (#150). The human
 gate forms its own view rather than relaying the vetter's, and the mechanical
@@ -448,6 +452,131 @@ argument the tool does not accept. It caps at 3 rather than 25 because every
 human ruling changes this queue, so a long page is stale past its head, and
 because a page long enough to matter would have to clip the reasoning the tool
 exists to carry.
+
+#### `next_close_candidate` — the flag decision, and why its order is different
+
+The flag lane's human half started with a manual search: the human could read a
+flag it already knew the number of and rule on it, but nothing answered **which
+flag is next**. So the queue where being wrong is least recoverable — a flag
+asks a human to destroy work — was the one worked by hand, while the PR queue
+had a one-call entry point. `next_close_candidate` is that call: the issue's
+title/state/labels/`createdAt`, the producer's **stated reason** (the claim
+being checked, never a fact), the vetter's verdict **pinned to the flag it
+judged**, and whether an open PR claims to close the issue.
+
+**Coverage is reported; what it COSTS is a pairing.** Rule 7a bars an issue
+"**merely** COVERED BY AN OPEN PR" and calls an open PR "never sufficient
+**evidence**" — one clause about having nothing else, one about what may be
+cited FOR a close. Read as a veto instead, it lets an unverified claim override
+a verified one: `rain.dia#6` was fixed on main by a merged PR and stayed blocked
+from 2026-07-28 behind `rain.dia#60`, a redundant PR that was itself queued for
+closure. Nothing in the pipeline could exit that — two queues each holding half
+the picture, neither reading the other. So `openPr.blocksClose` pairs the
+coverage read with `flag.grounds`: a flag citing **no landing** (`invalid` /
+`duplicate` / `wont-fix`, or an `already-fixed-on-main` claim naming nothing
+datable) is the "merely" case and the open PR may be the only thing that would
+ever resolve the issue, so it blocks — and an unreadable coverage query blocks
+with it. A flag citing a **landing** does not block: a redundant PR in flight
+does not un-land what landed, and disposing of it is a decision in the PR lane.
+
+Mergeability is deliberately **not** the discriminator. `rain.dia#60` happened
+to be `CONFLICTING`, but any PR can assert `Closes #N` and the assertion is not
+evidence; `rain.dia#63` blocks a sibling flag today and is perfectly mergeable.
+And `grounds` says what the reason CITES — read off `already_fixed_anchor`, the
+same parse `flag-close-candidate` gates the write on, so the two cannot disagree
+about it. It is not a claim that the citation holds: whether the merged PR is
+really this issue's fix is `/ncc` step 5's check, and `pr_context` still carries
+no merged/state field for the human to confirm it with.
+
+**And a citation that cannot be what it claims is now on the record.** `grounds`
+says what a reason CITES; it never said the cited change bears on the claim, and
+that gap is `rain.dia#22`: the flag said merged PR #48 "landed
+`testRoundTripEmpty` (line 27) and `testRoundTrip31Bytes` (line 32)" when #48 is
+an import-path standardisation whose touch on that file is `+2/-2` — PR #33
+added those tests. The vetter upheld it by restating the citation, which on the
+record is indistinguishable from checking it. So `flag-close-candidate`,
+`close_candidate_context` and `record_close_candidate_verdict` all carry a
+**citation evidence** line, read from the cited change's own diff: how many
+files it touches, its `+a/-d` on every path the reason names, and which symbols
+the reason names its changed lines do not contain.
+
+**One reading of it DOES gate, and only one.** A reason that names paths or
+symbols and cites a change containing NOT ONE of them — no named path in its
+file list, no named symbol in its changed lines — is refused at write time
+(`flag-close-candidate`, exit 5). That closes an EVASION of a guard that already
+existed: `already_fixed_recency_gate` refuses a bare `file:line` outright,
+because "this code is on main today" is not "a change landed that fixed this" —
+and appending the sha the tree was READ at converts that same claim into a
+commit anchor that always post-dates the issue, so the date check passes
+vacuously. Every commit-anchored flag on record is that shape.
+`raindex#588`/`#574`/`#573`/ `#570` all cite `bb83031`, which is "Merge pull
+request #2810 … fix/build-script-name" and touches `foundry.toml`,
+`script/Build.sol` and three siblings — not one of the Svelte components those
+four reasons are about; `raindex#928` cites `7ba0fa8` in the words "tauri-app/
+existed **at** 7ba0fa8", naming the state BEFORE the deletion it credits.
+Replayed over every flag in the live and closed queues, the gate refuses 4 of
+those 5 and **nothing else** — `#928` names no path or symbol at all, and an
+empty check is not a failed one.
+
+**Every WEAKER reading still gates nothing, and that is a measurement rather
+than a preference.** Over every `ai:close-candidate` flag in the live and closed
+queues carrying a fetchable anchor (21 of them, 2026-08-04), no threshold on any
+of these signals separates the sound citations from the one unsound one.
+Requiring a named symbol in the cited diff's changed lines would have passed
+`rain.dia#22` — its reason names `LibDia.t.sol`, and the import rewrite does
+touch `LibDia` — while refusing eleven sound flags, because an
+`already-fixed-on-main` reason argues about CURRENT MAIN as well as about the
+landing, and four of the seven live ones are fixed by DELETION, whose evidence
+is on the removed side. `rain.dia#22` was CLOSED on the merits with the
+correction recorded, since rejecting it would have cost a producer cycle to
+reach the same answer; a check that converted that into rework would be the
+wrong fix for it. So a partial miss is reported and never refused, and
+`rain.dia#22` itself passes the gate — the PR it cites does touch the file it
+names, which is all "connected" asks. The gate catches a citation about
+DIFFERENT CODE; whether a citation about the RIGHT code is the right change
+stays the human's call at `/ncc` step 5.
+
+Nothing here touches `already_fixed_anchor` or `flag_grounds`. The parse that
+answers "what does this reason CITE" is unchanged, so `blocksClose` on the live
+queue is unchanged too — replaying all 11 open flags through the gate before and
+after moves not one of them.
+
+The one hole this opens is closed where it is opened: a reason whose anchor is
+**one of the covering PRs** is citing the thing in flight as the reason to
+ignore it, so it reads as `cites-no-landing` and blocks. That is rule 7a
+literally — an open PR is never sufficient evidence — rather than an exception
+to the pairing.
+
+**The ranking is not the PR queue's.** Cheapest-first is right there because
+merges are the scarce resource and a cheap merge is throughput. Here the scarce
+resource is the human's judgement, and neither half transfers: a flag's whole
+content is one line whose length says nothing about how hard the claim is to
+falsify ("already fixed on main" is twenty-two characters and needs a diff read
+against the path the issue named), so a cost sort would be sorting by a number
+that does not measure the work. What the queue must protect against instead is
+**starvation**, because a flag is not inert while it waits —
+`is_producer_backlog` excludes an `ai:close-candidate` issue from the producer's
+backlog, so a flagged issue is neither being fixed nor closed. The flag parks
+it. So the order is **oldest flag first**, which bounds that limbo; and it is
+right on accuracy too, since an "already fixed" claim is about a main branch
+that keeps moving and the oldest flag's reason describes the least of what is
+there now. Newest-first — the other candidate — optimises the cost of each check
+by never reaching the flags that have decayed most.
+
+**What it withholds is as load-bearing as what it returns.** A flag the vetter
+has not judged is `counts.unvetted`, not a row: a flag the vetter would REJECT
+never reaches a human at all, because the reject strips the label, so presenting
+one early spends judgement on the vetter's turn. And `strandedFlags` names two
+states no AI transition will ever clear — a label with no producer comment
+behind it (the vetter skips it for ever as `skip-no-flag`) and a `reject` whose
+label removal did not land. Both sat invisible until this tool counted them.
+
+The cap is 3 for `next_ready`'s reason and the argument is stronger: there, a
+human who reads a row and does not merge leaves the PR in the queue, whereas
+**every** ruling here retires its flag — uphold-and-close, keep-open and
+reject-the-flag all remove the row — so a page is stale past its head by
+construction. The same per-field caps make a full page's worst case arithmetic
+the compiler checks, this time including both withheld lists at their caps.
 
 The last three vetter tools are its **second subject**. A PR asks a human to
 merge code; a close-candidate flag asks a human to **destroy work**, so the flag
@@ -622,6 +751,33 @@ naming the argument to narrow** — never truncated, never spilled. On 2026-07-2
 harness refused it, and the vetter improvised a fallback that silently dropped
 the whole open-threads accounting; the run log looked normal. A partial
 state-load cannot say what it is missing, so the tool refuses to produce one.
+
+**A refusal is only a redirect while a narrowing move exists** (#117). The
+argument each refusal names is declared on the tool's own table entry, beside
+the schema that has to advertise it, and a tool that declares none is told so —
+`narrowing_argument` used to be a match over the call whose catch-all was
+`Some("limit")`, which asserted a `limit` for seventeen variants of which two
+had one. `clone_list` was the one that bit: an empty input schema, a refusal
+saying "lower `limit`", and a producer with no second call to make, which
+improvised `ls -d …/*/ | wc -l` and reported **289 clones / 214G** where a state
+load belonged — every field the tool exists to carry (`branch`, `unpushed`,
+`uncommitted`, `ageDays`, `releasable`) gone, and nothing in the run saying so.
+The advice a caller cannot follow provokes the improvisation the refusal exists
+to prevent, so the prohibition on improvising is now in **both** branches, and
+`each_refusal_names_an_argument_that_actually_narrows_it` walks the advertised
+tool table rather than three tools named by hand.
+
+**Which is why an unbounded read is a bug in the read, not a case for the
+guard.** A tool whose result grows with the box or the queue fits itself to the
+budget the way `pr_context` does. `clone_list` and `clone_gc` state the whole
+population as **counts that are never truncated** and offer their per-clone rows
+to the budget in the order a caller acts on them — unreadable state first, then
+unpushed commits, then dirty trees, then releasable — with `listed`/`omitted`
+saying exactly how many rows the budget took. So the sample is the thing that
+shrinks and the accounting is not, which is the difference between a truncation
+that says what it is missing and a partial state-load that cannot. On the box
+#117 was found on, `clone_list` went from 38,492 bytes **refused** to 25,358
+bytes carrying all 139 held clones out of 242.
 
 **The budget must be lower than what the harness accepts, and that is the
 mechanism, not a preference.** If the harness is the thing that speaks, what
@@ -1032,6 +1188,10 @@ with `^`, and one `abstract contract` pinned with `=`.
 
 `pr-review-report mcp --profile producer` serves the **producer's** clone
 lifecycle — `clone_create`, `clone_release`, `clone_list`, `clone_gc` — plus the
+two output edges, **`push`** (see
+[pushing a rework is a transition](#pushing-a-rework-is-a-transition-push)) and
+**`open_pr`** (see
+[opening a PR is a transition](#opening-a-pr-is-a-transition-open_pr)), and the
 two **body repairs**, `repair_qa_block` and `weaken_closes` (see
 [the linkage repair](#the-linkage-repair-weaken-closes)). Unlike the vetter's
 surface this one is **additive** — the producer keeps its Bash, and is wired
@@ -1114,11 +1274,14 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   whether it has never been judged or its `ai:ready` verdict stopped being
   current at its head. Vetting is a pure function of the PR at its head, so
   "judged before" is not a state — there is one un-vetted state, handled one
-  way.
+  way. Plus `ai:blocked-on` (#161): the vetter's lane because the vetter is its
+  next mover — the state-load clears the flag the run after every typed dep
+  merges/closes and the PR re-enters vetting fresh ("clear when deps merge" is
+  vetter action, not human polling).
 - **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:design`,
   `ai:close-candidate`, plus the RETIRED `ai:relink` for as long as any PR still
   carries it (#135).
-- **producer-blocked** — `ai:blocked-deploy`, `ai:blocked-on`, plus the RETIRED
+- **producer-blocked** — `ai:blocked-deploy`, plus the RETIRED
   `ai:blocked-infra` for as long as any PR still carries it (#108).
 - **human-decisions** — `human:design`, `human:close-candidate`, plus the
   RETIRED `human:reject` for as long as any PR still carries it (#133). That
@@ -1155,6 +1318,194 @@ counts are derived from a single document, so `counts.X == X.len()` holds by
 construction. These are ISSUE states, so — like `closeCandidateIssues` — they
 are **not** in `lanes`, which groups PRs.
 
+### Opening a PR is a transition: `open_pr`
+
+Opening the PR — the one move that **is** a new PR's output — was a
+`gh pr create` inside Bash, which leaves a shell string in the trace and nothing
+a reader can join on. On the reference producer run that is **1,986 Bash calls
+against 35 MCP calls**, so the question "which dispatched task produced which
+PR" had no answer in the record the pipeline keeps. The cost side already had
+one (`token-report` splits a run by `parent_tool_use_id`); the output side did
+not, which made _what did it cost to land this_ unanswerable.
+
+`open_pr` is that edge as a tool:
+
+```json
+{
+  "repo": "rainlanguage/rain.solmem",
+  "head": "2026-08-02-issue-63",
+  "title": "Guard the empty inner position",
+  "body_file": "/scratch/pr-63.md",
+  "closes": 63
+}
+```
+
+and its **result** carries the PR number and url, so one typed line of the trace
+holds the whole `{agent, repo, issue, PR}` tuple. That tuple is what
+[`work-tokens`](#tokens-to-land-work-work-tokens) joins on.
+
+Four properties are deliberate:
+
+- **The QA gate runs BEFORE anything is created**, using
+  [`carries_qa_block`](#the-retrofit-repair-qa-block) — THE predicate, now with
+  three callers (the PR-open hook, the retrofit, and this). A body this tool
+  accepts is a body `require-qa-block` accepts by construction rather than by
+  two implementations agreeing, and a refusal (exit 3) provably created nothing,
+  so it costs one edit inside the run.
+- **`body_file` is a FILE, and absolute.** The bytes stay on disk for the trace,
+  and the MCP server's working directory is the cron's, not the caller's clone —
+  so a relative path names a file neither side can identify, and is refused.
+- **`closes` is a number, not prose.** The tool writes the canonical `Closes #N`
+  line only when [`closing_keywords`](#the-linkage-repair-weaken-closes) says
+  the body does not already close that issue, and the result reports every issue
+  the posted body closes. Stating a linkage at PR-open is what the producer
+  always did in prose; `weaken-closes`'s direction lock is untouched (it guards
+  a PR a human may already have read, where adding a `Closes` would
+  retroactively mark work covered).
+- **The PR number is read out of gh's OWN url**, and a url that cannot be read
+  is its own refusal (exit 6) saying the PR **was** created — retrying it would
+  open a second one.
+
+The `require-qa-block` PreToolUse hook stays exactly as it is. It binds every
+session on the box, including the interactive ones with no MCP surface at all,
+which are the population it was filed about; it is simply redundant on the cron
+producer's path now.
+
+### There is no screenshot gate at PR-open, and that is a ruling (#142)
+
+The QA block is gated at `gh pr create`. The screenshot is **not**, and asking
+for the same shape there is the obvious next move — a gate at open is worth more
+than a reject after the fact, because the reject costs a round trip through the
+queue. The ruling is that the enforcement point **stays where it is**: the
+vetter's SCREENSHOT GATE rejects a UI PR with no visual evidence, and the
+producer's step 3c backfills its own open UI PRs on the next pass, so the round
+trip runs inside the pipeline rather than through a human.
+
+What settles it is that the two gates are not the same shape. `require-qa-block`
+reads a `## QA` heading and four evidence lines — a STRUCTURE, present or
+absent, and `carries_qa_block` decides it exactly. The screenshot rule's subject
+is _does a user see this change_, and nothing on a `gh pr create` command line
+answers that. Measured over the **681 PRs the producer has opened since the
+cron's first commit** (`rainlanguage`, `cyclofinance`, `S01-Issuer`), with the
+shots on raindex's `pr-screenshots` branch as ground truth for _the producer
+judged this one visual and rendered it_ — **35** such PRs:
+
+| classifier                                                     | fires on | catches (of 35) | fires with no markup/style/template line changed |
+| -------------------------------------------------------------- | -------- | --------------- | ------------------------------------------------ |
+| `packages/webapp` \| `packages/ui-components` \| `site/*.html` | 78       | 24              | —                                                |
+| any `.svelte` / `.css` / `.html`                               | 116      | 31              | **32 of 116**                                    |
+| both, plus the whole `site/` tree                              | 123      | 35              | —                                                |
+
+The narrow rule misses **all nine** shot-carrying `cyclo.site` PRs, which is the
+repo both of #140's incidents happened in — `cyclo.site` keeps its components in
+`src/lib/components/`. Widening to extensions flips the failure over: **32 of
+the 116** it fires on change no markup, style or template line at all — and **5
+of that same 32** carry a screenshot the producer judged necessary anyway,
+because a string a `<script>` block assigns can be the text a user reads
+(`cyclo.site#432` renders generic error copy in place of a raw one). The rule
+that catches all 35 fires on 123 PRs and cannot say which of them a user sees.
+So every available classifier is wrong in one direction or both, and a refusal
+at open would land that error on the PR — whose only escape is the
+`screenshot pending (manual)` marker, i.e. it would manufacture pressure to
+write the bogus waiver #140 exists to remove.
+
+The same imprecision is **cheap** one step later. `is_ui_path` is read to ROUTE
+a PR to `screenshot-3c`, where step 3c's own next sentence is the narrowing —
+read the diff, skip a change with no visible effect. A false positive there
+costs one diff read, which is the price `UiTouch::Unknown` is already set at;
+the same false positive at open costs the PR. That asymmetry is why the
+classifier is deliberately wide and the gate deliberately absent.
+
+Three things the measurement found broken are fixed rather than ruled on,
+because the ruling above depends on all of them working:
+
+- **`is_ui_path` names all three families** (the frontend packages, the whole
+  `site/` tree, and the `.svelte`/`.css`/`.html` extensions). The claim that
+  step 3c catches its own open UI PRs was false for `cyclo.site`: neither the
+  tool nor the step could see a single one of them.
+- **A shot is recognised by its branch URL, not by a filename.** Step 5 names a
+  raindex shot `shots/<pr>.png` and every other repo's `shots/<repo>-<pr>.png`,
+  and the branch also holds per-view suffixes and shots naming no PR at all, so
+  matching `shots/<number>.png` recognised raindex's spelling and nothing else.
+  On 2026-08-04 `rain-org-health#155` and `#156` each carried
+  `shots/rain-org-health-<n>.png` and `worklist` reported both as having no
+  screenshot — re-routing them to `screenshot-3c` every run, which is also what
+  held them out of `green-ready`. `screenshot_settled` matches the subject the
+  vetter's SCREENSHOT GATE names — a `pr-screenshots/…png` in a trusted comment
+  — so the two ends of the convention are answering one question instead of one
+  of them matching a filename the other never mentions.
+
+The other half of #142 — moving the evidence channel so the artifact is keyed to
+branch + head sha and the shot rides in the BODY at open — is what a gate would
+require and is not done, because the gate is not being built. Reopen it with the
+gate, not before.
+
+### Pushing a rework is a transition: `push`
+
+`open_pr` records a PR that did not exist before. The RUN BUDGET counts three
+other kinds of work — "a rework you push", "a conflict you resolve", "a deploy
+you dispatch" — and the first two have **one outcome between them**: the head of
+an existing PR moves. That went out as a bare `git push` inside Bash, so on the
+first capped producer run (`20260804T114433Z`) **all three** of the run's items
+were reworks, none of them left a typed record, and `work-tokens` reported
+nothing at all for a run that spent $62.90 doing three things.
+
+```json
+{ "clone": "cyclo.site-pr369", "branch": "2026-05-04-lock-price-gate-slippage" }
+```
+
+`branch` is the **remote** branch and defaults to the clone's checked-out one;
+it exists because the corpus really does push a local branch to a differently
+named remote one (`push origin pr168-work:2026-07-31-issue-162-…`).
+
+The result is the record:
+
+```json
+{
+  "repo": "cyclofinance/cyclo.site",
+  "branch": "2026-05-04-lock-price-gate-slippage",
+  "head": "9c1f…",
+  "moved": true,
+  "pr": 369
+}
+```
+
+Four properties are deliberate:
+
+- **The join is CAUSAL, not nominal.** A PR is named only when the remote ref
+  actually **moved** and an open PR on that branch has `headRefOid` **equal to
+  the commit this call pushed**. Resolving a branch name through GitHub's head
+  index is exactly the join
+  [`work-tokens` rejected `clone_create` for](#tokens-to-land-work-work-tokens):
+  `gh pr list --head main` answers with a real PR the caller never touched. Here
+  the sha is the evidence, so the record says _the head this transition created
+  is that PR's head_. Nothing moved, no PR at that head, or **two** PRs at that
+  head (one branch, two bases — a real shape), and the result carries
+  `"pr": null` plus the reason. An unattributable push is a defensible nothing;
+  a plausible-looking wrong PR is not.
+- **It cannot spell a force-push.** The argv is
+  `push origin HEAD:refs/heads/<branch>` — no flags at all — and the `branch`
+  argument is refused if it starts with `+` or contains `:`. So "the producer
+  never force-pushes" stops being a prompt rule this path could violate.
+- **The command string is not a substitute**, and that is measured rather than
+  asserted. Across the seven producer traces **76** command strings contain a
+  `git … push`; they are not one shape (`git -C <dir> push`,
+  `push origin <branch>`, `push -u origin <branch>`,
+  `push origin HEAD:<branch>`, `push origin <local>:<remote>`), several are
+  chained behind `;` into unrelated commands, and two are not pushes at all — a
+  `for c in "git push" …` loop counting occurrences in a prompt file, and a
+  `grep -c -- "git push" <file>`. A parser over that invents work items, which
+  is what a label regex was rejected for.
+- **A push that moved nothing records nothing.** Being up to date is not this
+  transition's work item, whatever the PR's head says: the head it would name
+  was put there by something else, and crediting it here is how a read-only call
+  comes to own a real PR.
+
+The screenshot push (`shots/<repo>-<n>.png` onto the `pr-screenshots` branch) is
+deliberately **not** routed through this tool: it happens in a scratch clone
+rather than a work clone, and it moves no PR head, so it records nothing either
+way.
+
 ### The subject-reference shape
 
 Every reference to a GitHub subject in `human-queue --json` — a lane item, a
@@ -1190,11 +1541,56 @@ failed; a consumer just could not render a link.
 
 The producer never narrates a hand-off in prose. Anything it cannot land is a
 labeled transition into exactly one modeled state: `design`, `close-candidate`,
-`blocked-deploy`, or `blocked-on`. Those four plus `ready` (the merge queue) are
-the **human-gated states** — the daily review queue, a plain label search, no
-prose scraping. `design` is the **total-function fallback**: a situation the
-producer cannot classify is by definition one a human has to look at, and
-`design` already means exactly that.
+`blocked-deploy`, or `blocked-on`. The first three plus `ready` (the merge
+queue) are the **human-gated states** — the daily review queue, a plain label
+search, no prose scraping. `blocked-on` is **not** human-gated (#161): its next
+mover is the vetter, whose state-load clears it automatically — see below.
+`design` is the **total-function fallback**: a situation the producer cannot
+classify is by definition one a human has to look at, and `design` already means
+exactly that.
+
+### `ai:blocked-on` sits with the vetter (#161)
+
+Human ruling (verbatim): _"things that are blocked on other things due to a
+dependency should sit with the vetter, not with a human, it should be possible
+to automate the judgement about whether a dependency has been cleared."_ And:
+_"merging a dependency isn't a separate responsibility, it's just something that
+happens through normal merging of ready items, it is the ai's responsibility to
+present things that are truly ready."_
+
+Four mechanisms carry that:
+
+- **Typed dependency.**
+  `flag-blocked-on <owner/repo> <n> "<reason>"
+  --blocked-by <owner/repo#n>`
+  (repeatable). Each ref is parsed by the one `owner/repo#number` parser and
+  stored as a machine-readable `blocked-by owner/repo#n` line in the flag
+  comment, **alongside** the prose reason (the prose keeps the WHY). A new flag
+  without at least one typed ref is **refused** — fail closed on the exact input
+  that makes the state automatable. Clearance is never judged from prose.
+- **Automated clearance, in the vetter's state-load.** Every `unvetted` call
+  resolves each typed ref of every open `ai:blocked-on` PR. All deps MERGED or
+  CLOSED ⇒ the label is cleared and a `🤖 ai:vetter` `Blocked-on cleared:`
+  comment records which dep cleared in which state. That comment is deliberately
+  **not** a verdict (no `Reviewed <sha>:`, no protocol stamp), so as the newest
+  vetter comment it makes `vetted_at_head` false even at an unmoved head — the
+  PR re-enters vetting **fresh**, because the dependency landing may have
+  changed what correct means; clearance is never a rubber stamp back to
+  `ai:ready`. Any dep still OPEN ⇒ untouched, withheld from the vet queue
+  (`blockedOn` in the state-load names the open deps).
+- **Manual review is loud, never silent.** A flag with **no typed refs** (the
+  legacy prose-only flags), a malformed `blocked-by` line, or a ref that no
+  longer resolves is `blockedOnManualReview` in every state-load: named ref,
+  named reason, never auto-cleared, never auto-vetted, never silently stuck.
+- **Ownership on the dash.** `ai:blocked-on` emits under the **vet-lifecycle**
+  lane (the vetter's action is "clear when deps merge"), not producer-blocked
+  and not the human's queue. Seventeen human inbox slots of "has #9 merged yet?"
+  were pure polling the machine now does.
+
+The **legacy prose-only flags** are migrated by an eyes-on pass — a human (or an
+interactive session) re-flags each with typed refs derived by reading the PR,
+never by regexing the prose. Until then they sit visibly in
+`blockedOnManualReview`.
 
 ### Infrastructure down ends the run (#108)
 
@@ -1262,10 +1658,11 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 - **Producer** (`campaign-run.sh`, every 4h at :00 of 1,5,9,13,17,21 UTC) —
   opens drives its OWN red PRs green FIRST (existing in-flight work, non-force
   commits), THEN opens one fix PR per tractable, uncovered issue (audit-backlog
-  first). Org-mutating actions: `gh pr create`, `gh pr comment` (screenshots),
-  and non-force `git push` to its own PR branches. Never
-  merges/closes/deploys/force-pushes. Skips issues with a `reject` verdict
-  (parked for a human, so a rejected fix isn't re-attempted into dead PRs).
+  first). Org-mutating actions: `open_pr` (a tool, not `gh pr create`),
+  `gh pr comment` (screenshots), and `push` (a tool, not `git push`) to its own
+  PR branches. Never merges/closes/deploys/force-pushes. Skips issues with a
+  `reject` verdict (parked for a human, so a rejected fix isn't re-attempted
+  into dead PRs).
 - **Vetter** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) —
   AI-reviews open PRs and records a verdict as an `ai:*` label plus a sha-bound
   comment. Approval is the human's gate.
@@ -1277,14 +1674,15 @@ The three crons are **staggered by 2 h** so work flows downstream within each
 
 ## Scope — read this first
 
-**The org-mutating actions this routine takes are `gh pr create`,
-`gh pr comment` (UI screenshots), and a non-force `git push` of fix commits to
-its OWN open red PR branches (to drive them green).** It **never** merges,
-deploys, force-pushes, or closes/edits/comments-on issues. If it believes an
-issue should be closed (already fixed, invalid, duplicate) it records a
-_close-candidate_ — it never acts on it. This is enforced two ways: the
-permission deny-list in `campaign-settings.json` and the rules in
-`campaign-prompt.txt` (step 7 / 7a).
+**The org-mutating actions this routine takes are `open_pr` (the producer MCP
+tool that opens a PR, replacing `gh pr create`), `gh pr comment` (UI
+screenshots), and `push` (the producer MCP tool that fast-forwards a work
+clone's branch, replacing `git push`) of fix commits to its OWN open red PR
+branches (to drive them green).** It **never** merges, deploys, force-pushes, or
+closes/edits/comments-on issues. If it believes an issue should be closed
+(already fixed, invalid, duplicate) it records a _close-candidate_ — it never
+acts on it. This is enforced two ways: the permission deny-list in
+`campaign-settings.json` and the rules in `campaign-prompt.txt` (step 7 / 7a).
 
 That flag is then **vetted before a human sees it**. The producer is the party
 with an incentive to believe its own evidence, so the vetter judges the claim
@@ -1298,21 +1696,76 @@ and evidence that answers a narrower question than the issue asked.
 
 ## Files (tracked here)
 
-| File                     | Purpose                                                                                                                                                                                                                                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `campaign-run.sh`        | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                      |
-| `campaign-prompt.txt`    | The campaign instructions fed to the model.                                                                                                                                                                                                                                                             |
-| `campaign-settings.json` | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                               |
-| `review-run.sh`          | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                           |
-| `review-prompt.txt`      | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                    |
-| `review-settings.json`   | Tool allow/deny for the vetter: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                                                                                     |
-| `review-mcp.json`        | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                        |
-| `campaign-mcp.json`      | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                |
-| `cron.env.example`       | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                            |
-| `pr-review-report.sh`    | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
-| `hooks/`                 | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                   |
-| `.claude-plugin/`        | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                     |
-| `plugins/human-fsm/`     | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                           |
+| File                         | Purpose                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `campaign-run.sh`            | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                                                                       |
+| `campaign-prompt.txt`        | The campaign instructions fed to the model.                                                                                                                                                                                                                                                                                                              |
+| `campaign-worker-prompt.txt` | The standing brief every DISPATCHED worker starts with. `campaign-run.sh` wraps it into the `pr-worker` subagent type with `jq` and passes it as `--agents`, so the harness loads it straight into each dispatched agent and the main loop pays none of those bytes. See [Briefing a dispatched worker](#briefing-a-dispatched-worker--rules-not-state). |
+| `campaign-settings.json`     | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                                                                |
+| `review-run.sh`              | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                                                            |
+| `review-prompt.txt`          | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                                                                     |
+| `review-settings.json`       | Tool allow/deny for the vetter: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                                                                                                                                      |
+| `review-mcp.json`            | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                                                         |
+| `campaign-mcp.json`          | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                                                                 |
+| `cron.env.example`           | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                             |
+| `pr-review-report.sh`        | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs.                                                  |
+| `hooks/`                     | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                    |
+| `.claude-plugin/`            | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                      |
+| `plugins/human-fsm/`         | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                            |
+
+## Briefing a dispatched worker — rules, not state
+
+Fan-out is the default for independent items, and a dispatched sub-agent starts
+with **no prompt of its own**. Everything the run knows — the waiting rule, the
+prohibitions, which writes are tools — reaches it only if something puts it
+there, and until #200 the only channel was the dispatch prompt the main loop
+improvised per item.
+
+Measured across the 40 dispatches in the retained traces, that channel carried
+the wrong things and cost the most where it was dearest:
+
+| what a dispatched agent's GitHub reads were                          | calls |     $ |
+| -------------------------------------------------------------------- | ----: | ----: |
+| a `gh pr checks` re-read — a hand-rolled CI wait, one probe per turn |   142 | 12.60 |
+| another **re-read** of a subject already in that agent's own context |    72 |  3.14 |
+| the agent's **first** read of the subject it was dispatched to work  |   148 |  7.54 |
+|                                                                      |   362 | 23.27 |
+
+Two conclusions, both counter-intuitive, and both the reason this is a
+**briefing** change rather than a **state** change:
+
+- **Fleet state answers none of it.** Not one of the 148 first-reads could have
+  been served from a `worklist` row: they ask for `body`, `comments`, `state`,
+  `headRefName`, `createdAt`, and 69 of them are `gh issue view` — the worklist
+  has no issue rows at all. Pasting the fleet into a dispatch would buy nothing
+  and then be re-read on every turn of every worker.
+- **68% of the bucket is not cold-start.** It is the same spin-wait the main
+  loop was doing, reproduced inside a sub-agent because the waiting rule never
+  reached one.
+
+So `campaign-worker-prompt.txt` carries **rules**, and `campaign-run.sh` wraps
+it into the `pr-worker` subagent type via `--agents`. The harness loads that
+prompt into each dispatched agent directly, which is what makes it cheaper than
+the dispatch prompt it replaces: the main loop never holds those bytes, and it
+cannot paraphrase them away. Retyped boilerplate was 36% of dispatch-prompt
+bytes (60,891 of 181,867) and cost **$2.50 in main-loop context alone**.
+
+The brief is the one part of this that can silently cost more than it saves, so
+it has a **byte ceiling with a derivation**: the 40 agents ran 7,922 turns
+between them, so a byte present in every worker costs $0.000989 across the
+retained era, and the $18.23 it targets breaks even at 18,424 bytes.
+`the_worker_brief_stays_inside_its_context_budget` holds it at 4,096.
+
+At 3,777 bytes the brief costs $3.74 and the boilerplate it displaces is worth
+$4.08 ($1.58 worker-side, $2.50 main-loop-side), so the **byte ledger alone is
++$0.34 — near enough a wash**, and the case rests on the $15.74 of spin-wait the
+rules remove. That is deliberate rather than an erosion: 883 of those bytes are
+what naming `pr-review-report await` costs, and they are what makes the wait
+rule reachable at all. #197 measured that `Monitor` on its own is not — its only
+idiom needs a local file, and there is none for "have the checks reported" — so
+a rule stating only "waiting is `Monitor`" is a rule a worker meets a dead end
+at and improvises around, which is the $12.60 line. $0.87 to make $12.60 of
+instruction executable is the whole trade.
 
 ## PreToolUse guards — what a prompt cannot hold
 
@@ -1320,11 +1773,11 @@ A prompt is advice and a permission deny-list is prefix-matched, so some
 invariants can only be held by a PreToolUse hook, which sees the actual tool
 call. Three are wired that way. **Only two of them are scripts:**
 
-| Guard                               | Holds                                                                                                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pr-review-report require-qa-block` | QA-GUIDE.md section 8 — a `gh pr create` whose body has no `## QA` section, or names fewer than all four evidence lines, is refused with what's missing |
-| `hooks/block-nix-wrap-gh.sh`        | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                  |
-| `hooks/block-cron-git-bypass.sh`    | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                  |
+| Guard                               | Holds                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr-review-report require-qa-block` | QA-GUIDE.md section 8 — a `gh pr create` whose body has no `## QA` section, or names fewer than all four evidence lines, is refused with what's missing. Redundant on the cron producer's path since `open_pr` (which applies the same predicate before creating anything); still the only thing holding the rule for a session opened outside the cron |
+| `hooks/block-nix-wrap-gh.sh`        | `nix shell/run nixpkgs#gh` re-wrapping, which makes a command start with `nix` and so slips the `Bash(gh …)` deny-list                                                                                                                                                                                                                                  |
+| `hooks/block-cron-git-bypass.sh`    | `git -C <dir> reset --hard` / `git -C <dir> push --force`, the spellings that evade guards anchored on a bare `git reset` / `git push`                                                                                                                                                                                                                  |
 
 The QA gate is a **subcommand**, per CLAUDE.md's north star: everything it does
 is parsing — a shell word-splitter, a heading scanner, a distinct-line
@@ -1335,6 +1788,204 @@ manifests plus the crate, so a repo-root script is absent there and every test
 driving one skipped. The other two are still bash and still untested —
 [#10](https://github.com/rainlanguage/issue-pr-cron/issues/10) tracks giving
 them the same treatment.
+
+### The Solidity toolchain rule is checked AFTER the run, not blocked during it
+
+`sol-toolchain <dir>`
+([#195](https://github.com/rainlanguage/issue-pr-cron/issues/195)) gave the
+producer a way to ASK which toolchain a checkout's own CI judges it with.
+Nothing read the answer back, so the rule about it was prose with no check — and
+a rule with no check cannot report its own violation. That is how
+[#116](https://github.com/rainlanguage/issue-pr-cron/issues/116) was found: a
+parked PR whose one permitted back-off attempt had gone on a diff that could
+never pass. Note what #116 was **not**: the prompt said
+`github:rainlanguage/rainix#sol-shell` and the producer ran exactly that. The
+rule was wrong, not the compliance. So the thing to build is not a bigger
+prompt, it is a way for the next wrong rule to announce itself.
+
+`sol-toolchain-audit <trace>` is that. It reads the run's **own trace**: the
+`sol-toolchain` call and its output are recorded there, next to the
+`nix develop` lines that came after, so the comparison is between what the run
+was told and what the run then ran. It reports, per Solidity check, `matched` /
+`skew` / `unasked` / `unmatchable`, plus its own two blind spots — an invocation
+that names no checkout, and one that enters the working directory's flake
+without naming that directory. `campaign-run.sh` runs it after `run-metrics` and
+appends the report to the run log. Exit 3 on any skew or unasked; the blind
+spots and `unmatchable` change no exit code.
+
+**A blocking `PreToolUse` hook was the alternative, and the measurement is what
+decided against it.** Over the 21 retained traces (4,574 Bash calls, 508 `nix`
+invocations):
+
+| Measured                                                  | Count                                          |
+| --------------------------------------------------------- | ---------------------------------------------- |
+| Solidity checks (`is_sol_check`, so no `soldeer install`) | **197**, across **23 work clones** in 5 runs   |
+| …that named no checkout, so nothing could resolve one     | 8 — every one a `forge --version` health check |
+| …run in a shell that checkout's own CI does **not** run   | **170** of the 189 resolvable                  |
+| Busiest single run                                        | 73 checks                                      |
+
+So the exposure is not small, and "nothing, with a number" is not the answer
+here. But it is also **tens of checks per run, concentrated in a handful of
+clones** — which is exactly the shape that makes per-call resolution the wrong
+place to pay. A hook would resolve on the Bash call (73 resolutions on the
+busiest run, each a `RAINIX_SHA` read out of the reusable at a floating ref, so
+two GitHub reads apiece) where the audit resolves nothing at all, because the
+answer is already in the trace. And a hook must fail OPEN when that network read
+fails, or a blip stops the run — which means the guard is absent exactly when
+the network is flaky, while the audit's verdict is computed from a file after
+the fact and cannot be lost that way. What the audit gives up is real: it does
+not prevent the wasted attempt inside the run it audits. It moves the discovery
+of the next wrong rule from a parked PR weeks later to the end of the run that
+obeyed it.
+
+Reproduce the table with the shipped subcommand:
+
+```
+for f in runs/*.jsonl; do pr-review-report sol-toolchain-audit "$f"; done
+```
+
+Every retained trace predates #195, so none of them ever called `sol-toolchain`
+and all 189 resolvable checks report `unasked` — which is the honest verdict for
+a run that had no way to ask. The `skew` column above is the same corpus
+re-audited with each clone's live `sol-toolchain` answer injected ahead of it,
+which is what turns `unasked` into a comparison. The skew is not notional: every
+rainix-pin repo's CI runs `RAINIX_SHA` `53e96a7d` (2026-07-10), and the
+`github:rainlanguage/rainix#sol-shell` those runs used floats on a rainix HEAD
+37 commits and 20 days ahead of it.
+
+### Why the producer has no interpreter
+
+Measured over 18 producer traces
+([#171](https://github.com/rainlanguage/issue-pr-cron/issues/171)): **358
+permission denials in 6,350 tool calls**, against 533 error results — two of
+every three errors a run reads back is the permission layer refusing a command
+**shape**, not a tool doing something wrong. A denied call costs a round trip
+and then sits in context to be re-read for the rest of the run.
+
+The tempting fix is to permit `bash` / `sh` / `python3`, so a multi-step
+sequence can go in a script file. **It is the one change that must not be
+made**, and the reason is measured rather than argued — run against this harness
+with `Bash(bash:*)` allowed and `Bash(touch:*)` denied, `bash -c 'touch …'`
+creates the file, `sh <script>` runs whatever the file says, and
+`bash -c 'cd <dir> && git …'` walks straight past the cd-before-git refusal. A
+rule matches a command **string**, and an interpreter is a command whose string
+says nothing about what it will do: `gh pr merge`, `gh issue close`,
+`git push --force` and a `gh pr create` that never meets `require-qa-block` all
+come back within reach — by ACCIDENT, not by intent, because a provisioning
+script is precisely what a model reaches for when a sequence gets long. It also
+buys nothing for the denials actually being paid: a `for` loop is refused for
+its shape with `bash` permitted exactly as without it.
+
+The deny-list is not airtight as it stands — `node -e`, `npm run`, `npx`,
+`nix run` and `cargo run` are all allow-listed and all execute arbitrary code.
+That is the point rather than a counter-argument: what the list buys is that the
+common ACCIDENT is impossible, and each of those needs a deliberate wrapper the
+model has no habitual reason to write. The one escape hatch it DID reach for out
+of habit had to be closed by hand — that is what `hooks/block-nix-wrap-gh.sh`
+is.
+
+So the denials are answered where they are actually decidable, in the prompt.
+The permission check is **not** a first-token match: it parses the command,
+resolves `env` / `timeout` / `xargs` down to what they would really run, and
+refuses what it cannot statically verify. That makes every refusal
+deterministic, and therefore teachable:
+
+| Class                                    | Denials | Answer                                                                         |
+| ---------------------------------------- | ------: | ------------------------------------------------------------------------------ |
+| `cd <dir> && git …`                      |     110 | `git -C <dir> …` (a `cd` before `gh`, or before anything else, is fine)        |
+| loops, `$(…)`, `<(…)`, `( … )`           |     ~94 | separate tool calls; one `jq`/`grep` pipeline instead of ten iterations        |
+| bare `VAR=value <cmd>` prefix            |     ~40 | `env VAR=value <cmd>` (`env -C <dir>` is refused too — `env` carries no dir)   |
+| `cp` with any flag                       |     ~21 | regenerate artifacts in the clone that needs them; plain `cp <src> <dst>` only |
+| `bash` / `sh` / `python3` script or `-c` |      18 | there is no interpreter, by the section above                                  |
+
+`Monitor` needs no allow-list entry: its `command` is checked against the same
+Bash rules (a denial reads "Permission to use Bash with command …"), so a denied
+`Monitor` is always a command to rewrite. A loop INSIDE it is accepted, which
+makes `until <check>; do sleep …; done` the sanctioned wait even though the
+identical loop is refused as a Bash call.
+
+#### "The following parts require approval" is not an allow-list failure
+
+The refusal that reads as one:
+
+```
+This Bash command contains multiple operations. The following parts require approval:
+  pr-review-report worklist --json, head -5 /tmp/claude-1000/wl.err
+```
+
+Both named commands are allow-listed, nothing in the call is denied, and nothing
+is unlisted — which is how
+[#180](https://github.com/rainlanguage/issue-pr-cron/issues/180) came to be
+filed as a permission bug. It is not one. **Compounding is not refused**, and no
+part that should match its allow rule fails to: across the 21 producer traces
+4,232 accepted Bash calls include 2,460 carrying a pipe, 1,825 a `;`, 626 an
+`&&` and 481 a redirection. A chain is refused when ONE PART is refused — and
+the message prints that part **with its redirection stripped**, so the byte that
+actually disqualified it (`2>/tmp/claude-1000/wl.err`, hanging off the first
+command) is the one thing the reader never sees.
+
+Probed against the live harness — claude 2.1.221, `campaign-settings.json`,
+`--permission-mode default`, both `--add-dir` roots and the `Edit(//…/**)`
+rules, i.e. `campaign-run.sh`'s own invocation — over 91 Bash calls in 14
+sessions. `<in>` is a path under `WORK_DIR`, `<out>` is `/tmp/…` or
+`/nix/store/…`:
+
+| Command                                                          | Result                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `echo a; echo b` / `echo a && echo b` / `echo a \| wc -c`        | allowed — chaining is not the trigger                                           |
+| `cmd > <in> 2> <in>; echo "exit=$?"; wc -c <in>; head -5 <in>`   | **allowed** — the reported command, with `/tmp` swapped for the scratch dir     |
+| `cmd > <in> 2> <out>; echo "exit=$?"; wc -c <in>; head -5 <out>` | refused: "parts require approval: `cmd`, `head -5 <out>`" — the `2> <out>` gone |
+| `cmd 2> <out>` alone                                             | refused, and here the message DOES name it: "Output redirection to … blocked"   |
+| `head -2 <out>` alone, and `head -2 <out>; echo b`               | refused, message names the path and the allowed root                            |
+| `head -2 <out> \| wc -l`, `ls -d <out> \| head -2`               | refused as "multiple operations" — a pipe re-reports the same path block        |
+| Read **tool** on `/tmp/claude-1000/…`                            | **allowed** — the tool is not path-scoped the way Bash's readers are            |
+| `cd <dir> && cmd >> <in>` (and `&& echo b`)                      | allowed                                                                         |
+| `cd <dir> && cmd >> <in> 2>&1`                                   | refused — a second redirection                                                  |
+| `cd <dir> && cmd > <in>; echo b`                                 | refused — a `;`                                                                 |
+| `echo a >> <in>; cd <dir> && echo b`                             | refused — the `cd` may sit anywhere                                             |
+| `cd <dir> && ls \| head -2; echo b`                              | allowed — a `cd` with no redirection anywhere is fine                           |
+| `mkdir -p <in> <in> && FOO=bar echo x`                           | refused: the bare assignment prefix (#174's rule, message accurate)             |
+| `pkill -f x 2>/dev/null; sleep 1; echo x`                        | refused: `pkill` is off-list (message accurate)                                 |
+
+So the rule, in the order it is worth knowing:
+
+1. A part is refused for its own disqualifier; the rest of the chain is
+   irrelevant. **Reissuing the offending command bare — what the producer does
+   today — fixes nothing that swapping the path would not have fixed, and costs
+   the round trip twice.**
+2. `/tmp/…` is outside both `--add-dir` roots, so a redirect into it is a
+   refused WRITE and a `head`/`cat`/`tail`/`ls` of it is a refused READ. The
+   `…/tasks/<id>.output` file the harness names when it backgrounds a command is
+   in exactly that position: readable with the **Read tool**, refused to `head`.
+3. A `cd` anywhere in a command that also REDIRECTS is refused on the `cd`
+   ("cannot automatically determine the final working directory"), whatever the
+   paths — absolute targets included. The tolerated form is narrow (an `&&`-only
+   chain with a single redirection), which is why the prompt says keep `cd` out
+   of every call that writes rather than teaching the boundary.
+4. The same disqualifier surfaces under three different messages depending on
+   the shape it sits in, and only the least useful one — the "multiple
+   operations" summary — is the one a compound normally gets.
+
+**Measured population: 15 occurrences in 4 of 21 runs** — not the 12 #180
+reports, and the shortfall is the message again: the refusal is worded "The
+following **part requires** approval" for one offending part and "The following
+**parts require** approval" for several, so a scan for the singular misses
+three, two of them in the run #180 leads with and one of them its own headline
+example. Eleven of the fifteen predate #174 and are its classes, correctly named
+by their own messages: 4 `bash`/`sh` scripts, 3 `python3` heredocs or `-c`, 2
+`pkill` (off-list), 1 bare `FONTCONFIG_FILE=` prefix, 1 `for` loop. The four in
+`20260804T114433Z`, the only run whose prompt carried #174's rules, are this
+class: an out-of-scope `2>/tmp` plus its `head` (the run's opening state load),
+two `cd <clone> && … >> <log>` provisioning calls, and an
+`ls /nix/store/*dejavu*` inside a pipeline.
+
+[#182](https://github.com/rainlanguage/issue-pr-cron/issues/182) removes the
+first one's OCCASION and not its cause: the opening state load is now one typed
+`state-load` result with no redirect at all, so the run no longer opens with
+that command — but `worklist --json > {{SCRATCH_DIR}}/worklist.json` survives as
+the documented fallback, and what was refused was the
+`2>/tmp/claude-1000/wl.err` the model added of its own accord, which nothing in
+#182 touches. Three of the four remain reachable as written.
 
 ### The retrofit: `repair-qa-block`
 
@@ -1602,6 +2253,27 @@ rather than silently read as clean (which would present a dirty PR) or as dirty
 step-3e duty, and `worklist` routes the PR there as `nextAction:
 coderabbit-3e`.
 
+**A rate limit is not a fetch error, and the queue now says which it had.**
+`gh_json` used to collapse every failure into one `None`, so a candidate GitHub
+had merely asked us to re-ask for was reported as an unreadable PR and dropped —
+and #123/#126 put those fetches on a bounded pool, which makes a secondary limit
+_likelier_. The classification is typed and comes only from typed fields: the
+HTTP status code, the `Retry-After` / `X-RateLimit-Remaining` headers
+(`gh api
+--include`), GitHub's documented GraphQL `errors[].type`, and the REST
+body's own `status`. **No message is ever matched.** `gh pr view` supplies none
+of those — measured: exit 1 and an empty stdout for a missing PR, a missing repo
+and a dead network alike — so when it fails the queue RE-ASKS the same question
+through `gh
+api graphql`, which answers in types.
+
+What each class does: a rate limit is retried with backoff (GitHub's own
+`Retry-After` where it gave one, clamped), and a candidate still limited after
+the budget is counted as `rate-limited`, never `fetch-error`; a genuinely
+missing PR _is_ a `fetch-error`; an auth failure **aborts** the enumeration
+rather than printing a falsely-short queue. Where nothing typed is available the
+answer is `Unknown` — an honest class, not a guess.
+
 **There is no local review ledger.** Verdict state lives on GitHub as `ai:*` /
 `human:*` labels plus sha-bound comments, so it survives a lost box, is visible
 without shell access, and cannot drift from what the PR itself shows. To approve
@@ -1739,6 +2411,93 @@ the three exact fields account for a **median 72%** of a run's spend, range
 55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
 the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
 
+### Tokens to land work — `work-tokens`
+
+`pr-review-report work-tokens metrics/runs.jsonl [--json]`.
+
+**Cost per RUN rewards doing less** — a run that dispatches nothing is the
+cheapest run this pipeline can have, and it produces nothing. **Cost per
+dispatched TASK rewards cheap tasks that land nothing**, the same failure one
+level down. Only a denominator made of OUTPUT resists both, so the denominator
+is **landed work items** and the numerator is **everything the corpus spent** —
+churn and orchestration included, because what a landed item cost includes what
+it cost not to land the others.
+
+Three buckets, and **only one of them is waste**:
+
+| bucket                     | means                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `landed`                   | the work item merged                                                                                          |
+| `delivered-awaiting-human` | PR open and [presentable](#reviewing-the-output--the-merge-pipeline) (green, mergeable) — or already approved |
+| `churn`                    | reworked, abandoned, or no work item at all                                                                   |
+
+Landing is human-gated **by design**, so a green mergeable PR is not a failure
+of the pipeline — it is the pipeline having finished. Reading that backlog as
+waste would measure the human's review bandwidth and call it the producer's
+efficiency, which is why `delivered-awaiting-human` is its own bucket and the
+report says so in both its renderings. `per DELIVERED item` is what the pipeline
+controls; `per LANDED item` additionally depends on how fast the human merges.
+
+**The join is typed or it does not exist.** A dispatch label is free text: over
+40 real labels a regex invents **eight** work items that do not exist (`batch#1`
+out of "cyclo.site conflicts batch 1", `A0#2` out of "rain.solmem A02 sentinel
+alignment PR"). A denominator that is partly hallucinated is worse than no
+metric, so there is no label parser — an actor's work item is what a **work-item
+transition** recorded, and an actor with none is churn.
+
+`clone_create` is typed too and is deliberately **not** a source. Its `branch`
+names a CLONE, not a deliverable, and resolving it through GitHub's head index
+invents items exactly the way the regex does: on the 2026-07-29T17 run one task
+cloned `main` to read it, and `gh pr list -R rainlanguage/raindex --head main`
+answers with a real, closed PR that task never touched. Typed data joined on the
+wrong key is still a wrong join.
+
+**Four kinds of work, and which of them are typed.** The RUN BUDGET counts "an
+issue you PR, a rework you push, a conflict you resolve, a deploy you dispatch".
+The kind comes from the TRANSITION, never from the payload:
+
+| kind of work                               | typed by                                           | item `kind` |
+| ------------------------------------------ | -------------------------------------------------- | ----------- |
+| an issue you PR                            | [`open_pr`](#opening-a-pr-is-a-transition-open_pr) | `opened`    |
+| a rework you push / a conflict you resolve | [`push`](#pushing-a-rework-is-a-transition-push)   | `reworked`  |
+| a deploy you dispatch                      | **nothing** — see below                            | —           |
+
+The middle two are one row because they are one typed effect: a moved head on an
+existing PR, which the transition cannot tell a motive apart within. The deploy
+is dispatched by the `deploy` **subcommand**, whose result reaches the trace as
+Bash text, so it carries no typed record and its work is invisible here. That is
+stated rather than patched: no producer run in the corpus has dispatched one, so
+the coverage cost today is zero, and typing it means deciding whether a
+long-running dispatch-and-watch belongs on the MCP surface at all.
+
+**One PR is one item** however many transitions touched it: a PR opened and then
+pushed to is one unit of work, and the stronger claim (`opened`) is the one
+kept. Counting the transitions would make the metric look better the more times
+a PR was reworked.
+
+**The main loop is an actor.** Attribution keys on `parent_tool_use_id`, which
+is absent for every turn the main loop takes — so inline work used to land
+nowhere, and a run that dispatched nothing was dropped from the corpus entirely.
+It carries its items now, because inline runs are permanent rather than
+transitional: fan-out is the default for INDEPENDENT items, and inline is
+correct for the rest. What is **not** available is per-item cost for that work.
+A main loop's spend is its orchestration and its inline work in one number and
+the trace holds no boundary between them, so those dollars sit in the
+`main loop` row, in no bucket, and both renderings say so. Dividing them by the
+item count would be printing a number the record does not contain.
+
+The corpus is **small and stated**: a run enters it when it dispatched a task or
+recorded an inline work item, AND its trace survives. It is a snapshot, not a
+trend. Every run that could not be used is counted with its reason, and typed
+coverage is printed as a fraction, so a reader can see how much the number rests
+on. A run that dispatched nothing and recorded nothing stays out: charging its
+whole spend to churn on the strength of an absence is the same inference this
+metric refuses everywhere else.
+
+A PR that cannot be read is `unresolved` and sits in **no** bucket: folding it
+into churn would let a transient `gh` failure print a worse waste figure, and
+folding it into landed would print a better one.
+
 ### Rate-limit windows — `rateLimits`
 
 Every record (`usage` and `final`) carries a `rateLimits` object, keyed by the
@@ -1766,7 +2525,13 @@ recording it provides.
 
 ## Runtime state (NOT tracked — see `.gitignore`)
 
-- `campaign.log` — distilled human-readable log (`tail -f` to watch).
+- `campaign.log` — distilled human-readable log (`tail -f` to watch). A trace is
+  ONE stream carrying the main loop and every dispatched sub-agent at once, so
+  each line names its owner: `[aN]` is the sub-agent the `▸ Agent  [aN] …` line
+  above it dispatched, `[task]` is one of those agents reporting back, and an
+  untagged line is the main loop's. Run `20260802T130003Z` interleaves 19 owners
+  across 2,676 tool lines, up to 14 of them inside one 20-line window; a run
+  that dispatches nothing is untagged throughout.
 - `runs/<ts>.jsonl` — full per-run stream-json traces (`KEEP_RUNS` most recent).
 - Issue close-candidates are NOT a local file — the cron applies the
   `ai:close-candidate` label and never closes anything itself. The human triage
@@ -1853,17 +2618,129 @@ The surface gate is deliberately the third and not the only one. A symmetry
 check cannot see a capability **both** runners lack, which is exactly #85's
 shape; the two presence gates are what hold that bug.
 
+### Capabilities: the half of the environment PATH cannot answer
+
+`HARNESS_TOOLS` proves **presence**. `preflight`'s capability flags prove
+**function**, which is a different question about the same environment: `gh`
+resolves and is unauthenticated, `nix` resolves and cannot realise the shell the
+Solidity work builds in. Each is opt-in per runner — `campaign-run.sh` passes
+`--gh-auth --sol-shell`, `review-run.sh` passes neither, because the vetter
+reads PRs through the MCP surface and builds nothing, and a gate that costs a
+runner a nix evaluation for a capability it never uses is the gate that gets
+switched off.
+
+They were the producer prompt's step 1 until they moved here. Every producer run
+opened with the identical two calls, `gh auth status` and
+`nix develop …#sol-shell -c forge --version`, and neither carried decision
+content: a model that read "not logged in" could do nothing about it and started
+work anyway. **Moving them is a behaviour change, deliberately taken.** A broken
+`gh` now ends the run before a token is spent, on the same edge a missing
+`pdftoppm` takes — exit 12, one `metrics/runs.jsonl` row naming the unsatisfied
+capability in `missingTools`, `"outcome": "tooling-failure"`. That is neither a
+success nor a skip: a skip is a tick the pipeline chose not to run
+(`usage-gate`), and reading a dead tick as either is #176's complaint one layer
+down.
+
+The gh check is also **stricter** than the read it replaces. It asserts the
+token's `repo` and `workflow` scopes — the ones the pipeline's labels, comments
+and deploy dispatch actually need — matching whole scope entries rather than
+substrings, so `public_repo` does not satisfy `repo`. Where `gh` reports no
+scopes line at all (token kinds that carry none), the gate passes: absence of
+evidence is not evidence, and a false abort here costs a whole tick.
+
+### The producer's state-load is one pre-grouped result
+
+`pr-review-report state-load --json` composes `worklist` and `uncovered-issues`
+and returns the groupings the producer traces show runs actually derive:
+
+| Grouping                                        | Runs asking for it |
+| ----------------------------------------------- | ------------------ |
+| `fleet.byAction` — the `nextAction` histogram   | 7 of 7             |
+| `fleet.actionable` — the rows that name work    | 7 of 7             |
+| `fleet.approved` — `reviewDecision == APPROVED` | 7 of 7             |
+| `backlog.audit` — the audit backlog by severity | 4 of 7             |
+
+Groupings three runs or fewer asked for are deliberately absent — a grouping one
+run improvised is not a requirement, and a result that answers everything is a
+result nobody can read.
+
+Pre-grouped rather than queryable, because the counts settle it: a query
+interface puts the round trip back for a caller that wants one grouping, and
+three of the four are wanted by every run. The payload argument runs the other
+way too — `green-ready`, `wait` and `parked-skip` rows are **counted, not
+listed**, because no step acts on one, and they were 70–95% of the ~123 KB raw
+fleet across the measured runs.
+
+Two of these are not merely round trips. `reviewDecision` was already in
+`WORKLIST_DETAIL_FIELDS` and thrown away, so every run re-asked GitHub for it
+with a separate `gh search prs --review approved` — a search that returned
+**empty in all seven runs measured**. And the shell re-derivation is not
+reliable: four runs spent 2–4 `jq` calls each fighting `uncovered-issues`'s
+label shape (`startswith() requires string inputs`), and one of them accepted
+`audit-backlog total: 0` for a backlog that actually held 46 issues. A grouping
+computed in the tool is a grouping that cannot be silently wrong.
+
+### Covered is not fixed — `already-fixed`
+
+`uncovered-issues` splits covered from uncovered using **open** PRs' closing
+references. That is the right denominator for "is anyone already working on
+this" and the wrong one for "is this still broken": an issue whose fix has
+landed on `main` with no open PR pointing at it is `uncovered` by that
+definition, so it enters the candidate set and gets worked.
+`rainlanguage/rain.dia#60` is the shape — a producer PR opened 2026-07-18
+re-implementing an arity guard merged PR `#33` had landed on 2026-07-17, 25
+hours earlier.
+
+`pr-review-report already-fixed <owner/repo#n>...` is the missing question, and
+it is deliberately **not** part of `uncovered-issues`. It answers, per subject:
+has a MERGED PR referencing this issue landed since the issue was filed? Exit 4
+= yes, 1 = it could not tell, 0 = clear. Exit 4 is a reason to **read** that
+merged PR, never a finding that the issue is fixed — establishing that is
+`flag-close-candidate`'s job, and the recency rule both ends apply is the same
+`landed_after_filed`, so a run cannot disagree with itself about what
+"post-dates" means.
+
+Per-subject is a **cost** decision, measured: the uncovered set is 617 issues
+and the read is one GraphQL round trip each (~0.65 s over a 40-issue sample, so
+~6.7 minutes of network per run), against a producer budget of 3 work items.
+Folding it into the backlog buys ~614 answers per run that nothing reads.
+
+It reads `timelineItems(CROSS_REFERENCED_EVENT)` and **not**
+`closedByPullRequestsReferences(includeClosedPrs: true)`, which is the field
+that looks like the answer. Measured against the three cases it exists for, that
+field returns only the producer's own open PR for all three and none of the
+merged fixes — a PR appears there only when it declared a closing keyword, and
+`rain.dia#33`, `rain.dia#48` and `st0x.deploy#252` each declared none for the
+issue they fixed. A merged fix that never wrote `Closes` is exactly the fix
+`uncovered-issues` is blind to, so reading a field that requires one reproduces
+the blind spot. In a 40-issue sample of the live uncovered set, 5 issues (12.5%)
+carry such a merged reference — a look-first rate, not a skip rate, which is why
+the tool reports evidence rather than a verdict.
+
+A **PR** reference is resolved to the issues it closes and each is checked, so
+the same predicate detects the superseded-PR condition step 3 already has a
+route for ("log the narrower one as a PR close-candidate noting which PR
+supersedes it") and nothing detected. The PR being checked is excluded from its
+own result.
+
+Every uncertainty reports `unreadable` rather than a shorter list — a failed
+query, a missing filing date, a truncated timeline page, a malformed node, or a
+merge date that cannot be ordered against the filing. A shorter list is
+indistinguishable from a complete one once it is just an array, and the
+direction that matters is the one that opens a duplicate PR.
+
 ## What a run does
 
-1. Auth + toolchain check (`gh auth status`, nix `forge --version`); stop loudly
-   if broken.
-2. Enumerate open issues org-wide.
+1. `campaign-run.sh` asserts the environment before the model starts
+   (`preflight --gh-auth --sol-shell`); unsatisfied ends the run.
+2. Load the whole opening state in one call (`state-load --json`).
 3. Cheaply dedup against open PRs (single `jq` pass; byte-grepping the PR JSON
    is forbidden).
 4. For each tractable, genuinely-uncovered issue: clone, branch, implement a
-   minimal fix with mutation-validated tests, build + test, open ONE PR per
-   issue (`gh pr create --assignee $PR_ASSIGNEE`, body `Closes #N` / `Refs #N`).
-   If already fixed on main → no PR, log a close-candidate.
+   minimal fix with mutation-validated tests, build + test, `push` the branch
+   (the tool, not `git push`), open ONE PR per issue (the `open_pr` tool: it
+   assigns `$PR_ASSIGNEE` and writes the `Closes #N` linkage from a typed
+   `closes` argument). If already fixed on main → no PR, log a close-candidate.
 5. UI PRs require a screenshot (headless chromium harness → `pr-screenshots`
    branch).
 6. End with a summary: PRs opened, issues skipped, close-candidates logged.
