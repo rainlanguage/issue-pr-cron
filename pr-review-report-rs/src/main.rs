@@ -21902,7 +21902,7 @@ fn mcp_all_tools() -> Value {
                     "repo": {"type": "string", "description": "owner/repo"},
                     "head": {"type": "string", "description": "The branch holding the work, ALREADY PUSHED to that repo."},
                     "title": {"type": "string", "description": "PR title."},
-                    "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body, and NAMED FOR the issue `closes` names — .../pr-body-63.md. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
                     "closes": {"type": "integer", "description": "The issue this PR closes. Omit for a partial fix — then say `Refs #N` in the body yourself."},
                     "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
                 },
@@ -21928,7 +21928,7 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "pr": {"type": "string", "description": "owner/repo#number"},
-                    "block_file": {"type": "string", "description": "Absolute path to the file holding the section-8 block. A FILE, so the exact bytes stay on disk for the run trace."},
+                    "block_file": {"type": "string", "description": "ABSOLUTE path to the file holding the section-8 block, and NAMED FOR this PR — .../qa-block-63.md. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
                     "replace": {"type": "boolean", "description": "Replace an existing `## QA` section — only once the evidence has actually been re-run."},
                     "dry_run": {"type": "boolean", "description": "Report the plan without writing."}
                 },
@@ -24169,7 +24169,9 @@ impl BodyPathFault {
 
 #[cfg(test)]
 mod body_path_tests {
-    use super::{body_path_fault, repair_qa_block_apply, repo_root_text, BodyPathFault};
+    use super::{
+        body_path_fault, mcp_all_tools, repair_qa_block_apply, repo_root_text, BodyPathFault,
+    };
 
     /// The incident's own shape: a name with no directory in front of it, which the reader resolves
     /// against ITS working directory. Every spelling of "not absolute" is the same fault — `./`
@@ -24250,11 +24252,17 @@ mod body_path_tests {
     #[test]
     fn the_directory_does_not_get_to_name_the_subject() {
         assert_eq!(
-            body_path_fault("/home/x/code/scratch/20260804T063000Z-63/pr-body.md", Some(63)),
+            body_path_fault(
+                "/home/x/code/scratch/20260804T063000Z-63/pr-body.md",
+                Some(63)
+            ),
             Some(BodyPathFault::Unnamed)
         );
         assert_eq!(
-            body_path_fault("/home/x/code/scratch/20260804T063000Z-11/pr-body-63.md", Some(63)),
+            body_path_fault(
+                "/home/x/code/scratch/20260804T063000Z-11/pr-body-63.md",
+                Some(63)
+            ),
             None
         );
     }
@@ -24280,7 +24288,10 @@ mod body_path_tests {
         assert!(rel.contains("ABSOLUTE"), "{rel}");
         let un = BodyPathFault::Unnamed.message("--block-file", "/run/scratch/qa.md", Some(63));
         assert!(un.contains("--block-file"), "{un}");
-        assert!(un.contains("63"), "the fix names the number to put in the file name: {un}");
+        assert!(
+            un.contains("63"),
+            "the fix names the number to put in the file name: {un}"
+        );
     }
 
     /// The guard is on `repair_qa_block_apply` and not on the MCP parser, because the CLI
@@ -24311,6 +24322,27 @@ mod body_path_tests {
         )
         .expect_err("an unreadable file is still a refusal");
         assert_eq!(code, 2, "a compliant path must reach the read");
+    }
+
+    /// `block_file`'s schema said "Absolute path" for as long as nothing anywhere checked one —
+    /// advertised rule, no code. That is the drift this pins: BOTH file arguments must state the
+    /// rule their transition actually enforces, because the schema is the only description of it a
+    /// caller reads before it is refused.
+    #[test]
+    fn both_file_arguments_advertise_the_rule_that_is_enforced() {
+        let tools = mcp_all_tools();
+        for (tool, arg) in [("open_pr", "body_file"), ("repair_qa_block", "block_file")] {
+            let desc = tools
+                .as_array()
+                .expect("the tool table is an array")
+                .iter()
+                .find(|t| t["name"] == serde_json::json!(tool))
+                .and_then(|t| t["inputSchema"]["properties"][arg]["description"].as_str())
+                .unwrap_or_else(|| panic!("{tool}.{arg} has no description"))
+                .to_string();
+            assert!(desc.contains("ABSOLUTE"), "{tool}.{arg}: {desc}");
+            assert!(desc.contains("NAMED FOR"), "{tool}.{arg}: {desc}");
+        }
     }
 
     /// A guard the prompts do not teach is a guard every run discovers by being refused. Both
@@ -47124,8 +47156,14 @@ mod mcp_tests {
                 json!({"repo": "o/r", "head": "b", "title": "t", "body_file": "pr-body.md"}),
             ))
             .unwrap();
-        assert!(is_error(&resp), "relative is refused with or without closes");
-        assert!(g.calls().is_empty(), "no refused argument reached an effect");
+        assert!(
+            is_error(&resp),
+            "relative is refused with or without closes"
+        );
+        assert!(
+            g.calls().is_empty(),
+            "no refused argument reached an effect"
+        );
     }
 
     /// A minimal section-8 block, so a body fixture says what it is about rather than restating

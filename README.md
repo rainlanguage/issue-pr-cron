@@ -1352,9 +1352,20 @@ Four properties are deliberate:
   accepts is a body `require-qa-block` accepts by construction rather than by
   two implementations agreeing, and a refusal (exit 3) provably created nothing,
   so it costs one edit inside the run.
-- **`body_file` is a FILE, and absolute.** The bytes stay on disk for the trace,
-  and the MCP server's working directory is the cron's, not the caller's clone —
-  so a relative path names a file neither side can identify, and is refused.
+- **`body_file` is a FILE, absolute, and named for the issue.** The bytes stay
+  on disk for the trace, and the MCP server's working directory is the cron's,
+  not the caller's clone — so a relative path names a file neither side can
+  identify, and is refused. **Absolute is not unique**, which is the half that
+  actually stops the collision: `SCRATCH_DIR` is per RUN, and every worker a run
+  dispatches is handed that same directory, so two absolute paths chosen by two
+  concurrent agents are routinely the same path. That is how one PR's body came
+  to be written from another PR's file, silently, with exit 0
+  ([#202](https://github.com/rainlanguage/issue-pr-cron/issues/202)). So when
+  `closes` names an issue, the file NAME must carry that number — matched on the
+  basename and at digit boundaries, because a scratch directory's own timestamp
+  would otherwise satisfy every subject and `pr-body-163.md` is issue 163's
+  file. An open with no `closes` is the deliberate partial-coverage case, has no
+  number to be named for, and is held to the absolute half alone.
 - **`closes` is a number, not prose.** The tool writes the canonical `Closes #N`
   line only when [`closing_keywords`](#the-linkage-repair-weaken-closes) says
   the body does not already close that issue, and the result reports every issue
@@ -1961,10 +1972,16 @@ Three things make it a narrow transition rather than a re-opened `gh pr edit`:
 The block comes from a **file**, not flags: that is where the producer already
 writes its evidence (`{{SCRATCH_DIR}}/qa-block-<n>.md`) and the shape the
 PR-open gate already forces, so one artefact satisfies both and the exact bytes
-stay in the run trace. It needs **no deny-list change** —
-`Bash(pr-review-report:*)` is already allowed, and `Bash(gh pr edit:*)` stays
-denied; the binary shells out to `gh` itself, exactly as every label transition
-already does.
+stay in the run trace. That path is held to the same rule `open_pr`'s
+`body_file` is — absolute, and its file name carrying the PR number — and the
+check sits in `repair_qa_block_apply` (exit 7) rather than at the MCP argument
+edge, because this transition has **two** entry points and only the apply is on
+both: the `repair_qa_block` tool and the `repair-qa-block` subcommand the
+producer prompt hands it. A guard at the MCP edge alone is exactly the asymmetry
+that left `block_file`'s "Absolute path" schema text with nothing behind it on
+either surface. It needs **no deny-list change** — `Bash(pr-review-report:*)` is
+already allowed, and `Bash(gh pr edit:*)` stays denied; the binary shells out to
+`gh` itself, exactly as every label transition already does.
 
 One thing it deliberately does **not** do: a body edit moves no commit, so the
 PR is still `vetted-at-head` and the vetter will skip it. The subcommand prints
