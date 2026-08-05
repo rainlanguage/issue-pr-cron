@@ -4800,18 +4800,37 @@ fn strip_yaml_comment(line: &str) -> &str {
 fn workflow_gates_a_push(text: &str) -> bool {
     let mut in_on = false;
     for raw in text.lines() {
+        // Stripped FIRST, and that order is the whole point: a comment is not a key at ANY
+        // indentation, so a column-zero `# gate every branch` sitting between `on:` and `push:`
+        // must not close the block it is inside. Reading `raw` here made it do exactly that, and
+        // the result was a `mode: absent` on a repo that gates every branch.
+        let line = strip_yaml_comment(raw);
         // A column-zero key CLOSES whatever block was open and opens its own, so this single
         // assignment is the whole boundary: a `push` under `jobs:` cannot make a dispatch-only
         // workflow look like a gate, and `on: [push]` is still read off the trigger line itself.
-        if !raw.starts_with([' ', '\t']) && !raw.trim().is_empty() {
-            in_on = WORKFLOW_TRIGGER_KEYS.iter().any(|k| raw.starts_with(k));
+        if !line.starts_with([' ', '\t']) && !line.trim().is_empty() {
+            in_on = WORKFLOW_TRIGGER_KEYS.iter().any(|k| line.starts_with(k));
         }
-        let line = strip_yaml_comment(raw);
         if in_on && (names_token(line, "push") || names_token(line, "pull_request")) {
             return true;
         }
     }
     false
+}
+
+/// PURE: whether an explicit flake reference names an immutable revision.
+///
+/// `github:owner/repo#attr` floats with that repo's default branch; `github:owner/repo/<rev>#attr`
+/// does not. An unpinned one still reproduces CI's TEXT exactly — it is what the workflow says —
+/// but the two runs resolve it at different moments, which is the same moving target that parked
+/// cyclofinance/cyclo.sol#42. Anything that is not a `github:` URL is left alone: a local path is
+/// whatever is on disk, and calling that unpinned would warn about every ordinary checkout.
+fn flake_ref_is_pinned(flake: &str) -> bool {
+    let Some(rest) = flake.strip_prefix("github:") else {
+        return true;
+    };
+    let path = rest.split('#').next().unwrap_or("");
+    path.split('/').filter(|s| !s.is_empty()).count() >= 3
 }
 
 /// PURE: the git ref a `uses:` line pins a rainix Solidity reusable at, if that is what it is.
@@ -4926,7 +4945,12 @@ fn sol_toolchains(workflows: &[(String, String)]) -> Vec<(SolToolchain, Vec<Stri
             continue;
         }
         let matrix_names_sol = text.contains("rainix-sol");
-        for (n, line) in text.lines().enumerate() {
+        for (n, raw) in text.lines().enumerate() {
+            // Stripped ONCE here rather than in each parser, so a COMMENTED-OUT step cannot
+            // register as a toolchain. A `# uses: …rainix-sol.yaml@main` above a live
+            // `nix develop -c rainix-sol-static` used to make a one-toolchain repo report
+            // `mode: conflict` — an invented disagreement, reported with exit 3.
+            let line = strip_yaml_comment(raw);
             if let Some(git_ref) = rainix_sol_reusable_ref(line) {
                 found.push((SolToolchain::Reusable(git_ref), name.clone()));
             }
@@ -4996,12 +5020,30 @@ fn agreed_rainix_sha(leaves: &[(&str, Option<String>)]) -> Result<String, String
 /// `pin` is what the network read returned for a [`SolToolchain::Reusable`] — `Ok(sha)`, or `Err`
 /// carrying why it could not be resolved. Every decision is here, over already-taken readings, so
 /// the whole verdict is testable without a checkout and without a network.
+///
+/// `unreadable` is why the workflow read is a PARAMETER and not a silent empty list: a directory
+/// that could not be read produces the same empty `toolchains` a repo with no Solidity CI does,
+/// and reporting both as `absent` is this subcommand's own failure mode wearing its own clothes.
 fn sol_toolchain_lines(
     dir: &str,
     has_flake: bool,
     toolchains: &[(SolToolchain, Vec<String>)],
     pin: Option<Result<String, String>>,
+    unreadable: Option<String>,
 ) -> (i32, Vec<String>) {
+    if let Some(why) = unreadable {
+        return (
+            SOL_TOOLCHAIN_UNRESOLVED,
+            vec![
+                "mode: unreadable".to_string(),
+                format!(
+                    "error: this checkout's workflows could not be read ({why}), so NOTHING is \
+                     known about what gates it — which is not the same as knowing nothing gates \
+                     it. Fix the checkout and ask again; do not record this as `absent`."
+                ),
+            ],
+        );
+    }
     let mut lines: Vec<String> = Vec::new();
     for (toolchain, wfs) in toolchains {
         for wf in wfs {
@@ -5034,7 +5076,20 @@ fn sol_toolchain_lines(
                 )),
             ),
             SolToolchain::RepoFlake => ("repo-flake", Ok(format!("nix develop {dir} -c"))),
-            SolToolchain::Explicit(f) => ("explicit", Ok(format!("nix develop {f} -c"))),
+            SolToolchain::Explicit(f) => {
+                // The command IS what CI runs, so it is still the right thing to run — but an
+                // unpinned ref resolves at TWO different moments and a floating answer handed
+                // over as an authoritative one is #116 in miniature. Warn; do not withhold the
+                // only correct action.
+                if !flake_ref_is_pinned(f) {
+                    lines.push(format!(
+                        "warn: {f} names no revision, so it floats with that repo's default \
+                         branch — CI resolved it when CI ran and you resolve it now. Matching \
+                         text is not matching toolchain; say so if an exact check reds."
+                    ));
+                }
+                ("explicit", Ok(format!("nix develop {f} -c")))
+            }
             SolToolchain::Foreign(how) => (
                 "foreign",
                 Err(format!(
@@ -5094,22 +5149,64 @@ fn sol_toolchain_lines(
 /// The impure half — the directory walk and the one contents read — is here; every judgment is
 /// [`sol_toolchains`] and [`sol_toolchain_lines`].
 fn sol_toolchain_mode(dir: &str) -> i32 {
+    let say = |code: i32, lines: Vec<String>| {
+        for l in &lines {
+            println!("{l}");
+        }
+        code
+    };
+    // The printed command carries `dir` verbatim, so a relative one only reproduces CI from the
+    // directory it was typed in — and that command IS this subcommand's whole deliverable. The
+    // contract is enforced here rather than asserted in a doc comment.
+    let dir = match std::fs::canonicalize(dir) {
+        Ok(p) => p.to_string_lossy().into_owned(),
+        Err(e) => {
+            let (c, l) = sol_toolchain_lines("", false, &[], None, Some(format!("{dir}: {e}")));
+            return say(c, l);
+        }
+    };
+    let dir = dir.as_str();
+
+    // A directory that cannot be read yields the same empty list as a repo with no Solidity CI.
+    // Distinguishing them is the entire point of this subcommand, so the read failure is carried
+    // rather than swallowed — including a single unreadable FILE, which would silently drop the
+    // one workflow that gates the repo.
     let wf_dir = std::path::Path::new(dir).join(".github/workflows");
     let mut workflows: Vec<(String, String)> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&wf_dir) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if !(name.ends_with(".yaml") || name.ends_with(".yml")) {
-                continue;
-            }
-            if let Ok(text) = std::fs::read_to_string(e.path()) {
-                workflows.push((name, text));
+    let mut unreadable: Option<String> = None;
+    match std::fs::read_dir(&wf_dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // no workflows at all: `absent`
+        Err(e) => unreadable = Some(format!("{}: {e}", wf_dir.display())),
+        Ok(entries) => {
+            for e in entries {
+                let e = match e {
+                    Ok(e) => e,
+                    Err(err) => {
+                        unreadable = Some(format!("{}: {err}", wf_dir.display()));
+                        break;
+                    }
+                };
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !(name.ends_with(".yaml") || name.ends_with(".yml")) {
+                    continue;
+                }
+                match std::fs::read_to_string(e.path()) {
+                    Ok(text) => workflows.push((name, text)),
+                    Err(err) => {
+                        unreadable = Some(format!("{}: {err}", e.path().display()));
+                        break;
+                    }
+                }
             }
         }
     }
     workflows.sort();
     let toolchains = sol_toolchains(&workflows);
     let has_flake = std::path::Path::new(dir).join("flake.nix").is_file();
+    if unreadable.is_some() {
+        let (c, l) = sol_toolchain_lines(dir, has_flake, &[], None, unreadable);
+        return say(c, l);
+    }
 
     // One network read, and only for the shape that needs it: the pin lives in the reusable, so a
     // checkout cannot answer this on its own however hard it is parsed.
@@ -5130,18 +5227,15 @@ fn sol_toolchain_mode(dir: &str) -> i32 {
         _ => None,
     };
 
-    let (code, lines) = sol_toolchain_lines(dir, has_flake, &toolchains, pin);
-    for l in &lines {
-        println!("{l}");
-    }
-    code
+    let (code, lines) = sol_toolchain_lines(dir, has_flake, &toolchains, pin, None);
+    say(code, lines)
 }
 
 #[cfg(test)]
 mod sol_toolchain_tests {
     use super::{
-        agreed_rainix_sha, foreign_sol_toolchain, is_sol_check, names_token, nix_develop_step,
-        rainix_sha, rainix_sol_reusable_ref, sol_toolchain_lines, sol_toolchains,
+        agreed_rainix_sha, flake_ref_is_pinned, foreign_sol_toolchain, is_sol_check, names_token,
+        nix_develop_step, rainix_sha, rainix_sol_reusable_ref, sol_toolchain_lines, sol_toolchains,
         strip_yaml_comment, workflow_gates_a_push, SolToolchain,
     };
 
@@ -5219,7 +5313,7 @@ jobs:
         has_flake: bool,
         pin: Option<Result<String, String>>,
     ) -> (i32, String) {
-        let (code, lines) = sol_toolchain_lines("/w/clone", has_flake, toolchains, pin);
+        let (code, lines) = sol_toolchain_lines("/w/clone", has_flake, toolchains, pin, None);
         (code, lines.join("\n"))
     }
 
@@ -5586,6 +5680,113 @@ jobs:
             foreign_sol_toolchain("      # we dropped foundryup for nix"),
             None
         );
+    }
+
+    #[test]
+    fn a_column_zero_comment_does_not_close_the_trigger_block() {
+        // YAML permits a comment at any indentation. Reading the RAW line for the block boundary
+        // made this workflow — which gates every branch — report `mode: absent`.
+        assert!(workflow_gates_a_push(
+            "on:\n# gate every branch\n  push:\njobs:\n"
+        ));
+        // …and the boundary still has to close on a real column-zero KEY.
+        assert!(!workflow_gates_a_push(
+            "on:\n  workflow_dispatch:\njobs:\n  a:\n    steps:\n      - run: git push\n"
+        ));
+    }
+
+    /// A commented-out step is not a toolchain. Reading it as one invents a `conflict` on a repo
+    /// that has exactly one — an exit-3 refusal manufactured out of a comment.
+    #[test]
+    fn a_commented_out_step_registers_no_toolchain() {
+        let wf = "\
+on: [push]
+jobs:
+  a:
+    steps:
+      # uses: rainlanguage/rainix/.github/workflows/rainix-sol.yaml@main
+      # - run: nix develop github:rainlanguage/rainix#sol-shell -c forge fmt
+      - run: nix develop -c rainix-sol-static
+";
+        assert_eq!(
+            sol_toolchains(&wfs(&[("rainix.yaml", wf)])),
+            vec![(SolToolchain::RepoFlake, vec!["rainix.yaml".to_string()])],
+            "only the LIVE step is a toolchain"
+        );
+    }
+
+    #[test]
+    fn an_unpinned_explicit_flake_still_gets_its_command_but_is_flagged_as_floating() {
+        let (code, out) = report(
+            &[(
+                SolToolchain::Explicit("github:rainlanguage/rainix#sol-shell".into()),
+                vec!["git-clean.yaml".to_string()],
+            )],
+            true,
+            None,
+        );
+        // The command IS what CI runs, so withholding it would deny the only correct action.
+        assert_eq!(code, 0);
+        assert!(
+            out.contains("verify: nix develop github:rainlanguage/rainix#sol-shell -c"),
+            "{out}"
+        );
+        // …but it floats, and handing a moving target over as authoritative is #116 in miniature.
+        assert!(
+            out.contains("warn:") && out.contains("names no revision"),
+            "{out}"
+        );
+
+        // A PINNED explicit ref resolves to one thing forever and must NOT carry the warning.
+        let (code, pinned) = report(
+            &[(
+                SolToolchain::Explicit("github:rainlanguage/rainix/53e96a7d#sol-shell".into()),
+                vec!["git-clean.yaml".to_string()],
+            )],
+            true,
+            None,
+        );
+        assert_eq!(code, 0);
+        assert!(!pinned.contains("warn:"), "{pinned}");
+    }
+
+    #[test]
+    fn a_flake_ref_is_pinned_only_when_it_names_a_revision() {
+        assert!(!flake_ref_is_pinned("github:rainlanguage/rainix#sol-shell"));
+        assert!(!flake_ref_is_pinned("github:rainlanguage/rainix"));
+        assert!(flake_ref_is_pinned(
+            "github:rainlanguage/rainix/53e96a7d#sol-shell"
+        ));
+        assert!(flake_ref_is_pinned(
+            "github:rainlanguage/rainix/main#sol-shell"
+        ));
+        // Not a github URL: a local path is whatever is on disk, and warning about every ordinary
+        // checkout would make the warning worth nothing.
+        assert!(flake_ref_is_pinned("/w/clone"));
+        assert!(flake_ref_is_pinned(".#sol-shell"));
+    }
+
+    /// An unreadable checkout yields the same EMPTY toolchain list a repo with no Solidity CI
+    /// does. Reporting both as `absent` is this subcommand's own failure mode wearing its own
+    /// clothes — knowing nothing is not the same as knowing nothing gates it.
+    #[test]
+    fn an_unreadable_checkout_is_not_absent() {
+        let (code, out) = sol_toolchain_lines(
+            "/w/clone",
+            false,
+            &[],
+            None,
+            Some("/w/clone/.github/workflows: permission denied".into()),
+        );
+        let out = out.join("\n");
+        assert_eq!(code, 3);
+        assert!(out.contains("mode: unreadable"), "{out}");
+        assert!(!out.contains("mode: absent"), "{out}");
+        assert!(out.contains("do not record this as `absent`"), "{out}");
+        assert!(!out.contains("verify:"), "{out}");
+
+        let (_, absent) = report(&[], false, None);
+        assert!(!absent.contains("mode: unreadable"), "{absent}");
     }
 
     /// The bound, named so it is on the record rather than in someone's head: a third way of
