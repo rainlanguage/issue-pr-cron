@@ -23,7 +23,6 @@ stateDiagram-v2
     state "ai:design" as design
     state "ai:blocked-on" as bon
     state "run ended · infra down" as infradown
-    state "human:design" as hdesign
     state "human:keep-open (issue)" as ikeep
     state "presentable · in queue" as queue
     state "approved · human review" as approved
@@ -86,18 +85,16 @@ stateDiagram-v2
     infradown --> unvetted : next tick · 4h later, from scratch
 
     %% human decisions protect AUTHORSHIP (#111): no AI actor writes a human:* label, none
-    %% removes one as an override. A ruling is an INPUT the machine executes — park is the
-    %% explicit minority spelling, never the default — and clearing-by-execution is modeled.
-    %% a human REJECT writes the same ai:reject the vetter writes, with the work order in the
-    %% same call; the sha-pinned 👤 human comment records that a human ruled (#133).
+    %% removes one as an override. A ruling is an INPUT the machine executes. A human REJECT
+    %% writes the same ai:reject the vetter writes, with the work order in the same call, and a
+    %% human DESIGN ruling is the SAME send-back (#219): the answer IS producer work — there is
+    %% no parked spelling, and human:design is deleted (a question still open is already the
+    %% ai:design state). The sha-pinned 👤 human comment records WHICH verb ruled (#133/#219).
     ready --> reject : human-rule reject --rework · ruling + work order, one call
-    ready --> hdesign : human-rule design --rework · delegated work order
-    ready --> hdesign : human-rule design --park · explicit park
+    ready --> reject : human-rule design --rework · the answer is the same send-back
     ready --> [*] : human-close · decide+do, one transition (#213)
-    hdesign --> unvetted : producer executes the order → push · the re-vet clears the spent label
-    hdesign --> [*] : parked · exit is the human superseding their own ruling
 
-    design --> [*] : human design ruling
+    design --> reject : human answers · human-rule design --rework, same send-back as a rejection
     merged --> [*]
 ```
 
@@ -116,41 +113,47 @@ everything else treats as sacred was also the only one improvising raw
 
 | Transition                                             | The move it makes                                                                                                                                                                                                     |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design`, pinned to the **head sha**; park-or-delegate is chosen HERE (#111): `reject` REQUIRES `--rework "<order>"`, `design` takes exactly one of `--rework` / `--park`                      |
-| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those two plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` carry the same disposition flags, `keep-open` refuses them (the verb is its own disposition) |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design`, pinned to the **head sha**; both are send-backs and land the ONE reject state (#133/#219): each REQUIRES `--rework "<order>"`, writes `ai:reject` + the trusted work order in the same call, and the producer is the next mover |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those two plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` require `--rework` likewise (`design` writes NO label — the pinned comment is the record), `keep-open` refuses it (the verb is its own disposition) |
 | `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: record the ruling, close, retire the pending flag — one transition                                                                                                          |
 | `record-close-candidate-verdict <owner/repo> <n>`      | the vetter's flag verdict, on either subject type, now reachable from a terminal too (the refusal above names it)                                                                                                     |
 
-**A ruling can delegate, not only park (#111).** The ruling and the work order
-are two records with their own shapes — the ruling is provenance (_a human
-decided X, at anchor Y_; pinned, historical, true forever), the work order is an
-instruction to the producer, spent once acted on — and ONE call emits both:
+**A ruling delegates (#111/#219).** The ruling and the work order are two
+records with their own shapes — the ruling is provenance (_a human decided X, at
+anchor Y_; pinned, historical, true forever), the work order is an instruction
+to the producer, spent once acted on — and ONE call emits both:
 `--rework "<order>"` posts a trusted `Rework note @<anchor>: …` comment beside
 the ruling, in the **exact prefix form** the producer's
 `trusted-comments --marker 'Rework note'` verification accepts, pinned to the
 same anchor as the ruling so the two go stale together. The tool owns the
-prefix, so the failure the issue measured — a hand-typed `Rework Note` silently
-parking a PR meant to be delegated — is unconstructible. `reject` **requires**
-the order (a reject IS a send-back; one not worth reworking is a `human-close`,
-not a park); `design` takes exactly one of `--rework` / `--park`; and a bare
-call to either **refuses** rather than parking by accident — pure parking is an
-explicit spelling, never the default meaning of a ruling. `keep-open` takes
-neither flag and says so: it is a standing constraint — the verb is its own
-disposition, so a second spelling of it would only be a way to mean something
-else by accident. A close is not a ruling verb at all: deciding one IS executing
-one (`human-close`, #213). What the human namespace protects is **authorship
-only**: no AI actor writes a `human:*` label, and none removes one as an
-override — but a ruling is an input the machine executes, so the producer's
-state-load picks a delegated `human:design` up as a work order (`worklist`
-routes it `rework-ruling`), the push moves the head, and the vetter's next
-verdict clears the spent label as the **completion** of the ruling through the
-ordinary rework → un-vetted → re-vet flow.
+prefix, so the failure the issue measured — a hand-typed `Rework Note` invisible
+to the producer's verification — is unconstructible. `reject` **requires** the
+order (a reject IS a send-back; one not worth reworking is a `human-close`), and
+`design` requires it identically (#219): a design ruling IS its answer, the
+answer is producer work, and there is no parked spelling — a question still open
+is already the `ai:design` state, so ruling it again would only rename it. On a
+PR both verbs land the **one reject state**: `ai:reject`, every other `ai:*`
+cleared, the producer the next mover from the moment of the ruling; the
+sha-pinned `👤 human` comment records **which** verb ruled, so the record keeps
+the distinction the label machinery no longer carries. On an issue `design`
+writes **no label at all**: the pinned `Ruled …: design — <answer>` comment is
+the whole record, and the issue stays in (or returns to) the producer backlog to
+be worked per it. `keep-open` takes no flag and says so: it is a standing
+constraint — the verb is its own disposition, so a second spelling of it would
+only be a way to mean something else by accident. A close is not a ruling verb
+at all: deciding one IS executing one (`human-close`, #213). What the human
+namespace protects is **authorship only**: no AI actor writes a `human:*` label,
+and none removes one as an override — but a ruling is an input the machine
+executes: the producer picks the send-back up through the `ai:reject` label
+exactly as it picks up a vetter reject, the rework push moves the head, and the
+ruling goes stale by itself through the ordinary rework → un-vetted → re-vet
+flow.
 
-The vocabularies are not a second list: they **are** `HUMAN_DECISION_LABELS`
-(PRs) and `HUMAN_RULING_LABELS` (issues), the same constants every AI transition
-already refuses to override. A state added there gains its transition rather
-than needing one, so the transition surface and the lane classifier cannot name
-different states.
+The vocabularies are not a second list: they **are** `HUMAN_PR_RULINGS` (PRs)
+and `HUMAN_ISSUE_RULINGS` (issues), one table per subject mapping each verb to
+the label it writes — the same tables every guard derives from. A verb added
+there gains its transition rather than needing one, so the transition surface
+and the lane classifier cannot name different states.
 
 **A ruling is not a label; it is a label plus what it was ruling on.** The
 comment a ruling posts pins to whatever the AI's ruling on the _same subject_
@@ -180,16 +183,17 @@ that has already happened:
 - **a terminal subject is moot**, not refused: a merged PR or a closed issue has
   no state left to move out of, so nothing is written and the exit is 0;
 - **re-ruling supersedes** rather than refuses. The human owns this namespace
-  and may correct a mis-click, so the old `human:*` is removed and the new one
-  added — one of the **two RUNTIME** removals of a `human:*` label, sanctioned
-  because the actor removing it wrote it. The other is #111's
-  clearing-by-execution: the verdict that re-judges an **executed** delegation
-  clears the spent `human:design`, sanctioned because it completes what the
-  human asked rather than overriding it. There is a third remover, and it is a
-  MIGRATION rather than a transition of the running FSM: `migrate-reject` moves
-  the PRs still carrying the `human:reject` #133 retired onto `ai:reject` — a
-  one-shot over a fixed, shrinking population, which is why it is not one of the
-  two paths a live ruling can take;
+  and may correct a mis-click, so any old `human:*` is removed as the new ruling
+  lands — the one **RUNTIME** removal of a `human:*` label, sanctioned because
+  the actor removing it wrote it. The other removers are MIGRATIONS rather than
+  transitions of the running FSM: `migrate-reject` moves the PRs still carrying
+  the `human:reject` #133 retired onto `ai:reject`, and `migrate-design` moves
+  every subject still carrying the `human:design` #219 **deleted** — PRs onto
+  `ai:reject` with a trusted work order live at the head (the one already
+  pinned there, else the ruling's own note), issues onto no label at all, back
+  in the producer backlog with the ruling comment as the record. Each is a
+  one-shot over a fixed, shrinking population, which is why neither is a path a
+  live ruling can take;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:reject` sat on an issue whose producer close-candidate flag had not
@@ -204,18 +208,18 @@ the top of the hierarchy, and **a tool that makes the sacred decision harder
 than raw `gh` will simply be bypassed**. Every refusal here either has no legal
 write to make or names the one-command move that is legal.
 
-A ruling whose target is a sacred `human:*` label moves exactly **one** label,
-and strips an `ai:*` only where it contradicts outright: `keep-open` clears
-`ai:close-candidate` ("keep this open" against "close this"). Everything else is
-merely stale, not contradictory, and erasing the `ai:*` label would erase the
-very claim the ruling was ruling on.
+An issue ruling whose target is a sacred `human:*` label moves exactly **one**
+label, and strips an `ai:*` only where it contradicts outright: `keep-open`
+clears `ai:close-candidate` ("keep this open" against "close this"). Everything
+else is merely stale, not contradictory, and erasing the `ai:*` label would
+erase the very claim the ruling was ruling on.
 
-A `reject` ruling is different, and #133 is why: its target **is** a pipeline
-state (`ai:reject`), so it obeys the same one-state rule the vetter's write
-obeys and strips every other `ai:*`. That is not the human reaching into the
-machine's namespace — it is the reject state no longer being in anyone's. A
-`human:reject` PR used to carry its stale `ai:ready` for ever, because only
-`reworked-reject` was allowed to touch it.
+A PR ruling is different, and #133 is why: its target **is** a pipeline state
+(`ai:reject`, whichever verb ruled), so it obeys the same one-state rule the
+vetter's write obeys and strips every other `ai:*`. That is not the human
+reaching into the machine's namespace — it is the reject state no longer being
+in anyone's. A `human:reject` PR used to carry its stale `ai:ready` for ever,
+because only `reworked-reject` was allowed to touch it.
 
 The writes happen in a fail-safe **order**, which is the reverse of the AI
 verdict write's and is asserted as a property rather than left to statement
@@ -298,7 +302,7 @@ types is a Claude Code plugin, published from this repo's own marketplace:
 | `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire the flag, close. Issue **or** PR, by lookup        |
 | `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer |
 | `/reject <owner/repo#n> "…"`                 | `human-rule` — `ai:reject` (PR) / `human-rule-issue` — `human:reject` (issue)   |
-| `/design <owner/repo#n> "…"`                 | `human-rule` / `human-rule-issue` — `human:design`                              |
+| `/design <owner/repo#n> "…"`                 | `human-rule … design --rework` — `ai:reject` (PR) / comment-only (issue), #219  |
 | `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this"                |
 
 Ruling on one close-candidate previously took four steps: a hand-written
@@ -1347,16 +1351,19 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   clearance reads exactly `ai:blocked-on` typed refs, which this residue does
   not have — its exit is an eyes-on human pass that re-flags each PR blocked-on
   its repo's migration, or unblocks it outright.
-- **human-decisions** — `human:design`, plus the RETIRED `human:reject` for as
-  long as any PR still carries it (#133). That last count is the migration's
-  progress meter: `migrate-reject` moves those PRs to `ai:reject` and it only
-  ever shrinks.
+- **human-decisions** — the RETIRED `human:reject`, for as long as any PR still
+  carries it (#133). The count is the migration's progress meter:
+  `migrate-reject` moves those PRs to `ai:reject` and it only ever shrinks. It
+  is the lane's only state: a live human decision on a PR is a comment or a
+  native review, never a label — `human:design` is DELETED (#219), so residue
+  `migrate-design` has not yet moved classifies by whatever modeled state the
+  PR otherwise has (un-vetted at the bottom).
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved
 unchanged; `lanes` and the additive `counts` keys (`reject`, `relink` (retired,
-counting down to zero), `humanReject`, `humanDesign`, `unvetted`) are the
-full-machine view the dashboard renders.
+counting down to zero), `humanReject`, `unvetted`) are the full-machine view
+the dashboard renders.
 
 The close-candidate lifecycle carries two further additive counts over BOTH
 subject types (#211/#212) — the legacy `closeCandidateIssues` keeps its

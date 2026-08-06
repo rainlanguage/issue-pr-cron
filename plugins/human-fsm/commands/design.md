@@ -1,5 +1,5 @@
 ---
-description: Rule human:design on a PR or an issue — delegate the answer as a work order, or explicitly park the question.
+description: Rule design on a PR or an issue — record the answer and send it straight back to the producer, the same send-back a rejection is.
 argument-hint: <owner/repo#n> <note…>
 allowed-tools: Bash(pr-review-report human-rule:*), Bash(pr-review-report human-rule-issue:*)
 ---
@@ -8,64 +8,53 @@ Arguments: `$ARGUMENTS`
 
 - **SUBJECT** is the first word — an `owner/repo#n` reference. Split it on `#`
   into `<slug>` and `<n>`.
-- **NOTE** is everything after it, and it is required: state the question or the
-  answer, not that there is one.
+- **NOTE** is everything after it, and it is required: state the answer, not
+  that there is one.
 
 Refuse and say why if SUBJECT is not `owner/repo#n` or NOTE is empty. **Never
 infer an owner or a repo.**
 
-A design ruling has TWO dispositions, and the choice is explicit — the tool
-REFUSES a bare call rather than parking by accident:
+A design ruling IS its answer, and the answer is producer work — the same
+send-back a rejection is (#219). There is no parked spelling: a question still
+open is already the `ai:design` state, so if you do not have the answer yet
+there is nothing to rule — wait until you do. The work order is required,
+exactly as it is on `/reject`:
 
-- **The ruling answers the question and the answer is executable** → delegate.
-  The producer works it per your order, and the label clears itself through the
-  ordinary rework → un-vetted → re-vet flow:
+```text
+pr-review-report human-rule <slug> <n> design <NOTE> --rework <WORK ORDER>
+```
 
-  ```text
-  pr-review-report human-rule <slug> <n> design <NOTE> --rework <WORK ORDER>
-  ```
+Read the work order from the user's words: an instruction ("do X instead", "the
+convention is Y — apply it") is the order, verbatim where possible. When the
+note and the order are genuinely the same sentence, use it for both. When you
+cannot tell what the producer should DO, ask — that one question is cheaper
+than delegating a placeholder.
 
-- **The question genuinely stands** (you are raising it, or withholding the
-  answer) → park, explicitly. Parked means parked: no AI actor touches the
-  subject until you supersede your own ruling:
-
-  ```text
-  pr-review-report human-rule <slug> <n> design <NOTE> --park
-  ```
-
-Read the user's intent from their words: an instruction ("do X instead", "the
-convention is Y — apply it") is a delegation with that instruction as the work
-order; a question with no answer yet is a park. When it is genuinely unclear
-which they meant, ask — that one question is cheaper than parking a work order
-or delegating a placeholder.
-
-Either spelling applies `human:design` and posts a `👤 human` comment pinned to
-the **head sha**; a delegation ALSO posts the `Rework note @<sha>: …` work order
-in the exact trusted form the producer's
-`trusted-comments --marker 'Rework note'` verification accepts — one call, no
-raw `gh`, no marker to mistype. Both records pin the same sha, so they go stale
-together when the producer pushes the rework.
+On a PR this lands `ai:reject` (every other `ai:*` cleared, `ai:design`
+included) plus a `👤 human` comment pinned to the **head sha** recording the
+ruling word `design`, plus the `Rework note @<sha>: …` work order in the exact
+trusted form the producer's `trusted-comments --marker 'Rework note'`
+verification accepts — one call, no raw `gh`, no marker to mistype. The
+producer is the next mover from that moment; its push moves the head and the
+ruling goes stale by itself.
 
 **If it refuses with `is an ISSUE, not a pull request`**, run the command that
-refusal names, with the same NOTE and **the same disposition you chose above** —
-the issue side takes the same two spellings and refuses a bare call the same
-way, so carry the one you picked rather than the one you read first:
+refusal names, with the same NOTE and the same WORK ORDER:
 
 ```text
 pr-review-report human-rule-issue <slug> <n> design <NOTE> --rework <WORK ORDER>
-pr-review-report human-rule-issue <slug> <n> design <NOTE> --park
 ```
 
-The two are not interchangeable: `--rework` posts the trusted work order beside
-the ruling, `--park` posts no order at all. Copy out the one you chose.
+On an issue a design ruling writes **no label at all**: the pinned
+`Ruled …: design — <answer>` comment (and the work order beside it) is the
+whole record, and the issue stays in the producer backlog to be worked per it.
 
-On an issue carrying a **live** producer close-candidate flag this is refused on
-purpose: `human:design` there would strand the flag, since every AI transition
-refuses once a human has ruled. The refusal names all four legal moves — pick
-one of those rather than working around it.
+On an issue carrying a **live** producer close-candidate flag this is refused
+on purpose: the flag's own question must be answered first, and the refusal
+names every legal move — pick one of those rather than working around it.
 
 Any other refusal: relay it verbatim and stop. Do not reach for `gh`.
 
 Print the command's output verbatim: it names the anchor, every label that
-moved, and whether the subject is DELEGATED or PARKED — that last word is the
-point.
+moved, and that the subject is DELEGATED to the producer — that last word is
+the point.

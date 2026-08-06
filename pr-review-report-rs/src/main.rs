@@ -1251,54 +1251,28 @@ const RETIRED_HUMAN_REJECT_LABEL: &str = "human:reject";
 
 /// The human's namespace on a PR, and what it protects is AUTHORSHIP (#111): nothing in this binary
 /// writes one of these but the human's own transition, and nothing removes one AS AN OVERRIDE of the
-/// human. That is the whole protection. A ruling is an INPUT the machine executes, not a lock on it:
-/// where the ruling carries a work order (a trusted `Rework note` — see [`design_delegation`]), the
-/// producer executes it and the label is cleared as the modeled CONSEQUENCE of execution, by the
-/// verdict that re-judges the reworked head — the completion of what the human asked, not an
-/// override of it. (Absolute parking was the ruled-out overreaction: it made every `human:*` label a
-/// state only the human could exit, which is the #109 dead-state defect.)
+/// human. One entry: the RETIRED `human:reject` — see [`RETIRED_HUMAN_REJECT_LABEL`] — which parks
+/// absolutely until `migrate-reject` moves it.
 ///
-/// This constant is the WRITE-protected set, and it dominates the label-based views (the queue's
-/// presentability filter, [`classify_lane`]'s human-decisions lane). Which of them still PARK a PR
-/// against AI actors, and on what condition, is [`pr_human_sacred`]'s question, not this set's:
-/// `human:design` parks only while un-executed, the one in [`PR_PARKED_HUMAN_LABELS`] parks
-/// absolutely.
-///
-/// `human:reject` appears only as the RETIRED name — see [`RETIRED_HUMAN_REJECT_LABEL`]. A close
-/// ruling carries NO label at all (#213): deciding a close and executing it are one transition,
-/// `human-close`, whose durable record is the pinned `👤 human` comment — a state between the two
-/// would split one actor's decide/do on a terminal act that is a single API call.
-const PR_SACRED_LABELS: [&str; 2] = ["human:design", RETIRED_HUMAN_REJECT_LABEL];
+/// A LIVE human ruling on a PR carries no `human:*` label at all. Both PR ruling verbs land the ONE
+/// reject state — `ai:reject` plus the trusted work order, #133 for `reject` and #219 for `design`
+/// (an answered design question is the same send-back) — a close ruling is `human-close`'s
+/// decide+do with no label between (#213), and the ruling itself lives in the sha-pinned `👤 human`
+/// comment, where [`human_ruled_at_head`] reads it. `human:design` is DELETED (#219): its only live
+/// meaning was the parked question, and the question is already a modeled state (`ai:design`), so
+/// the park was a second name for it that only the human could exit — the #109 dead-state defect.
+/// `migrate-design` is the residue's exit.
+const PR_SACRED_LABELS: [&str; 1] = [RETIRED_HUMAN_REJECT_LABEL];
 
-/// The `human:*` labels that park a PR ABSOLUTELY — no AI actor acts on the PR while one is
-/// present, whatever the comments say. One entry: the retired `human:reject`, exited by
-/// `migrate-reject` and nothing else.
-///
-/// `human:design` is deliberately NOT here: it is authorship-protected like the rest, but an
-/// executed delegation ([`Delegation::Executed`]) is consumable — see [`pr_human_sacred`]. There
-/// is no absolutely-parked live state at all: "human authority" means the machine executes what
-/// the human RECORDED (#213), so every `human:*` state has a consuming transition.
-const PR_PARKED_HUMAN_LABELS: [&str; 1] = [RETIRED_HUMAN_REJECT_LABEL];
-
-/// A `gh search` result carries a human override label (which beats an `ai:ready` label) when any of
-/// its labels is in [`PR_SACRED_LABELS`]. Derived from the constant so the sacred set and the
-/// override test cannot name different states. This is the LABEL-presence test the views use
-/// (queue presentability, lane domination); whether the PR is parked against an AI WRITE is
-/// [`pr_human_sacred`], which is narrower on `human:design`.
+/// A PR carries a human override label (which beats an `ai:ready` label) when any of its labels is
+/// in [`PR_SACRED_LABELS`]. Derived from the constant so the sacred set and the override test
+/// cannot name different states. Every entry parks ABSOLUTELY, so this is decidable from a search
+/// result's labels alone — no per-PR fetch — and it is the label half of [`pr_human_sacred`], which
+/// adds the two forms a label cannot carry (a native review, a ruling pinned to the current head).
 fn has_human_override(p: &Value) -> bool {
     label_names(p)
         .iter()
         .any(|l| PR_SACRED_LABELS.contains(&l.as_str()))
-}
-
-/// A subject carries a label that parks it ABSOLUTELY ([`PR_PARKED_HUMAN_LABELS`]) — decidable from
-/// labels alone, which is what lets the vetter's state-load skip these without a per-PR fetch. A
-/// `human:design` PR is NOT decidable from labels alone (its parking depends on the delegation
-/// state, which lives in the comments), so it must reach [`pr_human_sacred`] with the full detail.
-fn pr_absolutely_parked(p: &Value) -> bool {
-    label_names(p)
-        .iter()
-        .any(|l| PR_PARKED_HUMAN_LABELS.contains(&l.as_str()))
 }
 
 /// A native GitHub human review (`reviewDecision` APPROVED or CHANGES_REQUESTED) is a human decision
@@ -1340,26 +1314,18 @@ fn human_ruled_at_head(pr_json: &Value, head: &str) -> bool {
 /// through this one predicate, so the forms of a human decision cannot drift apart. What it protects
 /// is AUTHORSHIP and CURRENCY, not permanence (#111):
 ///
-/// - an absolutely-parking label ([`PR_PARKED_HUMAN_LABELS`]) — sacred, no condition;
+/// - a sacred `human:*` label ([`PR_SACRED_LABELS`]) — sacred, no condition;
 /// - a native APPROVED/CHANGES_REQUESTED review — sacred, no condition;
 /// - a `👤 human` ruling pinned to THIS head — sacred: the decision describes the code that is
-///   there, whether it parked or delegated (a delegation un-executed is the PRODUCER's move, and
-///   still nothing for the vetter to write over);
-/// - `human:design` otherwise parks EXCEPT as an executed delegation: the ruling carried a trusted
-///   `Rework note`, the head has moved past it (the producer executed), and what remains is the
-///   normal un-vetted path — the vetter re-judges the reworked head with the ruling in front of it,
-///   and the verdict write clears the spent label as the completion of the ruling
-///   ([`verdict_plan`]). A `human:design` with NO work order is the EXPLICIT park (`--park` is the
-///   only spelling that produces it) and stays sacred until the human supersedes it.
+///   there, and there is nothing for the vetter to write over. The ruling is the PRODUCER's move
+///   (`ai:reject` + the trusted work order, the same send-back whichever verb ruled it —
+///   #133/#219); the producer's push moves the head, the ruling goes stale by itself, and the PR
+///   re-enters vetting through the ordinary un-vetted path with the ruling in
+///   `pr_context.humanComments`.
 fn pr_human_sacred(pr_json: &Value, head: &str) -> bool {
-    if pr_absolutely_parked(pr_json)
+    has_human_override(pr_json)
         || has_native_human_review(pr_json)
         || human_ruled_at_head(pr_json, head)
-    {
-        return true;
-    }
-    label_names(pr_json).iter().any(|l| l == "human:design")
-        && design_delegation(pr_json, head) != Delegation::Executed
 }
 
 /// owner/repo slug from a GitHub PR url — the search result's own URL, never guessed by org.
@@ -10444,7 +10410,6 @@ fn label_meta(label: &str) -> (&'static str, &'static str) {
         // migration has not moved, and a `label_meta` that forgot a live label is how a colour and
         // a description get silently rewritten org-wide by whatever writes it next.
         "human:reject" => ("b60205", "Human reviewer: needs rework"),
-        "human:design" => ("3d1a78", "Human maintainer: design question (sacred)"),
         "human:keep-open" => (
             "0e8a16",
             "Human decision: keep open (excluded from the close-candidate queue)",
@@ -11882,16 +11847,7 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
                 .collect()
         })
         .unwrap_or_default();
-    let mut to_remove = labels_to_remove(&current, target);
-    // CLEARING-BY-EXECUTION (#111): a `human:design` label that reaches this point is an EXECUTED
-    // delegation — the sacred gate above refused every other shape (absolute labels, a ruling at
-    // this head, an un-delegated or still-ordered design). The human asked for work, the producer
-    // pushed it, and this verdict is the re-judgement of the result; clearing the spent label is
-    // the COMPLETION of what the human asked, not an override of it. This is the second half of
-    // the rework → un-vetted → re-vet flow, the same move that clears a stale `ai:reject`.
-    if current.iter().any(|c| c == "human:design") {
-        to_remove.push("human:design".to_string());
-    }
+    let to_remove = labels_to_remove(&current, target);
     let has_target = current.iter().any(|c| c == target);
     let skip_comment = should_skip_comment(last_vetter_comment(pr_json).as_deref(), sha, verdict);
     VerdictPlan::Record {
@@ -12825,51 +12781,61 @@ enum CloseFlagPlan {
     Flag { add_label: bool, post_comment: bool },
 }
 
-/// The human's namespace on an ISSUE. A ruling here is sacred: neither the producer's flag nor the
-/// vetter's verdict may overwrite it.
+/// The ISSUE RULING vocabulary — verb → the label the ruling writes, or `None` for a COMMENT-ONLY
+/// ruling whose whole record is the pinned `👤 human` comment.
 ///
-/// This is a superset of the three [`has_human_override`] enforces on PRs, and the extra one is
-/// live: `human:keep-open` is the issue-only ruling that answers a close-candidate flag with "no",
-/// and the org carries it on real issues today (rain.erc4626.words#18/#86, rain.flare#110,
-/// flow#412). Checking only `keep-open` + `close-candidate` (as this did) left a `human:reject` /
-/// `human:design` ruling on an issue invisible here, so the producer could flag an issue a human had
-/// already parked.
+/// The labels here are the human's namespace on an ISSUE, and a ruling label is sacred: neither
+/// the producer's flag nor the vetter's verdict may overwrite it. `human:keep-open` is the
+/// issue-only ruling that answers a close-candidate flag with "no", and the org carries it on real
+/// issues today (rain.erc4626.words#18/#86, rain.flare#110, flow#412).
 ///
-/// It is also the ISSUE-side ruling vocabulary: `human-rule-issue` derives its verbs from this array
-/// (see [`human_rulings`]), so a state added here gains its transition rather than needing one.
+/// `design` writes NO label (#219): a design ruling IS its answer, the answer is producer work,
+/// and an issue is already the producer's subject — its backlog membership needs no label to move —
+/// so the pinned `Ruled …: design — <answer>` comment is the whole record and the producer works
+/// the issue per it. (`human:design` is DELETED from both subject types; `migrate-design` is the
+/// residue's exit.)
+///
 /// A CLOSE ruling has no entry (#213): deciding a close and executing it are one transition,
 /// `human-close`, recorded by the pinned `👤 human` comment alone — a label between the decision
 /// and the act would be a state splitting one actor's decide/do.
-const HUMAN_RULING_LABELS: [&str; 3] = ["human:reject", "human:design", "human:keep-open"];
+const HUMAN_ISSUE_RULINGS: [(&str, Option<&str>); 3] = [
+    ("reject", Some("human:reject")),
+    ("design", None),
+    ("keep-open", Some("human:keep-open")),
+];
 
-/// The PR RULING vocabulary — the labels `human-rule` may write on a pull request, and the twin of
-/// [`HUMAN_RULING_LABELS`] on the other subject.
+/// The PR RULING vocabulary — verb → the label the ruling writes, the twin of
+/// [`HUMAN_ISSUE_RULINGS`] on the other subject.
 ///
-/// **`reject` is `ai:reject`, and that IS #133.** `ai:reject` and `human:reject` demanded the same
-/// move from the same actor — the producer reads the note and reworks — so they were one state split
-/// by who ruled, and a state that models an ATTRIBUTE is a machine bigger than the thing it
-/// describes. The attribute did not go away: it moved to the sha-pinned `👤 human` comment the same
-/// transition posts, where [`human_ruled_at_head`] reads it and where the vetter cannot write it.
+/// **Both verbs write `ai:reject`, and that is #133 and #219 saying the same thing.** `ai:reject`
+/// and `human:reject` demanded the same move from the same actor — the producer reads the note and
+/// reworks — so they were one state split by who ruled, and a state that models an ATTRIBUTE is a
+/// machine bigger than the thing it describes (#133). An answered design question demands that
+/// same move again: the answer is a work order, the producer executes it, so `design` is the same
+/// send-back wearing the question's name (#219). Neither attribute went away: both moved to the
+/// sha-pinned `👤 human` comment the same transition posts (`Ruled <sha>: reject — …` /
+/// `Ruled <sha>: design — …`), where [`human_ruled_at_head`] reads it and where the vetter cannot
+/// write it.
 ///
-/// The one `human:*` entry stays in that namespace because it is not one half of a split:
-/// `ai:design` on a PR does not ask the same thing of the same actor as `human:design` — the AI's
-/// raises a question for the human; the human's records the ANSWER, which either delegates the
-/// execution (`design --rework`, the producer's work order) or explicitly parks (`design --park`).
 /// A CLOSE is not here at all (#213): it is `human-close`'s decide+do, never a ruling verb, for
 /// the reason #133 gives — a state that models an attribute (or a phase) is a machine bigger than
 /// the thing it describes.
 ///
-/// This is deliberately NOT the same array as [`HUMAN_DECISION_LABELS`] any more, and the invariant
-/// that mattered is kept as a property instead of an identity: every label a ruling can write must be
-/// one [`classify_lane`] buckets into a real lane, else the ruling is a leak. That is asserted
-/// directly, over both arrays.
-const HUMAN_PR_RULING_LABELS: [&str; 2] = ["ai:reject", "human:design"];
+/// The invariant that matters is kept as a property: every label a ruling can write must be one
+/// [`classify_lane`] buckets into a real lane, else the ruling is a leak. That is asserted
+/// directly, over both tables.
+const HUMAN_PR_RULINGS: [(&str, &str); 2] = [("reject", "ai:reject"), ("design", "ai:reject")];
 
-/// Does any human ruling sit on this issue? Takes label NAMES, which callers already have.
+/// Does any human ruling LABEL sit on this issue? Takes label NAMES, which callers already have.
+/// Derived from the targets [`HUMAN_ISSUE_RULINGS`] writes, so the transition surface and the
+/// sacred set cannot name different states. A comment-only ruling (`design`) is deliberately not
+/// represented: it parks nothing — the issue stays the producer's to work, per the ruling comment.
 fn has_human_ruling(labels: &[String]) -> bool {
-    labels
-        .iter()
-        .any(|l| HUMAN_RULING_LABELS.contains(&l.as_str()))
+    labels.iter().any(|l| {
+        HUMAN_ISSUE_RULINGS
+            .iter()
+            .any(|(_, t)| *t == Some(l.as_str()))
+    })
 }
 
 /// A human ruling is sacred (refuse); a CLOSED issue is moot; otherwise flag it, adding the label /
@@ -14749,12 +14715,13 @@ fn ai_state_label(labels: &[String]) -> Option<String> {
 // a hand-applied label records no anchor, no reason, and no state it ruled from, so it is simply
 // true for ever.
 //
-// The vocabularies are not invented here: they ARE [`HUMAN_PR_RULING_LABELS`] (PRs) and
-// [`HUMAN_RULING_LABELS`] (issues). Derived rather than re-typed so the transition surface and the
-// state names cannot drift — a ruling outside them would write a label [`classify_lane`] buckets
-// nowhere, i.e. a leak, and that is asserted directly over both arrays rather than assumed from an
-// identity: since #133 the PR vocabulary is deliberately NOT the human-decisions lane, because
-// `reject` is no longer a decision only the human can make.
+// The vocabularies are not invented here: they ARE [`HUMAN_PR_RULINGS`] (PRs) and
+// [`HUMAN_ISSUE_RULINGS`] (issues) — one table per subject, verb → the label the ruling writes.
+// Derived rather than re-typed so the transition surface and the state names cannot drift — a
+// ruling outside them would write a label [`classify_lane`] buckets nowhere, i.e. a leak, and that
+// is asserted directly over both tables. The tables are verb-keyed rather than label-derived
+// because the map is not one-to-one in either direction: both PR verbs write the ONE reject state
+// (#133/#219), and the issue-side `design` writes no label at all.
 //
 // The human is the TOP of the hierarchy, so these are not gates on the human's authority. A tool
 // that makes the sacred decision harder than raw `gh` gets bypassed, which is the failure mode above
@@ -14775,26 +14742,23 @@ const HUMAN_MARKER: &str = "👤 human";
 /// (see [`HumanRulePlan::StrandsFlag`]).
 const FLAG_DISPOSING_RULINGS: [&str; 2] = ["close-candidate", "keep-open"];
 
-/// PURE: the VERB a state label offers a ruling — its name after the namespace prefix. Split on the
-/// prefix rather than on a literal `human:` because after #133 a ruling verb can write a label in
-/// EITHER namespace (`reject` → `ai:reject`), and a verb list that silently dropped it would leave
-/// the human unable to name the transition at all.
-fn ruling_verb(label: &str) -> Option<&str> {
-    label.split_once(':').map(|(_, verb)| verb)
+/// PURE: the ruling VERBS a vocabulary table offers. Generic over the target type because the two
+/// tables answer differently-typed questions: a PR ruling always writes a label (`&str`), an
+/// issue ruling may be comment-only (`Option<&str>`) — the type is what makes "every PR ruling has
+/// a label to write" a fact the compiler holds rather than a convention a test chases.
+fn human_rulings<T>(table: &[(&'static str, T)]) -> Vec<&'static str> {
+    table.iter().map(|(verb, _)| *verb).collect()
 }
 
-/// PURE: the ruling VERBS a label set offers.
-fn human_rulings(set: &[&'static str]) -> Vec<&'static str> {
-    set.iter().copied().filter_map(ruling_verb).collect()
-}
-
-/// PURE: the label a ruling verb writes, or `None` when the verb is not in this subject's
-/// vocabulary. The vocabulary check and the label lookup are the SAME operation, so a ruling that
-/// validates always has a label to write.
-fn human_ruling_label(set: &[&'static str], ruling: &str) -> Option<&'static str> {
-    set.iter()
-        .copied()
-        .find(|l| ruling_verb(l) == Some(ruling.trim()))
+/// PURE: what a ruling verb writes — `None` when the verb is not in this subject's vocabulary.
+/// The vocabulary check and the target lookup are the SAME operation, so a ruling that validates
+/// always has its disposition in hand — including, on an issue, the disposition of writing no
+/// label at all.
+fn human_ruling_target<T: Copy>(table: &[(&'static str, T)], ruling: &str) -> Option<T> {
+    table
+        .iter()
+        .find(|(verb, _)| *verb == ruling.trim())
+        .map(|(_, target)| *target)
 }
 
 /// PROVENANCE. A human ruling pins to whatever the AI's ruling on the SAME subject pins to, so the
@@ -14824,29 +14788,32 @@ fn human_ruling_recorded(subject: &Value, anchor: &str, ruling: &str) -> bool {
 /// The marker prefix of a WORK ORDER comment — the EXACT string the producer's author-verified read
 /// (`trusted-comments --marker 'Rework note'`, a `starts_with` match in [`trusted_comments`])
 /// accepts. #111's failure mode was this prefix being hand-typed: `Rework Note` or `rework note`
-/// silently parks the PR the human meant to delegate, because a prefix match that misses says
-/// nothing. The tool owns the prefix now — [`rework_note_comment`] is the only writer — so a
-/// malformed work order is impossible by construction, and the round-trip (emit → the producer's own
-/// verification function) is a tested property.
+/// is invisible to the producer's verification, so the send-back lands with no readable order,
+/// because a prefix match that misses says nothing. The tool owns the prefix now —
+/// [`rework_note_comment`] is the only writer — so a malformed work order is impossible by
+/// construction, and the round-trip (emit → the producer's own verification function) is a tested
+/// property.
 const REWORK_MARKER: &str = "Rework note";
 
 /// THE WORK ORDER, as distinct from the ruling (#111). The ruling is provenance — *a human decided
 /// X, at anchor Y* — pinned, historical, true forever. This is an instruction to a specific actor,
 /// spent once acted on. One `human-rule` call may emit both, but they stay two comments with their
-/// own shapes: a PR can legitimately carry a ruling with no work order (the explicit park); it must
-/// never carry a work order with no ruling, which is why [`with_rework_note`] orders this AFTER the
-/// ruling comment.
+/// own shapes: a subject can legitimately carry a ruling with no work order (`keep-open`, a
+/// standing constraint); it must never carry a work order with no ruling, which is why
+/// [`with_rework_note`] orders this AFTER the ruling comment.
 ///
-/// Pinned to the SAME anchor as the ruling it rides with (`Rework note @<anchor>: …`), so a later
-/// push can be told apart from a note written for the current tree — the pin is what
-/// [`design_delegation`] reads to tell an outstanding order from an executed one.
+/// Pinned to the SAME anchor as the ruling it rides with (`Rework note @<anchor>: …`), so an order
+/// for the code that is there now can be told apart from one a later push already executed — the
+/// producer trusts only a note pinned to the head it is asked to rework, and `migrate-design`
+/// reads the same pin to decide whether a residue PR still carries a live order.
 fn rework_note_comment(anchor: &str, order: &str) -> String {
     format!("{REWORK_MARKER} @{anchor}: {}", order.trim())
 }
 
 /// PURE: the anchor a trusted work-order comment pins to, or `None` for a note in the legacy
-/// hand-written shape (`Rework note: …`, no pin). An unpinned note proves a delegation happened but
-/// not FOR WHICH tree, so [`design_delegation`] fail-safes it to parked.
+/// hand-written shape (`Rework note: …`, no pin). An unpinned note proves an order was given but
+/// not FOR WHICH tree, so no reader may treat it as current — `migrate-design` re-posts the
+/// ruling's own note at the head instead of trusting one.
 fn rework_note_anchor(body: &str) -> Option<String> {
     let rest = body.strip_prefix(REWORK_MARKER)?.strip_prefix(" @")?;
     let anchor = rest.lines().next()?.split(':').next()?.trim();
@@ -14865,65 +14832,19 @@ fn rework_note_recorded(subject: &Value, body: &str) -> bool {
         .any(|b| b == body)
 }
 
-/// Where a `human:design` PR stands relative to its work order — the discriminant that decides who
-/// moves next (#111). Derived entirely from trusted comments + the current head, so no actor has to
-/// be trusted about it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Delegation {
-    /// No usable work order: none was given (the EXPLICIT `--park` spelling), or the only notes
-    /// present are unpinned legacy ones that cannot be tied to any head. Parked for the human;
-    /// exit is the human superseding their own ruling.
-    Parked,
-    /// A trusted work order pinned to the CURRENT head: the PRODUCER's move. `worklist` routes it
-    /// as `rework-ruling`; the vetter still skips it (the decision is current — nothing to write
-    /// over).
-    Ordered,
-    /// Every trusted work order is pinned, and none to the current head: the producer pushed past
-    /// the order, so the delegation is EXECUTED and spent. The PR is consumable — un-vetted by the
-    /// ordinary path, and the verdict that re-judges the reworked head clears the spent
-    /// `human:design` label as the completion of the ruling ([`verdict_plan`]).
-    Executed,
-}
-
-/// PURE: classify a `human:design` PR's delegation state from its trusted work-order comments and
-/// its current head. Fail-safe throughout: an empty head, no notes, or any unpinned note (absent a
-/// pin at the current head) all read as [`Delegation::Parked`] — the state in which every AI actor
-/// leaves the PR alone.
-fn design_delegation(subject: &Value, head: &str) -> Delegation {
-    if head.is_empty() {
-        return Delegation::Parked;
-    }
-    let pins: Vec<Option<String>> = trusted_comments(subject, Some(REWORK_MARKER))
-        .iter()
-        .map(|b| rework_note_anchor(b))
-        .collect();
-    if pins.is_empty() {
-        return Delegation::Parked;
-    }
-    if pins.iter().any(|p| p.as_deref() == Some(head)) {
-        return Delegation::Ordered;
-    }
-    if pins.iter().all(|p| p.is_some()) {
-        return Delegation::Executed;
-    }
-    Delegation::Parked
-}
-
-/// What a ruling DOES with the subject beyond recording itself — the park-or-delegate choice #111
-/// moves to the point of ruling. Validated by [`ruling_work`] before any fetch, so a call that
-/// cannot express a coherent intent never reaches GitHub.
+/// What a ruling DOES with the subject beyond recording itself (#111). Validated by
+/// [`ruling_work`] before any fetch, so a call that cannot express a coherent intent never reaches
+/// GitHub.
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum RulingWork {
     /// The ruling carries a work order: a trusted [`rework_note_comment`] is posted alongside it,
-    /// at the same anchor. Required on `reject` (a reject IS a send-back; a reject not worth
-    /// reworking is a close-candidate, not a park), one of the two spellings on `design`.
+    /// at the same anchor. Required on `reject` AND on `design` — both are send-backs (#133/#219):
+    /// a reject not worth reworking is a close-candidate, and a design ruling IS its answer, so
+    /// neither has anything to say without the order.
     Delegate(String),
-    /// The EXPLICIT pure park — the ruling stands and the human keeps the next move. Never the
-    /// default meaning of a ruling: `--park` is its only spelling, and only `design` offers it.
-    Park,
     /// The verb's own single meaning needs no choice: `close-candidate` is a decided close awaiting
     /// the human's terminal edge (`human-close`), `keep-open` a standing constraint. Both refuse
-    /// the flags outright rather than offering a second spelling of one state.
+    /// the flag outright rather than offering a second spelling of one state.
     Bare,
 }
 
@@ -14942,75 +14863,56 @@ fn cli_rework_text(
     }
 }
 
-/// PURE: the park-or-delegate matrix, per ruling verb. Every refusal names the spelling that IS
+/// PURE: the disposition matrix, per ruling verb. Every refusal names the spelling that IS
 /// legal — a refusal that only says "no" sends the caller back to raw `gh`, which is the bypass
 /// this surface exists to remove.
-fn ruling_work(
-    ruling: &str,
-    rework: Option<String>,
-    park: bool,
-) -> Result<RulingWork, (i32, String)> {
+fn ruling_work(ruling: &str, rework: Option<String>) -> Result<RulingWork, (i32, String)> {
     let ruling = ruling.trim();
     if let Some(text) = &rework {
         if text.trim().is_empty() {
             return Err((
                 2,
-                "--rework is empty: a work order with nothing to execute is the parked state \
-                 wearing the delegated one's name"
+                "--rework is empty: a work order with nothing to execute leaves the producer a \
+                 send-back it cannot act on"
                     .to_string(),
             ));
         }
     }
     match ruling {
-        "reject" => match (rework, park) {
-            (Some(_), true) => Err((
-                2,
-                "--rework and --park contradict each other — a reject is a send-back, so give the \
-                 work order alone"
-                    .to_string(),
-            )),
-            (Some(text), false) => Ok(RulingWork::Delegate(text.trim().to_string())),
-            (None, _) => Err((
+        "reject" => match rework {
+            Some(text) => Ok(RulingWork::Delegate(text.trim().to_string())),
+            None => Err((
                 2,
                 "reject requires --rework \"<work order>\" (or --rework-file <path>): a reject IS \
-                 a send-back, and the note is what the producer executes. There is no --park here — \
-                 a reject not worth reworking is a different ruling: `design --park` parks a \
-                 question, `close-candidate` records a decided close, `human-close` closes now"
+                 a send-back, and the note is what the producer executes. A reject not worth \
+                 reworking is a different ruling: `close-candidate` records a decided close, \
+                 `human-close` closes now"
                     .to_string(),
             )),
         },
-        "design" => match (rework, park) {
-            (Some(_), true) => Err((
+        "design" => match rework {
+            Some(text) => Ok(RulingWork::Delegate(text.trim().to_string())),
+            None => Err((
                 2,
-                "--rework and --park contradict each other — a design ruling either carries the \
-                 executable answer (--rework) or parks the question (--park), never both"
-                    .to_string(),
-            )),
-            (Some(text), false) => Ok(RulingWork::Delegate(text.trim().to_string())),
-            (None, true) => Ok(RulingWork::Park),
-            (None, false) => Err((
-                2,
-                "design requires an explicit disposition — park is never what you get by \
-                 forgetting:\n  --rework \"<work order>\"   the ruling is executable; the producer \
-                 works it per the note\n  --park                    the question stands; parked \
-                 until you supersede it"
+                "design requires --rework \"<work order>\" (or --rework-file <path>): a design \
+                 ruling IS its answer, and the answer is producer work — the same send-back a \
+                 reject is. There is no parked spelling: a question still open is already the \
+                 `ai:design` state; rule when you have the answer"
                     .to_string(),
             )),
         },
-        _ => match (rework, park) {
-            (None, false) => Ok(RulingWork::Bare),
-            (Some(_), _) if ruling == "close-candidate" => Err((
+        _ => match rework {
+            None => Ok(RulingWork::Bare),
+            Some(_) if ruling == "close-candidate" => Err((
                 2,
                 "close-candidate takes no --rework: it is a DECIDED close, and its consuming \
                  transition is the human's own terminal edge — `human-close <owner/repo> <n> \
                  \"…\"` when you are ready to close"
                     .to_string(),
             )),
-            _ => Err((
+            Some(_) => Err((
                 2,
-                format!(
-                    "{ruling} takes neither --rework nor --park: the verb is its own disposition"
-                ),
+                format!("{ruling} takes no --rework: the verb is its own disposition"),
             )),
         },
     }
@@ -15043,11 +14945,15 @@ enum HumanRulePlan {
     /// through to whatever `ai:*` it carries and leaves the human-decisions lane entirely. The
     /// subject's own URL is the discriminator, and it costs no extra round trip.
     NotAnIssue,
-    /// This write would STRAND a live producer close-candidate flag. `record_close_candidate_verdict`
-    /// refuses once a human has ruled, so any non-disposing `human:*` label makes the flag's own
-    /// verdict transition permanently unreachable — the flag then sits un-judged for ever, and the
-    /// issue leaves both `closeCandidateUnvetted` and `closeCandidateUpheld` without ever being
-    /// resolved. This is precisely what happened on rain.erc4626.words#93.
+    /// This ruling would LAND ON a live producer close-candidate flag without answering it.
+    /// `record_close_candidate_verdict` refuses once a human has ruled, so a non-disposing
+    /// `human:*` label makes the flag's own verdict transition permanently unreachable — the flag
+    /// then sits un-judged for ever, and the issue leaves both `closeCandidateUnvetted` and
+    /// `closeCandidateUpheld` without ever being resolved; precisely what happened on
+    /// rain.erc4626.words#93. The comment-only `design` is refused on the same live flag for the
+    /// anchor's sake: the ruling would pin to `close-candidate @<at>` — the record of a judgement
+    /// on the FLAG — while answering a different question entirely, so the flag's own disposition
+    /// (`keep-open`, the flag verdict, or the close) has to come first.
     StrandsFlag { flag_at: String },
     Record {
         /// The comment's provenance anchor — see [`human_rule_comment`].
@@ -15062,15 +14968,16 @@ enum HumanRulePlan {
         ///
         /// Two cases, and they are different in kind:
         ///
-        /// - The ruling's own target IS an `ai:*` state (`reject` → `ai:reject`, #133). Then the
-        ///   ordinary ONE-STATE rule applies exactly as it does to the vetter's write: every other
-        ///   `ai:*` comes off, via the same [`labels_to_remove`]. This is what makes a human reject
-        ///   land the PR in one state instead of leaving the stale `ai:ready` that the old
-        ///   `human:reject` had to keep, because only `reworked-reject` was allowed to touch it.
-        /// - The ruling's target is a sacred `human:*` label. Then it clears only what it directly
-        ///   CONTRADICTS — exactly one pair qualifies, `keep-open` ⟂ `ai:close-candidate`. Every
-        ///   other combination is merely stale, not contradictory, and erasing the `ai:*` label
-        ///   would erase the very claim the ruling was ruling on.
+        /// - The ruling's own target IS an `ai:*` state — every PR ruling is (#133/#219: `reject`
+        ///   and `design` both write `ai:reject`). Then the ordinary ONE-STATE rule applies
+        ///   exactly as it does to the vetter's write: every other `ai:*` comes off, via the same
+        ///   [`labels_to_remove`]. This is what makes a human send-back land the PR in one state
+        ///   instead of leaving the stale `ai:ready` that the old `human:reject` had to keep,
+        ///   because only `reworked-reject` was allowed to touch it.
+        /// - The ruling's target is a sacred `human:*` label (issue-side only). Then it clears
+        ///   only what it directly CONTRADICTS — exactly one pair qualifies, `keep-open` ⟂
+        ///   `ai:close-candidate`. Every other combination is merely stale, not contradictory,
+        ///   and erasing the `ai:*` label would erase the very claim the ruling was ruling on.
         clears: Vec<String>,
         has_target: bool,
         skip_comment: bool,
@@ -15094,22 +15001,24 @@ fn human_pr_rule_plan(pr_json: &Value, ruling: &str, target: &str) -> HumanRuleP
         return HumanRulePlan::NoAnchor;
     }
     let labels = label_names(pr_json);
-    // The PR-side twin of the issue plan's strand guard (#211): a producer flag lives on PRs now,
-    // and `record_close_candidate_verdict` refuses once a human has ruled, so a ruling that
-    // neither disposes the flag nor clears the label would park it un-judgeable for ever —
-    // rain.erc4626.words#93's shape, on the other subject type. An `ai:*` target disposes
-    // structurally: [`labels_to_remove`] strips every other `ai:*`, the flag label with it.
-    if let Some(flag_at) = live_close_candidate_flag(pr_json, &labels) {
-        if !FLAG_DISPOSING_RULINGS.contains(&ruling) && !target.starts_with("ai:") {
-            return HumanRulePlan::StrandsFlag { flag_at };
-        }
-    }
+    // No strand guard here, and that is structural, not an omission (#211's shape cannot arise):
+    // every PR ruling's target is the ONE `ai:*` reject state (#133/#219), so a ruling on a
+    // flagged PR always disposes the flag — [`labels_to_remove`] strips every other `ai:*`, the
+    // `ai:close-candidate` label with it — and `record_close_candidate_verdict`'s refusal after a
+    // human ruling never has a live flag left to strand.
     HumanRulePlan::Record {
+        // Every `human:*` label present is superseded: a ruling's target is never in that
+        // namespace, so whatever residue the PR carries (the retired states the migrations empty)
+        // is the human changing their own mind — the sanctioned removal, because the actor
+        // removing it is the actor who wrote it.
         supersedes: labels
             .iter()
-            .filter(|l| l.starts_with("human:") && l.as_str() != target)
+            .filter(|l| l.starts_with("human:"))
             .cloned()
             .collect(),
+        // A ruling's target is the ONE `ai:*` reject state, so the vetter's own one-state rule
+        // applies. The guard is for [`human_close_plan`]'s empty target (#213): a close writes no
+        // label and clears none here — its only clear, the pending flag, is its own to add.
         clears: if target.starts_with("ai:") {
             labels_to_remove(&labels, target)
         } else {
@@ -15128,8 +15037,11 @@ fn human_pr_rule_plan(pr_json: &Value, ruling: &str, target: &str) -> HumanRuleP
 const PR_RULE_FIELDS: &str = "state,headRefOid,labels,comments";
 const ISSUE_RULE_FIELDS: &str = "state,labels,comments,createdAt,url";
 
-/// PURE: may the human write `ruling` on this ISSUE, and what does it change?
-fn human_issue_rule_plan(issue_json: &Value, ruling: &str, target: &str) -> HumanRulePlan {
+/// PURE: may the human write `ruling` on this ISSUE, and what does it change? `target` is the
+/// label the ruling writes — `None` for the comment-only `design` (#219), whose plan moves no
+/// label in either namespace: the pinned ruling comment is the whole write, and the issue stays
+/// the producer's to work.
+fn human_issue_rule_plan(issue_json: &Value, ruling: &str, target: Option<&str>) -> HumanRulePlan {
     if issue_json
         .get("url")
         .and_then(|u| u.as_str())
@@ -15163,16 +15075,22 @@ fn human_issue_rule_plan(issue_json: &Value, ruling: &str, target: &str) -> Huma
         }
     };
     HumanRulePlan::Record {
-        supersedes: labels
-            .iter()
-            .filter(|l| l.starts_with("human:") && l.as_str() != target)
-            .cloned()
-            .collect(),
+        // A LABEL ruling supersedes the other `human:*` labels (the human changing their own
+        // mind); the comment-only `design` supersedes nothing — it writes no state, so it moves
+        // none, and a standing `human:keep-open` keeps standing under the answer.
+        supersedes: match target {
+            Some(t) => labels
+                .iter()
+                .filter(|l| l.starts_with("human:") && l.as_str() != t)
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        },
         clears: match (ruling, live_flag.is_some()) {
             ("keep-open", true) => vec!["ai:close-candidate".to_string()],
             _ => Vec::new(),
         },
-        has_target: labels.iter().any(|l| l == target),
+        has_target: target.is_some_and(|t| labels.iter().any(|l| l == t)),
         skip_comment: human_ruling_recorded(issue_json, &anchor, ruling),
         anchor,
     }
@@ -15185,9 +15103,10 @@ enum RuleStep {
     Comment,
     /// Post the WORK ORDER comment ([`rework_note_comment`], carried whole so the tested step list
     /// pins the exact body). Always ordered after [`RuleStep::Comment`]: a ruling with no work
-    /// order is a legitimate state (parked), a work order with no ruling is not — so a failure
-    /// between the two leaves the fail-safe half-state, and [`rule_step_failure`] says loudly that
-    /// the PR currently reads as parked rather than letting the miss be invisible (#111).
+    /// order is a legitimate record (`keep-open`), a work order with no ruling is not — so a
+    /// failure between the two leaves the recorded-but-unordered half-state, and
+    /// [`rule_step_failure`] says loudly that the producer has no order to execute rather than
+    /// letting the miss be invisible (#111).
     ReworkNote(String),
     /// `gh label create --force`, so the label exists in a repo that has never seen it.
     EnsureLabel,
@@ -15213,9 +15132,14 @@ enum RuleStep {
 ///   silently un-rule a decision.
 /// - `RemoveLabel` last, superseded rulings before contradicted `ai:*`: the sacred namespace is
 ///   made consistent before the advisory one.
+///
+/// `writes_label` is whether the ruling has a label to write at all — false only for the
+/// comment-only issue-side `design` (#219), whose sequence is the comment (plus the work order
+/// [`with_rework_note`] threads in) and any flag-contradiction clears, with no Ensure/Add.
 fn human_rule_steps(
     supersedes: &[String],
     clears: &[String],
+    writes_label: bool,
     has_target: bool,
     skip_comment: bool,
 ) -> Vec<RuleStep> {
@@ -15223,9 +15147,11 @@ fn human_rule_steps(
     if !skip_comment {
         steps.push(RuleStep::Comment);
     }
-    steps.push(RuleStep::EnsureLabel);
-    if !has_target {
-        steps.push(RuleStep::AddLabel);
+    if writes_label {
+        steps.push(RuleStep::EnsureLabel);
+        if !has_target {
+            steps.push(RuleStep::AddLabel);
+        }
     }
     steps.extend(
         supersedes
@@ -15238,8 +15164,8 @@ fn human_rule_steps(
 
 /// PURE: thread the work-order comment into a ruling's step list — immediately AFTER the ruling
 /// comment when one is being posted, else first (the ruling is then already on the record, so the
-/// one-way "no work order without a ruling" relationship still holds). `None` (a park, a bare verb,
-/// or a deduped re-run) changes nothing.
+/// one-way "no work order without a ruling" relationship still holds). `None` (a bare verb, or a
+/// deduped re-run) changes nothing.
 fn with_rework_note(steps: Vec<RuleStep>, note: Option<String>) -> Vec<RuleStep> {
     let Some(body) = note else {
         return steps;
@@ -15300,8 +15226,8 @@ fn rule_step_failure(step: &RuleStep, slug: &str, n: &str, target: &str) -> Opti
         ),
         RuleStep::ReworkNote(_) => format!(
             "error: the ruling on {slug}#{n} is recorded but the WORK ORDER comment FAILED — the \
-             PR currently reads as PARKED, which is not what you asked for. Re-run the same \
-             command: the ruling comment dedups, and the work order is what gets posted"
+             producer has a send-back with no trusted order to execute. Re-run the same command: \
+             the ruling comment dedups, and the work order is what gets posted"
         ),
         RuleStep::EnsureLabel => return None,
         RuleStep::AddLabel => {
@@ -15344,14 +15270,17 @@ fn human_rule_write(
     Ok(())
 }
 
-/// PURE: the report a completed (or dry-run) ruling prints. `work` is the disposition tail — the
-/// report has to SAY whether the subject is delegated or parked, because "which of the two did I
-/// just do" being invisible is the failure #111 is about.
+/// PURE: the report a completed (or dry-run) ruling prints. `ruled` is the label written, or the
+/// ruling verb for a comment-only ruling (`comment_only`, which the report says out loud: a caller
+/// has to see that the pinned comment IS the whole record). `work` is the disposition tail — the
+/// report has to SAY when the subject is delegated, because "what did I just hand the producer"
+/// being invisible is the failure #111 is about.
 #[allow(clippy::too_many_arguments)]
 fn human_rule_report(
     slug: &str,
     n: &str,
-    target: &str,
+    ruled: &str,
+    comment_only: bool,
     anchor: &str,
     supersedes: &[String],
     clears: &[String],
@@ -15359,7 +15288,12 @@ fn human_rule_report(
     work: &str,
 ) -> String {
     format!(
-        "ruled {target} on {slug}#{n} @ {anchor}{}{}{}{work}",
+        "ruled {ruled} on {slug}#{n} @ {anchor}{}{}{}{}{work}",
+        if comment_only {
+            " [no label — the pinned ruling comment is the record]"
+        } else {
+            ""
+        },
         if supersedes.is_empty() {
             String::new()
         } else {
@@ -15384,7 +15318,6 @@ fn ruling_work_report(work: &RulingWork, note_deduped: bool) -> &'static str {
     match work {
         RulingWork::Delegate(_) if note_deduped => " [work order deduped — DELEGATED]",
         RulingWork::Delegate(_) => " [work order posted — DELEGATED to the producer]",
-        RulingWork::Park => " [PARKED — explicit; exit is your own superseding ruling]",
         RulingWork::Bare => "",
     }
 }
@@ -15423,12 +15356,16 @@ fn dry_run_work_line(body: Option<&str>, note_deduped: bool) -> String {
 }
 
 /// PURE: the usage refusal for a ruling verb outside a subject's vocabulary.
-fn human_ruling_vocab_error(set: &[&'static str], ruling: &str, subject: &str) -> (i32, String) {
+fn human_ruling_vocab_error<T>(
+    table: &[(&'static str, T)],
+    ruling: &str,
+    subject: &str,
+) -> (i32, String) {
     (
         2,
         format!(
             "{ruling:?} is not a human ruling on a {subject} — use one of: {}",
-            human_rulings(set).join(", ")
+            human_rulings(table).join(", ")
         ),
     )
 }
@@ -15438,12 +15375,12 @@ fn human_ruling_vocab_error(set: &[&'static str], ruling: &str, subject: &str) -
 /// It is a REDIRECTION, not an obstruction: it names every move that is legal here, each a single
 /// command, so the human's intent is always expressible. A refusal that only said "no" would send
 /// the caller straight back to raw `gh`, which is the bypass this surface exists to remove.
-fn strands_flag_error(slug: &str, issue: &str, target: &str, flag_at: &str) -> (i32, String) {
+fn strands_flag_error(slug: &str, issue: &str, ruling: &str, flag_at: &str) -> (i32, String) {
     (
         4,
         format!(
             "refusing: {slug}#{issue} carries a LIVE producer close-candidate flag (@{flag_at}), \
-             and `{target}` would strand it — every AI transition refuses once a human has ruled, \
+             and a `{ruling}` ruling would strand it — every AI transition refuses once a human has ruled, \
              so `record_close_candidate_verdict` could never judge this flag again.\n\
              The moves that ARE available here, one command each:\n  \
              human-close {slug} {issue} \"…\"                                — the flag is right: \
@@ -15505,12 +15442,13 @@ fn reference_is_an_issue(slug: &str, n: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// `human-rule <owner/repo> <pr> <reject|design|close-candidate> "<note>" [--rework …|--park]`:
-/// the human's transition on a PR — exactly [`HUMAN_PR_RULING_LABELS`], each pinned to the head sha
-/// it was ruled at, which is where the RULING lives now that `reject` writes no label of the
-/// human's own. `work` is the already-validated park-or-delegate choice ([`ruling_work`]): a
-/// delegation posts the trusted work-order comment in the same call, at the same anchor, so
-/// sending a PR back to the producer is ONE command and a malformed note is unconstructible.
+/// `human-rule <owner/repo> <pr> <reject|design> "<note>" --rework "<order>"`: the human's
+/// transition on a PR — exactly [`HUMAN_PR_RULINGS`], each pinned to the head sha it was ruled at,
+/// which is where the RULING lives: both verbs land the ONE reject state, so no label of the
+/// human's own is written (#133/#219). `work` is the already-validated disposition
+/// ([`ruling_work`]): the send-back posts the trusted work-order comment in the same call, at the
+/// same anchor, so handing a PR to the producer is ONE command and a malformed note is
+/// unconstructible.
 fn human_rule_pr_apply(
     slug: &str,
     pr: &str,
@@ -15519,12 +15457,8 @@ fn human_rule_pr_apply(
     work: &RulingWork,
     dry_run: bool,
 ) -> Result<String, (i32, String)> {
-    let Some(target) = human_ruling_label(&HUMAN_PR_RULING_LABELS, ruling) else {
-        return Err(human_ruling_vocab_error(
-            &HUMAN_PR_RULING_LABELS,
-            ruling,
-            "PR",
-        ));
+    let Some(target) = human_ruling_target(&HUMAN_PR_RULINGS, ruling) else {
+        return Err(human_ruling_vocab_error(&HUMAN_PR_RULINGS, ruling, "PR"));
     };
     if note.trim().is_empty() {
         return Err(human_ruling_note_error());
@@ -15554,9 +15488,10 @@ fn human_rule_pr_apply(
                     ),
                 ));
             }
-            // Neither arm can arise on the PR side (a PR carries no producer close-candidate flag,
-            // and `human_pr_rule_plan` never inspects a URL). Handled rather than `unreachable!` so
-            // a future change to the shared plan cannot turn into a panic mid-transition.
+            // Neither arm can arise on the PR side (every PR ruling's `ai:*` target disposes a
+            // live flag structurally, and `human_pr_rule_plan` never inspects a URL). Handled
+            // rather than `unreachable!` so a future change to the shared plan cannot turn into a
+            // panic mid-transition.
             HumanRulePlan::StrandsFlag { flag_at } => {
                 return Err((
                     4,
@@ -15585,6 +15520,7 @@ fn human_rule_pr_apply(
                 slug,
                 pr,
                 target,
+                false,
                 &anchor,
                 &supersedes,
                 &clears,
@@ -15606,7 +15542,7 @@ fn human_rule_pr_apply(
         target,
         &comment,
         &with_rework_note(
-            human_rule_steps(&supersedes, &clears, has_target, skip),
+            human_rule_steps(&supersedes, &clears, true, has_target, skip),
             rework_body.filter(|_| !note_deduped),
         ),
     )?;
@@ -15614,6 +15550,7 @@ fn human_rule_pr_apply(
         slug,
         pr,
         target,
+        false,
         &anchor,
         &supersedes,
         &clears,
@@ -15622,8 +15559,10 @@ fn human_rule_pr_apply(
     ))
 }
 
-/// `human-rule-issue <owner/repo> <issue> <reject|design|close-candidate|keep-open> "<note>"`: the
-/// human's transition on an ISSUE — exactly [`HUMAN_RULING_LABELS`].
+/// `human-rule-issue <owner/repo> <issue> <reject|design|keep-open> "<note>"`: the human's
+/// transition on an ISSUE — exactly [`HUMAN_ISSUE_RULINGS`]. `design` is comment-only (#219): the
+/// pinned ruling comment carries the answer, no label moves, and the issue stays in (or returns
+/// to) the producer backlog to be worked per that comment.
 ///
 /// The one state-dependent refusal lives here: on an issue carrying a LIVE producer flag, only the
 /// two flag-disposing rulings are legal, because any other one strands the flag (see
@@ -15637,9 +15576,9 @@ fn human_rule_issue_apply(
     work: &RulingWork,
     dry_run: bool,
 ) -> Result<String, (i32, String)> {
-    let Some(target) = human_ruling_label(&HUMAN_RULING_LABELS, ruling) else {
+    let Some(target) = human_ruling_target(&HUMAN_ISSUE_RULINGS, ruling) else {
         return Err(human_ruling_vocab_error(
-            &HUMAN_RULING_LABELS,
+            &HUMAN_ISSUE_RULINGS,
             ruling,
             "issue",
         ));
@@ -15663,49 +15602,50 @@ fn human_rule_issue_apply(
             ),
         ));
     };
-    let (anchor, supersedes, clears, has_target, skip) = match human_issue_rule_plan(
-        &j,
-        ruling.trim(),
-        target,
-    ) {
-        HumanRulePlan::Moot => {
-            return Ok(format!(
+    let (anchor, supersedes, clears, has_target, skip) =
+        match human_issue_rule_plan(&j, ruling.trim(), target) {
+            HumanRulePlan::Moot => {
+                return Ok(format!(
                 "{slug}#{issue} is already closed — the state a ruling would move it out of is \
                      already terminal; nothing written"
             ));
-        }
-        HumanRulePlan::NoAnchor => {
-            return Err((
-                1,
-                format!(
-                    "error: {slug}#{issue} has no createdAt — not writing a ruling pinned to \
+            }
+            HumanRulePlan::NoAnchor => {
+                return Err((
+                    1,
+                    format!(
+                        "error: {slug}#{issue} has no createdAt — not writing a ruling pinned to \
                          nothing"
-                ),
-            ));
-        }
-        HumanRulePlan::NotAnIssue => {
-            return Err((
+                    ),
+                ));
+            }
+            HumanRulePlan::NotAnIssue => {
+                return Err((
                     2,
                     format!(
                         "refusing: {slug}#{issue} is a PULL REQUEST, not an issue — \
                          `gh issue view` answers for either, so this would have written the ISSUE \
                          vocabulary onto a PR, and `human:keep-open` on a PR lands in no lane at \
                          all.\n  \
-                         Use: pr-review-report human-rule {slug} {issue} <reject|design|close-candidate> \"…\""
+                         Use: pr-review-report human-rule {slug} {issue} <reject|design> \"…\""
                     ),
                 ));
-        }
-        HumanRulePlan::StrandsFlag { flag_at } => {
-            return Err(strands_flag_error(slug, issue, target, &flag_at));
-        }
-        HumanRulePlan::Record {
-            anchor,
-            supersedes,
-            clears,
-            has_target,
-            skip_comment,
-        } => (anchor, supersedes, clears, has_target, skip_comment),
-    };
+            }
+            HumanRulePlan::StrandsFlag { flag_at } => {
+                return Err(strands_flag_error(slug, issue, ruling.trim(), &flag_at));
+            }
+            HumanRulePlan::Record {
+                anchor,
+                supersedes,
+                clears,
+                has_target,
+                skip_comment,
+            } => (anchor, supersedes, clears, has_target, skip_comment),
+        };
+    // What the report names as ruled, and what the write's label steps would name if the plan
+    // produced any: the label for a label ruling, the verb itself for the comment-only `design`
+    // (whose step list contains no label step to consume it).
+    let ruled = target.unwrap_or(ruling.trim());
     let comment = human_rule_comment(&anchor, ruling.trim(), note);
     let (rework_body, note_deduped, work_tail) = ruling_work_parts(&j, &anchor, work);
     if dry_run {
@@ -15714,7 +15654,8 @@ fn human_rule_issue_apply(
             human_rule_report(
                 slug,
                 issue,
-                target,
+                ruled,
+                target.is_none(),
                 &anchor,
                 &supersedes,
                 &clears,
@@ -15733,17 +15674,18 @@ fn human_rule_issue_apply(
         "issue",
         slug,
         issue,
-        target,
+        ruled,
         &comment,
         &with_rework_note(
-            human_rule_steps(&supersedes, &clears, has_target, skip),
+            human_rule_steps(&supersedes, &clears, target.is_some(), has_target, skip),
             rework_body.filter(|_| !note_deduped),
         ),
     )?;
     Ok(human_rule_report(
         slug,
         issue,
-        target,
+        ruled,
+        target.is_none(),
         &anchor,
         &supersedes,
         &clears,
@@ -15811,15 +15753,16 @@ enum HumanClosePlan {
 /// one.
 fn human_close_plan(subject: &Value, is_pr: bool) -> HumanClosePlan {
     let flagged = label_names(subject).iter().any(|l| l == PENDING_CLOSE_FLAG);
-    // The TARGET is empty (#213): this transition writes no label, and an empty target excepts
-    // nothing from `supersedes` — a close supersedes every standing `human:*` ruling, because the
-    // subject it parked no longer exists to be parked. The ruling WORD stays `close-candidate`:
-    // it is the vocabulary every recorded close ruling already carries, and the torn-close
-    // detector ([`human_close_ruled`]) reads exactly that word off the record.
+    // The TARGET is the empty label (#213): this transition writes no label, and an empty target
+    // excepts nothing from `supersedes` — a close supersedes every standing `human:*` ruling,
+    // because the subject it parked no longer exists to be parked. (Deliberately NOT the
+    // comment-only `None` a `design` ruling passes, which supersedes nothing.) The ruling WORD
+    // stays `close-candidate`: it is the vocabulary every recorded close ruling already carries,
+    // and the torn-close detector ([`human_close_ruled`]) reads exactly that word off the record.
     let plan = if is_pr {
         human_pr_rule_plan(subject, "close-candidate", "")
     } else {
-        human_issue_rule_plan(subject, "close-candidate", "")
+        human_issue_rule_plan(subject, "close-candidate", Some(""))
     };
     match plan {
         HumanRulePlan::Moot if flagged => HumanClosePlan::StaleFlag,
@@ -16592,19 +16535,6 @@ impl Lane {
     }
 }
 
-/// The `human:*` decisions a PR can sit in, in precedence order (a PR should carry at most
-/// one) — the human-decisions LANE.
-///
-/// After #133 this held only states whose next move is genuinely the HUMAN's; after #111 that is
-/// conditionally true of `human:design` — a delegated ruling's next move is the PRODUCER's
-/// (`worklist` routes it `rework-ruling`), and only the explicit `--park` spelling still waits on
-/// the human. The LANE still buckets by label (the label is the state; a lane keyed on comment
-/// state would misreport what the PR carries), so a delegated design PR shows here until the re-vet
-/// clears it; re-homing the dashboard slot that reads this lane is the #148-shaped follow-up gated
-/// on this machinery. The ruling vocabulary is [`HUMAN_PR_RULING_LABELS`] — no longer the same
-/// array, and no longer required to be. A close ruling buckets nowhere by design (#213): it is
-/// `human-close`'s decide+do with no label, so there is no close state for this lane to hold.
-const HUMAN_DECISION_LABELS: [&str; 1] = ["human:design"];
 /// The vetter's non-`ready` verdict labels (the `ready` split is handled separately by head drift).
 ///
 /// `ai:relink` is RETIRED (#135) — [`VETTER_VERDICTS`] no longer accepts the word, so no transition
@@ -16634,17 +16564,17 @@ fn classify_lane(
     producer_commented: bool,
 ) -> (Lane, String) {
     let has = |name: &str| labels.iter().any(|l| l == name);
-    for h in HUMAN_DECISION_LABELS {
-        if has(h) {
-            return (Lane::HumanDecisions, h.to_string());
-        }
-    }
-    // The RETIRED reject state (#133) is still bucketed — and still bucketed HERE, ahead of the
-    // `ai:*` states — for the same reason `ai:blocked-infra` is: a PR a pre-#133 run parked stays
+    // The RETIRED reject state (#133) is still bucketed — and bucketed FIRST, ahead of the `ai:*`
+    // states — for the same reason `ai:blocked-infra` is: a PR a pre-#133 run parked stays
     // VISIBLE where it was until `migrate-reject` moves it, rather than silently reclassifying. It
     // is deliberately NOT folded into `ai:reject`: while the label is still on the PR it is still
     // sacred to every AI actor ([`PR_SACRED_LABELS`]), and a state's bucket has to say where the PR
-    // actually is, not where the migration will put it.
+    // actually is, not where the migration will put it. It is the human-decisions lane's ONLY
+    // remaining state: a live human decision on a PR is a comment (a ruling at head) or a native
+    // review, never a label — `human:design` is DELETED (#219), so a residue PR still wearing it
+    // classifies by whatever modeled state it otherwise has (un-vetted at the bottom), which is
+    // the honest reading of a label no transition writes or consumes; `migrate-design` moves it
+    // into the reject state its ruling means.
     if has(RETIRED_HUMAN_REJECT_LABEL) {
         return (Lane::HumanDecisions, RETIRED_HUMAN_REJECT_LABEL.to_string());
     }
@@ -17227,8 +17157,10 @@ fn human_queue_doc(
             // PRs are inventoried by the mixed close-candidate arrays above (#211/#212), and a
             // close ruling is `human-close`'s decide+do with no state between (#213).
             // RETIRED (#133). Kept — the dashboard reads it — and it now means "still to migrate".
+            // No `humanDesign` sibling: the state is DELETED (#219), so there is no lane cell to
+            // count — residue the migration has not moved classifies by whatever modeled state
+            // the PR otherwise has.
             "humanReject": lane_state_count(lanes, "human-decisions", RETIRED_HUMAN_REJECT_LABEL),
-            "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
         }
     });
     if let Some(open) = open {
@@ -17628,7 +17560,6 @@ fn human_queue_mode(json_out: bool) -> i32 {
         "human-decisions",
         RETIRED_HUMAN_REJECT_LABEL,
     );
-    show_lane("HUMAN-DESIGN", "human-decisions", "human:design");
     // The two mixed-subject inboxes (#211/#212): the vetter's, then the human's. The legacy
     // issues-only view is gone from the review — one population, printed once, per owner.
     show_cc(
@@ -19320,12 +19251,11 @@ impl VetAction {
 /// BEFORE any head/vetted comparison, so a moved head can never reopen a PR the human still holds
 /// (on 2026-07-04 a run re-opened human-rejected rain.erc4626.words#162 for vetting after a
 /// merge-main commit moved its head — that exact sequence is what this ordering forbids).
-/// `human_sacred` is [`pr_human_sacred`]: an absolutely-parking label, a native
-/// `APPROVED`/`CHANGES_REQUESTED` review, a ruling pinned to the current head, or an un-executed
-/// `human:design`. A `human:design` whose DELEGATION IS EXECUTED (#111) is deliberately not sacred
-/// — there the moved head is the producer completing the human's own work order, and re-entering
-/// vetting (with the ruling in `pr_context.humanComments`) is the modeled consumption, not a
-/// re-opening of the decision.
+/// `human_sacred` is [`pr_human_sacred`]: a sacred `human:*` label, a native
+/// `APPROVED`/`CHANGES_REQUESTED` review, or a ruling pinned to the current head. A ruling whose
+/// head has MOVED is deliberately not sacred — the moved head is the producer executing the
+/// human's own send-back (#133/#219), and re-entering vetting (with the ruling in
+/// `pr_context.humanComments`) is the modeled consumption, not a re-opening of the decision.
 fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAction {
     if human_sacred {
         return VetAction::SkipHuman;
@@ -20632,14 +20562,12 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         };
         let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let is_draft = p.get("isDraft").and_then(|d| d.as_bool()).unwrap_or(false);
-        // Cheap pre-filter: a draft or an ABSOLUTELY-parked PR is skipped straight from the search
-        // JSON — no per-PR fetch. Only the absolute labels are decidable from labels alone
-        // (#111): a `human:design` PR's parking depends on its delegation state, which lives in
-        // the comments, so it falls through to the detail fetch where `pr_human_sacred` reads it.
-        // (A native human REVIEW is likewise invisible to search, so every remaining PR is still
-        // fetched and re-checked below, human-first.)
-        if is_draft || pr_absolutely_parked(p) {
-            let action = vet_action(is_draft, pr_absolutely_parked(p), false);
+        // Cheap pre-filter: a draft or a sacred-labelled PR is skipped straight from the search
+        // JSON — no per-PR fetch: every sacred label parks absolutely, so the label list alone
+        // decides. (A native human REVIEW and a ruling comment are invisible to search, so every
+        // remaining PR is still fetched and re-checked below, human-first.)
+        if is_draft || has_human_override(p) {
+            let action = vet_action(is_draft, has_human_override(p), false);
             rows.push((
                 action,
                 4,
@@ -24960,30 +24888,28 @@ fn mcp_all_tools() -> Value {
         },
         {
             "name": "human_rule",
-            "description": "The human's transition on a PR: apply the ruling's label (superseding any other human:* ruling) + a HEAD-SHA-PINNED 👤 human comment carrying the reason. Park-or-delegate is chosen HERE (#111): `rework` posts the trusted 'Rework note' work order alongside the ruling at the same anchor (one call — the producer executes it), `park` is the explicit pure park (design only). `reject` requires `rework` (a reject IS a send-back); `design` requires exactly one of the two. A rework push moves the head, the ruling stops describing the code, and the PR re-enters vetting by itself — the verdict that re-judges it clears an executed human:design as the completion of the ruling.",
+            "description": "The human's transition on a PR: both ruling verbs land the ONE reject state — ai:reject (every other ai:* cleared, any human:* residue superseded) + a HEAD-SHA-PINNED 👤 human comment carrying the reason (#133/#219; the comment records WHICH verb ruled). `rework` is REQUIRED on both: it posts the trusted 'Rework note' work order alongside the ruling at the same anchor, one call, and the producer is the next mover from that moment — a reject IS a send-back, and an answered design question is the same send-back. The rework push moves the head, the ruling stops describing the code, and the PR re-enters vetting by itself.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "pr": {"type": "string", "description": "owner/repo#number"},
                     "ruling": {"type": "string", "enum": ["reject", "design"]},
                     "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."},
-                    "rework": {"type": "string", "description": "The work order the producer executes — emitted as a trusted 'Rework note @<anchor>: …' comment, the exact form the producer's trusted-comments marker read accepts. Required for reject; one of rework/park for design."},
-                    "park": {"type": "boolean", "description": "EXPLICIT pure park (design only): the ruling stands, the human keeps the next move. Never the default."}
+                    "rework": {"type": "string", "description": "The work order the producer executes — emitted as a trusted 'Rework note @<anchor>: …' comment, the exact form the producer's trusted-comments marker read accepts. Required on both verbs: a ruling here IS a send-back, and the note is what the producer executes."}
                 },
-                "required": ["pr", "ruling", "note"]
+                "required": ["pr", "ruling", "note", "rework"]
             }
         },
         {
             "name": "human_rule_issue",
-            "description": "The human's transition on an ISSUE: apply human:<ruling> + a 👤 human comment pinned to the live close-candidate flag, or to the issue as filed when there is none. Park-or-delegate is chosen HERE (#111): `rework` posts the trusted 'Rework note' work order alongside the ruling (reject requires it; design takes exactly one of rework/park). On a live flag only close-candidate/keep-open are legal — anything else would strand it, and the refusal names every legal move.",
+            "description": "The human's transition on an ISSUE: apply the ruling's human:* label where the verb has one + a 👤 human comment pinned to the live close-candidate flag, or to the issue as filed when there is none. `design` writes NO label (#219): the pinned 'Ruled …: design — <answer>' comment is the whole record, the issue stays in the producer backlog, and the producer works it per the ruling. `rework` posts the trusted 'Rework note' work order alongside the ruling — reject and design both require it; keep-open refuses it. On a live flag only close-candidate/keep-open are legal — anything else would strand it, and the refusal names every legal move.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "issue": {"type": "string", "description": "owner/repo#number"},
                     "ruling": {"type": "string", "enum": ["reject", "design", "keep-open"]},
                     "note": {"type": "string", "description": "One line: what you ruled and the evidence it rests on."},
-                    "rework": {"type": "string", "description": "The work order the producer executes — emitted as a trusted 'Rework note @<anchor>: …' comment. Required for reject; one of rework/park for design."},
-                    "park": {"type": "boolean", "description": "EXPLICIT pure park (design only). Never the default."}
+                    "rework": {"type": "string", "description": "The work order the producer executes — emitted as a trusted 'Rework note @<anchor>: …' comment. Required for reject and design; keep-open refuses it (the verb is its own disposition)."}
                 },
                 "required": ["issue", "ruling", "note"]
             }
@@ -25412,27 +25338,26 @@ fn oversize_result_error(name: &str, len: usize, budget: usize, narrow: Option<&
 /// vocabulary. Reuses the apply's OWN error text, so the wording a caller sees is identical whether
 /// the refusal came from the MCP guard or from the CLI — two spellings of one rule is how a caller
 /// learns to treat them as two rules.
-fn human_rule_args(
-    set: &[&'static str],
+fn human_rule_args<T: Copy>(
+    table: &[(&'static str, T)],
     args: &Value,
     subject: &str,
 ) -> Result<(String, String, RulingWork), String> {
     let ruling = req_str(args, "ruling")?.trim().to_string();
-    if human_ruling_label(set, &ruling).is_none() {
-        return Err(human_ruling_vocab_error(set, &ruling, subject).1);
+    if human_ruling_target(table, &ruling).is_none() {
+        return Err(human_ruling_vocab_error(table, &ruling, subject).1);
     }
     let note = match req_str(args, "note") {
         Ok(n) if !n.trim().is_empty() => n.trim().to_string(),
         _ => return Err(human_ruling_note_error().1),
     };
-    // Park-or-delegate is validated HERE, before any fetch, off the same matrix the CLI uses —
+    // The disposition is validated HERE, before any fetch, off the same matrix the CLI uses —
     // the MCP caller gets the same refusal (naming the legal spelling) as a terminal would.
     let rework = args
         .get("rework")
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    let park = args.get("park").and_then(|v| v.as_bool()).unwrap_or(false);
-    let work = ruling_work(&ruling, rework, park).map_err(|(_, m)| m)?;
+    let work = ruling_work(&ruling, rework).map_err(|(_, m)| m)?;
     Ok((ruling, note, work))
 }
 
@@ -25570,7 +25495,7 @@ fn validate_call(
         // which is the only place the subject's live state is known.
         "human_rule" => {
             let (slug, num) = parse_pr_ref(req_str(args, "pr")?)?;
-            let (ruling, note, work) = human_rule_args(&HUMAN_PR_RULING_LABELS, args, "PR")?;
+            let (ruling, note, work) = human_rule_args(&HUMAN_PR_RULINGS, args, "PR")?;
             Ok(McpCall::HumanRule {
                 slug,
                 num,
@@ -25581,7 +25506,7 @@ fn validate_call(
         }
         "human_rule_issue" => {
             let (slug, num) = parse_pr_ref(req_str(args, "issue")?)?;
-            let (ruling, note, work) = human_rule_args(&HUMAN_RULING_LABELS, args, "issue")?;
+            let (ruling, note, work) = human_rule_args(&HUMAN_ISSUE_RULINGS, args, "issue")?;
             Ok(McpCall::HumanRuleIssue {
                 slug,
                 num,
@@ -30267,48 +30192,52 @@ enum Cmd {
         #[arg(long)]
         apply: bool,
     },
-    /// Human transition on a PR: apply human:<ruling> + a sha-pinned 👤 human comment.
+    /// One-shot (#219): human:design is DELETED — move every open subject still carrying it. PRs
+    /// land in ai:reject + a trusted work order at head (the live one, else the ruling's own
+    /// note); issues just lose the label. Reports the plan; writes only with --apply.
+    MigrateDesign {
+        /// PERFORM the writes. Without it this is a report and nothing is edited.
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Human transition on a PR: both verbs land ai:reject + a sha-pinned 👤 human comment — a
+    /// ruling here IS a send-back (#133/#219), and the comment records which verb ruled.
     HumanRule {
         /// owner/repo
         slug: String,
         pr: String,
-        /// reject | design | close-candidate
+        /// reject | design
         ruling: String,
         /// One-line ruling + evidence (trailing words are joined).
         note: Vec<String>,
         /// The WORK ORDER: posts a trusted `Rework note @<anchor>: …` comment alongside the ruling
-        /// (one call, park-or-delegate chosen here). Required on reject; one of the two spellings
-        /// on design.
+        /// in the same call. Required on both verbs — the note is what the producer executes, and
+        /// a ruling without one has nothing to send back.
         #[arg(long, conflicts_with = "rework_file")]
         rework: Option<String>,
         /// The work order read from a file, for a note too long for an argument.
         #[arg(long)]
         rework_file: Option<String>,
-        /// EXPLICIT pure park (design only): the ruling stands and the human keeps the next move.
-        /// Never the default — a bare reject/design ruling refuses rather than parking by accident.
-        #[arg(long)]
-        park: bool,
         #[arg(long)]
         dry_run: bool,
     },
-    /// Human transition on an ISSUE: apply human:<ruling> + a flag-/issue-pinned 👤 human comment.
+    /// Human transition on an ISSUE: apply the ruling's human:* label where the verb has one + a
+    /// flag-/issue-pinned 👤 human comment. design writes NO label (#219) — the pinned comment is
+    /// the record, and the issue stays in the producer backlog.
     HumanRuleIssue {
         /// owner/repo
         slug: String,
         issue: String,
-        /// reject | design | close-candidate | keep-open
+        /// reject | design | keep-open
         ruling: String,
         note: Vec<String>,
         /// The WORK ORDER: posts a trusted `Rework note @<anchor>: …` comment alongside the
-        /// ruling. Required on reject; one of the two spellings on design.
+        /// ruling. Required on reject and design; keep-open refuses it.
         #[arg(long, conflicts_with = "rework_file")]
         rework: Option<String>,
         /// The work order read from a file, for a note too long for an argument.
         #[arg(long)]
         rework_file: Option<String>,
-        /// EXPLICIT pure park (design only).
-        #[arg(long)]
-        park: bool,
         #[arg(long)]
         dry_run: bool,
     },
@@ -30447,7 +30376,6 @@ enum NextAction {
     Coderabbit3e, // clean CI but unresolved review threads (3e)
     Screenshot3c, // UI PR missing its screenshot (3c)
     Needs3b,      // red, fixable, not parked (3b)
-    ReworkRuling, // human ruling with a work order at the CURRENT head -> execute it (#111)
     ParkedSkip,   // design-flicked / handed-off -> do NOT re-touch this run
     Wait,         // CI still in flight -> nothing to do yet
 }
@@ -30461,7 +30389,6 @@ impl NextAction {
             NextAction::Coderabbit3e => "coderabbit-3e",
             NextAction::Screenshot3c => "screenshot-3c",
             NextAction::Needs3b => "needs-3b",
-            NextAction::ReworkRuling => "rework-ruling",
             NextAction::ParkedSkip => "parked-skip",
             NextAction::Wait => "wait",
         }
@@ -30483,16 +30410,12 @@ struct PrSignals {
     deploy_done_at_head: bool,
     parked: bool,
     ui_missing_screenshot: bool,
-    /// The PR carries a human decision that PARKS it: an absolutely-parking label (the retired
-    /// `human:reject`), or a `human:design` with no work order ([`Delegation::Parked`] — the
-    /// explicit park). Blocks routine producer action, even over a stale `ai:*` label. An
-    /// EXECUTED `human:design` delegation sets neither flag: the PR is back in the ordinary flow
-    /// (awaiting re-vet), so it classifies from CI like any reworked PR.
+    /// The PR carries a human decision that PARKS it: a sacred `human:*` label (the retired
+    /// `human:reject`, absolutely-parking — [`PR_SACRED_LABELS`]). Blocks routine producer
+    /// action, even over a stale `ai:*` label. A human SEND-BACK is not a parked state and never
+    /// sets this: it is the ordinary `ai:reject` + trusted work order (#133/#219), which the
+    /// producer picks up through the reject label exactly as it does a vetter reject.
     human_parked: bool,
-    /// The PR carries a `human:design` ruling whose trusted work order is pinned to the CURRENT
-    /// head ([`Delegation::Ordered`]): the ruling is the producer's WORK ORDER (#111) — execute it
-    /// per the note, on that same branch, before anything else about the PR matters.
-    human_work_order: bool,
     /// The PR's modeled `ai:*` state label, if any. When it is a human-gated state (`ai:design` /
     /// `ai:blocked-*` / `ai:close-candidate`), the label IS the state and the producer leaves the PR
     /// parked — only un-labeled PRs are classified from CI/mergeState.
@@ -30509,21 +30432,13 @@ struct PrSignals {
 /// green-ready for the human. A `parked` flag only suppresses re-touching a STILL-RED PR — a PR
 /// that has since gone green surfaces as green-ready regardless of past parking.
 fn next_action(s: &PrSignals) -> NextAction {
-    // A PARKING human decision (an absolute label, or an un-delegated `human:design` — the
-    // explicit park) blocks routine producer action regardless of anything else the PR carries —
-    // including a work order: the two flags only overlap on a contradictory hand-state (an
-    // absolutely-parking label beside an ordered note), and the fail-safe reading of a
-    // contradiction is "not yours to touch". This MUST come before the CI classifier so a
-    // human-parked PR is never re-derived from CI/mergeState.
+    // A PARKING human decision (a sacred `human:*` label) blocks routine producer action
+    // regardless of anything else the PR carries. This MUST come before the CI classifier so a
+    // human-parked PR is never re-derived from CI/mergeState. A human SEND-BACK never reaches
+    // this arm: it is the `ai:reject` state (#133/#219), which the producer works through the
+    // reject label's own pickup, not through this worklist's routing.
     if s.human_parked {
         return NextAction::ParkedSkip;
-    }
-    // A human ruling with a work order at the CURRENT head is the producer's HIGHEST-priority move
-    // (#111): the human already decided, so executing the order outranks every CI-derived action.
-    // An EXECUTED delegation sets neither flag and falls through: the PR is ordinary producer work
-    // again (keep it green while the vetter re-judges it).
-    if s.human_work_order {
-        return NextAction::ReworkRuling;
     }
     // A PR the producer has already moved into a modeled state (design / blocked-on /
     // close-candidate) is PARKED — the label IS the state, so the producer does not re-touch it
@@ -31138,20 +31053,13 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         })
         .unwrap_or_default();
     let state_label = ai_state_label(&labels);
-    // The human's hold on this PR (#111). Absolute labels park unconditionally; `human:design`
-    // parks or delegates by its trusted work order's pin ([`design_delegation`]): pinned to the
-    // CURRENT head = the producer's work order, pinned only to superseded heads = executed (falls
-    // through to the ordinary CI classifier, awaiting re-vet), none/unpinnable = the explicit park.
-    let delegation = if labels.iter().any(|l| l == "human:design") {
-        Some(design_delegation(detail, head))
-    } else {
-        None
-    };
-    let human_work_order = delegation == Some(Delegation::Ordered);
+    // The human's hold on this PR: a sacred `human:*` label parks it unconditionally
+    // ([`PR_SACRED_LABELS`] — decidable from the labels alone). A ruling that hands the producer
+    // work is not a hold: it is the `ai:reject` state plus a trusted work order (#133/#219),
+    // classified below like any other reject.
     let human_parked = labels
         .iter()
-        .any(|l| PR_PARKED_HUMAN_LABELS.contains(&l.as_str()))
-        || delegation == Some(Delegation::Parked);
+        .any(|l| PR_SACRED_LABELS.contains(&l.as_str()));
     let sig = PrSignals {
         ci,
         merge_state: merge_state.clone(),
@@ -31161,7 +31069,6 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         parked,
         ui_missing_screenshot,
         human_parked,
-        human_work_order,
         state_label: state_label.clone(),
     };
     let action = next_action(&sig);
@@ -31195,10 +31102,10 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
             "uiTouch": ui.as_str(),
         },
         "stateLabel": state_label,
-        // Label-presence (any human:* decision label) — the dashboard-compatible read. The
-        // ROUTING now distinguishes park from work order; `nextAction` carries that.
+        // Label-presence (any sacred human:* label) — the dashboard-compatible read. A human
+        // send-back is not one: it rides `stateLabel` as `ai:reject` (#133/#219), with the
+        // trusted work order on the PR itself.
         "humanOverride": has_human_override(detail),
-        "humanWorkOrder": human_work_order,
         // GitHub's native review state, carried because human approval IS that field (there is no
         // ledger) and 2z works the approved set first. `WORKLIST_DETAIL_FIELDS` already fetched it;
         // dropping it from the row is what left every run re-asking GitHub the same question with a
@@ -33460,6 +33367,360 @@ fn migrate_reject_mode(apply: bool) -> i32 {
     0
 }
 
+/// The label `migrate-design` removes. DELETED from the FSM (#219): no transition writes, reads,
+/// or refuses on it, no lane buckets it, and `label_meta` no longer registers it — the string
+/// survives only here, as the migration's population key over a fixed, shrinking residue.
+const DELETED_DESIGN_LABEL: &str = "human:design";
+
+/// PURE: the note text of the most recent trusted `👤 human` ruling comment — the part after the
+/// `Ruled <anchor>: <ruling> — ` prelude. This is what `migrate-design` posts as the work order
+/// when no live one is pinned at the head: a note is mandatory on every ruling, so a ruled subject
+/// always has one. `None` means no trusted ruling comment exists at all (a hand-applied label),
+/// which the migration reports rather than inventing an order.
+fn last_human_ruling_note(subject: &Value) -> Option<String> {
+    trusted_comments(subject, Some(HUMAN_MARKER))
+        .iter()
+        .rev()
+        .find_map(|b| {
+            let (_, tail) = b.split_once(" — ")?;
+            let tail = tail.trim();
+            if tail.is_empty() {
+                None
+            } else {
+                Some(tail.to_string())
+            }
+        })
+}
+
+/// Where a migrated PR's work order comes from — the producer must have a trusted order to execute
+/// the moment the label move un-parks the PR, and this names how it gets one.
+#[derive(Debug, PartialEq)]
+enum MigrateOrder {
+    /// A trusted order is already pinned to the current head — the ruling's own posting survives
+    /// the label move as-is; re-posting it would only fork the record.
+    LiveAtHead,
+    /// No live order at the head: post this `Rework note @<head>: …` body — the ruling's own note,
+    /// pinned to the current head.
+    Post(String),
+    /// Nothing to post: no trusted `👤 human` ruling comment to take a note from, or no head to
+    /// pin one to. The labels still move — it is the same state either way — but the producer
+    /// will read the resulting `ai:reject` as parked-for-a-human until a human re-rules with the
+    /// order, so the report says exactly that.
+    Unrecoverable,
+}
+
+/// What `migrate-design` will do to ONE PR, computed purely from its fetched JSON.
+#[derive(Debug, PartialEq)]
+enum MigrateDesignPlan {
+    /// Does not carry the deleted label — nothing to migrate (the search should never hand one of
+    /// these over, but a plan that only answers for the happy case is not a plan).
+    NotCarrying,
+    Migrate {
+        /// Add `ai:reject` (false when the PR already carries it — re-running is idempotent).
+        add_target: bool,
+        /// Other `ai:*` labels to strip, so the PR ends in exactly ONE modeled state.
+        clears: Vec<String>,
+        order: MigrateOrder,
+    },
+}
+
+/// PURE: [`migrate_design_mode`]'s decision for one PR (#219). Ordered and parked residue land in
+/// the SAME state — the one a design ruling produces today, `ai:reject` + a trusted work order at
+/// the head — because there is no parked spelling left to keep: a design ruling IS its answer, and
+/// the answer rides the ruling's own note where no separate order was ever posted.
+fn migrate_design_pr_plan(pr_json: &Value) -> MigrateDesignPlan {
+    let labels = label_names(pr_json);
+    if !labels.iter().any(|l| l == DELETED_DESIGN_LABEL) {
+        return MigrateDesignPlan::NotCarrying;
+    }
+    let head = pr_json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let live_at_head = !head.is_empty()
+        && trusted_comments(pr_json, Some(REWORK_MARKER))
+            .iter()
+            .any(|b| rework_note_anchor(b).as_deref() == Some(head));
+    let order = if live_at_head {
+        MigrateOrder::LiveAtHead
+    } else {
+        match (last_human_ruling_note(pr_json), head.is_empty()) {
+            (Some(note), false) => MigrateOrder::Post(rework_note_comment(head, &note)),
+            _ => MigrateOrder::Unrecoverable,
+        }
+    };
+    MigrateDesignPlan::Migrate {
+        add_target: !labels.iter().any(|l| l == "ai:reject"),
+        clears: labels_to_remove(&labels, "ai:reject"),
+        order,
+    }
+}
+
+/// PURE: does this ISSUE carry the deleted label? The whole issue-side decision: the label is
+/// stripped and nothing replaces it — the ruling comment (where one exists) stays the record, and
+/// losing the label is what returns the issue to the producer backlog.
+fn migrate_design_issue_carries(issue_json: &Value) -> bool {
+    label_names(issue_json)
+        .iter()
+        .any(|l| l == DELETED_DESIGN_LABEL)
+}
+
+/// One population's search argv for `migrate-design`: open subjects of `kind` (`prs` / `issues`)
+/// still carrying the deleted label, across every configured org.
+fn migrate_design_search(kind: &str) -> Vec<String> {
+    let mut search: Vec<String> = vec!["search".into(), kind.into()];
+    search.extend(org_owner_args());
+    search.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            DELETED_DESIGN_LABEL,
+            "--limit",
+            "200",
+            "--json",
+            "number,repository,title,url",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    search
+}
+
+/// `migrate-design [--apply]`: the #219 one-shot — `human:design` is DELETED from the FSM, and
+/// this moves every open subject still carrying it, on the `migrate-reject` precedent (#133): a
+/// label nothing writes any more is also a label nothing removes, so the residue cannot leave
+/// unaided.
+///
+/// PRs land in exactly the state a design ruling produces today ([`migrate_design_pr_plan`]);
+/// issues just lose the label ([`migrate_design_issue_carries`]). Nothing keeps the label.
+///
+/// **It defaults to a REPORT** for the reason `migrate-reject` does: it acts on a whole population
+/// across every configured org in one call, and an outward-facing bulk relabel is not something a
+/// forgotten `--dry-run` should be the only thing standing between — the flag GATES the write.
+///
+/// ORDER IS THE FAIL-SAFE, per PR: `ai:reject` goes on FIRST, the work order is posted NEXT, and
+/// `human:design` comes off LAST. A mid-sequence `gh` failure leaves the PR carrying both labels —
+/// more parked than it started, and still in the search population, so a re-run resumes it — never
+/// un-parked with no trusted order for the producer to execute.
+fn migrate_design_mode(apply: bool) -> i32 {
+    let mut failed = 0;
+    let mut moved = 0;
+    let mut unrecoverable = 0;
+    // ── PRs ──
+    let search = migrate_design_search("prs");
+    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&sref) else {
+        eprintln!(
+            "error: `gh search prs --label {DELETED_DESIGN_LABEL}` failed — not editing on incomplete data"
+        );
+        return 1;
+    };
+    let pr_targets = retire_targets(&val);
+    println!(
+        "{} open PR(s) carry the deleted {DELETED_DESIGN_LABEL}{}",
+        pr_targets.len(),
+        if apply {
+            " — migrating to ai:reject + work order"
+        } else {
+            " (report only; pass --apply to write)"
+        }
+    );
+    for (slug, num) in &pr_targets {
+        let n = num.to_string();
+        let Some(prj) = gh_json(&[
+            "pr",
+            "view",
+            &n,
+            "-R",
+            slug,
+            "--json",
+            "labels,comments,headRefOid",
+        ]) else {
+            eprintln!("  {slug}#{num} -> FAILED to read; not editing on incomplete data");
+            failed += 1;
+            continue;
+        };
+        let (add_target, clears, order) = match migrate_design_pr_plan(&prj) {
+            MigrateDesignPlan::NotCarrying => {
+                println!("  {slug}#{num} -> already migrated (no {DELETED_DESIGN_LABEL})");
+                continue;
+            }
+            MigrateDesignPlan::Migrate {
+                add_target,
+                clears,
+                order,
+            } => (add_target, clears, order),
+        };
+        let order_word = match &order {
+            MigrateOrder::LiveAtHead => "work order already live at head".to_string(),
+            MigrateOrder::Post(body) => {
+                format!("post work order: {}", body.replace('\n', " / "))
+            }
+            MigrateOrder::Unrecoverable => {
+                unrecoverable += 1;
+                format!(
+                    "NO 👤 human ruling comment to take an order from — the producer will read \
+                     the reject as parked until a human re-rules: `human-rule {slug} {n} reject \
+                     \"…\" --rework \"…\"`"
+                )
+            }
+        };
+        if !apply {
+            println!(
+                "  [report] {slug}#{num} -> {}{} , remove {DELETED_DESIGN_LABEL}  [{order_word}]",
+                if add_target {
+                    "add ai:reject"
+                } else {
+                    "ai:reject already present"
+                },
+                if clears.is_empty() {
+                    String::new()
+                } else {
+                    format!(", remove {}", clears.join(","))
+                }
+            );
+            continue;
+        }
+        let (color, desc) = label_meta("ai:reject");
+        if !gh_run(&[
+            "label",
+            "create",
+            "ai:reject",
+            "-R",
+            slug,
+            "--color",
+            color,
+            "--description",
+            desc,
+            "--force",
+        ]) {
+            eprintln!("  {slug}#{num} -> warning: could not ensure ai:reject exists");
+        }
+        if add_target && !gh_run(&["pr", "edit", &n, "-R", slug, "--add-label", "ai:reject"]) {
+            eprintln!(
+                "  {slug}#{num} -> FAILED to add ai:reject; {DELETED_DESIGN_LABEL} left in place"
+            );
+            failed += 1;
+            continue;
+        }
+        if let MigrateOrder::Post(body) = &order {
+            if !gh_run(&["pr", "comment", &n, "-R", slug, "--body", body]) {
+                eprintln!(
+                    "  {slug}#{num} -> FAILED to post the work order; {DELETED_DESIGN_LABEL} left \
+                     in place so the PR stays parked rather than un-parked with nothing to execute"
+                );
+                failed += 1;
+                continue;
+            }
+        }
+        let mut ok = true;
+        for c in &clears {
+            if !gh_run(&["pr", "edit", &n, "-R", slug, "--remove-label", c]) {
+                eprintln!("  {slug}#{num} -> warning: failed to remove stale {c}");
+                ok = false;
+            }
+        }
+        if !gh_run(&[
+            "pr",
+            "edit",
+            &n,
+            "-R",
+            slug,
+            "--remove-label",
+            DELETED_DESIGN_LABEL,
+        ]) {
+            eprintln!("  {slug}#{num} -> FAILED to remove {DELETED_DESIGN_LABEL}");
+            failed += 1;
+            continue;
+        }
+        moved += 1;
+        println!(
+            "  {slug}#{num} -> ai:reject{}  [{order_word}]",
+            if ok { "" } else { " (stale ai:* partly left)" }
+        );
+    }
+    // ── issues ──
+    let search = migrate_design_search("issues");
+    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&sref) else {
+        eprintln!(
+            "error: `gh search issues --label {DELETED_DESIGN_LABEL}` failed — not editing on incomplete data"
+        );
+        return 1;
+    };
+    let issue_targets = retire_targets(&val);
+    println!(
+        "{} open issue(s) carry the deleted {DELETED_DESIGN_LABEL}{}",
+        issue_targets.len(),
+        if apply {
+            " — stripping the label (the ruling comment stays the record)"
+        } else {
+            " (report only; pass --apply to write)"
+        }
+    );
+    for (slug, num) in &issue_targets {
+        let n = num.to_string();
+        let Some(ij) = gh_json(&["issue", "view", &n, "-R", slug, "--json", "labels,url"]) else {
+            eprintln!("  {slug}#{num} -> FAILED to read; not editing on incomplete data");
+            failed += 1;
+            continue;
+        };
+        // `gh issue view` answers for a PR too; a PR that slipped into this pass belongs to the
+        // PR pass above, where the label move must carry its work order with it.
+        if ij
+            .get("url")
+            .and_then(|u| u.as_str())
+            .is_some_and(|u| u.contains("/pull/"))
+        {
+            println!("  {slug}#{num} -> is a PULL REQUEST; handled by the PR pass");
+            continue;
+        }
+        if !migrate_design_issue_carries(&ij) {
+            println!("  {slug}#{num} -> already migrated (no {DELETED_DESIGN_LABEL})");
+            continue;
+        }
+        if !apply {
+            println!("  [report] {slug}#{num} -> remove {DELETED_DESIGN_LABEL}");
+            continue;
+        }
+        if !gh_run(&[
+            "issue",
+            "edit",
+            &n,
+            "-R",
+            slug,
+            "--remove-label",
+            DELETED_DESIGN_LABEL,
+        ]) {
+            eprintln!("  {slug}#{num} -> FAILED to remove {DELETED_DESIGN_LABEL}");
+            failed += 1;
+            continue;
+        }
+        moved += 1;
+        println!("  {slug}#{num} -> label removed; back in the producer backlog");
+    }
+    println!(
+        "{}: {} subject(s), {} PR(s) with no recoverable work order{}",
+        if apply { "migrated" } else { "would migrate" },
+        if apply {
+            moved
+        } else {
+            pr_targets.len() + issue_targets.len()
+        },
+        unrecoverable,
+        if failed > 0 {
+            format!(", {failed} FAILED")
+        } else {
+            String::new()
+        }
+    );
+    if failed > 0 {
+        return 1;
+    }
+    0
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // already-fixed — the MERGED-side read the candidate set does not have.
 //
@@ -34026,6 +34287,7 @@ fn main() {
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), &[], dry_run),
         Cmd::MigrateReject { apply } => migrate_reject_mode(apply),
+        Cmd::MigrateDesign { apply } => migrate_design_mode(apply),
         Cmd::HumanRule {
             slug,
             pr,
@@ -34033,10 +34295,9 @@ fn main() {
             note,
             rework,
             rework_file,
-            park,
             dry_run,
         } => print_transition_result(cli_rework_text(rework, rework_file).and_then(|text| {
-            let work = ruling_work(&ruling, text, park)?;
+            let work = ruling_work(&ruling, text)?;
             human_rule_pr_apply(&slug, &pr, &ruling, &note.join(" "), &work, dry_run)
         })),
         Cmd::HumanRuleIssue {
@@ -34046,10 +34307,9 @@ fn main() {
             note,
             rework,
             rework_file,
-            park,
             dry_run,
         } => print_transition_result(cli_rework_text(rework, rework_file).and_then(|text| {
-            let work = ruling_work(&ruling, text, park)?;
+            let work = ruling_work(&ruling, text)?;
             human_rule_issue_apply(&slug, &issue, &ruling, &note.join(" "), &work, dry_run)
         })),
         Cmd::HumanClose {
@@ -34586,14 +34846,18 @@ mod queue_tests {
         })
     }
 
-    // A human ruling on an ISSUE must be sacred under EVERY label in the ruling vocabulary — the
-    // old check hard-coded a subset, so an issue a human had already parked with `human:reject` /
-    // `human:design` could still be flagged. Iterating the vocabulary array itself is the fix
-    // that cannot re-drift: a label added there gains this protection with it.
+    // A human ruling LABEL on an ISSUE must be sacred under EVERY label in the ruling vocabulary —
+    // the old check hard-coded a subset, so an issue a human had already parked with
+    // `human:reject` could still be flagged. Iterating the vocabulary table itself is the fix
+    // that cannot re-drift: a label added there gains this protection with it. The comment-only
+    // `design` ruling contributes no label and therefore no sacredness (#219): the issue is the
+    // producer's to work, so the producer may flag it and the vetter may judge that flag.
     #[test]
     fn a_human_ruling_on_an_issue_is_sacred_whichever_label_it_wears() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        for l in HUMAN_RULING_LABELS {
+        let labels: Vec<&str> = HUMAN_ISSUE_RULINGS.iter().filter_map(|(_, t)| *t).collect();
+        assert!(!labels.is_empty(), "the label vocabulary cannot be empty");
+        for l in labels {
             assert_eq!(
                 close_candidate_plan("OPEN", &s(&[l]), false, false),
                 CloseFlagPlan::RefuseHuman,
@@ -34608,6 +34872,13 @@ mod queue_tests {
                 "{l} must block a vetter verdict"
             );
         }
+        // The DELETED `human:design` (#219) is not in the vocabulary and blocks nothing: residue
+        // still wearing it is ordinary producer/vetter territory until `migrate-design` strips it.
+        assert_ne!(
+            close_candidate_plan("OPEN", &s(&["human:design"]), false, false),
+            CloseFlagPlan::RefuseHuman,
+            "the deleted human:design must not block a producer flag"
+        );
     }
 
     // The flag — not the label — is what gets judged, and a RE-flag re-opens the question. This is
@@ -34718,13 +34989,14 @@ mod queue_tests {
         assert_eq!(gate, CcGate::NoFlag);
     }
 
-    /// A human ruling dominates a stranded label. `human:*` is sacred with no carve-out, and
-    /// "the label looks stuck" is not one — the clearance is an AI write, so it must not fire on an
-    /// issue a human has already parked, whatever the flag underneath still says.
+    /// A human ruling LABEL dominates a stranded label. A sacred `human:*` is sacred with no
+    /// carve-out, and "the label looks stuck" is not one — the clearance is an AI write, so it
+    /// must not fire on an issue a human has already parked, whatever the flag underneath still
+    /// says.
     #[test]
     fn a_human_ruling_beats_a_stranded_label_and_nothing_is_cleared() {
         let at = "2026-07-17T21:23:11Z";
-        for ruling in HUMAN_RULING_LABELS {
+        for ruling in HUMAN_ISSUE_RULINGS.iter().filter_map(|(_, t)| *t) {
             // Both stranded shapes, under a human ruling: a rejected flag, and no flag at all.
             let rejected = flagged_issue(
                 &[ruling, "ai:close-candidate"],
@@ -35067,9 +35339,14 @@ mod queue_tests {
             close_candidate_plan("OPEN", &s(&["human:keep-open"]), false, false),
             CloseFlagPlan::RefuseHuman
         );
+        // The DELETED `human:design` (#219) parks nothing: an issue a design answer was recorded
+        // on is the producer's to work — flagging included.
         assert_eq!(
             close_candidate_plan("OPEN", &s(&["human:design"]), false, false),
-            CloseFlagPlan::RefuseHuman
+            CloseFlagPlan::Flag {
+                add_label: true,
+                post_comment: true
+            }
         );
         assert_eq!(
             close_candidate_plan("OPEN", &s(&[]), false, false),
@@ -38510,10 +38787,13 @@ mod repo_root_tests {
             // `sweep_stale_closed_flags` for the first — do the withholding, which is why the
             // filter is not visible in the builder.
             "flagged_subjects_args",
-            // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
-            // both populations are empty in scope, and neither OFFERS work: a per-PR edit that
-            // fails is already reported as a failed edit rather than queued as a task.
+            // RETIRED/DELETED one-shot sweeps (#108 item 4, #133, #219). Nothing writes these
+            // labels any more, the populations are fixed and shrinking, and none OFFERS work: a
+            // per-subject edit that fails is already reported as a failed edit rather than queued
+            // as a task. (`migrate_design_search` is #219's argv builder — the mode fn reaches
+            // the scope through it.)
             "migrate_reject_mode",
+            "migrate_design_search",
             "retire_blocked_infra_mode",
             // A test.
             "next_close_candidate_tests",
@@ -43688,6 +43968,15 @@ mod cli_tests {
             parse(&["prr", "migrate-reject", "--apply"]),
             Cmd::MigrateReject { apply: true }
         );
+        // The #219 one-shot has the same report-by-default gate.
+        assert_eq!(
+            parse(&["prr", "migrate-design"]),
+            Cmd::MigrateDesign { apply: false }
+        );
+        assert_eq!(
+            parse(&["prr", "migrate-design", "--apply"]),
+            Cmd::MigrateDesign { apply: true }
+        );
         assert!(matches!(
             parse(&["prr", "human-queue"]),
             Cmd::HumanQueue { .. }
@@ -43718,10 +44007,18 @@ mod cli_tests {
                 note: s(&["leg", "1", "stands"]),
                 rework: None,
                 rework_file: None,
-                park: false,
                 dry_run: true,
             }
         );
+        // There is NO --park spelling on either subject (#219): a design ruling IS its answer, so
+        // the flag does not exist for clap to accept — a caller who types it is refused at parse,
+        // before any vocabulary or disposition logic runs.
+        for cmd in ["human-rule", "human-rule-issue"] {
+            assert!(
+                Cli::try_parse_from(["prr", cmd, "o/r", "93", "design", "note", "--park"]).is_err(),
+                "{cmd} must refuse the deleted --park spelling"
+            );
+        }
         assert_eq!(
             parse(&[
                 "prr",
@@ -43739,7 +44036,6 @@ mod cli_tests {
                 note: s(&["audit", "finding"]),
                 rework: None,
                 rework_file: None,
-                park: false,
                 dry_run: false,
             }
         );
@@ -45236,7 +45532,6 @@ mod worklist_tests {
             parked: false,
             ui_missing_screenshot: false,
             human_parked: false,
-            human_work_order: false,
             state_label: None,
         }
     }
@@ -45303,14 +45598,6 @@ mod worklist_tests {
         s.human_parked = true;
         s.has_deploy_trigger = true;
         assert_eq!(next_action(&s), NextAction::ParkedSkip);
-        // A work order beside a PARK flag is the contradictory hand-state (an absolute label next
-        // to an ordered note) — fail-safe: still parked, not yours to touch.
-        s.human_work_order = true;
-        assert_eq!(next_action(&s), NextAction::ParkedSkip);
-        // The work order alone outranks every CI-derived action: the human already decided, so
-        // executing the order IS the next action.
-        s.human_parked = false;
-        assert_eq!(next_action(&s), NextAction::ReworkRuling);
     }
 
     #[test]
@@ -45534,10 +45821,13 @@ mod worklist_tests {
         assert!(is_producer_backlog(&mk(&["bug", "ai:some-label"])));
         // ai:close-candidate → the human's close queue, surfaced separately — not the backlog.
         assert!(!is_producer_backlog(&mk(&["ai:close-candidate"])));
-        // Any human:* ruling → the human's inbox, not the producer's.
+        // Any human:* label → not the producer's. The exclusion is the NAMESPACE prefix, so the
+        // deleted `human:design` residue (#219) also sits out — its exit is `migrate-design`
+        // stripping the label, which is what returns the issue to this backlog. A LIVE design
+        // ruling writes no label at all, so it never leaves the backlog in the first place.
         assert!(!is_producer_backlog(&mk(&["human:keep-open"])));
-        assert!(!is_producer_backlog(&mk(&["human:design"])));
         assert!(!is_producer_backlog(&mk(&["bug", "human:reject"])));
+        assert!(!is_producer_backlog(&mk(&["human:design"])));
         // Missing labels field → conservatively counted in, never silently dropped.
         assert!(is_producer_backlog(&json!({})));
     }
@@ -46373,7 +46663,7 @@ mod one_reject_state_tests {
         // sha. The sacred check resolves FIRST — reading the sha before it must not reorder the
         // refusals — so what the caller is told is the reason that actually governs; a `NoSha` here
         // would send the vetter looking for an API fault that is not there.
-        let sacred = pr_at("", &["human:design"], vec![]);
+        let sacred = pr_at("", &[RETIRED_HUMAN_REJECT_LABEL], vec![]);
         assert_eq!(
             verdict_plan(&sacred, "ai:ready", "ready"),
             VerdictPlan::RefuseHuman
@@ -46458,12 +46748,14 @@ mod one_reject_state_tests {
         let (action, ..) = unvetted_row("o/r", 1, "u", "t", &pr);
         assert_eq!(action, VetAction::SkipHuman);
         assert!(PR_SACRED_LABELS.contains(&RETIRED_HUMAN_REJECT_LABEL));
-        // … and it is NOT a ruling the human can write any more.
+        // … and it is NOT a ruling the human can write any more: no PR verb targets it.
         assert_eq!(
-            human_ruling_label(&HUMAN_PR_RULING_LABELS, "reject"),
+            human_ruling_target(&HUMAN_PR_RULINGS, "reject"),
             Some("ai:reject")
         );
-        assert!(!HUMAN_PR_RULING_LABELS.contains(&RETIRED_HUMAN_REJECT_LABEL));
+        assert!(HUMAN_PR_RULINGS
+            .iter()
+            .all(|(_, t)| *t != RETIRED_HUMAN_REJECT_LABEL));
     }
 
     #[test]
@@ -46507,6 +46799,166 @@ mod one_reject_state_tests {
             MigrateRejectPlan::NotRetired
         );
     }
+
+    // ---- the DELETED design state, and the migration that is its only exit (#219) --------------
+
+    fn order_at(anchor: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": rework_note_comment(anchor, "split the crate"),
+        })
+    }
+
+    fn design_ruling_at(anchor: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": human_rule_comment(anchor, "design", "split the crate along the parser"),
+        })
+    }
+
+    #[test]
+    fn migrate_design_moves_ordered_and_parked_prs_alike_and_keeps_a_live_order() {
+        // ORDERED residue (a live work order pinned at the current head): the label moves and the
+        // order is already on the record — nothing is re-posted.
+        let ordered = pr_at(
+            HEAD,
+            &["human:design", "ai:ready", "bug"],
+            vec![design_ruling_at(HEAD), order_at(HEAD)],
+        );
+        assert_eq!(
+            migrate_design_pr_plan(&ordered),
+            MigrateDesignPlan::Migrate {
+                add_target: true,
+                clears: vec!["ai:ready".to_string()],
+                order: MigrateOrder::LiveAtHead,
+            }
+        );
+        // PARKED residue (no order ever posted): the ruling's own note becomes the order, pinned
+        // to the current head — a note is mandatory on every ruling, so the order always exists.
+        let parked = pr_at(HEAD, &["human:design"], vec![design_ruling_at(OLD)]);
+        assert_eq!(
+            migrate_design_pr_plan(&parked),
+            MigrateDesignPlan::Migrate {
+                add_target: true,
+                clears: vec![],
+                order: MigrateOrder::Post(rework_note_comment(
+                    HEAD,
+                    "split the crate along the parser"
+                )),
+            }
+        );
+        // EXECUTED-shaped residue (order pinned only to a superseded head): not a live order, so
+        // the ruling's note is re-posted at the current head like the parked case.
+        let executed = pr_at(
+            HEAD,
+            &["human:design"],
+            vec![design_ruling_at(OLD), order_at(OLD)],
+        );
+        assert_eq!(
+            migrate_design_pr_plan(&executed),
+            MigrateDesignPlan::Migrate {
+                add_target: true,
+                clears: vec![],
+                order: MigrateOrder::Post(rework_note_comment(
+                    HEAD,
+                    "split the crate along the parser"
+                )),
+            }
+        );
+        // A hand-applied label with NO trusted ruling comment: the label still moves — same state
+        // either way — but no order can be invented, and the plan says so.
+        let unrecorded = pr_at(HEAD, &["human:design"], vec![]);
+        assert_eq!(
+            migrate_design_pr_plan(&unrecorded),
+            MigrateDesignPlan::Migrate {
+                add_target: true,
+                clears: vec![],
+                order: MigrateOrder::Unrecoverable,
+            }
+        );
+        // Idempotent: a PR that no longer carries the deleted label is nothing to migrate — pure
+        // parks of OTHER labels and already-migrated PRs are untouched.
+        assert_eq!(
+            migrate_design_pr_plan(&pr_at(HEAD, &["ai:reject"], vec![order_at(HEAD)])),
+            MigrateDesignPlan::NotCarrying
+        );
+        // A spoofed order from another account is body text: it neither counts as live nor
+        // suppresses the re-post.
+        let spoofed = pr_at(
+            HEAD,
+            &["human:design"],
+            vec![
+                design_ruling_at(OLD),
+                json!({"author": {"login": "mallory"},
+                       "body": rework_note_comment(HEAD, "sabotage")}),
+            ],
+        );
+        assert_eq!(
+            migrate_design_pr_plan(&spoofed),
+            MigrateDesignPlan::Migrate {
+                add_target: true,
+                clears: vec![],
+                order: MigrateOrder::Post(rework_note_comment(
+                    HEAD,
+                    "split the crate along the parser"
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn migrate_design_strips_the_label_from_issues_and_touches_nothing_else() {
+        let carrying = json!({"labels": [{"name": "human:design"}, {"name": "bug"}]});
+        assert!(migrate_design_issue_carries(&carrying));
+        let clean = json!({"labels": [{"name": "bug"}]});
+        assert!(!migrate_design_issue_carries(&clean));
+    }
+
+    // The note extraction the parked-residue order rides on: the LAST trusted ruling wins (the
+    // human superseding themselves), untrusted comments never contribute, and a subject with no
+    // ruling comment yields nothing rather than an invented order.
+    #[test]
+    fn the_migrations_order_text_is_the_last_trusted_rulings_note() {
+        let subject = pr_at(
+            HEAD,
+            &["human:design"],
+            vec![
+                design_ruling_at(OLD),
+                json!({"author": {"login": TRUSTED_AUTHOR},
+                       "body": human_rule_comment(HEAD, "design", "actually: keep one crate")}),
+                json!({"author": {"login": "mallory"},
+                       "body": human_rule_comment(HEAD, "design", "spoofed order")}),
+            ],
+        );
+        assert_eq!(
+            last_human_ruling_note(&subject).as_deref(),
+            Some("actually: keep one crate")
+        );
+        assert_eq!(last_human_ruling_note(&pr_at(HEAD, &[], vec![])), None);
+        // A ruling whose note is empty after the dash contributes nothing either.
+        let blank = pr_at(
+            HEAD,
+            &[],
+            vec![
+                json!({"author": {"login": TRUSTED_AUTHOR}, "body": "👤 human\nRuled x: design — "}),
+            ],
+        );
+        assert_eq!(last_human_ruling_note(&blank), None);
+    }
+
+    // Both populations are searched with the same shape as `migrate-reject`'s, per subject kind —
+    // the label key is the DELETED name, and nothing else in the binary names it any more.
+    #[test]
+    fn migrate_design_searches_both_subject_kinds_for_the_deleted_label() {
+        assert_eq!(DELETED_DESIGN_LABEL, "human:design");
+        for kind in ["prs", "issues"] {
+            let args = migrate_design_search(kind);
+            assert_eq!(args[1], kind);
+            assert!(args.contains(&"--label".to_string()));
+            assert!(args.contains(&DELETED_DESIGN_LABEL.to_string()), "{args:?}");
+            assert!(args.contains(&"open".to_string()));
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46524,14 +46976,16 @@ mod fsm_completeness_tests {
 
     #[test]
     fn classify_lane_maps_every_state_by_precedence() {
-        // human decision dominates a stale ai:* label.
+        // human decision dominates a stale ai:* label. The lane's only state is the RETIRED
+        // `human:reject` (#133); the DELETED `human:design` (#219) is no state at all, so a PR
+        // wearing only that residue classifies as what it otherwise is — un-vetted.
         assert_eq!(
             classify_lane(&s(&["ai:ready", "human:reject"]), Some(true), false),
             (Lane::HumanDecisions, "human:reject".to_string())
         );
         assert_eq!(
             classify_lane(&s(&["human:design"]), None, false),
-            (Lane::HumanDecisions, "human:design".to_string())
+            (Lane::VetLifecycle, "un-vetted".to_string())
         );
         // blocked states next — same PRECEDENCE, but the LANE names whoever moves each (#161):
         // the vetter's state-load clears `ai:blocked-on` when its typed deps merge/close, so it
@@ -46556,8 +47010,8 @@ mod fsm_completeness_tests {
             (Lane::VetLifecycle, "ai:blocked-on".to_string())
         );
         assert_eq!(
-            classify_lane(&s(&["ai:blocked-on", "human:design"]), None, false),
-            (Lane::HumanDecisions, "human:design".to_string())
+            classify_lane(&s(&["ai:blocked-on", "human:reject"]), None, false),
+            (Lane::HumanDecisions, "human:reject".to_string())
         );
         // ai:ready splits on verdict currency: vetted-at-head stays ready, otherwise -> un-vetted.
         assert_eq!(
@@ -46599,8 +47053,8 @@ mod fsm_completeness_tests {
             (Lane::CloseCandidate, "ai:close-candidate".to_string())
         );
         assert_eq!(
-            classify_lane(&s(&["ai:close-candidate", "human:design"]), None, false),
-            (Lane::HumanDecisions, "human:design".to_string())
+            classify_lane(&s(&["ai:close-candidate", "human:reject"]), None, false),
+            (Lane::HumanDecisions, "human:reject".to_string())
         );
         // label-less: leak if the producer commented, else un-vetted.
         assert_eq!(
@@ -46646,7 +47100,8 @@ mod fsm_completeness_tests {
             qpr(8, &["ai:blocked-deploy"], None, false), // producer-blocked (RETIRED residue #162)
             qpr(9, &["ai:blocked-infra"], None, false),
             qpr(10, &["ai:blocked-on"], None, false), // vet-lifecycle: the vetter clears it (#161)
-            qpr(11, &["human:reject"], None, false),  // human decisions
+            qpr(11, &["human:reject"], None, false),  // human decisions (RETIRED residue #133)
+            // The DELETED human:design (#219): no lane state — counts as un-vetted below.
             qpr(12, &["human:design"], None, false),
             qpr(14, &[], None, true),             // leak
             qpr(15, &["ai:reject"], None, false), // a second ai:reject member
@@ -46655,9 +47110,10 @@ mod fsm_completeness_tests {
 
         // every state present, counts correct, membership disjoint (#15 joins #4 under ai:reject).
         let count = |lane: &str, st: &str| lane_state_count(&doc, lane, st);
-        // #1 (never labelled) and #2 (ai:ready, verdict not current at its head) are the SAME
-        // state — the vetter owes each of them a verdict, and nothing downstream distinguishes them.
-        assert_eq!(count("vet-lifecycle", "un-vetted"), 2);
+        // #1 (never labelled), #2 (ai:ready, verdict not current at its head) and #12 (the
+        // deleted human:design residue) are the SAME state — the vetter owes each of them a
+        // verdict, and nothing downstream distinguishes them.
+        assert_eq!(count("vet-lifecycle", "un-vetted"), 3);
         assert_eq!(count("vetter-verdicts", "ai:ready"), 1);
         assert_eq!(count("vetter-verdicts", "ai:reject"), 2);
         assert_eq!(count("vetter-verdicts", "ai:relink"), 1);
@@ -46674,11 +47130,13 @@ mod fsm_completeness_tests {
         assert_eq!(count("vet-lifecycle", "ai:blocked-on"), 1);
         assert_eq!(count("producer-blocked", "ai:blocked-on"), 0);
         assert_eq!(count("human-decisions", "human:reject"), 1);
-        assert_eq!(count("human-decisions", "human:design"), 1);
+        // The DELETED human:design (#219) emits no lane cell at all.
+        assert_eq!(count("human-decisions", "human:design"), 0);
         assert_eq!(count("leak", "leak"), 1);
 
-        // the PR list carries {repo, number, url, title}. #1 (never labelled) and #2 (ai:ready with
-        // no current verdict) sit side by side in the ONE un-vetted bucket, indistinguishable.
+        // the PR list carries {repo, number, url, title}. #1 (never labelled), #2 (ai:ready with
+        // no current verdict) and #12 (deleted-label residue) sit side by side in the ONE
+        // un-vetted bucket, indistinguishable.
         let members: Vec<u64> = doc
             .pointer("/vet-lifecycle/un-vetted/prs")
             .and_then(|v| v.as_array())
@@ -46686,7 +47144,7 @@ mod fsm_completeness_tests {
             .iter()
             .filter_map(|p| p.get("number").and_then(|v| v.as_u64()))
             .collect();
-        assert_eq!(members, vec![1, 2]);
+        assert_eq!(members, vec![1, 2, 12]);
         let arv = doc.pointer("/vet-lifecycle/un-vetted/prs/1").unwrap();
         assert_eq!(arv.get("repo").and_then(|v| v.as_str()), Some("o/r"));
         assert_eq!(
@@ -47639,42 +48097,52 @@ mod human_rule_tests {
         }
     }
 
-    // --- G1 vocabulary: the machine's OWN label sets, not a second list --------------------------
+    // --- G1 vocabulary: the machine's OWN tables, not a second list ------------------------------
 
-    // The verbs are DERIVED from the label constants, never typed out beside them — a second list is
-    // what lets the transition surface and the lane classifier name different states.
+    // The verbs and their targets come from ONE table per subject — a second list is what lets the
+    // transition surface and the lane classifier name different states.
     #[test]
-    fn human_ruling_vocabulary_is_derived_from_the_label_sets() {
-        // The PR vocabulary still offers `reject` — it just no longer writes a label of the human's
-        // own. Deriving the verb from the label's namespace SUFFIX is what keeps `reject` nameable
-        // at all now that it maps to `ai:reject` (#133); stripping a literal `human:` would have
-        // silently dropped the verb and left the human unable to reject a PR through the machine.
+    fn human_ruling_vocabulary_is_the_tables() {
+        assert_eq!(human_rulings(&HUMAN_PR_RULINGS), vec!["reject", "design"]);
         assert_eq!(
-            human_rulings(&HUMAN_PR_RULING_LABELS),
-            vec!["reject", "design"]
-        );
-        assert_eq!(
-            human_rulings(&HUMAN_RULING_LABELS),
+            human_rulings(&HUMAN_ISSUE_RULINGS),
             vec!["reject", "design", "keep-open"]
         );
+        // BOTH PR verbs write the ONE reject state (#133/#219): a reject is a send-back, and an
+        // answered design question is the same send-back — the verb survives only in the pinned
+        // `👤 human` comment.
         assert_eq!(
-            human_ruling_label(&HUMAN_PR_RULING_LABELS, "reject"),
+            human_ruling_target(&HUMAN_PR_RULINGS, "reject"),
+            Some("ai:reject")
+        );
+        assert_eq!(
+            human_ruling_target(&HUMAN_PR_RULINGS, "design"),
             Some("ai:reject"),
-            "a PR reject is the ONE reject state, not a human:* twin"
+            "an answered design question is the same send-back as a rejection"
         );
-        // Every verb round-trips to the label it writes …
-        for set in [&HUMAN_PR_RULING_LABELS[..], &HUMAN_RULING_LABELS[..]] {
-            for label in set {
-                let verb = ruling_verb(label).unwrap();
-                assert_eq!(human_ruling_label(set, verb), Some(*label));
-            }
-        }
-        // … and nothing else does. `keep-open` is ISSUE-only: on a PR there is no close-candidate
-        // flag for it to answer, and writing it would land the PR in no lane at all.
+        // The issue table: label rulings write their label; `design` is COMMENT-ONLY (#219) —
+        // in-vocabulary (`Some`), writing nothing (`None`).
         assert_eq!(
-            human_ruling_label(&HUMAN_PR_RULING_LABELS, "keep-open"),
-            None
+            human_ruling_target(&HUMAN_ISSUE_RULINGS, "reject"),
+            Some(Some("human:reject"))
         );
+        assert_eq!(
+            human_ruling_target(&HUMAN_ISSUE_RULINGS, "design"),
+            Some(None),
+            "an issue design ruling validates but writes NO label"
+        );
+        assert_eq!(
+            human_ruling_target(&HUMAN_ISSUE_RULINGS, "keep-open"),
+            Some(Some("human:keep-open"))
+        );
+        // The DELETED `human:design` (#219) is not a target in either table.
+        assert!(HUMAN_PR_RULINGS.iter().all(|(_, t)| *t != "human:design"));
+        assert!(HUMAN_ISSUE_RULINGS
+            .iter()
+            .all(|(_, t)| *t != Some("human:design")));
+        // `keep-open` is ISSUE-only: on a PR there is no close-candidate flag for it to answer,
+        // and writing it would land the PR in no lane at all.
+        assert_eq!(human_ruling_target(&HUMAN_PR_RULINGS, "keep-open"), None);
         for bad in [
             "",
             "REJECT",
@@ -47687,22 +48155,18 @@ mod human_rule_tests {
             "close-candidate",
             " ",
         ] {
-            assert_eq!(human_ruling_label(&HUMAN_RULING_LABELS, bad), None, "{bad}");
             assert_eq!(
-                human_ruling_label(&HUMAN_PR_RULING_LABELS, bad),
+                human_ruling_target(&HUMAN_ISSUE_RULINGS, bad),
                 None,
                 "{bad}"
             );
+            assert_eq!(human_ruling_target(&HUMAN_PR_RULINGS, bad), None, "{bad}");
         }
         // Surrounding whitespace is the caller's, not a different verb.
         assert_eq!(
-            human_ruling_label(&HUMAN_RULING_LABELS, "  keep-open  "),
-            Some("human:keep-open")
+            human_ruling_target(&HUMAN_ISSUE_RULINGS, "  keep-open  "),
+            Some(Some("human:keep-open"))
         );
-        // A label with no namespace at all offers no verb — the split is on the prefix, not a
-        // fallback to the whole string, so a bare `reject` label could never become a ruling verb.
-        assert_eq!(ruling_verb("reject"), None);
-        assert_eq!(ruling_verb("ai:close-candidate"), Some("close-candidate"));
     }
 
     // #133's structural invariant, and it REPLACES "the two arrays are the same array". What has to
@@ -47712,10 +48176,13 @@ mod human_rule_tests {
     // transition out of the machine.
     #[test]
     fn every_pr_ruling_label_lands_in_a_modeled_lane() {
-        for label in HUMAN_PR_RULING_LABELS {
+        for (verb, label) in HUMAN_PR_RULINGS {
             let (lane, state) = classify_lane(&s(&[label]), None, false);
-            assert_ne!(lane, Lane::Leak, "{label} escapes the machine");
-            assert_eq!(state, label, "{label} buckets under a different name");
+            assert_ne!(lane, Lane::Leak, "{verb}'s {label} escapes the machine");
+            assert_eq!(
+                state, label,
+                "{verb}'s {label} buckets under a different name"
+            );
         }
         // And the retired name still buckets too, so the PRs a pre-#133 run parked stay visible
         // where they are until `migrate-reject` moves them — never silently re-read as un-vetted.
@@ -47727,13 +48194,20 @@ mod human_rule_tests {
             ),
             (Lane::HumanDecisions, RETIRED_HUMAN_REJECT_LABEL.to_string())
         );
+        // The DELETED `human:design` (#219) is NOT a lane state: nothing writes it, so a residue
+        // PR still wearing it classifies by what it otherwise is — un-vetted at the bottom — and
+        // `migrate-design` moves it into the reject state its ruling means.
+        assert_eq!(
+            classify_lane(&s(&["human:design"]), None, false),
+            (Lane::VetLifecycle, "un-vetted".to_string())
+        );
     }
 
     // A ruling outside the vocabulary is a USAGE error (exit 2) that names the vocabulary — the
     // caller's next move must be a legal verb, not an improvised label.
     #[test]
     fn a_ruling_outside_the_vocabulary_is_refused_with_the_vocabulary() {
-        let (code, msg) = human_ruling_vocab_error(&HUMAN_PR_RULING_LABELS, "keep-open", "PR");
+        let (code, msg) = human_ruling_vocab_error(&HUMAN_PR_RULINGS, "keep-open", "PR");
         assert_eq!(code, 2);
         assert!(msg.contains("reject, design"), "{msg}");
         assert!(!msg.contains("keep-open,"), "{msg}");
@@ -47741,7 +48215,7 @@ mod human_rule_tests {
             !msg.contains("close-candidate"),
             "a close is decide+do (`human-close`), never a ruling verb to offer: {msg}"
         );
-        let (code, msg) = human_ruling_vocab_error(&HUMAN_RULING_LABELS, "nope", "issue");
+        let (code, msg) = human_ruling_vocab_error(&HUMAN_ISSUE_RULINGS, "nope", "issue");
         assert_eq!(code, 2);
         assert!(msg.contains("keep-open"), "{msg}");
     }
@@ -47749,9 +48223,9 @@ mod human_rule_tests {
     // The CLI apply path's own vocabulary LOOKUP, asserted THROUGH `human_rule_pr_apply`.
     //
     // The two surfaces resolve the verb at separate sites — `human_rule_args` for MCP,
-    // `human_rule_pr_apply` for the subcommand `/reject` actually runs — and pointing this one back
-    // at `HUMAN_DECISION_LABELS` survived the whole 485-test suite: the MCP schema test still
-    // passed while `pr-review-report human-rule … reject` refused its own ruling.
+    // `human_rule_pr_apply` for the subcommand `/reject` actually runs — and pointing this one at
+    // a DIFFERENT table once survived the whole 485-test suite: the MCP schema test still passed
+    // while `pr-review-report human-rule … reject` refused its own ruling.
     //
     // Asserting on the refusal's TEXT does not catch that, because the message is built from a
     // SECOND reference to the constant which the same edit need not touch — the first attempt at
@@ -47789,19 +48263,19 @@ mod human_rule_tests {
         // Both surfaces refuse on the same rule, in the same words.
         for blank in [json!(""), json!("   "), json!(null)] {
             let args = json!({"pr": "o/r#1", "ruling": "reject", "note": blank});
-            let err = human_rule_args(&HUMAN_PR_RULING_LABELS, &args, "PR").unwrap_err();
+            let err = human_rule_args(&HUMAN_PR_RULINGS, &args, "PR").unwrap_err();
             assert_eq!(err, human_ruling_note_error().1, "{blank}");
         }
         // A missing note key is the same refusal, not a different one.
         let args = json!({"pr": "o/r#1", "ruling": "reject"});
         assert_eq!(
-            human_rule_args(&HUMAN_PR_RULING_LABELS, &args, "PR").unwrap_err(),
+            human_rule_args(&HUMAN_PR_RULINGS, &args, "PR").unwrap_err(),
             human_ruling_note_error().1
         );
         // The vocabulary is checked BEFORE the note, so an illegal verb is never masked by a
         // missing note.
         let args = json!({"pr": "o/r#1", "ruling": "approve"});
-        assert!(human_rule_args(&HUMAN_PR_RULING_LABELS, &args, "PR")
+        assert!(human_rule_args(&HUMAN_PR_RULINGS, &args, "PR")
             .unwrap_err()
             .contains("is not a human ruling"));
     }
@@ -47829,11 +48303,11 @@ mod human_rule_tests {
     #[test]
     fn a_pr_ruling_without_a_head_sha_has_no_anchor_and_is_refused() {
         assert_eq!(
-            human_pr_rule_plan(&pr("", &[], vec![]), "reject", "human:reject"),
+            human_pr_rule_plan(&pr("", &[], vec![]), "reject", "ai:reject"),
             HumanRulePlan::NoAnchor
         );
         assert_eq!(
-            human_pr_rule_plan(&json!({"state": "OPEN"}), "reject", "human:reject"),
+            human_pr_rule_plan(&json!({"state": "OPEN"}), "reject", "ai:reject"),
             HumanRulePlan::NoAnchor
         );
     }
@@ -47848,7 +48322,11 @@ mod human_rule_tests {
             Some("2026-07-17T21:23:11Z"),
             vec![],
         );
-        let (anchor, ..) = record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
+        let (anchor, ..) = record(human_issue_rule_plan(
+            &j,
+            "keep-open",
+            Some("human:keep-open"),
+        ));
         assert_eq!(anchor, "close-candidate @2026-07-17T21:23:11Z");
         // The same anchor string the vetter's own comment carries — one re-flag stales both.
         assert!(
@@ -47865,7 +48343,7 @@ mod human_rule_tests {
         let (anchor, ..) = record(human_issue_rule_plan(
             &issue(&[], "2026-01-01T00:00:00Z", None, vec![]),
             "reject",
-            "human:reject",
+            Some("human:reject"),
         ));
         assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
 
@@ -47879,7 +48357,7 @@ mod human_rule_tests {
                 vec![],
             ),
             "reject",
-            "human:reject",
+            Some("human:reject"),
         ));
         assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
 
@@ -47888,10 +48366,45 @@ mod human_rule_tests {
             human_issue_rule_plan(
                 &json!({"state": "OPEN", "labels": [], "comments": []}),
                 "reject",
-                "human:reject"
+                Some("human:reject")
             ),
             HumanRulePlan::NoAnchor
         );
+    }
+
+    // The COMMENT-ONLY issue design ruling (#219): in-vocabulary, anchored like any ruling, and
+    // moving NO label in either namespace — no target to add, nothing superseded (a standing
+    // `human:keep-open` keeps standing under the answer), nothing cleared. The pinned comment is
+    // the whole record and the issue stays the producer's to work.
+    #[test]
+    fn an_issue_design_ruling_writes_no_label_and_moves_none() {
+        let j = issue(
+            &["human:keep-open", "bug"],
+            "2026-01-01T00:00:00Z",
+            None,
+            vec![],
+        );
+        let (anchor, supersedes, clears, has_target, skip) =
+            record(human_issue_rule_plan(&j, "design", None));
+        assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
+        assert_eq!(supersedes, Vec::<String>::new());
+        assert_eq!(clears, Vec::<String>::new());
+        assert!(!has_target);
+        assert!(!skip);
+        // The step list carries no label step at all: the comment (and the work order threaded
+        // beside it) is the entire write.
+        let steps = with_rework_note(
+            human_rule_steps(&supersedes, &clears, false, has_target, skip),
+            Some("Rework note @issue @2026-01-01T00:00:00Z: split the crate".to_string()),
+        );
+        assert!(
+            steps
+                .iter()
+                .all(|s| !matches!(s, RuleStep::EnsureLabel | RuleStep::AddLabel)),
+            "{steps:?}"
+        );
+        assert_eq!(steps[0], RuleStep::Comment);
+        assert!(matches!(steps[1], RuleStep::ReworkNote(_)));
     }
 
     // The comment carries the trusted MARKER, the anchor, the ruling and the reason — the four
@@ -47929,24 +48442,24 @@ mod human_rule_tests {
             vec![],
         );
         for stranding in ["reject", "design"] {
-            let label = human_ruling_label(&HUMAN_RULING_LABELS, stranding).unwrap();
+            let target = human_ruling_target(&HUMAN_ISSUE_RULINGS, stranding).unwrap();
             assert_eq!(
-                human_issue_rule_plan(&flagged, stranding, label),
+                human_issue_rule_plan(&flagged, stranding, target),
                 HumanRulePlan::StrandsFlag {
                     flag_at: "2026-07-17T21:23:11Z".to_string()
                 },
-                "{stranding} must not strand the flag"
+                "{stranding} must not land on a live flag"
             );
         }
         // The two that ANSWER the flag are legal — the human is never left without a move:
-        // `keep-open` through the ruling vocabulary, the close through the target-less plan
+        // `keep-open` through the ruling vocabulary, the close through the empty-target plan
         // `human-close` drives (#213 — it writes no label, so it has no vocabulary entry).
         record(human_issue_rule_plan(
             &flagged,
             "keep-open",
-            "human:keep-open",
+            Some("human:keep-open"),
         ));
-        record(human_issue_rule_plan(&flagged, "close-candidate", ""));
+        record(human_issue_rule_plan(&flagged, "close-candidate", Some("")));
         // The guard is about a LIVE flag, not about the label alone: a bare `ai:close-candidate`
         // with no trusted producer comment is nothing `record_close_candidate_verdict` could judge
         // anyway (it returns NoFlag), so refusing there would block a human for no benefit.
@@ -47956,7 +48469,11 @@ mod human_rule_tests {
             None,
             vec![],
         );
-        let (anchor, ..) = record(human_issue_rule_plan(&label_only, "reject", "human:reject"));
+        let (anchor, ..) = record(human_issue_rule_plan(
+            &label_only,
+            "reject",
+            Some("human:reject"),
+        ));
         assert_eq!(anchor, "issue @2026-01-01T00:00:00Z");
         assert_eq!(
             cc_verdict_plan(&label_only, "reject"),
@@ -47964,40 +48481,37 @@ mod human_rule_tests {
         );
     }
 
-    // The PR-side twin (#211): a producer flag lives on PRs now, and the same one-way door exists
-    // — a ruling that neither disposes the flag nor clears its label parks it un-judgeable, #93's
-    // shape on the other subject type. `reject` stays legal because its target is `ai:reject`,
-    // which clears every other `ai:*` structurally (the flag label with it); `close-candidate`
-    // stays legal because the terminal edge retires the flag itself.
+    // The PR side has NO stranding arm, structurally (#211's shape cannot arise since #219):
+    // every PR ruling's target is the ONE `ai:*` reject state, which disposes a live flag by
+    // clearing its label through the same one-state rule — whichever verb ruled. What the test
+    // pins is that the disposal actually happens: a flag left standing beside a ruling would be
+    // #93's shape on the other subject type.
     #[test]
-    fn a_pr_ruling_that_would_strand_a_live_flag_is_refused() {
+    fn a_pr_ruling_on_a_live_flag_disposes_it_structurally() {
         let flag = json!({
             "author": {"login": TRUSTED_AUTHOR},
             "createdAt": "2026-07-17T21:23:11Z",
             "body": "🤖 ai:producer\nClose-candidate: already-fixed-on-main: PR #181",
         });
         let flagged = pr("abc123", &["ai:close-candidate"], vec![flag]);
-        assert_eq!(
-            human_pr_rule_plan(&flagged, "design", "human:design"),
-            HumanRulePlan::StrandsFlag {
-                flag_at: "2026-07-17T21:23:11Z".to_string()
-            }
-        );
-        let (_, _, clears, ..) = record(human_pr_rule_plan(&flagged, "reject", "ai:reject"));
-        assert!(
-            clears.contains(&"ai:close-candidate".to_string()),
-            "an ai:reject ruling disposes the flag by clearing its label: {clears:?}"
-        );
+        for verb in ["reject", "design"] {
+            let target = human_ruling_target(&HUMAN_PR_RULINGS, verb).unwrap();
+            let (_, _, clears, ..) = record(human_pr_rule_plan(&flagged, verb, target));
+            assert!(
+                clears.contains(&"ai:close-candidate".to_string()),
+                "a {verb} ruling disposes the flag by clearing its label: {clears:?}"
+            );
+        }
         record(human_pr_rule_plan(&flagged, "close-candidate", ""));
-        // The guard protects a producer CLAIM, never the vetter's own `close` verdict — that PR
-        // has no flag for `record_close_candidate_verdict` to be locked out of, so a design
-        // ruling on it stays free.
+        // The vetter's own `close` verdict is no different: the ruling lands and the one-state
+        // rule clears the verdict label with everything else `ai:*`.
         let verdict = json!({
             "author": {"login": TRUSTED_AUTHOR},
             "body": "🤖 ai:vetter\nReviewed abc123: close — superseded by o/r#48",
         });
         let vc = pr("abc123", &["ai:close-candidate"], vec![verdict]);
-        record(human_pr_rule_plan(&vc, "design", "human:design"));
+        let (_, _, clears, ..) = record(human_pr_rule_plan(&vc, "design", "ai:reject"));
+        assert!(clears.contains(&"ai:close-candidate".to_string()));
     }
 
     // The refusal must name every legal move, or it is an obstruction rather than a redirection —
@@ -48012,13 +48526,13 @@ mod human_rule_tests {
         );
         // Reach the refusal text through the plan the apply matches on (the apply itself needs gh).
         let HumanRulePlan::StrandsFlag { flag_at } =
-            human_issue_rule_plan(&flagged, "reject", "human:reject")
+            human_issue_rule_plan(&flagged, "reject", Some("human:reject"))
         else {
             panic!("expected StrandsFlag");
         };
         assert_eq!(flag_at, "2026-07-17T21:23:11Z");
 
-        let (code, msg) = strands_flag_error("o/r", "93", "human:reject", &flag_at);
+        let (code, msg) = strands_flag_error("o/r", "93", "reject", &flag_at);
         assert_eq!(
             code, 4,
             "a stranded-flag refusal is a gate refusal, not usage"
@@ -48071,19 +48585,20 @@ mod human_rule_tests {
         let (_, _, clears, ..) = record(human_issue_rule_plan(
             &flagged,
             "keep-open",
-            "human:keep-open",
+            Some("human:keep-open"),
         ));
         assert_eq!(clears, s(&["ai:close-candidate"]));
-        // The CLOSE plan (target-less — `human-close` writes no label, #213) leaves the flag out
+        // The CLOSE plan (empty target — `human-close` writes no label, #213) leaves the flag out
         // of the RULING's own clears: the flag AGREES with the close, and the terminal transition
         // is what retires it, ordered after the act (see `human_close_plan`/`human_close_steps`).
-        let (_, _, clears, ..) = record(human_issue_rule_plan(&flagged, "close-candidate", ""));
+        let (_, _, clears, ..) =
+            record(human_issue_rule_plan(&flagged, "close-candidate", Some("")));
         assert!(clears.is_empty());
         // Nothing else is touched: `audit` is not the machine's label to remove.
         let (_, supersedes, clears, ..) = record(human_issue_rule_plan(
             &flagged,
             "keep-open",
-            "human:keep-open",
+            Some("human:keep-open"),
         ));
         assert!(!supersedes.contains(&"audit".to_string()));
         assert!(!clears.contains(&"audit".to_string()));
@@ -48091,27 +48606,42 @@ mod human_rule_tests {
         let (_, _, clears, ..) = record(human_issue_rule_plan(
             &issue(&[], "2026-01-01T00:00:00Z", None, vec![]),
             "keep-open",
-            "human:keep-open",
+            Some("human:keep-open"),
         ));
         assert!(clears.is_empty());
     }
 
-    // A ruling whose target is a SACRED `human:*` label clears no `ai:*`: it is ruling ON that
-    // claim, and erasing the label would erase what it ruled on.
+    // #219's headline: a `design` ruling on a PR is indistinguishable IN STATE from a `reject` —
+    // same target, same anchor, same clears, same supersedes. Only the comment differs, and it
+    // records the verb, so the distinction survives on the record without a label to carry it.
     #[test]
-    fn a_sacred_pr_ruling_leaves_the_ai_label_it_ruled_on() {
-        let (_, supersedes, clears, ..) = record(human_pr_rule_plan(
-            &pr("sha1", &["ai:ready", "bug"], vec![]),
+    fn an_answered_design_lands_the_pr_exactly_where_a_reject_does() {
+        let subject = pr("sha1", &["ai:design", "ai:ready", "bug"], vec![]);
+        let design = record(human_pr_rule_plan(
+            &subject,
             "design",
-            "human:design",
+            human_ruling_target(&HUMAN_PR_RULINGS, "design").unwrap(),
         ));
-        assert!(clears.is_empty());
-        assert!(supersedes.is_empty());
-        // The lane classifier gives the human ruling precedence, so the stale label is inert.
-        assert_eq!(
-            classify_lane(&s(&["ai:ready", "human:design"]), Some(true), false),
-            (Lane::HumanDecisions, "human:design".to_string())
+        let reject = record(human_pr_rule_plan(
+            &subject,
+            "reject",
+            human_ruling_target(&HUMAN_PR_RULINGS, "reject").unwrap(),
+        ));
+        assert_eq!(design, reject, "one send-back state, whichever verb ruled");
+        let (anchor, _, clears, ..) = design;
+        assert_eq!(anchor, "sha1");
+        assert!(
+            clears.contains(&"ai:design".to_string()),
+            "the question's own state is cleared by the answer: {clears:?}"
         );
+        assert!(clears.contains(&"ai:ready".to_string()));
+        assert!(
+            !clears.contains(&"bug".to_string()),
+            "non-pipeline untouched"
+        );
+        // Only the RECORD tells them apart: the ruling word rides the pinned comment.
+        assert!(human_rule_comment("sha1", "design", "split the crate")
+            .contains("Ruled sha1: design — split the crate"));
     }
 
     // #133. A `reject` ruling's target IS a pipeline state, so it obeys the ONE-STATE rule the
@@ -48146,23 +48676,29 @@ mod human_rule_tests {
 
     // --- G6 re-ruling: the human may change their own mind ---------------------------------------
 
-    // A DIFFERENT human ruling already present is superseded, not refused. Refusing would leave raw
+    // A human ruling LABEL already present is superseded, not refused. Refusing would leave raw
     // `gh` as the only way to correct a mis-click — the bypass this whole surface exists to remove.
+    // On a PR every `human:*` present is residue of a retired or deleted state, so a fresh ruling
+    // sweeps the whole namespace.
     #[test]
     fn a_new_human_ruling_supersedes_the_previous_one_rather_than_refusing() {
         let (_, supersedes, ..) = record(human_pr_rule_plan(
             &pr("sha1", &["human:design", "ai:ready"], vec![]),
             "reject",
-            "human:reject",
+            "ai:reject",
         ));
         assert_eq!(supersedes, s(&["human:design"]));
-        // The ruling's OWN label is never in the supersede list — that would remove what it adds.
+        // Both residue namespaces at once: retired reject and deleted design go together.
         let (_, supersedes, _, has_target, _) = record(human_pr_rule_plan(
-            &pr("sha1", &["human:reject"], vec![]),
-            "reject",
-            "human:reject",
+            &pr(
+                "sha1",
+                &["human:reject", "human:design", "ai:reject"],
+                vec![],
+            ),
+            "design",
+            "ai:reject",
         ));
-        assert!(supersedes.is_empty());
+        assert_eq!(supersedes, s(&["human:reject", "human:design"]));
         assert!(has_target, "the label is already there — do not re-add it");
         // Issue side, same rule, and a hand-applied stray is superseded too.
         let (_, supersedes, ..) = record(human_issue_rule_plan(
@@ -48173,7 +48709,7 @@ mod human_rule_tests {
                 vec![],
             ),
             "keep-open",
-            "human:keep-open",
+            Some("human:keep-open"),
         ));
         assert_eq!(supersedes, s(&["human:reject", "human:design"]));
     }
@@ -48182,26 +48718,33 @@ mod human_rule_tests {
 
     // `gh issue view <n>` answers for a PULL REQUEST too — GitHub's API treats one as the other —
     // so `human-rule-issue` pointed at a PR would write the ISSUE vocabulary onto it. That is not
-    // cosmetic: `human:keep-open` is not in `HUMAN_DECISION_LABELS`, so `classify_lane` buckets the
+    // cosmetic: `human:keep-open` is a label no PR lane models, so `classify_lane` buckets the
     // PR by whatever `ai:*` it still carries and the ruling vanishes from the human lane entirely.
     #[test]
     fn an_issue_ruling_pointed_at_a_pull_request_is_refused() {
         let mut j = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
         j["url"] = json!("https://github.com/o/r/pull/82");
         assert_eq!(
-            human_issue_rule_plan(&j, "keep-open", "human:keep-open"),
+            human_issue_rule_plan(&j, "keep-open", Some("human:keep-open")),
             HumanRulePlan::NotAnIssue
         );
         // The discriminator is the URL's own path, not a substring anywhere in it.
         j["url"] = json!("https://github.com/o/r/issues/89");
-        record(human_issue_rule_plan(&j, "keep-open", "human:keep-open"));
+        record(human_issue_rule_plan(
+            &j,
+            "keep-open",
+            Some("human:keep-open"),
+        ));
         // A subject whose URL was not fetched is still ruled on — the guard adds a refusal, it does
         // not turn a missing optional field into one.
         let mut k = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
         k.as_object_mut().unwrap().remove("url");
-        record(human_issue_rule_plan(&k, "keep-open", "human:keep-open"));
+        record(human_issue_rule_plan(
+            &k,
+            "keep-open",
+            Some("human:keep-open"),
+        ));
         // The label it would otherwise have written is exactly the one no PR lane models.
-        assert!(!HUMAN_DECISION_LABELS.contains(&"human:keep-open"));
         assert_eq!(
             classify_lane(&s(&["human:keep-open", "ai:ready"]), Some(true), false),
             (Lane::VetterVerdicts, "ai:ready".to_string()),
@@ -48227,7 +48770,7 @@ mod human_rule_tests {
         );
         // The ruling the caller asked for is carried into the redirection, so the retry is the
         // SAME decision on the right surface rather than a fresh one they have to re-type.
-        for ruling in human_rulings(&HUMAN_PR_RULING_LABELS) {
+        for ruling in human_rulings(&HUMAN_PR_RULINGS) {
             assert!(
                 pr_view_failed_error("o/r", "93", ruling, true)
                     .1
@@ -48285,7 +48828,7 @@ mod human_rule_tests {
             let mut p = pr("sha1", &[], vec![]);
             p["state"] = json!(state);
             assert_eq!(
-                human_pr_rule_plan(&p, "reject", "human:reject"),
+                human_pr_rule_plan(&p, "reject", "ai:reject"),
                 HumanRulePlan::Moot,
                 "{state}"
             );
@@ -48293,7 +48836,7 @@ mod human_rule_tests {
         let mut j = issue(&[], "2026-01-01T00:00:00Z", None, vec![]);
         j["state"] = json!("CLOSED");
         assert_eq!(
-            human_issue_rule_plan(&j, "reject", "human:reject"),
+            human_issue_rule_plan(&j, "reject", Some("human:reject")),
             HumanRulePlan::Moot
         );
         // An OPEN subject is never moot — a gate that refuses everything looks as green as one
@@ -48301,7 +48844,7 @@ mod human_rule_tests {
         record(human_pr_rule_plan(
             &pr("sha1", &[], vec![]),
             "reject",
-            "human:reject",
+            "ai:reject",
         ));
     }
 
@@ -48313,7 +48856,7 @@ mod human_rule_tests {
             let (.., skip) = record(human_pr_rule_plan(
                 &pr(sha, &[], vec![ruling_comment(anchor, ruling)]),
                 "reject",
-                "human:reject",
+                "ai:reject",
             ));
             skip
         };
@@ -48321,7 +48864,7 @@ mod human_rule_tests {
         assert!(!with("sha2", "sha1", "reject"), "head moved -> re-record");
         assert!(
             !with("sha1", "sha1", "design"),
-            "ruling changed -> re-record"
+            "ruling changed -> re-record: the two verbs share a label but not a record"
         );
         // A spoofed marker from another account never dedups a real ruling — the author is the
         // trust, the marker only selects the role.
@@ -48332,7 +48875,7 @@ mod human_rule_tests {
         let (.., skip) = record(human_pr_rule_plan(
             &pr("sha1", &[], vec![spoofed]),
             "reject",
-            "human:reject",
+            "ai:reject",
         ));
         assert!(!skip, "an untrusted comment must not dedup a ruling");
     }
@@ -48347,6 +48890,7 @@ mod human_rule_tests {
         let steps = human_rule_steps(
             &s(&["human:design"]),
             &s(&["ai:close-candidate"]),
+            true,
             false,
             false,
         );
@@ -48379,12 +48923,18 @@ mod human_rule_tests {
         );
         // Dedup drops the comment; an already-present label drops the add. Nothing else changes.
         assert_eq!(
-            human_rule_steps(&[], &[], true, true),
+            human_rule_steps(&[], &[], true, true, true),
             vec![RuleStep::EnsureLabel]
         );
         assert_eq!(
-            human_rule_steps(&[], &[], false, true),
+            human_rule_steps(&[], &[], true, false, true),
             vec![RuleStep::EnsureLabel, RuleStep::AddLabel]
+        );
+        // A COMMENT-ONLY ruling (#219, the issue-side design) has no label to ensure or add — its
+        // whole sequence is the comment plus whatever it clears.
+        assert_eq!(
+            human_rule_steps(&[], &[], false, false, false),
+            vec![RuleStep::Comment]
         );
     }
 
@@ -48396,7 +48946,7 @@ mod human_rule_tests {
     #[test]
     fn every_human_label_carries_the_orgs_live_colour_and_description() {
         let fallback = label_meta("ai:something-unknown");
-        for label in HUMAN_RULING_LABELS {
+        for label in HUMAN_ISSUE_RULINGS.iter().filter_map(|(_, t)| *t) {
             let meta = label_meta(label);
             assert_ne!(meta, fallback, "{label} falls through to the AI fallback");
             assert!(
@@ -48417,6 +48967,10 @@ mod human_rule_tests {
                 "Human decision: keep open (excluded from the close-candidate queue)"
             )
         );
+        // The DELETED `human:design` (#219) has no registration left: this table is consulted
+        // only for a label a transition is about to WRITE, and nothing writes it — `migrate-design`
+        // only ever removes it, so a row here would be a colour nothing can apply.
+        assert_eq!(label_meta("human:design"), fallback);
     }
 
     // --- the gh write seam: stdout is the MCP protocol -------------------------------------------
@@ -48464,6 +49018,7 @@ mod human_rule_tests {
             "o/r",
             "93",
             "human:keep-open",
+            false,
             "close-candidate @2026-07-17T21:23:11Z",
             &s(&["human:design"]),
             &s(&["ai:close-candidate"]),
@@ -48475,17 +49030,35 @@ mod human_rule_tests {
         assert!(r.contains("superseded human:design"), "{r}");
         assert!(r.contains("cleared ai:close-candidate"), "{r}");
         assert!(r.contains("comment posted"), "{r}");
+        assert!(!r.contains("no label"), "{r}");
         // Nothing moved, nothing claimed.
-        let r = human_rule_report("o/r", "1", "human:reject", "sha1", &[], &[], true, "");
+        let r = human_rule_report("o/r", "1", "ai:reject", false, "sha1", &[], &[], true, "");
         assert!(!r.contains("superseded"), "{r}");
         assert!(!r.contains("cleared"), "{r}");
         assert!(r.contains("comment deduped"), "{r}");
-        // The disposition tail says which of the two things the ruling DID — park or delegate —
-        // because that being invisible in the output is the #111 failure mode.
+        // A COMMENT-ONLY ruling says so out loud (#219): the caller has to see that the pinned
+        // comment IS the whole record, and the verb stands in for the label it does not write.
+        let r = human_rule_report(
+            "o/r",
+            "5",
+            "design",
+            true,
+            "issue @2026-01-01T00:00:00Z",
+            &[],
+            &[],
+            false,
+            " [work order posted — DELEGATED to the producer]",
+        );
+        assert!(r.contains("ruled design on o/r#5"), "{r}");
+        assert!(
+            r.contains("[no label — the pinned ruling comment is the record]"),
+            "{r}"
+        );
+        // The disposition tail says the ruling DELEGATED, because that being invisible in the
+        // output is the #111 failure mode.
         let delegate = RulingWork::Delegate("x".to_string());
         assert!(ruling_work_report(&delegate, false).contains("DELEGATED"));
         assert!(ruling_work_report(&delegate, true).contains("deduped"));
-        assert!(ruling_work_report(&RulingWork::Park, false).contains("PARKED"));
         assert_eq!(ruling_work_report(&RulingWork::Bare, false), "");
     }
 
@@ -48712,7 +49285,7 @@ mod human_rule_tests {
     #[test]
     fn each_step_invokes_the_gh_operation_it_names() {
         let argv = |step: &RuleStep, noun: &str| {
-            rule_step_argv(step, noun, "o/r", "93", "human:design", "body").join(" ")
+            rule_step_argv(step, noun, "o/r", "93", "human:keep-open", "body").join(" ")
         };
         assert_eq!(
             argv(&RuleStep::Close, "issue"),
@@ -48726,7 +49299,7 @@ mod human_rule_tests {
         );
         assert_eq!(
             argv(&RuleStep::AddLabel, "issue"),
-            "issue edit 93 -R o/r --add-label human:design"
+            "issue edit 93 -R o/r --add-label human:keep-open"
         );
         assert_eq!(
             argv(
@@ -48738,7 +49311,7 @@ mod human_rule_tests {
         // The label step is repo-scoped, never subject-scoped, so it carries no noun at all.
         let ensure = argv(&RuleStep::EnsureLabel, "issue");
         assert!(
-            ensure.starts_with("label create human:design -R o/r"),
+            ensure.starts_with("label create human:keep-open -R o/r"),
             "{ensure}"
         );
         assert!(ensure.ends_with("--force"), "{ensure}");
@@ -48747,7 +49320,7 @@ mod human_rule_tests {
         // Every failure names the half-state it leaves, so the caller knows what to re-run — except
         // EnsureLabel, which is best-effort and must NOT abort a ruling.
         assert_eq!(
-            rule_step_failure(&RuleStep::EnsureLabel, "o/r", "93", "human:design"),
+            rule_step_failure(&RuleStep::EnsureLabel, "o/r", "93", "human:keep-open"),
             None
         );
         for step in [
@@ -48756,13 +49329,14 @@ mod human_rule_tests {
             RuleStep::RemoveLabel("x".to_string()),
             RuleStep::Close,
         ] {
-            let (code, msg) = rule_step_failure(&step, "o/r", "93", "human:design").expect("named");
+            let (code, msg) =
+                rule_step_failure(&step, "o/r", "93", "human:keep-open").expect("named");
             assert_eq!(code, 1, "{step:?}");
             assert!(msg.contains("o/r#93"), "{step:?}: {msg}");
         }
         // The close's failure says the subject is ruled but still OPEN, and that a re-run finishes
         // it — the one half-state a caller can and must complete.
-        let (_, msg) = rule_step_failure(&RuleStep::Close, "o/r", "93", "human:design").unwrap();
+        let (_, msg) = rule_step_failure(&RuleStep::Close, "o/r", "93", "human:keep-open").unwrap();
         assert!(msg.contains("still open"), "{msg}");
         assert!(msg.contains("Re-run"), "{msg}");
     }
@@ -48784,13 +49358,14 @@ mod human_rule_tests {
         assert!(r.contains("[closed]"), "{r}");
         // It writes NO label (#213): no ruling vocabulary, on either subject, offers a close —
         // deciding one IS executing one, so a close state is unrepresentable in the machine.
-        for set in [&HUMAN_RULING_LABELS[..], &HUMAN_PR_RULING_LABELS[..]] {
-            assert!(
-                !set.iter()
-                    .any(|l| ruling_verb(l) == Some("close-candidate")),
-                "a close must not be writable as a standalone ruling: {set:?}"
-            );
-        }
+        assert!(
+            !human_rulings(&HUMAN_PR_RULINGS).contains(&"close-candidate"),
+            "a close must not be a standalone PR ruling verb"
+        );
+        assert!(
+            !human_rulings(&HUMAN_ISSUE_RULINGS).contains(&"close-candidate"),
+            "a close must not be a standalone issue ruling verb"
+        );
         // And the flag it retires is the one both populations share.
         assert_eq!(PENDING_CLOSE_FLAG, "ai:close-candidate");
     }
@@ -49335,7 +49910,7 @@ mod marketplace_tests {
     fn a_fence_language_tag_is_markdown_and_buys_a_command_nothing() {
         let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
         let grant = "Bash(pr-review-report human-rule:*)";
-        let order = "pr-review-report human-rule o/r 1 design note --park";
+        let order = "pr-review-report human-rule o/r 1 design note --rework \"do X\"";
         // Every spelling of the same block agrees — the tag changes nothing about what runs.
         for fence in ["```", "```text", "```console", "```sh"] {
             assert_eq!(
@@ -49352,7 +49927,7 @@ mod marketplace_tests {
         let raw = command_check(
             &command(
                 grant,
-                &format!("```text\n{order}\ngh pr edit 1 --add-label human:design\n```"),
+                &format!("```text\n{order}\ngh pr edit 1 --add-label ai:reject\n```"),
             ),
             &grantable,
         )
@@ -51534,13 +52109,10 @@ mod mcp_tests {
                 .map(|v| v.as_str().unwrap().to_string())
                 .collect()
         };
-        assert_eq!(
-            enum_of("human_rule"),
-            human_rulings(&HUMAN_PR_RULING_LABELS)
-        );
+        assert_eq!(enum_of("human_rule"), human_rulings(&HUMAN_PR_RULINGS));
         assert_eq!(
             enum_of("human_rule_issue"),
-            human_rulings(&HUMAN_RULING_LABELS)
+            human_rulings(&HUMAN_ISSUE_RULINGS)
         );
         for name in ["human_rule", "human_rule_issue"] {
             let t = tools.iter().find(|t| t["name"] == json!(name)).unwrap();
@@ -51553,7 +52125,21 @@ mod mcp_tests {
             // The note is REQUIRED by the schema: an unexplained ruling cannot be proposed.
             assert!(required.contains(&"note"), "{name} may omit its note");
             assert!(required.contains(&"ruling"), "{name} may omit its ruling");
+            // There is no park input on any surface (#219).
+            assert!(
+                t["inputSchema"]["properties"].get("park").is_none(),
+                "{name} still offers a park input"
+            );
         }
+        // The PR surface makes the send-back whole by schema: the work order cannot be omitted.
+        let t = tools
+            .iter()
+            .find(|t| t["name"] == json!("human_rule"))
+            .unwrap();
+        assert!(t["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("rework")));
     }
 
     // The guard maps a well-formed human ruling to a validated call, and refuses the malformed ones
@@ -51607,22 +52193,19 @@ mod mcp_tests {
                 json!({"pr": "93", "ruling": "reject", "note": "x", "rework": "x"}),
                 "bad pr ref",
             ),
-            // The #111 park-or-delegate matrix, enforced at the same before-any-effect guard:
+            // The disposition matrix (#111/#219), enforced at the same before-any-effect guard:
             (
                 json!({"pr": "o/r#1", "ruling": "reject", "note": "x"}),
                 "a bare reject — a reject IS a send-back, the work order is required",
             ),
             (
-                json!({"pr": "o/r#1", "ruling": "reject", "note": "x", "park": true, "rework": "x"}),
-                "reject with park beside the order",
-            ),
-            (
                 json!({"pr": "o/r#1", "ruling": "design", "note": "x"}),
-                "a bare design — park is never what you get by forgetting",
+                "a bare design — the ruling IS its answer, and there is no parked spelling",
             ),
             (
-                json!({"pr": "o/r#1", "ruling": "design", "note": "x", "park": true, "rework": "x"}),
-                "design with both spellings",
+                json!({"pr": "o/r#1", "ruling": "design", "note": "x", "park": true}),
+                "park is not an input on any surface (#219) — an unread key changes nothing, \
+                 and the missing work order still refuses",
             ),
             (
                 json!({"pr": "o/r#1", "ruling": "reject", "note": "x", "rework": "  "}),
@@ -51632,17 +52215,13 @@ mod mcp_tests {
                 json!({"pr": "o/r#1", "ruling": "close-candidate", "note": "x", "rework": "x"}),
                 "close-candidate takes no work order (human-close is its consumer)",
             ),
-            (
-                json!({"pr": "o/r#1", "ruling": "close-candidate", "note": "x", "park": true}),
-                "close-candidate takes no park flag (the verb is its own disposition)",
-            ),
         ] {
             let resp = g.handle(&call("human_rule", args)).unwrap();
             assert!(is_error(&resp), "{why} must be refused");
         }
         assert!(g.calls().is_empty(), "a refused ruling reached an effect");
 
-        // The two dispositions that ARE legal on design, each validating to its own work value.
+        // The ONE disposition legal on design: the answer, delegated as the work order.
         let d = FakeExec {
             profile: McpProfile::Human,
             ..FakeExec::ok()
@@ -51650,11 +52229,6 @@ mod mcp_tests {
         d.handle(&call(
             "human_rule",
             json!({"pr": "o/r#2", "ruling": "design", "note": "n", "rework": "do X"}),
-        ))
-        .unwrap();
-        d.handle(&call(
-            "human_rule",
-            json!({"pr": "o/r#2", "ruling": "design", "note": "n", "park": true}),
         ))
         .unwrap();
         let works: Vec<RulingWork> = d
@@ -51665,10 +52239,7 @@ mod mcp_tests {
                 other => panic!("unexpected call {other:?}"),
             })
             .collect();
-        assert_eq!(
-            works,
-            vec![RulingWork::Delegate("do X".to_string()), RulingWork::Park]
-        );
+        assert_eq!(works, vec![RulingWork::Delegate("do X".to_string())]);
 
         // The issue tool takes `issue`, not `pr`, and accepts the wider vocabulary.
         let h = FakeExec {
@@ -54646,17 +55217,18 @@ mod infra_down_tests {
                 RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
             )
         );
-        // …and a human decision still dominates it.
+        // …and a human decision still dominates it (the retired `human:reject`, the lane's one
+        // remaining state — the deleted `human:design` is no decision at all, #219).
         assert_eq!(
             classify_lane(
                 &[
-                    "human:design".to_string(),
+                    RETIRED_HUMAN_REJECT_LABEL.to_string(),
                     RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
                 ],
                 None,
                 false
             ),
-            (Lane::HumanDecisions, "human:design".to_string())
+            (Lane::HumanDecisions, RETIRED_HUMAN_REJECT_LABEL.to_string())
         );
     }
 
@@ -54679,10 +55251,15 @@ mod infra_down_tests {
             &["ai:ready".to_string(), "ai:design".to_string()],
             false
         ));
+        // The DELETED `human:design` (#219) dominates nothing: it is not a state, so the fetch
+        // beside an `ai:ready` still decides the lane.
+        assert!(needs_verdict_currency(
+            &["ai:ready".to_string(), "human:design".to_string()],
+            false
+        ));
         // Everything that returns ahead of the `ai:ready` branch makes the call dead weight —
         // including the close-candidate hand-off (#211), whose subjects the flag machinery owns.
         for dominating in [
-            "human:design",
             RETIRED_HUMAN_REJECT_LABEL,
             "ai:close-candidate",
             RETIRED_BLOCKED_DEPLOY_LABEL,
@@ -55484,16 +56061,12 @@ mod weaken_closes_tests {
     }
 }
 
-/// #111 — the human's ruling can DELEGATE, not only park, and the `human:*` namespace protects
-/// AUTHORSHIP rather than parking absolutely. Two halves under test:
-///
-/// - MECHANISM: one `human-rule` call emits the ruling (provenance, pinned forever) AND the work
-///   order (a trusted `Rework note`, spent by execution) as two distinct records, and the emitted
-///   order round-trips through the producer's own verification function — the `trusted_comments`
-///   marker read the campaign prompt names.
-/// - MODEL: an executed delegation is CONSUMED by the machine (worklist routes the order, the
-///   re-vet clears the spent label), while authorship protection is intact — no AI actor writes a
-///   `human:*` label, none removes one as an override, and the absolute parks stay absolute.
+/// #111/#219 — the human's ruling DELEGATES: one `human-rule` call emits the ruling (provenance,
+/// pinned forever) AND the work order (a trusted `Rework note`, spent by execution) as two
+/// distinct records, the emitted order round-trips through the producer's own verification
+/// function — the `trusted_comments` marker read the campaign prompt names — and the `human:*`
+/// namespace protects AUTHORSHIP: no AI actor writes a `human:*` label, none removes one, and the
+/// ruling's release is its own anchor going stale when the producer pushes.
 #[cfg(test)]
 mod delegation_111_tests {
     use super::*;
@@ -55520,7 +56093,8 @@ mod delegation_111_tests {
     // The round-trip the issue asks for: the tool's emitted comment, read back through the EXACT
     // call shape the producer's prompt mandates (`trusted-comments … --marker 'Rework note'`, a
     // `starts_with` match inside `trusted_comments`). A typo'd marker was invisible-failure —
-    // `Rework Note` silently parked the PR — so the marker is a constant only the builder writes.
+    // `Rework Note` left the producer a send-back with no readable order — so the marker is a
+    // constant only the builder writes.
     #[test]
     fn the_emitted_work_order_passes_the_producers_own_verification() {
         let body = rework_note_comment(HEAD, "  drop the duplicated hunk; keep the leg-1 test  ");
@@ -55549,7 +56123,7 @@ mod delegation_111_tests {
     }
 
     // The marker is the campaign prompt's exact spelling, and the prompt still teaches the read.
-    // Failing this means the tool and the producer verify different strings — the silent-park bug
+    // Failing this means the tool and the producer verify different strings — the silent-miss bug
     // reintroduced one level up.
     #[test]
     fn the_marker_is_the_prompts_exact_spelling() {
@@ -55564,8 +56138,13 @@ mod delegation_111_tests {
             "the producer prompt must still teach the Rework note work-order read"
         );
         assert!(
-            prompt.contains("rework-ruling"),
-            "the producer prompt must dispatch the worklist's rework-ruling rows"
+            !prompt.contains("rework-ruling"),
+            "the worklist no longer routes rework-ruling (#219) — a prompt that dispatches it \
+             teaches a row that never comes"
+        );
+        assert!(
+            !prompt.contains("human:design"),
+            "the deleted state must not survive in the producer's instructions (#219)"
         );
     }
 
@@ -55583,7 +56162,7 @@ mod delegation_111_tests {
             "neither record embeds the other's marker"
         );
         let steps = with_rework_note(
-            human_rule_steps(&["human:design".to_string()], &[], false, false),
+            human_rule_steps(&["human:design".to_string()], &[], true, false, false),
             Some(order.clone()),
         );
         assert_eq!(
@@ -55598,14 +56177,17 @@ mod delegation_111_tests {
             "ruling comment FIRST, work order second, labels after"
         );
         // A deduped ruling (re-run) still posts the order first in line.
-        let steps = with_rework_note(human_rule_steps(&[], &[], true, true), Some(order.clone()));
+        let steps = with_rework_note(
+            human_rule_steps(&[], &[], true, true, true),
+            Some(order.clone()),
+        );
         assert_eq!(
             steps,
             vec![RuleStep::ReworkNote(order.clone()), RuleStep::EnsureLabel]
         );
         // No order → the step list is untouched.
         assert_eq!(
-            with_rework_note(human_rule_steps(&[], &[], true, true), None),
+            with_rework_note(human_rule_steps(&[], &[], true, true, true), None),
             vec![RuleStep::EnsureLabel]
         );
         // The step's argv is a plain comment post — the same `gh` surface as the ruling comment.
@@ -55614,10 +56196,12 @@ mod delegation_111_tests {
             rule_step_argv(&step, "pr", "o/r", "9", "ai:reject", "unused"),
             vec!["pr", "comment", "9", "-R", "o/r", "--body", order.as_str()]
         );
-        // And its failure is LOUD about the half-state: ruling recorded, order missing = the PR
-        // reads as parked, which is exactly the invisible failure #111 exists to remove.
+        // And its failure is LOUD about the half-state: ruling recorded, order missing = a
+        // send-back the producer cannot execute, which is exactly the invisible failure #111
+        // exists to remove.
         let (_, msg) = rule_step_failure(&step, "o/r", "9", "ai:reject").expect("a real failure");
-        assert!(msg.contains("PARKED"), "{msg}");
+        assert!(msg.contains("no trusted order"), "{msg}");
+        assert!(msg.contains("Re-run"), "{msg}");
     }
 
     // Identical re-run is a no-op; a CHANGED order at the same anchor is a new instruction.
@@ -55636,60 +56220,67 @@ mod delegation_111_tests {
         ));
     }
 
-    // ---- MECHANISM: park-or-delegate is explicit at the point of ruling -------------------------
-
-    // The issue's check, as a matrix: one command delegates, one parks, and it is impossible to
-    // intend the first and get the second — a bare reject/design REFUSES rather than parking by
-    // accident, and every refusal names the legal spelling.
+    // The pin parser survives the delegation classifier it once fed: `migrate-design` reads it to
+    // find a live order at the head, and the producer's freshness read depends on the same
+    // answers. An unpinned legacy note and an empty pin both name no tree, so neither may ever be
+    // taken as current.
     #[test]
-    fn park_or_delegate_is_an_explicit_choice_never_a_default() {
-        // reject IS a send-back: the order is required, park is not offered.
+    fn the_work_order_pin_parses_and_unpinnable_notes_name_no_tree() {
         assert_eq!(
-            ruling_work("reject", Some("do X".to_string()), false),
+            rework_note_anchor(&rework_note_comment(HEAD, "do X")).as_deref(),
+            Some(HEAD)
+        );
+        assert_eq!(rework_note_anchor("Rework note: drop the dup hunk"), None);
+        assert_eq!(rework_note_anchor("Rework note @: do X"), None);
+        assert_eq!(rework_note_anchor("Rework note @   : do X"), None);
+    }
+
+    // ---- MECHANISM: the disposition is explicit at the point of ruling --------------------------
+
+    // The matrix (#111/#219): both PR verbs delegate, nothing parks, and every refusal names the
+    // legal spelling. There is no spelling by which a ruling can park a subject — a question still
+    // open is already the `ai:design` state.
+    #[test]
+    fn a_ruling_delegates_and_nothing_parks() {
+        // reject IS a send-back: the order is required.
+        assert_eq!(
+            ruling_work("reject", Some("do X".to_string())),
             Ok(RulingWork::Delegate("do X".to_string()))
         );
-        let (code, msg) = ruling_work("reject", None, false).unwrap_err();
+        let (code, msg) = ruling_work("reject", None).unwrap_err();
         assert_eq!(code, 2);
         assert!(msg.contains("--rework"), "{msg}");
         assert!(
             msg.contains("close-candidate") && msg.contains("human-close"),
-            "the refusal must name the states that DO park/close: {msg}"
+            "the refusal must name the rulings that DO close: {msg}"
         );
-        let (_, msg) = ruling_work("reject", None, true).unwrap_err();
-        assert!(
-            msg.contains("--rework"),
-            "a parked reject is not a state: {msg}"
-        );
-        assert!(ruling_work("reject", Some("x".to_string()), true).is_err());
-        // design: exactly one of the two spellings.
+        // design is the SAME send-back (#219): the answer is required, and there is no --park.
         assert_eq!(
-            ruling_work("design", Some("do X".to_string()), false),
+            ruling_work("design", Some("do X".to_string())),
             Ok(RulingWork::Delegate("do X".to_string()))
         );
-        assert_eq!(ruling_work("design", None, true), Ok(RulingWork::Park));
-        let (code, msg) = ruling_work("design", None, false).unwrap_err();
+        let (code, msg) = ruling_work("design", None).unwrap_err();
         assert_eq!(code, 2);
+        assert!(msg.contains("--rework"), "{msg}");
         assert!(
-            msg.contains("--rework") && msg.contains("--park"),
-            "a bare design must name BOTH spellings: {msg}"
+            !msg.contains("--park"),
+            "there is no parked spelling to offer: {msg}"
         );
-        assert!(ruling_work("design", Some("x".to_string()), true).is_err());
-        // A blank order is the parked state wearing the delegated one's name.
-        assert!(ruling_work("reject", Some("   ".to_string()), false).is_err());
-        assert!(ruling_work("design", Some("".to_string()), false).is_err());
+        assert!(
+            msg.contains("ai:design"),
+            "the refusal names where an unanswered question already lives: {msg}"
+        );
+        // A blank order is a send-back with nothing to execute.
+        assert!(ruling_work("reject", Some("   ".to_string())).is_err());
+        assert!(ruling_work("design", Some("".to_string())).is_err());
         // close-candidate: the verb is its own disposition, and the rework refusal names its
         // consuming transition (human-close) rather than only saying no.
-        assert_eq!(
-            ruling_work("close-candidate", None, false),
-            Ok(RulingWork::Bare)
-        );
-        let (_, msg) = ruling_work("close-candidate", Some("x".to_string()), false).unwrap_err();
+        assert_eq!(ruling_work("close-candidate", None), Ok(RulingWork::Bare));
+        let (_, msg) = ruling_work("close-candidate", Some("x".to_string())).unwrap_err();
         assert!(msg.contains("human-close"), "{msg}");
-        assert!(ruling_work("close-candidate", None, true).is_err());
         // keep-open likewise.
-        assert_eq!(ruling_work("keep-open", None, false), Ok(RulingWork::Bare));
-        assert!(ruling_work("keep-open", Some("x".to_string()), false).is_err());
-        assert!(ruling_work("keep-open", None, true).is_err());
+        assert_eq!(ruling_work("keep-open", None), Ok(RulingWork::Bare));
+        assert!(ruling_work("keep-open", Some("x".to_string())).is_err());
         // The CLI's file spelling resolves to the same text path.
         assert_eq!(
             cli_rework_text(Some("t".to_string()), None),
@@ -55699,7 +56290,7 @@ mod delegation_111_tests {
         assert!(cli_rework_text(None, Some("/no/such/file-111".to_string())).is_err());
     }
 
-    // The CLI accepts the new spellings (and clap refuses the contradictory pair outright).
+    // The CLI accepts the work-order spellings (and clap refuses carrying both at once).
     #[test]
     fn the_cli_carries_the_work_order_spellings() {
         use clap::Parser;
@@ -55714,10 +56305,6 @@ mod delegation_111_tests {
             "do X"
         ])
         .is_ok());
-        assert!(
-            Cli::try_parse_from(["prr", "human-rule", "o/r", "1", "design", "note", "--park"])
-                .is_ok()
-        );
         assert!(Cli::try_parse_from([
             "prr",
             "human-rule-issue",
@@ -55745,124 +56332,36 @@ mod delegation_111_tests {
         .is_err());
     }
 
-    // ---- MODEL: the delegation discriminant -----------------------------------------------------
+    // ---- MODEL: sacredness is authorship and currency, decidable from labels + head -------------
 
     #[test]
-    fn design_delegation_reads_the_pin_against_the_head() {
-        // No note → the explicit park.
-        assert_eq!(
-            design_delegation(&pr(&[], vec![], HEAD), HEAD),
-            Delegation::Parked
-        );
-        // Note pinned to the CURRENT head → the producer's outstanding order.
-        let ordered = pr(&[], vec![trusted(&rework_note_comment(HEAD, "do X"))], HEAD);
-        assert_eq!(design_delegation(&ordered, HEAD), Delegation::Ordered);
-        // The SAME PR after the producer pushes: the pin now names a superseded head → executed.
-        assert_eq!(design_delegation(&ordered, OLD), Delegation::Executed);
-        // A legacy unpinned note proves a delegation but not FOR WHICH tree → fail-safe park.
-        let unpinned = pr(&[], vec![trusted("Rework note: drop the dup hunk")], HEAD);
-        assert_eq!(design_delegation(&unpinned, HEAD), Delegation::Parked);
-        // …unless a pinned order at the current head is ALSO present.
-        let mixed = pr(
-            &[],
-            vec![
-                trusted("Rework note: drop the dup hunk"),
-                trusted(&rework_note_comment(HEAD, "do X")),
-            ],
-            HEAD,
-        );
-        assert_eq!(design_delegation(&mixed, HEAD), Delegation::Ordered);
-        // A pinned-elsewhere order beside an unpinnable one stays parked (cannot prove execution).
-        assert_eq!(design_delegation(&mixed, OLD), Delegation::Parked);
-        // No head to compare against → parked, never executed.
-        assert_eq!(design_delegation(&ordered, ""), Delegation::Parked);
-        // A spoofed order (untrusted author) is body text, not a delegation.
-        let spoofed = pr(
-            &[],
-            vec![json!({"author": {"login": "mallory"},
-                        "body": rework_note_comment(HEAD, "do X")})],
-            HEAD,
-        );
-        assert_eq!(design_delegation(&spoofed, HEAD), Delegation::Parked);
-        // An EMPTY pin names no tree either. `Rework note @: …` and `Rework note @   : …` carry
-        // the marker and the `@` but nothing to compare a head against, so they parse to NO
-        // anchor and fail-safe to parked at every head — the same answer as the unpinned legacy
-        // shape, for the same reason. The distinction that matters is against `Executed`: a note
-        // that read as pinned-but-empty would name a head no push can ever match, so the FIRST
-        // push past it would classify the delegation as executed and let the re-vet clear a
-        // `human:design` no producer was ever ordered to work.
-        assert_eq!(rework_note_anchor("Rework note @: do X"), None);
-        assert_eq!(rework_note_anchor("Rework note @   : do X"), None);
-        for body in ["Rework note @: do X", "Rework note @   : do X"] {
-            let blank_pin = pr(&[], vec![trusted(body)], HEAD);
-            assert_eq!(
-                design_delegation(&blank_pin, HEAD),
-                Delegation::Parked,
-                "{body} is not an order at the current head"
-            );
-            assert_eq!(
-                design_delegation(&blank_pin, OLD),
-                Delegation::Parked,
-                "{body} is not an executed delegation once the head moves"
-            );
-        }
-    }
-
-    // ---- MODEL: the narrowed sacred gate --------------------------------------------------------
-
-    // The #157 partition lesson, applied to the adjacent gates: the human PR namespace splits
-    // EXACTLY into the absolute parks and the execution-consumable state — no label in both, none
-    // in neither. A label added to the namespace must land in exactly one, or the gates disagree.
-    #[test]
-    fn the_human_namespace_partitions_into_absolute_and_consumable() {
-        let absolute: std::collections::BTreeSet<&str> =
-            PR_PARKED_HUMAN_LABELS.iter().copied().collect();
-        let consumable: std::collections::BTreeSet<&str> =
-            ["human:design"].iter().copied().collect();
-        let sacred: std::collections::BTreeSet<&str> = PR_SACRED_LABELS.iter().copied().collect();
-        assert!(
-            absolute.is_disjoint(&consumable),
-            "a label cannot be both absolutely parked and consumable"
-        );
-        let union: std::collections::BTreeSet<&str> =
-            absolute.union(&consumable).copied().collect();
-        assert_eq!(
-            union, sacred,
-            "every write-protected label is exactly one of absolute-park / consumable"
-        );
-    }
-
-    #[test]
-    fn sacredness_narrows_to_authorship_and_currency() {
+    fn sacredness_is_authorship_and_currency() {
         let order = rework_note_comment(HEAD, "do X");
-        // design + outstanding order at head: the producer's move, still sacred to the vetter.
+        // A ruling pinned to the CURRENT head is sacred whichever verb ruled: the decision
+        // describes the code that is there, and the producer's execution is what releases it.
         let ruled = vec![
             trusted(&human_rule_comment(HEAD, "design", "answered")),
             trusted(&order),
         ];
-        let pending = pr(&["human:design"], ruled.clone(), HEAD);
+        let pending = pr(&["ai:reject"], ruled.clone(), HEAD);
         assert!(pr_human_sacred(&pending, HEAD));
-        // …the producer pushes (head moves): EXECUTED, and the PR is consumable — un-vetted.
-        let executed = pr(&["human:design"], ruled, OLD);
+        // …the producer pushes (head moves): the ruling goes stale by itself and the PR is
+        // consumable — un-vetted through the ordinary path.
+        let executed = pr(&["ai:reject"], ruled, OLD);
         assert!(
             !pr_human_sacred(&executed, OLD),
-            "an executed delegation is the machine's to consume, not a lock"
+            "a stale ruling is the machine's to consume, not a lock"
         );
         let (action, _, row) = unvetted_row("o/r", 9, "u", "t", &executed);
         assert_eq!(action, VetAction::Vet, "{row}");
-        // design with NO order: the explicit park — sacred until the human supersedes it.
-        let parked = pr(
-            &["human:design"],
-            vec![trusted(&human_rule_comment(HEAD, "design", "hold this"))],
-            OLD,
-        );
-        assert!(pr_human_sacred(&parked, OLD));
-        assert_eq!(
-            vet_action(false, pr_human_sacred(&parked, OLD), false),
-            VetAction::SkipHuman
-        );
-        // The ABSOLUTE parks stay absolute even beside an executed-looking order.
-        for label in PR_PARKED_HUMAN_LABELS {
+        // The DELETED `human:design` label parks nothing (#219): the state is gone, so residue
+        // still wearing it neither blocks the vetter nor hides from the un-vetted queue.
+        let residue = pr(&["human:design"], vec![], HEAD);
+        assert!(!pr_human_sacred(&residue, HEAD));
+        assert!(!has_human_override(&residue));
+        // The sacred labels park absolutely, whatever the comments say — decidable from labels
+        // alone, which is what lets the vetter's pre-filter skip without a fetch.
+        for label in PR_SACRED_LABELS {
             let absolute = pr(
                 &[label],
                 vec![trusted(&rework_note_comment(HEAD, "do X"))],
@@ -55870,68 +56369,54 @@ mod delegation_111_tests {
             );
             assert!(
                 pr_human_sacred(&absolute, OLD),
-                "{label} must park absolutely — its consumer is the human's own transition"
+                "{label} must park absolutely — its exit is the migration"
             );
-            assert!(pr_absolutely_parked(&absolute));
+            assert!(has_human_override(&absolute));
         }
-        // A native human review outranks everything, execution included.
-        let mut reviewed = pr(&["human:design"], vec![trusted(&order)], OLD);
+        // A native human review outranks everything.
+        let mut reviewed = pr(&[], vec![trusted(&order)], OLD);
         reviewed["reviewDecision"] = json!("CHANGES_REQUESTED");
         assert!(pr_human_sacred(&reviewed, OLD));
-        // And the cheap pre-filter is decidable from labels alone ONLY for the absolute set.
-        assert!(!pr_absolutely_parked(&pr(&["human:design"], vec![], HEAD)));
     }
 
-    // ---- MODEL: clearing-by-execution is the verdict's, and ONLY on an executed delegation ------
+    // ---- MODEL: the verdict write never touches the human namespace -----------------------------
 
     #[test]
-    fn the_re_vet_clears_an_executed_design_as_completion() {
-        let ruled_at_old = vec![
-            trusted(&human_rule_comment(OLD, "design", "answered: do X")),
-            trusted(&rework_note_comment(OLD, "do X")),
-        ];
-        // Executed (head moved past the order): the verdict RECORDS, and the spent label rides
-        // to_remove with the stale ai:* — the completion of the ruling, not an override.
-        let mut executed = pr(&["human:design", "ai:ready"], ruled_at_old.clone(), HEAD);
-        executed["reviewDecision"] = json!(null);
-        match verdict_plan(&executed, "ai:ready", "ready") {
+    fn a_verdict_neither_refuses_on_nor_clears_the_deleted_design_label() {
+        // Residue `human:design` beside a stale ai:*: the verdict RECORDS (the label is not
+        // sacred — the state is deleted) and its sweep touches ONLY the ai:* namespace: the
+        // residue label is `migrate-design`'s to move, not the vetter's.
+        let residue = pr(&["human:design", "ai:ready"], vec![], HEAD);
+        match verdict_plan(&residue, "ai:reject", "reject") {
             VerdictPlan::Record { to_remove, .. } => {
-                assert!(
-                    to_remove.contains(&"human:design".to_string()),
-                    "the executed delegation is cleared by the verdict: {to_remove:?}"
+                assert_eq!(
+                    to_remove,
+                    vec!["ai:ready".to_string()],
+                    "only the ai:* namespace is the verdict's to sweep"
                 );
             }
-            other => panic!("an executed delegation must be recordable, got {other:?}"),
+            other => panic!("a residue label must not block a verdict, got {other:?}"),
         }
-        // Un-executed (order still at head): REFUSED — the decision is current.
-        let pending = pr(
-            &["human:design"],
-            vec![
-                trusted(&human_rule_comment(HEAD, "design", "answered")),
-                trusted(&rework_note_comment(HEAD, "do X")),
-            ],
+        // A ruling at the CURRENT head still refuses — currency, not the label, is the guard.
+        let ruled_now = pr(
+            &["ai:reject"],
+            vec![trusted(&human_rule_comment(HEAD, "design", "answered"))],
             HEAD,
         );
         assert_eq!(
-            verdict_plan(&pending, "ai:ready", "ready"),
+            verdict_plan(&ruled_now, "ai:ready", "ready"),
             VerdictPlan::RefuseHuman
         );
-        // Parked (no order): REFUSED — no execution has spent the ruling.
-        let parked = pr(&["human:design"], vec![], HEAD);
-        assert_eq!(
-            verdict_plan(&parked, "ai:ready", "ready"),
-            VerdictPlan::RefuseHuman
-        );
-        // The absolute parks refuse whatever the comments say.
-        for label in PR_PARKED_HUMAN_LABELS {
-            let absolute = pr(&[label], ruled_at_old.clone(), HEAD);
+        // The sacred labels refuse whatever the comments say.
+        for label in PR_SACRED_LABELS {
+            let absolute = pr(&[label], vec![], HEAD);
             assert_eq!(
                 verdict_plan(&absolute, "ai:ready", "ready"),
                 VerdictPlan::RefuseHuman,
                 "{label}"
             );
         }
-        // And a plain PR's plan gained nothing: no human:design, nothing extra to remove.
+        // And a plain PR's plan is the ordinary one-state sweep.
         let plain = pr(&["ai:reject"], vec![], HEAD);
         match verdict_plan(&plain, "ai:ready", "ready") {
             VerdictPlan::Record { to_remove, .. } => {
@@ -55941,7 +56426,7 @@ mod delegation_111_tests {
         }
     }
 
-    // ---- MODEL: the producer's state-load consumes the order --------------------------------
+    // ---- MODEL: the producer's state-load has ONE send-back channel -----------------------------
 
     fn wl_detail(labels: &[&str], comments: Vec<Value>, head: &str, conclusion: &str) -> Value {
         json!({
@@ -55956,34 +56441,30 @@ mod delegation_111_tests {
     }
 
     #[test]
-    fn worklist_routes_an_ordered_ruling_to_the_producer_and_parks_the_rest() {
+    fn worklist_has_no_design_routing_and_the_sacred_labels_still_park() {
         let ruling = trusted(&human_rule_comment(HEAD, "design", "answered: do X"));
         let order = trusted(&rework_note_comment(HEAD, "do X"));
-        // Outstanding order at the current head → the producer's work order, over any CI state.
-        let row = wl_detail(
+        // Residue `human:design` with a live order: NO rework-ruling row exists any more — the
+        // row classifies from CI like any other PR, and the send-back channel is the `ai:reject`
+        // label the migration (or a fresh ruling) puts on it.
+        let residue = wl_detail(
             &["human:design"],
             vec![ruling.clone(), order.clone()],
             HEAD,
             "FAILURE",
         );
-        let out = worklist_row("o/r", &row);
-        assert_eq!(out["nextAction"], "rework-ruling");
-        assert_eq!(out["humanWorkOrder"], true);
-        assert_eq!(out["humanOverride"], true);
-        // The producer pushed (head moved): executed — ordinary fleet duty again (here: a red to
-        // fix via 3b while the vetter re-judges), NOT parked and NOT still ordered.
-        let pushed = wl_detail(
-            &["human:design"],
-            vec![ruling.clone(), order.clone()],
-            "NEWHEADNEWHEADNEWHEADNEWHEADNEWHEADNEWH",
-            "FAILURE",
+        let out = worklist_row("o/r", &residue);
+        assert_eq!(out["nextAction"], "needs-3b");
+        assert!(
+            out.get("humanWorkOrder").is_none(),
+            "the delegated-design signal is gone from the row"
         );
-        assert_eq!(worklist_row("o/r", &pushed)["nextAction"], "needs-3b");
-        // The explicit park (no order): not the producer's to touch.
-        let parked = wl_detail(&["human:design"], vec![ruling], HEAD, "SUCCESS");
-        assert_eq!(worklist_row("o/r", &parked)["nextAction"], "parked-skip");
-        // The absolute parks park, order or no order.
-        for label in PR_PARKED_HUMAN_LABELS {
+        assert_eq!(
+            out["humanOverride"], false,
+            "the deleted label is no human hold"
+        );
+        // The sacred labels park, order or no order.
+        for label in PR_SACRED_LABELS {
             let absolute = wl_detail(&[label], vec![order.clone()], HEAD, "SUCCESS");
             assert_eq!(
                 worklist_row("o/r", &absolute)["nextAction"],
@@ -55995,12 +56476,11 @@ mod delegation_111_tests {
 
     // ---- MODEL: authorship protection is intact -------------------------------------------------
 
-    // Narrowing the gate must not have widened what an AI actor can WRITE: the vetter's verdict
-    // vocabulary still reaches no `human:*` label, and the ONLY `human:*` removal an AI transition
-    // performs is the spent `human:design` of an executed delegation. `labels_to_remove` itself —
-    // shared by every verdict write and the flag transitions — still never strips `human:*`.
+    // The vetter's verdict vocabulary reaches no `human:*` label, and `labels_to_remove` — shared
+    // by every verdict write and the flag transitions — never strips `human:*`: since #219 NO AI
+    // transition removes a human label at all; the migrations are the only movers.
     #[test]
-    fn no_ai_actor_writes_a_human_label_and_only_execution_clears_one() {
+    fn no_ai_actor_writes_or_removes_a_human_label() {
         for v in VETTER_VERDICTS {
             let label = format!("ai:{v}");
             assert!(
