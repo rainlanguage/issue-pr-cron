@@ -75,8 +75,10 @@ stateDiagram-v2
     %% split release lifecycle NO merge waits on a deploy, so a deploy-shaped block (red prod-pin,
     %% legacy redeploy marker) is evidence the REPO has not migrated — flagged blocked-on with the
     %% repo's migration issue/PR as its typed dep (filed if none exists), never a deploy. The
-    %% residue PRs still carrying the retired label stay visible in human-queue until each is
-    %% re-flagged (or unblocked) by an eyes-on human pass.
+    %% residue PRs still carrying the retired label stay visible in human-queue until
+    %% migrate-blocked-deploy (#221) — a one-shot MIGRATION, not a live transition — moves each
+    %% to ai:reject with the split-lifecycle rework order; whatever states follow the rework are
+    %% the producer's ordinary transitions.
     unvetted --> bon : flag-blocked-on --blocked-by owner/repo#n · waiting on dependency PRs, incl. the repo's lifecycle migration
     unvetted --> design : flag-design · anything a human must answer or supply
     bon --> unvetted : vetter clears · every typed dep merged/closed → re-vet fresh
@@ -189,7 +191,11 @@ that has already happened:
   MIGRATION rather than a transition of the running FSM: `migrate-reject` moves
   the PRs still carrying the `human:reject` #133 retired onto `ai:reject` — a
   one-shot over a fixed, shrinking population, which is why it is not one of the
-  two paths a live ruling can take;
+  two paths a live ruling can take. `migrate-blocked-deploy` (#221) sits in the
+  same migrations-not-transitions register, over the other retired residue:
+  every open PR still carrying the `ai:blocked-deploy` #162 retired moves to
+  `ai:reject`, with the sha-pinned ruling comment and the trusted `Rework note`
+  carrying the split-release-lifecycle work order posted in the same write;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:reject` sat on an issue whose producer close-candidate flag had not
@@ -1345,8 +1351,10 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   `ai:blocked-infra` (#108), each for as long as any PR still carries it. The
   blocked-deploy residue is deliberately **not** vet-lifecycle: the #164
   clearance reads exactly `ai:blocked-on` typed refs, which this residue does
-  not have — its exit is an eyes-on human pass that re-flags each PR blocked-on
-  its repo's migration, or unblocks it outright.
+  not have — its exit is the `migrate-blocked-deploy` one-shot (#221), which
+  moves each residue PR to `ai:reject` with the split-lifecycle rework order.
+  That count is the migration's progress meter and it only ever shrinks; the
+  producer is the mover from the moment of migration.
 - **human-decisions** — `human:design`, plus the RETIRED `human:reject` for as
   long as any PR still carries it (#133). That last count is the migration's
   progress meter: `migrate-reject` moves those PRs to `ai:reject` and it only
