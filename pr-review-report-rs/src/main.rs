@@ -1473,9 +1473,10 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
 
 /// Org scope for org-wide `gh search` — the SINGLE source of truth is the `ORGS` env var
 /// (space- or comma-separated), exported from cron.env by the run scripts, so the queue covers
-/// exactly the orgs the prompts do. Falls back to the historical default pair when unset (so a
-/// bare local invocation still works). Returns flattened `--owner <org>` args, ready to splice
-/// into a `gh search` arg list.
+/// exactly the orgs the prompts do. Falls back to the pipeline's full org scope when unset, so a
+/// bare invocation — a local run, or the plugin MCP server which launches with no env — answers
+/// for the same population the crons do rather than a silent subset of it. Returns flattened
+/// `--owner <org>` args, ready to splice into a `gh search` arg list.
 fn org_names(raw: &str) -> Vec<String> {
     let orgs: Vec<String> = raw
         .split(|c: char| c.is_whitespace() || c == ',')
@@ -1483,7 +1484,11 @@ fn org_names(raw: &str) -> Vec<String> {
         .map(String::from)
         .collect();
     if orgs.is_empty() {
-        vec!["rainlanguage".to_string(), "cyclofinance".to_string()]
+        vec![
+            "rainlanguage".to_string(),
+            "cyclofinance".to_string(),
+            "S01-Issuer".to_string(),
+        ]
     } else {
         orgs
     }
@@ -1522,8 +1527,16 @@ mod org_tests {
     use super::parse_orgs;
 
     #[test]
-    fn empty_falls_back_to_default_pair() {
-        let want = ["--owner", "rainlanguage", "--owner", "cyclofinance"].map(String::from);
+    fn empty_falls_back_to_default_orgs() {
+        let want = [
+            "--owner",
+            "rainlanguage",
+            "--owner",
+            "cyclofinance",
+            "--owner",
+            "S01-Issuer",
+        ]
+        .map(String::from);
         assert_eq!(parse_orgs(""), want);
         assert_eq!(parse_orgs("   \n"), want);
     }
@@ -1546,7 +1559,10 @@ mod org_tests {
 
     #[test]
     fn org_names_defaults_and_splits() {
-        assert_eq!(super::org_names(""), ["rainlanguage", "cyclofinance"]);
+        assert_eq!(
+            super::org_names(""),
+            ["rainlanguage", "cyclofinance", "S01-Issuer"]
+        );
         assert_eq!(super::org_names("a, b\tc"), ["a", "b", "c"]);
     }
 
@@ -1557,7 +1573,7 @@ mod org_tests {
         // `is:pr` or `is:open` silently changes what `uncovered-issues` counts as covered.
         assert_eq!(
             super::org_search_query(""),
-            "is:pr is:open org:rainlanguage org:cyclofinance"
+            "is:pr is:open org:rainlanguage org:cyclofinance org:S01-Issuer"
         );
         assert_eq!(
             super::org_search_query("S01-Issuer"),
