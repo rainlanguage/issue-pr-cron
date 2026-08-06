@@ -111,12 +111,12 @@ as strings it **read and refused on**, so the one actor whose decisions
 everything else treats as sacred was also the only one improvising raw
 `gh issue edit --add-label`.
 
-| Transition                                             | The move it makes                                                                                                                                                                                                     |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design`, pinned to the **head sha**; both are send-backs and land the ONE reject state (#133/#219): each REQUIRES `--rework "<order>"`, writes `ai:reject` + the trusted work order in the same call, and the producer is the next mover |
+| Transition                                             | The move it makes                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design`, pinned to the **head sha**; both are send-backs and land the ONE reject state (#133/#219): each REQUIRES `--rework "<order>"`, writes `ai:reject` + the trusted work order in the same call, and the producer is the next mover             |
 | `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those two plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` require `--rework` likewise (`design` writes NO label — the pinned comment is the record), `keep-open` refuses it (the verb is its own disposition) |
-| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: record the ruling, close, retire the pending flag — one transition                                                                                                          |
-| `record-close-candidate-verdict <owner/repo> <n>`      | the vetter's flag verdict, on either subject type, now reachable from a terminal too (the refusal above names it)                                                                                                     |
+| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: record the ruling, close, retire the pending flag — one transition                                                                                                                                                                 |
+| `record-close-candidate-verdict <owner/repo> <n>`      | the vetter's flag verdict, on either subject type, now reachable from a terminal too (the refusal above names it)                                                                                                                                                            |
 
 **A ruling delegates (#111/#219).** The ruling and the work order are two
 records with their own shapes — the ruling is provenance (_a human decided X, at
@@ -189,11 +189,11 @@ that has already happened:
   transitions of the running FSM: `migrate-reject` moves the PRs still carrying
   the `human:reject` #133 retired onto `ai:reject`, and `migrate-design` moves
   every subject still carrying the `human:design` #219 **deleted** — PRs onto
-  `ai:reject` with a trusted work order live at the head (the one already
-  pinned there, else the ruling's own note), issues onto no label at all, back
-  in the producer backlog with the ruling comment as the record. Each is a
-  one-shot over a fixed, shrinking population, which is why neither is a path a
-  live ruling can take;
+  `ai:reject` with a trusted work order live at the head (the one already pinned
+  there, else the ruling's own note), issues onto no label at all, back in the
+  producer backlog with the ruling comment as the record. Each is a one-shot
+  over a fixed, shrinking population, which is why neither is a path a live
+  ruling can take;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:reject` sat on an issue whose producer close-candidate flag had not
@@ -1356,14 +1356,14 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   `migrate-reject` moves those PRs to `ai:reject` and it only ever shrinks. It
   is the lane's only state: a live human decision on a PR is a comment or a
   native review, never a label — `human:design` is DELETED (#219), so residue
-  `migrate-design` has not yet moved classifies by whatever modeled state the
-  PR otherwise has (un-vetted at the bottom).
+  `migrate-design` has not yet moved classifies by whatever modeled state the PR
+  otherwise has (un-vetted at the bottom).
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved
 unchanged; `lanes` and the additive `counts` keys (`reject`, `relink` (retired,
-counting down to zero), `humanReject`, `unvetted`) are the full-machine view
-the dashboard renders.
+counting down to zero), `humanReject`, `unvetted`) are the full-machine view the
+dashboard renders.
 
 The close-candidate lifecycle carries two further additive counts over BOTH
 subject types (#211/#212) — the legacy `closeCandidateIssues` keeps its
