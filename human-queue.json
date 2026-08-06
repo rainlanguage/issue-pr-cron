@@ -184,32 +184,6 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
-    "ai:close-candidate": [
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 63,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/63",
-        "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 410,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
-        "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 402,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/402",
-        "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 401,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/401",
-        "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
-      }
-    ],
     "ai:design": [
       {
         "repo": "rainlanguage/rain.solmem",
@@ -344,12 +318,6 @@
         "number": 435,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
         "title": "fix(receipts): preserve display precision by truncating the decimal string"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 434,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
-        "title": "fix(prices): make DataFetcher provider reactive to network switch"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -490,6 +458,12 @@
         "number": 436,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
         "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 434,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
+        "title": "fix(prices): make DataFetcher provider reactive to network switch"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -1110,7 +1084,7 @@
         ]
       },
       "un-vetted": {
-        "count": 24,
+        "count": 23,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1135,12 +1109,6 @@
             "number": 435,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
             "title": "fix(receipts): preserve display precision by truncating the decimal string"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 434,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
-            "title": "fix(prices): make DataFetcher provider reactive to network switch"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1374,7 +1342,7 @@
         ]
       },
       "ai:reject": {
-        "count": 65,
+        "count": 66,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1399,6 +1367,12 @@
             "number": 436,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
             "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 434,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
+            "title": "fix(prices): make DataFetcher provider reactive to network switch"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1770,47 +1744,9 @@
       }
     }
   },
-  "closeCandidateIssues": [
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 248,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
-      "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    }
-  ],
+  "closeCandidateIssues": [],
   "closeCandidateUnvetted": [],
-  "closeCandidateUpheld": [
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 248,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
-      "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain.dia/pull/63",
-      "title": "test(dia): pin intOrAStringToString empty and max-31 V3 round-trips"
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 410,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/410",
-      "title": "fix(component): replace Number().toFixed(5) with string-truncation in ReceiptsTable (#361)"
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 402,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/402",
-      "title": "fix: DataFetcherProvider reacts to selectedNetwork changes (#311)"
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 401,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/401",
-      "title": "fix: disable token select and LOCK button during in-flight lock transaction (#350)"
-    }
-  ],
+  "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/claude-audit-skills",
@@ -2681,6 +2617,12 @@
       "number": 41,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/41",
       "title": "Flag byte-index string slicing that panics on multi-byte UTF-8 (not-a-char-boundary)"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 248,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/248",
+      "title": "Deploy the V4 authoriser clone deterministically via Zoltu (pin up-front, retire #211)"
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
@@ -5489,20 +5431,20 @@
     }
   ],
   "counts": {
-    "ready": 24,
+    "ready": 23,
     "design": 18,
     "blockedDeploy": 13,
     "blockedInfra": 0,
     "blockedOn": 17,
-    "closeCandidateIssues": 1,
+    "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
-    "closeCandidateUpheld": 5,
+    "closeCandidateUpheld": 0,
     "leaks": 5,
-    "totalProducerPrs": 148,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 602,
-    "unvetted": 24,
-    "reject": 65,
+    "uncoveredIssues": 603,
+    "unvetted": 23,
+    "reject": 66,
     "relink": 0,
     "humanReject": 0,
     "humanDesign": 6,
