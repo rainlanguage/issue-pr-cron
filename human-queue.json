@@ -1084,8 +1084,14 @@
         ]
       },
       "un-vetted": {
-        "count": 23,
+        "count": 24,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 162,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/162",
+            "title": "pipeline dash: remove the retired ai:blocked-infra state"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 104,
@@ -1748,6 +1754,24 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 164,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/164",
+      "title": "pipeline dash: render the machine from emitted stateDescriptors (consumer half of issue-pr-cron#130)"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 163,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/163",
+      "title": "pipeline dash: ai:blocked-on files under the vetter and reads vet-lifecycle (issue-pr-cron#161)"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 219,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/219",
+      "title": "RULED: an answered design question routes straight to producer rework, same as a rejection"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 84,
@@ -5440,21 +5464,21 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 5,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 145,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 603,
-    "unvetted": 23,
+    "uncoveredIssues": 606,
+    "unvetted": 24,
     "reject": 66,
     "relink": 0,
     "humanReject": 0,
     "humanDesign": 6,
-    "openIssues": 763
+    "openIssues": 767
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.3,
+      "meanDays": 314.7,
       "medianDays": 100.0,
-      "oldestDays": 1655.5
+      "oldestDays": 1655.6
     }
   }
 }
