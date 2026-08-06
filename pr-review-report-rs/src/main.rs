@@ -17254,17 +17254,35 @@ fn human_queue_doc(
     doc
 }
 
-/// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
-/// modeled state's PRs, grouped into four lanes (`vet-lifecycle` / `vetter-verdicts` /
-/// `producer-blocked` / `human-decisions`) so the dashboard can render where PRs pile up, not just
-/// the human-action states — plus the open `ai:close-candidate` issues and a loud **leak** bucket =
-/// open producer PRs that carry a `🤖 ai:producer` comment but NO `ai:*`/`human:*` label (the
-/// producer acting outside the FSM). The leak count is the conformance metric: it trends to zero as
-/// the producer is restricted to labeled transitions. The legacy `states`/`counts`/`leaks` keys are
-/// kept UNCHANGED for the dashboard's existing reads; the new `lanes` object + additive `counts` keys
-/// are the full-machine view. Runtime is O(unlabeled + ai:ready producer PRs) extra `gh` calls (the
-/// leak/reason check, plus the verdict-currency check that returns an ai:ready PR to un-vetted).
-fn human_queue_mode(json_out: bool) -> i32 {
+/// The open-producer-PR inventory: the ONE `gh search prs --author` read behind `human-queue` and
+/// the human's `next_leak` tool, with the archived withholding (#206) and the label partition
+/// applied.
+///
+/// Shared rather than written twice for the reason [`flagged_open_subjects`] is: two spellings of
+/// "every open producer PR" is how the dashboard's `leaks` array and the tool that pages it would
+/// come to enumerate different populations — the exact parallel-search drift #211 records on the
+/// flag side. Errors are a `Result` so each caller fails in its own register: `human-queue` prints
+/// the message and exits, the MCP tool returns it as the tool error.
+struct ProducerPrInventory {
+    /// Legacy label buckets (`states`, unchanged): the first `ai:*` label → its PRs.
+    buckets: std::collections::BTreeMap<String, Vec<SubjectRef>>,
+    /// Every addressable PR with its full label list — what the lane classifier consumes.
+    records: Vec<(SubjectRef, Vec<String>)>,
+    /// PRs with NO `ai:*` label — the leak-candidate set [`leak_scan`] reads. An unlabeled PR is
+    /// not yet a leak: freshly-opened/un-vetted is the modeled reading until a trusted producer
+    /// note says the producer acted.
+    unlabeled: Vec<SubjectRef>,
+    /// PRs an ARCHIVED repo froze (#206) — withheld from every bucket above, reported apart.
+    archived_prs: Vec<SubjectRef>,
+    /// The archived-repo set the withholding used, carried so a caller filtering a SECOND
+    /// population (the close-candidate issue search) reads the same set rather than a second fetch.
+    archived: ArchivedRepos,
+    /// The classifiable population size (post-withholding), including hits `records` could not
+    /// address.
+    total: usize,
+}
+
+fn producer_pr_inventory() -> Result<ProducerPrInventory, String> {
     let assignee = std::env::var("PR_ASSIGNEE").unwrap_or_else(|_| "thedavidmeister".to_string());
     // ONE search: every open producer PR with its labels — the label IS the state.
     let mut args: Vec<String> = vec!["search".into(), "prs".into()];
@@ -17284,21 +17302,16 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .map(|s| s.to_string()),
     );
     let argref: Vec<&str> = args.iter().map(String::as_str).collect();
-    let Some(prs) = gh_json(&argref).and_then(|v| v.as_array().cloned()) else {
-        eprintln!("error: `gh search prs --author {assignee}` failed — aborting rather than print a false-empty queue");
-        return 1;
-    };
+    let prs = gh_json(&argref)
+        .and_then(|v| v.as_array().cloned())
+        .ok_or_else(|| format!(
+            "error: `gh search prs --author {assignee}` failed — aborting rather than print a false-empty queue"
+        ))?;
     // A PR in an ARCHIVED repo belongs in no lane (#206): every lane names a transition, and an
     // archived repo refuses all of them. Withheld from the buckets and REPORTED as its own
     // top-level count — this document is the dashboard's source, so a row that silently vanished
     // from a lane would show as a lane that quietly shrank.
-    let archived_set = match archived_repos() {
-        Ok(s) => s,
-        Err(f) => {
-            eprintln!("{}", archived_read_error(f));
-            return 1;
-        }
-    };
+    let archived_set = archived_repos().map_err(archived_read_error)?;
     let (prs, frozen) = withhold_archived(prs, &archived_set, hit_slug);
     let archived_prs: Vec<SubjectRef> = frozen
         .iter()
@@ -17356,13 +17369,39 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
         records.push((subject, labels));
     }
+    Ok(ProducerPrInventory {
+        buckets,
+        records,
+        unlabeled,
+        archived_prs,
+        archived: archived_set,
+        total: prs.len(),
+    })
+}
 
-    // Leak detection: an unlabeled PR the producer has commented on = a hand-off with no modeled
-    // state (the FSM leaking). An unlabeled PR with NO producer comment is just freshly-open/unvetted.
-    // The pure decision is [`leak_reason`]: a vetter blocked-on CLEARANCE as the newest hand-off
-    // marker is a MODELED transition into un-vetted (#161), never a leak.
+/// The live leak read over one unlabeled set, shared by `human-queue` and `next_leak` so the
+/// dashboard's `leaks` array and the tool's rows are ONE computation over one population.
+///
+/// Leak detection: an unlabeled PR the producer has commented on = a hand-off with no modeled
+/// state (the FSM leaking). An unlabeled PR with NO producer comment is just freshly-open/unvetted.
+/// The pure decision is [`leak_reason`]: a vetter blocked-on CLEARANCE as the newest hand-off
+/// marker is a MODELED transition into un-vetted (#161), never a leak. Costs one `gh pr view` per
+/// unlabeled PR, on both callers alike.
+struct LeakScan {
+    /// The leaks, each with the trusted note that evidences it, in the enumeration's own order —
+    /// the SAME order `human-queue --json` emits the `leaks` array in, so that array's head and
+    /// this list's head are one PR by construction.
+    leaks: Vec<(SubjectRef, String)>,
+    /// Unlabeled PRs whose comment read FAILED. Leak status UNKNOWN — never "not a leak": a zero
+    /// computed over unread PRs is not proven health, and [`leak_queue_health`] refuses to call it
+    /// healthy.
+    unreadable: Vec<SubjectRef>,
+}
+
+fn leak_scan(unlabeled: &[SubjectRef]) -> LeakScan {
     let mut leaks: Vec<(SubjectRef, String)> = Vec::new();
-    for subject in &unlabeled {
+    let mut unreadable: Vec<SubjectRef> = Vec::new();
+    for subject in unlabeled {
         let Some(j) = gh_json(&[
             "pr",
             "view",
@@ -17372,12 +17411,46 @@ fn human_queue_mode(json_out: bool) -> i32 {
             "--json",
             "comments",
         ]) else {
+            unreadable.push(subject.clone());
             continue;
         };
         if let Some(reason) = leak_reason(&trusted_comments(&j, None)) {
             leaks.push((subject.clone(), reason));
         }
     }
+    LeakScan { leaks, unreadable }
+}
+
+/// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
+/// modeled state's PRs, grouped into four lanes (`vet-lifecycle` / `vetter-verdicts` /
+/// `producer-blocked` / `human-decisions`) so the dashboard can render where PRs pile up, not just
+/// the human-action states — plus the open `ai:close-candidate` issues and a loud **leak** bucket =
+/// open producer PRs that carry a `🤖 ai:producer` comment but NO `ai:*`/`human:*` label (the
+/// producer acting outside the FSM). The leak count is the conformance metric: it trends to zero as
+/// the producer is restricted to labeled transitions. The legacy `states`/`counts`/`leaks` keys are
+/// kept UNCHANGED for the dashboard's existing reads; the new `lanes` object + additive `counts` keys
+/// are the full-machine view. Runtime is O(unlabeled + ai:ready producer PRs) extra `gh` calls (the
+/// leak/reason check, plus the verdict-currency check that returns an ai:ready PR to un-vetted).
+fn human_queue_mode(json_out: bool) -> i32 {
+    let ProducerPrInventory {
+        buckets,
+        records,
+        unlabeled,
+        archived_prs,
+        archived: archived_set,
+        total: total_producer_prs,
+    } = match producer_pr_inventory() {
+        Ok(inv) => inv,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+
+    // The leak scan's unreadable list is deliberately unused here: this surface has always read a
+    // failed comment fetch as "not shown as a leak this run", and the dashboard document's shape is
+    // pinned by its consumers. `next_leak` is the surface that reports the unknowns.
+    let LeakScan { leaks, .. } = leak_scan(&unlabeled);
 
     // Verdict-currency check: an `ai:ready` PR with no `ai:vetter` verdict current at its head is
     // un-vetted, not ready (the established `queue`/`vetted_at_head` notion) — one `gh pr view`
@@ -17516,7 +17589,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
             &backlog,
             open.as_deref(),
             &leaks,
-            prs.len(),
+            total_producer_prs,
             &archived_prs,
             // The one impure input to the age arithmetic: "now", taken once so every emitted
             // age in this snapshot measures against the same instant.
@@ -17548,7 +17621,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
     };
     println!(
         "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs{}) ===",
-        prs.len(),
+        total_producer_prs,
         archived_note(archived_prs.len())
     );
     println!(
@@ -24672,6 +24745,590 @@ mod next_close_candidate_tests {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// next_leak — the human's CONFORMANCE read: the next PR the lane classifier
+// buckets into NO modeled state (#222).
+//
+// `human-queue --json` already emits the canonical `leaks` array — the
+// dashboard box that should read zero — but reading it means rendering the
+// whole org-wide inventory. This tool answers the one question that array's
+// head answers, off the SAME machinery: [`producer_pr_inventory`]'s search and
+// withholding, [`leak_scan`]'s trusted-comment read. A second enumeration here
+// would be a second definition of "leak", and the two would drift exactly as
+// the two orderings #121 removed did.
+//
+// A leak is a DEFECT TO LOCATE, not a queue item to process: the PR's state
+// record is wrong, or the machine's vocabulary is missing a state, or the
+// classifier is wrong. The row therefore carries the leak's own EVIDENCE — what
+// the PR has (the trusted producer note implying a state) and what it lacks
+// (the state label the classifier needed) — so the human can name which of the
+// three it is. And ZERO rows is the HEALTHY answer, said in as many words: an
+// empty conformance queue is the machine working, never an error.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Rows one call may return, and the default. The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason:
+/// locating a leak changes this queue — the located PR is re-filed, the missing state goes to
+/// design, or the classifier defect gets its issue and the whole set moves at the fix — so a long
+/// page is stale past its head, and the field this tool exists to carry (the evidencing note) would
+/// have to be clipped to fit one.
+const NEXT_LEAK_MAX_ROWS: usize = 3;
+const NEXT_LEAK_DEFAULT_ROWS: usize = 1;
+
+// Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable
+// to exceed the budget rather than merely unlikely to.
+const NL_NOTE_BYTES: usize = 2_000;
+const NL_TITLE_BYTES: usize = 200;
+const NL_URL_BYTES: usize = 200;
+const NL_PR_BYTES: usize = 160;
+const NL_LABEL_BYTES: usize = 60;
+const NL_MAX_LABELS: usize = 8;
+const NL_ERROR_BYTES: usize = 200;
+
+/// Every capped field in one row, summed. The `+ 1` label is `lacks.aiStateLabel`, counted at the
+/// label cap beside the label list.
+const NL_ROW_FIELD_BYTES: usize = NL_NOTE_BYTES
+    + NL_TITLE_BYTES
+    + NL_URL_BYTES
+    + NL_PR_BYTES
+    + (NL_MAX_LABELS + 1) * NL_LABEL_BYTES;
+
+/// The row's FIXED cost — keys, punctuation, numbers. Held honest by
+/// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
+const NL_ROW_FIXED_BYTES: usize = 1_200;
+const NL_ROW_CEILING: usize = NL_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NL_ROW_FIXED_BYTES;
+
+// The withheld list: unlabeled PRs whose comment read failed, capped with the overflow counted,
+// for the reason `next_close_candidate`'s withheld lists are — an unbounded list on a bad day is
+// how a document that must always be servable becomes one that is refused.
+const NL_MAX_ERRORS: usize = 3;
+const NL_WITHHELD_FIELD_BYTES: usize = NL_PR_BYTES + NL_ERROR_BYTES;
+const NL_WITHHELD_FIXED_BYTES: usize = 150;
+const NL_WITHHELD_CEILING: usize =
+    NL_WITHHELD_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NL_WITHHELD_FIXED_BYTES;
+
+/// The document minus its rows and its withheld list: `queue`, `health`, `counts`, the keys around
+/// them.
+const NL_ENVELOPE_BYTES: usize = 1_500;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — a full page of maximal rows plus the withheld
+/// list at its cap cannot reach [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this crate
+/// does not build.
+const _: () = assert!(
+    NEXT_LEAK_MAX_ROWS * NL_ROW_CEILING + NL_MAX_ERRORS * NL_WITHHELD_CEILING + NL_ENVELOPE_BYTES
+        <= MCP_MAX_RESULT_BYTES
+);
+
+/// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
+/// [`next_ready_limit`]'s is: a silently clamped argument leaves the caller believing it asked for
+/// something it did not get.
+fn next_leak_limit(args: &Value) -> Result<usize, String> {
+    match args.get("limit") {
+        None | Some(Value::Null) => Ok(NEXT_LEAK_DEFAULT_ROWS),
+        Some(v) => match v.as_u64() {
+            Some(n) if n >= 1 && n <= NEXT_LEAK_MAX_ROWS as u64 => Ok(n as usize),
+            _ => Err(format!(
+                "limit must be an integer in 1..={NEXT_LEAK_MAX_ROWS}"
+            )),
+        },
+    }
+}
+
+/// What this queue's size MEANS — typed, because a bare `0` is two different facts. Zero leaks over
+/// a fully-read population is the machine WORKING, and the tool says so in as many words so an
+/// empty result cannot read as an error. Zero leaks over a population with unread members is NOT
+/// that: [`leak_scan`] could not establish those PRs' status, so the zero is unproven — fail-safe,
+/// exactly as an unreadable CodeRabbit status is never coverage.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LeakQueueHealth {
+    /// Zero leaks, every unlabeled PR's comments read. The box that should read zero, reading zero.
+    Healthy,
+    /// Zero leaks FOUND, but comment reads failed — an unknown is never laundered into health.
+    ZeroUnproven,
+    /// At least one open PR sits in no modeled state.
+    Leaking,
+}
+
+impl LeakQueueHealth {
+    fn as_str(self) -> &'static str {
+        match self {
+            LeakQueueHealth::Healthy => {
+                "healthy-zero-leaks-every-open-producer-pr-is-in-a-modeled-state"
+            }
+            LeakQueueHealth::ZeroUnproven => {
+                "zero-leaks-found-but-unread-prs-remain-not-proven-health"
+            }
+            LeakQueueHealth::Leaking => "leaking-open-prs-sit-in-no-modeled-state",
+        }
+    }
+}
+
+/// PURE: the health verdict. A found leak dominates — unread PRs beside it do not soften
+/// "leaking" into "unproven" — and an unread PR blocks "healthy" however many zeros surround it.
+fn leak_queue_health(leaks: usize, unreadable: usize) -> LeakQueueHealth {
+    if leaks > 0 {
+        LeakQueueHealth::Leaking
+    } else if unreadable > 0 {
+        LeakQueueHealth::ZeroUnproven
+    } else {
+        LeakQueueHealth::Healthy
+    }
+}
+
+/// Everything ONE row is built from — grouped so the row builder is PURE and testable without a
+/// network.
+struct NextLeakFacts<'a> {
+    subject: &'a SubjectRef,
+    /// The newest trusted hand-off note [`leak_scan`] found — the producer acting on this PR, which
+    /// is what makes the missing label a LEAK rather than a fresh PR nobody has touched.
+    reason: &'a str,
+    /// Every label the PR carries, exactly as the search returned them.
+    labels: &'a [String],
+}
+
+/// PURE: one leak, as its own EVIDENCE. `has` is the trusted note that implies a state; `lacks` is
+/// the classifier's read of the labels — and `aiStateLabel` is COMPUTED by [`ai_state_label`], the
+/// same predicate that routed this PR into the leak scan, rather than asserted null: machinery
+/// drift that lands a state-labeled PR here shows ON the row instead of being laundered into the
+/// shape every real leak has. Every string is clipped, so the row's size is bounded by
+/// [`NL_ROW_CEILING`] whatever GitHub returns.
+fn next_leak_row(f: &NextLeakFacts) -> Value {
+    let labels: Vec<String> = f
+        .labels
+        .iter()
+        .take(NL_MAX_LABELS)
+        .map(|l| clip_field(l, NL_LABEL_BYTES))
+        .collect();
+    serde_json::json!({
+        "pr": clip_field(&format!("{}#{}", f.subject.repo, f.subject.number), NL_PR_BYTES),
+        "url": clip_field(&f.subject.url, NL_URL_BYTES),
+        "title": clip_field(&f.subject.title, NL_TITLE_BYTES),
+        "has": {
+            // The producer's own account of what it did — usually the state it MEANT to hand off
+            // to. Clipped; the full comment thread is `pr_context`'s to carry.
+            "producerNote": clip_field(f.reason, NL_NOTE_BYTES),
+            "producerNoteBytes": f.reason.len(),
+            "producerNoteTruncated": f.reason.len() > NL_NOTE_BYTES,
+        },
+        "lacks": {
+            // Null IS the finding: the classifier looked for a state label and found none.
+            "aiStateLabel": ai_state_label(f.labels).map(|l| clip_field(&l, NL_LABEL_BYTES)),
+            // What the PR carries INSTEAD, whole — a non-state label here (or a stale `human:*`
+            // one) is often the first clue which of the three defect locations this leak is.
+            "labels": labels,
+            "labelsTruncated": f.labels.len() > NL_MAX_LABELS,
+        },
+    })
+}
+
+/// The whole-population figures the document frames its rows with.
+#[derive(Clone, Copy)]
+struct LeakQueueCounts {
+    /// Every open producer PR in scope (post archived-withholding).
+    total_producer_prs: usize,
+    /// The leak-candidate set: PRs with no `ai:*` label.
+    unlabeled: usize,
+    leaks: usize,
+    /// Unlabeled PRs whose comment read failed — status UNKNOWN, listed in `fetchErrors`.
+    unreadable: usize,
+    archived_repo_prs: usize,
+}
+
+/// PURE: the whole document. `health` is the headline — this is a conformance metric, so the
+/// document says what its own emptiness means instead of leaving a bare `[]` to be read as a
+/// failure. `counts.leakUnknown` is the answer to "why is `health` not `healthy` at zero leaks",
+/// and `fetchErrors` names the PRs behind that number.
+fn next_leak_doc(rows: Vec<Value>, counts: &LeakQueueCounts, errors: Vec<Value>, more_errors: usize) -> Value {
+    let returned = rows.len();
+    serde_json::json!({
+        "queue": {
+            "leaks": counts.leaks,
+            "returned": returned,
+            "more": counts.leaks.saturating_sub(returned),
+        },
+        "health": leak_queue_health(counts.leaks, counts.unreadable).as_str(),
+        "counts": {
+            "totalProducerPrs": counts.total_producer_prs,
+            "unlabeled": counts.unlabeled,
+            "leaks": counts.leaks,
+            "leakUnknown": counts.unreadable,
+            "archivedRepoPrs": counts.archived_repo_prs,
+        },
+        "fetchErrors": errors,
+        "moreFetchErrors": more_errors,
+        "next": rows,
+    })
+}
+
+/// PURE: the leaks this call answers with — a PREFIX of the canonical `leaks` array, in that
+/// array's own order, and nothing else. It deliberately does NOT sort, for the reason
+/// [`next_ready_page`] does not: `human-queue --json` renders this sequence and this tool answers
+/// a prefix of it, so the dashboard's leak box and the tool cannot name different PRs — a sort
+/// here, even one that agrees today, is the second ordering #121 exists to prevent.
+fn next_leak_page(ordered: &[(SubjectRef, String)], limit: usize) -> Vec<&(SubjectRef, String)> {
+    ordered.iter().take(limit).collect()
+}
+
+/// Live `next_leak`: the shared inventory, the shared scan, then rows off the page actually
+/// returned. Label lookup is by subject key from the inventory's own records — the same search
+/// payload, never a refetch.
+fn next_leak_fetch(limit: usize) -> Result<Value, String> {
+    let inv = producer_pr_inventory()?;
+    let scan = leak_scan(&inv.unlabeled);
+    let labels_of: std::collections::HashMap<(&str, u64), &[String]> = inv
+        .records
+        .iter()
+        .map(|(s, l)| ((s.repo.as_str(), s.number), l.as_slice()))
+        .collect();
+    let rows: Vec<Value> = next_leak_page(&scan.leaks, limit)
+        .into_iter()
+        .map(|(subject, reason)| {
+            let labels = labels_of
+                .get(&(subject.repo.as_str(), subject.number))
+                .copied()
+                .unwrap_or(&[]);
+            next_leak_row(&NextLeakFacts {
+                subject,
+                reason,
+                labels,
+            })
+        })
+        .collect();
+    let errors: Vec<Value> = scan
+        .unreadable
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "pr": clip_field(&format!("{}#{}", s.repo, s.number), NL_PR_BYTES),
+                "why": clip_field(
+                    "gh pr view failed — leak status not established this run",
+                    NL_ERROR_BYTES
+                ),
+            })
+        })
+        .collect();
+    let (errors, more_errors) = page(errors, Some(NL_MAX_ERRORS));
+    Ok(next_leak_doc(
+        rows,
+        &LeakQueueCounts {
+            total_producer_prs: inv.total,
+            unlabeled: inv.unlabeled.len(),
+            leaks: scan.leaks.len(),
+            unreadable: scan.unreadable.len(),
+            archived_repo_prs: inv.archived_prs.len(),
+        },
+        errors,
+        more_errors,
+    ))
+}
+
+/// Digits reserved, per numeric field, in the fixed allowances above.
+#[cfg(test)]
+const NL_MAX_DIGITS: usize = 20;
+
+#[cfg(test)]
+mod next_leak_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn subject(repo: &str, num: u64) -> SubjectRef {
+        SubjectRef::new(
+            repo,
+            num,
+            format!("https://github.com/{repo}/pull/{num}"),
+            "t",
+        )
+    }
+
+    // The anti-drift property, `next_ready`'s one lane over: `human-queue --json` emits the
+    // canonical `leaks` array and this tool answers a PREFIX of it — never a re-ranking — so the
+    // dashboard's leak box and the tool cannot name different PRs.
+    #[test]
+    fn next_leak_answers_a_prefix_of_the_canonical_leaks_order() {
+        let note = |s: &str| format!("🤖 ai:producer {s}");
+        let leaks = vec![
+            (subject("o/zzz", 9), note("first in the array")),
+            (subject("o/aaa", 2), note("second")),
+            (subject("o/aaa", 7), note("third")),
+        ];
+        // limit = 1 is the question the tool answers: the head, and the head is the ARRAY's own —
+        // `o/zzz` ahead of `o/aaa`, because the order is the machinery's, not a sort of this
+        // tool's.
+        let head = next_leak_page(&leaks, 1);
+        assert_eq!(head.len(), 1);
+        assert_eq!(head[0].0, leaks[0].0);
+        // …and a page is the array's own next rows, in the array's own order.
+        let page = next_leak_page(&leaks, NEXT_LEAK_MAX_ROWS);
+        assert_eq!(
+            page.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>(),
+            leaks.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>()
+        );
+        // Asking for more than exists yields what exists, not an error.
+        assert_eq!(next_leak_page(&leaks, 99).len(), leaks.len());
+    }
+
+    // The page size is a REAL argument with a REAL range, refused rather than clamped — a silently
+    // clamped argument leaves the caller believing it asked for something it did not get.
+    #[test]
+    fn the_page_size_defaults_to_one_and_is_refused_outside_its_range() {
+        assert_eq!(
+            next_leak_limit(&json!({})).unwrap(),
+            NEXT_LEAK_DEFAULT_ROWS
+        );
+        assert_eq!(next_leak_limit(&json!({"limit": null})).unwrap(), 1);
+        assert_eq!(next_leak_limit(&json!({"limit": 1})).unwrap(), 1);
+        assert_eq!(
+            next_leak_limit(&json!({"limit": NEXT_LEAK_MAX_ROWS})).unwrap(),
+            NEXT_LEAK_MAX_ROWS
+        );
+        for bad in [
+            json!(0),
+            json!(NEXT_LEAK_MAX_ROWS + 1),
+            json!(-1),
+            json!("2"),
+            json!(1.5),
+        ] {
+            let e = next_leak_limit(&json!({"limit": bad})).unwrap_err();
+            assert!(
+                e.contains(&format!("1..={NEXT_LEAK_MAX_ROWS}")),
+                "{bad}: {e}"
+            );
+        }
+    }
+
+    // The row is the leak's own EVIDENCE, both halves: the trusted note that implies a state (what
+    // the PR HAS) and the classifier's read of its labels (what it LACKS). `aiStateLabel` is
+    // COMPUTED rather than asserted null, so a PR reaching this row while carrying a state label —
+    // machinery drift — is visible on the row instead of laundered into a real leak's shape.
+    #[test]
+    fn a_row_carries_the_leaks_own_evidence() {
+        let s = SubjectRef::new(
+            "rainlanguage/rain.math",
+            41,
+            "https://github.com/rainlanguage/rain.math/pull/41",
+            "fix: the thing",
+        );
+        let row = next_leak_row(&NextLeakFacts {
+            subject: &s,
+            reason: "🤖 ai:producer rework pushed at abc123",
+            labels: &["enhancement".to_string()],
+        });
+        assert_eq!(row["pr"], json!("rainlanguage/rain.math#41"));
+        assert_eq!(
+            row["url"],
+            json!("https://github.com/rainlanguage/rain.math/pull/41")
+        );
+        assert_eq!(row["title"], json!("fix: the thing"));
+        assert_eq!(
+            row["has"]["producerNote"],
+            json!("🤖 ai:producer rework pushed at abc123")
+        );
+        assert_eq!(row["has"]["producerNoteTruncated"], json!(false));
+        // Null IS the finding.
+        assert_eq!(row["lacks"]["aiStateLabel"], Value::Null);
+        assert_eq!(row["lacks"]["labels"], json!(["enhancement"]));
+        assert_eq!(row["lacks"]["labelsTruncated"], json!(false));
+
+        // Drift visibility: a state label the PR somehow carries is REPORTED, never re-nulled.
+        let drifted = next_leak_row(&NextLeakFacts {
+            subject: &s,
+            reason: "🤖 ai:producer acted",
+            labels: &["ai:ready".to_string()],
+        });
+        assert_eq!(drifted["lacks"]["aiStateLabel"], json!("ai:ready"));
+    }
+
+    // A note past the cap is clipped, and the clipping is REPORTED with the full size beside it —
+    // the caller reads the rest with `pr_context`, which is on the same profile. Same for the
+    // label list.
+    #[test]
+    fn an_oversized_note_and_label_list_are_clipped_and_say_so() {
+        let s = subject("o/r", 1);
+        let long = "z".repeat(NL_NOTE_BYTES * 2);
+        let many: Vec<String> = (0..NL_MAX_LABELS + 4).map(|i| format!("label-{i}")).collect();
+        let row = next_leak_row(&NextLeakFacts {
+            subject: &s,
+            reason: &long,
+            labels: &many,
+        });
+        assert_eq!(
+            row["has"]["producerNote"].as_str().unwrap().len(),
+            NL_NOTE_BYTES
+        );
+        assert_eq!(row["has"]["producerNoteTruncated"], json!(true));
+        assert!(row["has"]["producerNoteBytes"].as_u64().unwrap() > NL_NOTE_BYTES as u64);
+        assert_eq!(
+            row["lacks"]["labels"].as_array().unwrap().len(),
+            NL_MAX_LABELS
+        );
+        assert_eq!(row["lacks"]["labelsTruncated"], json!(true));
+    }
+
+    // ZERO is the answer this tool exists to make sayable: an empty conformance queue is the
+    // machine WORKING, and the document says so instead of leaving a bare `[]` to read as an
+    // error. Fail-safe on the other side: a zero computed over unread PRs is never called health.
+    #[test]
+    fn an_empty_queue_is_the_healthy_answer_and_says_so() {
+        assert_eq!(leak_queue_health(0, 0), LeakQueueHealth::Healthy);
+        assert_eq!(leak_queue_health(0, 1), LeakQueueHealth::ZeroUnproven);
+        assert_eq!(leak_queue_health(1, 0), LeakQueueHealth::Leaking);
+        // A found leak dominates: unread PRs beside it do not soften "leaking" into "unproven".
+        assert_eq!(leak_queue_health(2, 3), LeakQueueHealth::Leaking);
+
+        let counts = LeakQueueCounts {
+            total_producer_prs: 40,
+            unlabeled: 5,
+            leaks: 0,
+            unreadable: 0,
+            archived_repo_prs: 1,
+        };
+        let doc = next_leak_doc(vec![], &counts, vec![], 0);
+        assert_eq!(doc["health"], json!(LeakQueueHealth::Healthy.as_str()));
+        assert!(
+            doc["health"].as_str().unwrap().starts_with("healthy"),
+            "the empty answer must SAY it is the healthy one: {}",
+            doc["health"]
+        );
+        assert_eq!(doc["queue"]["leaks"], json!(0));
+        assert_eq!(doc["queue"]["returned"], json!(0));
+        assert_eq!(doc["queue"]["more"], json!(0));
+        assert_eq!(doc["next"], json!([]));
+        assert_eq!(doc["counts"]["totalProducerPrs"], json!(40));
+        assert_eq!(doc["counts"]["unlabeled"], json!(5));
+        assert_eq!(doc["counts"]["archivedRepoPrs"], json!(1));
+
+        // …and the unproven zero is DISTINCT from the healthy one on the document itself, with the
+        // unknown count beside it.
+        let unproven = next_leak_doc(
+            vec![],
+            &LeakQueueCounts {
+                unreadable: 2,
+                ..counts
+            },
+            vec![],
+            2,
+        );
+        assert_ne!(unproven["health"], doc["health"]);
+        assert_eq!(
+            unproven["health"],
+            json!(LeakQueueHealth::ZeroUnproven.as_str())
+        );
+        assert_eq!(unproven["counts"]["leakUnknown"], json!(2));
+    }
+
+    #[test]
+    fn a_populated_queue_reports_leaking_and_what_the_page_left_behind() {
+        let counts = LeakQueueCounts {
+            total_producer_prs: 40,
+            unlabeled: 6,
+            leaks: 5,
+            unreadable: 0,
+            archived_repo_prs: 0,
+        };
+        let doc = next_leak_doc(vec![json!({"pr": "o/r#1"})], &counts, vec![], 0);
+        assert_eq!(doc["health"], json!(LeakQueueHealth::Leaking.as_str()));
+        assert_eq!(doc["queue"]["leaks"], json!(5));
+        assert_eq!(doc["queue"]["returned"], json!(1));
+        assert_eq!(doc["queue"]["more"], json!(4));
+        assert_eq!(doc["counts"]["leaks"], json!(5));
+        assert_eq!(doc["next"].as_array().unwrap().len(), 1);
+    }
+
+    /// The most expensive text GitHub could hand us — see `next_ready_tests::hostile_text`.
+    fn hostile_text(bytes: usize) -> String {
+        "\"\u{1}\\\u{1f}".chars().cycle().take(bytes).collect()
+    }
+
+    // THE GUARANTEE, exercised rather than asserted: a full page of rows built from the worst
+    // input GitHub can hand us must fit the ONE budget. Remove any `clip_field` in
+    // `next_leak_row` and this fails.
+    #[test]
+    fn a_maximal_page_of_adversarial_rows_still_fits_the_budget() {
+        let hostile = hostile_text(20_000);
+        let many: Vec<String> = (0..40).map(|_| hostile.clone()).collect();
+        let s = SubjectRef::new(hostile.clone(), u64::MAX, hostile.clone(), hostile.clone());
+        let rows: Vec<Value> = (0..NEXT_LEAK_MAX_ROWS)
+            .map(|_| {
+                next_leak_row(&NextLeakFacts {
+                    subject: &s,
+                    reason: &hostile,
+                    labels: &many,
+                })
+            })
+            .collect();
+        for (i, row) in rows.iter().enumerate() {
+            let len = row.to_string().len();
+            assert!(
+                len <= NL_ROW_CEILING,
+                "row {i} is {len} bytes, over the {NL_ROW_CEILING}-byte row ceiling the \
+                 compile-time budget assertion is computed from"
+            );
+        }
+        let counts = LeakQueueCounts {
+            total_producer_prs: usize::MAX,
+            unlabeled: usize::MAX,
+            leaks: usize::MAX,
+            unreadable: usize::MAX,
+            archived_repo_prs: usize::MAX,
+        };
+        let errors: Vec<Value> = (0..NL_MAX_ERRORS)
+            .map(|_| {
+                json!({
+                    "pr": clip_field(&hostile, NL_PR_BYTES),
+                    "why": clip_field(&hostile, NL_ERROR_BYTES),
+                })
+            })
+            .collect();
+        let len = next_leak_doc(rows, &counts, errors, usize::MAX)
+            .to_string()
+            .len();
+        assert!(
+            len <= MCP_MAX_RESULT_BYTES,
+            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+        );
+    }
+
+    // The allowances the compile-time assertion is built on are MEASURED, not guessed. A field
+    // added without room for it lands here rather than at a caller's over-budget refusal.
+    #[test]
+    fn the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope() {
+        let s = SubjectRef::new("", 0, "", "");
+        let row = next_leak_row(&NextLeakFacts {
+            subject: &s,
+            reason: "",
+            labels: &[],
+        });
+        // One numeric field per row: producerNoteBytes.
+        let row_len = row.to_string().len() + NL_MAX_DIGITS;
+        assert!(
+            row_len <= NL_ROW_FIXED_BYTES,
+            "a row's fixed cost is {row_len} bytes, over the {NL_ROW_FIXED_BYTES} the budget \
+             assertion allows it"
+        );
+
+        let entry_len = json!({"pr": "", "why": ""}).to_string().len();
+        assert!(
+            entry_len <= NL_WITHHELD_FIXED_BYTES,
+            "a withheld entry's fixed cost is {entry_len} bytes, over the \
+             {NL_WITHHELD_FIXED_BYTES} allowed"
+        );
+
+        let counts = LeakQueueCounts {
+            total_producer_prs: 0,
+            unlabeled: 0,
+            leaks: 0,
+            unreadable: 0,
+            archived_repo_prs: 0,
+        };
+        // Nine numeric fields in the envelope: five counts, three queue figures, moreFetchErrors.
+        let env_len = next_leak_doc(vec![], &counts, vec![], 0).to_string().len()
+            + 9 * NL_MAX_DIGITS;
+        assert!(
+            env_len <= NL_ENVELOPE_BYTES,
+            "the envelope's fixed cost is {env_len} bytes, over the {NL_ENVELOPE_BYTES} allowed"
+        );
+    }
+}
+
 /// WHICH ROLE this server is serving. The two roles are different state machines that happen to
 /// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
 /// not a permission — `tools/list` returns only the profile's tools, so the producer never sees
@@ -24797,6 +25454,12 @@ impl McpProfile {
                 // at all because the reject strips the label.
                 "next_close_candidate",
                 "close_candidate_context",
+                // The CONFORMANCE read (#222): the human's third inbox is the one that should be
+                // EMPTY — the PRs the lane classifier buckets into no modeled state. It reads off
+                // the same machinery `human-queue --json` emits `leaks` from, so the dashboard's
+                // zero-box and this tool cannot name different PRs; without it, locating a leak
+                // started from the whole org-wide queue render.
+                "next_leak",
                 "human_rule",
                 "human_rule_issue",
                 "human_close",
@@ -24869,6 +25532,17 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "Flags to return, 1-3 (default 1). Every ruling retires its flag, so a page is stale past its head."}
+                }
+            }
+        },
+        {
+            "name": "next_leak",
+            "narrows": "limit",
+            "description": "The next FSM-conformance LEAK — an open producer PR the lane classifier buckets into NO modeled state: a trusted producer note implies a state, no ai:* label records one. Enumerated off the same machinery human-queue emits the `leaks` array from, in that array's own order — never a parallel search. Each row is the leak's evidence: what the PR HAS (the trusted note, truncation flagged) and what it LACKS (`aiStateLabel: null`, the classifier's own read of its labels, listed whole). ZERO rows is the HEALTHY answer and `health` says so; `counts.leakUnknown` counts unlabeled PRs whose comments could not be read, and a zero over those reports as unproven, never as health. A leak is a defect to LOCATE in exactly one of three places — the PR's state record, the machine's vocabulary, or the classifier — never a queue item to process in place.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Leaks to return, 1-3 (default 1). Locating a leak changes the queue, so a page is stale past its head."}
                 }
             }
         },
@@ -25118,6 +25792,12 @@ enum McpCall {
     /// The human's FLAG read: the next N upheld `ai:close-candidate` flags, oldest flag first.
     NextCloseCandidate {
         /// Always in `1..=NEXT_CC_MAX_ROWS`, and a REAL narrowing argument for the same reason.
+        limit: usize,
+    },
+    /// The human's CONFORMANCE read (#222): the next N PRs the lane classifier buckets into no
+    /// modeled state, in the canonical `leaks` order.
+    NextLeak {
+        /// Always in `1..=NEXT_LEAK_MAX_ROWS`, and a REAL narrowing argument for the same reason.
         limit: usize,
     },
     Unvetted {
@@ -25467,6 +26147,9 @@ fn validate_call(
         }),
         "next_close_candidate" => Ok(McpCall::NextCloseCandidate {
             limit: next_close_candidate_limit(args)?,
+        }),
+        "next_leak" => Ok(McpCall::NextLeak {
+            limit: next_leak_limit(args)?,
         }),
         "unvetted" => Ok(McpCall::Unvetted {
             include_skipped: args
@@ -25866,6 +26549,7 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
         McpCall::NextCloseCandidate { limit } => {
             next_close_candidate_fetch(limit).map(|d| d.to_string())
         }
+        McpCall::NextLeak { limit } => next_leak_fetch(limit).map(|d| d.to_string()),
         McpCall::Unvetted {
             include_skipped,
             limit,
@@ -38499,6 +39183,9 @@ mod repo_root_tests {
             "coverage_uncovered",
             "human_queue_mode",
             "presentable_queue",
+            // The shared producer-PR search behind `human-queue` and `next_leak` (#222) — the
+            // withholding moved here when the search did.
+            "producer_pr_inventory",
             "unvetted_fetch",
             "worklist_rows",
         ];
@@ -50996,6 +51683,7 @@ mod mcp_tests {
             "unvetted"
             | "next_ready"
             | "next_close_candidate"
+            | "next_leak"
             | "unvetted_close_candidates"
             | "clone_list"
             | "clone_gc" => json!({}),
@@ -51108,7 +51796,7 @@ mod mcp_tests {
         }
         assert_eq!(
             tools.len(),
-            20,
+            21,
             "a tool was added or removed — check it against this property, then update the count"
         );
     }
@@ -51143,7 +51831,7 @@ mod mcp_tests {
             .iter()
             .filter(|t| t.get(TOOL_NARROWS_KEY).is_some())
             .count();
-        assert_eq!(declared, 5, "five tools narrow; the rest genuinely cannot");
+        assert_eq!(declared, 6, "six tools narrow; the rest genuinely cannot");
         for profile in [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human] {
             for t in mcp_tools(profile).as_array().unwrap() {
                 assert!(
@@ -51412,6 +52100,9 @@ mod mcp_tests {
                 // being wrong is least recoverable was the one worked by hand.
                 "next_close_candidate",
                 "close_candidate_context",
+                // The CONFORMANCE read (#222): the inbox that should be EMPTY — PRs in no modeled
+                // state, off the same machinery the dashboard's `leaks` array comes from.
+                "next_leak",
                 "human_rule",
                 "human_rule_issue",
                 // The TERMINAL edge (#94). Composing it from `human_rule_issue` + a Bash `gh close`
