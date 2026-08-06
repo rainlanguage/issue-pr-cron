@@ -22909,11 +22909,10 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
 const NCC_ROW_FIXED_BYTES: usize = 1_200;
 const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
 
-// The three withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded,
+// The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded,
 // because they ride inside the same one budget the rows do — and an unbounded list of stranded
 // flags is how a document that must always be servable becomes one that is refused on a bad day.
 const NCC_MAX_STRANDED: usize = 3;
-const NCC_MAX_ARCHIVED: usize = 3;
 const NCC_MAX_ERRORS: usize = 3;
 const NCC_WITHHELD_FIELD_BYTES: usize = NCC_ISSUE_BYTES + NCC_ERROR_BYTES;
 const NCC_WITHHELD_FIXED_BYTES: usize = 150;
@@ -22928,7 +22927,7 @@ const NCC_ENVELOPE_BYTES: usize = 1_500;
 /// crate does not build.
 const _: () = assert!(
     NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
-        + (NCC_MAX_STRANDED + NCC_MAX_ARCHIVED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
+        + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
         + NCC_ENVELOPE_BYTES
         <= MCP_MAX_RESULT_BYTES
 );
@@ -23044,14 +23043,15 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
     })
 }
 
-/// The whole-queue breakdown. Every flagged subject the search returned lands in exactly one of
+/// The whole-queue breakdown. Every subject in this queue's population lands in exactly one of
 /// these, plus the fetch errors — so `flagged == presentable + vetterCloseVerdict + unvetted +
-/// noProducerFlag + humanRuled + vetterRejectedStillFlagged + archivedRepo + fetchErrors`, always,
-/// and a reader can see there is no further bucket quietly absorbing rows.
+/// noProducerFlag + humanRuled + vetterRejectedStillFlagged + fetchErrors`, always, and a reader
+/// can see there is no further bucket quietly absorbing rows.
 ///
-/// `archived_repo` is counted BEFORE the gate rather than as a gate state: a frozen flag is not
-/// classified at all, because classifying it would cost a `gh issue view` to answer a question no
-/// ruling can act on.
+/// Archived-repo hits are not part of `flagged` at all: an archived repo refuses every write this
+/// FSM owns, so those hits are dropped from the population before anything is counted — which also
+/// saves the `gh issue view` a classification would cost. The vetter's state-load still
+/// enumerates them for the dashboard.
 #[derive(Default)]
 struct FlagQueueCounts {
     flagged: usize,
@@ -23067,27 +23067,19 @@ struct FlagQueueCounts {
     no_flag: usize,
     human_ruled: usize,
     rejected_still_flagged: usize,
-    archived_repo: usize,
     fetch_errors: usize,
 }
 
 /// The one line every surface gives for a row an archived repo froze.
 const ARCHIVED_REPO_WHY: &str = "repo is archived — no label, comment or close can be written";
 
-/// The document's non-row halves: the counts, and the three lists a reader must see even though this
+/// The document's non-row halves: the counts, and the two lists a reader must see even though this
 /// call will not act on them.
 struct FlagQueueWithheld {
     counts: FlagQueueCounts,
     /// The [`CcGate::is_stranded`] flags — capped, with the overflow in `more_stranded`.
     stranded: Vec<Value>,
     more_stranded: usize,
-    /// The flags frozen by an ARCHIVED repo — a separate list from `stranded` on purpose. Both are
-    /// flags no transition can consume, but the causes are different and so are the answers: a
-    /// stranded flag is a label/verdict state some future transition could clear, while an
-    /// archived repo will never accept a write again. Folding them together would hide which is
-    /// which behind one number.
-    archived: Vec<Value>,
-    more_archived: usize,
     errors: Vec<Value>,
     more_errors: usize,
 }
@@ -23100,10 +23092,10 @@ struct FlagQueueWithheld {
 /// clears, so they sit until a human notices, and a queue that silently skipped them is how they
 /// stayed unnoticed.
 ///
-/// `archivedRepoFlags` is the same argument for a different cause (#206). Those flags CANNOT be
-/// ruled on at all — every write this FSM owns is refused by an archived repo — so offering one is
-/// offering work nobody can do; but dropping them silently would shrink the human's inbox with
-/// nothing to explain the gap, which is the defect that let them sit in the queue unnoticed.
+/// Archived-repo flags are NOT this queue's population and appear nowhere in this document: an
+/// archived repo refuses every write this FSM owns, so such a flag can never become a ruling, and
+/// the fetch drops those hits before anything here is counted. The vetter's state-load still
+/// enumerates them for the dashboard, which is where that inventory lives.
 fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
     let returned = rows.len();
     // The queue holds BOTH human-owned states (#212): upheld flags and PR-side close verdicts are
@@ -23125,13 +23117,10 @@ fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
             "noProducerFlag": w.counts.no_flag,
             "humanRuled": w.counts.human_ruled,
             "vetterRejectedStillFlagged": w.counts.rejected_still_flagged,
-            "archivedRepo": w.counts.archived_repo,
             "fetchErrors": w.counts.fetch_errors,
         },
         "strandedFlags": w.stranded,
         "moreStrandedFlags": w.more_stranded,
-        "archivedRepoFlags": w.archived,
-        "moreArchivedRepoFlags": w.more_archived,
         "fetchErrors": w.errors,
         "moreFetchErrors": w.more_errors,
         "next": rows,
@@ -23251,6 +23240,21 @@ fn flagged_open_subjects() -> Result<FlaggedSubjects, String> {
     })
 }
 
+/// PURE: this queue's population — the search hits minus every one whose repo is archived. An
+/// archived repo refuses every write this FSM owns, so a flag there can never become a ruling and
+/// is not this queue's work in any form; dropping it here, before counting and before the per-row
+/// `gh issue view`, is what keeps `counts.flagged` a sum over rulable subjects only. A hit whose
+/// ref does not parse is KEPT — it cannot be matched against the archived set, and the fetch's
+/// error path is where an unaddressable hit is reported. Order is preserved.
+fn ncc_population(hits: Vec<Value>, archived: &ArchivedRepos) -> Vec<Value> {
+    hits.into_iter()
+        .filter(|hit| match search_issue_ref(hit) {
+            Some((slug, _)) => !archived.contains(&slug),
+            None => true,
+        })
+        .collect()
+}
+
 /// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
 /// then pay for the covering-PR read only on the rows actually returned.
 fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
@@ -23258,16 +23262,13 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         hits: found,
         archived: archived_repos,
     } = flagged_open_subjects()?;
+    let found = ncc_population(found, &archived_repos);
     let mut flags: Vec<PresentableFlag> = Vec::new();
     let mut counts = FlagQueueCounts {
         flagged: found.len(),
         ..Default::default()
     };
     let mut stranded: Vec<Value> = Vec::new();
-    // The archived rows are named, not merely counted: this tool's contract is "here is the next
-    // thing to rule on, and here is everything you are NOT being shown", and a human who knows a
-    // flag exists somewhere unreachable can decide what to do about the repo.
-    let mut archived: Vec<Value> = Vec::new();
     let mut errors: Vec<Value> = Vec::new();
     for hit in &found {
         let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -23325,13 +23326,12 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
             CcGate::Unvetted => counts.unvetted += 1,
             CcGate::NoFlag => counts.no_flag += 1,
             CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
-            CcGate::RepoArchived => counts.archived_repo += 1,
+            // Unreachable here: [`ncc_population`] dropped every archived-repo hit before
+            // classification.
+            CcGate::RepoArchived => {}
         }
         if gate.is_stranded() {
             stranded.push(withheld_entry(&format!("{slug}#{num}"), gate.as_str()));
-        }
-        if gate == CcGate::RepoArchived {
-            archived.push(withheld_entry(&format!("{slug}#{num}"), ARCHIVED_REPO_WHY));
         }
         // BOTH human-owned states join the one queue (#212): an upheld flag keyed by the flag it
         // judged, a PR close verdict keyed by its own timestamp — each the moment the subject
@@ -23382,7 +23382,6 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         })
         .collect();
     let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
-    let (archived, more_archived) = page(archived, Some(NCC_MAX_ARCHIVED));
     let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
     Ok(next_close_candidate_doc(
         rows,
@@ -23390,8 +23389,6 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
             counts,
             stranded,
             more_stranded,
-            archived,
-            more_archived,
             errors,
             more_errors,
         },
@@ -24337,8 +24334,6 @@ mod next_close_candidate_tests {
             counts,
             stranded: vec![],
             more_stranded: 0,
-            archived: vec![],
-            more_archived: 0,
             errors: vec![],
             more_errors: 0,
         }
@@ -24349,7 +24344,7 @@ mod next_close_candidate_tests {
     #[test]
     fn the_envelope_states_what_the_page_left_behind() {
         let w = withheld(FlagQueueCounts {
-            flagged: 11,
+            flagged: 10,
             presentable: 5,
             vetter_close: 1,
             torn_human_close: 0,
@@ -24357,7 +24352,6 @@ mod next_close_candidate_tests {
             no_flag: 1,
             human_ruled: 1,
             rejected_still_flagged: 0,
-            archived_repo: 1,
             fetch_errors: 0,
         });
         let doc = next_close_candidate_doc(vec![json!({"issue": "o/r#7"})], &w);
@@ -24365,9 +24359,9 @@ mod next_close_candidate_tests {
         assert_eq!(doc["queue"]["presentable"], json!(6));
         assert_eq!(doc["queue"]["returned"], json!(1));
         assert_eq!(doc["queue"]["more"], json!(5));
-        // The counts partition the search: nothing is in two buckets and nothing is in none.
-        // `archivedRepo` is one of the parts (#206) — a flag withheld for a reason that is not in
-        // this list is a flag the sum cannot account for, which is how a silent drop would look.
+        // The counts partition the population: nothing is in two buckets and nothing is in none.
+        // Archived-repo hits are not a part because they are not in `flagged` — they are dropped
+        // from the population before anything is counted.
         let c = &doc["counts"];
         let parts: u64 = [
             "presentable",
@@ -24377,7 +24371,6 @@ mod next_close_candidate_tests {
             "noProducerFlag",
             "humanRuled",
             "vetterRejectedStillFlagged",
-            "archivedRepo",
             "fetchErrors",
         ]
         .iter()
@@ -24413,64 +24406,87 @@ mod next_close_candidate_tests {
         assert_eq!(doc["queue"]["presentable"], json!(0));
     }
 
-    // #206, as the live case that produced it. `rain.webapp` was archived on 2026-08-05 and this
-    // queue served `rain.webapp#139` as its HEAD four minutes later — a flag whose ruling could
-    // not be written, sorted to the front by an oldest-first order and staying there.
-    //
-    // The row must be GONE from `next` and PRESENT in the withheld list. Silence would leave a
-    // human unable to tell an archived-repo flag from one that was never filed, and this tool is
-    // the only place that inventory exists.
+    // Archived-repo flags are not this queue's population: an archived repo refuses every write
+    // this FSM owns, so no ruling on such a flag can ever be executed and the document carries the
+    // row in NO form — not offered, not counted, not listed. The dashboard is where that
+    // inventory lives, fed by the vetter's state-load.
     #[test]
-    fn a_flag_in_an_archived_repo_is_named_rather_than_offered_or_dropped() {
-        let mut w = withheld(FlagQueueCounts {
-            flagged: 7,
-            presentable: 6,
-            archived_repo: 1,
-            ..Default::default()
-        });
-        w.archived = vec![withheld_entry(
-            "rainlanguage/rain.webapp#139",
-            ARCHIVED_REPO_WHY,
-        )];
-        let doc = next_close_candidate_doc(vec![json!({"issue": "rainlanguage/raindex#960"})], &w);
-        // Not offered: the head of the queue is the live flag, not the frozen one.
-        assert_eq!(doc["next"][0]["issue"], json!("rainlanguage/raindex#960"));
-        assert_eq!(doc["next"].as_array().unwrap().len(), 1);
-        // Not dropped: named, with the reason no ruling can be written.
-        assert_eq!(
-            doc["archivedRepoFlags"][0]["issue"],
-            json!("rainlanguage/rain.webapp#139")
+    fn the_document_carries_no_archived_repo_key_in_any_form() {
+        let doc = next_close_candidate_doc(
+            vec![json!({"issue": "rainlanguage/raindex#960"})],
+            &withheld(FlagQueueCounts {
+                flagged: 1,
+                presentable: 1,
+                ..Default::default()
+            }),
         );
-        assert_eq!(doc["archivedRepoFlags"][0]["why"], json!(ARCHIVED_REPO_WHY));
-        assert_eq!(doc["counts"]["archivedRepo"], json!(1));
-        // A DIFFERENT list from `strandedFlags`: both hold flags nothing can consume, but one
-        // names a label state a transition could still clear and the other names a repo that will
-        // never accept a write. Folding them together would hide which is which.
-        assert_eq!(doc["strandedFlags"], json!([]));
+        assert!(doc.as_object().unwrap().get("archivedRepoFlags").is_none());
+        assert!(doc
+            .as_object()
+            .unwrap()
+            .get("moreArchivedRepoFlags")
+            .is_none());
+        assert!(doc["counts"]
+            .as_object()
+            .unwrap()
+            .get("archivedRepo")
+            .is_none());
     }
 
-    /// The overflow is stated, so a scope with more frozen flags than the cap does not silently
+    // The drop happens at the POPULATION, before counting and before any per-row fetch: an
+    // archived-repo hit is gone, every other hit survives in its original order, and a hit whose
+    // ref does not parse is kept — the fetch's error path is where that one is reported.
+    #[test]
+    fn an_archived_repo_hit_is_dropped_from_the_population_before_it_is_counted() {
+        let hit = |slug: &str, num: u64| {
+            json!({
+                "url": format!("https://github.com/{slug}/issues/{num}"),
+                "number": num,
+                "repository": {"nameWithOwner": slug},
+                "title": "t",
+            })
+        };
+        let unparseable = json!({"title": "no ref at all"});
+        let hits = vec![
+            hit("rainlanguage/raindex", 960),
+            hit("rainlanguage/rain.webapp", 139),
+            unparseable.clone(),
+            hit("rainlanguage/rain.orderbook", 5),
+        ];
+        let archived = ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]);
+        let kept = ncc_population(hits, &archived);
+        assert_eq!(
+            kept,
+            vec![
+                hit("rainlanguage/raindex", 960),
+                unparseable,
+                hit("rainlanguage/rain.orderbook", 5),
+            ]
+        );
+    }
+
+    /// The overflow is stated, so a scope with more stranded flags than the cap does not silently
     /// report only the first few.
     #[test]
-    fn frozen_flags_past_the_cap_are_counted_rather_than_lost() {
+    fn stranded_flags_past_the_cap_are_counted_rather_than_lost() {
         let mut w = withheld(FlagQueueCounts {
             flagged: 9,
-            archived_repo: 9,
+            no_flag: 9,
             ..Default::default()
         });
         let all: Vec<Value> = (0..9)
-            .map(|i| withheld_entry(&format!("o/r#{i}"), ARCHIVED_REPO_WHY))
+            .map(|i| withheld_entry(&format!("o/r#{i}"), CcGate::NoFlag.as_str()))
             .collect();
-        let (paged, more) = page(all, Some(NCC_MAX_ARCHIVED));
-        w.archived = paged;
-        w.more_archived = more;
+        let (paged, more) = page(all, Some(NCC_MAX_STRANDED));
+        w.stranded = paged;
+        w.more_stranded = more;
         let doc = next_close_candidate_doc(vec![], &w);
         assert_eq!(
-            doc["archivedRepoFlags"].as_array().unwrap().len(),
-            NCC_MAX_ARCHIVED
+            doc["strandedFlags"].as_array().unwrap().len(),
+            NCC_MAX_STRANDED
         );
-        assert_eq!(doc["moreArchivedRepoFlags"], json!(9 - NCC_MAX_ARCHIVED));
-        assert_eq!(doc["counts"]["archivedRepo"], json!(9));
+        assert_eq!(doc["moreStrandedFlags"], json!(9 - NCC_MAX_STRANDED));
+        assert_eq!(doc["counts"]["noProducerFlag"], json!(9));
     }
 
     // --- the budget -----------------------------------------------------------------------------
@@ -24539,13 +24555,10 @@ mod next_close_candidate_tests {
                     no_flag: usize::MAX,
                     human_ruled: usize::MAX,
                     rejected_still_flagged: usize::MAX,
-                    archived_repo: usize::MAX,
                     fetch_errors: usize::MAX,
                 },
                 stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
                 more_stranded: usize::MAX,
-                archived: (0..NCC_MAX_ARCHIVED).map(|_| entry.clone()).collect(),
-                more_archived: usize::MAX,
                 errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
                 more_errors: usize::MAX,
             },
@@ -24585,12 +24598,12 @@ mod next_close_candidate_tests {
              {NCC_WITHHELD_FIXED_BYTES} allowed"
         );
 
-        // Seventeen numeric fields in the envelope: ten counts (#212 added vetterCloseVerdict,
-        // #213 tornHumanClose), three queue figures, three overflows.
+        // Fourteen numeric fields in the envelope: nine counts, three queue figures, two
+        // overflows.
         let env_len = next_close_candidate_doc(vec![], &withheld(FlagQueueCounts::default()))
             .to_string()
             .len()
-            + 17 * NCC_MAX_DIGITS;
+            + 14 * NCC_MAX_DIGITS;
         assert!(
             env_len <= NCC_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NCC_ENVELOPE_BYTES} allowed"
