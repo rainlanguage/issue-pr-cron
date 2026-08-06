@@ -24937,7 +24937,12 @@ struct LeakQueueCounts {
 /// document says what its own emptiness means instead of leaving a bare `[]` to be read as a
 /// failure. `counts.leakUnknown` is the answer to "why is `health` not `healthy` at zero leaks",
 /// and `fetchErrors` names the PRs behind that number.
-fn next_leak_doc(rows: Vec<Value>, counts: &LeakQueueCounts, errors: Vec<Value>, more_errors: usize) -> Value {
+fn next_leak_doc(
+    rows: Vec<Value>,
+    counts: &LeakQueueCounts,
+    errors: Vec<Value>,
+    more_errors: usize,
+) -> Value {
     let returned = rows.len();
     serde_json::json!({
         "queue": {
@@ -25070,10 +25075,7 @@ mod next_leak_tests {
     // clamped argument leaves the caller believing it asked for something it did not get.
     #[test]
     fn the_page_size_defaults_to_one_and_is_refused_outside_its_range() {
-        assert_eq!(
-            next_leak_limit(&json!({})).unwrap(),
-            NEXT_LEAK_DEFAULT_ROWS
-        );
+        assert_eq!(next_leak_limit(&json!({})).unwrap(), NEXT_LEAK_DEFAULT_ROWS);
         assert_eq!(next_leak_limit(&json!({"limit": null})).unwrap(), 1);
         assert_eq!(next_leak_limit(&json!({"limit": 1})).unwrap(), 1);
         assert_eq!(
@@ -25144,7 +25146,9 @@ mod next_leak_tests {
     fn an_oversized_note_and_label_list_are_clipped_and_say_so() {
         let s = subject("o/r", 1);
         let long = "z".repeat(NL_NOTE_BYTES * 2);
-        let many: Vec<String> = (0..NL_MAX_LABELS + 4).map(|i| format!("label-{i}")).collect();
+        let many: Vec<String> = (0..NL_MAX_LABELS + 4)
+            .map(|i| format!("label-{i}"))
+            .collect();
         let row = next_leak_row(&NextLeakFacts {
             subject: &s,
             reason: &long,
@@ -25320,8 +25324,8 @@ mod next_leak_tests {
             archived_repo_prs: 0,
         };
         // Nine numeric fields in the envelope: five counts, three queue figures, moreFetchErrors.
-        let env_len = next_leak_doc(vec![], &counts, vec![], 0).to_string().len()
-            + 9 * NL_MAX_DIGITS;
+        let env_len =
+            next_leak_doc(vec![], &counts, vec![], 0).to_string().len() + 9 * NL_MAX_DIGITS;
         assert!(
             env_len <= NL_ENVELOPE_BYTES,
             "the envelope's fixed cost is {env_len} bytes, over the {NL_ENVELOPE_BYTES} allowed"
@@ -49789,6 +49793,7 @@ mod marketplace_tests {
                 "design",
                 "keep-open",
                 "ncc",
+                "nm",
                 "nr",
                 "reject"
             ],
