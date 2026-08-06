@@ -16565,10 +16565,12 @@ fn print_transition_result(result: Result<String, (i32, String)>) -> i32 {
 // vetter verdicts; a label-less PR is a leak if the producer commented, else un-vetted).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The four FSM lanes, plus the `Leak` anti-lane (escaped the machine — not a modeled state) and
-/// the `CloseCandidate` hand-off (#211/#212): a PR the flag machinery owns, inventoried by the
-/// close-candidate state-load (`closeCandidateUnvetted` / `closeCandidateUpheld`) rather than by
-/// any lane — the PR-side mirror of a flagged issue leaving `uncoveredIssues`.
+/// The four FSM lanes, plus two buckets that classify but emit no `lanes` cell: the `Leak`
+/// anti-lane (escaped the machine — not a modeled state; inventoried by the top-level `leaks`
+/// array, #130 clarification 2) and the `CloseCandidate` hand-off (#211/#212): a PR the flag
+/// machinery owns, inventoried by the close-candidate state-load (`closeCandidateUnvetted` /
+/// `closeCandidateUpheld`) rather than by any lane — the PR-side mirror of a flagged issue
+/// leaving `uncoveredIssues`.
 #[derive(Debug, PartialEq, Eq)]
 enum Lane {
     VetLifecycle,
@@ -16649,6 +16651,18 @@ enum StateOccupancy {
     },
 }
 
+/// When a state's descriptor is emitted (#130 clarification 1). A LIVE state always emits — an
+/// empty live state stays visible, which is the sparse-`lanes`-vs-canonical-shape separation the
+/// issue exists for. A state that exists only as residue emits only while its occupancy is
+/// nonzero: its existence IS its residue, so it leaves the shape when it drains instead of
+/// renting a permanent dimmed box (rain-org-health#145's rejected outcome), and no `retired`
+/// field reaches the wire — the consumer renders what is emitted, nothing more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Emit {
+    Always,
+    WhileOccupied,
+}
+
 /// ONE state of the machine, as data — the shape `human-queue --json` emits under
 /// `stateDescriptors` so a consumer renders what the pipeline says exists instead of hand-copying
 /// the vocabulary and drifting silently (#130: a state deleted, added, renamed or re-laned here
@@ -16672,6 +16686,7 @@ struct StateDescriptor {
     /// Display name, only where it differs from `key`.
     label: Option<&'static str>,
     occupancy: StateOccupancy,
+    emit: Emit,
 }
 
 impl StateDescriptor {
@@ -16751,6 +16766,7 @@ const STATE_UNCOVERED_ISSUES: StateDescriptor = StateDescriptor {
         items: "uncoveredIssues",
         items_are_issues: true,
     },
+    emit: Emit::Always,
 };
 
 /// The ONE vet-lifecycle state (#128): vetting is a pure function of the PR at its current head,
@@ -16765,6 +16781,7 @@ const STATE_UN_VETTED: StateDescriptor = StateDescriptor {
     hist_fold: &["awaitingReVet"],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetLifecycle),
+    emit: Emit::Always,
 };
 
 /// The VETTER's blocked state (#161): typed `--blocked-by` refs, cleared by the vetter's
@@ -16778,6 +16795,7 @@ const STATE_BLOCKED_ON: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetLifecycle),
+    emit: Emit::Always,
 };
 
 /// Vetted at head, queued for the human merge word.
@@ -16790,6 +16808,7 @@ const STATE_READY: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
+    emit: Emit::Always,
 };
 
 /// ONE reject state whoever ruled it (#133), whatever the ground (#135): the producer reworks
@@ -16803,6 +16822,7 @@ const STATE_REJECT: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
+    emit: Emit::Always,
 };
 
 /// RETIRED (#135): no verdict writes it; the residue leaves when the human re-records the
@@ -16816,6 +16836,7 @@ const STATE_RELINK: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: Some("ai:relink (retired #135)"),
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
+    emit: Emit::WhileOccupied,
 };
 
 /// A design question only a human can answer or supply.
@@ -16828,6 +16849,7 @@ const STATE_DESIGN: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
+    emit: Emit::Always,
 };
 
 /// RETIRED (#162): no merge waits on a deploy under the split release lifecycle, so each residue
@@ -16842,6 +16864,7 @@ const STATE_BLOCKED_DEPLOY: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: Some("ai:blocked-deploy (retired #162)"),
     occupancy: StateOccupancy::Lane(Lane::ProducerBlocked),
+    emit: Emit::WhileOccupied,
 };
 
 /// RETIRED (#108): nothing parks on it — the producer's next pass re-enters the ordinary
@@ -16855,6 +16878,7 @@ const STATE_BLOCKED_INFRA: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: Some("ai:blocked-infra (retired #108)"),
     occupancy: StateOccupancy::Lane(Lane::ProducerBlocked),
+    emit: Emit::WhileOccupied,
 };
 
 /// RETIRED (#133): parks ABSOLUTELY — no AI actor touches the PR — so the human-driven
@@ -16868,11 +16892,13 @@ const STATE_HUMAN_REJECT: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: Some("human:reject (retired #133)"),
     occupancy: StateOccupancy::Lane(Lane::HumanDecisions),
+    emit: Emit::WhileOccupied,
 };
 
 /// A human design ruling. The PRODUCER's move (#111): `worklist` routes a delegated ruling
 /// `rework-ruling` and the re-vet clears the spent label; only the explicit `--park` spelling
-/// waits on the human, the minority spelling by design.
+/// waits on the human, the minority spelling by design. Residue-emitted: the row leaves the
+/// shape when no PR carries the label.
 const STATE_HUMAN_DESIGN: StateDescriptor = StateDescriptor {
     key: "human:design",
     owner: StateOwner::Producer,
@@ -16882,6 +16908,7 @@ const STATE_HUMAN_DESIGN: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::HumanDecisions),
+    emit: Emit::WhileOccupied,
 };
 
 /// The vetter's flag inbox (#72/#73), over BOTH subject types (#211/#212): a producer
@@ -16899,6 +16926,7 @@ const STATE_CC_UNVETTED: StateDescriptor = StateDescriptor {
         items: "closeCandidateUnvetted",
         items_are_issues: true,
     },
+    emit: Emit::Always,
 };
 
 /// The human's ONE mixed close inbox (#212): an upheld flag on either subject type, or the
@@ -16917,12 +16945,14 @@ const STATE_CC_UPHELD: StateDescriptor = StateDescriptor {
         items: "closeCandidateUpheld",
         items_are_issues: true,
     },
+    emit: Emit::Always,
 };
 
 /// The anti-state (#130 amendment 1 files it with the top-level reads): a producer PR carrying a
 /// `🤖 ai:producer` comment and no modeled label escaped the machine, and a human classifies it
 /// into a real state or extends the machine to cover it. Reads from the top-level `leaks` array —
-/// the one carrying each leak's `reason` — not from the `lanes` cell.
+/// the one carrying each leak's `reason` — and [`lanes_doc`] emits NO cell for it (#130
+/// clarification 2), so every emitted lane cell is claimed by exactly one descriptor.
 const STATE_LEAK: StateDescriptor = StateDescriptor {
     key: "leak",
     owner: StateOwner::Human,
@@ -16936,11 +16966,14 @@ const STATE_LEAK: StateDescriptor = StateDescriptor {
         items: "leaks",
         items_are_issues: false,
     },
+    emit: Emit::Always,
 };
 
-/// Every modeled state, in render order — the `stateDescriptors` array `human-queue --json`
-/// emits, ordered as the human-readable daily review prints the same states (one machine, two
-/// renderings, one order), with the loud leak anti-state last.
+/// Every modeled state, in render order — the vocabulary `stateDescriptors` is emitted from,
+/// ordered as the human-readable daily review prints the same states (one machine, two
+/// renderings, one order), with the loud leak anti-state last. [`state_descriptors_json`] filters
+/// this by each row's [`Emit`] policy, so a drained residue row is in the TABLE (the classifier
+/// still buckets its stragglers) without being in the emitted shape.
 static STATE_DESCRIPTORS: [&StateDescriptor; 14] = [
     &STATE_UNCOVERED_ISSUES,
     &STATE_UN_VETTED,
@@ -16958,9 +16991,21 @@ static STATE_DESCRIPTORS: [&StateDescriptor; 14] = [
     &STATE_LEAK,
 ];
 
-/// The emitted `stateDescriptors` value: every row of [`STATE_DESCRIPTORS`], in table order.
-fn state_descriptors_json() -> Value {
-    Value::Array(STATE_DESCRIPTORS.iter().map(|d| d.to_json()).collect())
+/// The emitted `stateDescriptors` value: the rows of [`STATE_DESCRIPTORS`], in table order,
+/// filtered by each row's [`Emit`] policy against the SAME `counts` object the document carries —
+/// a live row always, a residue row only while `counts.<hist>` is nonzero, so a drained retired
+/// state leaves the shape while an empty live state stays visible (#130 clarification 1).
+fn state_descriptors_json(counts: &Value) -> Value {
+    Value::Array(
+        STATE_DESCRIPTORS
+            .iter()
+            .filter(|d| {
+                d.emit == Emit::Always
+                    || counts.get(d.hist).and_then(|v| v.as_u64()).unwrap_or(0) > 0
+            })
+            .map(|d| d.to_json())
+            .collect(),
+    )
 }
 
 /// The `human:*` decisions a PR can sit in, in precedence order (a PR should carry at most
@@ -17250,7 +17295,12 @@ fn lanes_doc(prs: &[QueuePr]) -> Value {
         // `closeCandidateUnvetted`/`closeCandidateUpheld` arrays, fed by the org-wide label
         // search, which reaches every PR this author-scoped scan does and more. Emitting it here
         // too would put one subject in two states, which is the split #212 retired.
-        if lane == Lane::CloseCandidate {
+        //
+        // Leak is not a cell either (#130 clarification 2): its inventory is the top-level
+        // `leaks` array — the one carrying each leak's `reason` — which is exactly what its
+        // descriptor claims, so a `lanes.leak` cell would be occupancy no descriptor claims and
+        // would trip the consumer's conservation check on every snapshot with a leak in it.
+        if lane == Lane::CloseCandidate || lane == Lane::Leak {
             continue;
         }
         lanes
@@ -17545,14 +17595,62 @@ fn human_queue_doc(
         .iter()
         .map(|(k, v)| (k.clone(), Value::Array(SubjectRef::array(v))))
         .collect();
+    // Built FIRST because the descriptor emission filters against it: a residue row emits only
+    // while its `counts.<hist>` is nonzero (#130 clarification 1). `openIssues` joins this
+    // object after assembly exactly as before — a non-state metric no descriptor filters on.
+    let counts = serde_json::json!({
+        // Legacy label-based counts (UNCHANGED — the dashboard reads these).
+        "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
+        "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
+        // RETIRED (#162): no transition writes `ai:blocked-deploy` any more, so this counts
+        // down to 0 and stays there. The key is kept while it can be non-zero — the
+        // kept-while-nonzero contract — because each residue PR still needs its eyes-on
+        // triage: re-flagged `ai:blocked-on --blocked-by <the repo's migration>`, or unblocked
+        // outright where the repo has already migrated. Never auto-migrated.
+        "blockedDeploy": buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL).map(|v| v.len()).unwrap_or(0),
+        "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
+        "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
+        "closeCandidateIssues": close_issues.len(),
+        // Close-candidate VET lifecycle (#72/#73), over BOTH subject types (#211/#212).
+        // `closeCandidateIssues` above keeps its legacy meaning — every ISSUE carrying the
+        // label — and these are the machine's own split, mixing issues and PRs:
+        //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
+        //   upheld   = the vetter judged this should close — an upheld flag on either subject
+        //              type, or the vetter's own PR `close` verdict — queued for the human
+        // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the subject
+        // leaves this set entirely — an issue back to `uncoveredIssues`, a PR to its lane.
+        "closeCandidateUnvetted": cc_unvetted_n,
+        "closeCandidateUpheld": cc_upheld_n,
+        "leaks": leaks.len(),
+        "totalProducerPrs": total_producer_prs,
+        "archivedRepoPrs": archived_prs.len(),
+        // Producer untouched backlog — open issues with no covering open PR, excluding
+        // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
+        "uncoveredIssues": backlog.len(),
+        // Additive lane-based counts (each PR counted once, human-override dominant) — the
+        // states previously invisible to the dashboard.
+        "unvetted": lane_state_count(lanes, "vet-lifecycle", "un-vetted"),
+        "reject": lane_state_count(lanes, "vetter-verdicts", "ai:reject"),
+        // RETIRED (#135): no verdict writes `ai:relink` any more, so this counts down to 0 and
+        // stays there. The key is kept while it can be non-zero — a dashboard that stopped
+        // rendering the state would hide the PR that still needs re-recording as a `reject`.
+        "relink": lane_state_count(lanes, "vetter-verdicts", "ai:relink"),
+        // No key counts a close-candidate PR lane state or a decided-close state: flagged
+        // PRs are inventoried by the mixed close-candidate arrays above (#211/#212), and a
+        // close ruling is `human-close`'s decide+do with no state between (#213).
+        // RETIRED (#133). Kept — the dashboard reads it — and it now means "still to migrate".
+        "humanReject": lane_state_count(lanes, "human-decisions", RETIRED_HUMAN_REJECT_LABEL),
+        "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
+    });
     let mut doc = serde_json::json!({
         "states": bmap,
         "lanes": lanes,
-        // The machine's SHAPE as data (#130): every modeled state's descriptor, in render order,
-        // serialised from the same rows [`classify_lane`]'s constants are spelled from. `lanes`
-        // above stays the sparse occupancy; this list is what EXISTS, so a consumer renders an
-        // empty-but-live state and drops a deleted one on the next refresh with no edit anywhere.
-        "stateDescriptors": state_descriptors_json(),
+        // The machine's SHAPE as data (#130): every state's descriptor, in render order,
+        // serialised from the same rows [`classify_lane`]'s constants are spelled from, with
+        // residue rows filtered by the `counts` above. `lanes` stays the sparse occupancy; this
+        // list is what EXISTS, so a consumer renders an empty-but-live state, and a deleted or
+        // drained state leaves on the next refresh with no edit anywhere.
+        "stateDescriptors": state_descriptors_json(&counts),
         "closeCandidateIssues": SubjectRef::array(close_issues),
         // Same key at top level (the ITEM ARRAY) and under `counts` (its length), exactly as
         // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
@@ -17568,50 +17666,7 @@ fn human_queue_doc(
             .iter()
             .map(|(s, reason)| s.to_json_with(&[("reason", Value::from(reason.as_str()))]))
             .collect::<Vec<_>>(),
-        "counts": {
-            // Legacy label-based counts (UNCHANGED — the dashboard reads these).
-            "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
-            "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
-            // RETIRED (#162): no transition writes `ai:blocked-deploy` any more, so this counts
-            // down to 0 and stays there. The key is kept while it can be non-zero — the
-            // kept-while-nonzero contract — because each residue PR still needs its eyes-on
-            // triage: re-flagged `ai:blocked-on --blocked-by <the repo's migration>`, or unblocked
-            // outright where the repo has already migrated. Never auto-migrated.
-            "blockedDeploy": buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL).map(|v| v.len()).unwrap_or(0),
-            "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
-            "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
-            "closeCandidateIssues": close_issues.len(),
-            // Close-candidate VET lifecycle (#72/#73), over BOTH subject types (#211/#212).
-            // `closeCandidateIssues` above keeps its legacy meaning — every ISSUE carrying the
-            // label — and these are the machine's own split, mixing issues and PRs:
-            //   unvetted = the vetter's inbox (flagged, no human ruling, no verdict at THIS flag)
-            //   upheld   = the vetter judged this should close — an upheld flag on either subject
-            //              type, or the vetter's own PR `close` verdict — queued for the human
-            // A REJECTED flag needs no key: the vetter strips `ai:close-candidate`, so the subject
-            // leaves this set entirely — an issue back to `uncoveredIssues`, a PR to its lane.
-            "closeCandidateUnvetted": cc_unvetted_n,
-            "closeCandidateUpheld": cc_upheld_n,
-            "leaks": leaks.len(),
-            "totalProducerPrs": total_producer_prs,
-            "archivedRepoPrs": archived_prs.len(),
-            // Producer untouched backlog — open issues with no covering open PR, excluding
-            // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
-            "uncoveredIssues": backlog.len(),
-            // Additive lane-based counts (each PR counted once, human-override dominant) — the
-            // states previously invisible to the dashboard.
-            "unvetted": lane_state_count(lanes, "vet-lifecycle", "un-vetted"),
-            "reject": lane_state_count(lanes, "vetter-verdicts", "ai:reject"),
-            // RETIRED (#135): no verdict writes `ai:relink` any more, so this counts down to 0 and
-            // stays there. The key is kept while it can be non-zero — a dashboard that stopped
-            // rendering the state would hide the PR that still needs re-recording as a `reject`.
-            "relink": lane_state_count(lanes, "vetter-verdicts", "ai:relink"),
-            // No key counts a close-candidate PR lane state or a decided-close state: flagged
-            // PRs are inventoried by the mixed close-candidate arrays above (#211/#212), and a
-            // close ruling is `human-close`'s decide+do with no state between (#213).
-            // RETIRED (#133). Kept — the dashboard reads it — and it now means "still to migrate".
-            "humanReject": lane_state_count(lanes, "human-decisions", RETIRED_HUMAN_REJECT_LABEL),
-            "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
-        }
+        "counts": counts,
     });
     if let Some(open) = open {
         // The org-wide open-issue count goes in `counts` beside the queue counts, and the ages go
@@ -47057,7 +47112,10 @@ mod fsm_completeness_tests {
         assert_eq!(count("producer-blocked", "ai:blocked-on"), 0);
         assert_eq!(count("human-decisions", "human:reject"), 1);
         assert_eq!(count("human-decisions", "human:design"), 1);
-        assert_eq!(count("leak", "leak"), 1);
+        // The leak bucket emits NO cell (#130 clarification 2): its inventory is the top-level
+        // `leaks` array — the one carrying each leak's `reason` — which is exactly what its
+        // descriptor claims, so a cell here would be occupancy no descriptor claims.
+        assert!(doc.pointer("/leak").is_none(), "not a lane cell");
 
         // the PR list carries {repo, number, url, title}. #1 (never labelled) and #2 (ai:ready with
         // no current verdict) sit side by side in the ONE un-vetted bucket, indistinguishable.
@@ -47077,16 +47135,17 @@ mod fsm_completeness_tests {
         );
         assert!(arv.get("title").is_some());
 
-        // total across lanes == number of PRs MINUS the close-candidate hand-off (#211/#212):
-        // #7 is inventoried by the flag machinery, and counting it in a lane too would be the
-        // one-subject-two-states split #212 retired.
+        // total across lanes == number of PRs MINUS the two no-cell buckets: #7 is inventoried
+        // by the flag machinery (#211/#212 — counting it in a lane too would be the
+        // one-subject-two-states split #212 retired), and #14 by the top-level `leaks` array
+        // (#130 clarification 2).
         let mut total = 0usize;
         for (_, states) in doc.as_object().unwrap() {
             for (_, b) in states.as_object().unwrap() {
                 total += b.get("count").and_then(|v| v.as_u64()).unwrap() as usize;
             }
         }
-        assert_eq!(total, prs.len() - 1);
+        assert_eq!(total, prs.len() - 2);
     }
 }
 
@@ -47177,8 +47236,9 @@ mod state_descriptor_tests {
                             lane.key(),
                             l.key()
                         ),
-                        // Amendment 1: the leak anti-state alone classifies into a lane cell but
-                        // reads its occupancy from the top level (the array carrying `reason`).
+                        // Amendment 1: the leak anti-state alone classifies with top-level
+                        // occupancy (the `leaks` array carrying `reason`), and `lanes_doc`
+                        // emits no cell for it (clarification 2) — pinned by the sweep below.
                         StateOccupancy::Counts { .. } => assert_eq!(
                             state, "leak",
                             "`{state}` classifies into a lane but its descriptor reads occupancy \
@@ -47198,6 +47258,46 @@ mod state_descriptor_tests {
                     l.key(),
                     d.key
                 );
+            }
+        }
+        // …and the emitted `lanes` document itself: every cell `lanes_doc` produces from these
+        // same inputs is claimed by exactly one lane-occupancy descriptor (#130 clarification 2).
+        // The leak and close-candidate buckets classify but emit NO cell — their inventories are
+        // top-level — so an unclaimed cell here is a defect, with zero declared exceptions.
+        let mut prs: Vec<QueuePr> = Vec::new();
+        for labels in &label_sets {
+            for rvah in [None, Some(true), Some(false)] {
+                for pc in [false, true] {
+                    let n = prs.len() as u64 + 1;
+                    prs.push(QueuePr {
+                        subject: SubjectRef::new(
+                            "o/r",
+                            n,
+                            format!("https://github.com/o/r/pull/{n}"),
+                            "pr",
+                        ),
+                        labels: labels.clone(),
+                        ready_vetted_at_head: rvah,
+                        producer_commented: pc,
+                    });
+                }
+            }
+        }
+        let emitted_lanes = lanes_doc(&prs);
+        for (lane, states) in emitted_lanes.as_object().expect("lanes is an object") {
+            for state in states.as_object().expect("a lane is an object").keys() {
+                match &descriptor(state).occupancy {
+                    StateOccupancy::Lane(l) => assert_eq!(
+                        l.key(),
+                        lane.as_str(),
+                        "emitted cell `{lane}`.`{state}` is claimed by a descriptor naming \
+                         another lane"
+                    ),
+                    StateOccupancy::Counts { .. } => panic!(
+                        "emitted cell `{lane}`.`{state}` is claimed by no lane-occupancy \
+                         descriptor — unclaimed occupancy (#130 clarification 2)"
+                    ),
+                }
             }
         }
     }
@@ -47225,8 +47325,14 @@ mod state_descriptor_tests {
             &[],
             0,
         );
-        // The emission is wired: the document carries the same rows the table holds.
-        assert_eq!(doc.get("stateDescriptors"), Some(&state_descriptors_json()));
+        // The emission is wired, and gated by the SAME counts object the document carries: this
+        // fixture is fully drained, so what ships is exactly the live rows.
+        assert_eq!(
+            doc.get("stateDescriptors"),
+            Some(&state_descriptors_json(
+                doc.get("counts").expect("counts is emitted")
+            ))
+        );
 
         let counts = doc
             .get("counts")
@@ -47290,13 +47396,25 @@ mod state_descriptor_tests {
         }
     }
 
+    /// Every history key at 1 — full occupancy, so every row of the table emits.
+    fn occupied() -> Value {
+        Value::Object(
+            STATE_DESCRIPTORS
+                .iter()
+                .map(|d| (d.hist.to_string(), Value::from(1)))
+                .collect(),
+        )
+    }
+
     // The ratified contract (the #130 schema comment), pinned verbatim: field set and spelling,
-    // per-state owner/act/kind/hist/folds/occupancy/label, and array order = render order. The
-    // table is the source; this pin is what makes an accidental edit to any cell loud.
+    // per-state owner/act/kind/hist/folds/occupancy/label, and array order = render order. Pinned
+    // at FULL occupancy so every row — residue rows included — is in the emitted array; the
+    // gating that removes a drained residue row is pinned by its own test below. The table is the
+    // source; this pin is what makes an accidental edit to any cell loud.
     #[test]
     fn state_descriptors_emit_the_ratified_shape() {
         assert_eq!(
-            state_descriptors_json(),
+            state_descriptors_json(&occupied()),
             json!([
                 {
                     "key": "uncoveredIssues",
@@ -47434,6 +47552,78 @@ mod state_descriptor_tests {
                 }
             ])
         );
+    }
+
+    // #130 clarification 1: a live state emits even empty — the shape is what EXISTS — while a
+    // residue state's existence IS its residue: its row leaves the shape when it drains and
+    // returns, at its table position with its label intact, the moment a straggler reappears.
+    // This is what keeps a consumer that renders the full shape including empties from drawing a
+    // permanent dimmed box for a drained retired state (rain-org-health#145's rejected outcome).
+    #[test]
+    fn a_residue_row_emits_only_while_occupied() {
+        let keys = |v: &Value| -> Vec<String> {
+            v.as_array()
+                .expect("stateDescriptors is an array")
+                .iter()
+                .map(|d| d["key"].as_str().expect("key is a string").to_string())
+                .collect()
+        };
+        let drained: Value = Value::Object(
+            STATE_DESCRIPTORS
+                .iter()
+                .map(|d| (d.hist.to_string(), Value::from(0)))
+                .collect(),
+        );
+        // The live set, pinned: every occupancy at ZERO, every live row still emitted, every
+        // residue row gone.
+        assert_eq!(
+            keys(&state_descriptors_json(&drained)),
+            [
+                "uncoveredIssues",
+                "un-vetted",
+                "ai:blocked-on",
+                "ai:ready",
+                "ai:reject",
+                "ai:design",
+                "closeCandidateUnvetted",
+                "closeCandidateUpheld",
+                "leak",
+            ]
+            .map(String::from)
+        );
+        // One straggler reappears → exactly its row returns, in render order.
+        let mut residue = drained.clone();
+        residue["blockedDeploy"] = Value::from(13);
+        let emitted = state_descriptors_json(&residue);
+        assert_eq!(
+            keys(&emitted),
+            [
+                "uncoveredIssues",
+                "un-vetted",
+                "ai:blocked-on",
+                "ai:ready",
+                "ai:reject",
+                "ai:design",
+                "ai:blocked-deploy",
+                "closeCandidateUnvetted",
+                "closeCandidateUpheld",
+                "leak",
+            ]
+            .map(String::from)
+        );
+        // …and it is the FULL row, retirement suffix still on the label.
+        let row = emitted
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["key"] == json!("ai:blocked-deploy"))
+            .expect("the residue row is emitted while occupied");
+        assert_eq!(row["label"], json!("ai:blocked-deploy (retired #162)"));
+        // `human:design` gates the same way — the row leaves the shape when no PR carries the
+        // label — with no special-casing anywhere for its pending deletion.
+        let mut hd = drained.clone();
+        hd["humanDesign"] = Value::from(6);
+        assert!(keys(&state_descriptors_json(&hd)).contains(&"human:design".to_string()));
     }
 }
 
