@@ -39082,6 +39082,66 @@ mod settings_tests {
         );
     }
 
+    /// #229 and the same defect one step below it. The state-load is the tool's, and a step that
+    /// re-derives a set `worklist` already typed is a second answer free to disagree with the first
+    /// — which is the failure `state-load` exists to remove, not a style preference. Step 3 found
+    /// its rejects with a raw `gh search prs --label ai:reject`, and step 3d found its conflicts
+    /// with a search PLUS a `gh pr view` per PR.
+    ///
+    /// Asserted on the STEPS and both ways round: the query text must be GONE as an instruction and
+    /// PRESENT as a prohibition, because a rule that is merely deleted is a rule the next edit
+    /// reinvents. A bare `!contains` over the whole file could not tell those two apart.
+    #[test]
+    fn the_reject_and_conflict_steps_consume_typed_rows_not_a_search() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step3 = producer_step(&prompt, "3");
+        assert!(
+            step3.contains("`nextAction` is `rework-reject`"),
+            "step 3 must take its reject work orders off the typed row: {step3}"
+        );
+        assert!(
+            !step3.contains("--label ai:reject --json repository,number"),
+            "the executable reject search must be gone from step 3"
+        );
+        assert!(
+            step3.contains("Do NOT re-derive the set with `gh search prs --label ai:reject`"),
+            "…and the ban must be STATED, not merely the query removed"
+        );
+        // The two reject shapes stay distinguishable in the prose, not only in the tool.
+        assert!(step3.contains("parked-skip"));
+
+        let step3d = producer_step(&prompt, "3d");
+        assert!(
+            step3d.contains("`nextAction` is `conflict-3d`"),
+            "step 3d must take its conflicts off the typed row: {step3d}"
+        );
+        assert!(
+            !step3d.contains("--json mergeStateStatus,baseRefName"),
+            "the per-PR mergeability probe must be gone from step 3d"
+        );
+        assert!(
+            step3d.contains("Do NOT re-derive the set with `gh search prs`+`gh pr view`"),
+            "…stated as a prohibition, for the same reason as step 3's"
+        );
+        // The ONE field the row genuinely does not carry is named, so the fetch that survives is
+        // scoped to it. Dropping this would leave the step unable to name its base branch at all.
+        assert!(
+            step3d.contains("baseRefName"),
+            "step 3d still needs the base branch and must say where it comes from"
+        );
+
+        // Both steps depend on step 2a offering the rows, so the enumeration there must name them.
+        let step2 = producer_step(&prompt, "2");
+        for action in ["rework-reject", "conflict-3d"] {
+            assert!(
+                step2.contains(action),
+                "step 2a's nextAction list must offer {action}"
+            );
+        }
+    }
+
     // The rework is the producer's most common output and its record: a `git push` in Bash moves
     // a PR head and leaves nothing any reader can join to a PR, so the prompt has to name the tool
     // at every place it tells the producer to push to one of its own PR branches.
