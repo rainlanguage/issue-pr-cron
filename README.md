@@ -381,24 +381,26 @@ server is the vetter's **only** tool surface.
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
 `human-mcp.json`) serves `next_ready`, `pr_context`, `pr_checkout`,
-`clone_release`, `next_close_candidate`, `close_candidate_context`, `next_leak`,
-`human_rule`, `human_rule_issue` and `human_close` — find the subject, read it,
-audit its source, rule on it, close it. Each of the human's inboxes has its own
-"which is next" tool: `next_ready` for PRs, `next_close_candidate` for
-close-candidate flags (#173), and `next_leak` for the FSM-conformance leaks
-(#222) — the inbox whose correct size is ZERO, so that tool's empty answer is
-typed as the healthy one rather than left to read as a failure. `human_close` is
-a tool rather than something the caller composes for the reason above: the
-alternative is a transition half in a tool and half in a prompt, and that half
-was wrong on all 74 closed-and-still-flagged subjects. The subcommands above are
-for the human at a terminal; the profile is for **an agent acting on the human's
-behalf**, which is the case that actually went wrong in #86. A prompt rule
-cannot take a bypassable Bash away, and a `gh issue edit` that no tool offers is
-exactly what gets improvised; a profile makes the non-FSM operation
-_unavailable_. The vetter's inbox tools are deliberately absent — the human's
-inbox is `human-queue`, which renders whole org-wide sets and does not fit one
-tool result — and so is `record_close_candidate_verdict`, which is the vetter's
-authority and the very move `human_rule_issue` refuses on the human's behalf.
+`clone_release`, `next_close_candidate`, `close_candidate_context`,
+`next_design`, `next_leak`, `human_rule`, `human_rule_issue` and `human_close` —
+find the subject, read it, audit its source, rule on it, close it. Each of the
+human's inboxes has its own "which is next" tool: `next_ready` for PRs,
+`next_close_candidate` for close-candidate flags (#173), `next_design` for open
+design questions (#220, oldest question first), and `next_leak` for the
+FSM-conformance leaks (#222) — the inbox whose correct size is ZERO, so that
+tool's empty answer is typed as the healthy one rather than left to read as a
+failure. `human_close` is a tool rather than something the caller composes for
+the reason above: the alternative is a transition half in a tool and half in a
+prompt, and that half was wrong on all 74 closed-and-still-flagged subjects. The
+subcommands above are for the human at a terminal; the profile is for **an agent
+acting on the human's behalf**, which is the case that actually went wrong in
+#86. A prompt rule cannot take a bypassable Bash away, and a `gh issue edit`
+that no tool offers is exactly what gets improvised; a profile makes the non-FSM
+operation _unavailable_. The vetter's inbox tools are deliberately absent — the
+human's inbox is `human-queue`, which renders whole org-wide sets and does not
+fit one tool result — and so is `record_close_candidate_verdict`, which is the
+vetter's authority and the very move `human_rule_issue` refuses on the human's
+behalf.
 
 `pr_checkout` and `clone_release` are on it for `/nr`'s sake (#150). The human
 gate forms its own view rather than relaying the vetter's, and the mechanical
@@ -715,6 +717,50 @@ name. `ToolSearch` nonetheless stays in the allow-list as the fail-safe — if a
 harness defers anyway, a vetter that cannot call it sees its own tools as
 nonexistent and records nothing at all (#63). The producer keeps deferral: it
 has Bash and a far larger surface, where the round trip pays for itself.
+
+#### `next_design` — the design questions, and why its order is the flag queue's
+
+The third inbox, and the last one worked by hand searches. `next_ready` answers
+which PR is next to merge and `next_close_candidate` which flag is next to rule
+on; nothing answered **which design question is next** — so the queue that waits
+on nothing but a human's answer was the queue with no entry point. Per row: the
+PR's title/`baseRefName`/`headRefOid`/labels, and the **trusted comment that
+raised the live question** — the vetter's `record-verdict design` note or the
+producer's `flag-design` note, whichever is the array tail, with
+`question.source` saying which. A vetter-raised question carries the sha it
+pinned and `question.atHead` says whether that is still the head; a
+producer-raised one pins no sha and reports `null` rather than a bool asserting
+a comparison nothing performed.
+
+**The order is `next_close_candidate`'s, and the argument transfers whole rather
+than by analogy.** Cheapest-first exists on the PR side because merges are the
+scarce resource; neither half of that reaches here. There is **no cost signal**
+— a question's length says nothing about how hard it is to answer — and the
+label **parks the PR**: `ai:design` waits on a human while every AI actor leaves
+it alone, so a waiting question is a PR that is neither being built nor being
+judged. FIFO bounds that limbo; every order that is not FIFO leaves some
+question at the back for ever. Ordering by the raising comment's timestamp is
+ordering by the moment the PR became the human's, which is exactly the wait
+being bounded.
+
+**The counts are a partition, not a difference.** `aiDesign` equals
+`draft +
+humanRuled + unaddressable + presentable + noQuestion + fetchErrors +
+archivedRepo`,
+and `withheld` names the rows behind three of them with the one line that says
+which. That shape is the fix for the failure mode a single `excluded` number
+has: it folds unrelated withholdings together, and the one class that cannot
+even be named — a hit whose ref does not parse — disappears inside it. A draft
+is withheld from the head for a reason that is **not** the merge queue's (a
+draft's question is perfectly answerable; what is still moving is the code it is
+about) and is listed by name, because an excluded row nobody lists is a PR owned
+by nobody.
+
+**The exit is a send-back.** Answering a design question routes the PR straight
+back to the producer as `ai:reject` plus the answer as the trusted work order,
+in one call — the same act a rejection is (#219). So every ruling retires its
+own row, which is why the page caps at 3 for `next_ready`'s reason with more
+force: a page is stale past its head by construction.
 
 ### Vetting is a pure function, and `vetted_at_head` is its cache key
 
@@ -1916,11 +1962,15 @@ an archived repo froze, in the same place it reports its other withheld sets:
 `counts.archivedRepo` and `archivedRepoFlags` on `next_close_candidate`,
 `counts.skipArchivedRepo` and `archivedRepoFlags` on the vetter's
 close-candidate inbox, `counts.skipArchivedRepo` and `archivedRepo` on
-`unvetted`, `counts.archivedRepo` on `next_ready`, an `archived-repo` segment in
-the `--queue` header, `archivedRepoPrs` on `human-queue`, and a
-`(N withheld: archived repo, unactionable)` note on `worklist`,
-`uncovered-issues` and `state-load`. Silence is what let these sit unnoticed; a
-stated count says the flags exist without offering work nobody can do.
+`unvetted`, `counts.archivedRepo` on `next_ready`, `counts.archivedRepo` on
+`next_design` (whose FIFO order makes the drop matter more than elsewhere — a
+frozen row sorts to the FRONT of an oldest-first queue and stays there, which is
+`rain.webapp#139` at the head of the flag queue four minutes after that repo was
+archived), an `archived-repo` segment in the `--queue` header, `archivedRepoPrs`
+on `human-queue`, and a `(N withheld: archived repo, unactionable)` note on
+`worklist`, `uncovered-issues` and `state-load`. Silence is what let these sit
+unnoticed; a stated count says the flags exist without offering work nobody can
+do.
 
 **The classification is `cc_gate`'s**, for both close-candidate inboxes at once
 (#207 made `cc_row` consume it, which is what let one variant serve both).

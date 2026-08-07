@@ -25655,6 +25655,1408 @@ mod next_leak_tests {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// next_design — the human's DESIGN-QUESTION read, as one typed result (#220).
+//
+// The third inbox. `next_ready` answers "which PR is next to merge" and
+// `next_close_candidate` answers "which flag is next to rule on"; nothing
+// answered "which design question is next", so the one queue that waits on
+// NOTHING but a human's answer was the one still worked by hand searches.
+//
+// This is the READ that precedes the design ruling — the ruling that routes
+// the PR straight back to the producer as `ai:reject` with the answer as the
+// trusted work order, one call (#219: an answered design question is a
+// send-back, the same act a rejection is).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// WHO raised the live design question — a typed discriminant, because two different trusted
+/// comment shapes can raise one and a reader handed only "a comment" would re-derive which record
+/// it is holding from the text, differently each time.
+///
+/// Either the vetter's `record-verdict design` (a `Reviewed <sha>: design` line, pinned to the
+/// head it judged) or the producer's own `flag-design` transition (a `Design-question:` note,
+/// pinned to no sha — the producer raises it about the PR as a whole). Both arrive through
+/// [`trusted_comments`]' author gate, so a spoofed marker cannot put words in either mouth.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DesignQuestionSource {
+    VetterVerdict,
+    ProducerFlag,
+}
+
+impl DesignQuestionSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            DesignQuestionSource::VetterVerdict => "vetter-verdict",
+            DesignQuestionSource::ProducerFlag => "producer-flag",
+        }
+    }
+}
+
+/// PURE: does one trusted vetter comment body record the PR-side `design` VERDICT — a
+/// `Reviewed <sha>: design …` line? The close-candidate twin (`Reviewed close-candidate @…`) is
+/// excluded by its own token, exactly as [`pr_close_verdict_line`] excludes it, so a flag verdict
+/// never reads as a PR design question or vice versa.
+fn pr_design_verdict_line(body: &str) -> bool {
+    body.lines().any(|l| {
+        let Some(rest) = l.trim().strip_prefix("Reviewed ") else {
+            return false;
+        };
+        if rest.starts_with("close-candidate @") {
+            return false;
+        }
+        matches!(
+            rest.split_once(": "),
+            Some((_, tail)) if tail.split_whitespace().next() == Some("design")
+        )
+    })
+}
+
+/// The live design question on one PR: when it was raised, the whole trusted comment that raised
+/// it, and which trusted role raised it.
+struct DesignQuestion {
+    /// The raising comment's `createdAt` — the FIFO queue key, because the raising comment is the
+    /// moment the PR became the human's, the same reasoning [`last_pr_close_verdict`]'s timestamp
+    /// carries.
+    at: String,
+    body: String,
+    source: DesignQuestionSource,
+}
+
+/// The most-recent trusted comment that RAISED a design question on this PR — the vetter's
+/// `Reviewed <sha>: design` verdict or the producer's `Design-question:` flag note, whichever came
+/// last. Most-recent-wins is the rule every trusted-comment reader here applies
+/// ([`last_vetter_comment`], [`last_close_candidate_flag`]): a re-raise supersedes, so the newest
+/// raising comment is the claim in force.
+///
+/// `None` means the label is on the PR and no trusted comment explains it — the design twin of
+/// [`CcGate::NoFlag`]: there is no claim to check, so there is nothing to present.
+fn last_design_question(detail: &Value) -> Option<DesignQuestion> {
+    detail
+        .get("comments")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|c| author_login(c) == Some(TRUSTED_AUTHOR))
+        .filter_map(|c| {
+            let body = c.get("body").and_then(|b| b.as_str())?;
+            let source = if body.starts_with("🤖 ai:vetter") && pr_design_verdict_line(body) {
+                DesignQuestionSource::VetterVerdict
+            } else if body.starts_with("🤖 ai:producer") && body.contains("Design-question:") {
+                DesignQuestionSource::ProducerFlag
+            } else {
+                return None;
+            };
+            let at = c.get("createdAt").and_then(|t| t.as_str()).unwrap_or("");
+            Some(DesignQuestion {
+                at: at.to_string(),
+                body: body.to_string(),
+                source,
+            })
+        })
+        .next_back()
+}
+
+/// One `ai:design` PR that is the human's to answer, as [`next_design_fetch`] produces it: the
+/// ordering key plus the `gh pr view` snapshot the row reads its fields out of. Carrying the JSON
+/// rather than a flattened row is what lets the ranking and the row answer off the SAME snapshot,
+/// for the reason [`PresentablePr`] does.
+struct PresentableDesign {
+    slug: String,
+    num: u64,
+    question: DesignQuestion,
+    detail: Value,
+}
+
+/// PURE: the total order the design queue is worked in — **OLDEST QUESTION FIRST**, ties broken by
+/// the PR reference so the order is total and two runs a second apart name the same head.
+///
+/// [`flag_order_key`]'s argument transfers whole rather than by analogy. There is no cost signal
+/// to sort by — a question's length says nothing about how hard it is to answer — and the label
+/// PARKS the PR: `ai:design` waits on a human while every AI actor leaves the PR alone, so a
+/// waiting question is a PR owned by nobody, and FIFO bounds that limbo where any other order
+/// leaves some question at the back for ever.
+fn design_order_key(d: &PresentableDesign) -> (&str, &str, u64) {
+    (&d.question.at, &d.slug, d.num)
+}
+
+/// PURE: apply [`design_order_key`] to the whole set. Separate from the paging below so the ORDER
+/// and the PREFIX are two testable facts, as [`rank_flags`] and its page are.
+fn rank_designs(designs: &mut [PresentableDesign]) {
+    designs.sort_by(|a, b| design_order_key(a).cmp(&design_order_key(b)));
+}
+
+/// PURE: the rows this call answers with — a PREFIX of the already-ranked set, and nothing else.
+/// It does not sort, for the reason [`next_ready_page`] does not: a second ordering is a second
+/// answer to "which question is next".
+fn next_design_page(ordered: &[PresentableDesign], limit: usize) -> Vec<&PresentableDesign> {
+    ordered.iter().take(limit).collect()
+}
+
+/// Rows one call may return, and the default.
+///
+/// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, with [`NEXT_CC_MAX_ROWS`]'s sharpening:
+/// every ruling retires its row — an answered question lands `ai:reject` + the work order in one
+/// call (#219), which strips `ai:design` — so a page is stale past its head by construction. And
+/// the field this tool exists to carry is the QUESTION; a page long enough to matter would have to
+/// clip it to fit, trading the one field the caller cannot reconstruct for rows it can wait for.
+const NEXT_DESIGN_MAX_ROWS: usize = 3;
+const NEXT_DESIGN_DEFAULT_ROWS: usize = 1;
+
+// Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable
+// to exceed the budget rather than merely unlikely to.
+const ND_NOTE_BYTES: usize = 2_600;
+const ND_TITLE_BYTES: usize = 200;
+const ND_URL_BYTES: usize = 200;
+const ND_PR_BYTES: usize = 160;
+const ND_BRANCH_BYTES: usize = 160;
+const ND_SHA_BYTES: usize = 64;
+const ND_TIME_BYTES: usize = 40;
+const ND_LABEL_BYTES: usize = 60;
+const ND_MAX_LABELS: usize = 8;
+const ND_ERROR_BYTES: usize = 200;
+
+/// Every capped field in one row, summed. Two shas (the PR's head, and the one a vetter-raised
+/// question pinned itself to) are counted at their own cap.
+const ND_ROW_FIELD_BYTES: usize = ND_PR_BYTES
+    + ND_URL_BYTES
+    + ND_TITLE_BYTES
+    + ND_BRANCH_BYTES
+    + 2 * ND_SHA_BYTES
+    + ND_TIME_BYTES
+    + ND_NOTE_BYTES
+    + ND_MAX_LABELS * ND_LABEL_BYTES;
+
+/// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
+/// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
+const ND_ROW_FIXED_BYTES: usize = 1_200;
+const ND_ROW_CEILING: usize = ND_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + ND_ROW_FIXED_BYTES;
+
+// The two withheld lists — capped, their overflow counted, because they ride inside the same one
+// budget the rows do, which is `next_close_candidate`'s reasoning unchanged.
+const ND_MAX_WITHHELD: usize = 3;
+const ND_MAX_ERRORS: usize = 3;
+const ND_WITHHELD_FIELD_BYTES: usize = ND_PR_BYTES + ND_ERROR_BYTES;
+const ND_WITHHELD_FIXED_BYTES: usize = 150;
+const ND_WITHHELD_CEILING: usize =
+    ND_WITHHELD_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + ND_WITHHELD_FIXED_BYTES;
+
+/// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
+const ND_ENVELOPE_BYTES: usize = 1_500;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — the same one both sibling tools hold: a full
+/// page of maximal rows plus both withheld lists at their caps cannot reach
+/// [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this crate does not build.
+const _: () = assert!(
+    NEXT_DESIGN_MAX_ROWS * ND_ROW_CEILING
+        + (ND_MAX_WITHHELD + ND_MAX_ERRORS) * ND_WITHHELD_CEILING
+        + ND_ENVELOPE_BYTES
+        <= MCP_MAX_RESULT_BYTES
+);
+
+/// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
+/// [`next_ready_limit`]'s is: a silently clamped argument leaves the caller believing it asked for
+/// something it did not get.
+fn next_design_limit(args: &Value) -> Result<usize, String> {
+    match args.get("limit") {
+        None | Some(Value::Null) => Ok(NEXT_DESIGN_DEFAULT_ROWS),
+        Some(v) => match v.as_u64() {
+            Some(n) if n >= 1 && n <= NEXT_DESIGN_MAX_ROWS as u64 => Ok(n as usize),
+            _ => Err(format!(
+                "limit must be an integer in 1..={NEXT_DESIGN_MAX_ROWS}"
+            )),
+        },
+    }
+}
+
+/// Everything ONE row is built from, grouped so the row builder is PURE and testable without a
+/// network.
+struct NextDesignFacts<'a> {
+    slug: &'a str,
+    num: u64,
+    /// The `gh pr view` JSON the queue classified this PR from.
+    detail: &'a Value,
+    /// The live question — the most-recent trusted raising comment, whole.
+    question: &'a DesignQuestion,
+}
+
+/// PURE: the design question for ONE PR. Every string is clipped, so the row's size is bounded by
+/// [`ND_ROW_CEILING`] whatever GitHub returns.
+///
+/// The row's centre is `question.note` — the raising comment itself, the CLAIM the human checks,
+/// never a fact. `sha`/`atHead` exist for the vetter-raised case exactly as `next_ready` states
+/// `verdict.sha` beside `headRefOid`: the reader can see whether the reasoning describes the code
+/// that is there now. A producer flag pins no sha, and the pair is null rather than a bool that
+/// would assert a comparison nothing performed.
+fn next_design_row(f: &NextDesignFacts) -> Value {
+    let head = f
+        .detail
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let labels_all = label_names(f.detail);
+    let labels: Vec<String> = labels_all
+        .iter()
+        .take(ND_MAX_LABELS)
+        .map(|l| clip_field(l, ND_LABEL_BYTES))
+        .collect();
+    let sha = match f.question.source {
+        DesignQuestionSource::VetterVerdict => verdict_sha(&f.question.body),
+        DesignQuestionSource::ProducerFlag => None,
+    };
+    serde_json::json!({
+        "pr": clip_field(&format!("{}#{}", f.slug, f.num), ND_PR_BYTES),
+        "url": clip_field(f.detail.get("url").and_then(|v| v.as_str()).unwrap_or(""), ND_URL_BYTES),
+        "title": clip_field(f.detail.get("title").and_then(|v| v.as_str()).unwrap_or(""), ND_TITLE_BYTES),
+        // The PR's own base, never guessed — `rain-org-health` is on `master`, the same lesson
+        // `next_ready_row` states.
+        "baseRefName": clip_field(f.detail.get("baseRefName").and_then(|v| v.as_str()).unwrap_or(""), ND_BRANCH_BYTES),
+        "headRefOid": clip_field(head, ND_SHA_BYTES),
+        "labels": labels,
+        "labelsTruncated": labels_all.len() > ND_MAX_LABELS,
+        "question": {
+            "source": f.question.source.as_str(),
+            // The raising comment's timestamp — the queue key, stated so a reader can see the
+            // FIFO position rather than take the ordering on trust.
+            "at": clip_field(&f.question.at, ND_TIME_BYTES),
+            "sha": sha.map(|s| clip_field(s, ND_SHA_BYTES)),
+            "atHead": sha.map(|s| !head.is_empty() && s == head),
+            "note": clip_field(&f.question.body, ND_NOTE_BYTES),
+            "noteBytes": f.question.body.len(),
+            "noteTruncated": f.question.body.len() > ND_NOTE_BYTES,
+        },
+    })
+}
+
+/// The whole-queue breakdown. Every hit the search returned lands in exactly ONE of these, so
+///
+/// ```text
+/// aiDesign == draft + humanRuled + unaddressable + presentable + noQuestion + fetchErrors
+///             + archivedRepo
+/// ```
+///
+/// always, and a reader can see there is no further bucket quietly absorbing rows. That is the
+/// property a single `excluded` number could not hold: it folded three unrelated withholdings
+/// into one difference, and the one class that cannot even be NAMED — a hit whose ref does not
+/// parse — was invisible inside it.
+#[derive(Default)]
+struct DesignQueueCounts {
+    /// The whole `ai:design` population the search returned, frozen rows included — the
+    /// header-arithmetic role [`QueueCounts::raw`] plays.
+    raw: usize,
+    /// DRAFT PRs, withheld from the presented head and LISTED by name.
+    ///
+    /// The exclusion is NOT [`presentable_queue`]'s inherited: there a draft is withheld because
+    /// it cannot merge, and that reason does not transfer — a draft's design question is
+    /// perfectly answerable, and #219 makes the answer producer work, which is exactly what a
+    /// draft is already for. What withholds it here is that the answer would be spent against a
+    /// tree its author is still shaping, and a ruling pinned to code that is still moving is the
+    /// staleness `question.atHead` exists to make visible.
+    ///
+    /// So it is withheld from the HEAD and named in the withheld list rather than dropped: an
+    /// excluded row nobody lists is a PR owned by nobody, which is the starvation this queue's
+    /// whole FIFO argument is against.
+    draft: usize,
+    /// A `human:*` label already dominates the `ai:design` one — the human's verdict wins, from
+    /// the same [`has_human_override`] predicate `presentable_queue`'s candidate filter reads.
+    /// Counted, not listed: a ruled subject is a decision already made, not an inbox item.
+    human_ruled: usize,
+    /// The hit names no PR this tool can ADDRESS — no `number`, or a url [`pr_slug`] does not
+    /// resolve. Listed under whatever identifier the hit does carry, because a row nobody can
+    /// name is the one class that a bare count leaves a reader unable to go and look at.
+    unaddressable: usize,
+    presentable: usize,
+    /// The label is on the PR and NO trusted comment raised a question — the design twin of
+    /// [`CcGate::NoFlag`]: there is no claim to check, so there is nothing to present, and the
+    /// row is listed rather than left invisible.
+    no_question: usize,
+    fetch_errors: usize,
+    /// `ai:design` PRs an ARCHIVED repo froze (#206) — counted for the reason `next_ready`
+    /// counts its own: a row this tool withholds is a row the human has no other way to learn
+    /// about.
+    archived_repo: usize,
+}
+
+/// The document's non-row halves: the counts, and the two lists a reader must see even though
+/// this call will not act on them.
+struct DesignQueueWithheld {
+    counts: DesignQueueCounts,
+    /// Every row withheld by CLASSIFICATION — draft, unaddressable, or labelled with no question
+    /// behind it — each carrying the one line that says which. ONE list rather than three,
+    /// because the entry already discriminates itself in `why` and three capped lists would cost
+    /// the budget three overflow counts to say the same thing.
+    withheld: Vec<Value>,
+    more_withheld: usize,
+    /// Rows withheld by FAILURE, kept apart from the classifications for the reason #129 keeps
+    /// `rateLimited` out of `fetchError`: a row that could not be read is un-read, not judged.
+    errors: Vec<Value>,
+    more_errors: usize,
+}
+
+/// The one-line reasons the withheld list carries. Named constants rather than literals at the
+/// push sites, so the string a test asserts and the string a human reads cannot drift apart.
+const ND_WHY_DRAFT: &str =
+    "draft — the question is answerable, but the code it is about is still being shaped";
+const ND_WHY_UNADDRESSABLE: &str = "unparseable PR ref — no subject a ruling could be written to";
+const ND_WHY_NO_QUESTION: &str = "no trusted comment raises a design question";
+const ND_WHY_FETCH_FAILED: &str = "gh pr view failed — not classified this run";
+
+/// PURE: one entry of either withheld list — the PR ref and one line saying what is wrong with
+/// it: [`withheld_entry`]'s shape, keyed by the subject name this queue's rows use.
+fn nd_withheld_entry(pr: &str, why: &str) -> Value {
+    serde_json::json!({
+        "pr": clip_field(pr, ND_PR_BYTES),
+        "why": clip_field(why, ND_ERROR_BYTES),
+    })
+}
+
+/// PURE: the whole document.
+///
+/// The `counts` are a PARTITION of `aiDesign` (see [`DesignQueueCounts`]) and `withheld` names
+/// the rows behind three of them, so "why is the PR I expected not here" is answerable from the
+/// document rather than by re-running the search: a labelled PR whose question nothing trusted
+/// raised, a draft, and a hit nobody can address are each stated with the ref and the one line
+/// that says which. An empty queue is an ANSWER — zero rows under zeroed counts says the lane is
+/// clear, never that the call failed (a failed enumeration is an `Err` the caller reads).
+fn next_design_doc(rows: Vec<Value>, w: &DesignQueueWithheld) -> Value {
+    let returned = rows.len();
+    serde_json::json!({
+        "queue": {
+            "presentable": w.counts.presentable,
+            "returned": returned,
+            "more": w.counts.presentable.saturating_sub(returned),
+        },
+        "counts": {
+            "aiDesign": w.counts.raw,
+            "draft": w.counts.draft,
+            "humanRuled": w.counts.human_ruled,
+            "unaddressable": w.counts.unaddressable,
+            "presentable": w.counts.presentable,
+            "noQuestion": w.counts.no_question,
+            "fetchErrors": w.counts.fetch_errors,
+            "archivedRepo": w.counts.archived_repo,
+        },
+        "withheld": w.withheld,
+        "moreWithheld": w.more_withheld,
+        "fetchErrors": w.errors,
+        "moreFetchErrors": w.more_errors,
+        "next": rows,
+    })
+}
+
+/// PURE: the argv of the org-wide `ai:design` search — the ONE place this queue's population query
+/// is spelled, for the reason [`flagged_subjects_args`] is one place: the thing deciding which
+/// population the tool sees must be a value a test can read, because the network call around it is
+/// asserted by nothing.
+///
+/// `gh search prs` only: both raising transitions — the vetter's `record-verdict design` and the
+/// producer's `flag-design` — write PR state, so there is no issue half for this label. Label
+/// search rather than any checks qualifier ([`presentable_queue`]'s measured 93-vs-203 lesson),
+/// org scope from ORGS via [`org_owner_args`] (single source: cron.env), and the `--json` set is
+/// exactly what [`nd_hit_class`] reads without a second call.
+fn design_open_prs_args() -> Vec<String> {
+    let mut args: Vec<String> = vec!["search".into(), "prs".into()];
+    args.extend(org_owner_args());
+    args.extend(
+        [
+            "--state",
+            "open",
+            "--label",
+            "ai:design",
+            "--limit",
+            "1000",
+            "--json",
+            "url,number,repository,isDraft,labels",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    args
+}
+
+/// Where ONE `ai:design` search hit lands before any per-PR fetch is paid for.
+///
+/// A typed classification rather than a chain of `filter`s, for the reason [`CandidateOutcome`]
+/// is one: every arm a filter expressed as a `continue` is a withholding with no NAME, and a
+/// withholding with no name is a row the counts can only report as a subtraction.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum DesignHit {
+    /// Addressable, not a draft, no human ruling: worth the `gh pr view` a row needs.
+    Candidate { slug: String, num: u64 },
+    /// A DRAFT, and addressable — carried as a ref so the withheld list can name it.
+    Draft { pr: String },
+    /// A `human:*` label already dominates the `ai:design` one.
+    HumanRuled,
+    /// Neither `number` nor `url` resolves to a PR this tool can address. `named` is the best
+    /// identifier the hit carries, so even this row is something a reader can go and look at.
+    Unaddressable { named: String },
+}
+
+/// PURE: classify one search hit.
+///
+/// The ORDER is load-bearing. The ref parse comes first because a hit nobody can address cannot
+/// honestly be listed as a draft or as human-ruled — the ref is the thing a reader would act on,
+/// and without it every later label is a claim about a subject that was never identified. The
+/// human's own decision then beats the draft state for the reason it beats everything else in
+/// this FSM: a ruled subject is not an inbox item, whatever else is true of it.
+fn nd_hit_class(hit: &Value) -> DesignHit {
+    let addressed = hit.get("number").and_then(|n| n.as_u64()).and_then(|num| {
+        hit.get("url")
+            .and_then(|u| u.as_str())
+            .and_then(pr_slug)
+            .map(|slug| (slug, num))
+    });
+    let Some((slug, num)) = addressed else {
+        let named = hit
+            .get("url")
+            .and_then(|u| u.as_str())
+            .or_else(|| hit.get("title").and_then(|t| t.as_str()))
+            .unwrap_or("(a hit carrying neither a url nor a title)");
+        return DesignHit::Unaddressable {
+            named: named.to_string(),
+        };
+    };
+    if has_human_override(hit) {
+        return DesignHit::HumanRuled;
+    }
+    if hit
+        .get("isDraft")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+    {
+        return DesignHit::Draft {
+            pr: format!("{slug}#{num}"),
+        };
+    }
+    DesignHit::Candidate { slug, num }
+}
+
+/// PURE: fold ONE classified hit into the running candidate list, counts and withheld list.
+///
+/// Split out for the reason [`apply_outcome`] is, and the reason is the same defect twice: a
+/// classification that only becomes a count and a listed row INSIDE a network function is a
+/// behaviour no unit test can reach, so "the draft is counted" and "the draft is listed by name"
+/// look identical to the suite. They are not identical to a human: an excluded row nobody lists
+/// is a PR owned by nobody, which is the starvation this queue's FIFO order exists to bound.
+///
+/// EXHAUSTIVE on purpose. A new [`DesignHit`] arm must be given its own count here rather than
+/// folding into an existing one, which is what keeps `aiDesign` provably the sum of its parts.
+fn nd_apply_hit(
+    hit: DesignHit,
+    candidates: &mut Vec<(String, u64)>,
+    counts: &mut DesignQueueCounts,
+    withheld: &mut Vec<Value>,
+) {
+    match hit {
+        DesignHit::Candidate { slug, num } => candidates.push((slug, num)),
+        DesignHit::Draft { pr } => {
+            counts.draft += 1;
+            withheld.push(nd_withheld_entry(&pr, ND_WHY_DRAFT));
+        }
+        // Counted, never listed: a subject the human has already ruled on is a decision made, not
+        // an inbox item, and listing it would re-offer the question they closed.
+        DesignHit::HumanRuled => counts.human_ruled += 1,
+        DesignHit::Unaddressable { named } => {
+            counts.unaddressable += 1;
+            withheld.push(nd_withheld_entry(&named, ND_WHY_UNADDRESSABLE));
+        }
+    }
+}
+
+/// PURE: this queue's population — the search hits split into the ones a ruling can be written
+/// to and the ones an ARCHIVED repo froze (#206).
+///
+/// It exists as its own named function for the reason [`ncc_population`] does, and the reason is
+/// sharper here: `next_design_fetch` reaches the org scope through [`design_open_prs_args`], so
+/// the repo-wide conformance scan that hunts `org_owner_args()` never sees the fetch at all and
+/// cannot tell whether it withholds. A filter that only exists inline in an un-scanned,
+/// un-unit-testable network function is a filter whose DELETION no test notices — which is
+/// exactly #206 reaching the newest enumeration by the one route the gate against it cannot
+/// watch. Here the behaviour is a value a test asserts, and the fetch's use of it is pinned
+/// beside the `flagged_open_subjects` pin.
+///
+/// An archived repo refuses every write this FSM owns — no label, no comment, no ruling — so a
+/// design question there can never become an answer, and the row belongs in the frozen half
+/// however live the question reads. A hit whose ref does not parse is KEPT on the live side: it
+/// cannot be matched against the archived set, and [`nd_hit_class`] is where it is named.
+/// Order is preserved on both sides.
+fn nd_population(hits: Vec<Value>, archived: &ArchivedRepos) -> (Vec<Value>, Vec<Value>) {
+    withhold_archived(hits, archived, hit_slug)
+}
+
+/// Live `next_design`: enumerate the whole `ai:design` set once, classify each PR, rank the
+/// human's half of it, and answer with a prefix of the ranked set.
+///
+/// Serial per-PR fetches, as [`next_close_candidate_fetch`]'s are: the population is small and a
+/// row needs no second paid read. `Err` rather than `exit` for the reason every enumeration here
+/// errs: an MCP tool must answer a failed search with a refusal the caller reads — a
+/// falsely-empty queue is the one lie this surface must never tell.
+fn next_design_fetch(limit: usize) -> Result<Value, String> {
+    let args = design_open_prs_args();
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&argref) else {
+        return Err("error: `gh search prs --label ai:design` failed (transient API error / auth?) — aborting rather than report a falsely-empty design queue".to_string());
+    };
+    let Some(arr) = val.as_array() else {
+        return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
+    };
+    // An `ai:design` PR in an ARCHIVED repo can take no ruling at all (#206): withheld BEFORE the
+    // per-PR fetch below, and counted. `nd_population` is where that happens, and it is a named
+    // pure function rather than an inline filter precisely so its deletion fails a test.
+    let archived_set = archived_repos().map_err(archived_read_error)?;
+    let (arr, frozen) = nd_population(arr.clone(), &archived_set);
+
+    let mut counts = DesignQueueCounts {
+        raw: arr.len() + frozen.len(),
+        archived_repo: frozen.len(),
+        ..Default::default()
+    };
+    let mut designs: Vec<PresentableDesign> = Vec::new();
+    let mut withheld: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
+    // Classify from the search JSON, no extra call. EXHAUSTIVE on purpose, as
+    // `next_close_candidate_fetch`'s gate match is: a new class must be given its own count and
+    // its own line here rather than folding into an existing one, which is what makes `aiDesign`
+    // provably the sum of its parts.
+    let mut candidates: Vec<(String, u64)> = Vec::new();
+    for hit in &arr {
+        nd_apply_hit(
+            nd_hit_class(hit),
+            &mut candidates,
+            &mut counts,
+            &mut withheld,
+        );
+    }
+    for (slug, num) in candidates {
+        // A dropped PR must be VISIBLE, for the reason `next_close_candidate` lists its own: a
+        // silently skipped row shrinks the human's inbox with nothing to explain the gap.
+        let Some(detail) = gh_json(&[
+            "pr",
+            "view",
+            &num.to_string(),
+            "-R",
+            &slug,
+            "--json",
+            "number,title,url,headRefOid,baseRefName,labels,comments",
+        ]) else {
+            counts.fetch_errors += 1;
+            errors.push(nd_withheld_entry(
+                &format!("{slug}#{num}"),
+                ND_WHY_FETCH_FAILED,
+            ));
+            continue;
+        };
+        match last_design_question(&detail) {
+            Some(question) => {
+                counts.presentable += 1;
+                designs.push(PresentableDesign {
+                    slug,
+                    num,
+                    question,
+                    detail,
+                });
+            }
+            None => {
+                counts.no_question += 1;
+                withheld.push(nd_withheld_entry(
+                    &format!("{slug}#{num}"),
+                    ND_WHY_NO_QUESTION,
+                ));
+            }
+        }
+    }
+    rank_designs(&mut designs);
+    let rows: Vec<Value> = next_design_page(&designs, limit)
+        .into_iter()
+        .map(|d| {
+            next_design_row(&NextDesignFacts {
+                slug: &d.slug,
+                num: d.num,
+                detail: &d.detail,
+                question: &d.question,
+            })
+        })
+        .collect();
+    let (withheld, more_withheld) = page(withheld, Some(ND_MAX_WITHHELD));
+    let (errors, more_errors) = page(errors, Some(ND_MAX_ERRORS));
+    Ok(next_design_doc(
+        rows,
+        &DesignQueueWithheld {
+            counts,
+            withheld,
+            more_withheld,
+            errors,
+            more_errors,
+        },
+    ))
+}
+
+/// Digits reserved, per numeric field, in the fixed allowances above — [`NR_MAX_DIGITS`]'s role.
+#[cfg(test)]
+const ND_MAX_DIGITS: usize = 20;
+
+#[cfg(test)]
+mod next_design_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Built by the REAL writers, so a fixture drifts with neither: the vetter's raising comment
+    /// through [`verdict_comment`], the producer's through [`state_comment`]. A hand-written body
+    /// would drift from the writers at the next format change.
+    fn vetter_design(at: &str, sha: &str, note: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": verdict_comment(sha, "design", note, Some(40), "a basis", None),
+            "createdAt": at,
+        })
+    }
+
+    fn producer_design(at: &str, reason: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": state_comment("ai:design", reason, &[]),
+            "createdAt": at,
+        })
+    }
+
+    // ── the question source ───────────────────────────────────────────────────────────────────
+
+    // The claim in force is the NEWEST raising comment, whichever trusted role wrote it — a
+    // re-raise supersedes, exactly as every other most-recent-wins comment read here.
+    #[test]
+    fn the_question_is_the_most_recent_trusted_raising_comment() {
+        let head = "a".repeat(40);
+        let detail = json!({"comments": [
+            vetter_design("2026-08-01T00:00:00Z", &head, "is the constant shared?"),
+            producer_design("2026-08-02T00:00:00Z", "version slot taken"),
+        ]});
+        let q = last_design_question(&detail).expect("a question is live");
+        assert_eq!(q.source, DesignQuestionSource::ProducerFlag);
+        assert_eq!(q.at, "2026-08-02T00:00:00Z");
+        assert!(q.body.contains("Design-question: version slot taken"));
+
+        // Reversed order: the vetter's is newer, and wins.
+        let detail = json!({"comments": [
+            producer_design("2026-08-01T00:00:00Z", "version slot taken"),
+            vetter_design("2026-08-02T00:00:00Z", &head, "is the constant shared?"),
+        ]});
+        let q = last_design_question(&detail).expect("a question is live");
+        assert_eq!(q.source, DesignQuestionSource::VetterVerdict);
+        assert_eq!(q.at, "2026-08-02T00:00:00Z");
+        assert!(q.body.contains(&format!("Reviewed {head}: design")));
+    }
+
+    // …and "most recent" means the ARRAY TAIL, which is the contract every sibling reader here
+    // holds ([`last_vetter_comment`], [`last_close_candidate_flag`]): GitHub returns comments in
+    // creation order, and the readers agree to trust that one ordering rather than each imposing
+    // its own. Pinned with a fixture whose timestamps DISAGREE with its array order, because two
+    // fixtures where they agree cannot tell the two implementations apart — a max-by-`createdAt`
+    // reader would pass every test above and diverge here, on the one input where a `createdAt`
+    // GitHub did not sort by would silently re-order the human's queue.
+    #[test]
+    fn the_claim_in_force_is_the_array_tail_not_the_newest_timestamp() {
+        let head = "a".repeat(40);
+        let detail = json!({"comments": [
+            producer_design("2026-08-02T00:00:00Z", "version slot taken"),
+            vetter_design("2026-08-01T00:00:00Z", &head, "is the constant shared?"),
+        ]});
+        let q = last_design_question(&detail).expect("a question is live");
+        assert_eq!(
+            q.source,
+            DesignQuestionSource::VetterVerdict,
+            "the LAST raising comment in the array is the claim in force, even where an earlier \
+             one carries a later timestamp"
+        );
+        assert_eq!(q.at, "2026-08-01T00:00:00Z");
+    }
+
+    // The two comment shapes that LOOK adjacent and are not: a close-candidate verdict (its own
+    // `Reviewed close-candidate @…` record, whatever its verdict word) and a non-design PR
+    // verdict. Neither raises a design question, and reading either as one would hand the human
+    // a claim nobody made.
+    #[test]
+    fn adjacent_trusted_comments_do_not_raise_a_question() {
+        let head = "b".repeat(40);
+        for body in [
+            format!("🤖 ai:vetter\nReviewed {head}: ready — fine"),
+            format!("🤖 ai:vetter\nReviewed {head}: reject — needs work"),
+            "🤖 ai:vetter\nReviewed close-candidate @2026-08-01T00:00:00Z: uphold — stale"
+                .to_string(),
+            // A producer note that is not the flag-design transition's record.
+            "🤖 ai:producer\nBlocked-on: waiting\nblocked-by o/r#2".to_string(),
+        ] {
+            let detail = json!({"comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": body,
+                "createdAt": "2026-08-01T00:00:00Z",
+            }]});
+            assert!(
+                last_design_question(&detail).is_none(),
+                "{body:?} was read as a design question"
+            );
+        }
+    }
+
+    // A spoofed marker from an untrusted author is body text, not a question — the same
+    // provenance rule every trust-bearing comment read goes through.
+    #[test]
+    fn a_spoofed_marker_from_an_untrusted_author_raises_nothing() {
+        let head = "c".repeat(40);
+        for body in [
+            format!("🤖 ai:vetter\nReviewed {head}: design — should this be shared?"),
+            "🤖 ai:producer\nDesign-question: should this be shared?".to_string(),
+        ] {
+            let detail = json!({"comments": [{
+                "author": {"login": "someone-else"},
+                "body": body,
+                "createdAt": "2026-08-01T00:00:00Z",
+            }]});
+            assert!(
+                last_design_question(&detail).is_none(),
+                "{body:?} from an untrusted author was read as trusted"
+            );
+        }
+    }
+
+    // ── the ordering, and its paging ──────────────────────────────────────────────────────────
+
+    fn presentable(at: &str, slug: &str, num: u64) -> PresentableDesign {
+        PresentableDesign {
+            slug: slug.to_string(),
+            num,
+            question: DesignQuestion {
+                at: at.to_string(),
+                body: "🤖 ai:producer\nDesign-question: q".to_string(),
+                source: DesignQuestionSource::ProducerFlag,
+            },
+            detail: json!({}),
+        }
+    }
+
+    // OLDEST FIRST, ties broken by the PR reference — and the page is a PREFIX of that one order,
+    // so the head of the queue and the row the tool names are the same PR by construction.
+    #[test]
+    fn next_design_answers_a_prefix_of_the_queues_own_order() {
+        let mut set = vec![
+            presentable("2026-08-03T00:00:00Z", "o/aaa", 1),
+            presentable("2026-08-01T00:00:00Z", "o/zzz", 9),
+            presentable("2026-08-01T00:00:00Z", "o/aaa", 7),
+            presentable("2026-08-01T00:00:00Z", "o/aaa", 2),
+        ];
+        rank_designs(&mut set);
+        let refs: Vec<String> = set
+            .iter()
+            .map(|d| format!("{}#{}", d.slug, d.num))
+            .collect();
+        assert_eq!(refs, vec!["o/aaa#2", "o/aaa#7", "o/zzz#9", "o/aaa#1"]);
+
+        // limit = 1 is the question the tool answers: the head, and the head is the oldest.
+        let page = next_design_page(&set, 1);
+        assert_eq!(page.len(), 1);
+        assert_eq!((page[0].slug.as_str(), page[0].num), ("o/aaa", 2));
+
+        // …and a page is the queue's own next rows, in the queue's own order — never a re-ranking.
+        let page = next_design_page(&set, NEXT_DESIGN_MAX_ROWS);
+        assert_eq!(
+            page.iter()
+                .map(|d| format!("{}#{}", d.slug, d.num))
+                .collect::<Vec<_>>(),
+            refs[..NEXT_DESIGN_MAX_ROWS].to_vec()
+        );
+        // Asking for more than exists yields what exists, not an error.
+        assert_eq!(next_design_page(&set, 99).len(), set.len());
+    }
+
+    // ── the shape a caller reads ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_row_carries_the_question_and_where_it_pins() {
+        let head = "d".repeat(40);
+        let detail = json!({
+            "url": "https://github.com/rainlanguage/raindex/pull/960",
+            "title": "feat: the thing",
+            "baseRefName": "main",
+            "headRefOid": head,
+            "labels": [{"name": "ai:design"}],
+            "comments": [vetter_design("2026-08-01T00:00:00Z", &head, "shared or duplicated?")],
+        });
+        let q = last_design_question(&detail).expect("raised");
+        let row = next_design_row(&NextDesignFacts {
+            slug: "rainlanguage/raindex",
+            num: 960,
+            detail: &detail,
+            question: &q,
+        });
+        assert_eq!(row["pr"], json!("rainlanguage/raindex#960"));
+        assert_eq!(
+            row["url"],
+            json!("https://github.com/rainlanguage/raindex/pull/960")
+        );
+        assert_eq!(row["baseRefName"], json!("main"));
+        assert_eq!(row["headRefOid"], json!(head));
+        assert_eq!(row["labels"], json!(["ai:design"]));
+        assert_eq!(row["question"]["source"], json!("vetter-verdict"));
+        assert_eq!(row["question"]["at"], json!("2026-08-01T00:00:00Z"));
+        // The sha the vetter PINNED the question to, and whether it still describes this head —
+        // stated so the reader can check rather than take the tool's word.
+        assert_eq!(row["question"]["sha"], json!(head));
+        assert_eq!(row["question"]["atHead"], json!(true));
+        assert!(row["question"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("shared or duplicated?"));
+        assert_eq!(row["question"]["noteTruncated"], json!(false));
+
+        // A moved head un-pins a vetter-raised question, and the row SAYS so.
+        let moved = json!({
+            "headRefOid": "e".repeat(40),
+            "comments": [vetter_design("2026-08-01T00:00:00Z", &head, "shared or duplicated?")],
+        });
+        let q = last_design_question(&moved).expect("raised");
+        let row = next_design_row(&NextDesignFacts {
+            slug: "o/r",
+            num: 1,
+            detail: &moved,
+            question: &q,
+        });
+        assert_eq!(row["question"]["atHead"], json!(false));
+    }
+
+    // A producer-raised question pins no sha, so the row carries null — never a bool asserting a
+    // comparison nothing performed.
+    #[test]
+    fn a_producer_raised_question_pins_no_sha_and_says_so_with_null() {
+        let detail = json!({
+            "headRefOid": "f".repeat(40),
+            "comments": [producer_design("2026-08-01T00:00:00Z", "version slot taken")],
+        });
+        let q = last_design_question(&detail).expect("raised");
+        let row = next_design_row(&NextDesignFacts {
+            slug: "o/r",
+            num: 1,
+            detail: &detail,
+            question: &q,
+        });
+        assert_eq!(row["question"]["source"], json!("producer-flag"));
+        assert_eq!(row["question"]["sha"], Value::Null);
+        assert_eq!(row["question"]["atHead"], Value::Null);
+        assert!(row["question"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("Design-question: version slot taken"));
+    }
+
+    // A question past the cap is clipped, and the clipping is REPORTED with the full size beside
+    // it — the caller reads the rest with `pr_context`, which is on the same profile.
+    #[test]
+    fn an_oversized_question_is_clipped_and_says_so() {
+        let long = "z".repeat(ND_NOTE_BYTES * 2);
+        let detail = json!({
+            "headRefOid": "1".repeat(40),
+            "comments": [producer_design("2026-08-01T00:00:00Z", &long)],
+        });
+        let q = last_design_question(&detail).expect("raised");
+        let row = next_design_row(&NextDesignFacts {
+            slug: "o/r",
+            num: 1,
+            detail: &detail,
+            question: &q,
+        });
+        assert_eq!(
+            row["question"]["note"].as_str().unwrap().len(),
+            ND_NOTE_BYTES
+        );
+        assert_eq!(row["question"]["noteTruncated"], json!(true));
+        assert!(row["question"]["noteBytes"].as_u64().unwrap() > ND_NOTE_BYTES as u64);
+    }
+
+    // An empty queue is an ANSWER: zero rows under zeroed counts says the lane is clear. A failed
+    // enumeration never reaches this shape — it is an `Err` the caller reads as a refusal.
+    #[test]
+    fn an_empty_queue_is_an_answer_not_an_error() {
+        let doc = next_design_doc(
+            vec![],
+            &DesignQueueWithheld {
+                counts: DesignQueueCounts::default(),
+                withheld: vec![],
+                more_withheld: 0,
+                errors: vec![],
+                more_errors: 0,
+            },
+        );
+        assert_eq!(doc["queue"]["presentable"], json!(0));
+        assert_eq!(doc["queue"]["returned"], json!(0));
+        assert_eq!(doc["queue"]["more"], json!(0));
+        assert_eq!(doc["next"], json!([]));
+        assert_eq!(doc["counts"]["aiDesign"], json!(0));
+        assert_eq!(doc["counts"]["noQuestion"], json!(0));
+    }
+
+    // The withheld list is the visibility half of the classification: a labelled PR with no
+    // trusted question, a draft, an unaddressable hit, and a PR the fetch could not read are each
+    // NAMED — a silently skipped row shrinks the human's inbox with nothing to explain the gap.
+    #[test]
+    fn withheld_rows_are_listed_and_their_overflow_counted() {
+        // Derived from the FIXTURE, never hand-written: a literal `2` here is correct only while
+        // the fixture size and the cap both happen to be what they were when it was typed, and
+        // each stays individually correct while their relationship silently stops holding.
+        let raised = ND_MAX_WITHHELD + 2;
+        let all: Vec<Value> = (0..raised)
+            .map(|i| nd_withheld_entry(&format!("o/r#{i}"), ND_WHY_NO_QUESTION))
+            .collect();
+        let (listed, more) = page(all, Some(ND_MAX_WITHHELD));
+        let doc = next_design_doc(
+            vec![],
+            &DesignQueueWithheld {
+                counts: DesignQueueCounts {
+                    raw: raised,
+                    no_question: raised,
+                    ..Default::default()
+                },
+                withheld: listed,
+                more_withheld: more,
+                errors: vec![nd_withheld_entry("o/r#9", ND_WHY_FETCH_FAILED)],
+                more_errors: 0,
+            },
+        );
+        assert_eq!(doc["withheld"].as_array().unwrap().len(), ND_MAX_WITHHELD);
+        assert_eq!(doc["moreWithheld"], json!(raised - ND_MAX_WITHHELD));
+        assert_eq!(doc["counts"]["noQuestion"], json!(raised));
+        assert_eq!(doc["fetchErrors"][0]["pr"], json!("o/r#9"));
+    }
+
+    // Every withheld class reaches the document with its OWN count and its own named row. The
+    // counts are a partition of `aiDesign`, so a class folded into another is visible here as
+    // arithmetic that no longer adds up.
+    #[test]
+    fn the_counts_partition_the_whole_population() {
+        let counts = DesignQueueCounts {
+            raw: 13,
+            draft: 2,
+            human_ruled: 3,
+            unaddressable: 1,
+            presentable: 4,
+            no_question: 1,
+            fetch_errors: 1,
+            archived_repo: 1,
+        };
+        let sum = counts.draft
+            + counts.human_ruled
+            + counts.unaddressable
+            + counts.presentable
+            + counts.no_question
+            + counts.fetch_errors
+            + counts.archived_repo;
+        assert_eq!(
+            sum, counts.raw,
+            "the counts must partition the whole `ai:design` population — a bucket that does not \
+             add up is a row class absorbed silently by another"
+        );
+        let doc = next_design_doc(
+            vec![],
+            &DesignQueueWithheld {
+                counts,
+                withheld: vec![],
+                more_withheld: 0,
+                errors: vec![],
+                more_errors: 0,
+            },
+        );
+        for (key, want) in [
+            ("aiDesign", 13),
+            ("draft", 2),
+            ("humanRuled", 3),
+            ("unaddressable", 1),
+            ("presentable", 4),
+            ("noQuestion", 1),
+            ("fetchErrors", 1),
+            ("archivedRepo", 1),
+        ] {
+            assert_eq!(doc["counts"][key], json!(want), "counts.{key}");
+        }
+    }
+
+    // Counting a withheld row and NAMING it are two different services to the human, and the fold
+    // is where the second one happens. A draft that is counted but not listed leaves the human a
+    // number they cannot act on — the PR is withheld from the head, absent from the list, and
+    // worked by nobody — so the push is asserted here rather than left to the network function.
+    #[test]
+    fn a_withheld_hit_is_both_counted_and_named() {
+        let fold = |hit: DesignHit| {
+            let (mut candidates, mut counts, mut withheld) =
+                (Vec::new(), DesignQueueCounts::default(), Vec::new());
+            nd_apply_hit(hit, &mut candidates, &mut counts, &mut withheld);
+            (candidates, counts, withheld)
+        };
+
+        let (candidates, counts, withheld) = fold(DesignHit::Draft {
+            pr: "o/r#7".to_string(),
+        });
+        assert!(candidates.is_empty(), "a draft is not presented");
+        assert_eq!(counts.draft, 1);
+        assert_eq!(
+            withheld,
+            vec![nd_withheld_entry("o/r#7", ND_WHY_DRAFT)],
+            "a draft must be NAMED as well as counted — a count alone is a row the human cannot \
+             go and look at"
+        );
+
+        let (candidates, counts, withheld) = fold(DesignHit::Unaddressable {
+            named: "a hit with no ref".to_string(),
+        });
+        assert!(candidates.is_empty());
+        assert_eq!(counts.unaddressable, 1);
+        assert_eq!(
+            withheld,
+            vec![nd_withheld_entry("a hit with no ref", ND_WHY_UNADDRESSABLE)]
+        );
+
+        // The one class that is counted and NOT listed, deliberately: a ruled subject is a
+        // decision already made, and listing it would re-offer a question the human closed.
+        let (candidates, counts, withheld) = fold(DesignHit::HumanRuled);
+        assert!(candidates.is_empty());
+        assert_eq!(counts.human_ruled, 1);
+        assert!(withheld.is_empty());
+
+        let (candidates, counts, withheld) = fold(DesignHit::Candidate {
+            slug: "o/r".to_string(),
+            num: 7,
+        });
+        assert_eq!(candidates, vec![("o/r".to_string(), 7)]);
+        assert_eq!(counts.draft + counts.human_ruled + counts.unaddressable, 0);
+        assert!(withheld.is_empty());
+    }
+
+    // ── the population filter (#206) ──────────────────────────────────────────────────────────
+
+    fn hit(slug: &str, num: u64) -> Value {
+        json!({
+            "url": format!("https://github.com/{slug}/pull/{num}"),
+            "number": num,
+            "repository": {"nameWithOwner": slug},
+            "isDraft": false,
+            "labels": [{"name": "ai:design"}],
+        })
+    }
+
+    // THE #206 GATE for this lane, as BEHAVIOUR rather than as wiring. An archived repo refuses
+    // every write this FSM owns, so a design question there can never become an answer: serving
+    // one to the human is a ruling that cannot be written, at the head of a FIFO queue where a
+    // frozen row sorts to the front and stays.
+    //
+    // Deleting the withholding from `next_design_fetch` is what this kills — the fetch reaches
+    // the org scope through `design_open_prs_args`, so the repo-wide scan that hunts
+    // `org_owner_args()` never sees the fetch and cannot notice the loss.
+    #[test]
+    fn an_archived_repo_hit_is_withheld_from_the_population_and_counted() {
+        let hits = vec![
+            hit("rainlanguage/raindex", 960),
+            hit("rainlanguage/rain.webapp", 139),
+            hit("rainlanguage/rain.orderbook", 5),
+        ];
+        let archived = ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]);
+        let (live, frozen) = nd_population(hits, &archived);
+        assert_eq!(
+            live,
+            vec![
+                hit("rainlanguage/raindex", 960),
+                hit("rainlanguage/rain.orderbook", 5),
+            ],
+            "an archived-repo hit must not survive into the population, and the order of the rest \
+             must be preserved"
+        );
+        assert_eq!(
+            frozen,
+            vec![hit("rainlanguage/rain.webapp", 139)],
+            "the frozen row is RETURNED, not dropped: `counts.archivedRepo` is the human's only \
+             way to learn the question exists"
+        );
+
+        // Nothing archived: every hit survives, nothing is frozen.
+        let (live, frozen) = nd_population(
+            vec![hit("rainlanguage/raindex", 960)],
+            &ArchivedRepos::from_slugs([] as [&str; 0]),
+        );
+        assert_eq!(live.len(), 1);
+        assert!(frozen.is_empty());
+
+        // A hit whose ref does not parse is KEPT on the live side — it cannot be matched against
+        // the archived set, and `nd_hit_class` is where it is named.
+        let unparseable = json!({"title": "no ref at all"});
+        let (live, frozen) = nd_population(
+            vec![unparseable.clone()],
+            &ArchivedRepos::from_slugs(["rainlanguage/rain.webapp"]),
+        );
+        assert_eq!(live, vec![unparseable]);
+        assert!(frozen.is_empty());
+    }
+
+    // ── the hit classifier ────────────────────────────────────────────────────────────────────
+
+    // Every withholding has a NAME, and the order between them is the one a reader would act on:
+    // a hit nobody can address cannot be reported as a draft, and a human ruling dominates the
+    // draft state as it dominates everything else in this FSM.
+    #[test]
+    fn every_withheld_hit_class_is_named_rather_than_filtered_away() {
+        assert_eq!(
+            nd_hit_class(&hit("o/r", 7)),
+            DesignHit::Candidate {
+                slug: "o/r".to_string(),
+                num: 7
+            }
+        );
+
+        let mut draft = hit("o/r", 7);
+        draft["isDraft"] = json!(true);
+        assert_eq!(
+            nd_hit_class(&draft),
+            DesignHit::Draft {
+                pr: "o/r#7".to_string()
+            },
+            "a draft is withheld from the head, but NAMED — an excluded row nobody lists is a PR \
+             owned by nobody"
+        );
+
+        let mut ruled = hit("o/r", 7);
+        ruled["labels"] = json!([{"name": "ai:design"}, {"name": PR_SACRED_LABELS[0]}]);
+        assert_eq!(nd_hit_class(&ruled), DesignHit::HumanRuled);
+        // …and a human ruling beats the draft state, not the other way round.
+        let mut ruled_draft = ruled.clone();
+        ruled_draft["isDraft"] = json!(true);
+        assert_eq!(nd_hit_class(&ruled_draft), DesignHit::HumanRuled);
+
+        // Unaddressable: no number, an unparseable url, or neither. Each is named by the best
+        // identifier the hit carries, because a row nobody can name is the one class a bare count
+        // leaves a reader unable to go and look at.
+        let no_number = json!({"url": "https://github.com/o/r/pull/7"});
+        assert_eq!(
+            nd_hit_class(&no_number),
+            DesignHit::Unaddressable {
+                named: "https://github.com/o/r/pull/7".to_string()
+            }
+        );
+        let issue_url = json!({"url": "https://github.com/o/r/issues/7", "number": 7});
+        assert_eq!(
+            nd_hit_class(&issue_url),
+            DesignHit::Unaddressable {
+                named: "https://github.com/o/r/issues/7".to_string()
+            }
+        );
+        let titled_only = json!({"title": "a hit with no ref"});
+        assert_eq!(
+            nd_hit_class(&titled_only),
+            DesignHit::Unaddressable {
+                named: "a hit with no ref".to_string()
+            }
+        );
+        // …and the parse comes FIRST: an unaddressable draft is unaddressable, because there is
+        // no ref to report it under.
+        let mut draft_no_ref = titled_only.clone();
+        draft_no_ref["isDraft"] = json!(true);
+        assert!(matches!(
+            nd_hit_class(&draft_no_ref),
+            DesignHit::Unaddressable { .. }
+        ));
+    }
+
+    // ── the limit guard ───────────────────────────────────────────────────────────────────────
+
+    // The page size is a REAL argument with a REAL range, refused rather than clamped — a
+    // silently clamped argument leaves the caller believing it asked for something it did not get.
+    #[test]
+    fn the_page_size_defaults_to_one_and_is_refused_outside_its_range() {
+        assert_eq!(
+            next_design_limit(&json!({})).unwrap(),
+            NEXT_DESIGN_DEFAULT_ROWS
+        );
+        assert_eq!(next_design_limit(&json!({"limit": null})).unwrap(), 1);
+        assert_eq!(next_design_limit(&json!({"limit": 1})).unwrap(), 1);
+        assert_eq!(
+            next_design_limit(&json!({"limit": NEXT_DESIGN_MAX_ROWS})).unwrap(),
+            NEXT_DESIGN_MAX_ROWS
+        );
+        for bad in [
+            json!(0),
+            json!(NEXT_DESIGN_MAX_ROWS + 1),
+            json!(-1),
+            json!("2"),
+            json!(1.5),
+        ] {
+            let e = next_design_limit(&json!({"limit": bad})).unwrap_err();
+            assert!(
+                e.contains(&format!("1..={NEXT_DESIGN_MAX_ROWS}")),
+                "{bad}: {e}"
+            );
+        }
+    }
+
+    // ── the budget ────────────────────────────────────────────────────────────────────────────
+
+    /// The most expensive text GitHub could hand us — the same construction `next_ready`'s budget
+    /// test uses, so both halves of the escape reasoning are exercised.
+    fn hostile_text(bytes: usize) -> String {
+        "\"\u{1}\\\u{1f}".chars().cycle().take(bytes).collect()
+    }
+
+    /// TEST HELPER: how many NUMBERS a document carries, counted from the document itself.
+    ///
+    /// The fixed allowances reserve [`ND_MAX_DIGITS`] per numeric field, and the count of those
+    /// fields used to be typed out in a comment beside the assertion. That is the shape of
+    /// hand-written total that survives every review and breaks on a MERGE: a count key added on
+    /// one branch and a reserve typed on another are each correct alone, and nothing conflicts
+    /// when both land — the reserve simply stops covering the document, and the compile-time
+    /// budget assertion is then computed from a number nobody re-derived. Counting the emitted
+    /// value cannot drift from it.
+    fn numeric_fields(v: &Value) -> usize {
+        match v {
+            Value::Number(_) => 1,
+            Value::Array(a) => a.iter().map(numeric_fields).sum(),
+            Value::Object(o) => o.values().map(numeric_fields).sum(),
+            _ => 0,
+        }
+    }
+
+    // THE GUARANTEE, exercised rather than asserted: a full page of rows built from the worst
+    // input GitHub can hand us, plus both withheld lists at their caps, fits the ONE budget.
+    // Remove any `clip_field` in `next_design_row` and this fails.
+    #[test]
+    fn a_maximal_page_of_adversarial_rows_still_fits_the_budget() {
+        let hostile = hostile_text(20_000);
+        let labels: Vec<Value> = (0..30).map(|_| json!({"name": hostile})).collect();
+        let detail = json!({
+            "url": hostile,
+            "title": hostile,
+            "baseRefName": hostile,
+            "headRefOid": hostile,
+            "labels": labels,
+        });
+        let question = DesignQuestion {
+            at: hostile.clone(),
+            body: hostile.clone(),
+            source: DesignQuestionSource::VetterVerdict,
+        };
+        let rows: Vec<Value> = (0..NEXT_DESIGN_MAX_ROWS)
+            .map(|i| {
+                next_design_row(&NextDesignFacts {
+                    slug: &hostile,
+                    num: u64::MAX - i as u64,
+                    detail: &detail,
+                    question: &question,
+                })
+            })
+            .collect();
+        for (i, row) in rows.iter().enumerate() {
+            let len = row.to_string().len();
+            assert!(
+                len <= ND_ROW_CEILING,
+                "row {i} is {len} bytes, over the {ND_ROW_CEILING}-byte row ceiling the \
+                 compile-time budget assertion is computed from"
+            );
+        }
+        let withheld_hostile: Vec<Value> = (0..ND_MAX_WITHHELD)
+            .map(|_| nd_withheld_entry(&hostile, &hostile))
+            .collect();
+        for w in &withheld_hostile {
+            let len = w.to_string().len();
+            assert!(
+                len <= ND_WITHHELD_CEILING,
+                "a withheld entry is {len} bytes, over its {ND_WITHHELD_CEILING}-byte ceiling"
+            );
+        }
+        let len = next_design_doc(
+            rows,
+            &DesignQueueWithheld {
+                counts: DesignQueueCounts {
+                    raw: usize::MAX,
+                    draft: usize::MAX,
+                    human_ruled: usize::MAX,
+                    unaddressable: usize::MAX,
+                    presentable: usize::MAX,
+                    no_question: usize::MAX,
+                    fetch_errors: usize::MAX,
+                    archived_repo: usize::MAX,
+                },
+                withheld: withheld_hostile.clone(),
+                more_withheld: usize::MAX,
+                errors: withheld_hostile,
+                more_errors: usize::MAX,
+            },
+        )
+        .to_string()
+        .len();
+        assert!(
+            len <= MCP_MAX_RESULT_BYTES,
+            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+        );
+    }
+
+    // The allowances the compile-time assertion is built on are MEASURED, not guessed — a field
+    // added to the row without room for it lands here rather than at a caller's refusal.
+    #[test]
+    fn the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope() {
+        let question = DesignQuestion {
+            at: String::new(),
+            body: String::new(),
+            // The longer source spelling, so the fixed cost is measured at its widest.
+            source: DesignQuestionSource::VetterVerdict,
+        };
+        let row = next_design_row(&NextDesignFacts {
+            slug: "",
+            num: 0,
+            detail: &json!({}),
+            question: &question,
+        });
+        // The numeric fields are COUNTED from the row, not asserted from a comment.
+        let row_len = row.to_string().len() + numeric_fields(&row) * ND_MAX_DIGITS;
+        assert!(
+            row_len <= ND_ROW_FIXED_BYTES,
+            "a row's fixed cost is {row_len} bytes, over the {ND_ROW_FIXED_BYTES} the budget \
+             assertion allows it"
+        );
+
+        let w_len = nd_withheld_entry("", "").to_string().len();
+        assert!(
+            w_len <= ND_WITHHELD_FIXED_BYTES,
+            "a withheld entry's fixed cost is {w_len} bytes, over the {ND_WITHHELD_FIXED_BYTES} \
+             allowed"
+        );
+
+        // The envelope's numeric fields — its counts, its queue figures and its overflows — are
+        // COUNTED from the document it emits, so a count key added later is covered on the day it
+        // is added rather than on the day someone remembers this reserve.
+        let envelope = next_design_doc(
+            vec![],
+            &DesignQueueWithheld {
+                counts: DesignQueueCounts::default(),
+                withheld: vec![],
+                more_withheld: 0,
+                errors: vec![],
+                more_errors: 0,
+            },
+        );
+        let env_len = envelope.to_string().len() + numeric_fields(&envelope) * ND_MAX_DIGITS;
+        assert!(
+            env_len <= ND_ENVELOPE_BYTES,
+            "the envelope's fixed cost is {env_len} bytes, over the {ND_ENVELOPE_BYTES} allowed"
+        );
+    }
+
+    // The population query, pinned as a value: label search over the ORGS scope for OPEN PRs,
+    // with the fields the candidate filter reads. A qualifier added or dropped here changes which
+    // PRs the human is ever shown, and the network call around it is asserted by nothing.
+    #[test]
+    fn the_population_is_the_open_ai_design_label_search() {
+        let args = design_open_prs_args();
+        let pairs: Vec<(&str, &str)> = args
+            .windows(2)
+            .map(|w| (w[0].as_str(), w[1].as_str()))
+            .collect();
+        assert_eq!(&args[..2], &["search".to_string(), "prs".to_string()]);
+        assert!(pairs.contains(&("--state", "open")));
+        assert!(pairs.contains(&("--label", "ai:design")));
+        assert!(pairs.contains(&("--json", "url,number,repository,isDraft,labels")));
+    }
+}
+
 /// WHICH ROLE this server is serving. The two roles are different state machines that happen to
 /// share a binary: the vetter judges PRs, the producer builds them. A profile is a SURFACE filter,
 /// not a permission — `tools/list` returns only the profile's tools, so the producer never sees
@@ -25780,6 +27182,11 @@ impl McpProfile {
                 // at all because the reject strips the label.
                 "next_close_candidate",
                 "close_candidate_context",
+                // The DESIGN lane's read (#220) — the third inbox. `ai:design` waits on nothing
+                // but a human's answer, and that answer routes the PR straight back to the
+                // producer as `ai:reject` + the work order in one call (#219), so the queue that
+                // feeds it takes the same one-call entry point the other two lanes have.
+                "next_design",
                 // The CONFORMANCE read (#222): the human's third inbox is the one that should be
                 // EMPTY — the PRs the lane classifier buckets into no modeled state. It reads off
                 // the same machinery `human-queue --json` emits `leaks` from, so the dashboard's
@@ -25858,6 +27265,17 @@ fn mcp_all_tools() -> Value {
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "Flags to return, 1-3 (default 1). Every ruling retires its flag, so a page is stale past its head."}
+                }
+            }
+        },
+        {
+            "name": "next_design",
+            "narrows": "limit",
+            "description": "The next ai:design PR for the human to rule on — OLDEST QUESTION FIRST (the label parks the PR outside every AI actor's queue, so the wait is the cost and FIFO bounds it). Per row: the PR's title/baseRefName/headRefOid/labels and the trusted comment that raised the live question (`question.note`; `question.source` says whether the vetter's record-verdict design note or the producer's flag-design note raised it; a vetter-raised question carries the sha it pinned and `atHead` says whether it still describes this head; `noteTruncated` says when the whole comment must be read via pr_context). The question is a CLAIM to check, never a fact. `counts` partition the whole labelled population and `withheld` NAMES the rows behind three of them — `noQuestion` (labelled, nothing trusted raised a question), `draft` (answerable, but the code is still being shaped) and `unaddressable` — so a PR you expected and did not get is findable without re-running the search; `archivedRepo` is frozen (no ruling can be written there at all). The exit is the design ruling: the answer routes the PR back to the producer as ai:reject + the answer as the work order, one call.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "PRs to return, 1-3 (default 1). Every design ruling retires its row, so a page is stale past its head."}
                 }
             }
         },
@@ -26116,6 +27534,12 @@ enum McpCall {
     /// The human's FLAG read: the next N upheld `ai:close-candidate` flags, oldest flag first.
     NextCloseCandidate {
         /// Always in `1..=NEXT_CC_MAX_ROWS`, and a REAL narrowing argument for the same reason.
+        limit: usize,
+    },
+    /// The human's DESIGN read: the next N open `ai:design` PRs, oldest question first.
+    NextDesign {
+        /// Always in `1..=NEXT_DESIGN_MAX_ROWS`, and a REAL narrowing argument for the same
+        /// reason.
         limit: usize,
     },
     /// The human's CONFORMANCE read (#222): the next N PRs the lane classifier buckets into no
@@ -26470,6 +27894,9 @@ fn validate_call(
         }),
         "next_close_candidate" => Ok(McpCall::NextCloseCandidate {
             limit: next_close_candidate_limit(args)?,
+        }),
+        "next_design" => Ok(McpCall::NextDesign {
+            limit: next_design_limit(args)?,
         }),
         "next_leak" => Ok(McpCall::NextLeak {
             limit: next_leak_limit(args)?,
@@ -26872,6 +28299,7 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
         McpCall::NextCloseCandidate { limit } => {
             next_close_candidate_fetch(limit).map(|d| d.to_string())
         }
+        McpCall::NextDesign { limit } => next_design_fetch(limit).map(|d| d.to_string()),
         McpCall::NextLeak { limit } => next_leak_fetch(limit).map(|d| d.to_string()),
         McpCall::Unvetted {
             include_skipped,
@@ -39690,9 +41118,13 @@ mod repo_root_tests {
             // The accessor itself.
             "org_owner_args",
             // PURE argv builders. Their live callers — `flagged_open_subjects` and
-            // `sweep_stale_closed_flags` for the first — do the withholding, which is why the
-            // filter is not visible in the builder.
+            // `sweep_stale_closed_flags` for the first, `next_design_fetch` for the second — do
+            // the withholding, which is why the filter is not visible in the builder. NEITHER
+            // exemption is taken on trust: each is backed by a positive pin below, because an
+            // exemption whose claim nothing checks is how a filter gets deleted from a caller
+            // this scan cannot see.
             "flagged_subjects_args",
+            "design_open_prs_args",
             // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
             // both populations are fixed and shrinking, and neither OFFERS work: a per-PR edit
             // that fails is already reported as a failed edit rather than queued as a task.
@@ -39743,6 +41175,27 @@ mod repo_root_tests {
                  items: {classifies:?}"
             );
         }
+
+        // The DESIGN lane takes the same shape, and it is pinned here because the scan above
+        // CANNOT see it: `next_design_fetch` reaches the org scope through
+        // `design_open_prs_args`, so it never appears in `got` and its exemption is a claim about
+        // a caller this test would otherwise never look at. Both halves of that claim are
+        // asserted — the fetch READS the archived set, and the fetch APPLIES the pure filter that
+        // uses it — so deleting either one fails here rather than passing as an unbacked comment.
+        assert!(
+            reads.contains(&"next_design_fetch".to_string()),
+            "`next_design_fetch` must read the archived set; without it `nd_population` is handed \
+             an empty one and every archived-repo design question reaches the human's queue \
+             (#206), at the FRONT of it — the ordering is oldest-first, so a frozen row sorts to \
+             the head and stays. Reading items: {reads:?}"
+        );
+        let filters = items_whose_code_contains(&format!("nd_popula{}", "tion("));
+        assert!(
+            filters.contains(&"next_design_fetch".to_string()),
+            "`next_design_fetch` must apply `nd_population`. A fetch that reads the archived set \
+             and does not filter with it is #206 with the read left in place to look like a \
+             guard. Filtering items: {filters:?}"
+        );
     }
 
     /// The SAME property one lane over, and it is the defect #222 shipped with: the leak population
@@ -50812,6 +52265,7 @@ mod marketplace_tests {
                 "design",
                 "keep-open",
                 "ncc",
+                "nd",
                 "nm",
                 "nr",
                 "reject"
@@ -51295,6 +52749,36 @@ mod marketplace_tests {
             ]),
             "/ncc reads the flag queue, the flag it heads, and the PR its reason cites — and takes \
              no audit lens, on purpose"
+        );
+    }
+
+    // `/nd` is the third sibling (#220), and its grant is pinned for the reason `/nr`'s is: a
+    // later edit that drops the checkout, its release, or the lens back out leaves a command whose
+    // prose promises a read it has no tool to perform, and the generic sweep would still pass
+    // because the remainder is a legal shape again. The lens rides here where `/ncc` refuses it,
+    // because a design question is a claim ABOUT CODE on a PR — `pr:<number>` names its subject.
+    #[test]
+    fn nd_grants_the_queue_the_pr_the_source_and_the_lens() {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/nd.md") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let grantable = grantable_mcp_tools(
+            &read_json("plugins/human-fsm/.claude-plugin/plugin.json").expect("the manifest"),
+        )
+        .unwrap();
+        assert_eq!(
+            command_check(&text, &grantable),
+            Ok(CommandKind::McpTools {
+                mcp: vec![
+                    plugin_mcp_tool_name("human-fsm", "fsm", "next_design"),
+                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
+                    plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                ],
+                native: vec!["Skill".to_string(), "Read".to_string()],
+            }),
+            "/nd reads the design queue, the PR behind its head, and the SOURCE the question turns \
+             on — and releases the checkout it took"
         );
     }
 
@@ -52707,6 +54191,7 @@ mod mcp_tests {
             "unvetted"
             | "next_ready"
             | "next_close_candidate"
+            | "next_design"
             | "next_leak"
             | "unvetted_close_candidates"
             | "clone_list"
@@ -52820,7 +54305,7 @@ mod mcp_tests {
         }
         assert_eq!(
             tools.len(),
-            21,
+            22,
             "a tool was added or removed — check it against this property, then update the count"
         );
     }
@@ -52855,7 +54340,7 @@ mod mcp_tests {
             .iter()
             .filter(|t| t.get(TOOL_NARROWS_KEY).is_some())
             .count();
-        assert_eq!(declared, 6, "six tools narrow; the rest genuinely cannot");
+        assert_eq!(declared, 7, "seven tools narrow; the rest genuinely cannot");
         for profile in [McpProfile::Vetter, McpProfile::Producer, McpProfile::Human] {
             for t in mcp_tools(profile).as_array().unwrap() {
                 assert!(
@@ -53124,6 +54609,9 @@ mod mcp_tests {
                 // being wrong is least recoverable was the one worked by hand.
                 "next_close_candidate",
                 "close_candidate_context",
+                // The DESIGN lane's read (#220) — the third inbox, whose exit routes the PR back
+                // to the producer as ai:reject + the answer as the work order, one call (#219).
+                "next_design",
                 // The CONFORMANCE read (#222): the inbox that should be EMPTY — PRs in no modeled
                 // state, off the same machinery the dashboard's `leaks` array comes from.
                 "next_leak",
