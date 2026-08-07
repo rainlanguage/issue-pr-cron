@@ -30380,7 +30380,33 @@ enum NextAction {
 }
 
 impl NextAction {
-    fn as_str(self) -> &'static str {
+    /// EVERY variant, in DISPATCH order — the order [`action_rank`] sorts the fleet into, so the
+    /// histogram, the actionable list and the sort all read one sequence.
+    ///
+    /// THE ENUM IS THE VOCABULARY (#130's lesson, applied to the action names). The string lists
+    /// this array feeds used to be hand-maintained beside it, and both drifted exactly as a
+    /// hand-copied vocabulary always does: they carried `deploy`, a retired spelling no variant can
+    /// produce — so the histogram reported a permanent phantom zero — and they OMITTED
+    /// `flag-migration`, the action that sorts FIRST, so a migration row was never counted and
+    /// never handed to the producer as work. Deriving the lists from here is what makes both
+    /// failures unrepresentable rather than merely fixed.
+    ///
+    /// Membership is compiler-enforced through [`NextAction::rank`] and [`NextAction::names_work`],
+    /// which are exhaustive: a variant added to the enum must be given a rank and a work
+    /// classification, and [`the_action_vocabulary_is_the_enum`] then requires it here too.
+    const ALL: [NextAction; 9] = [
+        NextAction::FlagMigration,
+        NextAction::ReworkReject,
+        NextAction::Needs3b,
+        NextAction::Conflict3d,
+        NextAction::Coderabbit3e,
+        NextAction::Screenshot3c,
+        NextAction::GreenReady,
+        NextAction::Wait,
+        NextAction::ParkedSkip,
+    ];
+
+    const fn as_str(self) -> &'static str {
         match self {
             NextAction::GreenReady => "green-ready",
             NextAction::FlagMigration => "flag-migration",
@@ -30391,6 +30417,58 @@ impl NextAction {
             NextAction::ReworkReject => "rework-reject",
             NextAction::ParkedSkip => "parked-skip",
             NextAction::Wait => "wait",
+        }
+    }
+
+    /// The variant a `nextAction` string names, or `None` for a string no variant produces. The
+    /// REVERSE of [`NextAction::as_str`], derived by searching the variants rather than by a second
+    /// table — a hand-written reverse map is the same drift this array exists to end.
+    fn from_str(s: &str) -> Option<NextAction> {
+        NextAction::ALL.iter().copied().find(|v| v.as_str() == s)
+    }
+
+    /// Sort priority, lowest first. Exhaustive on purpose: a variant added to the enum cannot
+    /// compile until somebody decides where in the producer's run it belongs, which is exactly what
+    /// the retired `rework-ruling` never got — it had no rank at all and silently sorted last.
+    ///
+    /// The migration hand-off leads for the same reason the deploy did (#162): no code fix can
+    /// green a prod-pin on an unmigrated repo, and the flag is cheap and terminal. A reject work
+    /// order follows: it is the only route a person WROTE about this exact PR — a vetter or a human
+    /// read this code and said what to change — so it leads every route derived from CI or
+    /// mergeState, which are signals nobody wrote for it.
+    const fn rank(self) -> u8 {
+        match self {
+            NextAction::FlagMigration => 0,
+            NextAction::ReworkReject => 1,
+            NextAction::Needs3b => 2,
+            NextAction::Conflict3d => 3,
+            NextAction::Coderabbit3e => 4,
+            NextAction::Screenshot3c => 5,
+            NextAction::GreenReady => 6,
+            NextAction::Wait => 7,
+            NextAction::ParkedSkip => 8,
+        }
+    }
+
+    /// Does a row carrying this action name WORK the producer does this run? Exhaustive, so a new
+    /// variant is classified DELIBERATELY — the alternative, a catch-all, silently makes every
+    /// future action either work or not work depending on which way the wildcard happens to fall.
+    ///
+    /// The three that are not work: `green-ready` is the human's move, `wait` is CI's, and
+    /// `parked-skip` is a state somebody else has to leave. They are counted and not enumerated,
+    /// which is the whole reason a digest is smaller than the fleet — they were 70–95% of the
+    /// ~123 KB raw fleet across the measured runs.
+    const fn names_work(self) -> bool {
+        match self {
+            NextAction::FlagMigration => true,
+            NextAction::ReworkReject => true,
+            NextAction::Needs3b => true,
+            NextAction::Conflict3d => true,
+            NextAction::Coderabbit3e => true,
+            NextAction::Screenshot3c => true,
+            NextAction::GreenReady => false,
+            NextAction::Wait => false,
+            NextAction::ParkedSkip => false,
         }
     }
 }
@@ -31200,35 +31278,57 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
     })
 }
 
-/// The `nextAction` values that name WORK this run: a row carrying one is dispatched to its step.
-/// The rest — `green-ready` (the human's move), `wait` (CI's), `parked-skip` (a human-gated state)
-/// — are counted and not enumerated, which is the whole reason a digest is smaller than the fleet.
-const ACTIONABLE_ACTIONS: [&str; 6] = [
-    "deploy",
-    "rework-reject",
-    "needs-3b",
-    "conflict-3d",
-    "coderabbit-3e",
-    "screenshot-3c",
-];
+/// How many [`NextAction`] variants name work — the length of [`ACTIONABLE_ACTIONS`], counted from
+/// the enum so the array cannot be sized by hand.
+const fn work_action_count() -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < NextAction::ALL.len() {
+        if NextAction::ALL[i].names_work() {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+}
 
-/// Every `nextAction` a row can carry, in dispatch order. The histogram reports ALL of them,
-/// including the zeroes: a class absent from a `group_by` has to be inferred, and "deploy is
-/// absent, so presumably zero" is a re-derivation the caller should never have to make. That holds
-/// hardest for `rework-reject`, whose empty count is the answer to a question the producer used to
-/// ask GitHub directly — "is anything of mine sent back right now?" — and an absent key would read
-/// as the tool declining to answer it.
-const ALL_ACTIONS: [&str; 9] = [
-    "deploy",
-    "rework-reject",
-    "needs-3b",
-    "conflict-3d",
-    "coderabbit-3e",
-    "screenshot-3c",
-    "green-ready",
-    "wait",
-    "parked-skip",
-];
+/// The `nextAction` values that name WORK this run: a row carrying one is dispatched to its step.
+/// DERIVED — [`NextAction::ALL`] filtered by [`NextAction::names_work`], never a second list beside
+/// the enum. The hand-written version had drifted to name a retired action and to omit
+/// `flag-migration`, which meant the producer was handed no migration row and those PRs were
+/// silently skipped.
+const ACTIONABLE_ACTIONS: [&str; work_action_count()] = {
+    let mut out = [""; work_action_count()];
+    let (mut i, mut n) = (0, 0);
+    while i < NextAction::ALL.len() {
+        if NextAction::ALL[i].names_work() {
+            out[n] = NextAction::ALL[i].as_str();
+            n += 1;
+        }
+        i += 1;
+    }
+    out
+};
+
+/// Every `nextAction` a row can carry, in dispatch order — [`NextAction::ALL`] by name. The
+/// histogram reports ALL of them, including the zeroes: a class absent from a `group_by` has to be
+/// inferred, and "flag-migration is absent, so presumably zero" is a re-derivation the caller
+/// should never have to make. That holds hardest for `rework-reject`, whose empty count is the
+/// answer to a question the producer used to ask GitHub directly — "is anything of mine sent back
+/// right now?" — and an absent key would read as the tool declining to answer it.
+///
+/// Derived rather than listed because the listed version stated a class no variant can produce
+/// (`deploy`) while omitting one that every run can (`flag-migration`) — a histogram that is both
+/// wrong and incomplete, in the one field whose contract is that it is neither.
+const ALL_ACTIONS: [&str; NextAction::ALL.len()] = {
+    let mut out = [""; NextAction::ALL.len()];
+    let mut i = 0;
+    while i < NextAction::ALL.len() {
+        out[i] = NextAction::ALL[i].as_str();
+        i += 1;
+    }
+    out
+};
 
 /// PURE: the fleet half of the producer's state-load.
 ///
@@ -31672,24 +31772,18 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
     0
 }
 
-/// Rank a nextAction string for sort (mirrors NextAction::rank; kept string-keyed for the Value rows).
+/// Rank a `nextAction` string for the fleet sort. String-keyed because the rows are `Value`s, but
+/// the ORDER is [`NextAction::rank`]'s and not a copy of it — a rank list beside the enum is how
+/// the retired `rework-ruling` came to have no rank at all and sort as parked while the classifier
+/// went on emitting it.
+///
+/// A string no variant produces ranks as `parked-skip`: it is the fail-safe reading of an action
+/// this binary does not recognise, and it is what a stale cached row spelling a retired action
+/// gets.
 fn action_rank(a: &str) -> u8 {
-    match a {
-        // The migration hand-off leads for the same reason the deploy did (#162): no code fix can
-        // green a prod-pin on an unmigrated repo, and the flag is cheap and terminal.
-        "flag-migration" => 0,
-        // A reject work order is the only route a person WROTE about this exact PR — a vetter or a
-        // human read this code and said what to change — so it leads every route derived from CI or
-        // mergeState, which are signals nobody wrote for it.
-        "rework-reject" => 1,
-        "needs-3b" => 2,
-        "conflict-3d" => 3,
-        "coderabbit-3e" => 4,
-        "screenshot-3c" => 5,
-        "green-ready" => 6,
-        "wait" => 7,
-        _ => 8, // parked-skip
-    }
+    NextAction::from_str(a)
+        .unwrap_or(NextAction::ParkedSkip)
+        .rank()
 }
 
 /// What one org-wide issue search plus one open-PR search know: every open issue, which of them no
@@ -45622,27 +45716,65 @@ mod worklist_tests {
     #[test]
     fn flag_migration_leads_the_action_rank() {
         assert_eq!(action_rank(NextAction::FlagMigration.as_str()), 0);
-        // The retired spelling must not secretly still be the ranked one. Asserted against
-        // `parked-skip`'s OWN rank rather than a literal, so inserting a rank cannot quietly turn
-        // this into a check that an unknown action sorts somewhere in the middle.
+        // A string no variant produces files as parked. Asserted against `parked-skip`'s OWN rank
+        // rather than a literal, so inserting a rank cannot quietly turn this into a check that an
+        // unknown action sorts somewhere in the middle.
         assert_eq!(
             action_rank("deploy"),
             action_rank(NextAction::ParkedSkip.as_str()),
             "an unknown action files as parked"
         );
-        // EVERY action a row can carry is ranked explicitly. One that is not falls through `_` to
-        // the parked rank, which sinks real work to the bottom of the producer's list while the
-        // classifier goes on emitting it — the silent half of the drift this test is named for.
-        for a in ALL_ACTIONS.iter().chain(["flag-migration"].iter()) {
-            if *a == "parked-skip" || *a == "deploy" {
-                continue; // parked-skip IS the `_` arm; `deploy` is the retired spelling above
-            }
-            assert_ne!(
-                action_rank(a),
-                action_rank(NextAction::ParkedSkip.as_str()),
-                "{a} is not ranked, so it sorts as parked"
+        // The string-keyed sort and the enum's own order are ONE order, at every variant. They were
+        // two lists, and the retired `rework-ruling` is what that cost: present in the classifier,
+        // absent from the rank table, silently sorted last.
+        for v in NextAction::ALL {
+            assert_eq!(
+                action_rank(v.as_str()),
+                v.rank(),
+                "{} ranks differently by string than by variant",
+                v.as_str()
             );
         }
+    }
+
+    /// THE ENUM IS THE VOCABULARY. `ALL_ACTIONS` and `ACTIONABLE_ACTIONS` were hand-maintained
+    /// beside `NextAction` and drifted both ways at once — they named `deploy`, which no variant
+    /// produces (a permanent phantom zero in the histogram), and omitted `flag-migration`, which
+    /// every run can produce and which sorts FIRST (never counted, never handed over as work, so
+    /// those PRs were silently skipped). This asserts over every variant rather than over the
+    /// lists, because a test driven by the lists cannot see what the lists are missing.
+    #[test]
+    fn the_action_vocabulary_is_the_enum() {
+        for v in NextAction::ALL {
+            assert!(
+                ALL_ACTIONS.contains(&v.as_str()),
+                "{} is a real action the classifier emits but the histogram never states it",
+                v.as_str()
+            );
+            assert_eq!(
+                ACTIONABLE_ACTIONS.contains(&v.as_str()),
+                v.names_work(),
+                "{} is enumerated as work iff it names work",
+                v.as_str()
+            );
+            // Every variant round-trips its own name, so `from_str` cannot quietly stop
+            // recognising one and drop it to the unknown-action rank.
+            assert_eq!(NextAction::from_str(v.as_str()), Some(v));
+        }
+        // …and nothing is in the lists that is not a variant. This is the half that catches a
+        // retired spelling outliving the variant it named.
+        for a in ALL_ACTIONS {
+            assert!(
+                NextAction::from_str(a).is_some(),
+                "{a} is stated by the histogram but no variant produces it"
+            );
+        }
+        assert_eq!(ALL_ACTIONS.len(), NextAction::ALL.len());
+        assert!(NextAction::from_str("deploy").is_none());
+        // The two the drift actually cost, named outright so a re-drift fails HERE with the reason.
+        assert!(ALL_ACTIONS.contains(&"flag-migration"));
+        assert!(ACTIONABLE_ACTIONS.contains(&"flag-migration"));
+        assert!(!ALL_ACTIONS.contains(&"deploy"));
     }
 
     #[test]
@@ -46176,20 +46308,27 @@ mod state_load_tests {
 
     #[test]
     fn the_histogram_states_every_action_including_the_zeroes() {
-        // `group_by` omits an empty class, so "deploy is absent, therefore zero" is an inference
-        // the caller had to make. Stating the zero is the difference between an answer and a hint.
+        // `group_by` omits an empty class, so "flag-migration is absent, therefore zero" is an
+        // inference the caller had to make. Stating the zero is the difference between an answer
+        // and a hint.
         let d = fleet_digest(&[row("needs-3b", ""), row("needs-3b", ""), row("wait", "")]);
         assert_eq!(d["total"], 3);
         assert_eq!(d["byAction"]["needs-3b"], 2);
         assert_eq!(d["byAction"]["wait"], 1);
-        for a in ALL_ACTIONS {
+        // Driven off the ENUM, not off `ALL_ACTIONS`: a histogram keyed by the same list it is
+        // checked against agrees with itself no matter which actions it forgot.
+        for v in NextAction::ALL {
             assert!(
-                d["byAction"].get(a).is_some(),
-                "every action is named, {a} was not"
+                d["byAction"].get(v.as_str()).is_some(),
+                "every action is named, {} was not",
+                v.as_str()
             );
         }
-        assert_eq!(d["byAction"]["deploy"], 0);
+        // `flag-migration` sorts FIRST and was the class the histogram never stated at all.
+        assert_eq!(d["byAction"]["flag-migration"], 0);
         assert_eq!(d["byAction"]["parked-skip"], 0);
+        // …and a retired spelling is no longer stated as a phantom zero beside the real classes.
+        assert!(d["byAction"].get("deploy").is_none());
         // The reject work-order class states its zero like every other. This is the count that
         // replaced a `gh search prs --label ai:reject`, and the query it replaced always answered:
         // an absent key would be the tool declining to say whether anything is sent back, which is
@@ -46209,7 +46348,10 @@ mod state_load_tests {
         // The bulk of the fleet is `parked-skip` + `green-ready` + `wait` — 70–95% of it across the
         // measured runs — and no run ever acts on one. Enumerating them is what made the raw list
         // 123 KB.
-        let rows: Vec<Value> = ALL_ACTIONS.iter().map(|a| row(a, "")).collect();
+        let rows: Vec<Value> = NextAction::ALL
+            .iter()
+            .map(|v| row(v.as_str(), ""))
+            .collect();
         let d = fleet_digest(&rows);
         let listed: Vec<String> = d["actionable"]
             .as_array()
@@ -46218,6 +46360,10 @@ mod state_load_tests {
             .map(|r| r["nextAction"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(listed, ACTIONABLE_ACTIONS.map(String::from).to_vec());
+        // The live bug this pins: a migration row is WORK, and the hand-maintained actionable list
+        // omitted it, so `fleet.actionable` never carried one and the producer never saw those PRs.
+        // It leads the list, because it is the action that sorts first.
+        assert_eq!(listed.first().map(String::as_str), Some("flag-migration"));
         for skipped in ["green-ready", "wait", "parked-skip"] {
             assert!(
                 !listed.contains(&skipped.to_string()),
