@@ -10432,15 +10432,6 @@ fn label_meta(label: &str) -> (&'static str, &'static str) {
         // `ai:relink` is deliberately ABSENT (#135): this table is consulted only for a label a
         // transition is about to WRITE, and no transition writes that label any more. The one PR
         // still carrying it is cleared by re-recording the verdict as `reject`, which strips it.
-        // RETIRED (#162) and never ENSURED any more — no transition writes this label, so nothing
-        // reaches this row. It stays for the same reason the `human:reject` row does: the label
-        // still exists across the org on the residue PRs the eyes-on triage has not re-flagged,
-        // and a `label_meta` that forgot a live label is how its colour and description get
-        // silently rewritten org-wide by whatever writes it next.
-        "ai:blocked-deploy" => (
-            "d93f0b",
-            "AI producer: blocked on a deploy it can't complete (human)",
-        ),
         "ai:blocked-infra" => (
             "e99695",
             "AI producer: blocked on an infra/tooling gap or can't classify (human)",
@@ -13875,9 +13866,10 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
 
 /// The human-facing noun for a producer state-transition comment (`<noun>: <reason>`).
 ///
-/// `ai:blocked-deploy` is deliberately absent (#162): this table is consulted only when a
-/// transition WRITES a state comment, and no transition writes that state any more. The residue
-/// comments already posted keep their `Blocked-deploy:` noun as body text; nothing re-renders them.
+/// `ai:blocked-deploy` is absent because the state does not exist (#162 retired it, #221 deleted
+/// it): "blocked on a deploy" is not something this machine can express, so there is no comment to
+/// render a noun for. Old comment bodies keep their `Blocked-deploy:` text as history; nothing
+/// re-renders them.
 fn state_noun(label: &str) -> &'static str {
     match label {
         "ai:blocked-on" => "Blocked-on",
@@ -13893,9 +13885,9 @@ fn state_noun(label: &str) -> &'static str {
 /// with the VETTER (#161) — its typed deps are cleared automatically by the vetter's state-load,
 /// and [`classify_lane`] files it accordingly.
 ///
-/// `ai:blocked-infra` was RETIRED by #108 ([`RETIRED_STATE_LABEL`]) and `ai:blocked-deploy` by
-/// #162 ([`RETIRED_BLOCKED_DEPLOY_LABEL`]) — under the split release lifecycle no merge waits on
-/// a deploy, so "blocked on a deploy" is not a state this machine can express.
+/// `ai:blocked-infra` was RETIRED by #108 ([`RETIRED_STATE_LABEL`]); `ai:blocked-deploy` was
+/// retired by #162 and DELETED by #221 — under the split release lifecycle no merge waits on a
+/// deploy, so "blocked on a deploy" is not a state this machine can express.
 const PRODUCER_STATE_LABELS: [&str; 2] = ["ai:design", "ai:blocked-on"];
 
 /// RETIRED (#108). Never written again, and never PARKS a PR — [`next_action`] deliberately does not
@@ -13908,25 +13900,6 @@ const PRODUCER_STATE_LABELS: [&str; 2] = ["ai:design", "ai:blocked-on"];
 /// since that strips every `ai:*` but the target — but a PR nothing transitions would keep it
 /// forever, which is exactly the trap #108 is about.)
 const RETIRED_STATE_LABEL: &str = "ai:blocked-infra";
-
-/// RETIRED (#162). `ai:blocked-deploy` parked a PR whose merge waited on a deploy, and under the
-/// split deploy/abstract release lifecycle that premise is gone: deploy repos freeze per-tag
-/// records and publish on `rainix-tag-release`, the on-chain deploy is a separate manual workflow
-/// dispatch decoupled from publishing (rainlanguage/rainix#282), and library repos never deploy —
-/// NO merge waits on a deploy anywhere. A PR that would earn this label is evidence of exactly one
-/// thing: its REPO has not migrated to the split lifecycle. The block is real but its object is
-/// the migration, so the live spelling is `flag-blocked-on --blocked-by <the repo's migration
-/// issue/PR>` — the ONE blocked state whose clearance the vetter already automates (#161).
-/// `flag-blocked-deploy` refuses naming exactly that (see
-/// [`retired_flag_blocked_deploy_refusal`]).
-///
-/// The constant stays while any PR still carries the label — the kept-while-nonzero contract every
-/// retirement has used (#108/#133/#135). Unlike [`RETIRED_STATE_LABEL`], residue here STILL PARKS
-/// ([`next_action`] consults it): the ruling is an eyes-on triage of each residue PR — a human
-/// re-flags it blocked-on its repo's migration, or unblocks it outright where the repo has since
-/// migrated — never an automatic re-derivation, which would be the auto-migration the ruling
-/// forbids. [`classify_lane`] keeps it visible (producer-blocked) until that pass empties it.
-const RETIRED_BLOCKED_DEPLOY_LABEL: &str = "ai:blocked-deploy";
 
 /// Pure plan for a producer state-transition ([`flag_state_mode`]). Mirrors [`verdict_plan`]'s guard —
 /// a `human:*` label OR a native GitHub review is sacred (refuse) — then the label move (strip every
@@ -16592,18 +16565,6 @@ fn classify_lane(
     if has("ai:close-candidate") {
         return (Lane::CloseCandidate, "ai:close-candidate".to_string());
     }
-    // RETIRED (#162) but still bucketed, at its old precedence: a blocked state dominates a stale
-    // `ai:ready` label. Deliberately producer-blocked and NOT vet-lifecycle — the #164 clearance
-    // reads exactly `ai:blocked-on` (typed refs the vetter can resolve), and this residue has
-    // neither the label nor the refs, so its next mover is the eyes-on triage that re-flags each
-    // PR blocked-on its repo's migration (or unblocks it outright). Dropping it here would
-    // reclassify the residue as `un-vetted` and hide the very thing that pass has to empty.
-    if has(RETIRED_BLOCKED_DEPLOY_LABEL) {
-        return (
-            Lane::ProducerBlocked,
-            RETIRED_BLOCKED_DEPLOY_LABEL.to_string(),
-        );
-    }
     // #161: `ai:blocked-on` files under the VETTER's lane — its next mover is the vetter, whose
     // state-load clears the flag the run after every typed dep merges/closes and hands the PR
     // straight back to vetting. Same PRECEDENCE position as the retired blocked residue above: a
@@ -16643,7 +16604,7 @@ fn classify_lane(
 /// Exactly when the answer CHANGES the lane, and that is a question for [`classify_lane`] rather
 /// than for a list of labels kept in step with it. `ready_vetted_at_head` is read in ONE place —
 /// the `ai:ready` branch — and every state ahead of that branch in the precedence order returns
-/// before it: a human decision, the retired reject, the retired blocked-deploy residue,
+/// before it: a human decision, the retired reject, the close-candidate hand-off,
 /// `ai:blocked-on`, the retired blocked-infra residue. So the fetch is asked for directly:
 /// `Some(false)` is what a fetch that finds a STALE verdict yields, `None` is literally what the
 /// lookup yields when NO fetch was made, and when the two classify identically the call is dead
@@ -16652,8 +16613,9 @@ fn classify_lane(
 /// DERIVED, not mirrored, because the mirror had already drifted twice. The hand-written predicate
 /// this replaces was built from [`PRODUCER_STATE_LABELS`], and a retirement takes a label OUT of
 /// that array while leaving it ahead of `ai:ready` in [`classify_lane`] — so `ai:blocked-infra`
-/// (#108) and then `ai:blocked-deploy` (#162) each silently re-armed a fetch whose result nothing
-/// reads. Naming no label here means the next precedence change carries itself.
+/// (#108) and then the since-deleted `ai:blocked-deploy` (#162) each silently re-armed a fetch
+/// whose result nothing reads. Naming no label here means the next precedence change carries
+/// itself.
 fn needs_verdict_currency(labels: &[String], producer_commented: bool) -> bool {
     classify_lane(labels, Some(false), producer_commented)
         != classify_lane(labels, None, producer_commented)
@@ -17124,12 +17086,6 @@ fn human_queue_doc(
             // Legacy label-based counts (UNCHANGED — the dashboard reads these).
             "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
             "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
-            // RETIRED (#162): no transition writes `ai:blocked-deploy` any more, so this counts
-            // down to 0 and stays there. The key is kept while it can be non-zero — the
-            // kept-while-nonzero contract — because each residue PR still needs its eyes-on
-            // triage: re-flagged `ai:blocked-on --blocked-by <the repo's migration>`, or unblocked
-            // outright where the repo has already migrated. Never auto-migrated.
-            "blockedDeploy": buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL).map(|v| v.len()).unwrap_or(0),
             "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
             "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
             "closeCandidateIssues": close_issues.len(),
@@ -17543,16 +17499,6 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
     };
     // producer-blocked (`ai:blocked-on` prints with the vetter's group above — #161)
-    // RETIRED (#162) — no transition writes this label any more. Shown while any PR still carries
-    // it, so each residue PR stays visible until its eyes-on triage: re-flag it
-    // `ai:blocked-on --blocked-by <the repo's migration issue/PR>`, or unblock it outright where
-    // the repo has already migrated to the split release lifecycle.
-    if let Some(v) = buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL) {
-        show(
-            "BLOCKED-DEPLOY (RETIRED #162) — re-flag blocked-on the repo's migration, or unblock",
-            v,
-        );
-    }
     if let Some(v) = buckets.get("ai:blocked-infra") {
         show("BLOCKED-INFRA", v);
     }
@@ -30580,16 +30526,11 @@ fn next_action(s: &PrSignals) -> NextAction {
     }
     // A PR the producer has already moved into a modeled state (design / blocked-on /
     // close-candidate) is PARKED — the label IS the state, so the producer does not re-touch it
-    // and does not re-derive a state from CI. The RETIRED `ai:blocked-deploy` residue parks too
-    // (#162): its exit is the human's eyes-on triage (re-flag blocked-on the repo's migration, or
-    // unblock), and a producer that re-derived it from CI would perform exactly the auto-migration
-    // that ruling forbids. Contrast `ai:blocked-infra` (#108), which deliberately does NOT park.
+    // and does not re-derive a state from CI. Contrast `ai:blocked-infra` (#108), which
+    // deliberately does NOT park.
     // Only un-labeled PRs fall through to the CI/mergeState classifier below.
     if let Some(l) = &s.state_label {
-        if PRODUCER_STATE_LABELS.contains(&l.as_str())
-            || l == "ai:close-candidate"
-            || l == RETIRED_BLOCKED_DEPLOY_LABEL
-        {
+        if PRODUCER_STATE_LABELS.contains(&l.as_str()) || l == "ai:close-candidate" {
             return NextAction::ParkedSkip;
         }
     }
@@ -45423,16 +45364,8 @@ mod worklist_tests {
     #[test]
     fn modeled_state_label_short_circuits_to_parked() {
         // A PR already in a modeled state is parked regardless of CI — even a deploy-trigger or a
-        // red-green signal does not override the label. `ai:blocked-deploy` is RETIRED (#162) and
-        // parks as RESIDUE: its exit is the human's eyes-on triage (re-flag blocked-on the repo's
-        // migration, or unblock), and re-deriving it from CI here would be the auto-migration the
-        // ruling forbids — the deliberate CONTRAST with `ai:blocked-infra` below.
-        for label in [
-            "ai:design",
-            RETIRED_BLOCKED_DEPLOY_LABEL,
-            "ai:blocked-on",
-            "ai:close-candidate",
-        ] {
+        // red-green signal does not override the label.
+        for label in ["ai:design", "ai:blocked-on", "ai:close-candidate"] {
             let mut s = sig(Ci::Green, "CLEAN");
             s.state_label = Some(label.to_string());
             s.has_deploy_trigger = true; // would otherwise be FlagMigration
@@ -45446,6 +45379,17 @@ mod worklist_tests {
         let mut s = sig(Ci::Green, "CLEAN");
         s.state_label = Some("ai:ready".to_string());
         assert_eq!(next_action(&s), NextAction::GreenReady);
+        // `ai:blocked-deploy` is DELETED (#221): it is not a state, so it parks NOTHING. A PR
+        // hand-wearing the string classifies from CI exactly like any unmodelled label would —
+        // the deploy-shaped signal routes to the migration flag (#162's live rule), never to a
+        // park that would strand it where no transition can reach it.
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.state_label = Some("ai:blocked-deploy".to_string());
+        assert_eq!(next_action(&s), NextAction::GreenReady);
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.state_label = Some("ai:blocked-deploy".to_string());
+        s.has_deploy_trigger = true;
+        assert_eq!(next_action(&s), NextAction::FlagMigration);
     }
 
     /// #108: the RETIRED `ai:blocked-infra` must NOT park. This is how the thirteen PRs a pre-#108
@@ -46943,15 +46887,12 @@ mod fsm_completeness_tests {
         );
         // blocked states next — same PRECEDENCE, but the LANE names whoever moves each (#161):
         // the vetter's state-load clears `ai:blocked-on` when its typed deps merge/close, so it
-        // files with the vetter's work; the RETIRED `ai:blocked-deploy` residue (#162) waits on
-        // its eyes-on triage, so it stays with the producer-blocked group.
+        // files with the vetter's work; the retired `ai:blocked-infra` residue stays with the
+        // producer-blocked group. (`ai:blocked-deploy` is DELETED — #221 — and so appears in no
+        // lane at all; `the_deleted_blocked_deploy_label_classifies_as_nothing` is its pin.)
         assert_eq!(
             classify_lane(&s(&["ai:blocked-infra"]), None, false),
             (Lane::ProducerBlocked, "ai:blocked-infra".to_string())
-        );
-        assert_eq!(
-            classify_lane(&s(&["ai:blocked-deploy"]), None, false),
-            (Lane::ProducerBlocked, "ai:blocked-deploy".to_string())
         );
         assert_eq!(
             classify_lane(&s(&["ai:blocked-on"]), None, false),
@@ -47051,7 +46992,12 @@ mod fsm_completeness_tests {
             qpr(6, &["ai:design"], None, false),       // ai:design
             // NOT in any lane (#211/#212): the close-candidate machinery inventories it.
             qpr(7, &["ai:close-candidate"], None, false),
-            qpr(8, &["ai:blocked-deploy"], None, false), // producer-blocked (RETIRED residue #162)
+            // `ai:blocked-deploy` is DELETED (#221) — kept in this fixture precisely because a PR
+            // can still be hand-labelled with the string. Fed the way the PIPELINE feeds it:
+            // `human_queue_mode` buckets every `ai:*`-labelled PR by `ai_state_label` and leak-
+            // detects only the unlabeled remainder, so `producer_commented` is false for any
+            // labelled PR. Unmodelled label + that input = the ordinary fallthrough, `un-vetted`.
+            qpr(8, &["ai:blocked-deploy"], None, false),
             qpr(9, &["ai:blocked-infra"], None, false),
             qpr(10, &["ai:blocked-on"], None, false), // vet-lifecycle: the vetter clears it (#161)
             qpr(11, &["human:reject"], None, false),  // human decisions (RETIRED residue #133)
@@ -47064,10 +47010,12 @@ mod fsm_completeness_tests {
 
         // every state present, counts correct, membership disjoint (#15 joins #4 under ai:reject).
         let count = |lane: &str, st: &str| lane_state_count(&doc, lane, st);
-        // #1 (never labelled), #2 (ai:ready, verdict not current at its head) and #12 (the
-        // deleted human:design residue) are the SAME state — the vetter owes each of them a
-        // verdict, and nothing downstream distinguishes them.
-        assert_eq!(count("vet-lifecycle", "un-vetted"), 3);
+        // #1 (never labelled), #2 (ai:ready, verdict not current at its head), #8 (wearing the
+        // DELETED `ai:blocked-deploy` string, #221) and #12 (wearing the DELETED `human:design`,
+        // #219) are the SAME state — the vetter owes each of them a verdict, and nothing
+        // downstream distinguishes them. TWO deletions land here, and each adds a member: a
+        // deleted state's residue models nothing, whichever namespace it was deleted from.
+        assert_eq!(count("vet-lifecycle", "un-vetted"), 4);
         assert_eq!(count("vetter-verdicts", "ai:ready"), 1);
         assert_eq!(count("vetter-verdicts", "ai:reject"), 2);
         assert_eq!(count("vetter-verdicts", "ai:relink"), 1);
@@ -47077,20 +47025,39 @@ mod fsm_completeness_tests {
         // dashboard renders a dimmed box and a new one draws nothing.
         assert_eq!(count("vetter-verdicts", "ai:close-candidate"), 0);
         assert!(doc.pointer("/close-candidate").is_none(), "not a lane");
-        assert_eq!(count("producer-blocked", "ai:blocked-deploy"), 1);
+        // The DELETED state (#221) emits no cell anywhere — #8 joins the un-vetted bucket above
+        // (asserted by member number below), and no lane names the string.
+        assert_eq!(count("producer-blocked", "ai:blocked-deploy"), 0);
+        assert_eq!(count("leak", "leak"), 1);
+        for lane in [
+            "producer-blocked",
+            "vet-lifecycle",
+            "vetter-verdicts",
+            "human-decisions",
+            "leak",
+        ] {
+            assert_eq!(
+                count(lane, "ai:blocked-deploy"),
+                0,
+                "`{lane}` still names the deleted state"
+            );
+        }
         assert_eq!(count("producer-blocked", "ai:blocked-infra"), 1);
         // #161: blocked-on emits under the VETTER's lane — the dash files it as vetter action
         // ("clear when deps merge"), and it must be GONE from producer-blocked, not doubled.
         assert_eq!(count("vet-lifecycle", "ai:blocked-on"), 1);
         assert_eq!(count("producer-blocked", "ai:blocked-on"), 0);
         assert_eq!(count("human-decisions", "human:reject"), 1);
-        // The DELETED human:design (#219) emits no lane cell at all.
+        // The DELETED human:design (#219) emits no lane cell at all — the same treatment #221
+        // gives the deleted `ai:blocked-deploy` two lanes up.
         assert_eq!(count("human-decisions", "human:design"), 0);
         assert_eq!(count("leak", "leak"), 1);
 
         // the PR list carries {repo, number, url, title}. #1 (never labelled), #2 (ai:ready with
-        // no current verdict) and #12 (deleted-label residue) sit side by side in the ONE
-        // un-vetted bucket, indistinguishable.
+        // no current verdict), #8 (the deleted `ai:blocked-deploy` string) and #12 (the deleted
+        // `human:design`) sit side by side in the ONE un-vetted bucket, indistinguishable — which
+        // is exactly what makes both deletions benign: the vetter picks each up as ordinary work
+        // and its next verdict strips the dead label.
         let members: Vec<u64> = doc
             .pointer("/vet-lifecycle/un-vetted/prs")
             .and_then(|v| v.as_array())
@@ -47098,7 +47065,7 @@ mod fsm_completeness_tests {
             .iter()
             .filter_map(|p| p.get("number").and_then(|v| v.as_u64()))
             .collect();
-        assert_eq!(members, vec![1, 2, 12]);
+        assert_eq!(members, vec![1, 2, 8, 12]);
         let arv = doc.pointer("/vet-lifecycle/un-vetted/prs/1").unwrap();
         assert_eq!(arv.get("repo").and_then(|v| v.as_str()), Some("o/r"));
         assert_eq!(
@@ -47327,58 +47294,38 @@ mod subject_ref_tests {
         }
     }
 
-    /// The kept-while-nonzero contract on the RETIRED `ai:blocked-deploy` (#162): the emission
-    /// keeps the `blockedDeploy` key — 0 once the residue is triaged, never absent — because a
-    /// dashboard that stopped rendering the state would hide the PRs still owed their eyes-on
-    /// re-flag to `ai:blocked-on --blocked-by <the repo's migration>`.
+    /// `ai:blocked-deploy` is DELETED (#221), so the emission carries NO `blockedDeploy` key —
+    /// absent, not zero. The kept-while-nonzero contract is what a RETIRED-but-occupied state
+    /// gets; this state has no occupancy to report and no transition that could create one, so a
+    /// key held at zero would be a dashboard box for a state the machine does not have. The sibling
+    /// keys are asserted alongside it: this must be a DELETION, not the whole `counts` object going
+    /// missing.
     #[test]
-    fn the_retired_blocked_deploy_count_keeps_its_key_and_counts_the_residue() {
-        // No residue bucket at all → the key is still there, and it is 0.
+    fn the_deleted_blocked_deploy_state_emits_no_count_key() {
         let empty = doc();
         assert_eq!(
             empty.pointer("/counts/blockedDeploy"),
-            Some(&json!(0)),
-            "the key must be KEPT at zero, not dropped: {:?}",
+            None,
+            "the key must be GONE, not zero: {:?}",
             empty.get("counts")
         );
-        // A residue PR still carrying the label → counted under the same key.
-        let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> =
-            std::collections::BTreeMap::new();
-        buckets.insert(
-            RETIRED_BLOCKED_DEPLOY_LABEL.into(),
-            vec![sref("rainlanguage/rainlang", 535, "pull", "residue pr")],
-        );
+        for kept in ["blockedInfra", "blockedOn", "ready", "design"] {
+            assert!(
+                empty.pointer(&format!("/counts/{kept}")).is_some(),
+                "deleting blockedDeploy must not take `{kept}` with it"
+            );
+        }
+        // …and a PR hand-wearing the deleted string does not resurrect the key or any lane state:
+        // it is UNMODELLED, so it lands in `un-vetted` and the vetter absorbs it.
         let lanes = lanes_doc(&[QueuePr {
-            subject: sref("rainlanguage/rainlang", 535, "pull", "residue pr"),
-            labels: vec![RETIRED_BLOCKED_DEPLOY_LABEL.to_string()],
+            subject: sref("rainlanguage/rainlang", 535, "pull", "hand-labelled pr"),
+            labels: vec!["ai:blocked-deploy".to_string()],
             ready_vetted_at_head: None,
             producer_commented: false,
         }]);
-        let (ccu, ccu_n) = issue_state_pair(vec![]);
-        let (ccup, ccup_n) = issue_state_pair(vec![]);
-        let with_residue = human_queue_doc(
-            &buckets,
-            &lanes,
-            &[],
-            ccu,
-            ccu_n,
-            ccup,
-            ccup_n,
-            &[],
-            None,
-            &[],
-            1,
-            &[],
-            DOC_NOW_MS,
-        );
         assert_eq!(
-            with_residue.pointer("/counts/blockedDeploy"),
-            Some(&json!(1))
-        );
-        // …and the lanes agree it is producer-blocked, so the count and the lane cannot drift.
-        assert_eq!(
-            lane_state_count(&lanes, "producer-blocked", RETIRED_BLOCKED_DEPLOY_LABEL),
-            1
+            lane_state_count(&lanes, "producer-blocked", "ai:blocked-deploy"),
+            0
         );
     }
 
@@ -55078,11 +55025,13 @@ mod infra_down_tests {
     // ---- the retirement ---------------------------------------------------------------------
 
     /// A retired label must not be reachable as a destination — not in the writable state set,
-    /// and not as a noun a transition could name. `ai:blocked-infra` (#108) and
-    /// `ai:blocked-deploy` (#162) both hold it; the live set is exactly design + blocked-on.
+    /// and not as a noun a transition could name. `ai:blocked-infra` (#108) holds it as a retired
+    /// constant; `ai:blocked-deploy` is DELETED outright (#221) and is asserted here as a bare
+    /// string, because there is no constant left to name it by. The live set is exactly design +
+    /// blocked-on.
     #[test]
     fn the_retired_labels_are_no_longer_destinations() {
-        for retired in [RETIRED_STATE_LABEL, RETIRED_BLOCKED_DEPLOY_LABEL] {
+        for retired in [RETIRED_STATE_LABEL, "ai:blocked-deploy"] {
             assert!(
                 !PRODUCER_STATE_LABELS.contains(&retired),
                 "the retired state {retired} must not be writable"
@@ -55093,6 +55042,25 @@ mod infra_down_tests {
         for still_live in ["ai:design", "ai:blocked-on"] {
             assert!(PRODUCER_STATE_LABELS.contains(&still_live));
         }
+        // …and the DELETED one has no `label_meta` row of its own (#221). That table is what
+        // `EnsureLabel` hands to `gh label create --force`. `label_meta` is TOTAL — an absent row
+        // yields the generic fallback, not an error — so the difference a row makes is whether
+        // this machine would re-create the label org-wide with its own colour and description.
+        // The definitions are deleted from every repo; a surviving row is what would let the next
+        // caller that named the string put them all back. Asserted against an arbitrary unknown
+        // label rather than against literals, so the pin is "no row of its own", not "these exact
+        // fallback bytes".
+        assert_eq!(
+            label_meta("ai:blocked-deploy"),
+            label_meta("nonexistent-label-with-no-row"),
+            "the deleted state must fall to the default, not carry its own label_meta row"
+        );
+        // The CONTRAST that keeps this honest: `ai:blocked-infra` is retired-but-occupied, so it
+        // deliberately KEEPS its row (the kept-while-nonzero contract).
+        assert_ne!(
+            label_meta(RETIRED_STATE_LABEL),
+            label_meta("nonexistent-label-with-no-row")
+        );
     }
 
     /// `flag-blocked-deploy` refuses (#162) — and the refusal TEACHES: it names the retirement,
@@ -55142,41 +55110,48 @@ mod infra_down_tests {
         );
     }
 
-    /// The `ai:blocked-deploy` residue (#162) stays visible too — and PRODUCER-blocked, never
-    /// vet-lifecycle: the #164 clearance reads exactly `ai:blocked-on` (typed refs the vetter can
-    /// resolve), and this residue has neither the label nor the refs. Its next mover is the
-    /// eyes-on triage that re-flags each PR blocked-on its repo's migration or unblocks it.
+    /// `ai:blocked-deploy` is not a state (#221), so the string classifies as NOTHING of its own:
+    /// it is an unmodelled label, and a PR wearing it falls through to `un-vetted` — the vetter
+    /// absorbs it, and the verdict that judges it strips the label. This is the pin that keeps the
+    /// deletion honest: a lane arm returning for it again would be a state with no transition into
+    /// or out of it.
+    ///
+    /// `producer_commented: false` is the only input the pipeline can construct for a PR carrying
+    /// this label, which is why it is the one asserted. [`human_queue_mode`] buckets every
+    /// `ai:*`-labelled PR through [`ai_state_label`] and leak-detects only the `unlabeled`
+    /// remainder, so `leak_keys` — the sole source of that flag — never contains a labelled PR.
+    /// The `Leak` arm belongs to label-less PRs, exactly as this parameter's contract states.
     #[test]
-    fn blocked_deploy_residue_is_producer_blocked_not_the_vetters_to_clear() {
+    fn the_deleted_blocked_deploy_label_classifies_as_nothing() {
+        let (lane, state) = classify_lane(&["ai:blocked-deploy".to_string()], None, false);
         assert_eq!(
-            classify_lane(&[RETIRED_BLOCKED_DEPLOY_LABEL.to_string()], None, false),
-            (
-                Lane::ProducerBlocked,
-                RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
-            )
+            (lane, state.as_str()),
+            (Lane::VetLifecycle, "un-vetted"),
+            "the deleted state must not bucket as producer-blocked"
         );
-        // Its old precedence holds: a blocked residue still dominates a stale `ai:ready` label…
+        assert_ne!(
+            state, "ai:blocked-deploy",
+            "no lane may name a deleted state"
+        );
+        // It does not dominate anything either: a real state alongside it wins outright, exactly
+        // as though the deleted string were any other unmodelled label.
         assert_eq!(
             classify_lane(
-                &[
-                    "ai:ready".to_string(),
-                    RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
-                ],
+                &["ai:ready".to_string(), "ai:blocked-deploy".to_string()],
                 Some(true),
                 false
             ),
-            (
-                Lane::ProducerBlocked,
-                RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
-            )
+            (Lane::VetterVerdicts, "ai:ready".to_string())
         );
         // …and a human decision still dominates it (the retired `human:reject`, the lane's one
-        // remaining state — the deleted `human:design` is no decision at all, #219).
+        // remaining state — the deleted `human:design` is no decision at all, #219). The deleted
+        // deploy string is spelled as a LITERAL, not a constant: #221 deleted the constant, and
+        // re-declaring one to name a state that does not exist is the deletion undone.
         assert_eq!(
             classify_lane(
                 &[
                     RETIRED_HUMAN_REJECT_LABEL.to_string(),
-                    RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
+                    "ai:blocked-deploy".to_string()
                 ],
                 None,
                 false
@@ -55190,11 +55165,10 @@ mod infra_down_tests {
     ///
     /// The restated version is what drifted: it read [`PRODUCER_STATE_LABELS`], and a retirement
     /// takes a label OUT of that array while leaving it AHEAD of `ai:ready` in the precedence
-    /// order — so `ai:blocked-infra` (#108) and `ai:blocked-deploy` (#162) each re-armed a
-    /// `gh pr view` per residue PR whose result `classify_lane` then never reads, the second of
-    /// them on a PR shaped exactly like
-    /// [`blocked_deploy_residue_is_producer_blocked_not_the_vetters_to_clear`]'s. Every dominating
-    /// state is asserted here, live and retired alike, so the next retirement cannot re-arm it.
+    /// order — so `ai:blocked-infra` (#108) and the since-deleted `ai:blocked-deploy` (#162) each
+    /// re-armed a `gh pr view` per residue PR whose result `classify_lane` then never reads. Every
+    /// dominating state is asserted here, live and retired alike, so the next retirement cannot
+    /// re-arm it.
     #[test]
     fn verdict_currency_is_fetched_only_where_it_can_change_the_lane() {
         // The one PR the fetch exists for: `ai:ready` with nothing ahead of it.
@@ -55215,7 +55189,6 @@ mod infra_down_tests {
         for dominating in [
             RETIRED_HUMAN_REJECT_LABEL,
             "ai:close-candidate",
-            RETIRED_BLOCKED_DEPLOY_LABEL,
             "ai:blocked-on",
             RETIRED_STATE_LABEL,
         ] {
