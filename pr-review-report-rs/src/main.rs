@@ -16653,14 +16653,17 @@ enum StateOccupancy {
 
 /// When a state's descriptor is emitted (#130 clarification 1). A LIVE state always emits — an
 /// empty live state stays visible, which is the sparse-`lanes`-vs-canonical-shape separation the
-/// issue exists for. A state that exists only as residue emits only while its occupancy is
-/// nonzero: its existence IS its residue, so it leaves the shape when it drains instead of
+/// issue exists for. A state that exists only as residue emits only while the named `counts` key
+/// is nonzero: its existence IS its residue, so it leaves the shape when it drains instead of
 /// renting a permanent dimmed box (rain-org-health#145's rejected outcome), and no `retired`
-/// field reaches the wire — the consumer renders what is emitted, nothing more.
+/// field reaches the wire — the consumer renders what is emitted, nothing more. The gate key is
+/// carried here rather than read from `hist` because the two are different claims: an ABSORBED
+/// residue row (`human:reject`, `ai:relink`) still gates on its kept-while-nonzero count while
+/// owning no series at all — its successor's `hist_fold` draws that past.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Emit {
     Always,
-    WhileOccupied,
+    WhileOccupied(&'static str),
 }
 
 /// ONE state of the machine, as data — the shape `human-queue --json` emits under
@@ -16676,12 +16679,14 @@ struct StateDescriptor {
     act: &'static str,
     kind: StateKind,
     /// The `counts` key its inventory series lives under — in this document and in every
-    /// `human-queue-history.jsonl` rollup line.
-    hist: &'static str,
-    /// RETIRED history keys whose samples fold into this series, added per sample. A retired key
-    /// is one `counts` no longer carries; its old rollup lines are real measurements of the
-    /// machine as it then was, and a series that ignored them would misdraw every chart spanning
-    /// the rename as though that inventory never existed.
+    /// `human-queue-history.jsonl` rollup line. `None` for an absorbed residue row whose series
+    /// belongs to its successor (the successor's `hist_fold` names this row's key), so the same
+    /// past never draws in two boxes; the field is then omitted from the wire, like `label`.
+    hist: Option<&'static str>,
+    /// History keys whose samples fold into this series — an absorbed retiree's past, which a
+    /// series that ignored it would truncate on every chart spanning the rename (#130). The old
+    /// rollup lines are real measurements of the machine as it then was; no row claims a fold
+    /// key as its own `hist`, so each sample draws exactly once.
     hist_fold: &'static [&'static str],
     /// Display name, only where it differs from `key`.
     label: Option<&'static str>,
@@ -16705,21 +16710,22 @@ impl StateDescriptor {
                 "itemsAreIssues": items_are_issues,
             }),
         };
-        let mut o = serde_json::json!({
-            "key": self.key,
-            "owner": self.owner.key(),
-            "act": self.act,
-            "kind": self.kind.key(),
-            "hist": self.hist,
-            "histFold": self.hist_fold,
-            "occupancy": occupancy,
-        });
-        if let Some(label) = self.label {
-            o.as_object_mut()
-                .expect("a state descriptor is a JSON object")
-                .insert("label".into(), Value::from(label));
+        let mut o = serde_json::Map::new();
+        o.insert("key".into(), Value::from(self.key));
+        o.insert("owner".into(), Value::from(self.owner.key()));
+        o.insert("act".into(), Value::from(self.act));
+        o.insert("kind".into(), Value::from(self.kind.key()));
+        // Omitted, not null, for an absorbed residue row: its successor's series draws its past,
+        // and a `hist` here — even null — would read as a series claim.
+        if let Some(hist) = self.hist {
+            o.insert("hist".into(), Value::from(hist));
         }
-        o
+        o.insert("histFold".into(), serde_json::json!(self.hist_fold));
+        o.insert("occupancy".into(), occupancy);
+        if let Some(label) = self.label {
+            o.insert("label".into(), Value::from(label));
+        }
+        Value::Object(o)
     }
 }
 
@@ -16744,11 +16750,16 @@ impl StateDescriptor {
 // `human:design` waits on the PRODUCER (#111 — `worklist` routes it `rework-ruling`; only the
 // explicit `--park` spelling waits on the human, the minority spelling by design).
 //
-// `hist_fold` names only keys the history has and `counts` no longer emits: `awaitingReVet`
-// (#128 collapsed awaiting-re-vet into `un-vetted` — vetting is a pure function of the PR at its
-// head) and `closeCandidatePrs` (the pre-#211/#212 PR-side flag inventory, absorbed by the mixed
-// upheld inbox). `humanCloseCandidate` folds nowhere by design: a close ruling is `human-close`'s
-// decide+do with no state between (#213), so no live series measures what it measured.
+// `hist_fold` names the keys a series draws BESIDE its own — an absorbed retiree's past, claimed
+// by exactly one successor and by no row as its own `hist`. Two are gone from `counts` entirely:
+// `awaitingReVet` (#128 collapsed awaiting-re-vet into `un-vetted` — vetting is a pure function
+// of the PR at its head) and `closeCandidatePrs` (the pre-#211/#212 PR-side flag inventory,
+// absorbed by the mixed upheld inbox). Two still emit under the kept-while-nonzero contract while
+// their residue rows own no series: `humanReject` (#133 — a reject is a reject whoever ruled it)
+// and `relink` (#135 — a linkage error IS a reject), both consolidated into `ai:reject`, whose
+// series would otherwise truncate their past on every chart spanning the rename.
+// `humanCloseCandidate` folds nowhere by design: a close ruling is `human-close`'s decide+do
+// with no state between (#213), so no live series measures what it measured.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Producer backlog: open issues with no covering open PR, excluding human-gated /
@@ -16758,7 +16769,7 @@ const STATE_UNCOVERED_ISSUES: StateDescriptor = StateDescriptor {
     owner: StateOwner::Producer,
     act: "open a PR",
     kind: StateKind::Flow,
-    hist: "uncoveredIssues",
+    hist: Some("uncoveredIssues"),
     hist_fold: &[],
     label: Some("untouched (no PR)"),
     occupancy: StateOccupancy::Counts {
@@ -16777,7 +16788,7 @@ const STATE_UN_VETTED: StateDescriptor = StateDescriptor {
     owner: StateOwner::Vetter,
     act: "vet at current head",
     kind: StateKind::Flow,
-    hist: "unvetted",
+    hist: Some("unvetted"),
     hist_fold: &["awaitingReVet"],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetLifecycle),
@@ -16791,7 +16802,7 @@ const STATE_BLOCKED_ON: StateDescriptor = StateDescriptor {
     owner: StateOwner::Vetter,
     act: "clears when every typed dep merges/closes",
     kind: StateKind::Blk,
-    hist: "blockedOn",
+    hist: Some("blockedOn"),
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetLifecycle),
@@ -16804,7 +16815,7 @@ const STATE_READY: StateDescriptor = StateDescriptor {
     owner: StateOwner::Human,
     act: "merge",
     kind: StateKind::Flow,
-    hist: "ready",
+    hist: Some("ready"),
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
@@ -16812,31 +16823,35 @@ const STATE_READY: StateDescriptor = StateDescriptor {
 };
 
 /// ONE reject state whoever ruled it (#133), whatever the ground (#135): the producer reworks
-/// per the note.
+/// per the note. Its series draws the consolidated predecessors' past — `humanReject` (#133) and
+/// `relink` (#135) — because those were renames INTO this state, and a series that ignored them
+/// would truncate every chart spanning the consolidation (#130).
 const STATE_REJECT: StateDescriptor = StateDescriptor {
     key: "ai:reject",
     owner: StateOwner::Producer,
     act: "rework per note",
     kind: StateKind::Blk,
-    hist: "reject",
-    hist_fold: &[],
+    hist: Some("reject"),
+    hist_fold: &["humanReject", "relink"],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
     emit: Emit::Always,
 };
 
 /// RETIRED (#135): no verdict writes it; the residue leaves when the human re-records the
-/// verdict as a `reject` naming the linkage.
+/// verdict as a `reject` naming the linkage. ABSORBED by `ai:reject`, so this row owns no
+/// series — reject's `hist_fold` draws the `relink` past — while still gating on that
+/// kept-while-nonzero count.
 const STATE_RELINK: StateDescriptor = StateDescriptor {
     key: "ai:relink",
     owner: StateOwner::Human,
     act: "re-record as reject naming the linkage",
     kind: StateKind::Blk,
-    hist: "relink",
+    hist: None,
     hist_fold: &[],
     label: Some("ai:relink (retired #135)"),
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
-    emit: Emit::WhileOccupied,
+    emit: Emit::WhileOccupied("relink"),
 };
 
 /// A design question only a human can answer or supply.
@@ -16845,7 +16860,7 @@ const STATE_DESIGN: StateDescriptor = StateDescriptor {
     owner: StateOwner::Human,
     act: "rule on the design question",
     kind: StateKind::Rule,
-    hist: "design",
+    hist: Some("design"),
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
@@ -16860,11 +16875,11 @@ const STATE_BLOCKED_DEPLOY: StateDescriptor = StateDescriptor {
     owner: StateOwner::Human,
     act: "re-flag blocked-on the repo's migration, or unblock",
     kind: StateKind::Blk,
-    hist: "blockedDeploy",
+    hist: Some("blockedDeploy"),
     hist_fold: &[],
     label: Some("ai:blocked-deploy (retired #162)"),
     occupancy: StateOccupancy::Lane(Lane::ProducerBlocked),
-    emit: Emit::WhileOccupied,
+    emit: Emit::WhileOccupied("blockedDeploy"),
 };
 
 /// RETIRED (#108): nothing parks on it — the producer's next pass re-enters the ordinary
@@ -16874,25 +16889,27 @@ const STATE_BLOCKED_INFRA: StateDescriptor = StateDescriptor {
     owner: StateOwner::Producer,
     act: "producer's next pass re-enters the lifecycle; retire-blocked-infra strips the label",
     kind: StateKind::Blk,
-    hist: "blockedInfra",
+    hist: Some("blockedInfra"),
     hist_fold: &[],
     label: Some("ai:blocked-infra (retired #108)"),
     occupancy: StateOccupancy::Lane(Lane::ProducerBlocked),
-    emit: Emit::WhileOccupied,
+    emit: Emit::WhileOccupied("blockedInfra"),
 };
 
 /// RETIRED (#133): parks ABSOLUTELY — no AI actor touches the PR — so the human-driven
-/// `migrate-reject` is the only exit.
+/// `migrate-reject` is the only exit. ABSORBED by `ai:reject`, so this row owns no series —
+/// reject's `hist_fold` draws the `humanReject` past — while still gating on that
+/// kept-while-nonzero count.
 const STATE_HUMAN_REJECT: StateDescriptor = StateDescriptor {
     key: "human:reject",
     owner: StateOwner::Human,
     act: "migrate-reject moves it to ai:reject",
     kind: StateKind::Blk,
-    hist: "humanReject",
+    hist: None,
     hist_fold: &[],
     label: Some("human:reject (retired #133)"),
     occupancy: StateOccupancy::Lane(Lane::HumanDecisions),
-    emit: Emit::WhileOccupied,
+    emit: Emit::WhileOccupied("humanReject"),
 };
 
 /// A human design ruling. The PRODUCER's move (#111): `worklist` routes a delegated ruling
@@ -16904,11 +16921,11 @@ const STATE_HUMAN_DESIGN: StateDescriptor = StateDescriptor {
     owner: StateOwner::Producer,
     act: "execute the delegated order (an explicit --park waits on the human)",
     kind: StateKind::Rule,
-    hist: "humanDesign",
+    hist: Some("humanDesign"),
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::HumanDecisions),
-    emit: Emit::WhileOccupied,
+    emit: Emit::WhileOccupied("humanDesign"),
 };
 
 /// The vetter's flag inbox (#72/#73), over BOTH subject types (#211/#212): a producer
@@ -16918,7 +16935,7 @@ const STATE_CC_UNVETTED: StateDescriptor = StateDescriptor {
     owner: StateOwner::Vetter,
     act: "vet the flag",
     kind: StateKind::Flow,
-    hist: "closeCandidateUnvetted",
+    hist: Some("closeCandidateUnvetted"),
     hist_fold: &[],
     label: Some("ai:close-candidate (unvetted)"),
     occupancy: StateOccupancy::Counts {
@@ -16937,7 +16954,7 @@ const STATE_CC_UPHELD: StateDescriptor = StateDescriptor {
     owner: StateOwner::Human,
     act: "human-close: record the ruling, close, retire the flag",
     kind: StateKind::Rule,
-    hist: "closeCandidateUpheld",
+    hist: Some("closeCandidateUpheld"),
     hist_fold: &["closeCandidatePrs"],
     label: Some("ai:close-candidate (upheld)"),
     occupancy: StateOccupancy::Counts {
@@ -16958,7 +16975,7 @@ const STATE_LEAK: StateDescriptor = StateDescriptor {
     owner: StateOwner::Human,
     act: "classify into a modeled state, or extend the machine",
     kind: StateKind::Blk,
-    hist: "leaks",
+    hist: Some("leaks"),
     hist_fold: &[],
     label: Some("not in any modeled state"),
     occupancy: StateOccupancy::Counts {
@@ -16993,15 +17010,15 @@ static STATE_DESCRIPTORS: [&StateDescriptor; 14] = [
 
 /// The emitted `stateDescriptors` value: the rows of [`STATE_DESCRIPTORS`], in table order,
 /// filtered by each row's [`Emit`] policy against the SAME `counts` object the document carries —
-/// a live row always, a residue row only while `counts.<hist>` is nonzero, so a drained retired
+/// a live row always, a residue row only while its gate key is nonzero, so a drained retired
 /// state leaves the shape while an empty live state stays visible (#130 clarification 1).
 fn state_descriptors_json(counts: &Value) -> Value {
     Value::Array(
         STATE_DESCRIPTORS
             .iter()
-            .filter(|d| {
-                d.emit == Emit::Always
-                    || counts.get(d.hist).and_then(|v| v.as_u64()).unwrap_or(0) > 0
+            .filter(|d| match d.emit {
+                Emit::Always => true,
+                Emit::WhileOccupied(k) => counts.get(k).and_then(|v| v.as_u64()).unwrap_or(0) > 0,
             })
             .map(|d| d.to_json())
             .collect(),
@@ -47338,27 +47355,46 @@ mod state_descriptor_tests {
             .get("counts")
             .and_then(|v| v.as_object())
             .expect("counts is an object");
-        let hists: Vec<&str> = STATE_DESCRIPTORS.iter().map(|d| d.hist).collect();
+        let hists: Vec<&str> = STATE_DESCRIPTORS.iter().filter_map(|d| d.hist).collect();
+        let folds: Vec<&str> = STATE_DESCRIPTORS
+            .iter()
+            .flat_map(|d| d.hist_fold.iter().copied())
+            .collect();
         for d in STATE_DESCRIPTORS {
-            // One series per state: two descriptors drawing one key would double-render it.
-            assert_eq!(
-                hists.iter().filter(|h| **h == d.hist).count(),
-                1,
-                "history key `{}` is claimed by more than one descriptor",
-                d.hist
-            );
-            assert!(
-                counts.contains_key(d.hist),
-                "`{}` names history key `{}` but `counts` has no such key — its series would \
-                 never gain a sample",
-                d.key,
-                d.hist
-            );
-            for f in d.hist_fold {
+            if let Some(h) = d.hist {
+                // One series per state: two descriptors drawing one key would double-render it.
+                assert_eq!(
+                    hists.iter().filter(|x| **x == h).count(),
+                    1,
+                    "history key `{h}` is claimed by more than one descriptor"
+                );
                 assert!(
-                    !counts.contains_key(*f),
-                    "`{}` folds `{f}`, but `counts` still emits that key — a fold is for RETIRED \
-                     keys only, and folding a live one double-counts every sample",
+                    counts.contains_key(h),
+                    "`{}` names history key `{h}` but `counts` has no such key — its series \
+                     would never gain a sample",
+                    d.key
+                );
+            }
+            for f in d.hist_fold {
+                // A fold is an ownership TRANSFER, not a share: the successor draws the past, so
+                // no row may claim the key as its own live series and no second series may fold
+                // the same key — either way one past would draw in two boxes.
+                assert!(
+                    !hists.contains(f),
+                    "`{}` folds `{f}`, but a row claims that key as its own `hist`",
+                    d.key
+                );
+                assert_eq!(
+                    folds.iter().filter(|x| **x == *f).count(),
+                    1,
+                    "fold key `{f}` folds into more than one series"
+                );
+            }
+            if let Emit::WhileOccupied(k) = d.emit {
+                assert!(
+                    counts.contains_key(k),
+                    "`{}` gates on `counts.{k}`, which is not emitted — the row could never \
+                     return for a straggler",
                     d.key
                 );
             }
@@ -47389,19 +47425,29 @@ mod state_descriptor_tests {
         ];
         for k in counts.keys() {
             assert!(
-                hists.contains(&k.as_str()) || NON_STATE_COUNTS.contains(&k.as_str()),
-                "counts.{k} is claimed by no state descriptor and is not a named non-state \
-                 rollup — occupancy a consumer cannot know exists (#130)"
+                hists.contains(&k.as_str())
+                    || folds.contains(&k.as_str())
+                    || NON_STATE_COUNTS.contains(&k.as_str()),
+                "counts.{k} is claimed by no state descriptor — neither as a live series nor as \
+                 a folded past — and is not a named non-state rollup: occupancy a consumer \
+                 cannot know exists (#130)"
             );
         }
     }
 
-    /// Every history key at 1 — full occupancy, so every row of the table emits.
-    fn occupied() -> Value {
+    /// Every history and gate key at `n` — the full counts surface the emission reads, so `1` is
+    /// full occupancy (every row emits) and `0` is fully drained (residue rows leave).
+    fn counts_at(n: u64) -> Value {
         Value::Object(
             STATE_DESCRIPTORS
                 .iter()
-                .map(|d| (d.hist.to_string(), Value::from(1)))
+                .flat_map(|d| {
+                    d.hist.into_iter().chain(match d.emit {
+                        Emit::WhileOccupied(k) => Some(k),
+                        Emit::Always => None,
+                    })
+                })
+                .map(|k| (k.to_string(), Value::from(n)))
                 .collect(),
         )
     }
@@ -47414,7 +47460,7 @@ mod state_descriptor_tests {
     #[test]
     fn state_descriptors_emit_the_ratified_shape() {
         assert_eq!(
-            state_descriptors_json(&occupied()),
+            state_descriptors_json(&counts_at(1)),
             json!([
                 {
                     "key": "uncoveredIssues",
@@ -47459,7 +47505,7 @@ mod state_descriptor_tests {
                     "act": "rework per note",
                     "kind": "blk",
                     "hist": "reject",
-                    "histFold": [],
+                    "histFold": ["humanReject", "relink"],
                     "occupancy": { "lane": "vetter-verdicts" }
                 },
                 {
@@ -47467,7 +47513,6 @@ mod state_descriptor_tests {
                     "owner": "human",
                     "act": "re-record as reject naming the linkage",
                     "kind": "blk",
-                    "hist": "relink",
                     "histFold": [],
                     "occupancy": { "lane": "vetter-verdicts" },
                     "label": "ai:relink (retired #135)"
@@ -47506,7 +47551,6 @@ mod state_descriptor_tests {
                     "owner": "human",
                     "act": "migrate-reject moves it to ai:reject",
                     "kind": "blk",
-                    "hist": "humanReject",
                     "histFold": [],
                     "occupancy": { "lane": "human-decisions" },
                     "label": "human:reject (retired #133)"
@@ -47568,12 +47612,7 @@ mod state_descriptor_tests {
                 .map(|d| d["key"].as_str().expect("key is a string").to_string())
                 .collect()
         };
-        let drained: Value = Value::Object(
-            STATE_DESCRIPTORS
-                .iter()
-                .map(|d| (d.hist.to_string(), Value::from(0)))
-                .collect(),
-        );
+        let drained = counts_at(0);
         // The live set, pinned: every occupancy at ZERO, every live row still emitted, every
         // residue row gone.
         assert_eq!(
@@ -47624,6 +47663,39 @@ mod state_descriptor_tests {
         let mut hd = drained.clone();
         hd["humanDesign"] = Value::from(6);
         assert!(keys(&state_descriptors_json(&hd)).contains(&"human:design".to_string()));
+        // An ABSORBED residue row gates on its own kept-while-nonzero count while owning no
+        // series: `ai:reject` draws that past through its folds, so the straggler is visible as a
+        // state without the same inventory drawing in two boxes (#133/#135 consolidated both
+        // INTO reject, the rename shape #130's history paragraph is about).
+        for (gate, key) in [("humanReject", "human:reject"), ("relink", "ai:relink")] {
+            let mut c = drained.clone();
+            c[gate] = Value::from(3);
+            let emitted = state_descriptors_json(&c);
+            let row = emitted
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| d["key"] == json!(key))
+                .unwrap_or_else(|| panic!("`{key}` emits while `{gate}` is nonzero"));
+            assert!(
+                row.get("hist").is_none(),
+                "`{key}` was absorbed into ai:reject, so it must carry no series of its own: {row}"
+            );
+            let reject = emitted
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| d["key"] == json!("ai:reject"))
+                .expect("the successor is live and always emitted");
+            assert_eq!(reject["hist"], json!("reject"));
+            assert!(
+                reject["histFold"]
+                    .as_array()
+                    .expect("histFold is an array")
+                    .contains(&json!(gate)),
+                "ai:reject must draw `{gate}`'s past, or the series truncates at the rename"
+            );
+        }
     }
 }
 
