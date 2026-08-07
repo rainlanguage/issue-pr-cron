@@ -1020,7 +1020,7 @@
             "repo": "rainlanguage/rain-org-health",
             "number": 166,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/166",
-            "title": "pipeline dash: render the machine from emitted stateDescriptors"
+            "title": "pipeline dash: render the machine from emitted stateDescriptors, and drop the deleted ai:blocked-deploy from the frozen table"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1804,18 +1804,6 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 228,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/228",
-      "title": "human-queue --json: counts.* (label bucket) and lanes cells (classifier) measure the same state differently — counts.ready 23 vs an absent lane cell"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 167,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/167",
-      "title": "pipeline dash: remove the deleted ai:blocked-deploy state (blocked-infra precedent)"
-    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 84,
@@ -5476,18 +5464,18 @@
     "leaks": 1,
     "totalProducerPrs": 150,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 604,
+    "uncoveredIssues": 602,
     "unvetted": 29,
     "reject": 79,
     "relink": 0,
     "humanReject": 0,
     "humanDesign": 0,
-    "openIssues": 770
+    "openIssues": 771
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.4,
-      "medianDays": 100.9,
+      "meanDays": 314.0,
+      "medianDays": 101.0,
       "oldestDays": 1656.5
     }
   }
