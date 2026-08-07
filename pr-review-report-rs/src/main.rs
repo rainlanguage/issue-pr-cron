@@ -25011,7 +25011,8 @@ struct DesignQueueWithheld {
 
 /// The one-line reasons the withheld list carries. Named constants rather than literals at the
 /// push sites, so the string a test asserts and the string a human reads cannot drift apart.
-const ND_WHY_DRAFT: &str = "draft — the question is answerable, but the code it is about is still being shaped";
+const ND_WHY_DRAFT: &str =
+    "draft — the question is answerable, but the code it is about is still being shaped";
 const ND_WHY_UNADDRESSABLE: &str = "unparseable PR ref — no subject a ruling could be written to";
 const ND_WHY_NO_QUESTION: &str = "no trusted comment raises a design question";
 const ND_WHY_FETCH_FAILED: &str = "gh pr view failed — not classified this run";
@@ -25134,7 +25135,11 @@ fn nd_hit_class(hit: &Value) -> DesignHit {
     if has_human_override(hit) {
         return DesignHit::HumanRuled;
     }
-    if hit.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false) {
+    if hit
+        .get("isDraft")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+    {
         return DesignHit::Draft {
             pr: format!("{slug}#{num}"),
         };
