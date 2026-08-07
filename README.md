@@ -637,6 +637,50 @@ reject-the-flag all remove the row — so a page is stale past its head by
 construction. The same per-field caps make a full page's worst case arithmetic
 the compiler checks, this time including both withheld lists at their caps.
 
+#### `next_leak` — the inbox that should be EMPTY, and why its population is the classifier's
+
+The third human read (#222) answers the conformance question the dashboard
+renders as the **leak** box: which open producer PRs sit in NO modeled state — a
+trusted `🤖 ai:producer` note says a hand-off happened, and no label records
+where to. Reading that box meant rendering the whole org-wide `human-queue`
+inventory; this returns its head, with the evidence to act on it.
+
+**The population is `classify_lane`'s own `Leak` verdict, and that is the whole
+correctness argument.** It was originally the set "carries no `ai:*` label",
+which reads like the same thing and is not: `human:*` labels are not
+`ai:*`-prefixed, so every PR parked in the human-decisions lane satisfied it.
+Measured over the pipeline's orgs on 2026-08-06, four of the five reported leaks
+were `human:design` PRs — in a modeled state, waiting on a ruling from the very
+human reading the box — and the one PR genuinely in no state sorted last behind
+them, below a page cap of 3. The dashboard's `counts.leaks` reads the same
+array, so it was wrong in the same four places. Deriving the question from the
+classifier is the `cc_gate` precedent one lane over: a `repo_root_tests` pin
+requires the enumeration to select through `classify_lane`, so the tool's
+definition and its population cannot be two facts.
+
+**The order is oldest-first, and the row states the age.** There is no cost
+signal to rank by and no flag timestamp, and unlike either sibling queue a leak
+is in **nobody's** inbox — not the producer's, not the vetter's — so nothing
+else will ever surface it and the harm is exactly how long it sits. The rows
+previously arrived in `gh search prs` order, which is newest-first, so the
+longest-unmodelled PR sank; on the measured population the oldest leak was also
+the only genuine one.
+
+**Empty is the answer this tool exists to be able to give.** A conformance
+metric whose healthy value is zero must not hand back a bare `[]` for a reader
+to interpret, so `health` is typed: `healthy-…` only when zero leaks were found
+over a **fully read** population; `…-not-proven-health` when comment reads
+failed, with `counts.leakUnknown` and the PRs named in `fetchErrors`;
+`leaking-…` otherwise. A run where every fetch failed therefore cannot report a
+clean conformance bill — the same fail-closed reasoning as `CodeRabbitCoverage`,
+where unreadable is never coverage.
+
+Each row carries the leak's own evidence — the trusted note (truncation
+flagged), the state label the classifier looked for and did not find, the labels
+the PR does carry, and `classifier.lane`/`classifier.state`, which read
+`leak`/`leak` on an honest row and expose the enumeration drifting from the
+definition when they do not.
+
 The last three vetter tools are its **second subject**. A PR asks a human to
 merge code; a close-candidate flag asks a human to **destroy work**, so the flag
 is judged before it reaches the triage queue. The shape is identical to the PR

@@ -22,14 +22,32 @@ deliverable of this command is naming which:
 
 - **The PR's state record is wrong.** It belongs in an existing state and the
   label went missing or was hand-mangled. The finding is the state it belongs
-  in, and the ONE command that files it there — a rework in flight is `/reject`
-  with the order on the record, a PR that should be destroyed is
-  `/close-candidate`, a finished subject is `/human-close`. One command, because
-  a state reached by a sequence of hand edits is a state nothing can audit,
-  which is how this PR got here. A label the FSM has RETIRED lands a PR here the
-  same way an absent one does — the state stopped existing while the PR went on
-  wearing it — and the finding is the same shape: the live state it belongs in
-  now, and the one command that files it there.
+  in, and the ONE command that files it there, written out in full so the human
+  can type it:
+  - `/human-fsm:reject <owner/repo#n> <note>` — work is owed on it; the note is
+    the work order, and the producer is the next mover.
+  - `/human-fsm:design <owner/repo#n> <note>` — the note is the ANSWER to a
+    question the PR raises, which is itself producer work.
+  - `/human-fsm:close-candidate <owner/repo#n> uphold <note>` — the PR is
+    finished or should be destroyed. This is the close: it runs `human-close`,
+    which resolves PR-or-issue by lookup, posts the ruling, closes the subject,
+    and retires any pending flag. It does NOT need an `ai:close-candidate` flag
+    to already exist, which matters here because a leaked PR by definition
+    carries no `ai:*` label at all.
+
+  One command, because a state reached by a sequence of hand edits is a state
+  nothing can audit, which is how this PR got here.
+
+  The commonest cause is a label the classifier NO LONGER RECOGNISES. Note the
+  distinction, because it is the difference between a leak and a false alarm: a
+  state the FSM **retired** is usually still bucketed on purpose — the label
+  stays in the classifier precisely so the PRs already wearing it stay visible
+  in their old lane — and such a PR is in a modeled state and will never appear
+  here. It is a state **deleted** from the classifier's vocabulary that leaks:
+  once no arm matches the label, the PR falls through every lane, and it does so
+  the moment the deletion lands rather than when anyone touches the PR. So a
+  cluster of leaks all wearing one dead label is not a producer that misbehaved;
+  it is a migration that removed a state and left its population behind.
 - **The machine's vocabulary is missing a state.** The PR is in a real condition
   no label covers — the producer had something true to say and no legal way to
   say it. That is a design gap, and the modeled response is the design path: the
@@ -145,13 +163,24 @@ ever produces the first answer, and the second and third are the ones that fix
 anything permanently. The vocabulary gap and the classifier defect each produce
 every future leak of their shape; the mangled record produces only itself.
 
-The rulings this command precedes are the existing ones and it invents none:
-`/reject` files a PR into rework with the order on the record, a `design` ruling
-carries its answer to the producer as the work order in the same act,
-`/close-candidate` flags what should be destroyed, `/human-close` ends what is
-finished, `/keep-open` protects an issue from re-flagging. **This command does
-not rule, does not label, and does not file** — it is the read that precedes the
-human's word, and on this queue the human's word is a diagnosis.
+The rulings this command precedes are the existing ones and it invents none —
+these five are the whole shipped set, and a command named outside them cannot be
+typed:
+
+- `/human-fsm:reject <owner/repo#n> <note>` — files the PR into rework with the
+  order on the record.
+- `/human-fsm:design <owner/repo#n> <note>` — the note is the answer, and the
+  answer travels to the producer as its work order in the same act.
+- `/human-fsm:close-candidate <owner/repo#n> uphold <note>` — ends what is
+  finished or should be destroyed: rule, close, retire any pending flag.
+- `/human-fsm:close-candidate <owner/repo#n> reject <note>` — sends a flag back
+  to the producer (a flagged subject only, so never a leak's exit).
+- `/human-fsm:keep-open <owner/repo#n> <note>` — protects an ISSUE from being
+  re-flagged; not a move on a PR.
+
+**This command does not rule, does not label, and does not file** — it is the
+read that precedes the human's word, and on this queue the human's word is a
+diagnosis.
 
 ## Typed reads, and no shell at all
 
@@ -174,31 +203,49 @@ of a command is what the command showed them.
 
 ## What `next_leak` has already settled
 
-**Which** PR is not a second question. The tool answers a PREFIX of the same
-`leaks` array `human-queue --json` emits, in that array's own order, off the
-same enumeration — so the dashboard's leak box and this command cannot name
-different PRs, and there is no second ordering to disagree with the first. Each
-field of the row is one read a human otherwise does by hand:
+**Which** PR is not a second question, and neither is what "leak" means. The
+population is the LANE CLASSIFIER's own verdict — the same call that decides
+every other PR's state — so this command, the `human-queue` array and the
+dashboard box cannot hold three opinions about which PRs escaped the machine.
+That is not decoration: while the enumeration was a second reading of the labels
+(`no ai:* label`) it swept in every PR parked in the human-decisions lane, which
+are in a modeled state, waiting on exactly the human running this command.
 
+The queue is **oldest first**. A leak is in nobody's queue — not the producer's,
+not the vetter's, no human inbox but this one — so nothing else will ever
+surface it, and the harm is proportional to how long it sits. Newest-first is
+what the underlying search returns and what the tool deliberately does not use:
+it buries the most-rotted leak below the page cap, which is exactly what it did
+before this order was chosen.
+
+Each field of the row is one read a human otherwise does by hand:
+
+- **`createdAt`** — the age this queue is ordered by, on the row so a human
+  reading a page can re-rank it by eye.
+- **`classifier.lane` / `classifier.state`** — the lane classifier's verdict for
+  this PR, recomputed live. `leak`/`leak` on an honest row. Anything else means
+  the enumeration and the definition have come apart, and THAT is the finding —
+  the PR is in the state named there, and this command's job is to say so rather
+  than diagnose a leak that is not one.
 - **`has.producerNote`** — the trusted note that made this PR a leak, with
   `producerNoteBytes` / `producerNoteTruncated` saying when the full text lives
   in `pr_context` instead. The note is the producer's claim about what it did;
   step 5 is what checks the claim.
-- **`lacks.aiStateLabel`** — the classifier's own answer for this PR's labels,
-  computed live. `null` IS the leak; a non-null value here is machinery drift
-  and a finding in itself, reported rather than re-nulled.
+- **`lacks.aiStateLabel`** — the state label the classifier looked for and did
+  not find. `null` is the ordinary reading here.
 - **`lacks.labels`** — everything the PR carries instead, whole, with
   `labelsTruncated` declared. What survived on the PR is evidence about what was
-  mangled.
+  mangled, and a dead label here is the migration case above.
 - **`health`** — what this queue's size means, typed. `healthy-…` is the zero
   this box exists to read; `…-not-proven-health` is a zero over unread PRs,
   never silently promoted; `leaking-…` is the state this command works.
 - **`counts`** — the population behind the verdict: `totalProducerPrs`,
-  `unlabeled` (the candidate set), `leaks`, `leakUnknown` (comment reads that
-  failed, each named in `fetchErrors`), and `archivedRepoPrs` (frozen, not
-  rulable, not this queue's work).
+  `leakCandidates` (the PRs the classifier could still file as leaks — what the
+  comment read was paid for), `leaks`, `leakUnknown` (comment reads that failed,
+  each named in `fetchErrors`), and `archivedRepoPrs` (frozen, not rulable, not
+  this queue's work).
 - **`queue.more`** — the leaks this page left behind, each as much a defect as
-  the head.
+  the head, and each older than nothing else in the queue.
 
 ## Present the result, do not summarise it away
 
