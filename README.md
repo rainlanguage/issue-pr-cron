@@ -71,12 +71,11 @@ stateDiagram-v2
 
     %% blocked hand-off. blocked-on sits with the VETTER (#161): the flag carries typed
     %% --blocked-by refs (refused without one) and the vetter's state-load clears it the run after
-    %% every dep merges/closes → fresh re-vet. ai:blocked-deploy is RETIRED (#162): under the
-    %% split release lifecycle NO merge waits on a deploy, so a deploy-shaped block (red prod-pin,
-    %% legacy redeploy marker) is evidence the REPO has not migrated — flagged blocked-on with the
-    %% repo's migration issue/PR as its typed dep (filed if none exists), never a deploy. The
-    %% residue PRs still carrying the retired label stay visible in human-queue until each is
-    %% re-flagged (or unblocked) by an eyes-on human pass.
+    %% every dep merges/closes → fresh re-vet. There is NO blocked-deploy state (#162 retired it,
+    %% #221 deleted it): under the split release lifecycle NO merge waits on a deploy, so a
+    %% deploy-shaped block (red prod-pin, legacy redeploy marker) is evidence the REPO has not
+    %% migrated — flagged blocked-on with the repo's migration issue/PR as its typed dep (filed if
+    %% none exists), never a deploy.
     unvetted --> bon : flag-blocked-on --blocked-by owner/repo#n · waiting on dependency PRs, incl. the repo's lifecycle migration
     unvetted --> design : flag-design · anything a human must answer or supply
     bon --> unvetted : vetter clears · every typed dep merged/closed → re-vet fresh
@@ -1341,12 +1340,13 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   the close-candidate machinery, which inventories it in the mixed
   `closeCandidateUnvetted` / `closeCandidateUpheld` arrays — the PR-side mirror
   of a flagged issue leaving `uncoveredIssues`.
-- **producer-blocked** — the RETIRED `ai:blocked-deploy` (#162) and
-  `ai:blocked-infra` (#108), each for as long as any PR still carries it. The
-  blocked-deploy residue is deliberately **not** vet-lifecycle: the #164
-  clearance reads exactly `ai:blocked-on` typed refs, which this residue does
-  not have — its exit is an eyes-on human pass that re-flags each PR blocked-on
-  its repo's migration, or unblocks it outright.
+- **producer-blocked** — the RETIRED `ai:blocked-infra` (#108), for as long as
+  any PR still carries it. (`ai:blocked-deploy` was retired by #162 and
+  **deleted** by #221: the machine has no such state, so a PR hand-wearing the
+  string models nothing and falls through to **`un-vetted`** — the vetter
+  absorbs it and the verdict that judges it strips the dead label. It is not a
+  leak: leak detection runs over label-less PRs only, and this one carries an
+  `ai:*` label.)
 - **human-decisions** — `human:design`, plus the RETIRED `human:reject` for as
   long as any PR still carries it (#133). That last count is the migration's
   progress meter: `migrate-reject` moves those PRs to `ai:reject` and it only
@@ -1354,13 +1354,12 @@ grouped into four lanes so the dashboard can show where PRs pile up:
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). `lanes` and the **lane-state** `counts` keys (`ready`,
-`design`, `blockedOn`, `blockedInfra`, `blockedDeploy` (retired), `reject`,
-`relink` (retired, counting down to zero), `humanReject`, `humanDesign`,
-`unvetted`) are the full-machine view the dashboard renders. They are not the
-whole of `counts`: the close-candidate split below and the non-state rollups
-(`closeCandidateIssues`, `leaks`, `totalProducerPrs`, `archivedRepoPrs`,
-`uncoveredIssues`, `openIssues`) sit beside them, and each measures a top-level
-array rather than a lane.
+`design`, `blockedOn`, `blockedInfra` (retired), `reject`, `relink` (retired,
+counting down to zero), `humanReject`, `humanDesign`, `unvetted`) are the
+full-machine view the dashboard renders. They are not the whole of `counts`: the
+close-candidate split below and the non-state rollups (`closeCandidateIssues`,
+`leaks`, `totalProducerPrs`, `archivedRepoPrs`, `uncoveredIssues`, `openIssues`)
+sit beside them, and each measures a top-level array rather than a lane.
 
 ### One population per state (#228)
 
@@ -1368,7 +1367,7 @@ A state's inventory is its **lane cell**, and its `counts` key is that cell's
 size — derived by iterating the state table, so a key cannot measure something
 its own cell does not.
 
-Five of those keys used to be counted a second way, from the **label bucket**
+Four of those keys used to be counted a second way, from the **label bucket**
 (`ai_state_label`, the first `ai:*` label a PR carries) rather than from
 `classify_lane` precedence. Both populations are defensible and neither said
 which it was, so the document answered the same question twice. On 2026-08-06
@@ -1388,15 +1387,18 @@ and is not in the state.
 
 **This puts a step in the history series.** Each `human-queue-history.jsonl`
 line copies `counts` verbatim, so a series means whatever its key meant on the
-day it was sampled. `ready`, `design`, `blockedOn`, `blockedInfra` and
-`blockedDeploy` change meaning at the commit that landed this, and the past is
-**not** rewritten — those lines are true measurements of the machine as it then
-was. Only `ready` steps visibly (23 → 0 on the 2026-08-06 snapshot), because
-`ai:ready` is the only label the classifier splits on head drift; the inventory
-did not move (`un-vetted` already held those PRs), the measurement did. The
-other four have no such split and can differ only on a PR carrying two state
-labels, which is off-protocol. `unvetted`, `reject`, `relink`, `humanReject` and
-`humanDesign` were already the lane cell and do not move.
+day it was sampled. `ready`, `design`, `blockedOn` and `blockedInfra` change
+meaning at the commit that landed this, and the past is **not** rewritten —
+those lines are true measurements of the machine as it then was. Only `ready`
+steps visibly (23 → 0 on the 2026-08-06 snapshot), because `ai:ready` is the
+only label the classifier splits on head drift; the inventory did not move
+(`un-vetted` already held those PRs), the measurement did. The other three have
+no such split and can differ only on a PR carrying two state labels, which is
+off-protocol. `unvetted`, `reject`, `relink`, `humanReject` and `humanDesign`
+were already the lane cell and do not move. A separate lineage note for the same
+file: `blockedDeploy` does not change meaning, it **ends** — #221 deleted the
+state, so the key stops being emitted at that commit and its past stands as the
+record of a state the machine no longer has.
 
 The close-candidate lifecycle carries two further additive counts over BOTH
 subject types (#211/#212) — the legacy `closeCandidateIssues` keeps its
@@ -1725,12 +1727,12 @@ labeled transition into exactly one modeled state: `design`, `close-candidate`,
 or `blocked-on`. The first two plus `ready` (the merge queue) are the
 **human-gated states** — the daily review queue, a plain label search, no prose
 scraping. `blocked-on` is **not** human-gated (#161): its next mover is the
-vetter, whose state-load clears it automatically — see below. (`blocked-deploy`
-is RETIRED — #162: no merge waits on a deploy under the split release lifecycle,
-so a deploy-shaped block is a repo-migration dependency expressed as
-`blocked-on`.) `design` is the **total-function fallback**: a situation the
-producer cannot classify is by definition one a human has to look at, and
-`design` already means exactly that.
+vetter, whose state-load clears it automatically — see below. (There is no
+`blocked-deploy` state — #162 retired it, #221 deleted it: no merge waits on a
+deploy under the split release lifecycle, so a deploy-shaped block is a
+repo-migration dependency expressed as `blocked-on`.) `design` is the
+**total-function fallback**: a situation the producer cannot classify is by
+definition one a human has to look at, and `design` already means exactly that.
 
 ### `ai:blocked-on` sits with the vetter (#161)
 
