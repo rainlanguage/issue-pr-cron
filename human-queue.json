@@ -868,19 +868,6 @@
     ]
   },
   "lanes": {
-    "leak": {
-      "leak": {
-        "count": 1,
-        "prs": [
-          {
-            "repo": "rainlanguage/flow",
-            "number": 475,
-            "url": "https://github.com/rainlanguage/flow/pull/475",
-            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
-          }
-        ]
-      }
-    },
     "vet-lifecycle": {
       "ai:blocked-on": {
         "count": 17,
@@ -990,19 +977,13 @@
         ]
       },
       "un-vetted": {
-        "count": 104,
+        "count": 103,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 231,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/231",
             "title": "Rename the send-back state from reject to needs-work — label through verb through docs"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 166,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/166",
-            "title": "pipeline dash: render the machine from emitted stateDescriptors, and drop the deleted ai:blocked-deploy from the frozen table"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1771,6 +1752,126 @@
       }
     }
   },
+  "stateDescriptors": [
+    {
+      "key": "uncoveredIssues",
+      "owner": "producer",
+      "act": "open a PR",
+      "kind": "flow",
+      "hist": "uncoveredIssues",
+      "histFold": [],
+      "occupancy": {
+        "counts": "uncoveredIssues",
+        "items": "uncoveredIssues",
+        "itemsAreIssues": true
+      },
+      "label": "untouched (no PR)"
+    },
+    {
+      "key": "un-vetted",
+      "owner": "vetter",
+      "act": "vet at current head",
+      "kind": "flow",
+      "hist": "unvetted",
+      "histFold": [
+        "awaitingReVet"
+      ],
+      "occupancy": {
+        "lane": "vet-lifecycle"
+      }
+    },
+    {
+      "key": "ai:blocked-on",
+      "owner": "vetter",
+      "act": "clears when every typed dep merges/closes",
+      "kind": "blk",
+      "hist": "blockedOn",
+      "histFold": [],
+      "occupancy": {
+        "lane": "vet-lifecycle"
+      }
+    },
+    {
+      "key": "ai:ready",
+      "owner": "human",
+      "act": "merge",
+      "kind": "flow",
+      "hist": "ready",
+      "histFold": [],
+      "occupancy": {
+        "lane": "vetter-verdicts"
+      }
+    },
+    {
+      "key": "ai:reject",
+      "owner": "producer",
+      "act": "rework per note",
+      "kind": "blk",
+      "hist": "reject",
+      "histFold": [
+        "humanReject",
+        "relink"
+      ],
+      "occupancy": {
+        "lane": "vetter-verdicts"
+      }
+    },
+    {
+      "key": "ai:design",
+      "owner": "human",
+      "act": "rule on the design question",
+      "kind": "rule",
+      "hist": "design",
+      "histFold": [],
+      "occupancy": {
+        "lane": "vetter-verdicts"
+      }
+    },
+    {
+      "key": "closeCandidateUnvetted",
+      "owner": "vetter",
+      "act": "vet the flag",
+      "kind": "flow",
+      "hist": "closeCandidateUnvetted",
+      "histFold": [],
+      "occupancy": {
+        "counts": "closeCandidateUnvetted",
+        "items": "closeCandidateUnvetted",
+        "itemsAreIssues": true
+      },
+      "label": "ai:close-candidate (unvetted)"
+    },
+    {
+      "key": "closeCandidateUpheld",
+      "owner": "human",
+      "act": "human-close: record the ruling, close, retire the flag",
+      "kind": "rule",
+      "hist": "closeCandidateUpheld",
+      "histFold": [
+        "closeCandidatePrs"
+      ],
+      "occupancy": {
+        "counts": "closeCandidateUpheld",
+        "items": "closeCandidateUpheld",
+        "itemsAreIssues": true
+      },
+      "label": "ai:close-candidate (upheld)"
+    },
+    {
+      "key": "leak",
+      "owner": "human",
+      "act": "classify into a modeled state, or extend the machine",
+      "kind": "blk",
+      "hist": "leaks",
+      "histFold": [],
+      "occupancy": {
+        "counts": "leaks",
+        "items": "leaks",
+        "itemsAreIssues": false
+      },
+      "label": "not in any modeled state"
+    }
+  ],
   "closeCandidateIssues": [],
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
@@ -5420,31 +5521,32 @@
       "number": 475,
       "url": "https://github.com/rainlanguage/flow/pull/475",
       "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows",
-      "reason": "🤖 ai:producer Producer note: 3d merge-update DONE — merged origin/main (6b2dc7e, PR #485 nix-cachix CI adoption) into this branch. One conflict: .github/workflows/manual-sol-artifacts.yaml — kept this PR's rainix reusable-workflow call (rainix-manual-sol-artifacts.yaml@main), which already opens with the same nix-cachix-setup composite main adopted inline, so main's newer CI shape is fully subsumed. No source/test/pointer changes were involved (merge tree-diff vs previous head is empty), so no Flow.pointers.sol regen needed. Local verify: forge soldeer install + full forge test green (55 passed, 0 failed), matching the pre-merge all-green CI baseline. Pushed cea9445; PR shows MERGEABLE."
+      "reason": "🤖 ai:producer Producer note: 3d merge-update DONE — merged origin/main (6b2dc7e, PR #485 nix-cachix CI adoption) into this branch. One conflict: .github/workflows/manual-sol-artifacts.yaml — kept this PR's rainix reusable-workflow call (rainix-manual-sol-artifacts.yaml@main), which already opens with the same nix-cachix-setup composite main adopted inline, so main's newer CI shape is fully subsumed. No source/test/pointer changes were involved (merge tree-diff vs previous head is empty), so no Flow.pointers.sol regen needed. Local verify: forge soldeer install + full forge test green (55 passed, 0 failed), matching the pre-merge all-green CI baseline. Pushed cea9445; PR shows MERGEABLE.",
+      "createdAt": "2026-06-06T09:54:00Z"
     }
   ],
   "counts": {
-    "ready": 23,
+    "unvetted": 103,
+    "blockedOn": 17,
+    "ready": 0,
+    "reject": 0,
+    "relink": 0,
     "design": 24,
     "blockedInfra": 0,
-    "blockedOn": 17,
+    "humanReject": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 146,
+    "totalProducerPrs": 145,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 602,
-    "unvetted": 104,
-    "reject": 0,
-    "relink": 0,
-    "humanReject": 0,
-    "openIssues": 765
+    "openIssues": 763
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.5,
-      "medianDays": 101.0,
+      "meanDays": 317.4,
+      "medianDays": 101.1,
       "oldestDays": 1656.6
     }
   }
