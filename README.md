@@ -1343,7 +1343,10 @@ grouped into four lanes so the dashboard can show where PRs pile up:
 - **producer-blocked** — the RETIRED `ai:blocked-infra` (#108), for as long as
   any PR still carries it. (`ai:blocked-deploy` was retired by #162 and
   **deleted** by #221: the machine has no such state, so a PR hand-wearing the
-  string classifies as a leak, not a lane member.)
+  string models nothing and falls through to **`un-vetted`** — the vetter
+  absorbs it and the verdict that judges it strips the dead label. It is not a
+  leak: leak detection runs over label-less PRs only, and this one carries an
+  `ai:*` label.)
 - **human-decisions** — `human:design`, plus the RETIRED `human:reject` for as
   long as any PR still carries it (#133). That last count is the migration's
   progress meter: `migrate-reject` moves those PRs to `ai:reject` and it only

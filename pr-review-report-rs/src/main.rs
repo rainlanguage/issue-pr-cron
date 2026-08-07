@@ -46585,10 +46585,11 @@ mod fsm_completeness_tests {
             // NOT in any lane (#211/#212): the close-candidate machinery inventories it.
             qpr(7, &["ai:close-candidate"], None, false),
             // `ai:blocked-deploy` is DELETED (#221) — kept in this fixture precisely because a PR
-            // can still be hand-labelled with the string. It is not a modelled label, so it takes
-            // the ordinary fallthrough: producer-commented → LEAK (the /nm queue), which is the
-            // real shape of these PRs, since the producer is what wrote the label.
-            qpr(8, &["ai:blocked-deploy"], None, true),
+            // can still be hand-labelled with the string. Fed the way the PIPELINE feeds it:
+            // `human_queue_mode` buckets every `ai:*`-labelled PR by `ai_state_label` and leak-
+            // detects only the unlabeled remainder, so `producer_commented` is false for any
+            // labelled PR. Unmodelled label + that input = the ordinary fallthrough, `un-vetted`.
+            qpr(8, &["ai:blocked-deploy"], None, false),
             qpr(9, &["ai:blocked-infra"], None, false),
             qpr(10, &["ai:blocked-on"], None, false), // vet-lifecycle: the vetter clears it (#161)
             qpr(11, &["human:reject"], None, false),  // human decisions
@@ -46600,9 +46601,10 @@ mod fsm_completeness_tests {
 
         // every state present, counts correct, membership disjoint (#15 joins #4 under ai:reject).
         let count = |lane: &str, st: &str| lane_state_count(&doc, lane, st);
-        // #1 (never labelled) and #2 (ai:ready, verdict not current at its head) are the SAME
-        // state — the vetter owes each of them a verdict, and nothing downstream distinguishes them.
-        assert_eq!(count("vet-lifecycle", "un-vetted"), 2);
+        // #1 (never labelled), #2 (ai:ready, verdict not current at its head) and #8 (wearing the
+        // DELETED `ai:blocked-deploy` string, which models nothing) are the SAME state — the vetter
+        // owes each of them a verdict, and nothing downstream distinguishes them.
+        assert_eq!(count("vet-lifecycle", "un-vetted"), 3);
         assert_eq!(count("vetter-verdicts", "ai:ready"), 1);
         assert_eq!(count("vetter-verdicts", "ai:reject"), 2);
         assert_eq!(count("vetter-verdicts", "ai:relink"), 1);
@@ -46612,10 +46614,10 @@ mod fsm_completeness_tests {
         // dashboard renders a dimmed box and a new one draws nothing.
         assert_eq!(count("vetter-verdicts", "ai:close-candidate"), 0);
         assert!(doc.pointer("/close-candidate").is_none(), "not a lane");
-        // The DELETED state (#221) emits no cell anywhere — #8 is a leak, not a lane member, and
-        // no lane anywhere names the string.
+        // The DELETED state (#221) emits no cell anywhere — #8 joins the un-vetted bucket above
+        // (asserted by member number below), and no lane names the string.
         assert_eq!(count("producer-blocked", "ai:blocked-deploy"), 0);
-        assert_eq!(count("leak", "leak"), 2);
+        assert_eq!(count("leak", "leak"), 1);
         for lane in [
             "producer-blocked",
             "vet-lifecycle",
@@ -46637,8 +46639,10 @@ mod fsm_completeness_tests {
         assert_eq!(count("human-decisions", "human:reject"), 1);
         assert_eq!(count("human-decisions", "human:design"), 1);
 
-        // the PR list carries {repo, number, url, title}. #1 (never labelled) and #2 (ai:ready with
-        // no current verdict) sit side by side in the ONE un-vetted bucket, indistinguishable.
+        // the PR list carries {repo, number, url, title}. #1 (never labelled), #2 (ai:ready with no
+        // current verdict) and #8 (the deleted string) sit side by side in the ONE un-vetted
+        // bucket, indistinguishable — which is exactly what makes the deletion benign: the vetter
+        // picks #8 up as ordinary work and its next verdict strips the dead label.
         let members: Vec<u64> = doc
             .pointer("/vet-lifecycle/un-vetted/prs")
             .and_then(|v| v.as_array())
@@ -46646,7 +46650,7 @@ mod fsm_completeness_tests {
             .iter()
             .filter_map(|p| p.get("number").and_then(|v| v.as_u64()))
             .collect();
-        assert_eq!(members, vec![1, 2]);
+        assert_eq!(members, vec![1, 2, 8]);
         let arv = doc.pointer("/vet-lifecycle/un-vetted/prs/1").unwrap();
         assert_eq!(arv.get("repo").and_then(|v| v.as_str()), Some("o/r"));
         assert_eq!(
@@ -46897,7 +46901,7 @@ mod subject_ref_tests {
             );
         }
         // …and a PR hand-wearing the deleted string does not resurrect the key or any lane state:
-        // it is UNMODELLED, so it lands in the leak lane the /nm queue reads.
+        // it is UNMODELLED, so it lands in `un-vetted` and the vetter absorbs it.
         let lanes = lanes_doc(&[QueuePr {
             subject: sref("rainlanguage/rainlang", 535, "pull", "hand-labelled pr"),
             labels: vec!["ai:blocked-deploy".to_string()],
@@ -54511,13 +54515,14 @@ mod infra_down_tests {
         for still_live in ["ai:design", "ai:blocked-on"] {
             assert!(PRODUCER_STATE_LABELS.contains(&still_live));
         }
-        // …and the DELETED one has no `label_meta` row either (#221). That table is what
-        // `EnsureLabel` hands to `gh label create --force`, so a row is the difference between a
-        // label this machine would RE-CREATE org-wide with its own colour and description and one
-        // it does not know at all. The definitions were deleted from every repo; a surviving row
-        // would let the next thing that named the string put them all back. Asserted against an
-        // arbitrary unknown label rather than against literals, so the pin is "no row of its own",
-        // not "these exact default bytes".
+        // …and the DELETED one has no `label_meta` row of its own (#221). That table is what
+        // `EnsureLabel` hands to `gh label create --force`. `label_meta` is TOTAL — an absent row
+        // yields the generic fallback, not an error — so the difference a row makes is whether
+        // this machine would re-create the label org-wide with its own colour and description.
+        // The definitions are deleted from every repo; a surviving row is what would let the next
+        // caller that named the string put them all back. Asserted against an arbitrary unknown
+        // label rather than against literals, so the pin is "no row of its own", not "these exact
+        // fallback bytes".
         assert_eq!(
             label_meta("ai:blocked-deploy"),
             label_meta("nonexistent-label-with-no-row"),
@@ -54578,21 +54583,19 @@ mod infra_down_tests {
         );
     }
 
-    /// `ai:blocked-deploy` is DELETED from the FSM (#221) — the population was migrated as a
-    /// once-off and the state went with it. So the string classifies as NOTHING: a PR wearing it
-    /// and nothing else is a LEAK (an unmodelled label the machine does not own), which is the
-    /// `/nm` queue's subject, not a producer-blocked lane cell. This is the pin that keeps the
-    /// deletion honest — a lane arm quietly returning for it again would resurrect a state with no
-    /// transition into or out of it.
+    /// `ai:blocked-deploy` is not a state (#221), so the string classifies as NOTHING of its own:
+    /// it is an unmodelled label, and a PR wearing it falls through to `un-vetted` — the vetter
+    /// absorbs it, and the verdict that judges it strips the label. This is the pin that keeps the
+    /// deletion honest: a lane arm returning for it again would be a state with no transition into
+    /// or out of it.
+    ///
+    /// `producer_commented: false` is the only input the pipeline can construct for a PR carrying
+    /// this label, which is why it is the one asserted. [`human_queue_mode`] buckets every
+    /// `ai:*`-labelled PR through [`ai_state_label`] and leak-detects only the `unlabeled`
+    /// remainder, so `leak_keys` — the sole source of that flag — never contains a labelled PR.
+    /// The `Leak` arm belongs to label-less PRs, exactly as this parameter's contract states.
     #[test]
     fn the_deleted_blocked_deploy_label_classifies_as_nothing() {
-        // Unmodelled, so it takes the ordinary fallthrough — and the producer wrote this label, so
-        // the real-world shape (a trusted producer comment alongside it) is the LEAK the `/nm`
-        // queue serves. Without one it is simply un-vetted: either way, never a state of its own.
-        assert_eq!(
-            classify_lane(&["ai:blocked-deploy".to_string()], None, true),
-            (Lane::Leak, "leak".to_string())
-        );
         let (lane, state) = classify_lane(&["ai:blocked-deploy".to_string()], None, false);
         assert_eq!(
             (lane, state.as_str()),
