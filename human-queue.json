@@ -990,31 +990,19 @@
         ]
       },
       "un-vetted": {
-        "count": 106,
+        "count": 104,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
-            "number": 227,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/227",
-            "title": "/nm: next unmodelled item (FSM leak) — next_leak tool + command"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 226,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/226",
-            "title": "/nd: next ai:design PR to rule on — next_design tool + command"
+            "number": 231,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/231",
+            "title": "Rename the send-back state from reject to needs-work — label through verb through docs"
           },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 166,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/166",
             "title": "pipeline dash: render the machine from emitted stateDescriptors, and drop the deleted ai:blocked-deploy from the frozen table"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 223,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/223",
-            "title": "human-queue --json emits stateDescriptors: the machine's shape as data"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1787,12 +1775,6 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 230,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/230",
-      "title": "RULED: rename the send-back state from reject to needs-work, label through verb through docs"
-    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 84,
@@ -5444,26 +5426,24 @@
   "counts": {
     "ready": 23,
     "design": 24,
-    "blockedDeploy": 0,
     "blockedInfra": 0,
     "blockedOn": 17,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 148,
+    "totalProducerPrs": 146,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 603,
-    "unvetted": 106,
+    "uncoveredIssues": 602,
+    "unvetted": 104,
     "reject": 0,
     "relink": 0,
     "humanReject": 0,
-    "humanDesign": 0,
-    "openIssues": 769
+    "openIssues": 765
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.9,
+      "meanDays": 316.5,
       "medianDays": 101.0,
       "oldestDays": 1656.6
     }
