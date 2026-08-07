@@ -35,9 +35,10 @@ what the vetter reads when it re-judges the rework) and the
 both — there is no second `gh` command, and a mistyped marker is impossible.
 
 `--rework` is REQUIRED on a needs-work: it IS a send-back, so there is no parked
-spelling here. If the rework is not worth doing at all, that is a different
-ruling — `/design` with `--park` for an open question, `/close-candidate` for a
-decided close, `human-close` to close now — and the tool's refusal names them.
+spelling here (or anywhere — `/design` is the same send-back, #219). If the
+rework is not worth doing at all, that is a different ruling —
+`/close-candidate` for a decided close, `human-close` to close now — and the
+tool's refusal names them.
 
 Two things follow:
 
