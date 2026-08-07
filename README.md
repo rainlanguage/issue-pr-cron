@@ -1353,10 +1353,14 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   ever shrinks.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
-stale `ai:*` label). `lanes` and the `counts` keys (`ready`, `design`,
-`blockedOn`, `blockedInfra`, `blockedDeploy` (retired), `reject`, `relink`
-(retired, counting down to zero), `humanReject`, `humanDesign`, `unvetted`) are
-the full-machine view the dashboard renders.
+stale `ai:*` label). `lanes` and the **lane-state** `counts` keys (`ready`,
+`design`, `blockedOn`, `blockedInfra`, `blockedDeploy` (retired), `reject`,
+`relink` (retired, counting down to zero), `humanReject`, `humanDesign`,
+`unvetted`) are the full-machine view the dashboard renders. They are not the
+whole of `counts`: the close-candidate split below and the non-state rollups
+(`closeCandidateIssues`, `leaks`, `totalProducerPrs`, `archivedRepoPrs`,
+`uncoveredIssues`, `openIssues`) sit beside them, and each measures a top-level
+array rather than a lane.
 
 ### One population per state (#228)
 
