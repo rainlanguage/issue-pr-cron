@@ -1,5 +1,5 @@
 ---
-description: Rule design on a PR or an issue — record the answer and send it straight back to the producer, the same send-back a rejection is.
+description: Rule design on a PR or an issue — record the answer and send it straight back to the producer, the same send-back a needs-work is.
 argument-hint: <owner/repo#n> <note…>
 allowed-tools: Bash(pr-review-report human-rule:*), Bash(pr-review-report human-rule-issue:*)
 ---
@@ -15,10 +15,10 @@ Refuse and say why if SUBJECT is not `owner/repo#n` or NOTE is empty. **Never
 infer an owner or a repo.**
 
 A design ruling IS its answer, and the answer is producer work — the same
-send-back a rejection is (#219). There is no parked spelling: a question still
+send-back a needs-work is (#219). There is no parked spelling: a question still
 open is already the `ai:design` state, so if you do not have the answer yet
 there is nothing to rule — wait until you do. The work order is required,
-exactly as it is on `/reject`:
+exactly as it is on `/needs-work`:
 
 ```text
 pr-review-report human-rule <slug> <n> design <NOTE> --rework <WORK ORDER>
@@ -30,7 +30,7 @@ note and the order are genuinely the same sentence, use it for both. When you
 cannot tell what the producer should DO, ask — that one question is cheaper than
 delegating a placeholder.
 
-On a PR this lands `ai:reject` (every other `ai:*` cleared, `ai:design`
+On a PR this lands `ai:needs-work` (every other `ai:*` cleared, `ai:design`
 included) plus a `👤 human` comment pinned to the **head sha** recording the
 ruling word `design`, plus the `Rework note @<sha>: …` work order in the exact
 trusted form the producer's `trusted-comments --marker 'Rework note'`

@@ -19,7 +19,7 @@ stateDiagram-v2
     state "close-candidate · upheld (issue or PR)" as iupheld
     state "un-vetted PR" as unvetted
     state "ai:ready" as ready
-    state "ai:reject — needs rework" as reject
+    state "ai:needs-work — rework per note" as needswork
     state "ai:design" as design
     state "ai:blocked-on" as bon
     state "run ended · infra down" as infradown
@@ -51,7 +51,7 @@ stateDiagram-v2
     %% vet lifecycle — the vetter is the sole verdict transition fn. The `close` verdict lands in
     %% the SAME upheld inbox an upheld flag does (#212): one judgement, two routes, one state.
     unvetted --> ready : vetter record-verdict
-    unvetted --> reject : vetter record-verdict
+    unvetted --> needswork : vetter record-verdict
     unvetted --> design : vetter record-verdict
     unvetted --> iupheld : vetter record-verdict close
     ready --> unvetted : head moves (producer fix) · verdict no longer current
@@ -61,12 +61,13 @@ stateDiagram-v2
     queue --> approved : human review = APPROVED
     approved --> merged : gh pr merge --admin · human word
 
-    %% the reject state routes back to the producer, then back to un-vetted. ONE state, whoever
-    %% ruled (#133) and whatever the ground: a code rework, a linkage repair (#135 retired
-    %% ai:relink — a linkage error is a reject whose note names the reference), or a close.
-    reject --> unvetted : producer reworks → head moves
-    reject --> icand : producer flag-close-candidate · judged not worth doing
-    reject --> unvetted : linkage reject · producer weaken-closes Closes→Refs
+    %% the send-back state routes back to the producer, then back to un-vetted. ONE state,
+    %% whoever ruled (#133) and whatever the ground: a code rework, a linkage repair (#135
+    %% retired ai:relink — a linkage error is a needs-work whose note names the reference), or a
+    %% close. It is named for what it ASKS, not for a judgement the machine never reaches (#230).
+    needswork --> unvetted : producer reworks → head moves
+    needswork --> icand : producer flag-close-candidate · judged not worth doing
+    needswork --> unvetted : linkage repair · producer weaken-closes Closes→Refs
 
     %% blocked hand-off. blocked-on sits with the VETTER (#161): the flag carries typed
     %% --blocked-by refs (refused without one) and the vetter's state-load clears it the run after
@@ -84,16 +85,16 @@ stateDiagram-v2
     infradown --> unvetted : next tick · 4h later, from scratch
 
     %% human decisions protect AUTHORSHIP (#111): no AI actor writes a human:* label, none
-    %% removes one as an override. A ruling is an INPUT the machine executes. A human REJECT
-    %% writes the same ai:reject the vetter writes, with the work order in the same call, and a
+    %% removes one as an override. A ruling is an INPUT the machine executes. A human NEEDS-WORK
+    %% writes the same ai:needs-work the vetter writes, with the work order in the same call, and a
     %% human DESIGN ruling is the SAME send-back (#219): the answer IS producer work — there is
     %% no parked spelling, and human:design is deleted (a question still open is already the
     %% ai:design state). The sha-pinned 👤 human comment records WHICH verb ruled (#133/#219).
-    ready --> reject : human-rule reject --rework · ruling + work order, one call
-    ready --> reject : human-rule design --rework · the answer is the same send-back
+    ready --> needswork : human-rule needs-work --rework · ruling + work order, one call
+    ready --> needswork : human-rule design --rework · the answer is the same send-back
     ready --> [*] : human-close · decide+do, one transition (#213)
 
-    design --> reject : human answers · human-rule design --rework, same send-back as a rejection
+    design --> needswork : human answers · human-rule design --rework, same send-back as a needs-work
     merged --> [*]
 ```
 
@@ -110,12 +111,12 @@ as strings it **read and refused on**, so the one actor whose decisions
 everything else treats as sacred was also the only one improvising raw
 `gh issue edit --add-label`.
 
-| Transition                                             | The move it makes                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `reject` / `design`, pinned to the **head sha**; both are send-backs and land the ONE reject state (#133/#219): each REQUIRES `--rework "<order>"`, writes `ai:reject` + the trusted work order in the same call, and the producer is the next mover             |
-| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those two plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `reject` / `design` require `--rework` likewise (`design` writes NO label — the pinned comment is the record), `keep-open` refuses it (the verb is its own disposition) |
-| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: record the ruling, close, retire the pending flag — one transition                                                                                                                                                                 |
-| `record-close-candidate-verdict <owner/repo> <n>`      | the vetter's flag verdict, on either subject type, now reachable from a terminal too (the refusal above names it)                                                                                                                                                            |
+| Transition                                             | The move it makes                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `human-rule <owner/repo> <pr> <ruling> "<note>"`       | PR ruling — `needs-work` / `design`, pinned to the **head sha**; both are send-backs and land the ONE send-back state (#133/#219): each REQUIRES `--rework "<order>"`, writes `ai:needs-work` + the trusted work order in the same call, and the producer is the next mover      |
+| `human-rule-issue <owner/repo> <issue> <ruling> "<…>"` | issue ruling — those two plus `keep-open`, pinned to the **live flag** or to the **issue as filed**; `needs-work` / `design` require `--rework` likewise (`design` writes NO label — the pinned comment is the record), `keep-open` refuses it (the verb is its own disposition) |
+| `human-close <owner/repo> <n> "<note>"`                | the **terminal** edge, on either subject: record the ruling, close, retire the pending flag — one transition                                                                                                                                                                     |
+| `record-close-candidate-verdict <owner/repo> <n>`      | the vetter's flag verdict, on either subject type, now reachable from a terminal too (the refusal above names it)                                                                                                                                                                |
 
 **A ruling delegates (#111/#219).** The ruling and the work order are two
 records with their own shapes — the ruling is provenance (_a human decided X, at
@@ -126,13 +127,13 @@ the ruling, in the **exact prefix form** the producer's
 `trusted-comments --marker 'Rework note'` verification accepts, pinned to the
 same anchor as the ruling so the two go stale together. The tool owns the
 prefix, so the failure the issue measured — a hand-typed `Rework Note` invisible
-to the producer's verification — is unconstructible. `reject` **requires** the
-order (a reject IS a send-back; one not worth reworking is a `human-close`), and
+to the producer's verification — is unconstructible. `needs-work` **requires**
+the order (it IS a send-back; one not worth reworking is a `human-close`), and
 `design` requires it identically (#219): a design ruling IS its answer, the
 answer is producer work, and there is no parked spelling — a question still open
 is already the `ai:design` state, so ruling it again would only rename it. On a
-PR both verbs land the **one reject state**: `ai:reject`, every other `ai:*`
-cleared, the producer the next mover from the moment of the ruling; the
+PR both verbs land the **one send-back state**: `ai:needs-work`, every other
+`ai:*` cleared, the producer the next mover from the moment of the ruling; the
 sha-pinned `👤 human` comment records **which** verb ruled, so the record keeps
 the distinction the label machinery no longer carries. On an issue `design`
 writes **no label at all**: the pinned `Ruled …: design — <answer>` comment is
@@ -143,9 +144,9 @@ only be a way to mean something else by accident. A close is not a ruling verb
 at all: deciding one IS executing one (`human-close`, #213). What the human
 namespace protects is **authorship only**: no AI actor writes a `human:*` label,
 and none removes one as an override — but a ruling is an input the machine
-executes: the producer picks the send-back up through the `ai:reject` label
-exactly as it picks up a vetter reject, the rework push moves the head, and the
-ruling goes stale by itself through the ordinary rework → un-vetted → re-vet
+executes: the producer picks the send-back up through the `ai:needs-work` label
+exactly as it picks up a vetter send-back, the rework push moves the head, and
+the ruling goes stale by itself through the ordinary rework → un-vetted → re-vet
 flow.
 
 The vocabularies are not a second list: they **are** `HUMAN_PR_RULINGS` (PRs)
@@ -158,8 +159,8 @@ and the lane classifier cannot name different states.
 comment a ruling posts pins to whatever the AI's ruling on the _same subject_
 pins to, so the two records go stale together:
 
-- a PR → its head sha: `👤 human` / `Ruled <sha>: reject — <note>`, the twin of
-  `Reviewed <sha>: …`. A rework moves the head and the ruling visibly stops
+- a PR → its head sha: `👤 human` / `Ruled <sha>: needs-work — <note>`, the twin
+  of `Reviewed <sha>: …`. A rework moves the head and the ruling visibly stops
   describing the code that is there.
 - an issue carrying a **live** producer flag → the flag's timestamp:
   `Ruled close-candidate @<at>: keep-open — <note>`, the twin of
@@ -177,20 +178,21 @@ that has already happened:
   label `classify_lane` buckets nowhere — a leak);
 - **a note is required** (an unexplained ruling is indistinguishable from a
   mis-click, which is the whole complaint);
-- **an anchor must exist** — no head sha, no ruling (`Ruled : reject` is the
+- **an anchor must exist** — no head sha, no ruling (`Ruled : needs-work` is the
   bound-to-nothing label this replaces);
 - **a terminal subject is moot**, not refused: a merged PR or a closed issue has
   no state left to move out of, so nothing is written and the exit is 0;
 - **re-ruling supersedes** rather than refuses. The human owns this namespace
   and may correct a mis-click, so any old `human:*` is removed as the new ruling
-  lands — the one **RUNTIME** removal of a `human:*` label, sanctioned because
-  the actor removing it wrote it. The other remover is a MIGRATION rather than a
-  transition of the running FSM: `migrate-reject` moves the PRs still carrying
-  the `human:reject` #133 retired onto `ai:reject` — a one-shot over a fixed,
-  shrinking population, which is why it is not a path a live ruling can take;
+  lands — now the ONLY removal of a `human:*` label, sanctioned because the
+  actor removing it wrote it. There used to be a second remover, a MIGRATION
+  rather than a transition of the running FSM (`migrate-needs-work`, moving the
+  PRs #133 retired onto `ai:needs-work`); it has run to zero and come out with
+  its state, because a migration is an execution vehicle rather than permanent
+  machinery;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
-  `human:reject` sat on an issue whose producer close-candidate flag had not
+  `human:needs-work` sat on an issue whose producer close-candidate flag had not
   been judged — and because **every** AI transition refuses once a human has
   ruled, `record_close_candidate_verdict` could never judge it again. The flag
   was stranded and undoing it took more raw `gh`. So on an issue carrying a live
@@ -209,11 +211,11 @@ else is merely stale, not contradictory, and erasing the `ai:*` label would
 erase the very claim the ruling was ruling on.
 
 A PR ruling is different, and #133 is why: its target **is** a pipeline state
-(`ai:reject`, whichever verb ruled), so it obeys the same one-state rule the
+(`ai:needs-work`, whichever verb ruled), so it obeys the same one-state rule the
 vetter's write obeys and strips every other `ai:*`. That is not the human
-reaching into the machine's namespace — it is the reject state no longer being
-in anyone's. A `human:reject` PR used to carry its stale `ai:ready` for ever,
-because only `reworked-reject` was allowed to touch it.
+reaching into the machine's namespace — it is the send-back state no longer
+being in anyone's. A `human:needs-work` PR used to carry its stale `ai:ready`
+for ever, because only `reworked-reject` was allowed to touch it.
 
 The writes happen in a fail-safe **order**, which is the reverse of the AI
 verdict write's and is asserted as a property rather than left to statement
@@ -291,13 +293,13 @@ types is a Claude Code plugin, published from this repo's own marketplace:
 /plugin install human-fsm@issue-pr-cron
 ```
 
-| Command                                      | The transition it invokes                                                       |
-| -------------------------------------------- | ------------------------------------------------------------------------------- |
-| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire the flag, close. Issue **or** PR, by lookup        |
-| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer |
-| `/reject <owner/repo#n> "…"`                 | `human-rule` — `ai:reject` (PR) / `human-rule-issue` — `human:reject` (issue)   |
-| `/design <owner/repo#n> "…"`                 | `human-rule … design --rework` — `ai:reject` (PR) / comment-only (issue), #219  |
-| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this"                |
+| Command                                      | The transition it invokes                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire the flag, close. Issue **or** PR, by lookup              |
+| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer       |
+| `/needs-work <owner/repo#n> "…"`             | `human-rule` — `ai:needs-work` (PR) / `human-rule-issue` — `human:needs-work` (issue) |
+| `/design <owner/repo#n> "…"`                 | `human-rule … design --rework` — `ai:needs-work` (PR) / comment-only (issue), #219    |
+| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this"                      |
 
 Ruling on one close-candidate previously took four steps: a hand-written
 JSON-RPC frame, `pr-review-report mcp` fed from a file, a Python filter to read
@@ -648,15 +650,16 @@ inventory; this returns its head, with the evidence to act on it.
 **The population is `classify_lane`'s own `Leak` verdict, and that is the whole
 correctness argument.** It was originally the set "carries no `ai:*` label",
 which reads like the same thing and is not: `human:*` labels are not
-`ai:*`-prefixed, so every PR parked in the human-decisions lane satisfied it.
-Measured over the pipeline's orgs on 2026-08-06, four of the five reported leaks
-were PRs parked in that lane — in a modeled state, waiting on a ruling from the
-very human reading the box — and the one PR genuinely in no state sorted last
-behind them, below a page cap of 3. The dashboard's `counts.leaks` reads the
-same array, so it was wrong in the same four places. Deriving the question from
-the classifier is the `cc_gate` precedent one lane over: a `repo_root_tests` pin
-requires the enumeration to select through `classify_lane`, so the tool's
-definition and its population cannot be two facts.
+`ai:*`-prefixed, so back when they still named PR states, every PR parked in one
+satisfied it. Measured over the pipeline's orgs on 2026-08-06, four of the five
+reported leaks were PRs parked that way — in a modeled state, waiting on a
+ruling from the very human reading the box — and the one genuinely in no state
+sorted last behind them, below a page cap of 3. The dashboard's `counts.leaks`
+reads the same array, so it was wrong in the same four places. Deriving the
+question from the classifier is the `cc_gate` precedent one lane over: a
+`repo_root_tests` pin requires the enumeration to select through
+`classify_lane`, so the tool's definition and its population cannot be two
+facts.
 
 **A deleted state is two different cases, and only one of them leaks.** A
 deleted `ai:*` label lands its PR in `un-vetted`: the vetter absorbs it and the
@@ -757,9 +760,9 @@ about) and is listed by name, because an excluded row nobody lists is a PR owned
 by nobody.
 
 **The exit is a send-back.** Answering a design question routes the PR straight
-back to the producer as `ai:reject` plus the answer as the trusted work order,
-in one call — the same act a rejection is (#219). So every ruling retires its
-own row, which is why the page caps at 3 for `next_ready`'s reason with more
+back to the producer as `ai:needs-work` plus the answer as the trusted work
+order, in one call — the same act a rejection is (#219). So every ruling retires
+its own row, which is why the page caps at 3 for `next_ready`'s reason with more
 force: a page is stale past its head by construction.
 
 ### Vetting is a pure function, and `vetted_at_head` is its cache key
@@ -1050,7 +1053,7 @@ does not ask for either:
 - **Re-running a PR's tests.** The QA gate checks that the QA-GUIDE.md section-8
   evidence block **exists** and that its claims are consistent with the diff it
   reads. It does not re-run the named tests against base; CI runs them, and a
-  red CI is the producer's to green, never a vetter `reject` ground.
+  red CI is the producer's to green, never a vetter `needs-work` ground.
 
 ### The audit lens is a PRECONDITION of a verdict, and the binary checks it
 
@@ -1113,8 +1116,8 @@ Five things this is careful about:
 - **It refuses EVERY verdict, not only `ready`**, and that is where its shape
   differs from the mechanical-convention gate
   ([#141](https://github.com/rainlanguage/issue-pr-cron/issues/141)). A
-  convention violation is a property of the PR that `reject` is the correct
-  routing **for**, so gating `reject` on it would leave the PR unroutable. A
+  convention violation is a property of the PR that `needs-work` is the correct
+  routing **for**, so gating `needs-work` on it would leave the PR unroutable. A
   missing lens is not a property of the PR at all — it is work not done, and the
   repair (`pr_checkout`, then invoke the skill) is available whatever the
   verdict was going to be. 7 of the 35 were not `ready`, and all 7 were
@@ -1303,7 +1306,7 @@ Four things that decision is careful about:
 
 Four things it deliberately does **not** do:
 
-- **Only `ready` is gated.** `reject`, `design` and `close` pass untouched —
+- **Only `ready` is gated.** `needs-work`, `design` and `close` pass untouched —
   gating them would leave a convention-breaking PR with no verdict it could be
   given at all, which is a deadlock, not a fix. It is one arm of `record_gate`,
   the single ordered decision #145 built, so its place in the order is a
@@ -1403,12 +1406,14 @@ The machine has **no dead-ends**: every state has an exit back into the
 lifecycle or to a terminal (`merged` / a human ruling). The vet lifecycle is
 `un-vetted → vetting → a verdict`, and a PR falls back to **`un-vetted`** — the
 same state, not a second one — the moment its verdict stops being current at its
-head, so a reworked PR is always judged against its current code. A **reject is
-TRANSIENT**, not terminal, and since #133 there is exactly one of them:
-`ai:reject`, whoever ruled. Both labels always demanded the same move from the
-same actor — the producer reads the note and reworks — so they were one state
-split by an attribute, and filing that attribute as a state is what put 36 items
-of producer work in a lane named `human-decisions`.
+head, so a reworked PR is always judged against its current code. The
+**send-back is TRANSIENT**, not terminal — which is what #230 named it for — and
+since #133 there is exactly one of them: `ai:needs-work`, whoever ruled. Both
+labels always demanded the same move from the same actor — the producer reads
+the note and reworks — so they were one state split by an attribute, and filing
+that attribute as a state is what put 36 items of producer work in a lane named
+`human-decisions` — a lane that no longer exists, since that residue was its
+only state and the migration draining it has run.
 
 The attribute did not go away; it moved to where provenance already lives. A
 human ruling posts a `👤 human` comment **pinned to the head sha**, and that
@@ -1437,8 +1442,8 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   next mover — the state-load clears the flag the run after every typed dep
   merges/closes and the PR re-enters vetting fresh ("clear when deps merge" is
   vetter action, not human polling).
-- **vetter-verdicts** — `ai:ready`, `ai:reject`, `ai:design`, plus the RETIRED
-  `ai:relink` for as long as any PR still carries it (#135).
+- **vetter-verdicts** — `ai:ready`, `ai:needs-work`, `ai:design`, plus the
+  RETIRED `ai:relink` for as long as any PR still carries it (#135).
   `ai:close-candidate` is NOT a lane state (#211/#212): the flag hands the PR to
   the close-candidate machinery, which inventories it in the mixed
   `closeCandidateUnvetted` / `closeCandidateUpheld` arrays — the PR-side mirror
@@ -1449,18 +1454,18 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   string models nothing and falls through to **`un-vetted`** — the vetter
   absorbs it and the verdict that judges it strips the dead label. It is not a
   leak: leak detection runs over label-less PRs only, and this one carries an
-  `ai:*` label.)
-- **human-decisions** — the RETIRED `human:reject`, for as long as any PR still
-  carries it (#133). The count is the migration's progress meter:
-  `migrate-reject` moves those PRs to `ai:reject` and it only ever shrinks. It
-  is the lane's only state: a live human decision on a PR is a comment or a
-  native review, never a label — `human:design` is DELETED (#219), and no PR
-  carries it. A deleted label behaves the same way in either namespace: like the
-  deploy string above, residue wearing it models nothing and falls through.
+  `ai:*` label.) (There is no **human-decisions** lane. It held exactly one
+  state — the RETIRED PR-side `human:needs-work` (#133) — and once
+  `migrate-needs-work` had moved that population to `ai:needs-work` the state,
+  the lane and the migration verb all came out together. A live human decision
+  on a PR is a comment or a native review, never a label; `human:design` is
+  DELETED (#219) too. A deleted label behaves the same way in either namespace:
+  like the deploy string above, residue wearing it models nothing and falls
+  through.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). `lanes` and the **lane-state** `counts` keys (`ready`,
-`design`, `blockedOn`, `blockedInfra` (retired), `reject`, `relink` (retired,
+`design`, `blockedOn`, `blockedInfra` (retired), `needsWork`, `relink` (retired,
 counting down to zero), `humanReject`, `unvetted`) are the full-machine view the
 dashboard renders. They are not the whole of `counts`: the close-candidate split
 below and the non-state rollups (`closeCandidateIssues`, `leaks`,
@@ -1474,7 +1479,7 @@ from exactly there — derived by iterating the state table, so a key cannot
 measure something its own declaration does not. There are two declarations, and
 the direction differs:
 
-- a **lane** state (`ready`, `design`, `blockedOn`, `blockedInfra`, `reject`,
+- a **lane** state (`ready`, `design`, `blockedOn`, `blockedInfra`, `needsWork`,
   `relink`, `humanReject`, `unvetted`) is inventoried by its `lanes` cell, and
   its `counts` key is DERIVED from that cell's size;
 - a **top-level** state (`uncoveredIssues`, `leak`, `closeCandidateUnvetted`,
@@ -1512,8 +1517,8 @@ steps visibly (23 → 0 on the 2026-08-06 snapshot), because `ai:ready` is the
 only label the classifier splits on head drift; the inventory did not move
 (`un-vetted` already held those PRs), the measurement did. The other three have
 no such split and can differ only on a PR carrying two state labels, which is
-off-protocol. `unvetted`, `reject`, `relink` and `humanReject` were already the
-lane cell and do not move. A separate lineage note for the same file:
+off-protocol. `unvetted`, `needsWork`, `relink` and `humanReject` were already
+the lane cell and do not move. A separate lineage note for the same file:
 `blockedDeploy` does not change meaning, it **ends** — #221 deleted the state,
 so the key stops being emitted at that commit and its past stands as the record
 of a state the machine no longer has. `humanDesign` ends the same way, deleted
@@ -1677,11 +1682,11 @@ producer's path now.
 
 The QA block is gated at `gh pr create`. The screenshot is **not**, and asking
 for the same shape there is the obvious next move — a gate at open is worth more
-than a reject after the fact, because the reject costs a round trip through the
-queue. The ruling is that the enforcement point **stays where it is**: the
-vetter's SCREENSHOT GATE rejects a UI PR with no visual evidence, and the
-producer's step 3c backfills its own open UI PRs on the next pass, so the round
-trip runs inside the pipeline rather than through a human.
+than a send-back after the fact, because a `needs-work` costs a round trip
+through the queue. The ruling is that the enforcement point **stays where it
+is**: the vetter's SCREENSHOT GATE rejects a UI PR with no visual evidence, and
+the producer's step 3c backfills its own open UI PRs on the next pass, so the
+round trip runs inside the pipeline rather than through a human.
 
 What settles it is that the two gates are not the same shape. `require-qa-block`
 reads a `## QA` heading and four evidence lines — a STRUCTURE, present or
@@ -2118,8 +2123,8 @@ The three crons are **staggered by 2 h** so work flows downstream within each
   first). Org-mutating actions: `open_pr` (a tool, not `gh pr create`),
   `gh pr comment` (screenshots), and `push` (a tool, not `git push`) to its own
   PR branches. Never merges/closes/deploys/force-pushes. Skips issues with a
-  `reject` verdict (parked for a human, so a rejected fix isn't re-attempted
-  into dead PRs).
+  `needs-work` verdict (parked for a human, so a sent-back fix isn't
+  re-attempted into dead PRs).
 - **Vetter** (`review-run.sh`, every 4h at :00 of 3,7,11,15,19,23 UTC) —
   AI-reviews open PRs and records a verdict as an `ai:*` label plus a sha-bound
   comment. Approval is the human's gate.
@@ -2165,7 +2170,7 @@ and evidence that answers a narrower question than the issue asked.
 | `review-mcp.json`            | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                                                         |
 | `campaign-mcp.json`          | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                                                                 |
 | `cron.env.example`           | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                             |
-| `pr-review-report.sh`        | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / reject / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs.                                                  |
+| `pr-review-report.sh`        | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / needs-work / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs.                                              |
 | `hooks/`                     | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                    |
 | `.claude-plugin/`            | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                      |
 | `plugins/human-fsm/`         | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                            |
@@ -2453,8 +2458,8 @@ producer's only way to write a body was `gh pr edit` — denied by
 `campaign-settings.json` — and, measured by running the gate itself over the
 whole fleet, **122 of 160 open PRs carried a body it would refuse** (114 with no
 `## QA` heading at all, 8 with an incomplete one), over diffs the vetter's own
-notes certified sound. The reject named a defect the rework loop had no move for
-([#51](https://github.com/rainlanguage/issue-pr-cron/issues/51)).
+notes certified sound. The send-back named a defect the rework loop had no move
+for ([#51](https://github.com/rainlanguage/issue-pr-cron/issues/51)).
 
 ```
 pr-review-report repair-qa-block <owner/repo> <n> --block-file <path> [--replace] [--dry-run]
@@ -2473,7 +2478,7 @@ Three things make it a narrow transition rather than a re-opened `gh pr edit`:
   second is not ceremony, because a block appended to a body with no trailing
   newline is a heading that does not start a line, which the gate cannot see.
 - **A present-but-different block is refused** (exit 4), not overwritten. That
-  is the _other_ reject — "the block's claims don't hold" — and silently
+  is the _other_ send-back — "the block's claims don't hold" — and silently
   rewriting the claim would sanction fixing the prose instead of the code.
   `--replace` is the deliberate opt-in for a body whose evidence has actually
   been re-produced. Re-running the identical call is a no-op, so a retry is
@@ -2504,7 +2509,7 @@ a NOTE saying so, and the producer re-arms the vet the way it re-arms CI — an
 producer to change a body `Closes #N` to `Refs #N`, on a producer whose every
 body write was denied (`Bash(gh pr edit:*)`) or absent. Its population was one
 PR, sitting. [#135](https://github.com/rainlanguage/issue-pr-cron/issues/135)
-retires the verdict — a linkage error is a `reject` whose note names the
+retires the verdict — a linkage error is a `needs-work` whose note names the
 reference, because it always named the same owner and the same move — and
 [#136](https://github.com/rainlanguage/issue-pr-cron/issues/136) is the
 transition it never had.
@@ -2686,7 +2691,7 @@ A PR moves through two distinct gates before it merges:
 `./pr-review-report.sh` prints every open PR bucketed by where it sits in that
 pipeline, all as clickable URLs: **✅ approved by you** (ready to merge) · **🤖
 AI-vetted — awaiting your approval** · **🔴 needs a producer fix** (CI red — the
-producer drives it green) · **❌ reject / changes-requested** · **🗑️ close
+producer drives it green) · **❌ needs-work / changes-requested** · **🗑️ close
 (dup/superseded)** · **🟦 not yet reviewed** · **⚠️ conflicting** (needs rebase)
 · **🟡 pending** · **📝 drafts** · plus the issues the cron flagged
 `ai:close-candidate`. `--ready` prints only the approved-by-you set.
@@ -3057,8 +3062,9 @@ Two fields on that record carry the detail:
 Why it is not merely a coverage question: on 2026-07-28 the vetter's `Read` of
 `audit/protofire/*.pdf` returned `pdftoppm is not installed`, the run vetted the
 PR on what was left, recorded `ready`, and exited 0 — for a PR an earlier run
-had `reject`ed at the same head. A missing dependency that produces a confident
-answer is indistinguishable, from outside, from a considered judgement (#85).
+had sent back as `needs-work` at the same head. A missing dependency that
+produces a confident answer is indistinguishable, from outside, from a
+considered judgement (#85).
 
 `HARNESS_TOOLS` is only a declaration; three CI gates make it true of the
 closure a model actually runs inside. Each is a subcommand, so it runs locally
@@ -3143,26 +3149,26 @@ label shape (`startswith() requires string inputs`), and one of them accepted
 `audit-backlog total: 0` for a backlog that actually held 46 issues. A grouping
 computed in the tool is a grouping that cannot be silently wrong.
 
-**A reject is two rows, and neither of them is a search.** `ai:reject` is one
-state whoever ruled it — a vetter verdict and a human ruling both write it — but
-it carries two different next moves, so `nextAction` splits it in two.
-`rework-reject` is a reject the tool can read a **trusted** instruction for: the
-vetter's own `Reviewed <sha>: reject — …`, the human's `Rework note`, or the
-human's `👤 human` ruling, each read back through `trusted_comments`, which
-filters by AUTHOR before it looks at any marker. That last part is why this is a
-row and not a search: every marker is public body text a third party can post,
-so the same words from another account produce no work order at all. A reject
-with nothing trusted behind it is the other row — `parked-skip`, parked for a
-human, open no new PR — because the label says the PR was sent back and nothing
-the tooling trusts says what for, and a blind re-attempt is what piles up dead
-PRs. Collapsing the two would have to pick one meaning for everybody: either the
-producer re-attempts a PR nobody has explained, or it walks past one somebody
-already has. `rework-reject` counts in `byAction` like every other class, **zero
-included**, because the query it replaced (`gh search prs --label
-ai:reject`)
-always answered — and an absent key is the tool declining to say whether
-anything is sent back, which is exactly the question that sends a run back to
-GitHub.
+**A send-back is two rows, and neither of them is a search.** `ai:needs-work` is
+one state whoever ruled it — a vetter verdict and a human ruling both write it —
+but it carries two different next moves, so `nextAction` splits it in two.
+`rework-needs-work` is a send-back the tool can read a **trusted** instruction
+for: the vetter's own `Reviewed <sha>: needs-work — …`, the human's
+`Rework note`, or the human's `👤 human` ruling, each read back through
+`trusted_comments`, which filters by AUTHOR before it looks at any marker. That
+last part is why this is a row and not a search: every marker is public body
+text a third party can post, so the same words from another account produce no
+work order at all. A send-back with nothing trusted behind it is the other row —
+`parked-skip`, parked for a human, open no new PR — because the label says the
+PR was sent back and nothing the tooling trusts says what for, and a blind
+re-attempt is what piles up dead PRs. Collapsing the two would have to pick one
+meaning for everybody: either the producer re-attempts a PR nobody has
+explained, or it walks past one somebody already has. `rework-needs-work` counts
+in `byAction` like every other class, **zero included**, because the query it
+replaced (`gh search prs --label
+ai:needs-work`) always answered — and an absent
+key is the tool declining to say whether anything is sent back, which is exactly
+the question that sends a run back to GitHub.
 
 ### Covered is not fixed — `already-fixed`
 

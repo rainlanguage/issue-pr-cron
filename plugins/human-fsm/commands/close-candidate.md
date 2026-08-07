@@ -49,8 +49,8 @@ issue to the producer's uncovered backlog, a PR to the vet queue — either free
 to be re-flagged on better evidence. It judges a producer FLAG on either subject
 type; the one PR it refuses is the one whose label is the vetter's own `close`
 verdict (no producer claim exists there to judge — that PR is yours to `uphold`
-above, or to send back with `/reject`), and the refusal says so and names the
-moves that do apply.
+above, or to send back with `/needs-work`), and the refusal says so and names
+the moves that do apply.
 
 If you mean "this must **never** be flagged again" rather than "not on this
 evidence", that is the sacred ruling `/keep-open`, not this.

@@ -62,7 +62,7 @@ deliverables, and the whole job is telling them apart:
   consult, or resting on a false premise about what the code currently does. The
   finding is the misroute, stated with **what the correct state would have
   been** — a verdict the vetter could have recorded, producer work that needed
-  no permission, or a reject with the defect named.
+  no permission, or a needs-work with the defect named.
 
 Name the finding before you argue it. A presentation that drifts between the
 three is the reprint this command exists to replace.
@@ -156,12 +156,12 @@ settled matter costs a human decision anyway.
 ## The exit: an answer is a send-back
 
 The ruling this read precedes is the design ruling, and answering IS routing:
-the answer lands the PR back with the producer as `ai:reject` with the answer as
-the trusted work order, posted in the same call at the same anchor — a design
-ruling is the same act a rejection is, and the producer is the next mover from
-the moment it is written. There is no parked spelling and no waiting state: a
-design ruling without an executable answer is not a ruling yet, and the machine
-holds no state for half of one.
+the answer lands the PR back with the producer as `ai:needs-work` with the
+answer as the trusted work order, posted in the same call at the same anchor — a
+design ruling is the same act a needs-work is, and the producer is the next
+mover from the moment it is written. There is no parked spelling and no waiting
+state: a design ruling without an executable answer is not a ruling yet, and the
+machine holds no state for half of one.
 
 So every finding above ends in a producer work order, and the presentation
 should make writing it cheap:

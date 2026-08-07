@@ -50,19 +50,19 @@ the deny-list back out to the whole of `gh pr edit`; it is `repair-qa-block`, a
 transition narrow enough to say what it does — **append** the section, never
 rewrite the body — and validated with the **gate's own predicate**
 (`carries_qa_block`), so what one writes is what the other accepts. **When a
-guard names a defect, check that some transition can clear it**; a reject with
-no exit is a deadlock however correct the reject is.
+guard names a defect, check that some transition can clear it**; a send-back
+with no exit is a deadlock however correct the send-back is.
 
 `ai:relink` was the same shape and went unnoticed for longer, because it was a
 whole VERDICT rather than a rejection ground: it told the producer to change a
 body `Closes #N` to `Refs #N`, and the producer's every body write was denied
 (`Bash(gh pr edit:*)`) or absent (its MCP profile was four clone tools). One PR
-sat in it. #135 retires the verdict — a linkage error is a `reject` whose note
-names the reference, because it always named the same owner and the same move —
-and #136 is the transition it never had, `weaken-closes`. The two had to land
-together: consolidating alone would have moved an unexecutable instruction into
-a bigger bucket, where it is harder to notice, which is the failure mode this
-whole section is about.
+sat in it. #135 retires the verdict — a linkage error is a `needs-work` whose
+note names the reference, because it always named the same owner and the same
+move — and #136 is the transition it never had, `weaken-closes`. The two had to
+land together: consolidating alone would have moved an unexecutable instruction
+into a bigger bucket, where it is harder to notice, which is the failure mode
+this whole section is about.
 
 **A tool that can only WEAKEN.** `weaken-closes` may rewrite `Closes` to `Refs`
 and never the reverse, and that direction is the invariant rather than a
@@ -116,8 +116,8 @@ transition functions:
 | `sol-toolchain-audit <trace>`                                                   | the CHECK on the rule above (#203): every Solidity check the run ran, against the toolchain `sol-toolchain` named for that checkout — `matched` / `skew` / `unasked` / `unmatchable`, plus the audit's own two blind spots (an invocation naming no checkout, one entering the working directory's flake without naming it). Read out of the run's OWN trace, where the answer and the `nix develop` that followed are both recorded, so it costs no network read and cannot stop a run. Exit 3 on skew or unasked; `campaign-run.sh` appends it to the run log                                       |
 | `unvetted_close_candidates` (MCP)                                               | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `record_close_candidate_verdict` (MCP)                                          | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `human-rule <owner/repo> <n> <ruling> "<note>"`                                 | the HUMAN's PR ruling: `ai:reject` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling; the comment records which verb ruled). Both verbs are send-backs (#133/#219) and REQUIRE `--rework "<order>"` / `--rework-file <path>`, which emits the trusted `Rework note` work order in the same call; a bare reject/design refuses; there is no park and no close verb — a question still open is already `ai:design`, and deciding a close IS executing one, which is `human-close` (#213)                                                                                        |
-| `human-rule-issue <owner/repo> <n> <ruling> "<note>"`                           | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed. `reject` / `design` both REQUIRE `--rework` on the same terms as the PR side, but `design` writes NO LABEL at all (#219) — the pinned `Ruled …: design — <answer>` comment is the whole record and the issue stays the producer's to work; `keep-open` refuses the flag (the verb is its own disposition)                                                                                                                                                                              |
+| `human-rule <owner/repo> <n> <ruling> "<note>"`                                 | the HUMAN's PR ruling: `ai:needs-work` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling; the comment records which verb ruled). Both verbs are send-backs (#133/#219) and REQUIRE `--rework "<order>"` / `--rework-file <path>`, which emits the trusted `Rework note` work order in the same call; a bare needs-work/design refuses; there is no park and no close verb — a question still open is already `ai:design`, and deciding a close IS executing one, which is `human-close` (#213)                                                                                |
+| `human-rule-issue <owner/repo> <n> <ruling> "<note>"`                           | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed. `needs-work` / `design` both REQUIRE `--rework` on the same terms as the PR side, but `design` writes NO LABEL at all (#219) — the pinned `Ruled …: design — <answer>` comment is the whole record and the issue stays the producer's to work; `keep-open` refuses the flag (the verb is its own disposition)                                                                                                                                                                          |
 | `human-close <owner/repo> <n> "<note>"`                                         | the HUMAN's TERMINAL edge on either subject: record the `close-candidate` ruling comment, close, retire the pending `ai:close-candidate` — ONE transition, in that tear-safe order (#94, #213)                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `record-close-candidate-verdict <owner/repo> <n> <v> …`                         | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `require-qa-block`                                                              | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session — including the ones with no MCP surface, which is the only population still reaching for `gh pr create` now `open_pr` exists                                                                                                                                                                                                                                                                                                             |
@@ -125,10 +125,9 @@ transition functions:
 | `push` (MCP)                                                                    | the PRODUCER'S REWORK EDGE: fast-forward a work clone's branch onto origin — no force spelling is expressible — and RECORD the PR whose head it moved, named only when an open PR on that branch is at exactly the commit just pushed                                                                                                                                                                                                                                                                                                                                                                 |
 | `work-tokens <metrics/runs.jsonl> [--json]`                                     | TOKENS TO LAND WORK: per-actor spend joined to the work items `open_pr` and `push` recorded, bucketed landed / delivered-awaiting-human / churn. Only churn is waste; an actor with no typed item is churn and nothing is inferred from a label or a branch name. The main loop carries items but no per-item cost                                                                                                                                                                                                                                                                                    |
 | `repair-qa-block <owner/repo> <n> --block-file <path>`                          | the RETROFIT of the same rule on an ALREADY-open PR: appends the §8 block to the body, every other byte identical, validated with `require-qa-block`'s predicate                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `weaken-closes <owner/repo> <n> <issue>`                                        | the LINKAGE repair a linkage `reject` names: `Closes #issue` → `Refs #issue`, every other byte identical, `## QA` untouched, DIRECTION-LOCKED so it can only ever remove a closing reference                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `weaken-closes <owner/repo> <n> <issue>`                                        | the LINKAGE repair a linkage `needs-work` names: `Closes #issue` → `Refs #issue`, every other byte identical, `## QA` untouched, DIRECTION-LOCKED so it can only ever remove a closing reference                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `mcp [--profile vetter\|producer\|human]`                                       | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `plugin-version-lockstep [--root <dir>]`                                        | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `migrate-reject [--apply]`                                                      | the #133 one-shot: every open PR still carrying the RETIRED `human:reject` → `ai:reject`. A REPORT unless `--apply` — an org-wide relabel is not one forgotten flag away                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ## The layer a human types: slash commands as a plugin
 
@@ -307,35 +306,39 @@ it finds is a different PR's code.
 - **Human decisions protect AUTHORSHIP, and a ruling is an INPUT (#111).** No AI
   actor ever writes a `human:*` label, and none removes one as an OVERRIDE of
   the human: a native `APPROVED`/`CHANGES_REQUESTED` review, a `👤 human` ruling
-  pinned to the CURRENT head, or a sacred label (the retired `human:reject`) is
-  never overwritten by the vetter — `--record-verdict` refuses (exit 3), closing
-  the TOCTOU race. But absolute parking is the ruled-out overreaction: a ruling
-  is an input the machine EXECUTES. A ruling's trusted `Rework note` is the
-  producer's work order; the push that executes it moves the head, the ruling
-  stops describing the code by itself, and the PR re-enters vetting through the
-  ordinary un-vetted path — no label of the human's own to clear (#219).
-- **A reject is ONE state, and the ruler rides on the comment (#133/#219).**
-  `ai:reject` and `human:reject` demanded the same move from the same actor, so
-  they are one state: `ai:reject`, whoever ruled — and an answered design
-  question demands it again, so a human `design` ruling lands the same state
-  (#219: the answer IS producer work; there is no parked spelling, and
-  `human:design` is DELETED — a question still open is already `ai:design`). The
-  label says what the work is; the **sha-pinned `👤 human` comment** says who
-  said so — and which verb ruled — and that is where the authority lives. The
-  vetter cannot forge one: `trusted_comments` authenticates by AUTHOR and
-  matches the marker with `starts_with`, and every comment the vetter can post
-  begins `🤖 ai:vetter` — a marker in the middle of a vetter note is body text.
-  **The anchor is also the release.** A rework moves the head, the ruling stops
-  describing the code, and the PR re-enters vetting through the ordinary
-  un-vetted path with the ruling in `pr_context.humanComments`.
-  `reworked-reject` is retired: its timestamp comparison proved only that SOME
-  commit post-dated the label event, and what actually protects the objection is
-  a stateless re-vet that can read it. So `human:*` means one thing —
-  AUTHORSHIP-protected: never written by an AI actor, never removed as an
-  override. `human:reject` survives only as a RETIRED label on PRs the migration
-  has not moved; it stays sacred and stays bucketed until `migrate-reject` does.
-  `human:design` does not survive at all: nothing writes, reads, or buckets it,
-  no repo defines it, and no subject carries it.
+  pinned to the CURRENT head is never overwritten by the vetter —
+  `--record-verdict` refuses (exit 3), closing the TOCTOU race. But absolute
+  parking is the ruled-out overreaction: a ruling is an input the machine
+  EXECUTES. A ruling's trusted `Rework note` is the producer's work order; the
+  push that executes it moves the head, the ruling stops describing the code by
+  itself, and the PR re-enters vetting through the ordinary un-vetted path — no
+  label of the human's own to clear (#219).
+- **The send-back is ONE state, and the ruler rides on the comment
+  (#133/#219).** `ai:needs-work` and `human:needs-work` demanded the same move
+  from the same actor, so they are one state: `ai:needs-work`, whoever ruled —
+  and an answered design question demands it again, so a human `design` ruling
+  lands the same state (#219: the answer IS producer work; there is no parked
+  spelling, and `human:design` is DELETED — a question still open is already
+  `ai:design`). It is named for what it ASKS rather than for a verdict against
+  the work (#230) — the producer reworks that same PR and branch, and the push
+  is the transition. The label says what the work is; the **sha-pinned
+  `👤 human` comment** says who said so — and which verb ruled — and that is
+  where the authority lives. The vetter cannot forge one: `trusted_comments`
+  authenticates by AUTHOR and matches the marker with `starts_with`, and every
+  comment the vetter can post begins `🤖 ai:vetter` — a marker in the middle of
+  a vetter note is body text. **The anchor is also the release.** A rework moves
+  the head, the ruling stops describing the code, and the PR re-enters vetting
+  through the ordinary un-vetted path with the ruling in
+  `pr_context.humanComments`. `reworked-reject` is retired: its timestamp
+  comparison proved only that SOME commit post-dated the label event, and what
+  actually protects the objection is a stateless re-vet that can read it. So
+  `human:*` means one thing — AUTHORSHIP-protected: never written by an AI
+  actor, never removed as an override. On a PR neither string survives as a
+  state: `human:design` was deleted outright (#219), and the RETIRED
+  `human:needs-work` came out with `migrate-needs-work` once that one-shot had
+  emptied it (#133/#230) — a migration is an execution vehicle, not permanent
+  machinery. `human:needs-work` is still LIVE on an ISSUE, where
+  `human-rule-issue needs-work` writes it.
 - **A verdict accounts for every file the PR changes.** Scope coverage was the
   one thing `record_verdict` took on trust, and a verdict formed without a
   changed file in view is indistinguishable from a diligent one:

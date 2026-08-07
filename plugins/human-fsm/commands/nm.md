@@ -24,8 +24,8 @@ deliverable of this command is naming which:
   label went missing or was hand-mangled. The finding is the state it belongs
   in, and the ONE command that files it there, written out in full so the human
   can type it:
-  - `/human-fsm:reject <owner/repo#n> <note>` — work is owed on it; the note is
-    the work order, and the producer is the next mover.
+  - `/human-fsm:needs-work <owner/repo#n> <note>` — work is owed on it; the note
+    is the work order, and the producer is the next mover.
   - `/human-fsm:design <owner/repo#n> <note>` — the note is the ANSWER to a
     question the PR raises, which is itself producer work.
   - `/human-fsm:close-candidate <owner/repo#n> uphold <note>` — the PR is
@@ -180,8 +180,8 @@ The rulings this command precedes are the existing ones and it invents none —
 these five are the whole shipped set, and a command named outside them cannot be
 typed:
 
-- `/human-fsm:reject <owner/repo#n> <note>` — files the PR into rework with the
-  order on the record.
+- `/human-fsm:needs-work <owner/repo#n> <note>` — files the PR into rework with
+  the order on the record.
 - `/human-fsm:design <owner/repo#n> <note>` — the note is the answer, and the
   answer travels to the producer as its work order in the same act.
 - `/human-fsm:close-candidate <owner/repo#n> uphold <note>` — ends what is
@@ -221,8 +221,8 @@ population is the LANE CLASSIFIER's own verdict — the same call that decides
 every other PR's state — so this command, the `human-queue` array and the
 dashboard box cannot hold three opinions about which PRs escaped the machine.
 That is not decoration: while the enumeration was a second reading of the labels
-(`no ai:* label`) it swept in every PR parked in the human-decisions lane, which
-are in a modeled state, waiting on exactly the human running this command.
+(`no ai:* label`) it swept in every PR then parked in a modeled `human:*` state,
+waiting on exactly the human running this command.
 
 The queue is **oldest first**. A leak is in nobody's queue — not the producer's,
 not the vetter's, no human inbox but this one — so nothing else will ever
