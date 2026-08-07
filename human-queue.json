@@ -143,6 +143,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 412,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
+        "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 399,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
         "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
@@ -158,6 +164,24 @@
         "number": 386,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
         "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 233,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
+        "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 166,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
+        "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2778,
+        "url": "https://github.com/rainlanguage/raindex/pull/2778",
+        "title": "fix: mask signer row operand to low byte"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -182,6 +206,18 @@
         "number": 112,
         "url": "https://github.com/rainlanguage/rain.flare/pull/112",
         "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2721,
+        "url": "https://github.com/rainlanguage/raindex/pull/2721",
+        "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2720,
+        "url": "https://github.com/rainlanguage/raindex/pull/2720",
+        "title": "Retry SDK indexing on transient timeout before failing"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -832,49 +868,6 @@
     ]
   },
   "lanes": {
-    "human-decisions": {
-      "human:design": {
-        "count": 6,
-        "prs": [
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 412,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
-            "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 233,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
-            "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 166,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
-            "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2778,
-            "url": "https://github.com/rainlanguage/raindex/pull/2778",
-            "title": "fix: mask signer row operand to low byte"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2721,
-            "url": "https://github.com/rainlanguage/raindex/pull/2721",
-            "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2720,
-            "url": "https://github.com/rainlanguage/raindex/pull/2720",
-            "title": "Retry SDK indexing on transient timeout before failing"
-          }
-        ]
-      }
-    },
     "leak": {
       "leak": {
         "count": 1,
@@ -1015,7 +1008,7 @@
             "repo": "rainlanguage/issue-pr-cron",
             "number": 225,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/225",
-            "title": "migrate-blocked-deploy: the retired residue moves to ai:reject with a split-lifecycle rework order"
+            "title": "ai:blocked-deploy: migrated as a once-off, state deleted"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1178,7 +1171,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 18,
+        "count": 24,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1218,6 +1211,12 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
+            "number": 412,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
+            "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
             "number": 399,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
             "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
@@ -1233,6 +1232,24 @@
             "number": 386,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
             "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 233,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
+            "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 166,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
+            "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2778,
+            "url": "https://github.com/rainlanguage/raindex/pull/2778",
+            "title": "fix: mask signer row operand to low byte"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1257,6 +1274,18 @@
             "number": 112,
             "url": "https://github.com/rainlanguage/rain.flare/pull/112",
             "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2721,
+            "url": "https://github.com/rainlanguage/raindex/pull/2721",
+            "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2720,
+            "url": "https://github.com/rainlanguage/raindex/pull/2720",
+            "title": "Retry SDK indexing on transient timeout before failing"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1775,6 +1804,18 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 228,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/228",
+      "title": "human-queue --json: counts.* (label bucket) and lanes cells (classifier) measure the same state differently — counts.ready 23 vs an absent lane cell"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 167,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/167",
+      "title": "pipeline dash: remove the deleted ai:blocked-deploy state (blocked-infra precedent)"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 84,
@@ -5416,34 +5457,6 @@
   ],
   "leaks": [
     {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 412,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
-      "title": "fix: drop malformed subgraph rows from AccountStatus transfer history",
-      "reason": "🤖 ai:producer screenshot pending (manual): AccountStatus transfer-history list rendering is subgraph+wallet-gated; cyclo.site's SvelteKit/Tailwind runtime stack does not render in the standalone Vite+Svelte harness (same ruling as the earlier 14-component batch)."
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2778,
-      "url": "https://github.com/rainlanguage/raindex/pull/2778",
-      "title": "fix: mask signer row operand to low byte",
-      "reason": "🤖 ai:producer Producer note: both red checks (rainix-sol/static + rs-static) are MAIN-STATE, not PR-caused — the no-vm.skip gate flags 5 pre-existing test/lib/deploy files on main (e.g. LibRaindexDeployTaggedConstants.t.sol:24); identical red on main HEAD. rainix-sol/test PASSES here. Greens when main resolves the vm.skip gate."
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2721,
-      "url": "https://github.com/rainlanguage/raindex/pull/2721",
-      "title": "fix(webapp): stop double-fetching custom registries in advanced mode",
-      "reason": "🤖 ai:producer Producer note: the three red checks are MAIN-STATE, not PR-caused — missing 0.1.13 soldeer deploy-constant pins (rainix-sol/test) and the no-vm.skip gate on 5 pre-existing main files (rainix-sol/static + rs-static); identical failures on main HEAD. Separate from the open human design hold on clearCustomRegistry, which remains the real gate."
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2720,
-      "url": "https://github.com/rainlanguage/raindex/pull/2720",
-      "title": "Retry SDK indexing on transient timeout before failing",
-      "reason": "🤖 ai:producer Producer note: the three red checks are MAIN-STATE, not PR-caused — missing 0.1.13 soldeer deploy-constant pins (rainix-sol/test) and the no-vm.skip gate on 5 pre-existing main files (rainix-sol/static + rs-static); identical failures on main HEAD. Separate from the open human design hold (typed discriminant, depends on #2327), which remains the real gate."
-    },
-    {
       "repo": "rainlanguage/flow",
       "number": 475,
       "url": "https://github.com/rainlanguage/flow/pull/475",
@@ -5453,28 +5466,28 @@
   ],
   "counts": {
     "ready": 23,
-    "design": 18,
+    "design": 24,
     "blockedDeploy": 0,
     "blockedInfra": 0,
     "blockedOn": 17,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
-    "leaks": 5,
+    "leaks": 1,
     "totalProducerPrs": 150,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 602,
+    "uncoveredIssues": 604,
     "unvetted": 29,
     "reject": 79,
     "relink": 0,
     "humanReject": 0,
-    "humanDesign": 6,
-    "openIssues": 768
+    "humanDesign": 0,
+    "openIssues": 770
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.1,
-      "medianDays": 100.8,
+      "meanDays": 314.3,
+      "medianDays": 100.9,
       "oldestDays": 1656.4
     }
   }
