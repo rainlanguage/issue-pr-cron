@@ -2979,6 +2979,27 @@ label shape (`startswith() requires string inputs`), and one of them accepted
 `audit-backlog total: 0` for a backlog that actually held 46 issues. A grouping
 computed in the tool is a grouping that cannot be silently wrong.
 
+**A reject is two rows, and neither of them is a search.** `ai:reject` is one
+state whoever ruled it — a vetter verdict and a human ruling both write it — but
+it carries two different next moves, so `nextAction` splits it in two.
+`rework-reject` is a reject the tool can read a **trusted** instruction for: the
+vetter's own `Reviewed <sha>: reject — …`, the human's `Rework note`, or the
+human's `👤 human` ruling, each read back through `trusted_comments`, which
+filters by AUTHOR before it looks at any marker. That last part is why this is a
+row and not a search: every marker is public body text a third party can post,
+so the same words from another account produce no work order at all. A reject
+with nothing trusted behind it is the other row — `parked-skip`, parked for a
+human, open no new PR — because the label says the PR was sent back and nothing
+the tooling trusts says what for, and a blind re-attempt is what piles up dead
+PRs. Collapsing the two would have to pick one meaning for everybody: either the
+producer re-attempts a PR nobody has explained, or it walks past one somebody
+already has. `rework-reject` counts in `byAction` like every other class, **zero
+included**, because the query it replaced (`gh search prs --label
+ai:reject`)
+always answered — and an absent key is the tool declining to say whether
+anything is sent back, which is exactly the question that sends a run back to
+GitHub.
+
 ### Covered is not fixed — `already-fixed`
 
 `uncovered-issues` splits covered from uncovered using **open** PRs' closing
