@@ -9372,6 +9372,13 @@ fn trace_outcome_mode(path: &str, exit_code: i32) -> i32 {
 /// snapshot without one (every commit predating the key, and any refresh whose backlog had no age
 /// to report) emits a line WITHOUT the key, never `"ages": null`. The dashboard's degradation
 /// contract is a missing field, and a null would be a third shape both sides would have to handle.
+///
+/// `counts` is copied VERBATIM, which is what makes this file a set of series: a key means what
+/// `counts.<key>` meant on the day it was sampled, and this function neither knows nor normalises
+/// that. One such meaning change is on the record — five keys, `ready` visibly, became the
+/// classifier's lane cell instead of the label bucket on 2026-08-07 (#228); [`lane_counts_json`]
+/// documents which and how far the step goes. Past lines are NOT rewritten: they are true
+/// measurements of the machine as it then was.
 fn queue_history_line(snapshot: &str, ts: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(snapshot).ok()?;
     let counts = doc.get("counts")?;
@@ -16639,7 +16646,16 @@ impl StateKind {
 /// surface, and `ai:blocked-on`'s re-lane (#161) rendered 17 blocked PRs nowhere).
 enum StateOccupancy {
     /// A `lanes` cell: `lanes.<lane>.<key>` carries `{count, prs}`; sparse-absent ⇒ 0.
-    Lane(Lane),
+    ///
+    /// `counts` names the `counts` key that cell FILLS. Both variants therefore name a `counts`
+    /// key, and the direction is the difference: a top-level row's key IS its occupancy, while a
+    /// lane row's key is DERIVED from its cell by [`lane_counts_json`] — one measurement, written
+    /// where a `counts` reader can find it, rather than a second census of the same state.
+    ///
+    /// It is deliberately not on the wire. The ratified #130 occupancy form for a lane row is
+    /// `{lane}` and nothing else: a consumer reads the cell, which is the population; the key is
+    /// the producer-side mirror, already named as `hist` by every row that owns a series.
+    Lane { lane: Lane, counts: &'static str },
     /// Top level: the count under `counts.<counts>`, the click-through list in the top-level
     /// `<items>` array. `items_are_issues` says which GitHub url path to try first for an item —
     /// a display hint only, never a per-key rule: every item already carries its resolved `url`
@@ -16705,7 +16721,7 @@ impl StateDescriptor {
     /// `act`, `kind`, `hist`, `histFold`, `occupancy`, plus `label` only where one is declared.
     fn to_json(&self) -> Value {
         let occupancy = match &self.occupancy {
-            StateOccupancy::Lane(lane) => serde_json::json!({ "lane": lane.key() }),
+            StateOccupancy::Lane { lane, .. } => serde_json::json!({ "lane": lane.key() }),
             StateOccupancy::Counts {
                 counts,
                 items,
@@ -16797,7 +16813,10 @@ const STATE_UN_VETTED: StateDescriptor = StateDescriptor {
     hist: Some("unvetted"),
     hist_fold: &["awaitingReVet"],
     label: None,
-    occupancy: StateOccupancy::Lane(Lane::VetLifecycle),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::VetLifecycle,
+        counts: "unvetted",
+    },
     emit: Emit::Always,
 };
 
@@ -16811,7 +16830,10 @@ const STATE_BLOCKED_ON: StateDescriptor = StateDescriptor {
     hist: Some("blockedOn"),
     hist_fold: &[],
     label: None,
-    occupancy: StateOccupancy::Lane(Lane::VetLifecycle),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::VetLifecycle,
+        counts: "blockedOn",
+    },
     emit: Emit::Always,
 };
 
@@ -16824,7 +16846,10 @@ const STATE_READY: StateDescriptor = StateDescriptor {
     hist: Some("ready"),
     hist_fold: &[],
     label: None,
-    occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::VetterVerdicts,
+        counts: "ready",
+    },
     emit: Emit::Always,
 };
 
@@ -16840,7 +16865,10 @@ const STATE_REJECT: StateDescriptor = StateDescriptor {
     hist: Some("reject"),
     hist_fold: &["humanReject", "relink"],
     label: None,
-    occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::VetterVerdicts,
+        counts: "reject",
+    },
     emit: Emit::Always,
 };
 
@@ -16856,7 +16884,10 @@ const STATE_RELINK: StateDescriptor = StateDescriptor {
     hist: None,
     hist_fold: &[],
     label: Some("ai:relink (retired #135)"),
-    occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::VetterVerdicts,
+        counts: "relink",
+    },
     emit: Emit::WhileOccupied,
 };
 
@@ -16869,7 +16900,10 @@ const STATE_DESIGN: StateDescriptor = StateDescriptor {
     hist: Some("design"),
     hist_fold: &[],
     label: None,
-    occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::VetterVerdicts,
+        counts: "design",
+    },
     emit: Emit::Always,
 };
 
@@ -16884,7 +16918,10 @@ const STATE_BLOCKED_DEPLOY: StateDescriptor = StateDescriptor {
     hist: Some("blockedDeploy"),
     hist_fold: &[],
     label: Some("ai:blocked-deploy (retired #162)"),
-    occupancy: StateOccupancy::Lane(Lane::ProducerBlocked),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::ProducerBlocked,
+        counts: "blockedDeploy",
+    },
     emit: Emit::WhileOccupied,
 };
 
@@ -16898,7 +16935,10 @@ const STATE_BLOCKED_INFRA: StateDescriptor = StateDescriptor {
     hist: Some("blockedInfra"),
     hist_fold: &[],
     label: Some("ai:blocked-infra (retired #108)"),
-    occupancy: StateOccupancy::Lane(Lane::ProducerBlocked),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::ProducerBlocked,
+        counts: "blockedInfra",
+    },
     emit: Emit::WhileOccupied,
 };
 
@@ -16914,7 +16954,10 @@ const STATE_HUMAN_REJECT: StateDescriptor = StateDescriptor {
     hist: None,
     hist_fold: &[],
     label: Some("human:reject (retired #133)"),
-    occupancy: StateOccupancy::Lane(Lane::HumanDecisions),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::HumanDecisions,
+        counts: "humanReject",
+    },
     emit: Emit::WhileOccupied,
 };
 
@@ -16937,7 +16980,10 @@ const STATE_HUMAN_DESIGN: StateDescriptor = StateDescriptor {
     hist: Some("humanDesign"),
     hist_fold: &[],
     label: None,
-    occupancy: StateOccupancy::Lane(Lane::HumanDecisions),
+    occupancy: StateOccupancy::Lane {
+        lane: Lane::HumanDecisions,
+        counts: "humanDesign",
+    },
     emit: Emit::Always,
 };
 
@@ -17023,15 +17069,84 @@ static STATE_DESCRIPTORS: [&StateDescriptor; 14] = [
 
 /// PURE: how many subjects a descriptor's DECLARED occupancy holds, read from the same document
 /// the descriptor points a consumer at — the lane cell for a lane row (sparse-absent ⇒ 0), the
-/// named `counts` key for a top-level row. One reader, so the gate below and the consumer's
-/// rendering can never disagree about whether a state is occupied.
+/// named `counts` key for a top-level row. One reader, so the gate below, the `counts` key
+/// [`lane_counts_json`] writes, and the consumer's rendering can never disagree about how
+/// occupied a state is.
 fn descriptor_occupancy(d: &StateDescriptor, counts: &Value, lanes: &Value) -> usize {
     match &d.occupancy {
-        StateOccupancy::Lane(lane) => lane_state_count(lanes, lane.key(), d.key),
+        StateOccupancy::Lane { lane, .. } => lane_state_count(lanes, lane.key(), d.key),
         StateOccupancy::Counts { counts: key, .. } => {
             counts.get(key).and_then(|v| v.as_u64()).unwrap_or(0) as usize
         }
     }
+}
+
+/// PURE: the `counts` keys of every state whose occupancy IS a lane cell, each holding that
+/// cell's size — in [`STATE_DESCRIPTORS`] order (#228).
+///
+/// One source of truth per state. These keys used to be written two ways: `ready`, `design`,
+/// `blockedOn`, `blockedInfra` and `blockedDeploy` counted the LABEL BUCKET ([`ai_state_label`],
+/// the first `ai:*` label a PR carries) while the lane cell beside them was [`classify_lane`]
+/// PRECEDENCE, and the remaining five spelled their own `lane_state_count(…)` call. Both
+/// populations are defensible and neither said which it was, so the document answered "how many
+/// PRs are in this state?" twice with different numbers and nothing compared them. On
+/// 2026-08-06 that was `counts.ready` 23 over an ABSENT `vetter-verdicts`.`ai:ready` cell — all
+/// 23 labelled PRs un-vetted at their current head — which the dashboard drew as a merge inbox
+/// of 0 beneath a sparkline plotted at 23.
+///
+/// Derived by ITERATING the table rather than by naming states, so a row added, renamed or
+/// re-laned carries its `counts` key with it; and read through [`descriptor_occupancy`], the same
+/// accessor the residue-emission gate reads, so a key, its gate and its rendered cell are one
+/// number by construction rather than by three call sites agreeing.
+///
+/// The label-bucket population is NOT lost and needs no key of its own: the top-level `states`
+/// object IS that census — `states.<label>` is every PR carrying the label, whatever its head —
+/// so a consumer wanting it reads the array it can also click through, and no single key means
+/// the label population one day and the classifier's the next.
+///
+/// Every lane row emits its key unconditionally, at 0 when the cell is absent, so the
+/// kept-while-nonzero contract the retired keys (`blockedDeploy` #162, `relink` #135,
+/// `humanReject` #133) were held to by hand is now structural: a residue key is present at zero
+/// while its row is in the table, and leaves only when the row does.
+///
+/// # The step this puts in `human-queue-history.jsonl`
+///
+/// Each rollup line is `{ts, counts[, ages]}` verbatim (see [`queue_history_line`]), so a series
+/// means whatever `counts.<key>` meant on the day it was sampled. Five keys change meaning HERE,
+/// and the change is not rewritten backwards — the old lines are true measurements of the machine
+/// as it then was, and #130's own rule for a renamed series is that the past is drawn, not
+/// deleted:
+///
+/// - `ready`, `design`, `blockedOn`, `blockedInfra`, `blockedDeploy` — the label bucket BEFORE
+///   this change, the lane cell after. Only `ready` moves visibly: it is the one key whose two
+///   populations differ at any scale, because `ai:ready` is the only label [`classify_lane`]
+///   splits on head drift, and a labelled PR pushed past its verdict is `un-vetted`. On the
+///   2026-08-06 snapshot the step is 23 → 0 (all 23 stale at head; `un-vetted` already held them,
+///   so the machine's total is unchanged and no PR appears or disappears). The other four have
+///   no split — their labels dominate the precedence order — so they can differ only on a PR
+///   carrying two state labels, which is off-protocol and empirically absent.
+/// - `unvetted`, `reject`, `relink`, `humanReject`, `humanDesign` were already the lane cell and
+///   do not move; they are here because they are now derived the same way instead of by their own
+///   hand-written call.
+///
+/// A chart spanning 2026-08-07 therefore has a real discontinuity in `ready` — inventory that was
+/// counted as "carries the label" becoming "is in the state" — and it is a discontinuity in what
+/// was MEASURED, not in the queue.
+fn lane_counts_json(lanes: &Value) -> serde_json::Map<String, Value> {
+    let mut m = serde_json::Map::new();
+    for d in STATE_DESCRIPTORS {
+        if let StateOccupancy::Lane { counts, .. } = &d.occupancy {
+            // `Value::Null` is the honest `counts` argument, not a placeholder: a lane row's
+            // declared occupancy is the lane CELL and reads no `counts` key at all, which is
+            // exactly what makes deriving that key from the occupancy well-founded instead of
+            // circular. A lane row that ever read `counts` would be defining a key from itself.
+            m.insert(
+                (*counts).to_string(),
+                Value::from(descriptor_occupancy(d, &Value::Null, lanes) as u64),
+            );
+        }
+    }
+    m
 }
 
 /// The emitted `stateDescriptors` value: the rows of [`STATE_DESCRIPTORS`], in table order,
@@ -17373,14 +17488,98 @@ fn lanes_doc(prs: &[QueuePr]) -> Value {
     Value::Object(doc)
 }
 
-/// Flat per-state counts derived from the lane doc, for a dashboard reading `counts` for tiles.
-/// Lane-based (each PR counted once, human-override dominant) — distinct from the legacy label-based
-/// counts (`ready`/`design`/`blocked*`) which are kept unchanged for backward-compat.
+/// The size of ONE lane cell in the lane doc — `{count, prs}` under `lanes.<lane>.<state>`,
+/// sparse-absent ⇒ 0. Every per-state number this tool reports resolves through here: the
+/// `counts` key ([`lane_counts_json`]), the residue-emission gate ([`descriptor_occupancy`]) and
+/// the daily review's sections ([`review_lane_sections`]).
 fn lane_state_count(lanes: &Value, lane: &str, state: &str) -> usize {
     lanes
         .pointer(&format!("/{lane}/{state}/count"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize
+}
+
+/// The daily review's state sections, in printed order — a title and the ROW whose declared
+/// occupancy supplies the PRs. Naming the row rather than a (lane, state) pair means the section,
+/// the `counts` key and the emitted descriptor all read one declaration; a re-laned state carries
+/// its section with it, and `every_lane_state_has_exactly_one_review_section` holds the set
+/// complete in both directions.
+const REVIEW_LANE_SECTIONS: [(&str, &StateDescriptor); 10] = [
+    // vet-lifecycle
+    ("UN-VETTED — the vetter owes a verdict", &STATE_UN_VETTED),
+    // #161: blocked-on is the VETTER's — its state-load clears the flag when every typed dep
+    // merges/closes and the PR re-enters vetting fresh. Filed with the vetter's work, not the
+    // producer's blocked states.
+    (
+        "BLOCKED-ON — vetter clears when every typed dep merges/closes",
+        &STATE_BLOCKED_ON,
+    ),
+    // vetter-verdicts
+    ("MERGE — ai:ready", &STATE_READY),
+    (
+        "REWORK — ai:reject (producer reworks; vetter OR human ruled)",
+        &STATE_REJECT,
+    ),
+    // RETIRED (#135) — no verdict writes this label any more. Shown while any PR still carries it,
+    // so the one that needs re-recording as a `reject` is visible rather than silently un-vetted.
+    (
+        "RELINK (RETIRED #135) — ai:relink · re-record as `reject` naming the linkage",
+        &STATE_RELINK,
+    ),
+    ("RULE — ai:design", &STATE_DESIGN),
+    // producer-blocked (`ai:blocked-on` prints with the vetter's group above — #161)
+    // RETIRED (#162) — no transition writes this label any more. Shown while any PR still carries
+    // it, so each residue PR stays visible until its eyes-on triage: re-flag it
+    // `ai:blocked-on --blocked-by <the repo's migration issue/PR>`, or unblock it outright where
+    // the repo has already migrated to the split release lifecycle.
+    (
+        "BLOCKED-DEPLOY (RETIRED #162) — re-flag blocked-on the repo's migration, or unblock",
+        &STATE_BLOCKED_DEPLOY,
+    ),
+    ("BLOCKED-INFRA", &STATE_BLOCKED_INFRA),
+    // human-decisions
+    // RETIRED (#133) — shown so the PRs a pre-#133 run parked stay visible, and so this section is
+    // the migration's progress meter. It trends to zero as `migrate-reject` runs and never grows.
+    (
+        "HUMAN-REJECT (RETIRED — migrate-reject moves these to ai:reject)",
+        &STATE_HUMAN_REJECT,
+    ),
+    ("HUMAN-DESIGN", &STATE_HUMAN_DESIGN),
+];
+
+/// PURE: the daily review's whole state-section block, each section listing its LANE CELL.
+///
+/// Given `lanes` and NOTHING ELSE, deliberately (#228). Four of these sections — `ai:ready`,
+/// `ai:design` and the two blocked residues — used to list the label BUCKET, so this review
+/// answered "which PRs are in this state?" differently from the `--json` the same run emits: on
+/// 2026-08-06 it printed 23 PRs under "MERGE — ai:ready" while its own document put every one of
+/// them in `un-vetted`, their verdicts stale at head. Handing the renderer no bucket makes that
+/// unconstructible rather than merely corrected — there is no second population in scope to print.
+///
+/// A RESIDUE row's section is printed only while the state is OCCUPIED, off the row's own
+/// [`Emit`] policy and the same declared occupancy its descriptor is gated on, so a drained
+/// retiree leaves the review exactly as it leaves the emitted shape (#130 clarification 1).
+fn review_lane_sections(lanes: &Value) -> String {
+    let mut out = String::new();
+    for (title, d) in REVIEW_LANE_SECTIONS {
+        let StateOccupancy::Lane { lane, .. } = &d.occupancy else {
+            continue;
+        };
+        if d.emit == Emit::WhileOccupied && descriptor_occupancy(d, &Value::Null, lanes) == 0 {
+            continue;
+        }
+        let empty = Vec::new();
+        let items = lanes
+            .pointer(&format!("/{}/{}/prs", lane.key(), d.key))
+            .and_then(|v| v.as_array())
+            .unwrap_or(&empty);
+        out.push_str(&format!("\n▓▓ {title}  ({})\n", items.len()));
+        for it in items {
+            out.push_str(&review_subject_block(&SubjectRef::from_row(it), 66));
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// PURE: the `closeCandidateIssues` subject list, parsed from `gh search issues --json
@@ -17644,18 +17843,13 @@ fn human_queue_doc(
     // because the descriptor emission filters against it: a residue row emits only while its
     // declared occupancy is nonzero (#130 clarification 1). Completing the object first means a
     // key added here later cannot be read as absent-and-therefore-zero by that filter.
-    let mut counts = serde_json::json!({
-        // Legacy label-based counts (UNCHANGED — the dashboard reads these).
-        "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
-        "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
-        // RETIRED (#162): no transition writes `ai:blocked-deploy` any more, so this counts
-        // down to 0 and stays there. The key is kept while it can be non-zero — the
-        // kept-while-nonzero contract — because each residue PR still needs its eyes-on
-        // triage: re-flagged `ai:blocked-on --blocked-by <the repo's migration>`, or unblocked
-        // outright where the repo has already migrated. Never auto-migrated.
-        "blockedDeploy": buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL).map(|v| v.len()).unwrap_or(0),
-        "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
-        "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
+    //
+    // Every state whose declared occupancy is a lane cell takes its `counts` key FROM that cell,
+    // by iterating the state table (#228) — see [`lane_counts_json`] for what that replaced and
+    // what it means for the history series. The keys below are the rest: sizes of top-level
+    // arrays and named non-state rollups, each measured once, at its own single source.
+    let mut counts = lane_counts_json(lanes);
+    let rollups = serde_json::json!({
         "closeCandidateIssues": close_issues.len(),
         // Close-candidate VET lifecycle (#72/#73), over BOTH subject types (#211/#212).
         // `closeCandidateIssues` above keeps its legacy meaning — every ISSUE carrying the
@@ -17672,22 +17866,18 @@ fn human_queue_doc(
         "archivedRepoPrs": archived_prs.len(),
         // Producer untouched backlog — open issues with no covering open PR, excluding
         // human-gated / close-candidate (the producer's biggest, previously-hidden inbox).
-        "uncoveredIssues": backlog.len(),
-        // Additive lane-based counts (each PR counted once, human-override dominant) — the
-        // states previously invisible to the dashboard.
-        "unvetted": lane_state_count(lanes, "vet-lifecycle", "un-vetted"),
-        "reject": lane_state_count(lanes, "vetter-verdicts", "ai:reject"),
-        // RETIRED (#135): no verdict writes `ai:relink` any more, so this counts down to 0 and
-        // stays there. The key is kept while it can be non-zero — a dashboard that stopped
-        // rendering the state would hide the PR that still needs re-recording as a `reject`.
-        "relink": lane_state_count(lanes, "vetter-verdicts", "ai:relink"),
         // No key counts a close-candidate PR lane state or a decided-close state: flagged
         // PRs are inventoried by the mixed close-candidate arrays above (#211/#212), and a
         // close ruling is `human-close`'s decide+do with no state between (#213).
-        // RETIRED (#133). Kept — the dashboard reads it — and it now means "still to migrate".
-        "humanReject": lane_state_count(lanes, "human-decisions", RETIRED_HUMAN_REJECT_LABEL),
-        "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
+        "uncoveredIssues": backlog.len(),
     });
+    for (k, v) in rollups
+        .as_object()
+        .expect("the non-state rollup block is an object")
+    {
+        counts.insert(k.clone(), v.clone());
+    }
+    let mut counts = Value::Object(counts);
     if let Some(open) = open {
         // The org-wide open-issue count goes in `counts` beside the queue counts, and the ages go
         // in a SIBLING `ages` block below, never inside `counts` — `counts` is named for what it
@@ -17697,6 +17887,15 @@ fn human_queue_doc(
         counts["openIssues"] = Value::from(open.len());
     }
     let mut doc = serde_json::json!({
+        // The LABEL BUCKET, and only that: `states.<label>` is every PR carrying the label
+        // ([`ai_state_label`], the first `ai:*` a PR holds), whatever its head and whatever
+        // [`classify_lane`] does with it. It is deliberately NOT the state's inventory — a state's
+        // inventory is its lane cell, and `counts` is that cell's size (#228). The two differ on
+        // exactly the PRs the classifier routes past their own label: a labelled `ai:ready` PR
+        // whose verdict is stale at its head is in `states["ai:ready"]` and in the `un-vetted`
+        // cell, because it carries the word and is not in the state. Kept as the answer to "which
+        // PRs carry this label", which is a real question with a real reader, under a key that has
+        // only ever meant that.
         "states": bmap,
         "lanes": lanes,
         // The machine's SHAPE as data (#130): every state's descriptor, in render order,
@@ -18015,24 +18214,6 @@ fn human_queue_mode(json_out: bool) -> i32 {
 
     // Human-readable daily review. Every line is rendered by a pure block builder (`clip_chars`
     // truncates on CHAR boundaries) so the printed link is the same resolved url the JSON emits.
-    let show = |title: &str, items: &[SubjectRef]| {
-        println!("\n▓▓ {title}  ({})", items.len());
-        for s in items {
-            println!("{}", review_subject_block(s, 66));
-        }
-    };
-    // Print a lane/state bucket straight from the lane doc (the states without a legacy label bucket).
-    let show_lane = |title: &str, lane: &str, state: &str| {
-        let empty = Vec::new();
-        let items = lanes
-            .pointer(&format!("/{lane}/{state}/prs"))
-            .and_then(|v| v.as_array())
-            .unwrap_or(&empty);
-        println!("\n▓▓ {title}  ({})", items.len());
-        for it in items {
-            println!("{}", review_subject_block(&SubjectRef::from_row(it), 66));
-        }
-    };
     println!(
         "=== HUMAN QUEUE — daily FSM-conformance review ({} open producer PRs{}) ===",
         prs.len(),
@@ -18050,39 +18231,9 @@ fn human_queue_mode(json_out: bool) -> i32 {
     if let Some(open) = open.as_deref() {
         print!("{}", review_open_issue_ages(open, now_unix() * 1000));
     }
-    // vet-lifecycle
-    show_lane(
-        "UN-VETTED — the vetter owes a verdict",
-        "vet-lifecycle",
-        "un-vetted",
-    );
-    // #161: blocked-on is the VETTER's — its state-load clears the flag when every typed dep
-    // merges/closes and the PR re-enters vetting fresh. Filed with the vetter's work, not the
-    // producer's blocked states.
-    show_lane(
-        "BLOCKED-ON — vetter clears when every typed dep merges/closes",
-        "vet-lifecycle",
-        "ai:blocked-on",
-    );
-    // vetter-verdicts
-    if let Some(v) = buckets.get("ai:ready") {
-        show("MERGE — ai:ready", v);
-    }
-    show_lane(
-        "REWORK — ai:reject (producer reworks; vetter OR human ruled)",
-        "vetter-verdicts",
-        "ai:reject",
-    );
-    // RETIRED (#135) — no verdict writes this label any more. Shown while any PR still carries it,
-    // so the one that needs re-recording as a `reject` is visible rather than silently un-vetted.
-    show_lane(
-        "RELINK (RETIRED #135) — ai:relink · re-record as `reject` naming the linkage",
-        "vetter-verdicts",
-        "ai:relink",
-    );
-    if let Some(v) = buckets.get("ai:design") {
-        show("RULE — ai:design", v);
-    }
+    // Every modeled state, each listing its LANE CELL — the one population that IS the state
+    // (#228) — with the retired ones printed only while their residue lasts.
+    print!("{}", review_lane_sections(&lanes));
     // Print a mixed-subject close-candidate array (issues AND PRs, #211/#212) straight from the
     // same document the JSON emits, so the daily review and the dashboard read one population.
     let show_cc = |title: &str, items: &Value| {
@@ -18093,29 +18244,6 @@ fn human_queue_mode(json_out: bool) -> i32 {
             println!("{}", review_subject_block(&SubjectRef::from_row(it), 66));
         }
     };
-    // producer-blocked (`ai:blocked-on` prints with the vetter's group above — #161)
-    // RETIRED (#162) — no transition writes this label any more. Shown while any PR still carries
-    // it, so each residue PR stays visible until its eyes-on triage: re-flag it
-    // `ai:blocked-on --blocked-by <the repo's migration issue/PR>`, or unblock it outright where
-    // the repo has already migrated to the split release lifecycle.
-    if let Some(v) = buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL) {
-        show(
-            "BLOCKED-DEPLOY (RETIRED #162) — re-flag blocked-on the repo's migration, or unblock",
-            v,
-        );
-    }
-    if let Some(v) = buckets.get("ai:blocked-infra") {
-        show("BLOCKED-INFRA", v);
-    }
-    // human-decisions
-    // RETIRED (#133) — shown so the PRs a pre-#133 run parked stay visible, and so this count is
-    // the migration's progress meter. It trends to zero as `migrate-reject` runs and never grows.
-    show_lane(
-        "HUMAN-REJECT (RETIRED — migrate-reject moves these to ai:reject)",
-        "human-decisions",
-        RETIRED_HUMAN_REJECT_LABEL,
-    );
-    show_lane("HUMAN-DESIGN", "human-decisions", "human:design");
     // The two mixed-subject inboxes (#211/#212): the vetter's, then the human's. The legacy
     // issues-only view is gone from the review — one population, printed once, per owner.
     show_cc(
@@ -47231,14 +47359,10 @@ mod state_descriptor_tests {
         hits[0]
     }
 
-    // Conservation, producer side (#130 amendment 2): every state [`classify_lane`] can emit has
-    // exactly one descriptor, and every lane-occupancy descriptor names a (lane, state) the
-    // classifier actually emits. The sweep is built from the classifier's OWN label constants —
-    // which are themselves spelled from the descriptor rows — so a state added to the vocabulary
-    // arrives here already swept, and a row dropped from [`STATE_DESCRIPTORS`] fails on the
-    // classifier side rather than vanishing quietly.
-    #[test]
-    fn every_classifier_state_has_exactly_one_descriptor() {
+    /// One PR per state label the classifier reacts to, plus the label-LESS PR — built from the
+    /// classifier's own constants (which are themselves spelled from the descriptor rows), so a
+    /// state added to the vocabulary arrives in every sweep below already covered.
+    fn state_label_sets() -> Vec<Vec<String>> {
         let mut label_sets: Vec<Vec<String>> = vec![vec![]];
         for l in HUMAN_DECISION_LABELS {
             label_sets.push(vec![l.to_string()]);
@@ -47256,7 +47380,39 @@ mod state_descriptor_tests {
         ] {
             label_sets.push(vec![l.to_string()]);
         }
+        label_sets
+    }
 
+    /// [`state_label_sets`] plus every ORDERED PAIR of those labels — the only inputs on which a
+    /// label-bucket key and a precedence winner can disagree, because [`ai_state_label`] takes the
+    /// FIRST `ai:*` (and skips `human:*` entirely) while [`classify_lane`] resolves by precedence.
+    /// A single-label sweep passes straight through both directions of that bug.
+    fn state_label_sets_with_pairs() -> Vec<Vec<String>> {
+        let mut label_sets = state_label_sets();
+        let singles: Vec<String> = label_sets
+            .iter()
+            .filter(|l| l.len() == 1)
+            .map(|l| l[0].clone())
+            .collect();
+        for a in &singles {
+            for b in &singles {
+                if a != b {
+                    label_sets.push(vec![a.clone(), b.clone()]);
+                }
+            }
+        }
+        label_sets
+    }
+
+    // Conservation, producer side (#130 amendment 2): every state [`classify_lane`] can emit has
+    // exactly one descriptor, and every lane-occupancy descriptor names a (lane, state) the
+    // classifier actually emits. The sweep is built from the classifier's OWN label constants —
+    // which are themselves spelled from the descriptor rows — so a state added to the vocabulary
+    // arrives here already swept, and a row dropped from [`STATE_DESCRIPTORS`] fails on the
+    // classifier side rather than vanishing quietly.
+    #[test]
+    fn every_classifier_state_has_exactly_one_descriptor() {
+        let label_sets = state_label_sets();
         let mut reached: std::collections::BTreeSet<(String, String)> = Default::default();
         for labels in &label_sets {
             for rvah in [None, Some(true), Some(false)] {
@@ -47278,7 +47434,7 @@ mod state_descriptor_tests {
                     }
                     let d = descriptor(&state);
                     match &d.occupancy {
-                        StateOccupancy::Lane(l) => assert_eq!(
+                        StateOccupancy::Lane { lane: l, .. } => assert_eq!(
                             l.key(),
                             lane.key(),
                             "`{state}` classifies into lane `{}` but its descriptor points \
@@ -47299,7 +47455,7 @@ mod state_descriptor_tests {
             }
         }
         for d in STATE_DESCRIPTORS {
-            if let StateOccupancy::Lane(l) = &d.occupancy {
+            if let StateOccupancy::Lane { lane: l, .. } = &d.occupancy {
                 assert!(
                     reached.contains(&(l.key().to_string(), d.key.to_string())),
                     "descriptor `{}` names lane cell `{}`.`{}`, which no classifier input \
@@ -47371,39 +47527,7 @@ mod state_descriptor_tests {
     // single-label sweep passes straight through both directions of that bug.
     #[test]
     fn every_emitted_lane_cell_is_claimed_by_an_emitted_descriptor() {
-        let mut label_sets: Vec<Vec<String>> = vec![vec![]];
-        for l in HUMAN_DECISION_LABELS {
-            label_sets.push(vec![l.to_string()]);
-        }
-        for v in VETTER_VERDICT_LABELS {
-            label_sets.push(vec![v.to_string()]);
-        }
-        for l in [
-            RETIRED_HUMAN_REJECT_LABEL,
-            RETIRED_BLOCKED_DEPLOY_LABEL,
-            RETIRED_STATE_LABEL,
-            STATE_BLOCKED_ON.key,
-            STATE_READY.key,
-            "ai:close-candidate",
-        ] {
-            label_sets.push(vec![l.to_string()]);
-        }
-        // Every ordered pair of state labels: a label-bucket key and a precedence winner disagree
-        // exactly here, and nowhere else.
-        let singles: Vec<String> = label_sets
-            .iter()
-            .filter(|l| l.len() == 1)
-            .map(|l| l[0].clone())
-            .collect();
-        for a in &singles {
-            for b in &singles {
-                if a != b {
-                    label_sets.push(vec![a.clone(), b.clone()]);
-                }
-            }
-        }
-
-        let doc = doc_for(&label_sets);
+        let doc = doc_for(&state_label_sets_with_pairs());
         let emitted = doc
             .get("stateDescriptors")
             .expect("descriptors are emitted");
@@ -47445,6 +47569,164 @@ mod state_descriptor_tests {
                 );
             }
         }
+    }
+
+    // ONE population per state (#228): a lane state's `counts` key IS the size of the lane cell
+    // its row declares as its occupancy, so the document cannot answer "how many PRs are in this
+    // state?" two ways. `counts.ready` 23 over an ABSENT `vetter-verdicts`.`ai:ready` cell — the
+    // label bucket against the classifier, both defensible, neither labelled — is what this holds.
+    //
+    // Swept by ITERATING [`STATE_DESCRIPTORS`], never by naming states: a hand list is exactly the
+    // drift that produced the bug, and it fails open (a new state simply is not checked). A row
+    // added, renamed or re-laned arrives here already swept, and a row whose `counts` key stops
+    // being written fails on the key rather than on a number.
+    //
+    // Two guards keep the sweep from passing vacuously, because a sweep that covers nothing is
+    // green: `checked` must equal the table's own lane-row count (so an iteration broken to visit
+    // nothing fails), and the FIXTURE must actually contain a state whose label bucket differs
+    // from its cell (so a `counts` key reverted to the bucket cannot slip through a fixture where
+    // the two happen to agree).
+    #[test]
+    fn every_lane_states_counts_key_is_its_lane_cell() {
+        let doc = doc_for(&state_label_sets_with_pairs());
+        let counts = doc["counts"].as_object().expect("counts is an object");
+        let lanes = &doc["lanes"];
+        // The label bucket, straight off the wire: `states.<label>` is the population the five
+        // legacy keys used to count. Read here only to prove the fixture makes the two DIFFER.
+        let states = doc["states"].as_object().expect("states is an object");
+
+        let mut checked = 0usize;
+        let mut disagreeing: Vec<&str> = Vec::new();
+        for d in STATE_DESCRIPTORS {
+            let StateOccupancy::Lane { lane, counts: key } = &d.occupancy else {
+                continue;
+            };
+            let cell = lane_state_count(lanes, lane.key(), d.key);
+            assert_eq!(
+                counts.get(*key).and_then(|v| v.as_u64()),
+                Some(cell as u64),
+                "counts.{key} must BE the `{}`.`{}` cell it declares as its occupancy, which \
+                 holds {cell} — a second census of one state is the divergence #228 removed",
+                lane.key(),
+                d.key
+            );
+            checked += 1;
+            let bucket = states
+                .get(d.key)
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            if bucket != cell {
+                disagreeing.push(*key);
+            }
+        }
+        let lane_rows = STATE_DESCRIPTORS
+            .iter()
+            .filter(|d| matches!(d.occupancy, StateOccupancy::Lane { .. }))
+            .count();
+        assert_eq!(
+            checked, lane_rows,
+            "the sweep must visit every lane row in the table, not {checked} of {lane_rows}"
+        );
+        assert!(
+            !disagreeing.is_empty(),
+            "the fixture must hold at least one state whose LABEL BUCKET differs from its lane \
+             cell, or this test passes against a `counts` still built from the buckets"
+        );
+    }
+
+    // The daily review shows the same states the document does, and no others (#228). Both
+    // directions, structurally: a lane row with no section is a state the human never sees, and a
+    // section over a non-lane row lists PRs from a cell that does not exist.
+    #[test]
+    fn every_lane_state_has_exactly_one_review_section() {
+        let sectioned: Vec<&str> = REVIEW_LANE_SECTIONS.iter().map(|(_, d)| d.key).collect();
+        for d in STATE_DESCRIPTORS {
+            let StateOccupancy::Lane { .. } = &d.occupancy else {
+                continue;
+            };
+            assert_eq!(
+                sectioned.iter().filter(|k| **k == d.key).count(),
+                1,
+                "state `{}` must print in exactly one daily-review section — a lane state with \
+                 none is inventory the human is never shown",
+                d.key
+            );
+        }
+        for (title, d) in REVIEW_LANE_SECTIONS {
+            assert!(
+                matches!(d.occupancy, StateOccupancy::Lane { .. }),
+                "review section `{title}` names `{}`, whose occupancy is not a lane cell — it \
+                 would list PRs from a cell that is never emitted",
+                d.key
+            );
+        }
+    }
+
+    // The section lists the CELL, never the label bucket beside it: an `ai:ready` PR whose verdict
+    // is stale at its head prints under UN-VETTED, not under the human's MERGE inbox. This is the
+    // live 2026-08-06 shape — 23 labelled PRs, none vetted at head — reduced to one PR.
+    #[test]
+    fn a_stale_at_head_ready_pr_prints_as_un_vetted_not_as_merge() {
+        let stale = SubjectRef::new(
+            "rainlanguage/raindex",
+            10,
+            "https://github.com/rainlanguage/raindex/pull/10",
+            "pushed past its verdict",
+        );
+        let out = review_lane_sections(&lanes_doc(&[QueuePr {
+            subject: stale.clone(),
+            labels: vec![STATE_READY.key.to_string()],
+            ready_vetted_at_head: Some(false),
+            producer_commented: false,
+        }]));
+        let (unvetted, rest) = out
+            .split_once("▓▓ MERGE")
+            .expect("the merge section is always printed — an empty live state stays visible");
+        assert!(
+            unvetted.contains("UN-VETTED") && unvetted.contains("/pull/10"),
+            "a stale-at-head ai:ready PR belongs to the vetter, above the merge inbox: {out}"
+        );
+        assert!(
+            rest.starts_with(" — ai:ready  (0)"),
+            "the human's merge inbox is the CELL, which holds nothing here: {out}"
+        );
+        assert!(
+            !rest.contains("/pull/10"),
+            "the labelled PR must not also be listed under MERGE — one subject, one state: {out}"
+        );
+    }
+
+    // A residue section is printed only while its state is occupied, off the same declared
+    // occupancy its descriptor is gated on — so a drained retiree leaves the review exactly as it
+    // leaves the emitted shape, instead of renting a permanent empty heading.
+    #[test]
+    fn a_retired_states_review_section_appears_only_while_it_has_residue() {
+        let drained = review_lane_sections(&lanes_doc(&[]));
+        assert!(
+            !drained.contains("BLOCKED-INFRA"),
+            "a drained retired state must leave the review: {drained}"
+        );
+        assert!(
+            drained.contains("MERGE") && drained.contains("UN-VETTED"),
+            "an empty LIVE state still prints, at zero: {drained}"
+        );
+        let residue = review_lane_sections(&lanes_doc(&[QueuePr {
+            subject: SubjectRef::new(
+                "rainlanguage/rainlang",
+                535,
+                "https://github.com/rainlanguage/rainlang/pull/535",
+                "residue pr",
+            ),
+            labels: vec![RETIRED_STATE_LABEL.to_string()],
+            ready_vetted_at_head: None,
+            producer_commented: false,
+        }]));
+        assert!(
+            residue.contains("BLOCKED-INFRA") && residue.contains("/pull/535"),
+            "while the residue lasts the state is shown, with the PR that needs unpicking: \
+             {residue}"
+        );
     }
 
     // Every occupancy source and history key a descriptor declares EXISTS in the document the
@@ -47564,7 +47846,7 @@ mod state_descriptor_tests {
         let mut lanes = serde_json::Map::new();
         for d in STATE_DESCRIPTORS {
             match &d.occupancy {
-                StateOccupancy::Lane(l) => {
+                StateOccupancy::Lane { lane: l, .. } => {
                     let cells = lanes
                         .entry(l.key().to_string())
                         .or_insert_with(|| Value::Object(Default::default()));
@@ -47888,12 +48170,23 @@ mod subject_ref_tests {
             "ai:design".into(),
             vec![sref("rainlanguage/raindex", 11, "pull", "design pr")],
         );
-        let lanes = lanes_doc(&[QueuePr {
-            subject: sref("rainlanguage/raindex", 10, "pull", "ready pr"),
-            labels: vec!["ai:ready".to_string()],
-            ready_vetted_at_head: Some(true),
-            producer_commented: false,
-        }]);
+        // BOTH bucketed PRs, because the live subcommand classifies the same `records` it buckets:
+        // a document whose `states` and `lanes` describe different populations is not a shape this
+        // tool can emit, and the `counts` keys are the lane cells (#228).
+        let lanes = lanes_doc(&[
+            QueuePr {
+                subject: sref("rainlanguage/raindex", 10, "pull", "ready pr"),
+                labels: vec!["ai:ready".to_string()],
+                ready_vetted_at_head: Some(true),
+                producer_commented: false,
+            },
+            QueuePr {
+                subject: sref("rainlanguage/raindex", 11, "pull", "design pr"),
+                labels: vec!["ai:design".to_string()],
+                ready_vetted_at_head: None,
+                producer_commented: false,
+            },
+        ]);
         // One issue-shaped and one PR-shaped member, each with the url it really has: the emitted
         // link must come from the payload, not from a per-key assumption about what the array holds.
         let (cc_unvetted, cc_unvetted_n) = issue_state_pair(vec![
@@ -48697,7 +48990,7 @@ mod subject_ref_tests {
                 "counts.{key} must be the length of the {key} array it labels"
             );
         }
-        // The legacy label-based counts read the same buckets the `states` arrays are built from.
+        // A lane state's count is its lane CELL, not the label bucket beside it (#228).
         assert_eq!(d.pointer("/counts/ready").unwrap(), &json!(1));
         assert_eq!(d.pointer("/counts/design").unwrap(), &json!(1));
         assert_eq!(d.pointer("/counts/totalProducerPrs").unwrap(), &json!(2));
