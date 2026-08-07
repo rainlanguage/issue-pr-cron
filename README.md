@@ -1459,10 +1459,65 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   deploy string above, residue wearing it models nothing and falls through.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
-stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved
-unchanged; `lanes` and the additive `counts` keys (`reject`, `relink` (retired,
+stale `ai:*` label). `lanes` and the **lane-state** `counts` keys (`ready`,
+`design`, `blockedOn`, `blockedInfra` (retired), `reject`, `relink` (retired,
 counting down to zero), `humanReject`, `unvetted`) are the full-machine view the
-dashboard renders.
+dashboard renders. They are not the whole of `counts`: the close-candidate split
+below and the non-state rollups (`closeCandidateIssues`, `leaks`,
+`totalProducerPrs`, `archivedRepoPrs`, `uncoveredIssues`, `openIssues`) sit
+beside them, and each measures a top-level array rather than a lane.
+
+### One population per state (#228)
+
+Every state declares where its inventory lives, and its `counts` key is read
+from exactly there — derived by iterating the state table, so a key cannot
+measure something its own declaration does not. There are two declarations, and
+the direction differs:
+
+- a **lane** state (`ready`, `design`, `blockedOn`, `blockedInfra`, `reject`,
+  `relink`, `humanReject`, `unvetted`) is inventoried by its `lanes` cell, and
+  its `counts` key is DERIVED from that cell's size;
+- a **top-level** state (`uncoveredIssues`, `leak`, `closeCandidateUnvetted`,
+  `closeCandidateUpheld`) is inventoried by a top-level array, and its `counts`
+  key IS that array's length — the click-through pairing `counts.X == X.len()`
+  that already held.
+
+Either way one population, read once. The rest of this section is about the lane
+states, because that is where the second census was.
+
+Four of those keys used to be counted a second way, from the **label bucket**
+(`ai_state_label`, the first `ai:*` label a PR carries) rather than from
+`classify_lane` precedence. Both populations are defensible and neither said
+which it was, so the document answered the same question twice. On 2026-08-06
+`counts.ready` was **23** while the `vetter-verdicts` / `ai:ready` cell was
+**absent** — all 23 labelled PRs were un-vetted at their current head — and the
+dashboard drew the human's merge inbox at 0 beneath a sparkline plotted at 23.
+The daily human-readable review printed the same 23 under `MERGE — ai:ready`, so
+the tool disagreed with its own `--json`. Both now read the cell.
+
+The label population is **not** gone and did not need a second count key: the
+top-level `states` object is exactly that census. `states.<label>` is every PR
+carrying the label whatever its head, click-through like every other array, and
+it has never meant anything else. The two differ precisely on the PRs the
+classifier routes past their own label — a stale-at-head `ai:ready` PR is in
+`states["ai:ready"]` and in the `un-vetted` cell, because it carries the word
+and is not in the state.
+
+**This puts a step in the history series.** Each `human-queue-history.jsonl`
+line copies `counts` verbatim, so a series means whatever its key meant on the
+day it was sampled. `ready`, `design`, `blockedOn` and `blockedInfra` change
+meaning at the commit that landed this, and the past is **not** rewritten —
+those lines are true measurements of the machine as it then was. Only `ready`
+steps visibly (23 → 0 on the 2026-08-06 snapshot), because `ai:ready` is the
+only label the classifier splits on head drift; the inventory did not move
+(`un-vetted` already held those PRs), the measurement did. The other three have
+no such split and can differ only on a PR carrying two state labels, which is
+off-protocol. `unvetted`, `reject`, `relink` and `humanReject` were already the
+lane cell and do not move. A separate lineage note for the same file:
+`blockedDeploy` does not change meaning, it **ends** — #221 deleted the state,
+so the key stops being emitted at that commit and its past stands as the record
+of a state the machine no longer has. `humanDesign` ends the same way, deleted
+by #219.
 
 The close-candidate lifecycle carries two further additive counts over BOTH
 subject types (#211/#212) — the legacy `closeCandidateIssues` keeps its
