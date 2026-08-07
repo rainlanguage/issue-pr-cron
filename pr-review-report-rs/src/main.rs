@@ -54511,6 +54511,24 @@ mod infra_down_tests {
         for still_live in ["ai:design", "ai:blocked-on"] {
             assert!(PRODUCER_STATE_LABELS.contains(&still_live));
         }
+        // …and the DELETED one has no `label_meta` row either (#221). That table is what
+        // `EnsureLabel` hands to `gh label create --force`, so a row is the difference between a
+        // label this machine would RE-CREATE org-wide with its own colour and description and one
+        // it does not know at all. The definitions were deleted from every repo; a surviving row
+        // would let the next thing that named the string put them all back. Asserted against an
+        // arbitrary unknown label rather than against literals, so the pin is "no row of its own",
+        // not "these exact default bytes".
+        assert_eq!(
+            label_meta("ai:blocked-deploy"),
+            label_meta("nonexistent-label-with-no-row"),
+            "the deleted state must fall to the default, not carry its own label_meta row"
+        );
+        // The CONTRAST that keeps this honest: `ai:blocked-infra` is retired-but-occupied, so it
+        // deliberately KEEPS its row (the kept-while-nonzero contract).
+        assert_ne!(
+            label_meta(RETIRED_STATE_LABEL),
+            label_meta("nonexistent-label-with-no-row")
+        );
     }
 
     /// `flag-blocked-deploy` refuses (#162) — and the refusal TEACHES: it names the retirement,
