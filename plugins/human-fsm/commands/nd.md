@@ -37,11 +37,26 @@ deliverables, and the whole job is telling them apart:
   space **as the code actually constrains it** (which options the tree in front
   of you forecloses, which it leaves open, and what each costs), and a
   recommendation. The human's answer is the exit.
-- **Already answered** — an existing ruling, a recorded precedent, or a repo
-  convention the surrounding files state already settles it. The pointer IS the
+- **Already answered** — something already settles it, and the pointer IS the
   finding: name where the answer lives, and the recommendation is to rule that
   answer. Do not re-derive it as if it were open; a settled question re-asked is
   how precedents drift.
+
+  **What this command can actually reach, and what it cannot.** Two sources are
+  verifiable here: a ruling or a statement in the PR's own linked issues and
+  trusted comments (`pr_context` carries them), and a convention the code states
+  — the pragma of the file next door, the sibling implementation, the constant
+  already shared — which `Read` reaches inside the checkout. A ruling recorded
+  on **any other issue or PR** is reachable by no tool in this grant: there is
+  no issue search here, no `gh`, and no fetch.
+
+  So if you recall such a precedent, say so **as a recollection, marked
+  unverified**, name the issue or PR you believe carries it, and let the human
+  confirm it — never present it as a checked pointer. That is the same move step
+  4 makes for a truncated diff and step 5 makes for a failed checkout: name the
+  read you could not make. It does not license answering from memory, which the
+  grant section below forbids for exactly this reason; it makes the memory
+  visible AS memory instead of laundering it into a finding.
 - **Not a design question** — the flag is misrouted: the question is askable of
   the code (a read would answer it), answerable by precedent the raiser did not
   consult, or resting on a false premise about what the code currently does. The
@@ -154,7 +169,10 @@ should make writing it cheap:
 - a **genuine question** exits through the human's answer — recommend the ruling
   with the work order the answer implies already drafted;
 - an **already-answered** question exits the same way, with the existing answer
-  as the order and the pointer in the note;
+  as the order and the pointer in the note — and where the pointer is a
+  recollection rather than something you read here, the note says so, because a
+  work order resting on an unverified precedent is one the producer will execute
+  as though it were checked;
 - a **misroute** exits as the correction: the work order says what the correct
   move was, so the producer executes that instead of re-asking.
 

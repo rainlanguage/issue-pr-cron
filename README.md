@@ -661,6 +661,50 @@ harness defers anyway, a vetter that cannot call it sees its own tools as
 nonexistent and records nothing at all (#63). The producer keeps deferral: it
 has Bash and a far larger surface, where the round trip pays for itself.
 
+#### `next_design` — the design questions, and why its order is the flag queue's
+
+The third inbox, and the last one worked by hand searches. `next_ready` answers
+which PR is next to merge and `next_close_candidate` which flag is next to rule
+on; nothing answered **which design question is next** — so the queue that waits
+on nothing but a human's answer was the queue with no entry point. Per row: the
+PR's title/`baseRefName`/`headRefOid`/labels, and the **trusted comment that
+raised the live question** — the vetter's `record-verdict design` note or the
+producer's `flag-design` note, whichever is the array tail, with
+`question.source` saying which. A vetter-raised question carries the sha it
+pinned and `question.atHead` says whether that is still the head; a
+producer-raised one pins no sha and reports `null` rather than a bool asserting
+a comparison nothing performed.
+
+**The order is `next_close_candidate`'s, and the argument transfers whole rather
+than by analogy.** Cheapest-first exists on the PR side because merges are the
+scarce resource; neither half of that reaches here. There is **no cost signal**
+— a question's length says nothing about how hard it is to answer — and the
+label **parks the PR**: `ai:design` waits on a human while every AI actor leaves
+it alone, so a waiting question is a PR that is neither being built nor being
+judged. FIFO bounds that limbo; every order that is not FIFO leaves some
+question at the back for ever. Ordering by the raising comment's timestamp is
+ordering by the moment the PR became the human's, which is exactly the wait
+being bounded.
+
+**The counts are a partition, not a difference.** `aiDesign` equals
+`draft +
+humanRuled + unaddressable + presentable + noQuestion + fetchErrors +
+archivedRepo`,
+and `withheld` names the rows behind three of them with the one line that says
+which. That shape is the fix for the failure mode a single `excluded` number
+has: it folds unrelated withholdings together, and the one class that cannot
+even be named — a hit whose ref does not parse — disappears inside it. A draft
+is withheld from the head for a reason that is **not** the merge queue's (a
+draft's question is perfectly answerable; what is still moving is the code it is
+about) and is listed by name, because an excluded row nobody lists is a PR owned
+by nobody.
+
+**The exit is a send-back.** Answering a design question routes the PR straight
+back to the producer as `ai:reject` plus the answer as the trusted work order,
+in one call — the same act a rejection is (#219). So every ruling retires its
+own row, which is why the page caps at 3 for `next_ready`'s reason with more
+force: a page is stale past its head by construction.
+
 ### Vetting is a pure function, and `vetted_at_head` is its cache key
 
 A verdict is the value of one function — **the PR at its current head** — and
@@ -1857,11 +1901,15 @@ an archived repo froze, in the same place it reports its other withheld sets:
 `counts.archivedRepo` and `archivedRepoFlags` on `next_close_candidate`,
 `counts.skipArchivedRepo` and `archivedRepoFlags` on the vetter's
 close-candidate inbox, `counts.skipArchivedRepo` and `archivedRepo` on
-`unvetted`, `counts.archivedRepo` on `next_ready`, an `archived-repo` segment in
-the `--queue` header, `archivedRepoPrs` on `human-queue`, and a
-`(N withheld: archived repo, unactionable)` note on `worklist`,
-`uncovered-issues` and `state-load`. Silence is what let these sit unnoticed; a
-stated count says the flags exist without offering work nobody can do.
+`unvetted`, `counts.archivedRepo` on `next_ready`, `counts.archivedRepo` on
+`next_design` (whose FIFO order makes the drop matter more than elsewhere — a
+frozen row sorts to the FRONT of an oldest-first queue and stays there, which is
+`rain.webapp#139` at the head of the flag queue four minutes after that repo was
+archived), an `archived-repo` segment in the `--queue` header, `archivedRepoPrs`
+on `human-queue`, and a `(N withheld: archived repo, unactionable)` note on
+`worklist`, `uncovered-issues` and `state-load`. Silence is what let these sit
+unnoticed; a stated count says the flags exist without offering work nobody can
+do.
 
 **The classification is `cc_gate`'s**, for both close-candidate inboxes at once
 (#207 made `cc_row` consume it, which is what let one variant serve both).

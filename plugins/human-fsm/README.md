@@ -23,7 +23,8 @@ Names collide across plugins; `/human-fsm:close-candidate` disambiguates.
 
 ## The reads and the writes
 
-`/nr` and `/ncc` are the reads that precede a ruling; the rest are the rulings.
+`/nr`, `/ncc` and `/nd` are the reads that precede a ruling — one per inbox: the
+merge queue, the flag queue, and the design questions. The rest are the rulings.
 They differ in how they reach the binary, and the difference is the point.
 
 The rulings shell out to a `pr-review-report` subcommand. The reads call **MCP
@@ -36,12 +37,14 @@ PR and weighing its options means reading the tree. `/ncc` is granted
 `next_close_candidate`, `close_candidate_context` and `pr_context`, and those
 three only: a flag has no diff and no tree to check out, so there is nothing for
 `Skill` or `Read` to reach, and a grant a command cannot use is surface it
-cannot account for. Neither falls back to `gh`, neither assembles a field
-itself, and neither quietly answers from memory: either the tools answered or
-the command says so and stops. That is the guarantee a merge decision needs,
-because the way this goes wrong is not a refusal, it is a plausible answer
-nobody can trace — and a close decision needs it no less, since upholding a flag
-closes an issue somebody filed.
+cannot account for. None of the three falls back to `gh`, none assembles a field
+itself, and none quietly answers from memory: either the tools answered or the
+command says so and stops. That is the guarantee a merge decision needs, because
+the way this goes wrong is not a refusal, it is a plausible answer nobody can
+trace — and a close decision needs it no less, since upholding a flag closes an
+issue somebody filed. A design ruling needs it for a third reason: since #219 an
+answer IS producer work, so a question answered against something nobody read
+dispatches that work on it.
 
 The `allowed-tools` line is a **declaration**, not a sandbox — measured on
 Claude Code 2.1.220, a command granting only `Read` still ran a `Bash` call with
