@@ -977,14 +977,8 @@
         ]
       },
       "un-vetted": {
-        "count": 103,
+        "count": 102,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 231,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/231",
-            "title": "Rename the send-back state from reject to needs-work — label through verb through docs"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 23,
@@ -5526,7 +5520,7 @@
     }
   ],
   "counts": {
-    "unvetted": 103,
+    "unvetted": 102,
     "blockedOn": 17,
     "ready": 0,
     "reject": 0,
@@ -5538,15 +5532,15 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 145,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 602,
-    "openIssues": 763
+    "openIssues": 762
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.5,
-      "medianDays": 101.1,
+      "meanDays": 317.9,
+      "medianDays": 101.2,
       "oldestDays": 1656.7
     }
   }
