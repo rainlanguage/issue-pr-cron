@@ -1261,7 +1261,7 @@ const RETIRED_HUMAN_REJECT_LABEL: &str = "human:reject";
 /// comment, where [`human_ruled_at_head`] reads it. `human:design` is DELETED (#219): its only live
 /// meaning was the parked question, and the question is already a modeled state (`ai:design`), so
 /// the park was a second name for it that only the human could exit — the #109 dead-state defect.
-/// `migrate-design` is the residue's exit.
+/// No repo defines that label and no subject carries it.
 const PR_SACRED_LABELS: [&str; 1] = [RETIRED_HUMAN_REJECT_LABEL];
 
 /// A PR carries a human override label (which beats an `ai:ready` label) when any of its labels is
@@ -12792,8 +12792,7 @@ enum CloseFlagPlan {
 /// `design` writes NO label (#219): a design ruling IS its answer, the answer is producer work,
 /// and an issue is already the producer's subject — its backlog membership needs no label to move —
 /// so the pinned `Ruled …: design — <answer>` comment is the whole record and the producer works
-/// the issue per it. (`human:design` is DELETED from both subject types; `migrate-design` is the
-/// residue's exit.)
+/// the issue per it. (`human:design` is DELETED from both subject types.)
 ///
 /// A CLOSE ruling has no entry (#213): deciding a close and executing it are one transition,
 /// `human-close`, recorded by the pinned `👤 human` comment alone — a label between the decision
@@ -14804,23 +14803,9 @@ const REWORK_MARKER: &str = "Rework note";
 ///
 /// Pinned to the SAME anchor as the ruling it rides with (`Rework note @<anchor>: …`), so an order
 /// for the code that is there now can be told apart from one a later push already executed — the
-/// producer trusts only a note pinned to the head it is asked to rework, and `migrate-design`
-/// reads the same pin to decide whether a residue PR still carries a live order.
+/// producer trusts only a note pinned to the head it is asked to rework.
 fn rework_note_comment(anchor: &str, order: &str) -> String {
     format!("{REWORK_MARKER} @{anchor}: {}", order.trim())
-}
-
-/// PURE: the anchor a trusted work-order comment pins to, or `None` for a note in the legacy
-/// hand-written shape (`Rework note: …`, no pin). An unpinned note proves an order was given but
-/// not FOR WHICH tree, so no reader may treat it as current — `migrate-design` re-posts the
-/// ruling's own note at the head instead of trusting one.
-fn rework_note_anchor(body: &str) -> Option<String> {
-    let rest = body.strip_prefix(REWORK_MARKER)?.strip_prefix(" @")?;
-    let anchor = rest.lines().next()?.split(':').next()?.trim();
-    if anchor.is_empty() {
-        return None;
-    }
-    Some(anchor.to_string())
 }
 
 /// PURE: is this exact work-order comment already posted? Full-body match, not anchor match: a
@@ -16581,10 +16566,9 @@ fn classify_lane(
     // sacred to every AI actor ([`PR_SACRED_LABELS`]), and a state's bucket has to say where the PR
     // actually is, not where the migration will put it. It is the human-decisions lane's ONLY
     // remaining state: a live human decision on a PR is a comment (a ruling at head) or a native
-    // review, never a label — `human:design` is DELETED (#219), so a residue PR still wearing it
-    // classifies by whatever modeled state it otherwise has (un-vetted at the bottom), which is
-    // the honest reading of a label no transition writes or consumes; `migrate-design` moves it
-    // into the reject state its ruling means.
+    // review, never a label — `human:design` is DELETED (#219). Nothing writes that label, no
+    // repo defines it, and it buckets nowhere: a PR wearing one classifies by whatever modeled
+    // state it otherwise has, which is the honest reading of a label the machine does not know.
     if has(RETIRED_HUMAN_REJECT_LABEL) {
         return (Lane::HumanDecisions, RETIRED_HUMAN_REJECT_LABEL.to_string());
     }
@@ -30202,14 +30186,6 @@ enum Cmd {
         #[arg(long)]
         apply: bool,
     },
-    /// One-shot (#219): human:design is DELETED — move every open subject still carrying it. PRs
-    /// land in ai:reject + a trusted work order at head (the live one, else the ruling's own
-    /// note); issues just lose the label. Reports the plan; writes only with --apply.
-    MigrateDesign {
-        /// PERFORM the writes. Without it this is a report and nothing is edited.
-        #[arg(long)]
-        apply: bool,
-    },
     /// Human transition on a PR: both verbs land ai:reject + a sha-pinned 👤 human comment — a
     /// ruling here IS a send-back (#133/#219), and the comment records which verb ruled.
     HumanRule {
@@ -33377,401 +33353,6 @@ fn migrate_reject_mode(apply: bool) -> i32 {
     0
 }
 
-/// The label `migrate-design` removes. DELETED from the FSM (#219): no transition writes, reads,
-/// or refuses on it, no lane buckets it, and `label_meta` no longer registers it — the string
-/// survives only here, as the migration's population key over a fixed, shrinking residue.
-const DELETED_DESIGN_LABEL: &str = "human:design";
-
-/// The ruling verbs whose note is an INSTRUCTION — the only ones [`last_human_ruling_note`] may
-/// carry forward as a work order. `close-candidate` is deliberately absent: its note says why the
-/// subject should be closed, and a torn `human-close` (ruling comment on the record, close never
-/// executed) leaves exactly that comment on an OPEN subject, where taking it as an order would
-/// hand the producer "duplicate of #40" to implement.
-const SEND_BACK_RULINGS: [&str; 2] = ["design", "reject"];
-
-/// PURE: the note text of the most recent trusted `👤 human` SEND-BACK ruling comment — the part
-/// after the `Ruled <anchor>: <ruling> — ` prelude, and only where `<ruling>` is one the note
-/// instructs on ([`SEND_BACK_RULINGS`]). This is what `migrate-design` posts as the work order
-/// when no live one is pinned at the head. `None` means no such comment exists — a hand-applied
-/// label, or a ruling whose note is not an instruction — and the migration then asks the question
-/// rather than inventing an answer.
-fn last_human_ruling_note(subject: &Value) -> Option<String> {
-    trusted_comments(subject, Some(HUMAN_MARKER))
-        .iter()
-        .rev()
-        .find_map(|b| {
-            let (head, tail) = b.split_once(" — ")?;
-            // `👤 human\nRuled <anchor>: <verb>` — the verb is what follows the LAST `: `, so an
-            // anchor containing one (`close-candidate @…`) cannot be read as the verb.
-            let verb = head.rsplit_once(": ")?.1.trim();
-            if !SEND_BACK_RULINGS.contains(&verb) {
-                return None;
-            }
-            let tail = tail.trim();
-            if tail.is_empty() {
-                None
-            } else {
-                Some(tail.to_string())
-            }
-        })
-}
-
-/// Where a migrated PR's work order comes from. A send-back the producer cannot read is inert —
-/// `campaign-prompt.txt` tells the producer that a reject with no trusted note is PARKED for a
-/// human — so an order the migration cannot produce is what decides the PR's TARGET, not merely
-/// what its report says.
-#[derive(Debug, PartialEq)]
-enum MigrateOrder {
-    /// A trusted order is already pinned to the current head — the ruling's own posting survives
-    /// the label move as-is; re-posting it would only fork the record.
-    LiveAtHead,
-    /// No live order at the head: post this `Rework note @<head>: …` body — the ruling's own note,
-    /// pinned to the current head.
-    Post(String),
-}
-
-/// What `migrate-design` will do to ONE PR, computed purely from its fetched JSON.
-#[derive(Debug, PartialEq)]
-enum MigrateDesignPlan {
-    /// Does not carry the deleted label — nothing to migrate (the search should never hand one of
-    /// these over, but a plan that only answers for the happy case is not a plan).
-    NotCarrying,
-    /// The ruling's ANSWER is recoverable, so the PR becomes what an answered design ruling
-    /// produces today: `ai:reject` + a trusted work order live at the head.
-    Answered {
-        /// Add `ai:reject` (false when the PR already carries it — re-running is idempotent).
-        add_target: bool,
-        /// Other `ai:*` labels to strip, so the PR ends in exactly ONE modeled state.
-        clears: Vec<String>,
-        order: MigrateOrder,
-    },
-    /// No answer is recoverable: no trusted order at the head and no trusted `👤 human` ruling
-    /// comment to take a note from. The PR becomes `ai:design` — the machine's own state for "a
-    /// human must answer this", which is the `/nd` queue.
-    ///
-    /// This is the mapping the DATA forces, and it is the honest one. `human:design` predates the
-    /// marker-emitting ruling transition, so the residue records its hold as untrusted prose:
-    /// nothing `trusted_comments` can read, hence no order to carry forward. Sending such a PR to
-    /// `ai:reject` would assert an answer nobody gave, and land it in the producer's queue as an
-    /// orderless reject — a state the producer is told to leave alone, so the question would go
-    /// neither answered nor asked. An unanswered hold is an unanswered QUESTION, and the question
-    /// already has a modeled state.
-    Unanswered {
-        /// Add `ai:design` (false when the PR already carries it — re-running is idempotent).
-        add_target: bool,
-        /// Other `ai:*` labels to strip, so the PR ends in exactly ONE modeled state.
-        clears: Vec<String>,
-    },
-}
-
-/// PURE: [`migrate_design_mode`]'s decision for one PR (#219), and the discriminant is whether the
-/// ruling's ANSWER survives in machine-readable form:
-///
-/// - a trusted order pinned at the head, or a trusted `👤 human` ruling whose note can be posted
-///   as one → the PR is ANSWERED, and lands where an answered design ruling lands today;
-/// - neither → the PR is UNANSWERED, and lands in `ai:design`, where a human is asked.
-///
-/// Mapping both to one target was the tempting shape and it is wrong in the direction that
-/// matters: it would put a question the machine cannot answer into the queue for work the machine
-/// cannot do.
-fn migrate_design_pr_plan(pr_json: &Value) -> MigrateDesignPlan {
-    let labels = label_names(pr_json);
-    if !labels.iter().any(|l| l == DELETED_DESIGN_LABEL) {
-        return MigrateDesignPlan::NotCarrying;
-    }
-    let head = pr_json
-        .get("headRefOid")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let live_at_head = !head.is_empty()
-        && trusted_comments(pr_json, Some(REWORK_MARKER))
-            .iter()
-            .any(|b| rework_note_anchor(b).as_deref() == Some(head));
-    let order = if live_at_head {
-        Some(MigrateOrder::LiveAtHead)
-    } else {
-        match (last_human_ruling_note(pr_json), head.is_empty()) {
-            (Some(note), false) => Some(MigrateOrder::Post(rework_note_comment(head, &note))),
-            _ => None,
-        }
-    };
-    match order {
-        Some(order) => MigrateDesignPlan::Answered {
-            add_target: !labels.iter().any(|l| l == "ai:reject"),
-            clears: labels_to_remove(&labels, "ai:reject"),
-            order,
-        },
-        None => MigrateDesignPlan::Unanswered {
-            add_target: !labels.iter().any(|l| l == "ai:design"),
-            clears: labels_to_remove(&labels, "ai:design"),
-        },
-    }
-}
-
-/// PURE: does this ISSUE carry the deleted label? The whole issue-side decision: the label is
-/// stripped and nothing replaces it — the ruling comment (where one exists) stays the record, and
-/// losing the label is what returns the issue to the producer backlog.
-fn migrate_design_issue_carries(issue_json: &Value) -> bool {
-    label_names(issue_json)
-        .iter()
-        .any(|l| l == DELETED_DESIGN_LABEL)
-}
-
-/// One population's search argv for `migrate-design`: open subjects of `kind` (`prs` / `issues`)
-/// still carrying the deleted label, across every configured org.
-fn migrate_design_search(kind: &str) -> Vec<String> {
-    let mut search: Vec<String> = vec!["search".into(), kind.into()];
-    search.extend(org_owner_args());
-    search.extend(
-        [
-            "--state",
-            "open",
-            "--label",
-            DELETED_DESIGN_LABEL,
-            "--limit",
-            "200",
-            "--json",
-            "number,repository,title,url",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    search
-}
-
-/// `migrate-design [--apply]`: the #219 one-shot — `human:design` is DELETED from the FSM, and
-/// this moves every open subject still carrying it, on the `migrate-reject` precedent (#133): a
-/// label nothing writes any more is also a label nothing removes, so the residue cannot leave
-/// unaided.
-///
-/// PRs land in exactly the state a design ruling produces today ([`migrate_design_pr_plan`]);
-/// issues just lose the label ([`migrate_design_issue_carries`]). Nothing keeps the label.
-///
-/// **It defaults to a REPORT** for the reason `migrate-reject` does: it acts on a whole population
-/// across every configured org in one call, and an outward-facing bulk relabel is not something a
-/// forgotten `--dry-run` should be the only thing standing between — the flag GATES the write.
-///
-/// ORDER IS THE FAIL-SAFE, per PR: `ai:reject` goes on FIRST, the work order is posted NEXT, and
-/// `human:design` comes off LAST. A mid-sequence `gh` failure leaves the PR carrying both labels —
-/// more parked than it started, and still in the search population, so a re-run resumes it — never
-/// un-parked with no trusted order for the producer to execute.
-fn migrate_design_mode(apply: bool) -> i32 {
-    let mut failed = 0;
-    let mut moved = 0;
-    let mut unanswered = 0;
-    // ── PRs ──
-    let search = migrate_design_search("prs");
-    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
-    let Some(val) = gh_json(&sref) else {
-        eprintln!(
-            "error: `gh search prs --label {DELETED_DESIGN_LABEL}` failed — not editing on incomplete data"
-        );
-        return 1;
-    };
-    let pr_targets = retire_targets(&val);
-    println!(
-        "{} open PR(s) carry the deleted {DELETED_DESIGN_LABEL}{}",
-        pr_targets.len(),
-        if apply {
-            " — answered ones to ai:reject + work order, unanswered ones to ai:design"
-        } else {
-            " (report only; pass --apply to write)"
-        }
-    );
-    for (slug, num) in &pr_targets {
-        let n = num.to_string();
-        let Some(prj) = gh_json(&[
-            "pr",
-            "view",
-            &n,
-            "-R",
-            slug,
-            "--json",
-            "labels,comments,headRefOid",
-        ]) else {
-            eprintln!("  {slug}#{num} -> FAILED to read; not editing on incomplete data");
-            failed += 1;
-            continue;
-        };
-        // The target IS the plan's answer: an answered ruling becomes the send-back it always
-        // meant, an unanswered one becomes the question it always was.
-        let (target, add_target, clears, order) = match migrate_design_pr_plan(&prj) {
-            MigrateDesignPlan::NotCarrying => {
-                println!("  {slug}#{num} -> already migrated (no {DELETED_DESIGN_LABEL})");
-                continue;
-            }
-            MigrateDesignPlan::Answered {
-                add_target,
-                clears,
-                order,
-            } => ("ai:reject", add_target, clears, Some(order)),
-            MigrateDesignPlan::Unanswered { add_target, clears } => {
-                unanswered += 1;
-                ("ai:design", add_target, clears, None)
-            }
-        };
-        let order_word = match &order {
-            Some(MigrateOrder::LiveAtHead) => "work order already live at head".to_string(),
-            Some(MigrateOrder::Post(body)) => {
-                format!("post work order: {}", body.replace('\n', " / "))
-            }
-            None => "no recoverable answer — asked as a question, for /nd".to_string(),
-        };
-        if !apply {
-            println!(
-                "  [report] {slug}#{num} -> {}{} , remove {DELETED_DESIGN_LABEL}  [{order_word}]",
-                if add_target {
-                    format!("add {target}")
-                } else {
-                    format!("{target} already present")
-                },
-                if clears.is_empty() {
-                    String::new()
-                } else {
-                    format!(", remove {}", clears.join(","))
-                }
-            );
-            continue;
-        }
-        let (color, desc) = label_meta(target);
-        if !gh_run(&[
-            "label",
-            "create",
-            target,
-            "-R",
-            slug,
-            "--color",
-            color,
-            "--description",
-            desc,
-            "--force",
-        ]) {
-            eprintln!("  {slug}#{num} -> warning: could not ensure {target} exists");
-        }
-        if add_target && !gh_run(&["pr", "edit", &n, "-R", slug, "--add-label", target]) {
-            eprintln!(
-                "  {slug}#{num} -> FAILED to add {target}; {DELETED_DESIGN_LABEL} left in place"
-            );
-            failed += 1;
-            continue;
-        }
-        if let Some(MigrateOrder::Post(body)) = &order {
-            if !gh_run(&["pr", "comment", &n, "-R", slug, "--body", body]) {
-                eprintln!(
-                    "  {slug}#{num} -> FAILED to post the work order; {DELETED_DESIGN_LABEL} left \
-                     in place so the PR stays parked rather than un-parked with nothing to execute"
-                );
-                failed += 1;
-                continue;
-            }
-        }
-        let mut ok = true;
-        for c in &clears {
-            if !gh_run(&["pr", "edit", &n, "-R", slug, "--remove-label", c]) {
-                eprintln!("  {slug}#{num} -> warning: failed to remove stale {c}");
-                ok = false;
-            }
-        }
-        if !gh_run(&[
-            "pr",
-            "edit",
-            &n,
-            "-R",
-            slug,
-            "--remove-label",
-            DELETED_DESIGN_LABEL,
-        ]) {
-            eprintln!("  {slug}#{num} -> FAILED to remove {DELETED_DESIGN_LABEL}");
-            failed += 1;
-            continue;
-        }
-        moved += 1;
-        println!(
-            "  {slug}#{num} -> {target}{}  [{order_word}]",
-            if ok { "" } else { " (stale ai:* partly left)" }
-        );
-    }
-    // ── issues ──
-    let search = migrate_design_search("issues");
-    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
-    let Some(val) = gh_json(&sref) else {
-        eprintln!(
-            "error: `gh search issues --label {DELETED_DESIGN_LABEL}` failed — not editing on incomplete data"
-        );
-        return 1;
-    };
-    let issue_targets = retire_targets(&val);
-    println!(
-        "{} open issue(s) carry the deleted {DELETED_DESIGN_LABEL}{}",
-        issue_targets.len(),
-        if apply {
-            " — stripping the label (the ruling comment stays the record)"
-        } else {
-            " (report only; pass --apply to write)"
-        }
-    );
-    for (slug, num) in &issue_targets {
-        let n = num.to_string();
-        let Some(ij) = gh_json(&["issue", "view", &n, "-R", slug, "--json", "labels,url"]) else {
-            eprintln!("  {slug}#{num} -> FAILED to read; not editing on incomplete data");
-            failed += 1;
-            continue;
-        };
-        // `gh issue view` answers for a PR too; a PR that slipped into this pass belongs to the
-        // PR pass above, where the label move must carry its work order with it.
-        if ij
-            .get("url")
-            .and_then(|u| u.as_str())
-            .is_some_and(|u| u.contains("/pull/"))
-        {
-            println!("  {slug}#{num} -> is a PULL REQUEST; handled by the PR pass");
-            continue;
-        }
-        if !migrate_design_issue_carries(&ij) {
-            println!("  {slug}#{num} -> already migrated (no {DELETED_DESIGN_LABEL})");
-            continue;
-        }
-        if !apply {
-            println!("  [report] {slug}#{num} -> remove {DELETED_DESIGN_LABEL}");
-            continue;
-        }
-        if !gh_run(&[
-            "issue",
-            "edit",
-            &n,
-            "-R",
-            slug,
-            "--remove-label",
-            DELETED_DESIGN_LABEL,
-        ]) {
-            eprintln!("  {slug}#{num} -> FAILED to remove {DELETED_DESIGN_LABEL}");
-            failed += 1;
-            continue;
-        }
-        moved += 1;
-        println!("  {slug}#{num} -> label removed; back in the producer backlog");
-    }
-    println!(
-        "{}: {} subject(s), {} PR(s) asked as questions (ai:design, no recoverable answer){}",
-        if apply { "migrated" } else { "would migrate" },
-        if apply {
-            moved
-        } else {
-            pr_targets.len() + issue_targets.len()
-        },
-        unanswered,
-        if failed > 0 {
-            format!(", {failed} FAILED")
-        } else {
-            String::new()
-        }
-    );
-    if failed > 0 {
-        return 1;
-    }
-    0
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // already-fixed — the MERGED-side read the candidate set does not have.
 //
@@ -34338,7 +33919,6 @@ fn main() {
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), &[], dry_run),
         Cmd::MigrateReject { apply } => migrate_reject_mode(apply),
-        Cmd::MigrateDesign { apply } => migrate_design_mode(apply),
         Cmd::HumanRule {
             slug,
             pr,
@@ -34923,8 +34503,8 @@ mod queue_tests {
                 "{l} must block a vetter verdict"
             );
         }
-        // The DELETED `human:design` (#219) is not in the vocabulary and blocks nothing: residue
-        // still wearing it is ordinary producer/vetter territory until `migrate-design` strips it.
+        // The DELETED `human:design` (#219) is not in the vocabulary and blocks nothing: a
+        // subject wearing that label is ordinary producer/vetter territory.
         assert_ne!(
             close_candidate_plan("OPEN", &s(&["human:design"]), false, false),
             CloseFlagPlan::RefuseHuman,
@@ -38838,13 +38418,10 @@ mod repo_root_tests {
             // `sweep_stale_closed_flags` for the first — do the withholding, which is why the
             // filter is not visible in the builder.
             "flagged_subjects_args",
-            // RETIRED/DELETED one-shot sweeps (#108 item 4, #133, #219). Nothing writes these
-            // labels any more, the populations are fixed and shrinking, and none OFFERS work: a
-            // per-subject edit that fails is already reported as a failed edit rather than queued
-            // as a task. (`migrate_design_search` is #219's argv builder — the mode fn reaches
-            // the scope through it.)
+            // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
+            // both populations are fixed and shrinking, and neither OFFERS work: a per-PR edit
+            // that fails is already reported as a failed edit rather than queued as a task.
             "migrate_reject_mode",
-            "migrate_design_search",
             "retire_blocked_infra_mode",
             // A test.
             "next_close_candidate_tests",
@@ -44019,15 +43596,11 @@ mod cli_tests {
             parse(&["prr", "migrate-reject", "--apply"]),
             Cmd::MigrateReject { apply: true }
         );
-        // The #219 one-shot has the same report-by-default gate.
-        assert_eq!(
-            parse(&["prr", "migrate-design"]),
-            Cmd::MigrateDesign { apply: false }
-        );
-        assert_eq!(
-            parse(&["prr", "migrate-design", "--apply"]),
-            Cmd::MigrateDesign { apply: true }
-        );
+        // `migrate-design` is GONE (#219/#221): the one-shot executed, so the subcommand went
+        // with it — a migration is an execution vehicle, not permanent machinery. Parsing it must
+        // fail like any other unknown verb.
+        assert!(Cli::try_parse_from(["prr", "migrate-design"]).is_err());
+        assert!(Cli::try_parse_from(["prr", "migrate-design", "--apply"]).is_err());
         assert!(matches!(
             parse(&["prr", "human-queue"]),
             Cmd::HumanQueue { .. }
@@ -45872,10 +45445,10 @@ mod worklist_tests {
         assert!(is_producer_backlog(&mk(&["bug", "ai:some-label"])));
         // ai:close-candidate → the human's close queue, surfaced separately — not the backlog.
         assert!(!is_producer_backlog(&mk(&["ai:close-candidate"])));
-        // Any human:* label → not the producer's. The exclusion is the NAMESPACE prefix, so the
-        // deleted `human:design` residue (#219) also sits out — its exit is `migrate-design`
-        // stripping the label, which is what returns the issue to this backlog. A LIVE design
-        // ruling writes no label at all, so it never leaves the backlog in the first place.
+        // Any human:* label → not the producer's. The exclusion is the NAMESPACE prefix, so an
+        // issue hand-labelled with the deleted `human:design` (#219) would sit out too — the
+        // prefix rule does not enumerate names. A design ruling writes no label at all, so it
+        // never takes an issue out of this backlog.
         assert!(!is_producer_backlog(&mk(&["human:keep-open"])));
         assert!(!is_producer_backlog(&mk(&["bug", "human:reject"])));
         assert!(!is_producer_backlog(&mk(&["human:design"])));
@@ -46849,289 +46422,6 @@ mod one_reject_state_tests {
             migrate_reject_plan(&pr_at(HEAD, &["ai:reject"], vec![])),
             MigrateRejectPlan::NotRetired
         );
-    }
-
-    // ---- the DELETED design state, and the migration that is its only exit (#219) --------------
-
-    fn order_at(anchor: &str) -> Value {
-        json!({
-            "author": {"login": TRUSTED_AUTHOR},
-            "body": rework_note_comment(anchor, "split the crate"),
-        })
-    }
-
-    fn design_ruling_at(anchor: &str) -> Value {
-        json!({
-            "author": {"login": TRUSTED_AUTHOR},
-            "body": human_rule_comment(anchor, "design", "split the crate along the parser"),
-        })
-    }
-
-    #[test]
-    fn migrate_design_sends_back_an_answered_ruling_and_keeps_a_live_order() {
-        // ORDERED residue (a live work order pinned at the current head): the answer is on the
-        // record, so the PR becomes the send-back it meant — and the order is not re-posted.
-        let ordered = pr_at(
-            HEAD,
-            &["human:design", "ai:ready", "bug"],
-            vec![design_ruling_at(HEAD), order_at(HEAD)],
-        );
-        assert_eq!(
-            migrate_design_pr_plan(&ordered),
-            MigrateDesignPlan::Answered {
-                add_target: true,
-                clears: vec!["ai:ready".to_string()],
-                order: MigrateOrder::LiveAtHead,
-            }
-        );
-        // PARKED residue with a trusted ruling: the answer is recoverable from the ruling's own
-        // note, which is posted as the order pinned to the current head.
-        let parked = pr_at(HEAD, &["human:design"], vec![design_ruling_at(OLD)]);
-        assert_eq!(
-            migrate_design_pr_plan(&parked),
-            MigrateDesignPlan::Answered {
-                add_target: true,
-                clears: vec![],
-                order: MigrateOrder::Post(rework_note_comment(
-                    HEAD,
-                    "split the crate along the parser"
-                )),
-            }
-        );
-        // EXECUTED-shaped residue (order pinned only to a superseded head): not a live order, so
-        // the ruling's note is re-posted at the current head like the parked case.
-        let executed = pr_at(
-            HEAD,
-            &["human:design"],
-            vec![design_ruling_at(OLD), order_at(OLD)],
-        );
-        assert_eq!(
-            migrate_design_pr_plan(&executed),
-            MigrateDesignPlan::Answered {
-                add_target: true,
-                clears: vec![],
-                order: MigrateOrder::Post(rework_note_comment(
-                    HEAD,
-                    "split the crate along the parser"
-                )),
-            }
-        );
-        // Idempotent: a PR that no longer carries the deleted label is nothing to migrate — pure
-        // parks of OTHER labels and already-migrated PRs are untouched.
-        assert_eq!(
-            migrate_design_pr_plan(&pr_at(HEAD, &["ai:reject"], vec![order_at(HEAD)])),
-            MigrateDesignPlan::NotCarrying
-        );
-        // A spoofed order from another account is body text: it neither counts as live nor
-        // suppresses the re-post.
-        let spoofed = pr_at(
-            HEAD,
-            &["human:design"],
-            vec![
-                design_ruling_at(OLD),
-                json!({"author": {"login": "mallory"},
-                       "body": rework_note_comment(HEAD, "sabotage")}),
-            ],
-        );
-        assert_eq!(
-            migrate_design_pr_plan(&spoofed),
-            MigrateDesignPlan::Answered {
-                add_target: true,
-                clears: vec![],
-                order: MigrateOrder::Post(rework_note_comment(
-                    HEAD,
-                    "split the crate along the parser"
-                )),
-            }
-        );
-    }
-
-    /// A ruling with NO recoverable answer becomes the QUESTION it always was — `ai:design`, the
-    /// `/nd` queue — never an orderless `ai:reject`, which the producer is told to leave alone
-    /// (`campaign-prompt.txt`: "a reject-labelled PR WITHOUT any trusted note is PARKED for a
-    /// human"). This is the shape of the ENTIRE live residue: all six open `human:design` PRs
-    /// predate the marker-emitting transition, so none carries a trusted ruling comment or order.
-    #[test]
-    fn migrate_design_asks_an_unanswered_ruling_as_a_question() {
-        // The live population's exact shape: the label alone, no trusted comments at all.
-        let bare = pr_at(HEAD, &["human:design"], vec![]);
-        assert_eq!(
-            migrate_design_pr_plan(&bare),
-            MigrateDesignPlan::Unanswered {
-                add_target: true,
-                clears: vec![],
-            }
-        );
-        // Untrusted prose is not an answer, however much of it there is.
-        let prose = pr_at(
-            HEAD,
-            &["human:design", "ai:ready"],
-            vec![json!({"author": {"login": "someone-else"},
-                        "body": "👤 human\nRuled abc123: design — do the thing"})],
-        );
-        assert_eq!(
-            migrate_design_pr_plan(&prose),
-            MigrateDesignPlan::Unanswered {
-                add_target: true,
-                clears: vec!["ai:ready".to_string()],
-            }
-        );
-        // A torn `human-close` leaves a trusted ruling comment on an OPEN subject, and its note is
-        // a CLOSE reason — never an order. Reading it as one would hand the producer "duplicate of
-        // #40" to implement, so it reads as unanswered.
-        let torn_close = pr_at(
-            HEAD,
-            &["human:design"],
-            vec![json!({"author": {"login": TRUSTED_AUTHOR},
-                        "body": human_rule_comment(
-                            "close-candidate @2026-07-17T21:23:11Z",
-                            "close-candidate",
-                            "duplicate of #40")})],
-        );
-        assert_eq!(
-            migrate_design_pr_plan(&torn_close),
-            MigrateDesignPlan::Unanswered {
-                add_target: true,
-                clears: vec![],
-            }
-        );
-        // Idempotent: a PR already asked stays asked, and the target is not re-added.
-        let already = pr_at(HEAD, &["human:design", "ai:design"], vec![]);
-        assert_eq!(
-            migrate_design_pr_plan(&already),
-            MigrateDesignPlan::Unanswered {
-                add_target: false,
-                clears: vec![],
-            }
-        );
-        // A REJECT ruling's note IS an instruction, so it still answers — the guard is on the
-        // verb, not on the marker.
-        let reject_ruled = pr_at(
-            HEAD,
-            &["human:design"],
-            vec![json!({"author": {"login": TRUSTED_AUTHOR},
-                        "body": human_rule_comment(OLD, "reject", "restore the leg-1 assertion")})],
-        );
-        assert_eq!(
-            migrate_design_pr_plan(&reject_ruled),
-            MigrateDesignPlan::Answered {
-                add_target: true,
-                clears: vec![],
-                order: MigrateOrder::Post(rework_note_comment(HEAD, "restore the leg-1 assertion")),
-            }
-        );
-    }
-
-    #[test]
-    fn migrate_design_strips_the_label_from_issues_and_touches_nothing_else() {
-        let carrying = json!({"labels": [{"name": "human:design"}, {"name": "bug"}]});
-        assert!(migrate_design_issue_carries(&carrying));
-        let clean = json!({"labels": [{"name": "bug"}]});
-        assert!(!migrate_design_issue_carries(&clean));
-    }
-
-    // The note extraction the parked-residue order rides on: the LAST trusted ruling wins (the
-    // human superseding themselves), untrusted comments never contribute, and a subject with no
-    // ruling comment yields nothing rather than an invented order.
-    #[test]
-    fn the_migrations_order_text_is_the_last_trusted_rulings_note() {
-        let subject = pr_at(
-            HEAD,
-            &["human:design"],
-            vec![
-                design_ruling_at(OLD),
-                json!({"author": {"login": TRUSTED_AUTHOR},
-                       "body": human_rule_comment(HEAD, "design", "actually: keep one crate")}),
-                json!({"author": {"login": "mallory"},
-                       "body": human_rule_comment(HEAD, "design", "spoofed order")}),
-            ],
-        );
-        assert_eq!(
-            last_human_ruling_note(&subject).as_deref(),
-            Some("actually: keep one crate")
-        );
-        assert_eq!(last_human_ruling_note(&pr_at(HEAD, &[], vec![])), None);
-        // A ruling whose note is empty after the dash contributes nothing either.
-        let blank = pr_at(
-            HEAD,
-            &[],
-            vec![
-                json!({"author": {"login": TRUSTED_AUTHOR}, "body": "👤 human\nRuled x: design — "}),
-            ],
-        );
-        assert_eq!(last_human_ruling_note(&blank), None);
-        // Only a SEND-BACK verb's note is an instruction. A `close-candidate` ruling's note says
-        // why to CLOSE — a torn `human-close` leaves exactly that on an open subject — and a
-        // `keep-open`'s is a standing constraint; neither is an order to hand a producer.
-        for (verb, anchor) in [
-            ("close-candidate", "close-candidate @2026-07-17T21:23:11Z"),
-            ("keep-open", "issue @2026-01-01T00:00:00Z"),
-        ] {
-            let ruled = pr_at(
-                HEAD,
-                &[],
-                vec![json!({"author": {"login": TRUSTED_AUTHOR},
-                            "body": human_rule_comment(anchor, verb, "duplicate of #40")})],
-            );
-            assert_eq!(last_human_ruling_note(&ruled), None, "{verb}");
-        }
-        // …and the verb is read from AFTER the LAST `: `, never the first. The prelude is not
-        // guaranteed to be one line: a human ruling at a terminal can carry context above the
-        // `Ruled …` line, and every `Word: ` in it sits before the verb. Reading from the FIRST
-        // `: ` would take that context as the verb, find it is not a send-back, and silently
-        // discard a real answer the migration could have carried forward.
-        let with_context = pr_at(
-            HEAD,
-            &[],
-            vec![json!({"author": {"login": TRUSTED_AUTHOR},
-                        "body": format!("{HUMAN_MARKER}\nContext: see the thread\nRuled {HEAD}: design — answer it this way")})],
-        );
-        assert_eq!(
-            last_human_ruling_note(&with_context).as_deref(),
-            Some("answer it this way")
-        );
-        // The same shape reaches the plan: an answered ruling with a context line is ANSWERED.
-        assert_eq!(
-            migrate_design_pr_plan(&pr_at(
-                HEAD,
-                &["human:design"],
-                vec![json!({"author": {"login": TRUSTED_AUTHOR},
-                            "body": format!("{HUMAN_MARKER}\nContext: see the thread\nRuled {HEAD}: design — answer it this way")})],
-            )),
-            MigrateDesignPlan::Answered {
-                add_target: true,
-                clears: vec![],
-                order: MigrateOrder::Post(rework_note_comment(HEAD, "answer it this way")),
-            }
-        );
-        // A flag anchor's own colons are likewise not the verb.
-        let flag_anchored = pr_at(
-            HEAD,
-            &[],
-            vec![json!({"author": {"login": TRUSTED_AUTHOR},
-                        "body": human_rule_comment(
-                            "close-candidate @2026-07-17T21:23:11Z",
-                            "design",
-                            "answer it this way")})],
-        );
-        assert_eq!(
-            last_human_ruling_note(&flag_anchored).as_deref(),
-            Some("answer it this way")
-        );
-    }
-
-    // Both populations are searched with the same shape as `migrate-reject`'s, per subject kind —
-    // the label key is the DELETED name, and nothing else in the binary names it any more.
-    #[test]
-    fn migrate_design_searches_both_subject_kinds_for_the_deleted_label() {
-        assert_eq!(DELETED_DESIGN_LABEL, "human:design");
-        for kind in ["prs", "issues"] {
-            let args = migrate_design_search(kind);
-            assert_eq!(args[1], kind);
-            assert!(args.contains(&"--label".to_string()));
-            assert!(args.contains(&DELETED_DESIGN_LABEL.to_string()), "{args:?}");
-            assert!(args.contains(&"open".to_string()));
-        }
     }
 }
 
@@ -48368,9 +47658,8 @@ mod human_rule_tests {
             ),
             (Lane::HumanDecisions, RETIRED_HUMAN_REJECT_LABEL.to_string())
         );
-        // The DELETED `human:design` (#219) is NOT a lane state: nothing writes it, so a residue
-        // PR still wearing it classifies by what it otherwise is — un-vetted at the bottom — and
-        // `migrate-design` moves it into the reject state its ruling means.
+        // The DELETED `human:design` (#219) is NOT a lane state: nothing writes it, so a PR
+        // wearing that label classifies by what it otherwise is — un-vetted at the bottom.
         assert_eq!(
             classify_lane(&s(&["human:design"]), None, false),
             (Lane::VetLifecycle, "un-vetted".to_string())
@@ -49142,8 +48431,8 @@ mod human_rule_tests {
             )
         );
         // The DELETED `human:design` (#219) has no registration left: this table is consulted
-        // only for a label a transition is about to WRITE, and nothing writes it — `migrate-design`
-        // only ever removes it, so a row here would be a colour nothing can apply.
+        // only for a label a transition is about to WRITE, and nothing writes it, so a row here
+        // would be a colour nothing can apply.
         assert_eq!(label_meta("human:design"), fallback);
     }
 
@@ -56282,8 +55571,11 @@ mod delegation_111_tests {
             vec![body.clone()],
             "the emitted order must come back from the producer's own marker read"
         );
-        // The pin is the SAME anchor the ruling pins to, and it parses back.
-        assert_eq!(rework_note_anchor(&body).as_deref(), Some(HEAD));
+        // The pin is the SAME anchor the ruling pins to, and it is carried literally.
+        assert!(
+            body.starts_with(&format!("{REWORK_MARKER} @{HEAD}: ")),
+            "{body:?}"
+        );
         // A third party posting the identical text is filtered by AUTHOR, not by marker.
         let spoofed = pr(
             &["ai:reject"],
@@ -56394,19 +55686,18 @@ mod delegation_111_tests {
         ));
     }
 
-    // The pin parser survives the delegation classifier it once fed: `migrate-design` reads it to
-    // find a live order at the head, and the producer's freshness read depends on the same
-    // answers. An unpinned legacy note and an empty pin both name no tree, so neither may ever be
-    // taken as current.
+    // The PIN is the live half of the contract: the producer reads `Rework note @<head>: …` and
+    // trusts an order only where the anchor is the head it is being asked to rework. Nothing in
+    // this binary parses it back — the producer does — so what must hold here is that the emitted
+    // form carries the anchor in exactly the shape that read expects.
     #[test]
-    fn the_work_order_pin_parses_and_unpinnable_notes_name_no_tree() {
-        assert_eq!(
-            rework_note_anchor(&rework_note_comment(HEAD, "do X")).as_deref(),
-            Some(HEAD)
-        );
-        assert_eq!(rework_note_anchor("Rework note: drop the dup hunk"), None);
-        assert_eq!(rework_note_anchor("Rework note @: do X"), None);
-        assert_eq!(rework_note_anchor("Rework note @   : do X"), None);
+    fn the_emitted_work_order_pins_the_anchor_in_the_form_the_producer_reads() {
+        let body = rework_note_comment(HEAD, "do X");
+        assert_eq!(body, format!("Rework note @{HEAD}: do X"));
+        assert!(body.starts_with(REWORK_MARKER));
+        // A DIFFERENT anchor is a different order — the pin is what makes staleness visible.
+        assert_ne!(body, rework_note_comment(OLD, "do X"));
+        assert!(rework_note_comment(OLD, "do X").contains(OLD));
     }
 
     // ---- MECHANISM: the disposition is explicit at the point of ruling --------------------------
@@ -56557,9 +55848,9 @@ mod delegation_111_tests {
 
     #[test]
     fn a_verdict_neither_refuses_on_nor_clears_the_deleted_design_label() {
-        // Residue `human:design` beside a stale ai:*: the verdict RECORDS (the label is not
-        // sacred — the state is deleted) and its sweep touches ONLY the ai:* namespace: the
-        // residue label is `migrate-design`'s to move, not the vetter's.
+        // A hand-applied `human:design` beside a stale ai:*: the verdict RECORDS (the label is
+        // not sacred — the state is deleted) and its sweep touches ONLY the ai:* namespace, so
+        // the stray is left exactly where it was rather than quietly cleaned up by an AI write.
         let residue = pr(&["human:design", "ai:ready"], vec![], HEAD);
         match verdict_plan(&residue, "ai:reject", "reject") {
             VerdictPlan::Record { to_remove, .. } => {

@@ -185,15 +185,10 @@ that has already happened:
 - **re-ruling supersedes** rather than refuses. The human owns this namespace
   and may correct a mis-click, so any old `human:*` is removed as the new ruling
   lands — the one **RUNTIME** removal of a `human:*` label, sanctioned because
-  the actor removing it wrote it. The other removers are MIGRATIONS rather than
-  transitions of the running FSM: `migrate-reject` moves the PRs still carrying
-  the `human:reject` #133 retired onto `ai:reject`, and `migrate-design` moves
-  every subject still carrying the `human:design` #219 **deleted** — PRs onto
-  `ai:reject` with a trusted work order live at the head (the one already pinned
-  there, else the ruling's own note), issues onto no label at all, back in the
-  producer backlog with the ruling comment as the record. Each is a one-shot
-  over a fixed, shrinking population, which is why neither is a path a live
-  ruling can take;
+  the actor removing it wrote it. The other remover is a MIGRATION rather than a
+  transition of the running FSM: `migrate-reject` moves the PRs still carrying
+  the `human:reject` #133 retired onto `ai:reject` — a one-shot over a fixed,
+  shrinking population, which is why it is not a path a live ruling can take;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:reject` sat on an issue whose producer close-candidate flag had not
@@ -1355,9 +1350,8 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   carries it (#133). The count is the migration's progress meter:
   `migrate-reject` moves those PRs to `ai:reject` and it only ever shrinks. It
   is the lane's only state: a live human decision on a PR is a comment or a
-  native review, never a label — `human:design` is DELETED (#219), so residue
-  `migrate-design` has not yet moved classifies by whatever modeled state the PR
-  otherwise has (un-vetted at the bottom).
+  native review, never a label — `human:design` is DELETED (#219), and no PR
+  carries it.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). The legacy `states` / `leaks` / `counts` keys are preserved

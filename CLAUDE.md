@@ -335,8 +335,7 @@ it finds is a different PR's code.
   override. `human:reject` survives only as a RETIRED label on PRs the migration
   has not moved; it stays sacred and stays bucketed until `migrate-reject` does.
   `human:design` does not survive at all: nothing writes, reads, or buckets it,
-  and `migrate-design` moves the residue — PRs to `ai:reject` with their work
-  order live at head, issues back to the bare producer backlog.
+  no repo defines it, and no subject carries it.
 - **A verdict accounts for every file the PR changes.** Scope coverage was the
   one thing `record_verdict` took on trust, and a verdict formed without a
   changed file in view is indistinguishable from a diligent one:
