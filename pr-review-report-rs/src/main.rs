@@ -25142,6 +25142,38 @@ fn nd_hit_class(hit: &Value) -> DesignHit {
     DesignHit::Candidate { slug, num }
 }
 
+/// PURE: fold ONE classified hit into the running candidate list, counts and withheld list.
+///
+/// Split out for the reason [`apply_outcome`] is, and the reason is the same defect twice: a
+/// classification that only becomes a count and a listed row INSIDE a network function is a
+/// behaviour no unit test can reach, so "the draft is counted" and "the draft is listed by name"
+/// look identical to the suite. They are not identical to a human: an excluded row nobody lists
+/// is a PR owned by nobody, which is the starvation this queue's FIFO order exists to bound.
+///
+/// EXHAUSTIVE on purpose. A new [`DesignHit`] arm must be given its own count here rather than
+/// folding into an existing one, which is what keeps `aiDesign` provably the sum of its parts.
+fn nd_apply_hit(
+    hit: DesignHit,
+    candidates: &mut Vec<(String, u64)>,
+    counts: &mut DesignQueueCounts,
+    withheld: &mut Vec<Value>,
+) {
+    match hit {
+        DesignHit::Candidate { slug, num } => candidates.push((slug, num)),
+        DesignHit::Draft { pr } => {
+            counts.draft += 1;
+            withheld.push(nd_withheld_entry(&pr, ND_WHY_DRAFT));
+        }
+        // Counted, never listed: a subject the human has already ruled on is a decision made, not
+        // an inbox item, and listing it would re-offer the question they closed.
+        DesignHit::HumanRuled => counts.human_ruled += 1,
+        DesignHit::Unaddressable { named } => {
+            counts.unaddressable += 1;
+            withheld.push(nd_withheld_entry(&named, ND_WHY_UNADDRESSABLE));
+        }
+    }
+}
+
 /// PURE: this queue's population — the search hits split into the ones a ruling can be written
 /// to and the ones an ARCHIVED repo froze (#206).
 ///
@@ -25199,18 +25231,12 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
     // provably the sum of its parts.
     let mut candidates: Vec<(String, u64)> = Vec::new();
     for hit in &arr {
-        match nd_hit_class(hit) {
-            DesignHit::Candidate { slug, num } => candidates.push((slug, num)),
-            DesignHit::Draft { pr } => {
-                counts.draft += 1;
-                withheld.push(nd_withheld_entry(&pr, ND_WHY_DRAFT));
-            }
-            DesignHit::HumanRuled => counts.human_ruled += 1,
-            DesignHit::Unaddressable { named } => {
-                counts.unaddressable += 1;
-                withheld.push(nd_withheld_entry(&named, ND_WHY_UNADDRESSABLE));
-            }
-        }
+        nd_apply_hit(
+            nd_hit_class(hit),
+            &mut candidates,
+            &mut counts,
+            &mut withheld,
+        );
     }
     for (slug, num) in candidates {
         // A dropped PR must be VISIBLE, for the reason `next_close_candidate` lists its own: a
@@ -25655,6 +25681,57 @@ mod next_design_tests {
         ] {
             assert_eq!(doc["counts"][key], json!(want), "counts.{key}");
         }
+    }
+
+    // Counting a withheld row and NAMING it are two different services to the human, and the fold
+    // is where the second one happens. A draft that is counted but not listed leaves the human a
+    // number they cannot act on — the PR is withheld from the head, absent from the list, and
+    // worked by nobody — so the push is asserted here rather than left to the network function.
+    #[test]
+    fn a_withheld_hit_is_both_counted_and_named() {
+        let fold = |hit: DesignHit| {
+            let (mut candidates, mut counts, mut withheld) =
+                (Vec::new(), DesignQueueCounts::default(), Vec::new());
+            nd_apply_hit(hit, &mut candidates, &mut counts, &mut withheld);
+            (candidates, counts, withheld)
+        };
+
+        let (candidates, counts, withheld) = fold(DesignHit::Draft {
+            pr: "o/r#7".to_string(),
+        });
+        assert!(candidates.is_empty(), "a draft is not presented");
+        assert_eq!(counts.draft, 1);
+        assert_eq!(
+            withheld,
+            vec![nd_withheld_entry("o/r#7", ND_WHY_DRAFT)],
+            "a draft must be NAMED as well as counted — a count alone is a row the human cannot \
+             go and look at"
+        );
+
+        let (candidates, counts, withheld) = fold(DesignHit::Unaddressable {
+            named: "a hit with no ref".to_string(),
+        });
+        assert!(candidates.is_empty());
+        assert_eq!(counts.unaddressable, 1);
+        assert_eq!(
+            withheld,
+            vec![nd_withheld_entry("a hit with no ref", ND_WHY_UNADDRESSABLE)]
+        );
+
+        // The one class that is counted and NOT listed, deliberately: a ruled subject is a
+        // decision already made, and listing it would re-offer a question the human closed.
+        let (candidates, counts, withheld) = fold(DesignHit::HumanRuled);
+        assert!(candidates.is_empty());
+        assert_eq!(counts.human_ruled, 1);
+        assert!(withheld.is_empty());
+
+        let (candidates, counts, withheld) = fold(DesignHit::Candidate {
+            slug: "o/r".to_string(),
+            num: 7,
+        });
+        assert_eq!(candidates, vec![("o/r".to_string(), 7)]);
+        assert_eq!(counts.draft + counts.human_ruled + counts.unaddressable, 0);
+        assert!(withheld.is_empty());
     }
 
     // ── the population filter (#206) ──────────────────────────────────────────────────────────
