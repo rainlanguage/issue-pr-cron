@@ -47075,8 +47075,36 @@ mod one_reject_state_tests {
             );
             assert_eq!(last_human_ruling_note(&ruled), None, "{verb}");
         }
-        // …and the verb is read from AFTER the last `: `, so an anchor that itself contains one
-        // cannot be mistaken for the verb.
+        // …and the verb is read from AFTER the LAST `: `, never the first. The prelude is not
+        // guaranteed to be one line: a human ruling at a terminal can carry context above the
+        // `Ruled …` line, and every `Word: ` in it sits before the verb. Reading from the FIRST
+        // `: ` would take that context as the verb, find it is not a send-back, and silently
+        // discard a real answer the migration could have carried forward.
+        let with_context = pr_at(
+            HEAD,
+            &[],
+            vec![json!({"author": {"login": TRUSTED_AUTHOR},
+                        "body": format!("{HUMAN_MARKER}\nContext: see the thread\nRuled {HEAD}: design — answer it this way")})],
+        );
+        assert_eq!(
+            last_human_ruling_note(&with_context).as_deref(),
+            Some("answer it this way")
+        );
+        // The same shape reaches the plan: an answered ruling with a context line is ANSWERED.
+        assert_eq!(
+            migrate_design_pr_plan(&pr_at(
+                HEAD,
+                &["human:design"],
+                vec![json!({"author": {"login": TRUSTED_AUTHOR},
+                            "body": format!("{HUMAN_MARKER}\nContext: see the thread\nRuled {HEAD}: design — answer it this way")})],
+            )),
+            MigrateDesignPlan::Answered {
+                add_target: true,
+                clears: vec![],
+                order: MigrateOrder::Post(rework_note_comment(HEAD, "answer it this way")),
+            }
+        );
+        // A flag anchor's own colons are likewise not the verb.
         let flag_anchored = pr_at(
             HEAD,
             &[],
