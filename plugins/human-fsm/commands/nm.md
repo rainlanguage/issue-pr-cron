@@ -38,16 +38,23 @@ deliverable of this command is naming which:
   One command, because a state reached by a sequence of hand edits is a state
   nothing can audit, which is how this PR got here.
 
-  The commonest cause is a label the classifier NO LONGER RECOGNISES. Note the
-  distinction, because it is the difference between a leak and a false alarm: a
-  state the FSM **retired** is usually still bucketed on purpose — the label
-  stays in the classifier precisely so the PRs already wearing it stay visible
-  in their old lane — and such a PR is in a modeled state and will never appear
-  here. It is a state **deleted** from the classifier's vocabulary that leaks:
-  once no arm matches the label, the PR falls through every lane, and it does so
-  the moment the deletion lands rather than when anyone touches the PR. So a
-  cluster of leaks all wearing one dead label is not a producer that misbehaved;
-  it is a migration that removed a state and left its population behind.
+  The commonest cause is a label the classifier NO LONGER RECOGNISES, and there
+  are three cases worth telling apart before you diagnose one:
+
+  - A state the FSM **retired** is usually still bucketed on purpose — the label
+    stays in the classifier so the PRs already wearing it stay visible in their
+    old lane — so such a PR is in a modeled state and never appears here.
+  - A **deleted `ai:*`** state does not appear here either, and that is a ruling
+    rather than an accident: the vetter absorbs the PR as un-vetted and the
+    verdict that judges it strips the dead label, so the machine heals it
+    without a human. If you find one in this queue, that is itself the defect.
+  - A **deleted `human:*`** state DOES leak, because nothing absorbs it — the
+    vetter's label sweep is `ai:*`-scoped. The PR falls through every lane the
+    moment the deletion lands, not when anyone touches it.
+
+  So a cluster of leaks all wearing one dead `human:*` label is not a producer
+  that misbehaved; it is a migration that removed a state and left its
+  population behind, and the finding names the live state each belongs in now.
 - **The machine's vocabulary is missing a state.** The PR is in a real condition
   no label covers — the producer had something true to say and no legal way to
   say it. That is a design gap, and the modeled response is the design path: the
@@ -105,17 +112,23 @@ intent, not a fact about state: a producer note saying "ready" on a PR whose
 diff does not build is two defects, not one.
 
 **4. Check the classifier's actual rule against that evidence — before
-concluding anything.** The rule is one sentence and it is this: an open producer
-PR with NO `ai:*` label whose newest trusted hand-off marker is a
-`🤖 ai:producer` note is a leak; a vetter blocked-on CLEARANCE as the newest
-marker is the modeled transition into un-vetted instead, never a leak. Hold the
-row's evidence against that rule as written. If the evidence does not actually
-satisfy it — the note is not the newest marker, the label list contradicts
-`aiStateLabel`, the "producer note" is something else wearing the prefix — the
-leak is the CLASSIFIER's defect (the third place), and you have found it without
-opening the diff. If the evidence does satisfy the rule, the defect is in the
-first or second place, and the question becomes which state this PR is really
-in.
+concluding anything.** The rule has three clauses and every one of them matters:
+an open producer PR is a leak when (a) the LANE CLASSIFIER files it in no lane —
+so a `human:*` state still in the vocabulary disqualifies it exactly as an
+`ai:*` one does; (b) it carries no `ai:*` label at all, even a dead one, because
+the vetter absorbs those as un-vetted; and (c) its newest trusted hand-off
+marker is a `🤖 ai:producer` note — a vetter blocked-on CLEARANCE as the newest
+marker is the modeled transition into un-vetted instead, never a leak.
+
+Hold the row's evidence against those three as written. Clause (a) is the one
+that was wrong in the machinery itself and is worth checking first: read
+`classifier.lane` on the row, and if it says anything but `leak`, the PR is in
+the state named there and the finding is that this queue produced it at all. If
+the note is not the newest marker, or the "producer note" is something else
+wearing the prefix, that is likewise the CLASSIFIER's defect — the third place —
+and you have found it without opening the diff. If the evidence does satisfy all
+three, the defect is in the first or second place, and the question becomes
+which state this PR is really in.
 
 **5. Decide between the three, from the PR rather than from the note.** The
 producer's note names the state it intended; whether the PR IS in that condition
