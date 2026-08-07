@@ -71,14 +71,11 @@ stateDiagram-v2
 
     %% blocked hand-off. blocked-on sits with the VETTER (#161): the flag carries typed
     %% --blocked-by refs (refused without one) and the vetter's state-load clears it the run after
-    %% every dep merges/closes → fresh re-vet. ai:blocked-deploy is RETIRED (#162): under the
-    %% split release lifecycle NO merge waits on a deploy, so a deploy-shaped block (red prod-pin,
-    %% legacy redeploy marker) is evidence the REPO has not migrated — flagged blocked-on with the
-    %% repo's migration issue/PR as its typed dep (filed if none exists), never a deploy. The
-    %% residue PRs still carrying the retired label stay visible in human-queue until
-    %% migrate-blocked-deploy (#221) — a one-shot MIGRATION, not a live transition — moves each
-    %% to ai:reject with the split-lifecycle rework order; whatever states follow the rework are
-    %% the producer's ordinary transitions.
+    %% every dep merges/closes → fresh re-vet. There is NO blocked-deploy state (#162 retired it,
+    %% #221 deleted it): under the split release lifecycle NO merge waits on a deploy, so a
+    %% deploy-shaped block (red prod-pin, legacy redeploy marker) is evidence the REPO has not
+    %% migrated — flagged blocked-on with the repo's migration issue/PR as its typed dep (filed if
+    %% none exists), never a deploy.
     unvetted --> bon : flag-blocked-on --blocked-by owner/repo#n · waiting on dependency PRs, incl. the repo's lifecycle migration
     unvetted --> design : flag-design · anything a human must answer or supply
     bon --> unvetted : vetter clears · every typed dep merged/closed → re-vet fresh
@@ -191,11 +188,7 @@ that has already happened:
   MIGRATION rather than a transition of the running FSM: `migrate-reject` moves
   the PRs still carrying the `human:reject` #133 retired onto `ai:reject` — a
   one-shot over a fixed, shrinking population, which is why it is not one of the
-  two paths a live ruling can take. `migrate-blocked-deploy` (#221) sits in the
-  same migrations-not-transitions register, over the other retired residue:
-  every open PR still carrying the `ai:blocked-deploy` #162 retired moves to
-  `ai:reject`, with the sha-pinned ruling comment and the trusted `Rework note`
-  carrying the split-release-lifecycle work order posted in the same write;
+  two paths a live ruling can take;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:reject` sat on an issue whose producer close-candidate flag had not
@@ -1347,14 +1340,10 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   the close-candidate machinery, which inventories it in the mixed
   `closeCandidateUnvetted` / `closeCandidateUpheld` arrays — the PR-side mirror
   of a flagged issue leaving `uncoveredIssues`.
-- **producer-blocked** — the RETIRED `ai:blocked-deploy` (#162) and
-  `ai:blocked-infra` (#108), each for as long as any PR still carries it. The
-  blocked-deploy residue is deliberately **not** vet-lifecycle: the #164
-  clearance reads exactly `ai:blocked-on` typed refs, which this residue does
-  not have — its exit is the `migrate-blocked-deploy` one-shot (#221), which
-  moves each residue PR to `ai:reject` with the split-lifecycle rework order.
-  That count is the migration's progress meter and it only ever shrinks; the
-  producer is the mover from the moment of migration.
+- **producer-blocked** — the RETIRED `ai:blocked-infra` (#108), for as long as
+  any PR still carries it. (`ai:blocked-deploy` was retired by #162 and
+  **deleted** by #221: the machine has no such state, so a PR hand-wearing the
+  string classifies as a leak, not a lane member.)
 - **human-decisions** — `human:design`, plus the RETIRED `human:reject` for as
   long as any PR still carries it (#133). That last count is the migration's
   progress meter: `migrate-reject` moves those PRs to `ai:reject` and it only
@@ -1693,12 +1682,12 @@ labeled transition into exactly one modeled state: `design`, `close-candidate`,
 or `blocked-on`. The first two plus `ready` (the merge queue) are the
 **human-gated states** — the daily review queue, a plain label search, no prose
 scraping. `blocked-on` is **not** human-gated (#161): its next mover is the
-vetter, whose state-load clears it automatically — see below. (`blocked-deploy`
-is RETIRED — #162: no merge waits on a deploy under the split release lifecycle,
-so a deploy-shaped block is a repo-migration dependency expressed as
-`blocked-on`.) `design` is the **total-function fallback**: a situation the
-producer cannot classify is by definition one a human has to look at, and
-`design` already means exactly that.
+vetter, whose state-load clears it automatically — see below. (There is no
+`blocked-deploy` state — #162 retired it, #221 deleted it: no merge waits on a
+deploy under the split release lifecycle, so a deploy-shaped block is a
+repo-migration dependency expressed as `blocked-on`.) `design` is the
+**total-function fallback**: a situation the producer cannot classify is by
+definition one a human has to look at, and `design` already means exactly that.
 
 ### `ai:blocked-on` sits with the vetter (#161)
 

@@ -10467,15 +10467,6 @@ fn label_meta(label: &str) -> (&'static str, &'static str) {
         // `ai:relink` is deliberately ABSENT (#135): this table is consulted only for a label a
         // transition is about to WRITE, and no transition writes that label any more. The one PR
         // still carrying it is cleared by re-recording the verdict as `reject`, which strips it.
-        // RETIRED (#162) and never ENSURED any more — no transition writes this label, so nothing
-        // reaches this row. It stays for the same reason the `human:reject` row does: the label
-        // still exists across the org on the residue PRs `migrate-blocked-deploy` (#221) has not
-        // yet moved to `ai:reject`, and a `label_meta` that forgot a live label is how its colour
-        // and description get silently rewritten org-wide by whatever writes it next.
-        "ai:blocked-deploy" => (
-            "d93f0b",
-            "AI producer: blocked on a deploy it can't complete (human)",
-        ),
         "ai:blocked-infra" => (
             "e99695",
             "AI producer: blocked on an infra/tooling gap or can't classify (human)",
@@ -13900,9 +13891,10 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
 
 /// The human-facing noun for a producer state-transition comment (`<noun>: <reason>`).
 ///
-/// `ai:blocked-deploy` is deliberately absent (#162): this table is consulted only when a
-/// transition WRITES a state comment, and no transition writes that state any more. The residue
-/// comments already posted keep their `Blocked-deploy:` noun as body text; nothing re-renders them.
+/// `ai:blocked-deploy` is absent because the state does not exist (#162 retired it, #221 deleted
+/// it): "blocked on a deploy" is not something this machine can express, so there is no comment to
+/// render a noun for. Old comment bodies keep their `Blocked-deploy:` text as history; nothing
+/// re-renders them.
 fn state_noun(label: &str) -> &'static str {
     match label {
         "ai:blocked-on" => "Blocked-on",
@@ -13918,9 +13910,9 @@ fn state_noun(label: &str) -> &'static str {
 /// with the VETTER (#161) — its typed deps are cleared automatically by the vetter's state-load,
 /// and [`classify_lane`] files it accordingly.
 ///
-/// `ai:blocked-infra` was RETIRED by #108 ([`RETIRED_STATE_LABEL`]) and `ai:blocked-deploy` by
-/// #162 ([`RETIRED_BLOCKED_DEPLOY_LABEL`]) — under the split release lifecycle no merge waits on
-/// a deploy, so "blocked on a deploy" is not a state this machine can express.
+/// `ai:blocked-infra` was RETIRED by #108 ([`RETIRED_STATE_LABEL`]); `ai:blocked-deploy` was
+/// retired by #162 and DELETED by #221 — under the split release lifecycle no merge waits on a
+/// deploy, so "blocked on a deploy" is not a state this machine can express.
 const PRODUCER_STATE_LABELS: [&str; 2] = ["ai:design", "ai:blocked-on"];
 
 /// RETIRED (#108). Never written again, and never PARKS a PR — [`next_action`] deliberately does not
@@ -13933,26 +13925,6 @@ const PRODUCER_STATE_LABELS: [&str; 2] = ["ai:design", "ai:blocked-on"];
 /// since that strips every `ai:*` but the target — but a PR nothing transitions would keep it
 /// forever, which is exactly the trap #108 is about.)
 const RETIRED_STATE_LABEL: &str = "ai:blocked-infra";
-
-/// RETIRED (#162). `ai:blocked-deploy` parked a PR whose merge waited on a deploy, and under the
-/// split deploy/abstract release lifecycle that premise is gone: deploy repos freeze per-tag
-/// records and publish on `rainix-tag-release`, the on-chain deploy is a separate manual workflow
-/// dispatch decoupled from publishing (rainlanguage/rainix#282), and library repos never deploy —
-/// NO merge waits on a deploy anywhere. A PR that would earn this label is evidence of exactly one
-/// thing: its REPO has not migrated to the split lifecycle. The block is real but its object is
-/// the migration, so the live spelling is `flag-blocked-on --blocked-by <the repo's migration
-/// issue/PR>` — the ONE blocked state whose clearance the vetter already automates (#161).
-/// `flag-blocked-deploy` refuses naming exactly that (see
-/// [`retired_flag_blocked_deploy_refusal`]).
-///
-/// The constant stays while any PR still carries the label — the kept-while-nonzero contract every
-/// retirement has used (#108/#133/#135). Unlike [`RETIRED_STATE_LABEL`], residue here STILL PARKS
-/// ([`next_action`] consults it): no AI actor re-derives a state for a residue PR from CI. Its
-/// exit is the #221 MIGRATION — [`migrate_blocked_deploy_mode`] moves every residue PR to
-/// `ai:reject` with the sha-pinned ruling comment and the uniform split-lifecycle work order
-/// (the 2026-08-06 ruling, executed as a one-shot rather than per-PR triage). [`classify_lane`]
-/// keeps the residue visible (producer-blocked) until the migration empties it.
-const RETIRED_BLOCKED_DEPLOY_LABEL: &str = "ai:blocked-deploy";
 
 /// Pure plan for a producer state-transition ([`flag_state_mode`]). Mirrors [`verdict_plan`]'s guard —
 /// a `human:*` label OR a native GitHub review is sacred (refuse) — then the label move (strip every
@@ -16659,19 +16631,6 @@ fn classify_lane(
     if has("ai:close-candidate") {
         return (Lane::CloseCandidate, "ai:close-candidate".to_string());
     }
-    // RETIRED (#162) but still bucketed, at its old precedence: a blocked state dominates a stale
-    // `ai:ready` label. Deliberately producer-blocked and NOT vet-lifecycle — the #164 clearance
-    // reads exactly `ai:blocked-on` (typed refs the vetter can resolve), and this residue has
-    // neither the label nor the refs. Its exit is `migrate-blocked-deploy` (#221), the one-shot
-    // that moves each residue PR to `ai:reject` with the split-lifecycle work order. Dropping it
-    // here would reclassify the residue as `un-vetted` and hide the very population that
-    // migration has to empty.
-    if has(RETIRED_BLOCKED_DEPLOY_LABEL) {
-        return (
-            Lane::ProducerBlocked,
-            RETIRED_BLOCKED_DEPLOY_LABEL.to_string(),
-        );
-    }
     // #161: `ai:blocked-on` files under the VETTER's lane — its next mover is the vetter, whose
     // state-load clears the flag the run after every typed dep merges/closes and hands the PR
     // straight back to vetting. Same PRECEDENCE position as the retired blocked residue above: a
@@ -16711,7 +16670,7 @@ fn classify_lane(
 /// Exactly when the answer CHANGES the lane, and that is a question for [`classify_lane`] rather
 /// than for a list of labels kept in step with it. `ready_vetted_at_head` is read in ONE place —
 /// the `ai:ready` branch — and every state ahead of that branch in the precedence order returns
-/// before it: a human decision, the retired reject, the retired blocked-deploy residue,
+/// before it: a human decision, the retired reject, the close-candidate hand-off,
 /// `ai:blocked-on`, the retired blocked-infra residue. So the fetch is asked for directly:
 /// `Some(false)` is what a fetch that finds a STALE verdict yields, `None` is literally what the
 /// lookup yields when NO fetch was made, and when the two classify identically the call is dead
@@ -16720,8 +16679,9 @@ fn classify_lane(
 /// DERIVED, not mirrored, because the mirror had already drifted twice. The hand-written predicate
 /// this replaces was built from [`PRODUCER_STATE_LABELS`], and a retirement takes a label OUT of
 /// that array while leaving it ahead of `ai:ready` in [`classify_lane`] — so `ai:blocked-infra`
-/// (#108) and then `ai:blocked-deploy` (#162) each silently re-armed a fetch whose result nothing
-/// reads. Naming no label here means the next precedence change carries itself.
+/// (#108) and then the since-deleted `ai:blocked-deploy` (#162) each silently re-armed a fetch
+/// whose result nothing reads. Naming no label here means the next precedence change carries
+/// itself.
 fn needs_verdict_currency(labels: &[String], producer_commented: bool) -> bool {
     classify_lane(labels, Some(false), producer_commented)
         != classify_lane(labels, None, producer_commented)
@@ -17192,12 +17152,6 @@ fn human_queue_doc(
             // Legacy label-based counts (UNCHANGED — the dashboard reads these).
             "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
             "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
-            // RETIRED (#162): no transition writes `ai:blocked-deploy` any more, so this counts
-            // down to 0 and stays there. The key is kept while it can be non-zero — the
-            // kept-while-nonzero contract — because it is the #221 migration's progress meter:
-            // `migrate-blocked-deploy` moves each residue PR to `ai:reject` with the
-            // split-lifecycle work order, and the count only ever shrinks.
-            "blockedDeploy": buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL).map(|v| v.len()).unwrap_or(0),
             "blockedInfra": buckets.get("ai:blocked-infra").map(|v| v.len()).unwrap_or(0),
             "blockedOn": buckets.get("ai:blocked-on").map(|v| v.len()).unwrap_or(0),
             "closeCandidateIssues": close_issues.len(),
@@ -17609,15 +17563,6 @@ fn human_queue_mode(json_out: bool) -> i32 {
         }
     };
     // producer-blocked (`ai:blocked-on` prints with the vetter's group above — #161)
-    // RETIRED (#162) — no transition writes this label any more. Shown while any PR still carries
-    // it — the #221 migration's progress meter: `migrate-blocked-deploy` moves each residue PR to
-    // `ai:reject` with the split-lifecycle rework order, and this group only ever shrinks.
-    if let Some(v) = buckets.get(RETIRED_BLOCKED_DEPLOY_LABEL) {
-        show(
-            "BLOCKED-DEPLOY (RETIRED — migrate-blocked-deploy moves these to ai:reject)",
-            v,
-        );
-    }
     if let Some(v) = buckets.get("ai:blocked-infra") {
         show("BLOCKED-INFRA", v);
     }
@@ -30268,19 +30213,6 @@ enum Cmd {
         #[arg(long)]
         apply: bool,
     },
-    /// One-shot (#221): move every open PR still carrying the RETIRED ai:blocked-deploy label
-    /// (#162) to ai:reject, posting the sha-pinned 👤 human ruling comment and the trusted Rework
-    /// note carrying the split-release-lifecycle work order. Reports the plan; writes only with
-    /// --apply.
-    MigrateBlockedDeploy {
-        /// PERFORM the writes. Without it this is a report and nothing is edited.
-        #[arg(long)]
-        apply: bool,
-        /// The EXPLICIT spelling of the default: report, write nothing. Conflicts with --apply so
-        /// one call can never say both.
-        #[arg(long, conflicts_with = "apply")]
-        dry_run: bool,
-    },
     /// Human transition on a PR: apply human:<ruling> + a sha-pinned 👤 human comment.
     HumanRule {
         /// owner/repo
@@ -30541,17 +30473,11 @@ fn next_action(s: &PrSignals) -> NextAction {
     }
     // A PR the producer has already moved into a modeled state (design / blocked-on /
     // close-candidate) is PARKED — the label IS the state, so the producer does not re-touch it
-    // and does not re-derive a state from CI. The RETIRED `ai:blocked-deploy` residue parks too
-    // (#162): its exit is the `migrate-blocked-deploy` one-shot (#221), which moves it to
-    // `ai:reject` with the ruling and work order on the record — a producer that re-derived a
-    // state from CI would bypass those records. Contrast `ai:blocked-infra` (#108), which
+    // and does not re-derive a state from CI. Contrast `ai:blocked-infra` (#108), which
     // deliberately does NOT park.
     // Only un-labeled PRs fall through to the CI/mergeState classifier below.
     if let Some(l) = &s.state_label {
-        if PRODUCER_STATE_LABELS.contains(&l.as_str())
-            || l == "ai:close-candidate"
-            || l == RETIRED_BLOCKED_DEPLOY_LABEL
-        {
+        if PRODUCER_STATE_LABELS.contains(&l.as_str()) || l == "ai:close-candidate" {
             return NextAction::ParkedSkip;
         }
     }
@@ -33475,298 +33401,6 @@ fn migrate_reject_mode(apply: bool) -> i32 {
     0
 }
 
-/// The one-line reason the migration's sha-pinned `👤 human` ruling comment carries — it records
-/// that the write executes the 2026-08-06 ruling (verbatim in #221: _"migrate all the blocked on
-/// deploy back to rejected so it can be reworked to fit in the new deployment paradigm"_), so the
-/// `ai:reject` each residue PR lands in has its authority on the record the same way a per-PR
-/// `human-rule reject` would.
-const MIGRATE_BLOCKED_DEPLOY_RULING_NOTE: &str = "executing the 2026-08-06 ruling in \
-    https://github.com/rainlanguage/issue-pr-cron/issues/221 — the retired ai:blocked-deploy \
-    residue (#162) migrates to ai:reject for rework to the split release lifecycle";
-
-/// The UNIFORM work order (#221) posted on every migrated PR — the trusted `Rework note` the
-/// producer executes. Built by [`rework_note_comment`], never hand-typed, so the marker the
-/// producer's author-verified read matches is correct by construction.
-const MIGRATE_BLOCKED_DEPLOY_WORK_ORDER: &str = "rework the PR to fit the split release \
-    lifecycle — deploys never gate merges (the deploy-before-merge choreography is superseded); \
-    remove or restructure anything in the PR that waits on a deploy; where deploy constants/pins \
-    are involved, follow the *.deploy repo convention (audited code only; version ↔ snapshot ↔ \
-    pins internally consistent; tag-release lifecycle). Whatever states follow the rework \
-    (including a typed blocked-on the repo's migration if one is genuinely needed) are the \
-    producer's ordinary transitions. Executes the 2026-08-06 ruling: \
-    https://github.com/rainlanguage/issue-pr-cron/issues/221";
-
-/// What `migrate-blocked-deploy` will do to ONE PR, computed purely from its fetched JSON — the
-/// guard-before-write shape [`MigrateRejectPlan`] and [`HumanRulePlan`] share, with the guards of
-/// BOTH: this migration posts pinned comments, so it needs `human_pr_rule_plan`'s anchor and
-/// strand guards on top of the label move.
-#[derive(Debug, PartialEq)]
-enum MigrateBlockedDeployPlan {
-    /// Closed or merged since the search — the state a migration would move it out of is already
-    /// terminal; skip, nothing written.
-    Moot,
-    /// Does not carry the retired label — nothing to migrate (the search should never hand one of
-    /// these over, but a plan that only answers for the happy case is not a plan). Also the state
-    /// every fully-migrated PR re-reads as, which is what makes a re-run a no-op.
-    NotRetired,
-    /// A LIVE producer close-candidate flag (label + trusted flag comment): the strand rule
-    /// (#86/#211). Writing `ai:reject` would strip `ai:close-candidate` while
-    /// `record_close_candidate_verdict` still owes the flag a judgement — reported and SKIPPED;
-    /// the flag's disposition comes first, and the re-run after it migrates what remains.
-    StrandsFlag { flag_at: String },
-    /// No head sha: the ruling and the work order both pin to the head, so there is nothing to pin
-    /// them to (`Ruled : reject` is the bound-to-nothing record the pin exists to prevent) —
-    /// refused for this PR and reported.
-    NoAnchor,
-    Migrate {
-        /// The head sha both comments pin to.
-        anchor: String,
-        /// Add `ai:reject` (false when the PR already carries it — re-running is idempotent).
-        add_target: bool,
-        /// Other stale `ai:*` labels to strip so the PR lands in exactly ONE modeled state — the
-        /// retired label itself EXCLUDED: it comes off LAST
-        /// ([`migrate_blocked_deploy_steps`]), `migrate-reject`'s fail-safe order.
-        clears: Vec<String>,
-        /// The identical ruling is already recorded at this anchor — a re-run posts nothing twice.
-        skip_ruling: bool,
-        /// The identical work order is already posted — same dedup, [`rework_note_recorded`].
-        skip_note: bool,
-    },
-}
-
-/// PURE: [`migrate_blocked_deploy_mode`]'s decision for one PR. Guard order mirrors
-/// [`human_pr_rule_plan`]: terminal first, then the retired-label population test, then the
-/// anchor, then the strand rule.
-fn migrate_blocked_deploy_plan(pr_json: &Value) -> MigrateBlockedDeployPlan {
-    if pr_json
-        .get("state")
-        .and_then(|s| s.as_str())
-        .is_some_and(|s| s != "OPEN")
-    {
-        return MigrateBlockedDeployPlan::Moot;
-    }
-    let labels = label_names(pr_json);
-    if !labels.iter().any(|l| l == RETIRED_BLOCKED_DEPLOY_LABEL) {
-        return MigrateBlockedDeployPlan::NotRetired;
-    }
-    let sha = pr_json
-        .get("headRefOid")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if sha.is_empty() {
-        return MigrateBlockedDeployPlan::NoAnchor;
-    }
-    if let Some(flag_at) = live_close_candidate_flag(pr_json, &labels) {
-        return MigrateBlockedDeployPlan::StrandsFlag { flag_at };
-    }
-    MigrateBlockedDeployPlan::Migrate {
-        anchor: sha.to_string(),
-        add_target: !labels.iter().any(|l| l == "ai:reject"),
-        clears: labels_to_remove(&labels, "ai:reject")
-            .into_iter()
-            .filter(|l| l != RETIRED_BLOCKED_DEPLOY_LABEL)
-            .collect(),
-        skip_ruling: human_ruling_recorded(pr_json, sha, "reject"),
-        skip_note: rework_note_recorded(
-            pr_json,
-            &rework_note_comment(sha, MIGRATE_BLOCKED_DEPLOY_WORK_ORDER),
-        ),
-    }
-}
-
-/// PURE: the ORDERED `gh` writes migrating ONE PR performs — EMPTY unless `apply`, so "report mode
-/// writes nothing" is a property of the step list rather than a branch a reader has to trust. The
-/// order is the union of its two precedents' fail-safes:
-///
-/// - comments FIRST, ruling before work order ([`human_rule_steps`]/[`with_rework_note`]'s
-///   reasoning: if the record fails to post, no label has moved, and a work order with no ruling
-///   is the one illegal half-state);
-/// - `ai:reject` ON before anything comes off, and the retired label off LAST
-///   ([`migrate_reject_mode`]'s reasoning: a mid-sequence `gh` failure leaves the PR MORE parked
-///   than it started, never less — and still in this migration's population, so a re-run finishes
-///   it).
-fn migrate_blocked_deploy_steps(plan: &MigrateBlockedDeployPlan, apply: bool) -> Vec<RuleStep> {
-    let MigrateBlockedDeployPlan::Migrate {
-        anchor,
-        add_target,
-        clears,
-        skip_ruling,
-        skip_note,
-    } = plan
-    else {
-        return Vec::new();
-    };
-    if !apply {
-        return Vec::new();
-    }
-    let mut steps = with_rework_note(
-        human_rule_steps(&[], clears, !*add_target, *skip_ruling),
-        (!*skip_note).then(|| rework_note_comment(anchor, MIGRATE_BLOCKED_DEPLOY_WORK_ORDER)),
-    );
-    steps.push(RuleStep::RemoveLabel(
-        RETIRED_BLOCKED_DEPLOY_LABEL.to_string(),
-    ));
-    steps
-}
-
-/// PURE: the `gh search prs` argv enumerating the migration's population — every configured org,
-/// OPEN PRs only, the retired `ai:blocked-deploy` label. Extracted so WHICH population the
-/// one-shot walks is a tested property: pointed at the wrong label or the wrong state, a bulk
-/// relabel rewrites the wrong PRs.
-fn migrate_blocked_deploy_search_args() -> Vec<String> {
-    let mut search: Vec<String> = vec!["search".into(), "prs".into()];
-    search.extend(org_owner_args());
-    search.extend(
-        [
-            "--state",
-            "open",
-            "--label",
-            RETIRED_BLOCKED_DEPLOY_LABEL,
-            "--limit",
-            "200",
-            "--json",
-            "number,repository,title,url",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    search
-}
-
-/// `migrate-blocked-deploy [--apply]`: the #221 one-shot — move every open PR still carrying the
-/// RETIRED `ai:blocked-deploy` label (#162) to `ai:reject`, with the sha-pinned `👤 human` ruling
-/// comment recording that the write executes the 2026-08-06 ruling and the trusted `Rework note`
-/// carrying the uniform split-release-lifecycle work order. The producer is the mover from the
-/// moment of migration; whatever states follow the rework are its ordinary transitions.
-///
-/// `migrate-reject`'s twin (#133) and it exists for the same reason: a label nothing writes any
-/// more is also a label nothing removes, so the residue PRs cannot leave unaided. Each migrated PR
-/// lands in exactly the state `human-rule <slug> <n> reject --rework "…"` would have produced —
-/// same comments, same labels — so nothing downstream has to know a migration ever happened.
-///
-/// **It defaults to a REPORT**, for `migrate-reject`'s reason: an outward-facing bulk relabel
-/// across every configured org must not be one forgotten `--dry-run` away from happening, so the
-/// `--apply` flag GATES the write rather than a flag suppressing it. `--dry-run` is accepted as
-/// the explicit spelling of the default.
-fn migrate_blocked_deploy_mode(apply: bool) -> i32 {
-    let search = migrate_blocked_deploy_search_args();
-    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
-    let Some(val) = gh_json(&sref) else {
-        eprintln!(
-            "error: `gh search prs --label {RETIRED_BLOCKED_DEPLOY_LABEL}` failed — not editing on incomplete data"
-        );
-        return 1;
-    };
-    let targets = retire_targets(&val);
-    if targets.is_empty() {
-        println!(
-            "no open PR carries the retired {RETIRED_BLOCKED_DEPLOY_LABEL} — nothing to migrate"
-        );
-        return 0;
-    }
-    println!(
-        "{} open PR(s) carry the retired {RETIRED_BLOCKED_DEPLOY_LABEL}{}",
-        targets.len(),
-        if apply {
-            " — migrating to ai:reject"
-        } else {
-            " (report only; pass --apply to write)"
-        }
-    );
-    let (mut failed, mut migrated, mut skipped) = (0, 0, 0);
-    for (slug, num) in &targets {
-        let n = num.to_string();
-        let Some(prj) = gh_json(&["pr", "view", &n, "-R", slug, "--json", PR_RULE_FIELDS]) else {
-            eprintln!("  {slug}#{num} -> FAILED to read; not editing on incomplete data");
-            failed += 1;
-            continue;
-        };
-        let plan = migrate_blocked_deploy_plan(&prj);
-        let (anchor, add_target, clears, skip_ruling, skip_note) = match &plan {
-            MigrateBlockedDeployPlan::Moot => {
-                println!("  {slug}#{num} -> closed/merged — moot; nothing written");
-                skipped += 1;
-                continue;
-            }
-            MigrateBlockedDeployPlan::NotRetired => {
-                println!("  {slug}#{num} -> already migrated (no {RETIRED_BLOCKED_DEPLOY_LABEL})");
-                continue;
-            }
-            MigrateBlockedDeployPlan::NoAnchor => {
-                eprintln!(
-                    "  {slug}#{num} -> REFUSED: no head sha to pin the ruling and the work \
-                     order to; nothing written"
-                );
-                failed += 1;
-                continue;
-            }
-            MigrateBlockedDeployPlan::StrandsFlag { flag_at } => {
-                println!(
-                    "  {slug}#{num} -> SKIPPED: live close-candidate flag @{flag_at} — \
-                     migrating would strand it; dispose of the flag, then re-run"
-                );
-                skipped += 1;
-                continue;
-            }
-            MigrateBlockedDeployPlan::Migrate {
-                anchor,
-                add_target,
-                clears,
-                skip_ruling,
-                skip_note,
-            } => (anchor, *add_target, clears, *skip_ruling, *skip_note),
-        };
-        let line = format!(
-            "{}{}, remove {RETIRED_BLOCKED_DEPLOY_LABEL} [ruling: {}; work order: {}]",
-            if add_target {
-                "add ai:reject"
-            } else {
-                "ai:reject already present"
-            },
-            if clears.is_empty() {
-                String::new()
-            } else {
-                format!(", remove {}", clears.join(","))
-            },
-            if skip_ruling {
-                "already recorded"
-            } else {
-                "post"
-            },
-            if skip_note { "already posted" } else { "post" },
-        );
-        if !apply {
-            println!("  [report] {slug}#{num} @ {anchor} -> {line}");
-            migrated += 1;
-            continue;
-        }
-        let comment = human_rule_comment(anchor, "reject", MIGRATE_BLOCKED_DEPLOY_RULING_NOTE);
-        let steps = migrate_blocked_deploy_steps(&plan, apply);
-        if let Err((_, msg)) = human_rule_write("pr", slug, &n, "ai:reject", &comment, &steps) {
-            eprintln!("  {slug}#{num} -> {msg}");
-            failed += 1;
-            continue;
-        }
-        migrated += 1;
-        println!("  {slug}#{num} @ {anchor} -> {line}");
-    }
-    println!(
-        "{}: {} PR(s), {} skipped (moot or live flag){}",
-        if apply { "migrated" } else { "would migrate" },
-        migrated,
-        skipped,
-        if failed > 0 {
-            format!(", {failed} FAILED/refused")
-        } else {
-            String::new()
-        }
-    );
-    if failed > 0 {
-        return 1;
-    }
-    0
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // already-fixed — the MERGED-side read the candidate set does not have.
 //
@@ -34333,7 +33967,6 @@ fn main() {
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), &[], dry_run),
         Cmd::MigrateReject { apply } => migrate_reject_mode(apply),
-        Cmd::MigrateBlockedDeploy { apply, .. } => migrate_blocked_deploy_mode(apply),
         Cmd::HumanRule {
             slug,
             pr,
@@ -38818,17 +38451,13 @@ mod repo_root_tests {
             // `sweep_stale_closed_flags` for the first — do the withholding, which is why the
             // filter is not visible in the builder.
             "flagged_subjects_args",
-            // RETIRED one-shot sweeps (#108 item 4, #133, #221). Nothing writes any of these
-            // labels any more, the populations are empty in scope, and none OFFERS work: a per-PR
-            // edit that fails is already reported as a failed edit rather than queued as a task.
-            // The #221 entry is the PURE argv builder — its caller `migrate_blocked_deploy_mode`
-            // never names the scope itself.
-            "migrate_blocked_deploy_search_args",
+            // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
+            // both populations are empty in scope, and neither OFFERS work: a per-PR edit that
+            // fails is already reported as a failed edit rather than queued as a task.
             "migrate_reject_mode",
             "retire_blocked_infra_mode",
-            // Tests (`one_reject_state_tests` pins the #221 migration's org scope by naming it).
+            // A test.
             "next_close_candidate_tests",
-            "one_reject_state_tests",
         ];
         let mut want: Vec<&str> = filtered.iter().chain(exempt.iter()).copied().collect();
         want.sort_unstable();
@@ -44000,34 +43629,6 @@ mod cli_tests {
             parse(&["prr", "migrate-reject", "--apply"]),
             Cmd::MigrateReject { apply: true }
         );
-        // The #221 one-shot takes the same shape: bare is a report, `--apply` is the gated write,
-        // and `--dry-run` is the EXPLICIT spelling of the default — accepted, still a report, and
-        // contradictory with `--apply` so one call can never say both.
-        assert_eq!(
-            parse(&["prr", "migrate-blocked-deploy"]),
-            Cmd::MigrateBlockedDeploy {
-                apply: false,
-                dry_run: false
-            }
-        );
-        assert_eq!(
-            parse(&["prr", "migrate-blocked-deploy", "--dry-run"]),
-            Cmd::MigrateBlockedDeploy {
-                apply: false,
-                dry_run: true
-            }
-        );
-        assert_eq!(
-            parse(&["prr", "migrate-blocked-deploy", "--apply"]),
-            Cmd::MigrateBlockedDeploy {
-                apply: true,
-                dry_run: false
-            }
-        );
-        assert!(
-            Cli::try_parse_from(["prr", "migrate-blocked-deploy", "--apply", "--dry-run"]).is_err(),
-            "--apply --dry-run is a contradiction, not a write and not a report"
-        );
         assert!(matches!(
             parse(&["prr", "human-queue"]),
             Cmd::HumanQueue { .. }
@@ -45584,16 +45185,8 @@ mod worklist_tests {
     #[test]
     fn modeled_state_label_short_circuits_to_parked() {
         // A PR already in a modeled state is parked regardless of CI — even a deploy-trigger or a
-        // red-green signal does not override the label. `ai:blocked-deploy` is RETIRED (#162) and
-        // parks as RESIDUE: its exit is the `migrate-blocked-deploy` one-shot (#221), and
-        // re-deriving a state from CI here would bypass the ruling and work order that migration
-        // puts on the record — the deliberate CONTRAST with `ai:blocked-infra` below.
-        for label in [
-            "ai:design",
-            RETIRED_BLOCKED_DEPLOY_LABEL,
-            "ai:blocked-on",
-            "ai:close-candidate",
-        ] {
+        // red-green signal does not override the label.
+        for label in ["ai:design", "ai:blocked-on", "ai:close-candidate"] {
             let mut s = sig(Ci::Green, "CLEAN");
             s.state_label = Some(label.to_string());
             s.has_deploy_trigger = true; // would otherwise be FlagMigration
@@ -45607,6 +45200,17 @@ mod worklist_tests {
         let mut s = sig(Ci::Green, "CLEAN");
         s.state_label = Some("ai:ready".to_string());
         assert_eq!(next_action(&s), NextAction::GreenReady);
+        // `ai:blocked-deploy` is DELETED (#221): it is not a state, so it parks NOTHING. A PR
+        // hand-wearing the string classifies from CI exactly like any unmodelled label would —
+        // the deploy-shaped signal routes to the migration flag (#162's live rule), never to a
+        // park that would strand it where no transition can reach it.
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.state_label = Some("ai:blocked-deploy".to_string());
+        assert_eq!(next_action(&s), NextAction::GreenReady);
+        let mut s = sig(Ci::Green, "CLEAN");
+        s.state_label = Some("ai:blocked-deploy".to_string());
+        s.has_deploy_trigger = true;
+        assert_eq!(next_action(&s), NextAction::FlagMigration);
     }
 
     /// #108: the RETIRED `ai:blocked-infra` must NOT park. This is how the thirteen PRs a pre-#108
@@ -46847,182 +46451,6 @@ mod one_reject_state_tests {
             MigrateRejectPlan::NotRetired
         );
     }
-
-    // ---- the OTHER retired residue: ai:blocked-deploy → ai:reject (#221) ----------------------
-
-    /// A PR in the migration's population: the retired label, plus whatever else the case needs.
-    fn blocked_deploy_pr(labels: &[&str], comments: Vec<Value>) -> Value {
-        pr_at(HEAD, labels, comments)
-    }
-
-    /// The trusted producer close-candidate FLAG comment, as `last_close_candidate_flag` reads it.
-    fn cc_flag_at(ts: &str) -> Value {
-        json!({
-            "author": {"login": TRUSTED_AUTHOR},
-            "createdAt": ts,
-            "body": "🤖 ai:producer\nClose-candidate: superseded by the split lifecycle",
-        })
-    }
-
-    #[test]
-    fn migrate_blocked_deploy_enumerates_open_prs_carrying_the_retired_label() {
-        // The population is enumerated live, at run time: OPEN PRs, the retired label, every
-        // configured org. Pointed at the wrong label or the wrong state, a bulk relabel rewrites
-        // the wrong PRs — so the argv is a tested property, not a line only a live run checks.
-        let args = migrate_blocked_deploy_search_args();
-        assert_eq!(&args[0..2], &["search", "prs"]);
-        assert!(args.windows(2).any(|w| w == ["--state", "open"]));
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["--label", RETIRED_BLOCKED_DEPLOY_LABEL]));
-        for owner_arg in org_owner_args() {
-            assert!(args.contains(&owner_arg), "org scope missing {owner_arg}");
-        }
-    }
-
-    #[test]
-    fn migrate_blocked_deploy_plans_the_swap_and_pins_both_comments_to_the_head() {
-        // The full move: ai:reject on, every other stale ai:* off, the retired label off — and
-        // the retired label is NOT in `clears`, because the steps remove it LAST (the fail-safe:
-        // a mid-sequence failure leaves the PR more parked than it started, never less).
-        let pr = blocked_deploy_pr(&[RETIRED_BLOCKED_DEPLOY_LABEL, "ai:ready", "bug"], vec![]);
-        let plan = migrate_blocked_deploy_plan(&pr);
-        assert_eq!(
-            plan,
-            MigrateBlockedDeployPlan::Migrate {
-                anchor: HEAD.to_string(),
-                add_target: true,
-                clears: vec!["ai:ready".to_string()],
-                skip_ruling: false,
-                skip_note: false,
-            }
-        );
-        let steps = migrate_blocked_deploy_steps(&plan, true);
-        assert_eq!(
-            steps,
-            vec![
-                RuleStep::Comment,
-                RuleStep::ReworkNote(rework_note_comment(HEAD, MIGRATE_BLOCKED_DEPLOY_WORK_ORDER)),
-                RuleStep::EnsureLabel,
-                RuleStep::AddLabel,
-                RuleStep::RemoveLabel("ai:ready".to_string()),
-                RuleStep::RemoveLabel(RETIRED_BLOCKED_DEPLOY_LABEL.to_string()),
-            ]
-        );
-        // The comments the migration posts are the SAME records `human-rule reject --rework`
-        // posts, recognised by the same author-verified reads — the tool owns both markers, so a
-        // malformed work order is unconstructible. And the work order is #221's, in substance:
-        // the split lifecycle, no deploy gating a merge, the *.deploy convention, the ruling URL.
-        let ruling = human_rule_comment(HEAD, "reject", MIGRATE_BLOCKED_DEPLOY_RULING_NOTE);
-        let RuleStep::ReworkNote(note) = &steps[1] else {
-            unreachable!("pinned above")
-        };
-        let migrated = pr_at(HEAD, &["ai:reject"], vec![trusted(&ruling), trusted(note)]);
-        assert!(human_ruling_recorded(&migrated, HEAD, "reject"));
-        assert!(rework_note_recorded(&migrated, note));
-        assert_eq!(rework_note_anchor(note).as_deref(), Some(HEAD));
-        for must in [
-            "split release lifecycle",
-            "deploys never gate merges",
-            "*.deploy repo convention",
-            "https://github.com/rainlanguage/issue-pr-cron/issues/221",
-        ] {
-            assert!(note.contains(must), "work order lost {must:?}");
-        }
-        assert!(ruling.contains("https://github.com/rainlanguage/issue-pr-cron/issues/221"));
-    }
-
-    #[test]
-    fn migrate_blocked_deploy_report_mode_writes_nothing() {
-        // The default is a REPORT and `--dry-run` its explicit spelling: for the SAME plan that
-        // writes six steps under --apply, the step list is empty — not filtered, empty.
-        let pr = blocked_deploy_pr(&[RETIRED_BLOCKED_DEPLOY_LABEL, "ai:ready"], vec![]);
-        let plan = migrate_blocked_deploy_plan(&pr);
-        assert!(!migrate_blocked_deploy_steps(&plan, true).is_empty());
-        assert_eq!(migrate_blocked_deploy_steps(&plan, false), Vec::new());
-    }
-
-    #[test]
-    fn migrate_blocked_deploy_is_idempotent_over_its_own_writes() {
-        // A fully-migrated PR re-reads as NotRetired — a re-run finds a smaller population and
-        // touches nothing twice.
-        assert_eq!(
-            migrate_blocked_deploy_plan(&pr_at(HEAD, &["ai:reject"], vec![])),
-            MigrateBlockedDeployPlan::NotRetired
-        );
-        // A PARTLY-migrated PR (both comments landed, the retired label did not come off — the
-        // one half-state the write order can leave) resumes: both comments dedup, ai:reject is
-        // already present, and the only remaining writes are the removals.
-        let ruling = human_rule_comment(HEAD, "reject", MIGRATE_BLOCKED_DEPLOY_RULING_NOTE);
-        let note = rework_note_comment(HEAD, MIGRATE_BLOCKED_DEPLOY_WORK_ORDER);
-        let partial = pr_at(
-            HEAD,
-            &[RETIRED_BLOCKED_DEPLOY_LABEL, "ai:reject"],
-            vec![trusted(&ruling), trusted(&note)],
-        );
-        let plan = migrate_blocked_deploy_plan(&partial);
-        assert_eq!(
-            plan,
-            MigrateBlockedDeployPlan::Migrate {
-                anchor: HEAD.to_string(),
-                add_target: false,
-                clears: vec![],
-                skip_ruling: true,
-                skip_note: true,
-            }
-        );
-        assert_eq!(
-            migrate_blocked_deploy_steps(&plan, true),
-            vec![
-                RuleStep::EnsureLabel,
-                RuleStep::RemoveLabel(RETIRED_BLOCKED_DEPLOY_LABEL.to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn migrate_blocked_deploy_skips_moot_flagged_and_anchorless_prs() {
-        // Closed/merged is MOOT: the state a migration would move it out of is already terminal,
-        // so nothing is written — even under --apply.
-        let mut merged = blocked_deploy_pr(&[RETIRED_BLOCKED_DEPLOY_LABEL], vec![]);
-        merged["state"] = json!("MERGED");
-        assert_eq!(
-            migrate_blocked_deploy_plan(&merged),
-            MigrateBlockedDeployPlan::Moot
-        );
-        assert_eq!(
-            migrate_blocked_deploy_steps(&migrate_blocked_deploy_plan(&merged), true),
-            Vec::new()
-        );
-        // A LIVE close-candidate flag is reported and SKIPPED (the strand rule #86/#211): writing
-        // ai:reject would strip the flag label while the vetter still owes it a judgement.
-        let flagged = blocked_deploy_pr(
-            &[RETIRED_BLOCKED_DEPLOY_LABEL, "ai:close-candidate"],
-            vec![cc_flag_at("2026-08-01T00:00:00Z")],
-        );
-        assert_eq!(
-            migrate_blocked_deploy_plan(&flagged),
-            MigrateBlockedDeployPlan::StrandsFlag {
-                flag_at: "2026-08-01T00:00:00Z".to_string()
-            }
-        );
-        // …but a flag the vetter already rejected (comment without the label) is history, not a
-        // pending claim — it must NOT hold the PR in the residue.
-        let judged = blocked_deploy_pr(
-            &[RETIRED_BLOCKED_DEPLOY_LABEL],
-            vec![cc_flag_at("2026-08-01T00:00:00Z")],
-        );
-        assert!(matches!(
-            migrate_blocked_deploy_plan(&judged),
-            MigrateBlockedDeployPlan::Migrate { .. }
-        ));
-        // No head sha, no migration for THAT PR: both comments pin to the head, and `Ruled :
-        // reject` bound to nothing is exactly what the pin exists to prevent.
-        assert_eq!(
-            migrate_blocked_deploy_plan(&pr_at("", &[RETIRED_BLOCKED_DEPLOY_LABEL], vec![])),
-            MigrateBlockedDeployPlan::NoAnchor
-        );
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47051,16 +46479,12 @@ mod fsm_completeness_tests {
         );
         // blocked states next — same PRECEDENCE, but the LANE names whoever moves each (#161):
         // the vetter's state-load clears `ai:blocked-on` when its typed deps merge/close, so it
-        // files with the vetter's work; the RETIRED `ai:blocked-deploy` residue (#162) waits on
-        // the `migrate-blocked-deploy` one-shot (#221), so it stays with the producer-blocked
-        // group.
+        // files with the vetter's work; the retired `ai:blocked-infra` residue stays with the
+        // producer-blocked group. (`ai:blocked-deploy` is DELETED — #221 — and so appears in no
+        // lane at all; `the_deleted_blocked_deploy_label_classifies_as_nothing` is its pin.)
         assert_eq!(
             classify_lane(&s(&["ai:blocked-infra"]), None, false),
             (Lane::ProducerBlocked, "ai:blocked-infra".to_string())
-        );
-        assert_eq!(
-            classify_lane(&s(&["ai:blocked-deploy"]), None, false),
-            (Lane::ProducerBlocked, "ai:blocked-deploy".to_string())
         );
         assert_eq!(
             classify_lane(&s(&["ai:blocked-on"]), None, false),
@@ -47160,7 +46584,11 @@ mod fsm_completeness_tests {
             qpr(6, &["ai:design"], None, false),       // ai:design
             // NOT in any lane (#211/#212): the close-candidate machinery inventories it.
             qpr(7, &["ai:close-candidate"], None, false),
-            qpr(8, &["ai:blocked-deploy"], None, false), // producer-blocked (RETIRED residue #162)
+            // `ai:blocked-deploy` is DELETED (#221) — kept in this fixture precisely because a PR
+            // can still be hand-labelled with the string. It is not a modelled label, so it takes
+            // the ordinary fallthrough: producer-commented → LEAK (the /nm queue), which is the
+            // real shape of these PRs, since the producer is what wrote the label.
+            qpr(8, &["ai:blocked-deploy"], None, true),
             qpr(9, &["ai:blocked-infra"], None, false),
             qpr(10, &["ai:blocked-on"], None, false), // vet-lifecycle: the vetter clears it (#161)
             qpr(11, &["human:reject"], None, false),  // human decisions
@@ -47184,7 +46612,23 @@ mod fsm_completeness_tests {
         // dashboard renders a dimmed box and a new one draws nothing.
         assert_eq!(count("vetter-verdicts", "ai:close-candidate"), 0);
         assert!(doc.pointer("/close-candidate").is_none(), "not a lane");
-        assert_eq!(count("producer-blocked", "ai:blocked-deploy"), 1);
+        // The DELETED state (#221) emits no cell anywhere — #8 is a leak, not a lane member, and
+        // no lane anywhere names the string.
+        assert_eq!(count("producer-blocked", "ai:blocked-deploy"), 0);
+        assert_eq!(count("leak", "leak"), 2);
+        for lane in [
+            "producer-blocked",
+            "vet-lifecycle",
+            "vetter-verdicts",
+            "human-decisions",
+            "leak",
+        ] {
+            assert_eq!(
+                count(lane, "ai:blocked-deploy"),
+                0,
+                "`{lane}` still names the deleted state"
+            );
+        }
         assert_eq!(count("producer-blocked", "ai:blocked-infra"), 1);
         // #161: blocked-on emits under the VETTER's lane — the dash files it as vetter action
         // ("clear when deps merge"), and it must be GONE from producer-blocked, not doubled.
@@ -47192,7 +46636,6 @@ mod fsm_completeness_tests {
         assert_eq!(count("producer-blocked", "ai:blocked-on"), 0);
         assert_eq!(count("human-decisions", "human:reject"), 1);
         assert_eq!(count("human-decisions", "human:design"), 1);
-        assert_eq!(count("leak", "leak"), 1);
 
         // the PR list carries {repo, number, url, title}. #1 (never labelled) and #2 (ai:ready with
         // no current verdict) sit side by side in the ONE un-vetted bucket, indistinguishable.
@@ -47432,58 +46875,38 @@ mod subject_ref_tests {
         }
     }
 
-    /// The kept-while-nonzero contract on the RETIRED `ai:blocked-deploy` (#162): the emission
-    /// keeps the `blockedDeploy` key — 0 once `migrate-blocked-deploy` (#221) has emptied the
-    /// residue, never absent — because a dashboard that stopped rendering the state would hide
-    /// the PRs the migration has not yet moved to `ai:reject`.
+    /// `ai:blocked-deploy` is DELETED (#221), so the emission carries NO `blockedDeploy` key —
+    /// absent, not zero. The kept-while-nonzero contract is what a RETIRED-but-occupied state
+    /// gets; this state has no occupancy to report and no transition that could create one, so a
+    /// key held at zero would be a dashboard box for a state the machine does not have. The sibling
+    /// keys are asserted alongside it: this must be a DELETION, not the whole `counts` object going
+    /// missing.
     #[test]
-    fn the_retired_blocked_deploy_count_keeps_its_key_and_counts_the_residue() {
-        // No residue bucket at all → the key is still there, and it is 0.
+    fn the_deleted_blocked_deploy_state_emits_no_count_key() {
         let empty = doc();
         assert_eq!(
             empty.pointer("/counts/blockedDeploy"),
-            Some(&json!(0)),
-            "the key must be KEPT at zero, not dropped: {:?}",
+            None,
+            "the key must be GONE, not zero: {:?}",
             empty.get("counts")
         );
-        // A residue PR still carrying the label → counted under the same key.
-        let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> =
-            std::collections::BTreeMap::new();
-        buckets.insert(
-            RETIRED_BLOCKED_DEPLOY_LABEL.into(),
-            vec![sref("rainlanguage/rainlang", 535, "pull", "residue pr")],
-        );
+        for kept in ["blockedInfra", "blockedOn", "ready", "design"] {
+            assert!(
+                empty.pointer(&format!("/counts/{kept}")).is_some(),
+                "deleting blockedDeploy must not take `{kept}` with it"
+            );
+        }
+        // …and a PR hand-wearing the deleted string does not resurrect the key or any lane state:
+        // it is UNMODELLED, so it lands in the leak lane the /nm queue reads.
         let lanes = lanes_doc(&[QueuePr {
-            subject: sref("rainlanguage/rainlang", 535, "pull", "residue pr"),
-            labels: vec![RETIRED_BLOCKED_DEPLOY_LABEL.to_string()],
+            subject: sref("rainlanguage/rainlang", 535, "pull", "hand-labelled pr"),
+            labels: vec!["ai:blocked-deploy".to_string()],
             ready_vetted_at_head: None,
             producer_commented: false,
         }]);
-        let (ccu, ccu_n) = issue_state_pair(vec![]);
-        let (ccup, ccup_n) = issue_state_pair(vec![]);
-        let with_residue = human_queue_doc(
-            &buckets,
-            &lanes,
-            &[],
-            ccu,
-            ccu_n,
-            ccup,
-            ccup_n,
-            &[],
-            None,
-            &[],
-            1,
-            &[],
-            DOC_NOW_MS,
-        );
         assert_eq!(
-            with_residue.pointer("/counts/blockedDeploy"),
-            Some(&json!(1))
-        );
-        // …and the lanes agree it is producer-blocked, so the count and the lane cannot drift.
-        assert_eq!(
-            lane_state_count(&lanes, "producer-blocked", RETIRED_BLOCKED_DEPLOY_LABEL),
-            1
+            lane_state_count(&lanes, "producer-blocked", "ai:blocked-deploy"),
+            0
         );
     }
 
@@ -55071,11 +54494,13 @@ mod infra_down_tests {
     // ---- the retirement ---------------------------------------------------------------------
 
     /// A retired label must not be reachable as a destination — not in the writable state set,
-    /// and not as a noun a transition could name. `ai:blocked-infra` (#108) and
-    /// `ai:blocked-deploy` (#162) both hold it; the live set is exactly design + blocked-on.
+    /// and not as a noun a transition could name. `ai:blocked-infra` (#108) holds it as a retired
+    /// constant; `ai:blocked-deploy` is DELETED outright (#221) and is asserted here as a bare
+    /// string, because there is no constant left to name it by. The live set is exactly design +
+    /// blocked-on.
     #[test]
     fn the_retired_labels_are_no_longer_destinations() {
-        for retired in [RETIRED_STATE_LABEL, RETIRED_BLOCKED_DEPLOY_LABEL] {
+        for retired in [RETIRED_STATE_LABEL, "ai:blocked-deploy"] {
             assert!(
                 !PRODUCER_STATE_LABELS.contains(&retired),
                 "the retired state {retired} must not be writable"
@@ -55135,42 +54560,44 @@ mod infra_down_tests {
         );
     }
 
-    /// The `ai:blocked-deploy` residue (#162) stays visible too — and PRODUCER-blocked, never
-    /// vet-lifecycle: the #164 clearance reads exactly `ai:blocked-on` (typed refs the vetter can
-    /// resolve), and this residue has neither the label nor the refs. Its exit is the
-    /// `migrate-blocked-deploy` one-shot (#221), which moves each residue PR to `ai:reject` with
-    /// the split-lifecycle rework order.
+    /// `ai:blocked-deploy` is DELETED from the FSM (#221) — the population was migrated as a
+    /// once-off and the state went with it. So the string classifies as NOTHING: a PR wearing it
+    /// and nothing else is a LEAK (an unmodelled label the machine does not own), which is the
+    /// `/nm` queue's subject, not a producer-blocked lane cell. This is the pin that keeps the
+    /// deletion honest — a lane arm quietly returning for it again would resurrect a state with no
+    /// transition into or out of it.
     #[test]
-    fn blocked_deploy_residue_is_producer_blocked_not_the_vetters_to_clear() {
+    fn the_deleted_blocked_deploy_label_classifies_as_nothing() {
+        // Unmodelled, so it takes the ordinary fallthrough — and the producer wrote this label, so
+        // the real-world shape (a trusted producer comment alongside it) is the LEAK the `/nm`
+        // queue serves. Without one it is simply un-vetted: either way, never a state of its own.
         assert_eq!(
-            classify_lane(&[RETIRED_BLOCKED_DEPLOY_LABEL.to_string()], None, false),
-            (
-                Lane::ProducerBlocked,
-                RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
-            )
+            classify_lane(&["ai:blocked-deploy".to_string()], None, true),
+            (Lane::Leak, "leak".to_string())
         );
-        // Its old precedence holds: a blocked residue still dominates a stale `ai:ready` label…
+        let (lane, state) = classify_lane(&["ai:blocked-deploy".to_string()], None, false);
+        assert_eq!(
+            (lane, state.as_str()),
+            (Lane::VetLifecycle, "un-vetted"),
+            "the deleted state must not bucket as producer-blocked"
+        );
+        assert_ne!(
+            state, "ai:blocked-deploy",
+            "no lane may name a deleted state"
+        );
+        // It does not dominate anything either: a real state alongside it wins outright, exactly
+        // as though the deleted string were any other unmodelled label.
         assert_eq!(
             classify_lane(
-                &[
-                    "ai:ready".to_string(),
-                    RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
-                ],
+                &["ai:ready".to_string(), "ai:blocked-deploy".to_string()],
                 Some(true),
                 false
             ),
-            (
-                Lane::ProducerBlocked,
-                RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
-            )
+            (Lane::VetterVerdicts, "ai:ready".to_string())
         );
-        // …and a human decision still dominates it.
         assert_eq!(
             classify_lane(
-                &[
-                    "human:design".to_string(),
-                    RETIRED_BLOCKED_DEPLOY_LABEL.to_string()
-                ],
+                &["human:design".to_string(), "ai:blocked-deploy".to_string()],
                 None,
                 false
             ),
@@ -55183,11 +54610,10 @@ mod infra_down_tests {
     ///
     /// The restated version is what drifted: it read [`PRODUCER_STATE_LABELS`], and a retirement
     /// takes a label OUT of that array while leaving it AHEAD of `ai:ready` in the precedence
-    /// order — so `ai:blocked-infra` (#108) and `ai:blocked-deploy` (#162) each re-armed a
-    /// `gh pr view` per residue PR whose result `classify_lane` then never reads, the second of
-    /// them on a PR shaped exactly like
-    /// [`blocked_deploy_residue_is_producer_blocked_not_the_vetters_to_clear`]'s. Every dominating
-    /// state is asserted here, live and retired alike, so the next retirement cannot re-arm it.
+    /// order — so `ai:blocked-infra` (#108) and the since-deleted `ai:blocked-deploy` (#162) each
+    /// re-armed a `gh pr view` per residue PR whose result `classify_lane` then never reads. Every
+    /// dominating state is asserted here, live and retired alike, so the next retirement cannot
+    /// re-arm it.
     #[test]
     fn verdict_currency_is_fetched_only_where_it_can_change_the_lane() {
         // The one PR the fetch exists for: `ai:ready` with nothing ahead of it.
@@ -55203,7 +54629,6 @@ mod infra_down_tests {
             "human:design",
             RETIRED_HUMAN_REJECT_LABEL,
             "ai:close-candidate",
-            RETIRED_BLOCKED_DEPLOY_LABEL,
             "ai:blocked-on",
             RETIRED_STATE_LABEL,
         ] {
