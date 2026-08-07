@@ -15370,7 +15370,15 @@ fn human_ruling_vocab_error<T>(
     )
 }
 
-/// PURE: the stranded-flag refusal — the one state-dependent guard, and the one #86 is about.
+/// PURE: the live-flag refusal — the one state-dependent guard, and the one #86 is about.
+///
+/// TWO reasons converge on the same refusal, and the message states the one that always holds. A
+/// ruling that writes a `human:*` label STRANDS the flag: `record_close_candidate_verdict` refuses
+/// once a human has ruled, so the flag could never be judged again (#86's own shape). A
+/// comment-only ruling strands nothing — it writes no label for `has_human_ruling` to see — but it
+/// would pin its record to `close-candidate @<at>`, the anchor that says *I judged this flag*,
+/// while answering a different question entirely. Both are the same instruction to the caller:
+/// dispose of the flag first, then rule on whatever else you meant.
 ///
 /// It is a REDIRECTION, not an obstruction: it names every move that is legal here, each a single
 /// command, so the human's intent is always expressible. A refusal that only said "no" would send
@@ -15380,8 +15388,10 @@ fn strands_flag_error(slug: &str, issue: &str, ruling: &str, flag_at: &str) -> (
         4,
         format!(
             "refusing: {slug}#{issue} carries a LIVE producer close-candidate flag (@{flag_at}), \
-             and a `{ruling}` ruling would strand it — every AI transition refuses once a human has ruled, \
-             so `record_close_candidate_verdict` could never judge this flag again.\n\
+             and a `{ruling}` ruling here would pin its record to that flag — the anchor that says \
+             the flag itself was judged — while answering a different question. Dispose of the \
+             flag first; a ruling that also writes a human:* label would strand it outright, since \
+             `record_close_candidate_verdict` refuses once a human has ruled.\n\
              The moves that ARE available here, one command each:\n  \
              human-close {slug} {issue} \"…\"                                — the flag is right: \
              record the ruling, close, retire the flag — decide+do, one transition\n  \
@@ -33372,17 +33382,31 @@ fn migrate_reject_mode(apply: bool) -> i32 {
 /// survives only here, as the migration's population key over a fixed, shrinking residue.
 const DELETED_DESIGN_LABEL: &str = "human:design";
 
-/// PURE: the note text of the most recent trusted `👤 human` ruling comment — the part after the
-/// `Ruled <anchor>: <ruling> — ` prelude. This is what `migrate-design` posts as the work order
-/// when no live one is pinned at the head: a note is mandatory on every ruling, so a ruled subject
-/// always has one. `None` means no trusted ruling comment exists at all (a hand-applied label),
-/// which the migration reports rather than inventing an order.
+/// The ruling verbs whose note is an INSTRUCTION — the only ones [`last_human_ruling_note`] may
+/// carry forward as a work order. `close-candidate` is deliberately absent: its note says why the
+/// subject should be closed, and a torn `human-close` (ruling comment on the record, close never
+/// executed) leaves exactly that comment on an OPEN subject, where taking it as an order would
+/// hand the producer "duplicate of #40" to implement.
+const SEND_BACK_RULINGS: [&str; 2] = ["design", "reject"];
+
+/// PURE: the note text of the most recent trusted `👤 human` SEND-BACK ruling comment — the part
+/// after the `Ruled <anchor>: <ruling> — ` prelude, and only where `<ruling>` is one the note
+/// instructs on ([`SEND_BACK_RULINGS`]). This is what `migrate-design` posts as the work order
+/// when no live one is pinned at the head. `None` means no such comment exists — a hand-applied
+/// label, or a ruling whose note is not an instruction — and the migration then asks the question
+/// rather than inventing an answer.
 fn last_human_ruling_note(subject: &Value) -> Option<String> {
     trusted_comments(subject, Some(HUMAN_MARKER))
         .iter()
         .rev()
         .find_map(|b| {
-            let (_, tail) = b.split_once(" — ")?;
+            let (head, tail) = b.split_once(" — ")?;
+            // `👤 human\nRuled <anchor>: <verb>` — the verb is what follows the LAST `: `, so an
+            // anchor containing one (`close-candidate @…`) cannot be read as the verb.
+            let verb = head.rsplit_once(": ")?.1.trim();
+            if !SEND_BACK_RULINGS.contains(&verb) {
+                return None;
+            }
             let tail = tail.trim();
             if tail.is_empty() {
                 None
@@ -33392,8 +33416,10 @@ fn last_human_ruling_note(subject: &Value) -> Option<String> {
         })
 }
 
-/// Where a migrated PR's work order comes from — the producer must have a trusted order to execute
-/// the moment the label move un-parks the PR, and this names how it gets one.
+/// Where a migrated PR's work order comes from. A send-back the producer cannot read is inert —
+/// `campaign-prompt.txt` tells the producer that a reject with no trusted note is PARKED for a
+/// human — so an order the migration cannot produce is what decides the PR's TARGET, not merely
+/// what its report says.
 #[derive(Debug, PartialEq)]
 enum MigrateOrder {
     /// A trusted order is already pinned to the current head — the ruling's own posting survives
@@ -33402,11 +33428,6 @@ enum MigrateOrder {
     /// No live order at the head: post this `Rework note @<head>: …` body — the ruling's own note,
     /// pinned to the current head.
     Post(String),
-    /// Nothing to post: no trusted `👤 human` ruling comment to take a note from, or no head to
-    /// pin one to. The labels still move — it is the same state either way — but the producer
-    /// will read the resulting `ai:reject` as parked-for-a-human until a human re-rules with the
-    /// order, so the report says exactly that.
-    Unrecoverable,
 }
 
 /// What `migrate-design` will do to ONE PR, computed purely from its fetched JSON.
@@ -33415,19 +33436,44 @@ enum MigrateDesignPlan {
     /// Does not carry the deleted label — nothing to migrate (the search should never hand one of
     /// these over, but a plan that only answers for the happy case is not a plan).
     NotCarrying,
-    Migrate {
+    /// The ruling's ANSWER is recoverable, so the PR becomes what an answered design ruling
+    /// produces today: `ai:reject` + a trusted work order live at the head.
+    Answered {
         /// Add `ai:reject` (false when the PR already carries it — re-running is idempotent).
         add_target: bool,
         /// Other `ai:*` labels to strip, so the PR ends in exactly ONE modeled state.
         clears: Vec<String>,
         order: MigrateOrder,
     },
+    /// No answer is recoverable: no trusted order at the head and no trusted `👤 human` ruling
+    /// comment to take a note from. The PR becomes `ai:design` — the machine's own state for "a
+    /// human must answer this", which is the `/nd` queue.
+    ///
+    /// This is the mapping the DATA forces, and it is the honest one. `human:design` predates the
+    /// marker-emitting ruling transition, so the residue records its hold as untrusted prose:
+    /// nothing `trusted_comments` can read, hence no order to carry forward. Sending such a PR to
+    /// `ai:reject` would assert an answer nobody gave, and land it in the producer's queue as an
+    /// orderless reject — a state the producer is told to leave alone, so the question would go
+    /// neither answered nor asked. An unanswered hold is an unanswered QUESTION, and the question
+    /// already has a modeled state.
+    Unanswered {
+        /// Add `ai:design` (false when the PR already carries it — re-running is idempotent).
+        add_target: bool,
+        /// Other `ai:*` labels to strip, so the PR ends in exactly ONE modeled state.
+        clears: Vec<String>,
+    },
 }
 
-/// PURE: [`migrate_design_mode`]'s decision for one PR (#219). Ordered and parked residue land in
-/// the SAME state — the one a design ruling produces today, `ai:reject` + a trusted work order at
-/// the head — because there is no parked spelling left to keep: a design ruling IS its answer, and
-/// the answer rides the ruling's own note where no separate order was ever posted.
+/// PURE: [`migrate_design_mode`]'s decision for one PR (#219), and the discriminant is whether the
+/// ruling's ANSWER survives in machine-readable form:
+///
+/// - a trusted order pinned at the head, or a trusted `👤 human` ruling whose note can be posted
+///   as one → the PR is ANSWERED, and lands where an answered design ruling lands today;
+/// - neither → the PR is UNANSWERED, and lands in `ai:design`, where a human is asked.
+///
+/// Mapping both to one target was the tempting shape and it is wrong in the direction that
+/// matters: it would put a question the machine cannot answer into the queue for work the machine
+/// cannot do.
 fn migrate_design_pr_plan(pr_json: &Value) -> MigrateDesignPlan {
     let labels = label_names(pr_json);
     if !labels.iter().any(|l| l == DELETED_DESIGN_LABEL) {
@@ -33442,17 +33488,23 @@ fn migrate_design_pr_plan(pr_json: &Value) -> MigrateDesignPlan {
             .iter()
             .any(|b| rework_note_anchor(b).as_deref() == Some(head));
     let order = if live_at_head {
-        MigrateOrder::LiveAtHead
+        Some(MigrateOrder::LiveAtHead)
     } else {
         match (last_human_ruling_note(pr_json), head.is_empty()) {
-            (Some(note), false) => MigrateOrder::Post(rework_note_comment(head, &note)),
-            _ => MigrateOrder::Unrecoverable,
+            (Some(note), false) => Some(MigrateOrder::Post(rework_note_comment(head, &note))),
+            _ => None,
         }
     };
-    MigrateDesignPlan::Migrate {
-        add_target: !labels.iter().any(|l| l == "ai:reject"),
-        clears: labels_to_remove(&labels, "ai:reject"),
-        order,
+    match order {
+        Some(order) => MigrateDesignPlan::Answered {
+            add_target: !labels.iter().any(|l| l == "ai:reject"),
+            clears: labels_to_remove(&labels, "ai:reject"),
+            order,
+        },
+        None => MigrateDesignPlan::Unanswered {
+            add_target: !labels.iter().any(|l| l == "ai:design"),
+            clears: labels_to_remove(&labels, "ai:design"),
+        },
     }
 }
 
@@ -33506,7 +33558,7 @@ fn migrate_design_search(kind: &str) -> Vec<String> {
 fn migrate_design_mode(apply: bool) -> i32 {
     let mut failed = 0;
     let mut moved = 0;
-    let mut unrecoverable = 0;
+    let mut unanswered = 0;
     // ── PRs ──
     let search = migrate_design_search("prs");
     let sref: Vec<&str> = search.iter().map(String::as_str).collect();
@@ -33521,7 +33573,7 @@ fn migrate_design_mode(apply: bool) -> i32 {
         "{} open PR(s) carry the deleted {DELETED_DESIGN_LABEL}{}",
         pr_targets.len(),
         if apply {
-            " — migrating to ai:reject + work order"
+            " — answered ones to ai:reject + work order, unanswered ones to ai:design"
         } else {
             " (report only; pass --apply to write)"
         }
@@ -33541,38 +33593,37 @@ fn migrate_design_mode(apply: bool) -> i32 {
             failed += 1;
             continue;
         };
-        let (add_target, clears, order) = match migrate_design_pr_plan(&prj) {
+        // The target IS the plan's answer: an answered ruling becomes the send-back it always
+        // meant, an unanswered one becomes the question it always was.
+        let (target, add_target, clears, order) = match migrate_design_pr_plan(&prj) {
             MigrateDesignPlan::NotCarrying => {
                 println!("  {slug}#{num} -> already migrated (no {DELETED_DESIGN_LABEL})");
                 continue;
             }
-            MigrateDesignPlan::Migrate {
+            MigrateDesignPlan::Answered {
                 add_target,
                 clears,
                 order,
-            } => (add_target, clears, order),
+            } => ("ai:reject", add_target, clears, Some(order)),
+            MigrateDesignPlan::Unanswered { add_target, clears } => {
+                unanswered += 1;
+                ("ai:design", add_target, clears, None)
+            }
         };
         let order_word = match &order {
-            MigrateOrder::LiveAtHead => "work order already live at head".to_string(),
-            MigrateOrder::Post(body) => {
+            Some(MigrateOrder::LiveAtHead) => "work order already live at head".to_string(),
+            Some(MigrateOrder::Post(body)) => {
                 format!("post work order: {}", body.replace('\n', " / "))
             }
-            MigrateOrder::Unrecoverable => {
-                unrecoverable += 1;
-                format!(
-                    "NO 👤 human ruling comment to take an order from — the producer will read \
-                     the reject as parked until a human re-rules: `human-rule {slug} {n} reject \
-                     \"…\" --rework \"…\"`"
-                )
-            }
+            None => "no recoverable answer — asked as a question, for /nd".to_string(),
         };
         if !apply {
             println!(
                 "  [report] {slug}#{num} -> {}{} , remove {DELETED_DESIGN_LABEL}  [{order_word}]",
                 if add_target {
-                    "add ai:reject"
+                    format!("add {target}")
                 } else {
-                    "ai:reject already present"
+                    format!("{target} already present")
                 },
                 if clears.is_empty() {
                     String::new()
@@ -33582,11 +33633,11 @@ fn migrate_design_mode(apply: bool) -> i32 {
             );
             continue;
         }
-        let (color, desc) = label_meta("ai:reject");
+        let (color, desc) = label_meta(target);
         if !gh_run(&[
             "label",
             "create",
-            "ai:reject",
+            target,
             "-R",
             slug,
             "--color",
@@ -33595,16 +33646,16 @@ fn migrate_design_mode(apply: bool) -> i32 {
             desc,
             "--force",
         ]) {
-            eprintln!("  {slug}#{num} -> warning: could not ensure ai:reject exists");
+            eprintln!("  {slug}#{num} -> warning: could not ensure {target} exists");
         }
-        if add_target && !gh_run(&["pr", "edit", &n, "-R", slug, "--add-label", "ai:reject"]) {
+        if add_target && !gh_run(&["pr", "edit", &n, "-R", slug, "--add-label", target]) {
             eprintln!(
-                "  {slug}#{num} -> FAILED to add ai:reject; {DELETED_DESIGN_LABEL} left in place"
+                "  {slug}#{num} -> FAILED to add {target}; {DELETED_DESIGN_LABEL} left in place"
             );
             failed += 1;
             continue;
         }
-        if let MigrateOrder::Post(body) = &order {
+        if let Some(MigrateOrder::Post(body)) = &order {
             if !gh_run(&["pr", "comment", &n, "-R", slug, "--body", body]) {
                 eprintln!(
                     "  {slug}#{num} -> FAILED to post the work order; {DELETED_DESIGN_LABEL} left \
@@ -33636,7 +33687,7 @@ fn migrate_design_mode(apply: bool) -> i32 {
         }
         moved += 1;
         println!(
-            "  {slug}#{num} -> ai:reject{}  [{order_word}]",
+            "  {slug}#{num} -> {target}{}  [{order_word}]",
             if ok { "" } else { " (stale ai:* partly left)" }
         );
     }
@@ -33701,14 +33752,14 @@ fn migrate_design_mode(apply: bool) -> i32 {
         println!("  {slug}#{num} -> label removed; back in the producer backlog");
     }
     println!(
-        "{}: {} subject(s), {} PR(s) with no recoverable work order{}",
+        "{}: {} subject(s), {} PR(s) asked as questions (ai:design, no recoverable answer){}",
         if apply { "migrated" } else { "would migrate" },
         if apply {
             moved
         } else {
             pr_targets.len() + issue_targets.len()
         },
-        unrecoverable,
+        unanswered,
         if failed > 0 {
             format!(", {failed} FAILED")
         } else {
@@ -46817,9 +46868,9 @@ mod one_reject_state_tests {
     }
 
     #[test]
-    fn migrate_design_moves_ordered_and_parked_prs_alike_and_keeps_a_live_order() {
-        // ORDERED residue (a live work order pinned at the current head): the label moves and the
-        // order is already on the record — nothing is re-posted.
+    fn migrate_design_sends_back_an_answered_ruling_and_keeps_a_live_order() {
+        // ORDERED residue (a live work order pinned at the current head): the answer is on the
+        // record, so the PR becomes the send-back it meant — and the order is not re-posted.
         let ordered = pr_at(
             HEAD,
             &["human:design", "ai:ready", "bug"],
@@ -46827,18 +46878,18 @@ mod one_reject_state_tests {
         );
         assert_eq!(
             migrate_design_pr_plan(&ordered),
-            MigrateDesignPlan::Migrate {
+            MigrateDesignPlan::Answered {
                 add_target: true,
                 clears: vec!["ai:ready".to_string()],
                 order: MigrateOrder::LiveAtHead,
             }
         );
-        // PARKED residue (no order ever posted): the ruling's own note becomes the order, pinned
-        // to the current head — a note is mandatory on every ruling, so the order always exists.
+        // PARKED residue with a trusted ruling: the answer is recoverable from the ruling's own
+        // note, which is posted as the order pinned to the current head.
         let parked = pr_at(HEAD, &["human:design"], vec![design_ruling_at(OLD)]);
         assert_eq!(
             migrate_design_pr_plan(&parked),
-            MigrateDesignPlan::Migrate {
+            MigrateDesignPlan::Answered {
                 add_target: true,
                 clears: vec![],
                 order: MigrateOrder::Post(rework_note_comment(
@@ -46856,24 +46907,13 @@ mod one_reject_state_tests {
         );
         assert_eq!(
             migrate_design_pr_plan(&executed),
-            MigrateDesignPlan::Migrate {
+            MigrateDesignPlan::Answered {
                 add_target: true,
                 clears: vec![],
                 order: MigrateOrder::Post(rework_note_comment(
                     HEAD,
                     "split the crate along the parser"
                 )),
-            }
-        );
-        // A hand-applied label with NO trusted ruling comment: the label still moves — same state
-        // either way — but no order can be invented, and the plan says so.
-        let unrecorded = pr_at(HEAD, &["human:design"], vec![]);
-        assert_eq!(
-            migrate_design_pr_plan(&unrecorded),
-            MigrateDesignPlan::Migrate {
-                add_target: true,
-                clears: vec![],
-                order: MigrateOrder::Unrecoverable,
             }
         );
         // Idempotent: a PR that no longer carries the deleted label is nothing to migrate — pure
@@ -46895,13 +46935,89 @@ mod one_reject_state_tests {
         );
         assert_eq!(
             migrate_design_pr_plan(&spoofed),
-            MigrateDesignPlan::Migrate {
+            MigrateDesignPlan::Answered {
                 add_target: true,
                 clears: vec![],
                 order: MigrateOrder::Post(rework_note_comment(
                     HEAD,
                     "split the crate along the parser"
                 )),
+            }
+        );
+    }
+
+    /// A ruling with NO recoverable answer becomes the QUESTION it always was — `ai:design`, the
+    /// `/nd` queue — never an orderless `ai:reject`, which the producer is told to leave alone
+    /// (`campaign-prompt.txt`: "a reject-labelled PR WITHOUT any trusted note is PARKED for a
+    /// human"). This is the shape of the ENTIRE live residue: all six open `human:design` PRs
+    /// predate the marker-emitting transition, so none carries a trusted ruling comment or order.
+    #[test]
+    fn migrate_design_asks_an_unanswered_ruling_as_a_question() {
+        // The live population's exact shape: the label alone, no trusted comments at all.
+        let bare = pr_at(HEAD, &["human:design"], vec![]);
+        assert_eq!(
+            migrate_design_pr_plan(&bare),
+            MigrateDesignPlan::Unanswered {
+                add_target: true,
+                clears: vec![],
+            }
+        );
+        // Untrusted prose is not an answer, however much of it there is.
+        let prose = pr_at(
+            HEAD,
+            &["human:design", "ai:ready"],
+            vec![json!({"author": {"login": "someone-else"},
+                        "body": "👤 human\nRuled abc123: design — do the thing"})],
+        );
+        assert_eq!(
+            migrate_design_pr_plan(&prose),
+            MigrateDesignPlan::Unanswered {
+                add_target: true,
+                clears: vec!["ai:ready".to_string()],
+            }
+        );
+        // A torn `human-close` leaves a trusted ruling comment on an OPEN subject, and its note is
+        // a CLOSE reason — never an order. Reading it as one would hand the producer "duplicate of
+        // #40" to implement, so it reads as unanswered.
+        let torn_close = pr_at(
+            HEAD,
+            &["human:design"],
+            vec![json!({"author": {"login": TRUSTED_AUTHOR},
+                        "body": human_rule_comment(
+                            "close-candidate @2026-07-17T21:23:11Z",
+                            "close-candidate",
+                            "duplicate of #40")})],
+        );
+        assert_eq!(
+            migrate_design_pr_plan(&torn_close),
+            MigrateDesignPlan::Unanswered {
+                add_target: true,
+                clears: vec![],
+            }
+        );
+        // Idempotent: a PR already asked stays asked, and the target is not re-added.
+        let already = pr_at(HEAD, &["human:design", "ai:design"], vec![]);
+        assert_eq!(
+            migrate_design_pr_plan(&already),
+            MigrateDesignPlan::Unanswered {
+                add_target: false,
+                clears: vec![],
+            }
+        );
+        // A REJECT ruling's note IS an instruction, so it still answers — the guard is on the
+        // verb, not on the marker.
+        let reject_ruled = pr_at(
+            HEAD,
+            &["human:design"],
+            vec![json!({"author": {"login": TRUSTED_AUTHOR},
+                        "body": human_rule_comment(OLD, "reject", "restore the leg-1 assertion")})],
+        );
+        assert_eq!(
+            migrate_design_pr_plan(&reject_ruled),
+            MigrateDesignPlan::Answered {
+                add_target: true,
+                clears: vec![],
+                order: MigrateOrder::Post(rework_note_comment(HEAD, "restore the leg-1 assertion")),
             }
         );
     }
@@ -46944,6 +47060,36 @@ mod one_reject_state_tests {
             ],
         );
         assert_eq!(last_human_ruling_note(&blank), None);
+        // Only a SEND-BACK verb's note is an instruction. A `close-candidate` ruling's note says
+        // why to CLOSE — a torn `human-close` leaves exactly that on an open subject — and a
+        // `keep-open`'s is a standing constraint; neither is an order to hand a producer.
+        for (verb, anchor) in [
+            ("close-candidate", "close-candidate @2026-07-17T21:23:11Z"),
+            ("keep-open", "issue @2026-01-01T00:00:00Z"),
+        ] {
+            let ruled = pr_at(
+                HEAD,
+                &[],
+                vec![json!({"author": {"login": TRUSTED_AUTHOR},
+                            "body": human_rule_comment(anchor, verb, "duplicate of #40")})],
+            );
+            assert_eq!(last_human_ruling_note(&ruled), None, "{verb}");
+        }
+        // …and the verb is read from AFTER the last `: `, so an anchor that itself contains one
+        // cannot be mistaken for the verb.
+        let flag_anchored = pr_at(
+            HEAD,
+            &[],
+            vec![json!({"author": {"login": TRUSTED_AUTHOR},
+                        "body": human_rule_comment(
+                            "close-candidate @2026-07-17T21:23:11Z",
+                            "design",
+                            "answer it this way")})],
+        );
+        assert_eq!(
+            last_human_ruling_note(&flag_anchored).as_deref(),
+            Some("answer it this way")
+        );
     }
 
     // Both populations are searched with the same shape as `migrate-reject`'s, per subject kind —
