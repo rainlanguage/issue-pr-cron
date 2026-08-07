@@ -1365,9 +1365,21 @@ beside them, and each measures a top-level array rather than a lane.
 
 ### One population per state (#228)
 
-A state's inventory is its **lane cell**, and its `counts` key is that cell's
-size — derived by iterating the state table, so a key cannot measure something
-its own cell does not.
+Every state declares where its inventory lives, and its `counts` key is read
+from exactly there — derived by iterating the state table, so a key cannot
+measure something its own declaration does not. There are two declarations, and
+the direction differs:
+
+- a **lane** state (`ready`, `design`, `blockedOn`, `blockedInfra`, `reject`,
+  `relink`, `humanReject`, `unvetted`) is inventoried by its `lanes` cell, and
+  its `counts` key is DERIVED from that cell's size;
+- a **top-level** state (`uncoveredIssues`, `leak`, `closeCandidateUnvetted`,
+  `closeCandidateUpheld`) is inventoried by a top-level array, and its `counts`
+  key IS that array's length — the click-through pairing `counts.X == X.len()`
+  that already held.
+
+Either way one population, read once. The rest of this section is about the lane
+states, because that is where the second census was.
 
 Four of those keys used to be counted a second way, from the **label bucket**
 (`ai_state_label`, the first `ai:*` label a PR carries) rather than from
