@@ -383,22 +383,24 @@ server is the vetter's **only** tool surface.
 There is a **third profile**, and it is the answer to "CLI subcommand or MCP
 tool?" for the human: `pr-review-report mcp --profile human` (wired by
 `human-mcp.json`) serves `next_ready`, `pr_context`, `pr_checkout`,
-`clone_release`, `next_close_candidate`, `close_candidate_context`,
+`clone_release`, `next_close_candidate`, `close_candidate_context`, `next_leak`,
 `human_rule`, `human_rule_issue` and `human_close` — find the subject, read it,
-audit its source, rule on it, close it. The human has **two** inboxes, so it has
-two "which is next" tools: `next_ready` for PRs and `next_close_candidate` for
-close-candidate flags (#173). `human_close` is a tool rather than something the
-caller composes for the reason above: the alternative is a transition half in a
-tool and half in a prompt, and that half was wrong on all 74
-closed-and-still-flagged subjects. The subcommands above are for the human at a
-terminal; the profile is for **an agent acting on the human's behalf**, which is
-the case that actually went wrong in #86. A prompt rule cannot take a bypassable
-Bash away, and a `gh issue edit` that no tool offers is exactly what gets
-improvised; a profile makes the non-FSM operation _unavailable_. The vetter's
-inbox tools are deliberately absent — the human's inbox is `human-queue`, which
-renders whole org-wide sets and does not fit one tool result — and so is
-`record_close_candidate_verdict`, which is the vetter's authority and the very
-move `human_rule_issue` refuses on the human's behalf.
+audit its source, rule on it, close it. Each of the human's inboxes has its own
+"which is next" tool: `next_ready` for PRs, `next_close_candidate` for
+close-candidate flags (#173), and `next_leak` for the FSM-conformance leaks
+(#222) — the inbox whose correct size is ZERO, so that tool's empty answer is
+typed as the healthy one rather than left to read as a failure. `human_close` is
+a tool rather than something the caller composes for the reason above: the
+alternative is a transition half in a tool and half in a prompt, and that half
+was wrong on all 74 closed-and-still-flagged subjects. The subcommands above are
+for the human at a terminal; the profile is for **an agent acting on the human's
+behalf**, which is the case that actually went wrong in #86. A prompt rule
+cannot take a bypassable Bash away, and a `gh issue edit` that no tool offers is
+exactly what gets improvised; a profile makes the non-FSM operation
+_unavailable_. The vetter's inbox tools are deliberately absent — the human's
+inbox is `human-queue`, which renders whole org-wide sets and does not fit one
+tool result — and so is `record_close_candidate_verdict`, which is the vetter's
+authority and the very move `human_rule_issue` refuses on the human's behalf.
 
 `pr_checkout` and `clone_release` are on it for `/nr`'s sake (#150). The human
 gate forms its own view rather than relaying the vetter's, and the mechanical
