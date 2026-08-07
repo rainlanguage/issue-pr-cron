@@ -13,6 +13,7 @@ JSON-RPC frame, a Python filter over the response, and two raw `gh` calls.
 | `/nr [1-3]`                                  | `next_ready` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:ready` PR, and the vetter's verdict checked against its diff, its issue and its source. Writes no GitHub state                                                                             |
 | `/ncc [1-3]`                                 | `next_close_candidate` + `close_candidate_context` + `pr_context` (MCP) — the next `ai:close-candidate` flag, and the producer's reason checked against the issue as filed and the code it claims about. Writes no GitHub state                                                                     |
 | `/nd [1-3]`                                  | `next_design` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:design` PR, and the raised question checked against its issue, its diff and its source: genuine (presented with its option space), already answered, or misrouted. Writes no GitHub state |
+| `/nm [1-3]`                                  | `next_leak` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next FSM-conformance leak, and which of three places the defect is in: the PR's state record, the machine's vocabulary, or the classifier. Writes no GitHub state                                    |
 | `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                                                                                                                                                                                       |
 | `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                                                                                                                                                                                        |
 | `/reject <owner/repo#n> "…"`                 | `human-rule … reject --rework` / `human-rule-issue … reject --rework` — the send-back: `ai:reject` (PR) plus the trusted `Rework note` work order, one call, pinned to the head sha or the issue. `--rework` is REQUIRED on either subject; there is no parked reject                               |
@@ -23,9 +24,10 @@ Names collide across plugins; `/human-fsm:close-candidate` disambiguates.
 
 ## The reads and the writes
 
-`/nr`, `/ncc` and `/nd` are the reads that precede a ruling — one per inbox: the
-merge queue, the flag queue, and the design questions. The rest are the rulings.
-They differ in how they reach the binary, and the difference is the point.
+`/nr`, `/ncc`, `/nd` and `/nm` are the reads that precede a ruling — one per
+inbox: the merge queue, the flag queue, the design questions, and the leaks. The
+rest are the rulings. They differ in how they reach the binary, and the
+difference is the point.
 
 The rulings shell out to a `pr-review-report` subcommand. The reads call **MCP
 tools** — served by the `fsm` server this plugin ships in its own manifest — and
@@ -33,18 +35,21 @@ tools** — served by the `fsm` server this plugin ships in its own manifest —
 and `clone_release`, plus `Skill` and `Read`, which it needs because it puts the
 PR's source on disk and audits it. `/nd` is granted the same shape with
 `next_design` at its head, because a design question is a claim about code on a
-PR and weighing its options means reading the tree. `/ncc` is granted
-`next_close_candidate`, `close_candidate_context` and `pr_context`, and those
-three only: a flag has no diff and no tree to check out, so there is nothing for
-`Skill` or `Read` to reach, and a grant a command cannot use is surface it
-cannot account for. None of the three falls back to `gh`, none assembles a field
-itself, and none quietly answers from memory: either the tools answered or the
-command says so and stops. That is the guarantee a merge decision needs, because
-the way this goes wrong is not a refusal, it is a plausible answer nobody can
-trace — and a close decision needs it no less, since upholding a flag closes an
-issue somebody filed. A design ruling needs it for a third reason: since #219 an
-answer IS producer work, so a question answered against something nobody read
-dispatches that work on it.
+PR and weighing its options means reading the tree. `/nm` is granted the same
+shape with `next_leak` at its head: locating a leak sometimes turns on what the
+code actually did, so the tree has to be reachable — though most leaks are
+located from the trusted comments and the labels, and the lens is the exception
+rather than a step. `/ncc` is granted `next_close_candidate`,
+`close_candidate_context` and `pr_context`, and those three only: a flag has no
+diff and no tree to check out, so there is nothing for `Skill` or `Read` to
+reach, and a grant a command cannot use is surface it cannot account for. None
+falls back to `gh`, none assembles a field itself, and none quietly answers from
+memory: either the tools answered or the command says so and stops. That is the
+guarantee a merge decision needs, because the way this goes wrong is not a
+refusal, it is a plausible answer nobody can trace — and a close decision needs
+it no less, since upholding a flag closes an issue somebody filed. A design
+ruling needs it for a third reason: since #219 an answer IS producer work, so a
+question answered against something nobody read dispatches that work on it.
 
 The `allowed-tools` line is a **declaration**, not a sandbox — measured on
 Claude Code 2.1.220, a command granting only `Read` still ran a `Bash` call with
