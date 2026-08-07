@@ -16653,17 +16653,23 @@ enum StateOccupancy {
 
 /// When a state's descriptor is emitted (#130 clarification 1). A LIVE state always emits — an
 /// empty live state stays visible, which is the sparse-`lanes`-vs-canonical-shape separation the
-/// issue exists for. A state that exists only as residue emits only while the named `counts` key
-/// is nonzero: its existence IS its residue, so it leaves the shape when it drains instead of
-/// renting a permanent dimmed box (rain-org-health#145's rejected outcome), and no `retired`
-/// field reaches the wire — the consumer renders what is emitted, nothing more. The gate key is
-/// carried here rather than read from `hist` because the two are different claims: an ABSORBED
-/// residue row (`human:reject`, `ai:relink`) still gates on its kept-while-nonzero count while
-/// owning no series at all — its successor's `hist_fold` draws that past.
+/// issue exists for. A state that exists only as residue emits only while it is OCCUPIED: its
+/// existence IS its residue, so it leaves the shape when it drains instead of renting a permanent
+/// dimmed box (rain-org-health#145's rejected outcome), and no `retired` field reaches the wire —
+/// the consumer renders what is emitted, nothing more.
+///
+/// The gate names no key of its own: it reads the row's DECLARED [`StateOccupancy`], the same
+/// place it points consumers at. A gate keyed separately can measure a different population than
+/// the occupancy it gates, and then both directions are wrong — a row emitting over an empty cell
+/// is the dimmed box this clarification exists to remove, and a row withheld over a full one
+/// hides real PRs. That is not hypothetical for a label-bucket key: `counts.blockedDeploy` counts
+/// the FIRST `ai:*` label ([`ai_state_label`]) while the cell is [`classify_lane`] PRECEDENCE, so
+/// `["human:design", "ai:blocked-deploy"]` fills the count with an empty cell and
+/// `["ai:ready", "ai:blocked-deploy"]` fills the cell with a zero count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Emit {
     Always,
-    WhileOccupied(&'static str),
+    WhileOccupied,
 }
 
 /// ONE state of the machine, as data — the shape `human-queue --json` emits under
@@ -16851,7 +16857,7 @@ const STATE_RELINK: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: Some("ai:relink (retired #135)"),
     occupancy: StateOccupancy::Lane(Lane::VetterVerdicts),
-    emit: Emit::WhileOccupied("relink"),
+    emit: Emit::WhileOccupied,
 };
 
 /// A design question only a human can answer or supply.
@@ -16879,7 +16885,7 @@ const STATE_BLOCKED_DEPLOY: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: Some("ai:blocked-deploy (retired #162)"),
     occupancy: StateOccupancy::Lane(Lane::ProducerBlocked),
-    emit: Emit::WhileOccupied("blockedDeploy"),
+    emit: Emit::WhileOccupied,
 };
 
 /// RETIRED (#108): nothing parks on it — the producer's next pass re-enters the ordinary
@@ -16893,7 +16899,7 @@ const STATE_BLOCKED_INFRA: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: Some("ai:blocked-infra (retired #108)"),
     occupancy: StateOccupancy::Lane(Lane::ProducerBlocked),
-    emit: Emit::WhileOccupied("blockedInfra"),
+    emit: Emit::WhileOccupied,
 };
 
 /// RETIRED (#133): parks ABSOLUTELY — no AI actor touches the PR — so the human-driven
@@ -16909,13 +16915,20 @@ const STATE_HUMAN_REJECT: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: Some("human:reject (retired #133)"),
     occupancy: StateOccupancy::Lane(Lane::HumanDecisions),
-    emit: Emit::WhileOccupied("humanReject"),
+    emit: Emit::WhileOccupied,
 };
 
 /// A human design ruling. The PRODUCER's move (#111): `worklist` routes a delegated ruling
 /// `rework-ruling` and the re-vet clears the spent label; only the explicit `--park` spelling
-/// waits on the human, the minority spelling by design. Residue-emitted: the row leaves the
-/// shape when no PR carries the label.
+/// waits on the human, the minority spelling by design.
+///
+/// A LIVE state, so it emits even at zero: `/design` still writes the label
+/// ([`HUMAN_PR_RULING_LABELS`]) and #111 routes each delegated ruling back to the producer, so
+/// the population empties and refills in the ordinary course. Gating it as residue would make
+/// the box vanish the moment the queue drained and reappear on the next ruling — a live state
+/// rendering nowhere, which is the mirror of the drift #130 exists to kill. (#219 proposes
+/// deleting the state; that deletion removes this row wholesale, which is a different thing from
+/// gating a state the machine still writes.)
 const STATE_HUMAN_DESIGN: StateDescriptor = StateDescriptor {
     key: "human:design",
     owner: StateOwner::Producer,
@@ -16925,7 +16938,7 @@ const STATE_HUMAN_DESIGN: StateDescriptor = StateDescriptor {
     hist_fold: &[],
     label: None,
     occupancy: StateOccupancy::Lane(Lane::HumanDecisions),
-    emit: Emit::WhileOccupied("humanDesign"),
+    emit: Emit::Always,
 };
 
 /// The vetter's flag inbox (#72/#73), over BOTH subject types (#211/#212): a producer
@@ -17008,17 +17021,30 @@ static STATE_DESCRIPTORS: [&StateDescriptor; 14] = [
     &STATE_LEAK,
 ];
 
+/// PURE: how many subjects a descriptor's DECLARED occupancy holds, read from the same document
+/// the descriptor points a consumer at — the lane cell for a lane row (sparse-absent ⇒ 0), the
+/// named `counts` key for a top-level row. One reader, so the gate below and the consumer's
+/// rendering can never disagree about whether a state is occupied.
+fn descriptor_occupancy(d: &StateDescriptor, counts: &Value, lanes: &Value) -> usize {
+    match &d.occupancy {
+        StateOccupancy::Lane(lane) => lane_state_count(lanes, lane.key(), d.key),
+        StateOccupancy::Counts { counts: key, .. } => {
+            counts.get(key).and_then(|v| v.as_u64()).unwrap_or(0) as usize
+        }
+    }
+}
+
 /// The emitted `stateDescriptors` value: the rows of [`STATE_DESCRIPTORS`], in table order,
-/// filtered by each row's [`Emit`] policy against the SAME `counts` object the document carries —
-/// a live row always, a residue row only while its gate key is nonzero, so a drained retired
-/// state leaves the shape while an empty live state stays visible (#130 clarification 1).
-fn state_descriptors_json(counts: &Value) -> Value {
+/// filtered by each row's [`Emit`] policy against the SAME `counts`/`lanes` the document carries —
+/// a live row always, a residue row only while its declared occupancy is nonzero, so a drained
+/// retired state leaves the shape while an empty live state stays visible (#130 clarification 1).
+fn state_descriptors_json(counts: &Value, lanes: &Value) -> Value {
     Value::Array(
         STATE_DESCRIPTORS
             .iter()
             .filter(|d| match d.emit {
                 Emit::Always => true,
-                Emit::WhileOccupied(k) => counts.get(k).and_then(|v| v.as_u64()).unwrap_or(0) > 0,
+                Emit::WhileOccupied => descriptor_occupancy(d, counts, lanes) > 0,
             })
             .map(|d| d.to_json())
             .collect(),
@@ -17297,9 +17323,11 @@ struct QueuePr {
 }
 
 /// PURE: build the lane-grouped inventory `{ <lane>: { <state>: { count, prs:[{repo,number,url,title}] } } }`
-/// from the classified PRs. Every state key appears with a stable, sorted PR list. The `Leak` lane is
-/// emitted too (as `leak`), but the top-level `leaks` key stays the canonical leak view for
-/// backward-compat.
+/// from the classified PRs. Every state key appears with a stable, sorted PR list. Two classified
+/// buckets get NO cell: the close-candidate hand-off, inventoried by the mixed
+/// `closeCandidateUnvetted`/`closeCandidateUpheld` arrays (#211/#212), and `leak`, inventoried by
+/// the top-level `leaks` array that carries each leak's `reason` (#130 clarification 2) — so every
+/// cell emitted here is claimed by exactly one state descriptor.
 fn lanes_doc(prs: &[QueuePr]) -> Value {
     // lane -> state -> Vec<pr Value>, both levels sorted (BTreeMap) for a stable snapshot diff.
     let mut lanes: std::collections::BTreeMap<
@@ -17612,10 +17640,11 @@ fn human_queue_doc(
         .iter()
         .map(|(k, v)| (k.clone(), Value::Array(SubjectRef::array(v))))
         .collect();
-    // Built FIRST because the descriptor emission filters against it: a residue row emits only
-    // while its `counts.<hist>` is nonzero (#130 clarification 1). `openIssues` joins this
-    // object after assembly exactly as before — a non-state metric no descriptor filters on.
-    let counts = serde_json::json!({
+    // Built FIRST, and COMPLETE — `openIssues` included below before anything reads it —
+    // because the descriptor emission filters against it: a residue row emits only while its
+    // declared occupancy is nonzero (#130 clarification 1). Completing the object first means a
+    // key added here later cannot be read as absent-and-therefore-zero by that filter.
+    let mut counts = serde_json::json!({
         // Legacy label-based counts (UNCHANGED — the dashboard reads these).
         "ready": buckets.get("ai:ready").map(|v| v.len()).unwrap_or(0),
         "design": buckets.get("ai:design").map(|v| v.len()).unwrap_or(0),
@@ -17659,15 +17688,24 @@ fn human_queue_doc(
         "humanReject": lane_state_count(lanes, "human-decisions", RETIRED_HUMAN_REJECT_LABEL),
         "humanDesign": lane_state_count(lanes, "human-decisions", "human:design"),
     });
+    if let Some(open) = open {
+        // The org-wide open-issue count goes in `counts` beside the queue counts, and the ages go
+        // in a SIBLING `ages` block below, never inside `counts` — `counts` is named for what it
+        // holds and an age is not a count (rain-org-health#140 / #165). Both read the SAME `open`
+        // list, which [`open_issues`] is the only site to build: the number of issues and the age
+        // of those issues cannot describe different populations.
+        counts["openIssues"] = Value::from(open.len());
+    }
     let mut doc = serde_json::json!({
         "states": bmap,
         "lanes": lanes,
         // The machine's SHAPE as data (#130): every state's descriptor, in render order,
         // serialised from the same rows [`classify_lane`]'s constants are spelled from, with
-        // residue rows filtered by the `counts` above. `lanes` stays the sparse occupancy; this
+        // residue rows filtered by their own declared occupancy — the `counts` completed above
+        // and these very `lanes`. `lanes` stays the sparse occupancy; this
         // list is what EXISTS, so a consumer renders an empty-but-live state, and a deleted or
         // drained state leaves on the next refresh with no edit anywhere.
-        "stateDescriptors": state_descriptors_json(&counts),
+        "stateDescriptors": state_descriptors_json(&counts, lanes),
         "closeCandidateIssues": SubjectRef::array(close_issues),
         // Same key at top level (the ITEM ARRAY) and under `counts` (its length), exactly as
         // `closeCandidateIssues` / `uncoveredIssues` do — the dashboard boxes are click-through.
@@ -17686,16 +17724,11 @@ fn human_queue_doc(
         "counts": counts,
     });
     if let Some(open) = open {
-        // The org-wide open-issue count goes in `counts` beside the queue counts, and the ages go
-        // in a SIBLING `ages` block, never inside `counts` — `counts` is named for what it holds
-        // and an age is not a count (rain-org-health#140 / #165). Both read the SAME `open` list,
-        // which [`open_issues`] is the only site to build: the number of issues and the age of
-        // those issues cannot describe different populations.
-        doc["counts"]["openIssues"] = Value::from(open.len());
         // ABSENT, not null and not zero, when no member carries a parseable `createdAt` — the
         // dashboard's documented degradation for a missing field is no spark, never a broken box,
-        // and a `0` would claim a set of brand-new issues. Note this is independent of the count
-        // above: a population whose rows all lack `createdAt` still HAS a size.
+        // and a `0` would claim a set of brand-new issues. Note this is independent of the
+        // `openIssues` COUNT written above: a population whose rows all lack `createdAt` still
+        // HAS a size.
         if let Some(ages) = issue_age_stats(open, now_ms) {
             doc.as_object_mut()
                 .expect("human_queue_doc is an object")
@@ -47277,12 +47310,12 @@ mod state_descriptor_tests {
                 );
             }
         }
-        // …and the emitted `lanes` document itself: every cell `lanes_doc` produces from these
-        // same inputs is claimed by exactly one lane-occupancy descriptor (#130 clarification 2).
-        // The leak and close-candidate buckets classify but emit NO cell — their inventories are
-        // top-level — so an unclaimed cell here is a defect, with zero declared exceptions.
+    }
+
+    /// The document a set of labelled PRs produces, through the SAME pure assembler that ships.
+    fn doc_for(label_sets: &[Vec<String>]) -> Value {
         let mut prs: Vec<QueuePr> = Vec::new();
-        for labels in &label_sets {
+        for labels in label_sets {
             for rvah in [None, Some(true), Some(false)] {
                 for pc in [false, true] {
                     let n = prs.len() as u64 + 1;
@@ -47300,21 +47333,116 @@ mod state_descriptor_tests {
                 }
             }
         }
-        let emitted_lanes = lanes_doc(&prs);
-        for (lane, states) in emitted_lanes.as_object().expect("lanes is an object") {
-            for state in states.as_object().expect("a lane is an object").keys() {
-                match &descriptor(state).occupancy {
-                    StateOccupancy::Lane(l) => assert_eq!(
-                        l.key(),
-                        lane.as_str(),
-                        "emitted cell `{lane}`.`{state}` is claimed by a descriptor naming \
-                         another lane"
-                    ),
-                    StateOccupancy::Counts { .. } => panic!(
-                        "emitted cell `{lane}`.`{state}` is claimed by no lane-occupancy \
-                         descriptor — unclaimed occupancy (#130 clarification 2)"
-                    ),
+        let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> = Default::default();
+        for p in &prs {
+            if let Some(state) = ai_state_label(&p.labels) {
+                buckets.entry(state).or_default().push(p.subject.clone());
+            }
+        }
+        let (ccu, ccu_n) = issue_state_pair(vec![]);
+        let (ccup, ccup_n) = issue_state_pair(vec![]);
+        human_queue_doc(
+            &buckets,
+            &lanes_doc(&prs),
+            &[],
+            ccu,
+            ccu_n,
+            ccup,
+            ccup_n,
+            &[],
+            Some(&[]),
+            &[],
+            prs.len(),
+            &[],
+            0,
+        )
+    }
+
+    // Conservation as the CONSUMER sees it, on the WIRE: every cell in the emitted `lanes` is
+    // claimed by exactly one EMITTED descriptor, and no residue descriptor is emitted over a cell
+    // that is empty. Asserted against `stateDescriptors` AS SHIPPED — through the `Emit` filter,
+    // not against the table behind it — because those are different objects and only the emitted
+    // one reaches a consumer.
+    //
+    // The fixture carries MULTI-LABEL PRs on purpose. A gate reading some other population than
+    // the occupancy it gates diverges only when a PR carries two labels, and that is normal here:
+    // [`classify_lane`] resolves by precedence ("a blocked state dominates a stale `ai:ready`
+    // label") while [`ai_state_label`] takes the first `ai:*` and skips `human:*` entirely. A
+    // single-label sweep passes straight through both directions of that bug.
+    #[test]
+    fn every_emitted_lane_cell_is_claimed_by_an_emitted_descriptor() {
+        let mut label_sets: Vec<Vec<String>> = vec![vec![]];
+        for l in HUMAN_DECISION_LABELS {
+            label_sets.push(vec![l.to_string()]);
+        }
+        for v in VETTER_VERDICT_LABELS {
+            label_sets.push(vec![v.to_string()]);
+        }
+        for l in [
+            RETIRED_HUMAN_REJECT_LABEL,
+            RETIRED_BLOCKED_DEPLOY_LABEL,
+            RETIRED_STATE_LABEL,
+            STATE_BLOCKED_ON.key,
+            STATE_READY.key,
+            "ai:close-candidate",
+        ] {
+            label_sets.push(vec![l.to_string()]);
+        }
+        // Every ordered pair of state labels: a label-bucket key and a precedence winner disagree
+        // exactly here, and nowhere else.
+        let singles: Vec<String> = label_sets
+            .iter()
+            .filter(|l| l.len() == 1)
+            .map(|l| l[0].clone())
+            .collect();
+        for a in &singles {
+            for b in &singles {
+                if a != b {
+                    label_sets.push(vec![a.clone(), b.clone()]);
                 }
+            }
+        }
+
+        let doc = doc_for(&label_sets);
+        let emitted = doc
+            .get("stateDescriptors")
+            .expect("descriptors are emitted");
+        let lanes = doc.get("lanes").expect("lanes are emitted");
+        let claimed: std::collections::BTreeSet<(String, String)> = emitted
+            .as_array()
+            .expect("stateDescriptors is an array")
+            .iter()
+            .filter_map(|d| {
+                Some((
+                    d.pointer("/occupancy/lane")?.as_str()?.to_string(),
+                    d["key"].as_str()?.to_string(),
+                ))
+            })
+            .collect();
+
+        for (lane, states) in lanes.as_object().expect("lanes is an object") {
+            for (state, cell) in states.as_object().expect("a lane is an object") {
+                assert!(
+                    claimed.contains(&(lane.clone(), state.clone())),
+                    "emitted cell `{lane}`.`{state}` (count {}) is claimed by no emitted \
+                     descriptor — its inventory renders nowhere (#130)",
+                    cell["count"]
+                );
+            }
+        }
+        // …and the other direction: nothing emitted over a cell that does not exist, which is the
+        // permanent dimmed box holding nothing that clarification 1 exists to remove.
+        for d in emitted.as_array().unwrap() {
+            let Some(lane) = d.pointer("/occupancy/lane").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let key = d["key"].as_str().unwrap();
+            if descriptor(key).emit == Emit::WhileOccupied {
+                assert!(
+                    lane_state_count(lanes, lane, key) > 0,
+                    "residue descriptor `{key}` is emitted while its cell `{lane}`.`{key}` is \
+                     empty — a dimmed box holding nothing (#130 clarification 1)"
+                );
             }
         }
     }
@@ -47347,7 +47475,8 @@ mod state_descriptor_tests {
         assert_eq!(
             doc.get("stateDescriptors"),
             Some(&state_descriptors_json(
-                doc.get("counts").expect("counts is emitted")
+                doc.get("counts").expect("counts is emitted"),
+                doc.get("lanes").expect("lanes are emitted")
             ))
         );
 
@@ -47390,14 +47519,6 @@ mod state_descriptor_tests {
                     "fold key `{f}` folds into more than one series"
                 );
             }
-            if let Emit::WhileOccupied(k) = d.emit {
-                assert!(
-                    counts.contains_key(k),
-                    "`{}` gates on `counts.{k}`, which is not emitted — the row could never \
-                     return for a straggler",
-                    d.key
-                );
-            }
             if let StateOccupancy::Counts {
                 counts: c, items, ..
             } = &d.occupancy
@@ -47435,21 +47556,29 @@ mod state_descriptor_tests {
         }
     }
 
-    /// Every history and gate key at `n` — the full counts surface the emission reads, so `1` is
-    /// full occupancy (every row emits) and `0` is fully drained (residue rows leave).
-    fn counts_at(n: u64) -> Value {
-        Value::Object(
-            STATE_DESCRIPTORS
-                .iter()
-                .flat_map(|d| {
-                    d.hist.into_iter().chain(match d.emit {
-                        Emit::WhileOccupied(k) => Some(k),
-                        Emit::Always => None,
-                    })
-                })
-                .map(|k| (k.to_string(), Value::from(n)))
-                .collect(),
-        )
+    /// A `(counts, lanes)` pair holding `n` in EVERY descriptor's declared occupancy — both the
+    /// counts keys and the lane cells, since the gate reads whichever one its row declares. `1`
+    /// is full occupancy (every row emits); `0` is fully drained (residue rows leave).
+    fn occupancy_at(n: u64) -> (Value, Value) {
+        let mut counts = serde_json::Map::new();
+        let mut lanes = serde_json::Map::new();
+        for d in STATE_DESCRIPTORS {
+            match &d.occupancy {
+                StateOccupancy::Lane(l) => {
+                    let cells = lanes
+                        .entry(l.key().to_string())
+                        .or_insert_with(|| Value::Object(Default::default()));
+                    cells[d.key] = json!({ "count": n, "prs": [] });
+                }
+                StateOccupancy::Counts { counts: key, .. } => {
+                    counts.insert(key.to_string(), Value::from(n));
+                }
+            }
+            if let Some(h) = d.hist {
+                counts.entry(h.to_string()).or_insert(Value::from(n));
+            }
+        }
+        (Value::Object(counts), Value::Object(lanes))
     }
 
     // The ratified contract (the #130 schema comment), pinned verbatim: field set and spelling,
@@ -47460,7 +47589,10 @@ mod state_descriptor_tests {
     #[test]
     fn state_descriptors_emit_the_ratified_shape() {
         assert_eq!(
-            state_descriptors_json(&counts_at(1)),
+            {
+                let (counts, lanes) = occupancy_at(1);
+                state_descriptors_json(&counts, &lanes)
+            },
             json!([
                 {
                     "key": "uncoveredIssues",
@@ -47612,11 +47744,11 @@ mod state_descriptor_tests {
                 .map(|d| d["key"].as_str().expect("key is a string").to_string())
                 .collect()
         };
-        let drained = counts_at(0);
+        let (drained, no_lanes) = occupancy_at(0);
         // The live set, pinned: every occupancy at ZERO, every live row still emitted, every
         // residue row gone.
         assert_eq!(
-            keys(&state_descriptors_json(&drained)),
+            keys(&state_descriptors_json(&drained, &no_lanes)),
             [
                 "uncoveredIssues",
                 "un-vetted",
@@ -47624,6 +47756,7 @@ mod state_descriptor_tests {
                 "ai:ready",
                 "ai:reject",
                 "ai:design",
+                "human:design",
                 "closeCandidateUnvetted",
                 "closeCandidateUpheld",
                 "leak",
@@ -47631,9 +47764,11 @@ mod state_descriptor_tests {
             .map(String::from)
         );
         // One straggler reappears → exactly its row returns, in render order.
-        let mut residue = drained.clone();
-        residue["blockedDeploy"] = Value::from(13);
-        let emitted = state_descriptors_json(&residue);
+        // A straggler is a LANE cell for these rows — the same place the descriptor points a
+        // consumer — never the label-bucket count, which measures a different population.
+        let mut residue_lanes = no_lanes.clone();
+        residue_lanes["producer-blocked"]["ai:blocked-deploy"] = json!({"count": 13, "prs": []});
+        let emitted = state_descriptors_json(&drained, &residue_lanes);
         assert_eq!(
             keys(&emitted),
             [
@@ -47644,6 +47779,7 @@ mod state_descriptor_tests {
                 "ai:reject",
                 "ai:design",
                 "ai:blocked-deploy",
+                "human:design",
                 "closeCandidateUnvetted",
                 "closeCandidateUpheld",
                 "leak",
@@ -47658,19 +47794,19 @@ mod state_descriptor_tests {
             .find(|d| d["key"] == json!("ai:blocked-deploy"))
             .expect("the residue row is emitted while occupied");
         assert_eq!(row["label"], json!("ai:blocked-deploy (retired #162)"));
-        // `human:design` gates the same way — the row leaves the shape when no PR carries the
-        // label — with no special-casing anywhere for its pending deletion.
-        let mut hd = drained.clone();
-        hd["humanDesign"] = Value::from(6);
-        assert!(keys(&state_descriptors_json(&hd)).contains(&"human:design".to_string()));
+        // …while `human:design` is NOT gated at all: it is above, in the drained live set.
+        assert!(matches!(descriptor("human:design").emit, Emit::Always));
         // An ABSORBED residue row gates on its own kept-while-nonzero count while owning no
         // series: `ai:reject` draws that past through its folds, so the straggler is visible as a
         // state without the same inventory drawing in two boxes (#133/#135 consolidated both
         // INTO reject, the rename shape #130's history paragraph is about).
-        for (gate, key) in [("humanReject", "human:reject"), ("relink", "ai:relink")] {
-            let mut c = drained.clone();
-            c[gate] = Value::from(3);
-            let emitted = state_descriptors_json(&c);
+        for (gate, key, lane) in [
+            ("humanReject", "human:reject", "human-decisions"),
+            ("relink", "ai:relink", "vetter-verdicts"),
+        ] {
+            let mut l = no_lanes.clone();
+            l[lane][key] = json!({"count": 3, "prs": []});
+            let emitted = state_descriptors_json(&drained, &l);
             let row = emitted
                 .as_array()
                 .unwrap()
