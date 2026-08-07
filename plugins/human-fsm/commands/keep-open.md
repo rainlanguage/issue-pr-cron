@@ -21,8 +21,8 @@ pr-review-report human-rule-issue <slug> <n> keep-open <NOTE>
 
 `keep-open` is **issue-only**: it answers a producer close-candidate flag with
 "no", and a PR has no such flag to answer — `human:keep-open` on a PR is a label
-the lane classifier buckets nowhere, so the PR would silently leave the
-human-decisions lane entirely. The tool refuses it there and says so.
+the lane classifier buckets nowhere, so the ruling would record nothing at all.
+The tool refuses it there and says so.
 
 This is the one ruling that **clears** an `ai:*` label: `keep-open` contradicts
 `ai:close-candidate` outright, so the flag goes with it. The comment pins to the

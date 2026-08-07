@@ -128,7 +128,6 @@ transition functions:
 | `weaken-closes <owner/repo> <n> <issue>`                                        | the LINKAGE repair a linkage `needs-work` names: `Closes #issue` → `Refs #issue`, every other byte identical, `## QA` untouched, DIRECTION-LOCKED so it can only ever remove a closing reference                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `mcp [--profile vetter\|producer\|human]`                                       | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `plugin-version-lockstep [--root <dir>]`                                        | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `migrate-needs-work [--apply]`                                                  | the #133 one-shot: every open PR still carrying the RETIRED `human:needs-work` → `ai:needs-work`. A REPORT unless `--apply` — an org-wide relabel is not one forgotten flag away                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ## The layer a human types: slash commands as a plugin
 
@@ -307,14 +306,13 @@ it finds is a different PR's code.
 - **Human decisions protect AUTHORSHIP, and a ruling is an INPUT (#111).** No AI
   actor ever writes a `human:*` label, and none removes one as an OVERRIDE of
   the human: a native `APPROVED`/`CHANGES_REQUESTED` review, a `👤 human` ruling
-  pinned to the CURRENT head, or a sacred label (the retired `human:needs-work`)
-  is never overwritten by the vetter — `--record-verdict` refuses (exit 3),
-  closing the TOCTOU race. But absolute parking is the ruled-out overreaction: a
-  ruling is an input the machine EXECUTES. A ruling's trusted `Rework note` is
-  the producer's work order; the push that executes it moves the head, the
-  ruling stops describing the code by itself, and the PR re-enters vetting
-  through the ordinary un-vetted path — no label of the human's own to clear
-  (#219).
+  pinned to the CURRENT head is never overwritten by the vetter —
+  `--record-verdict` refuses (exit 3), closing the TOCTOU race. But absolute
+  parking is the ruled-out overreaction: a ruling is an input the machine
+  EXECUTES. A ruling's trusted `Rework note` is the producer's work order; the
+  push that executes it moves the head, the ruling stops describing the code by
+  itself, and the PR re-enters vetting through the ordinary un-vetted path — no
+  label of the human's own to clear (#219).
 - **The send-back is ONE state, and the ruler rides on the comment
   (#133/#219).** `ai:needs-work` and `human:needs-work` demanded the same move
   from the same actor, so they are one state: `ai:needs-work`, whoever ruled —
@@ -335,11 +333,12 @@ it finds is a different PR's code.
   comparison proved only that SOME commit post-dated the label event, and what
   actually protects the objection is a stateless re-vet that can read it. So
   `human:*` means one thing — AUTHORSHIP-protected: never written by an AI
-  actor, never removed as an override. `human:needs-work` survives only as a
-  RETIRED label on PRs the migration has not moved; it stays sacred and stays
-  bucketed until `migrate-needs-work` does. `human:design` does not survive at
-  all: nothing writes, reads, or buckets it, no repo defines it, and no subject
-  carries it.
+  actor, never removed as an override. On a PR neither string survives as a
+  state: `human:design` was deleted outright (#219), and the RETIRED
+  `human:needs-work` came out with `migrate-needs-work` once that one-shot had
+  emptied it (#133/#230) — a migration is an execution vehicle, not permanent
+  machinery. `human:needs-work` is still LIVE on an ISSUE, where
+  `human-rule-issue needs-work` writes it.
 - **A verdict accounts for every file the PR changes.** Scope coverage was the
   one thing `record_verdict` took on trust, and a verdict formed without a
   changed file in view is indistinguishable from a diligent one:

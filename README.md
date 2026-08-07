@@ -184,12 +184,12 @@ that has already happened:
   no state left to move out of, so nothing is written and the exit is 0;
 - **re-ruling supersedes** rather than refuses. The human owns this namespace
   and may correct a mis-click, so any old `human:*` is removed as the new ruling
-  lands — the one **RUNTIME** removal of a `human:*` label, sanctioned because
-  the actor removing it wrote it. The other remover is a MIGRATION rather than a
-  transition of the running FSM: `migrate-needs-work` moves the PRs still
-  carrying the `human:needs-work` #133 retired onto `ai:needs-work` — a one-shot
-  over a fixed, shrinking population, which is why it is not a path a live
-  ruling can take;
+  lands — now the ONLY removal of a `human:*` label, sanctioned because the
+  actor removing it wrote it. There used to be a second remover, a MIGRATION
+  rather than a transition of the running FSM (`migrate-needs-work`, moving the
+  PRs #133 retired onto `ai:needs-work`); it has run to zero and come out with
+  its state, because a migration is an execution vehicle rather than permanent
+  machinery;
 - **a ruling that would strand a live flag is refused** (exit 4). This is the
   one from #86. On `rainlanguage/rain.erc4626.words#93` a hand-applied
   `human:needs-work` sat on an issue whose producer close-candidate flag had not
@@ -650,15 +650,16 @@ inventory; this returns its head, with the evidence to act on it.
 **The population is `classify_lane`'s own `Leak` verdict, and that is the whole
 correctness argument.** It was originally the set "carries no `ai:*` label",
 which reads like the same thing and is not: `human:*` labels are not
-`ai:*`-prefixed, so every PR parked in the human-decisions lane satisfied it.
-Measured over the pipeline's orgs on 2026-08-06, four of the five reported leaks
-were PRs parked in that lane — in a modeled state, waiting on a ruling from the
-very human reading the box — and the one PR genuinely in no state sorted last
-behind them, below a page cap of 3. The dashboard's `counts.leaks` reads the
-same array, so it was wrong in the same four places. Deriving the question from
-the classifier is the `cc_gate` precedent one lane over: a `repo_root_tests` pin
-requires the enumeration to select through `classify_lane`, so the tool's
-definition and its population cannot be two facts.
+`ai:*`-prefixed, so back when they still named PR states, every PR parked in one
+satisfied it. Measured over the pipeline's orgs on 2026-08-06, four of the five
+reported leaks were PRs parked that way — in a modeled state, waiting on a
+ruling from the very human reading the box — and the one genuinely in no state
+sorted last behind them, below a page cap of 3. The dashboard's `counts.leaks`
+reads the same array, so it was wrong in the same four places. Deriving the
+question from the classifier is the `cc_gate` precedent one lane over: a
+`repo_root_tests` pin requires the enumeration to select through
+`classify_lane`, so the tool's definition and its population cannot be two
+facts.
 
 **A deleted state is two different cases, and only one of them leaks.** A
 deleted `ai:*` label lands its PR in `un-vetted`: the vetter absorbs it and the
@@ -1411,7 +1412,8 @@ since #133 there is exactly one of them: `ai:needs-work`, whoever ruled. Both
 labels always demanded the same move from the same actor — the producer reads
 the note and reworks — so they were one state split by an attribute, and filing
 that attribute as a state is what put 36 items of producer work in a lane named
-`human-decisions`.
+`human-decisions` — a lane that no longer exists, since that residue was its
+only state and the migration draining it has run.
 
 The attribute did not go away; it moved to where provenance already lives. A
 human ruling posts a `👤 human` comment **pinned to the head sha**, and that
@@ -1452,15 +1454,14 @@ grouped into four lanes so the dashboard can show where PRs pile up:
   string models nothing and falls through to **`un-vetted`** — the vetter
   absorbs it and the verdict that judges it strips the dead label. It is not a
   leak: leak detection runs over label-less PRs only, and this one carries an
-  `ai:*` label.)
-- **human-decisions** — the RETIRED `human:needs-work`, for as long as any PR
-  still carries it (#133). The count is the migration's progress meter:
-  `migrate-needs-work` moves those PRs to `ai:needs-work` and it only ever
-  shrinks. It is the lane's only state: a live human decision on a PR is a
-  comment or a native review, never a label — `human:design` is DELETED (#219),
-  and no PR carries it. A deleted label behaves the same way in either
-  namespace: like the deploy string above, residue wearing it models nothing and
-  falls through.
+  `ai:*` label.) (There is no **human-decisions** lane. It held exactly one
+  state — the RETIRED PR-side `human:needs-work` (#133) — and once
+  `migrate-needs-work` had moved that population to `ai:needs-work` the state,
+  the lane and the migration verb all came out together. A live human decision
+  on a PR is a comment or a native review, never a label; `human:design` is
+  DELETED (#219) too. A deleted label behaves the same way in either namespace:
+  like the deploy string above, residue wearing it models nothing and falls
+  through.
 
 Each PR is bucketed **once**, by FSM precedence (a human decision dominates a
 stale `ai:*` label). `lanes` and the **lane-state** `counts` keys (`ready`,

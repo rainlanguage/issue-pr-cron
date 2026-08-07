@@ -221,8 +221,8 @@ population is the LANE CLASSIFIER's own verdict — the same call that decides
 every other PR's state — so this command, the `human-queue` array and the
 dashboard box cannot hold three opinions about which PRs escaped the machine.
 That is not decoration: while the enumeration was a second reading of the labels
-(`no ai:* label`) it swept in every PR parked in the human-decisions lane, which
-are in a modeled state, waiting on exactly the human running this command.
+(`no ai:* label`) it swept in every PR then parked in a modeled `human:*` state,
+waiting on exactly the human running this command.
 
 The queue is **oldest first**. A leak is in nobody's queue — not the producer's,
 not the vetter's, no human inbox but this one — so nothing else will ever

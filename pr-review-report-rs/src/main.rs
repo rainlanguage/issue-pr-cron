@@ -1238,43 +1238,6 @@ fn presentable_state(ci: Ci, merge: Merge, review_decision: Option<&str>) -> Pre
         },
     }
 }
-/// RETIRED (#133). `human:needs-work` was the human's OWN needs-work state, and the split it created is the
-/// thing #133 removes: `ai:needs-work` and `human:needs-work` demanded the same move from the same actor —
-/// the producer reworks — so they were one state wearing two names, and the name a lane is filed
-/// under is why "human-decisions" held 36 items of PRODUCER work.
-///
-/// Never written again. Still listed in [`PR_SACRED_LABELS`] and still bucketed by [`classify_lane`]
-/// for exactly the reason [`RETIRED_STATE_LABEL`] is: the PRs a pre-#133 run parked must not silently
-/// reclassify, and — unlike `ai:blocked-infra` — they must not silently become vetter-writable
-/// either. `migrate-needs-work` is their exit.
-const RETIRED_HUMAN_NEEDS_WORK_LABEL: &str = STATE_HUMAN_NEEDS_WORK.key;
-
-/// The human's namespace on a PR, and what it protects is AUTHORSHIP (#111): nothing in this binary
-/// writes one of these but the human's own transition, and nothing removes one AS AN OVERRIDE of the
-/// human. One entry: the RETIRED `human:needs-work` — see [`RETIRED_HUMAN_NEEDS_WORK_LABEL`] — which parks
-/// absolutely until `migrate-needs-work` moves it.
-///
-/// A LIVE human ruling on a PR carries no `human:*` label at all. Both PR ruling verbs land the ONE
-/// needs-work state — `ai:needs-work` plus the trusted work order, #133 for `needs-work` and #219 for `design`
-/// (an answered design question is the same send-back) — a close ruling is `human-close`'s
-/// decide+do with no label between (#213), and the ruling itself lives in the sha-pinned `👤 human`
-/// comment, where [`human_ruled_at_head`] reads it. `human:design` is DELETED (#219): its only live
-/// meaning was the parked question, and the question is already a modeled state (`ai:design`), so
-/// the park was a second name for it that only the human could exit — the #109 dead-state defect.
-/// No repo defines that label and no subject carries it.
-const PR_SACRED_LABELS: [&str; 1] = [RETIRED_HUMAN_NEEDS_WORK_LABEL];
-
-/// A PR carries a human override label (which beats an `ai:ready` label) when any of its labels is
-/// in [`PR_SACRED_LABELS`]. Derived from the constant so the sacred set and the override test
-/// cannot name different states. Every entry parks ABSOLUTELY, so this is decidable from a search
-/// result's labels alone — no per-PR fetch — and it is the label half of [`pr_human_sacred`], which
-/// adds the two forms a label cannot carry (a native review, a ruling pinned to the current head).
-fn has_human_override(p: &Value) -> bool {
-    label_names(p)
-        .iter()
-        .any(|l| PR_SACRED_LABELS.contains(&l.as_str()))
-}
-
 /// A native GitHub human review (`reviewDecision` APPROVED or CHANGES_REQUESTED) is a human decision
 /// too, as sacred as a `human:*` label. Checked at WRITE time so a review that lands between the
 /// vetter's read and its record cannot be clobbered — this closes the human-review TOCTOU race.
@@ -1314,7 +1277,6 @@ fn human_ruled_at_head(pr_json: &Value, head: &str) -> bool {
 /// through this one predicate, so the forms of a human decision cannot drift apart. What it protects
 /// is AUTHORSHIP and CURRENCY, not permanence (#111):
 ///
-/// - a sacred `human:*` label ([`PR_SACRED_LABELS`]) — sacred, no condition;
 /// - a native APPROVED/CHANGES_REQUESTED review — sacred, no condition;
 /// - a `👤 human` ruling pinned to THIS head — sacred: the decision describes the code that is
 ///   there, and there is nothing for the vetter to write over. The ruling is the PRODUCER's move
@@ -1323,9 +1285,7 @@ fn human_ruled_at_head(pr_json: &Value, head: &str) -> bool {
 ///   re-enters vetting through the ordinary un-vetted path with the ruling in
 ///   `pr_context.humanComments`.
 fn pr_human_sacred(pr_json: &Value, head: &str) -> bool {
-    has_human_override(pr_json)
-        || has_native_human_review(pr_json)
-        || human_ruled_at_head(pr_json, head)
+    has_native_human_review(pr_json) || human_ruled_at_head(pr_json, head)
 }
 
 /// owner/repo slug from a GitHub PR url — the search result's own URL, never guessed by org.
@@ -2368,12 +2328,12 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     let archived_set = archived_repos().map_err(archived_read_error)?;
     let (arr, frozen) = withhold_archived(arr.clone(), &archived_set, hit_slug);
 
-    // Candidate filter (from the search JSON, no extra call): drop drafts and any PR whose ai:ready
-    // is overridden by a human:* label (the human's verdict wins).
+    // Candidate filter (from the search JSON, no extra call): drop drafts. No `human:*` label
+    // parks a PR any more (#133/#230) — a live human decision is a native review or a ruling pinned
+    // to the head, neither of which a search result carries, so every survivor is re-checked per-PR.
     let candidates: Vec<(String, u64, String)> = arr
         .iter()
         .filter(|p| !p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false))
-        .filter(|p| !has_human_override(p))
         .filter_map(|p| {
             let num = p.get("number").and_then(|n| n.as_u64())?;
             let url = p
@@ -14918,7 +14878,7 @@ enum HumanRulePlan {
     /// The issue transition was pointed at a PULL REQUEST. `gh issue view <n>` happily answers for
     /// a PR — GitHub's API treats one as the other — so without this the issue vocabulary reaches a
     /// PR, and `human:keep-open` on a PR is a label [`classify_lane`] buckets nowhere: the PR falls
-    /// through to whatever `ai:*` it carries and leaves the human-decisions lane entirely. The
+    /// through to whatever `ai:*` it carries, so the ruling records nothing at all. The
     /// subject's own URL is the discriminator, and it costs no extra round trip.
     NotAnIssue,
     /// This ruling would LAND ON a live producer close-candidate flag without answering it.
@@ -16505,7 +16465,6 @@ enum Lane {
     VetLifecycle,
     VetterVerdicts,
     ProducerBlocked,
-    HumanDecisions,
     Leak,
     CloseCandidate,
 }
@@ -16564,11 +16523,10 @@ impl Lane {
     /// Every variant, for tests that must cover the enum rather than a hand-kept list of it. Adding
     /// a lane without adding it here is a compile error at the array's own length.
     #[cfg(test)]
-    const ALL: [Lane; 6] = [
+    const ALL: [Lane; 5] = [
         Lane::VetLifecycle,
         Lane::VetterVerdicts,
         Lane::ProducerBlocked,
-        Lane::HumanDecisions,
         Lane::Leak,
         Lane::CloseCandidate,
     ];
@@ -16578,7 +16536,6 @@ impl Lane {
             Lane::VetLifecycle => "vet-lifecycle",
             Lane::VetterVerdicts => "vetter-verdicts",
             Lane::ProducerBlocked => "producer-blocked",
-            Lane::HumanDecisions => "human-decisions",
             Lane::Leak => "leak",
             Lane::CloseCandidate => "close-candidate",
         }
@@ -16907,25 +16864,6 @@ const STATE_BLOCKED_INFRA: StateDescriptor = StateDescriptor {
     emit: Emit::WhileOccupied,
 };
 
-/// RETIRED (#133): parks ABSOLUTELY — no AI actor touches the PR — so the human-driven
-/// `migrate-needs-work` is the only exit. ABSORBED by `ai:needs-work`, so this row owns no series —
-/// needs-work's `hist_fold` draws the `humanReject` past — while still gating on that
-/// kept-while-nonzero count.
-const STATE_HUMAN_NEEDS_WORK: StateDescriptor = StateDescriptor {
-    key: "human:needs-work",
-    owner: StateOwner::Human,
-    act: "migrate-needs-work moves it to ai:needs-work",
-    kind: StateKind::Blk,
-    hist: None,
-    hist_fold: &[],
-    label: Some("human:needs-work (retired #133)"),
-    occupancy: StateOccupancy::Lane {
-        lane: Lane::HumanDecisions,
-        counts: "humanReject",
-    },
-    emit: Emit::WhileOccupied,
-};
-
 /// The vetter's flag inbox (#72/#73), over BOTH subject types (#211/#212): a producer
 /// `ai:close-candidate` flag is a claim, judged before a human is asked to destroy work.
 const STATE_CC_UNVETTED: StateDescriptor = StateDescriptor {
@@ -16989,7 +16927,7 @@ const STATE_LEAK: StateDescriptor = StateDescriptor {
 /// renderings, one order), with the loud leak anti-state last. [`state_descriptors_json`] filters
 /// this by each row's [`Emit`] policy, so a drained residue row is in the TABLE (the classifier
 /// still buckets its stragglers) without being in the emitted shape.
-static STATE_DESCRIPTORS: [&StateDescriptor; 12] = [
+static STATE_DESCRIPTORS: [&StateDescriptor; 11] = [
     &STATE_UNCOVERED_ISSUES,
     &STATE_UN_VETTED,
     &STATE_BLOCKED_ON,
@@ -16998,7 +16936,6 @@ static STATE_DESCRIPTORS: [&StateDescriptor; 12] = [
     &STATE_RELINK,
     &STATE_DESIGN,
     &STATE_BLOCKED_INFRA,
-    &STATE_HUMAN_NEEDS_WORK,
     &STATE_CC_UNVETTED,
     &STATE_CC_UPHELD,
     &STATE_LEAK,
@@ -17136,22 +17073,12 @@ fn classify_lane(
     producer_commented: bool,
 ) -> (Lane, String) {
     let has = |name: &str| labels.iter().any(|l| l == name);
-    // The RETIRED needs-work state (#133) is still bucketed — and bucketed FIRST, ahead of the `ai:*`
-    // states — for the same reason `ai:blocked-infra` is: a PR a pre-#133 run parked stays
-    // VISIBLE where it was until `migrate-needs-work` moves it, rather than silently reclassifying. It
-    // is deliberately NOT folded into `ai:needs-work`: while the label is still on the PR it is still
-    // sacred to every AI actor ([`PR_SACRED_LABELS`]), and a state's bucket has to say where the PR
-    // actually is, not where the migration will put it. It is the human-decisions lane's ONLY
-    // remaining state: a live human decision on a PR is a comment (a ruling at head) or a native
-    // review, never a label — `human:design` is DELETED (#219). Nothing writes that label, no
-    // repo defines it, and it buckets nowhere: a PR wearing one classifies by whatever modeled
-    // state it otherwise has, which is the honest reading of a label the machine does not know.
-    if has(RETIRED_HUMAN_NEEDS_WORK_LABEL) {
-        return (
-            Lane::HumanDecisions,
-            RETIRED_HUMAN_NEEDS_WORK_LABEL.to_string(),
-        );
-    }
+    // NO `human:*` label is a PR state. A live human decision on a PR is a comment (a ruling at
+    // head) or a native review, never a label: `human:design` was DELETED (#219) and the retired
+    // PR-side `human:needs-work` was removed with the migration that was its only exit (#133/#230,
+    // which is also why the human-decisions lane is gone). A PR wearing either string classifies by
+    // whatever modeled state it otherwise has — the honest reading of a label the machine does not
+    // know — and by nothing at all if it has none.
     // The close-candidate hand-off (#211/#212), ahead of every remaining `ai:*` state: the label
     // parks the PR in the flag machinery — the org-wide label search is what enumerates it, into
     // `closeCandidateUnvetted` (a producer flag awaiting the vetter) or `closeCandidateUpheld`
@@ -17223,14 +17150,14 @@ fn needs_verdict_currency(labels: &[String], producer_commented: bool) -> bool {
 ///
 /// This is THE definition of the leak population, and it is derived because restating it drifted.
 /// The enumeration used to be "carries no `ai:*` label", which is a DIFFERENT set: `human:*` labels
-/// are not `ai:*`-prefixed, so every PR parked in the human-decisions lane satisfied it and was
-/// reported as escaping the machine while it sat in a modeled state waiting on a human. Measured
-/// 2026-08-06 over the pipeline's own orgs, four of the five reported leaks were PRs parked in that
-/// lane, and the ONE PR genuinely in no state sorted last behind them. The dashboard's `leaks` box
-/// and `counts.leaks` read the same array, so the same four were mislabelled there. (Those four
-/// wore `human:design`, which #219 has since DELETED — so today they would be leaks in earnest,
-/// which is the case below rather than this one. [`RETIRED_HUMAN_NEEDS_WORK_LABEL`] is the lane's
-/// surviving state and the live instance of the same hazard.)
+/// are not `ai:*`-prefixed, so back when they still named states, every PR parked in one satisfied
+/// it and was reported as escaping the machine while it sat in a modeled state waiting on a human.
+/// Measured 2026-08-06 over the pipeline's own orgs, four of the five reported leaks were PRs
+/// parked that way, and the ONE PR genuinely in no state sorted last behind them. The dashboard's
+/// `leaks` box and `counts.leaks` read the same array, so the same four were mislabelled there.
+/// (Those four wore `human:design`, DELETED by #219 — so today they are leaks in earnest. No
+/// `human:*` label names a PR state any longer, but deriving the question from the classifier is
+/// what makes that a fact this function cannot get wrong rather than one it has to be told.)
 ///
 /// `Some(true)` is passed for the producer-comment input because that is the ONLY value under which
 /// [`classify_lane`] can answer `Leak` at all: this asks "do the LABELS leave the leak arm
@@ -17457,7 +17384,7 @@ fn lane_state_count(lanes: &Value, lane: &str, state: &str) -> usize {
 /// the `counts` key and the emitted descriptor all read one declaration; a re-laned state carries
 /// its section with it, and `every_lane_state_has_exactly_one_review_section` holds the set
 /// complete in both directions.
-const REVIEW_LANE_SECTIONS: [(&str, &StateDescriptor); 8] = [
+const REVIEW_LANE_SECTIONS: [(&str, &StateDescriptor); 7] = [
     // vet-lifecycle
     ("UN-VETTED — the vetter owes a verdict", &STATE_UN_VETTED),
     // #161: blocked-on is the VETTER's — its state-load clears the flag when every typed dep
@@ -17482,13 +17409,6 @@ const REVIEW_LANE_SECTIONS: [(&str, &StateDescriptor); 8] = [
     ("RULE — ai:design", &STATE_DESIGN),
     // producer-blocked (`ai:blocked-on` prints with the vetter's group above — #161)
     ("BLOCKED-INFRA", &STATE_BLOCKED_INFRA),
-    // human-decisions
-    // RETIRED (#133) — shown so the PRs a pre-#133 run parked stay visible, and so this section is
-    // the migration's progress meter. It trends to zero as `migrate-needs-work` runs and never grows.
-    (
-        "HUMAN-NEEDS-WORK (RETIRED — migrate-needs-work moves these to ai:needs-work)",
-        &STATE_HUMAN_NEEDS_WORK,
-    ),
 ];
 
 /// PURE: the daily review's whole state-section block, each section listing its LANE CELL.
@@ -18146,8 +18066,8 @@ where
 }
 
 /// `human-queue`: the daily FSM-conformance review. Emits the FULL inventory of the machine — every
-/// modeled state's PRs, grouped into four lanes (`vet-lifecycle` / `vetter-verdicts` /
-/// `producer-blocked` / `human-decisions`) so the dashboard can render where PRs pile up, not just
+/// modeled state's PRs, grouped into lanes (`vet-lifecycle` / `vetter-verdicts` /
+/// `producer-blocked`, plus the leak and close-candidate buckets) so the dashboard can render where PRs pile up, not just
 /// the human-action states — plus the open `ai:close-candidate` issues and a loud **leak** bucket =
 /// open producer PRs that carry a `🤖 ai:producer` comment but NO `ai:*`/`human:*` label (the
 /// producer acting outside the FSM). The leak count is the conformance metric: it trends to zero as
@@ -21357,12 +21277,12 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         };
         let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let is_draft = p.get("isDraft").and_then(|d| d.as_bool()).unwrap_or(false);
-        // Cheap pre-filter: a draft or a sacred-labelled PR is skipped straight from the search
-        // JSON — no per-PR fetch: every sacred label parks absolutely, so the label list alone
-        // decides. (A native human REVIEW and a ruling comment are invisible to search, so every
-        // remaining PR is still fetched and re-checked below, human-first.)
-        if is_draft || has_human_override(p) {
-            let action = vet_action(is_draft, has_human_override(p), false);
+        // Cheap pre-filter: a draft is skipped straight from the search JSON, no per-PR fetch.
+        // No `human:*` label parks a PR any more (#133/#230), and the two forms a human decision
+        // does take — a native REVIEW and a ruling comment — are invisible to search, so every
+        // remaining PR is still fetched and re-checked below, human-first.
+        if is_draft {
+            let action = vet_action(is_draft, false, false);
             rows.push((
                 action,
                 4,
@@ -25549,8 +25469,8 @@ struct NextLeakFacts<'a> {
 ///
 /// That last field is the row's drift check, and it is the classifier's answer rather than a second
 /// reading of the labels because a second reading is what went wrong: while the population was "no
-/// `ai:*` label", every row said `aiStateLabel: null` — true, and true of four PRs sitting in the
-/// human-decisions lane, which the row had no field capable of revealing. A row that states
+/// `ai:*` label", every row said `aiStateLabel: null` — true, and true of four PRs that were then
+/// sitting in a modeled `human:*` state, which the row had no field capable of revealing. A row that states
 /// `classifier.state` shows `human:design` in that case, so the enumeration bug is visible ON the
 /// artefact it corrupts instead of only in the population that produced it.
 ///
@@ -25747,8 +25667,8 @@ mod next_leak_tests {
     // never a second reading of the labels.
     //
     // The enumeration used to be "carries no `ai:*` label". A `human:design` PR carries no `ai:*`
-    // label and IS in a modeled state — parked in the human-decisions lane waiting on a human — so
-    // every one of them was reported as having escaped the machine. Measured over the pipeline's
+    // label and, at the time, WAS in a modeled state — parked waiting on a human — so every one of
+    // them was reported as having escaped the machine. Measured over the pipeline's
     // orgs on 2026-08-06 that was four of five reported leaks, and it pushed the one real leak past
     // the page cap. Deriving the question from the classifier is what makes the tool's definition
     // and its enumeration the same fact.
@@ -25759,19 +25679,22 @@ mod next_leak_tests {
         // A label-less PR: the classifier's leak arm is reachable, so it is a candidate.
         assert!(is_leak_candidate(&[]));
 
-        // THE REGRESSION. A `human:*` state parks the PR in a MODELED state while carrying no
-        // `ai:*` label, so the old "no ai:* label" rule admitted it. `human:needs-work` is the one
-        // still bucketed (RETIRED by #133, kept visible until `migrate-needs-work` empties it).
-        for parked in [
-            s(&[RETIRED_HUMAN_NEEDS_WORK_LABEL]),
-            s(&[RETIRED_HUMAN_NEEDS_WORK_LABEL, "enhancement"]),
-        ] {
+        // THE REGRESSION is now unreachable BY CONSTRUCTION, and that is the thing to pin. It
+        // needed a MODELED state carrying no `ai:*` label, which the old "no ai:* label" rule
+        // admitted; the human-decisions lane was the only such class and it is gone (#133/#230 —
+        // the retired PR-side `human:needs-work` was its one state, and the migration that was its
+        // exit has run). So both `human:*` strings now read the same way on a PR: unmodelled, and
+        // the classifier — not a label spelling — is what says so.
+        for dead in [s(&["human:needs-work"]), s(&["human:design"])] {
             assert!(
-                !is_leak_candidate(&parked),
-                "{parked:?} is a MODELED state — the human-decisions lane — and must never be \
-                 reported as escaping the machine"
+                is_leak_candidate(&dead),
+                "{dead:?} names no modeled PR state, so the producer having acted on it IS a leak"
             );
-            // …and the classifier agrees, which is the point: one fact, asked once.
+            assert_eq!(classify_lane(&dead, None, true).0, Lane::Leak);
+        }
+        // A MODELED state still never reads as a leak — asked of the classifier, once.
+        for parked in [s(&["ai:blocked-on"]), s(&["ai:close-candidate"])] {
+            assert!(!is_leak_candidate(&parked), "{parked:?} is a modeled state");
             assert_ne!(classify_lane(&parked, None, true).0, Lane::Leak);
         }
 
@@ -26008,22 +25931,9 @@ mod next_leak_tests {
         // DRIFT, and this is the check the old row could not make. A PR whose labels put it in a
         // modeled state must never reach this queue; if a future enumeration change lets one
         // through, the row SAYS which state it is really in instead of presenting it as a leak.
-        // The witness is the human-decisions lane, because a `human:*` label carries no `ai:*`
-        // prefix and so is exactly what the old `ai_state_label` population wrongly admitted —
-        // `human:needs-work`, the lane's one surviving state, since `human:design` was DELETED (#219)
-        // and a PR wearing that string is now genuinely unmodelled rather than parked.
-        let drifted = next_leak_row(&NextLeakFacts {
-            subject: &s,
-            reason: "🤖 ai:producer acted",
-            labels: &[RETIRED_HUMAN_NEEDS_WORK_LABEL.to_string()],
-            created_at: "2026-03-04T05:06:07Z",
-        });
-        assert_eq!(drifted["classifier"]["lane"], json!("human-decisions"));
-        assert_eq!(
-            drifted["classifier"]["state"],
-            json!(RETIRED_HUMAN_NEEDS_WORK_LABEL)
-        );
-        // …and an `ai:*` state is reported rather than re-nulled, for the same reason.
+        // Both `human:*` strings are now unmodelled on a PR (#219 deleted `human:design`;
+        // #133/#230 removed the retired PR-side `human:needs-work` once its migration had run), so
+        // the row reports the state the PR is really in rather than the label it happens to wear.
         let labelled = next_leak_row(&NextLeakFacts {
             subject: &s,
             reason: "🤖 ai:producer acted",
@@ -26506,7 +26416,7 @@ fn next_design_row(f: &NextDesignFacts) -> Value {
 /// The whole-queue breakdown. Every hit the search returned lands in exactly ONE of these, so
 ///
 /// ```text
-/// aiDesign == draft + humanRuled + unaddressable + presentable + noQuestion + fetchErrors
+/// aiDesign == draft + unaddressable + presentable + noQuestion + fetchErrors
 ///             + archivedRepo
 /// ```
 ///
@@ -26532,10 +26442,6 @@ struct DesignQueueCounts {
     /// excluded row nobody lists is a PR owned by nobody, which is the starvation this queue's
     /// whole FIFO argument is against.
     draft: usize,
-    /// A `human:*` label already dominates the `ai:design` one — the human's verdict wins, from
-    /// the same [`has_human_override`] predicate `presentable_queue`'s candidate filter reads.
-    /// Counted, not listed: a ruled subject is a decision already made, not an inbox item.
-    human_ruled: usize,
     /// The hit names no PR this tool can ADDRESS — no `number`, or a url [`pr_slug`] does not
     /// resolve. Listed under whatever identifier the hit does carry, because a row nobody can
     /// name is the one class that a bare count leaves a reader unable to go and look at.
@@ -26604,7 +26510,6 @@ fn next_design_doc(rows: Vec<Value>, w: &DesignQueueWithheld) -> Value {
         "counts": {
             "aiDesign": w.counts.raw,
             "draft": w.counts.draft,
-            "humanRuled": w.counts.human_ruled,
             "unaddressable": w.counts.unaddressable,
             "presentable": w.counts.presentable,
             "noQuestion": w.counts.no_question,
@@ -26656,12 +26561,10 @@ fn design_open_prs_args() -> Vec<String> {
 /// withholding with no name is a row the counts can only report as a subtraction.
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum DesignHit {
-    /// Addressable, not a draft, no human ruling: worth the `gh pr view` a row needs.
+    /// Addressable and not a draft: worth the `gh pr view` a row needs.
     Candidate { slug: String, num: u64 },
     /// A DRAFT, and addressable — carried as a ref so the withheld list can name it.
     Draft { pr: String },
-    /// A `human:*` label already dominates the `ai:design` one.
-    HumanRuled,
     /// Neither `number` nor `url` resolves to a PR this tool can address. `named` is the best
     /// identifier the hit carries, so even this row is something a reader can go and look at.
     Unaddressable { named: String },
@@ -26670,10 +26573,8 @@ enum DesignHit {
 /// PURE: classify one search hit.
 ///
 /// The ORDER is load-bearing. The ref parse comes first because a hit nobody can address cannot
-/// honestly be listed as a draft or as human-ruled — the ref is the thing a reader would act on,
-/// and without it every later label is a claim about a subject that was never identified. The
-/// human's own decision then beats the draft state for the reason it beats everything else in
-/// this FSM: a ruled subject is not an inbox item, whatever else is true of it.
+/// honestly be listed as a draft — the ref is the thing a reader would act on, and without it
+/// every later label is a claim about a subject that was never identified.
 fn nd_hit_class(hit: &Value) -> DesignHit {
     let addressed = hit.get("number").and_then(|n| n.as_u64()).and_then(|num| {
         hit.get("url")
@@ -26691,9 +26592,6 @@ fn nd_hit_class(hit: &Value) -> DesignHit {
             named: named.to_string(),
         };
     };
-    if has_human_override(hit) {
-        return DesignHit::HumanRuled;
-    }
     if hit
         .get("isDraft")
         .and_then(|x| x.as_bool())
@@ -26728,9 +26626,6 @@ fn nd_apply_hit(
             counts.draft += 1;
             withheld.push(nd_withheld_entry(&pr, ND_WHY_DRAFT));
         }
-        // Counted, never listed: a subject the human has already ruled on is a decision made, not
-        // an inbox item, and listing it would re-offer the question they closed.
-        DesignHit::HumanRuled => counts.human_ruled += 1,
         DesignHit::Unaddressable { named } => {
             counts.unaddressable += 1;
             withheld.push(nd_withheld_entry(&named, ND_WHY_UNADDRESSABLE));
@@ -27206,9 +27101,8 @@ mod next_design_tests {
     #[test]
     fn the_counts_partition_the_whole_population() {
         let counts = DesignQueueCounts {
-            raw: 13,
+            raw: 10,
             draft: 2,
-            human_ruled: 3,
             unaddressable: 1,
             presentable: 4,
             no_question: 1,
@@ -27216,7 +27110,6 @@ mod next_design_tests {
             archived_repo: 1,
         };
         let sum = counts.draft
-            + counts.human_ruled
             + counts.unaddressable
             + counts.presentable
             + counts.no_question
@@ -27238,9 +27131,8 @@ mod next_design_tests {
             },
         );
         for (key, want) in [
-            ("aiDesign", 13),
+            ("aiDesign", 10),
             ("draft", 2),
-            ("humanRuled", 3),
             ("unaddressable", 1),
             ("presentable", 4),
             ("noQuestion", 1),
@@ -27286,19 +27178,12 @@ mod next_design_tests {
             vec![nd_withheld_entry("a hit with no ref", ND_WHY_UNADDRESSABLE)]
         );
 
-        // The one class that is counted and NOT listed, deliberately: a ruled subject is a
-        // decision already made, and listing it would re-offer a question the human closed.
-        let (candidates, counts, withheld) = fold(DesignHit::HumanRuled);
-        assert!(candidates.is_empty());
-        assert_eq!(counts.human_ruled, 1);
-        assert!(withheld.is_empty());
-
         let (candidates, counts, withheld) = fold(DesignHit::Candidate {
             slug: "o/r".to_string(),
             num: 7,
         });
         assert_eq!(candidates, vec![("o/r".to_string(), 7)]);
-        assert_eq!(counts.draft + counts.human_ruled + counts.unaddressable, 0);
+        assert_eq!(counts.draft + counts.unaddressable, 0);
         assert!(withheld.is_empty());
     }
 
@@ -27391,14 +27276,6 @@ mod next_design_tests {
             "a draft is withheld from the head, but NAMED — an excluded row nobody lists is a PR \
              owned by nobody"
         );
-
-        let mut ruled = hit("o/r", 7);
-        ruled["labels"] = json!([{"name": "ai:design"}, {"name": PR_SACRED_LABELS[0]}]);
-        assert_eq!(nd_hit_class(&ruled), DesignHit::HumanRuled);
-        // …and a human ruling beats the draft state, not the other way round.
-        let mut ruled_draft = ruled.clone();
-        ruled_draft["isDraft"] = json!(true);
-        assert_eq!(nd_hit_class(&ruled_draft), DesignHit::HumanRuled);
 
         // Unaddressable: no number, an unparseable url, or neither. Each is named by the best
         // identifier the hit carries, because a row nobody can name is the one class a bare count
@@ -27544,7 +27421,6 @@ mod next_design_tests {
                 counts: DesignQueueCounts {
                     raw: usize::MAX,
                     draft: usize::MAX,
-                    human_ruled: usize::MAX,
                     unaddressable: usize::MAX,
                     presentable: usize::MAX,
                     no_question: usize::MAX,
@@ -33271,13 +33147,6 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// One-shot (#133): move every open PR still carrying the RETIRED human:needs-work label into the
-    /// ONE needs-work state, ai:needs-work. Reports the plan; writes only with --apply.
-    MigrateNeedsWork {
-        /// PERFORM the writes. Without it this is a report and nothing is edited.
-        #[arg(long)]
-        apply: bool,
-    },
     /// Human transition on a PR: both verbs land ai:needs-work + a sha-pinned 👤 human comment — a
     /// ruling here IS a send-back (#133/#219), and the comment records which verb ruled.
     HumanRule {
@@ -33624,12 +33493,6 @@ struct PrSignals {
     deploy_done_at_head: bool,
     parked: bool,
     ui_missing_screenshot: bool,
-    /// The PR carries a human decision that PARKS it: a sacred `human:*` label (the retired
-    /// `human:needs-work`, absolutely-parking — [`PR_SACRED_LABELS`]). Blocks routine producer
-    /// action, even over a stale `ai:*` label. A human SEND-BACK is not a parked state and never
-    /// sets this: it is the ordinary `ai:needs-work` + trusted work order (#133/#219), which the
-    /// producer picks up through the needs-work label exactly as it does a vetter needs-work.
-    human_parked: bool,
     /// The PR's modeled `ai:*` state label, if any. When it is a human-gated state (`ai:design` /
     /// `ai:blocked-*` / `ai:close-candidate`), the label IS the state and the producer leaves the PR
     /// parked — only un-labeled PRs are classified from CI/mergeState.
@@ -33652,14 +33515,6 @@ struct PrSignals {
 /// green-ready for the human. A `parked` flag only suppresses re-touching a STILL-RED PR — a PR
 /// that has since gone green surfaces as green-ready regardless of past parking.
 fn next_action(s: &PrSignals) -> NextAction {
-    // A PARKING human decision (a sacred `human:*` label) blocks routine producer action
-    // regardless of anything else the PR carries. This MUST come before the CI classifier so a
-    // human-parked PR is never re-derived from CI/mergeState. A human SEND-BACK never reaches
-    // this arm: it is the `ai:needs-work` state (#133/#219), which the producer works through the
-    // needs-work label's own pickup, not through this worklist's routing.
-    if s.human_parked {
-        return NextAction::ParkedSkip;
-    }
     // A PR the producer has already moved into a modeled state (design / blocked-on /
     // close-candidate) is PARKED — the label IS the state, so the producer does not re-touch it
     // and does not re-derive a state from CI. Contrast `ai:blocked-infra` (#108), which
@@ -34283,13 +34138,6 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         })
         .unwrap_or_default();
     let state_label = ai_state_label(&labels);
-    // The human's hold on this PR: a sacred `human:*` label parks it unconditionally
-    // ([`PR_SACRED_LABELS`] — decidable from the labels alone). A ruling that hands the producer
-    // work is not a hold: it is the `ai:needs-work` state plus a trusted work order (#133/#219),
-    // classified below like any other needs-work.
-    let human_parked = labels
-        .iter()
-        .any(|l| PR_SACRED_LABELS.contains(&l.as_str()));
     // The needs-work state and what it asks of THIS run: `ai:needs-work` plus a trusted instruction is the
     // producer's work order on this same branch; `ai:needs-work` with nothing trusted behind it is
     // parked for a human. This is the row that replaced the producer's raw `gh search prs --label
@@ -34304,7 +34152,6 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
         deploy_done_at_head,
         parked,
         ui_missing_screenshot,
-        human_parked,
         state_label: state_label.clone(),
         needs_work,
     };
@@ -34339,10 +34186,6 @@ fn worklist_row(slug: &str, detail: &Value) -> Value {
             "uiTouch": ui.as_str(),
         },
         "stateLabel": state_label,
-        // Label-presence (any sacred human:* label) — the dashboard-compatible read. A human
-        // send-back is not one: it rides `stateLabel` as `ai:needs-work` (#133/#219), with the
-        // trusted work order on the PR itself.
-        "humanOverride": has_human_override(detail),
         // GitHub's native review state, carried because human approval IS that field (there is no
         // ledger) and 2z works the approved set first. `WORKLIST_DETAIL_FIELDS` already fetched it;
         // dropping it from the row is what left every run re-asking GitHub the same question with a
@@ -36412,225 +36255,6 @@ fn retire_blocked_infra_mode(dry_run: bool) -> i32 {
     0
 }
 
-/// What `migrate-needs-work` will do to ONE PR, computed purely from its fetched JSON.
-#[derive(Debug, PartialEq)]
-enum MigrateNeedsWorkPlan {
-    /// Does not carry the retired label — nothing to migrate (the search should never hand one of
-    /// these over, but a plan that only answers for the happy case is not a plan).
-    NotRetired,
-    Migrate {
-        /// Add `ai:needs-work` (false when the PR already carries it — re-running is idempotent).
-        add_target: bool,
-        /// Other `ai:*` verdict labels to strip, so the PR ends in exactly ONE modeled state. A
-        /// `human:needs-work` PR deliberately KEPT its stale `ai:ready` under the old model, because
-        /// `reworked-reject` was the only thing allowed to clear it; the migration is where that
-        /// carried-forward staleness is finally settled.
-        clears: Vec<String>,
-        /// Does a trusted `👤 human` ruling comment survive the label move as the authority record?
-        ///
-        /// This is the migration's honesty check, and it is the one thing the operator has to look
-        /// at. After #133 the ruler is recorded in the COMMENT, not the label — so a PR with no
-        /// `👤 human` comment loses its last machine-readable trace of who rejected it. GitHub's
-        /// `labeled` event does NOT recover it: the pipeline's producer, its vetter and the human
-        /// all act as the SAME account ([`TRUSTED_AUTHOR`]), so the actor on that event says nothing
-        /// about which of them applied it. Such a PR is still migrated — it is the same state either
-        /// way, and nothing in this pipeline merges anything without the human's per-PR word — but
-        /// it is REPORTED, because it may resurface in the human's queue if the vetter re-derives
-        /// `ready` from a diff whose objection was never written down.
-        ruling_on_record: bool,
-    },
-}
-
-/// PURE: [`migrate_needs_work_mode`]'s decision for one PR.
-fn migrate_needs_work_plan(pr_json: &Value) -> MigrateNeedsWorkPlan {
-    let labels = label_names(pr_json);
-    if !labels.iter().any(|l| l == RETIRED_HUMAN_NEEDS_WORK_LABEL) {
-        return MigrateNeedsWorkPlan::NotRetired;
-    }
-    MigrateNeedsWorkPlan::Migrate {
-        add_target: !labels.iter().any(|l| l == "ai:needs-work"),
-        clears: labels_to_remove(&labels, "ai:needs-work"),
-        ruling_on_record: !trusted_comments(pr_json, Some(HUMAN_MARKER)).is_empty(),
-    }
-}
-
-/// `migrate-needs-work [--apply]`: the #133 one-shot — move every open PR still carrying the RETIRED
-/// `human:needs-work` label into the ONE needs-work state, `ai:needs-work`.
-///
-/// The twin of `retire-blocked-infra` (#108) and it exists for the same reason: a label nothing
-/// writes any more is also a label nothing REMOVES, so the PRs already parked in it cannot leave
-/// unaided. It is the ONLY sanctioned clear of `human:needs-work`, and it replaces `reworked-reject`,
-/// which is a strictly weaker exit — that one required a rework to have been pushed first, and its
-/// "proof" was only that SOME commit post-dated the label event.
-///
-/// **It defaults to a REPORT.** Every other transition here acts on one subject the caller named;
-/// this one acts on a whole population across every configured org in a single call, and an
-/// outward-facing bulk relabel is not something a forgotten `--dry-run` should be the only thing
-/// standing between. So the flag GATES the write rather than suppressing it: a caller who forgets it
-/// changes nothing.
-///
-/// ORDER IS THE FAIL-SAFE, and it is the reverse of `reworked-reject`'s: `ai:needs-work` goes on FIRST,
-/// `human:needs-work` comes off LAST. A mid-sequence `gh` failure then leaves the PR carrying BOTH — more
-/// parked than it started, never less — where the reverse order has a window in which the PR carries
-/// neither and every AI actor is free to move it.
-fn migrate_needs_work_mode(apply: bool) -> i32 {
-    let mut search: Vec<String> = vec!["search".into(), "prs".into()];
-    search.extend(org_owner_args());
-    search.extend(
-        [
-            "--state",
-            "open",
-            "--label",
-            RETIRED_HUMAN_NEEDS_WORK_LABEL,
-            "--limit",
-            "200",
-            "--json",
-            "number,repository,title,url",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    let sref: Vec<&str> = search.iter().map(String::as_str).collect();
-    let Some(val) = gh_json(&sref) else {
-        eprintln!(
-            "error: `gh search prs --label {RETIRED_HUMAN_NEEDS_WORK_LABEL}` failed — not editing on incomplete data"
-        );
-        return 1;
-    };
-    let targets = retire_targets(&val);
-    if targets.is_empty() {
-        println!(
-            "no open PR carries the retired {RETIRED_HUMAN_NEEDS_WORK_LABEL} — nothing to migrate"
-        );
-        return 0;
-    }
-    println!(
-        "{} open PR(s) carry the retired {RETIRED_HUMAN_NEEDS_WORK_LABEL}{}",
-        targets.len(),
-        if apply {
-            " — migrating to ai:needs-work"
-        } else {
-            " (report only; pass --apply to write)"
-        }
-    );
-    let (mut failed, mut migrated, mut unrecorded) = (0, 0, 0);
-    for (slug, num) in &targets {
-        let n = num.to_string();
-        let Some(prj) = gh_json(&["pr", "view", &n, "-R", slug, "--json", "labels,comments"])
-        else {
-            eprintln!("  {slug}#{num} -> FAILED to read; not editing on incomplete data");
-            failed += 1;
-            continue;
-        };
-        let (add_target, clears, on_record) = match migrate_needs_work_plan(&prj) {
-            MigrateNeedsWorkPlan::NotRetired => {
-                println!(
-                    "  {slug}#{num} -> already migrated (no {RETIRED_HUMAN_NEEDS_WORK_LABEL})"
-                );
-                continue;
-            }
-            MigrateNeedsWorkPlan::Migrate {
-                add_target,
-                clears,
-                ruling_on_record,
-            } => (add_target, clears, ruling_on_record),
-        };
-        if !on_record {
-            unrecorded += 1;
-        }
-        let record = if on_record {
-            "👤 ruling on record"
-        } else {
-            "NO 👤 human ruling comment — the ruler is not recoverable from the label event either \
-             (one shared account); re-rule with `human-rule <slug> <n> needs-work \"…\"` to put it back \
-             on the record"
-        };
-        if !apply {
-            println!(
-                "  [report] {slug}#{num} -> {}{} , remove {RETIRED_HUMAN_NEEDS_WORK_LABEL}  [{record}]",
-                if add_target {
-                    "add ai:needs-work"
-                } else {
-                    "ai:needs-work already present"
-                },
-                if clears.is_empty() {
-                    String::new()
-                } else {
-                    format!(", remove {}", clears.join(","))
-                }
-            );
-            continue;
-        }
-        let (color, desc) = label_meta("ai:needs-work");
-        if !gh_run(&[
-            "label",
-            "create",
-            "ai:needs-work",
-            "-R",
-            slug,
-            "--color",
-            color,
-            "--description",
-            desc,
-            "--force",
-        ]) {
-            eprintln!("  {slug}#{num} -> warning: could not ensure ai:needs-work exists");
-        }
-        if add_target && !gh_run(&["pr", "edit", &n, "-R", slug, "--add-label", "ai:needs-work"]) {
-            eprintln!(
-                "  {slug}#{num} -> FAILED to add ai:needs-work; {RETIRED_HUMAN_NEEDS_WORK_LABEL} left in place"
-            );
-            failed += 1;
-            continue;
-        }
-        let mut ok = true;
-        for c in &clears {
-            if !gh_run(&["pr", "edit", &n, "-R", slug, "--remove-label", c]) {
-                eprintln!("  {slug}#{num} -> warning: failed to remove stale {c}");
-                ok = false;
-            }
-        }
-        if !gh_run(&[
-            "pr",
-            "edit",
-            &n,
-            "-R",
-            slug,
-            "--remove-label",
-            RETIRED_HUMAN_NEEDS_WORK_LABEL,
-        ]) {
-            eprintln!("  {slug}#{num} -> FAILED to remove {RETIRED_HUMAN_NEEDS_WORK_LABEL}");
-            failed += 1;
-            continue;
-        }
-        migrated += 1;
-        println!(
-            "  {slug}#{num} -> ai:needs-work{}  [{}]",
-            if ok { "" } else { " (stale ai:* partly left)" },
-            if on_record {
-                "👤 ruling on record"
-            } else {
-                "NO 👤 human ruling comment"
-            }
-        );
-    }
-    println!(
-        "{}: {} PR(s), {} with NO 👤 human ruling comment{}",
-        if apply { "migrated" } else { "would migrate" },
-        if apply { migrated } else { targets.len() },
-        unrecorded,
-        if failed > 0 {
-            format!(", {failed} FAILED")
-        } else {
-            String::new()
-        }
-    );
-    if failed > 0 {
-        return 1;
-    }
-    0
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // already-fixed — the MERGED-side read the candidate set does not have.
 //
@@ -37196,7 +36820,6 @@ fn main() {
             reason,
             dry_run,
         } => flag_state_mode(&slug, &pr, "ai:design", &reason.join(" "), &[], dry_run),
-        Cmd::MigrateNeedsWork { apply } => migrate_needs_work_mode(apply),
         Cmd::HumanRule {
             slug,
             pr,
@@ -39102,7 +38725,7 @@ diff --git a/a.c b/a.c
     fn producer_state_plan_guards_human_and_dedups() {
         let body = "🤖 ai:producer\nBlocked-infra: missing FLARE_RPC_URL";
         // human:* label -> refuse
-        let j = json!({"labels":[{"name":"human:needs-work"}],"comments":[],"reviewDecision":null});
+        let j = json!({"labels":[],"comments":[],"reviewDecision":"CHANGES_REQUESTED"});
         assert_eq!(
             producer_state_plan(&j, "ai:blocked-infra", body),
             ProducerStatePlan::RefuseHuman
@@ -39247,23 +38870,6 @@ diff --git a/a.c b/a.c
         );
     }
 
-    // --- has_human_override: a human:* label beats an ai:ready label ----------------------------
-
-    #[test]
-    fn human_override_labels_detected() {
-        for l in PR_SACRED_LABELS {
-            let p = json!({"labels": [{"name": "ai:ready"}, {"name": l}]});
-            assert!(has_human_override(&p), "must override on {l}");
-        }
-    }
-
-    #[test]
-    fn plain_ai_ready_is_not_overridden() {
-        let p = json!({"labels": [{"name": "ai:ready"}]});
-        assert!(!has_human_override(&p));
-        let none = json!({"number": 1});
-        assert!(!has_human_override(&none), "no labels field => no override");
-    }
     // --- pr_slug: owner/repo only from real PR URLs ---------------------------------------------
 
     #[test]
@@ -41703,10 +41309,9 @@ mod repo_root_tests {
             // this scan cannot see.
             "flagged_subjects_args",
             "design_open_prs_args",
-            // RETIRED one-shot sweeps (#108 item 4, #133). Nothing writes either label any more,
-            // both populations are fixed and shrinking, and neither OFFERS work: a per-PR edit
-            // that fails is already reported as a failed edit rather than queued as a task.
-            "migrate_needs_work_mode",
+            // The RETIRED one-shot sweep (#108 item 4). Nothing writes that label any more, its
+            // population is fixed and shrinking, and it does not OFFER work: a per-PR edit that
+            // fails is already reported as a failed edit rather than queued as a task.
             "retire_blocked_infra_mode",
             // A test.
             "next_close_candidate_tests",
@@ -43381,9 +42986,9 @@ mod settings_tests {
 #[cfg(test)]
 mod record_verdict_tests {
     use super::{
-        cost_from_comment, has_human_override, labels_to_remove, last_vetter_comment,
-        should_skip_comment, verdict_comment, verdict_label, verdict_plan, vetted_at_head,
-        VerdictPlan, TRUSTED_AUTHOR, VET_PROTOCOL, VET_PROTOCOL_PREFIX,
+        cost_from_comment, labels_to_remove, last_vetter_comment, should_skip_comment,
+        verdict_comment, verdict_label, verdict_plan, vetted_at_head, VerdictPlan, TRUSTED_AUTHOR,
+        VET_PROTOCOL, VET_PROTOCOL_PREFIX,
     };
     use serde_json::json;
 
@@ -43399,10 +43004,10 @@ mod record_verdict_tests {
     }
 
     // GAP-CLOSER: pins that the recording decision REFUSES when a human verdict is present. Removing
-    // the guard from verdict_plan makes this fail (the leaf has_human_override test alone did not).
+    // the guard from verdict_plan makes this fail.
     #[test]
     fn verdict_plan_refuses_a_human_overridden_pr() {
-        let pr = json!({"headRefOid":"abc123","labels":[{"name":"ai:ready"},{"name":"human:needs-work"}],"comments":[]});
+        let pr = json!({"headRefOid":"abc123","labels":[{"name":"ai:ready"}],"comments":[],"reviewDecision":"CHANGES_REQUESTED"});
         assert_eq!(
             verdict_plan(&pr, "ai:ready", "ready"),
             VerdictPlan::RefuseHuman
@@ -43624,14 +43229,6 @@ mod record_verdict_tests {
             None,
             "no author → untrusted"
         );
-    }
-
-    #[test]
-    fn human_override_guards_the_verdict() {
-        let human = json!({"labels":[{"name":"ai:ready"},{"name":"human:needs-work"}]});
-        assert!(has_human_override(&human), "human:needs-work must guard");
-        let ai_only = json!({"labels":[{"name":"ai:ready"}]});
-        assert!(!has_human_override(&ai_only));
     }
 }
 
@@ -44509,7 +44106,7 @@ diff --git a/a.md b/a.md
     fn the_human_no_sha_and_file_list_refusals_all_outrank_the_convention_gate() {
         let claim = good_claim();
         for (extra, want) in [
-            (json!({"labels": [{"name": "human:needs-work"}]}), "human"),
+            (json!({"reviewDecision": "CHANGES_REQUESTED"}), "human"),
             (json!({"reviewDecision": "APPROVED"}), "human"),
             (json!({"headRefOid": ""}), "nosha"),
         ] {
@@ -44767,7 +44364,7 @@ diff --git a/a.md b/a.md
     fn the_human_and_no_sha_refusals_outrank_the_coverage_refusal() {
         let bad: Vec<Covered> = vec![named("src/Vault.sol")];
         for sacred in [
-            json!({"labels": [{"name": "human:needs-work"}]}),
+            json!({"reviewDecision": "CHANGES_REQUESTED"}),
             json!({"reviewDecision": "APPROVED"}),
             json!({"reviewDecision": "CHANGES_REQUESTED"}),
         ] {
@@ -45998,7 +45595,7 @@ index 1111111..2222222 100644
     fn the_human_no_sha_and_file_list_refusals_all_outrank_the_lens_gate() {
         let none = LensEvidence::NoSource("no checkout".into());
         for sacred in [
-            json!({"labels": [{"name": "human:needs-work"}]}),
+            json!({"reviewDecision": "CHANGES_REQUESTED"}),
             json!({"reviewDecision": "APPROVED"}),
             json!({"reviewDecision": "CHANGES_REQUESTED"}),
         ] {
@@ -46125,7 +45722,7 @@ index 1111111..2222222 100644
     fn the_human_no_sha_and_file_list_refusals_all_outrank_the_scope_gate() {
         let wrong = wrong_scope("whole-repo");
         for sacred in [
-            json!({"labels": [{"name": "human:needs-work"}]}),
+            json!({"reviewDecision": "CHANGES_REQUESTED"}),
             json!({"reviewDecision": "APPROVED"}),
             json!({"reviewDecision": "CHANGES_REQUESTED"}),
         ] {
@@ -46986,17 +46583,12 @@ mod cli_tests {
             Cli::try_parse_from(["prr", "reworked-reject", "o/r", "1"]).is_err(),
             "reworked-reject must be GONE, not merely unused"
         );
-        // Its replacement is the one-shot MIGRATION, and it is a REPORT unless `--apply` is passed:
-        // an outward-facing bulk relabel across every configured org must not be one forgotten flag
-        // away from happening.
-        assert_eq!(
-            parse(&["prr", "migrate-needs-work"]),
-            Cmd::MigrateNeedsWork { apply: false }
-        );
-        assert_eq!(
-            parse(&["prr", "migrate-needs-work", "--apply"]),
-            Cmd::MigrateNeedsWork { apply: true }
-        );
+        // Its replacement, the one-shot MIGRATION, is GONE too (#133/#230). It executed: no open
+        // PR carries the retired label in any configured org, so the verb has done its one job and
+        // a migration is an execution vehicle, not permanent machinery. Parsing it must fail like
+        // any other unknown verb.
+        assert!(Cli::try_parse_from(["prr", "migrate-needs-work"]).is_err());
+        assert!(Cli::try_parse_from(["prr", "migrate-needs-work", "--apply"]).is_err());
         // `migrate-design` is GONE (#219/#221): the one-shot executed, so the subcommand went
         // with it — a migration is an execution vehicle, not permanent machinery. Parsing it must
         // fail like any other unknown verb.
@@ -48556,7 +48148,6 @@ mod worklist_tests {
             deploy_done_at_head: false,
             parked: false,
             ui_missing_screenshot: false,
-            human_parked: false,
             state_label: None,
             needs_work: NeedsWorkState::NotNeedsWork,
         }
@@ -48622,9 +48213,10 @@ mod worklist_tests {
             NextAction::Needs3b,
             "control: no human override → a red PR routes to 3b"
         );
-        // A PARKING human decision BLOCKS routine action: the PR is parked regardless of the
-        // stale `ai:ready`, the red CI, AND a deploy trigger (otherwise checked before CI).
-        s.human_parked = true;
+        // A modeled human-gated STATE blocks routine action: the PR is parked regardless of the
+        // red CI AND a deploy trigger (otherwise checked before CI). No `human:*` LABEL does this
+        // any more (#133/#230) — the parking states left are all `ai:*`.
+        s.state_label = Some("ai:design".to_string());
         s.has_deploy_trigger = true;
         assert_eq!(next_action(&s), NextAction::ParkedSkip);
     }
@@ -48669,14 +48261,14 @@ mod worklist_tests {
         }
     }
 
-    /// …but NOT the states written above it. A needs-work beside a sacred `human:*` label or a modeled
-    /// human-gated state is a contradictory hand-state, and the fail-safe reading of a contradiction
-    /// is "not yours to touch" — never "there is an instruction here, go".
+    /// …but NOT the states written above it. A needs-work beside a modeled human-gated state is a
+    /// contradictory hand-state, and the fail-safe reading of a contradiction is "not yours to
+    /// touch" — never "there is an instruction here, go".
     #[test]
     fn a_parking_state_still_beats_a_send_back_work_order() {
         let mut s = sig(Ci::Green, "CLEAN");
         s.needs_work = NeedsWorkState::WorkOrder;
-        s.human_parked = true;
+        s.state_label = Some("ai:design".to_string());
         assert_eq!(next_action(&s), NextAction::ParkedSkip);
         let mut s = sig(Ci::Green, "CLEAN");
         s.needs_work = NeedsWorkState::WorkOrder;
@@ -49923,11 +49515,14 @@ mod one_needs_work_state_tests {
         let pr = pr_at("", &[], vec![trusted("👤 human\nRuled : needs-work — x")]);
         assert!(!human_ruled_at_head(&pr, ""));
         assert_eq!(verdict_plan(&pr, "ai:ready", "ready"), VerdictPlan::NoSha);
-        // But a LABEL-sacred PR with no sha is still answered as a human decision, not as a missing
-        // sha. The sacred check resolves FIRST — reading the sha before it must not reorder the
-        // refusals — so what the caller is told is the reason that actually governs; a `NoSha` here
-        // would send the vetter looking for an API fault that is not there.
-        let sacred = pr_at("", &[RETIRED_HUMAN_NEEDS_WORK_LABEL], vec![]);
+        // But a human-decided PR with no sha is still answered as a human decision, not as a
+        // missing sha. The sacred check resolves FIRST — reading the sha before it must not reorder
+        // the refusals — so what the caller is told is the reason that actually governs; a `NoSha`
+        // here would send the vetter looking for an API fault that is not there. The witness is a
+        // NATIVE review: since #133/#230 no `human:*` LABEL parks a PR, and a review is the form
+        // that still decides without a sha.
+        let mut sacred = pr_at("", &[], vec![]);
+        sacred["reviewDecision"] = json!("CHANGES_REQUESTED");
         assert_eq!(
             verdict_plan(&sacred, "ai:ready", "ready"),
             VerdictPlan::RefuseHuman
@@ -49995,72 +49590,32 @@ mod one_needs_work_state_tests {
     // ---- the retired label, and the migration that is its only exit ---------------------------
 
     #[test]
-    fn the_retired_send_back_label_is_still_sacred_to_every_ai_actor() {
-        // Nothing writes `human:needs-work` any more, but 36 open PRs carry it. Until `migrate-needs-work`
-        // moves them they must stay exactly as parked as they were — a retired state that quietly
-        // became vetter-writable would un-rule weeks of human decisions in one cron tick.
-        let pr = pr_at(HEAD, &[RETIRED_HUMAN_NEEDS_WORK_LABEL], vec![]);
-        assert!(has_human_override(&pr));
-        assert_eq!(
+    fn the_retired_send_back_label_no_longer_parks_a_pr() {
+        // The PR-side `human:needs-work` residue is GONE (#133/#230). Its migration was the only
+        // exit and it has run — no open PR in any configured org carries the label — so the state,
+        // the sacred-label check and the migration verb went together, exactly as #221 required of
+        // `ai:blocked-deploy`. A PR hand-wearing the string now is ordinary vetter territory.
+        let pr = pr_at(HEAD, &["human:needs-work"], vec![]);
+        assert!(!pr_human_sacred(&pr, HEAD), "no label parks a PR any more");
+        assert!(matches!(
             verdict_plan(&pr, "ai:ready", "ready"),
-            VerdictPlan::RefuseHuman
-        );
-        assert_eq!(
-            producer_state_plan(&pr, "ai:design", "x"),
-            ProducerStatePlan::RefuseHuman
-        );
+            VerdictPlan::Record { .. }
+        ));
         let (action, ..) = unvetted_row("o/r", 1, "u", "t", &pr);
-        assert_eq!(action, VetAction::SkipHuman);
-        assert!(PR_SACRED_LABELS.contains(&RETIRED_HUMAN_NEEDS_WORK_LABEL));
-        // … and it is NOT a ruling the human can write any more: no PR verb targets it.
+        assert_eq!(action, VetAction::Vet);
+        // It is not a PR ruling target either: the send-back verbs land `ai:needs-work`.
         assert_eq!(
             human_ruling_target(&HUMAN_PR_RULINGS, "needs-work"),
             Some("ai:needs-work")
         );
         assert!(HUMAN_PR_RULINGS
             .iter()
-            .all(|(_, t)| *t != RETIRED_HUMAN_NEEDS_WORK_LABEL));
-    }
-
-    #[test]
-    fn migrate_needs_work_plans_the_move_and_reports_whether_the_ruling_survives() {
-        // The stale `ai:ready` a `human:needs-work` PR was forced to keep is settled by the migration:
-        // it comes off, so the PR lands in exactly ONE state.
-        let with_record = pr_at(
-            HEAD,
-            &[RETIRED_HUMAN_NEEDS_WORK_LABEL, "ai:ready", "bug"],
-            vec![ruling_at(HEAD)],
-        );
+            .all(|(_, t)| *t != "human:needs-work"));
+        // …but the string is STILL LIVE on the other subject: `human-rule-issue needs-work` writes
+        // it, and 21 open issues carry it. Only the PR-side retired state was removed.
         assert_eq!(
-            migrate_needs_work_plan(&with_record),
-            MigrateNeedsWorkPlan::Migrate {
-                add_target: true,
-                clears: vec!["ai:ready".to_string()],
-                ruling_on_record: true,
-            }
-        );
-        // 30 of the 36 have NO `👤 human` comment. They still migrate — it is the same state either
-        // way — but the plan REPORTS it, because the label event cannot recover the ruler: the
-        // human, the producer and the vetter all act as the same account.
-        let no_record = pr_at(
-            HEAD,
-            &[RETIRED_HUMAN_NEEDS_WORK_LABEL, "ai:needs-work"],
-            vec![trusted(
-                "Human reject (David-authorized 2026-07-10) — rework it",
-            )],
-        );
-        assert_eq!(
-            migrate_needs_work_plan(&no_record),
-            MigrateNeedsWorkPlan::Migrate {
-                add_target: false,
-                clears: vec![],
-                ruling_on_record: false,
-            }
-        );
-        // Idempotent: re-running over a PR already migrated is a no-op, not a second write.
-        assert_eq!(
-            migrate_needs_work_plan(&pr_at(HEAD, &["ai:needs-work"], vec![])),
-            MigrateNeedsWorkPlan::NotRetired
+            human_ruling_target(&HUMAN_ISSUE_RULINGS, "needs-work"),
+            Some(Some("human:needs-work"))
         );
     }
 }
@@ -50080,17 +49635,22 @@ mod fsm_completeness_tests {
 
     #[test]
     fn classify_lane_maps_every_state_by_precedence() {
-        // human decision dominates a stale ai:* label. The lane's only state is the RETIRED
-        // `human:needs-work` (#133); the DELETED `human:design` (#219) is no state at all, so a PR
-        // wearing only that residue classifies as what it otherwise is — un-vetted.
-        assert_eq!(
-            classify_lane(&s(&["ai:ready", "human:needs-work"]), Some(true), false),
-            (Lane::HumanDecisions, "human:needs-work".to_string())
-        );
-        assert_eq!(
-            classify_lane(&s(&["human:design"]), None, false),
-            (Lane::VetLifecycle, "un-vetted".to_string())
-        );
+        // NO `human:*` label is a lane state: #219 deleted `human:design`, and #133/#230 removed
+        // the retired PR-side `human:needs-work` once the migration that was its only exit had run.
+        // A PR wearing either classifies as what it otherwise is — un-vetted alone, and never
+        // displacing a live `ai:*` state.
+        for dead in ["human:needs-work", "human:design"] {
+            assert_eq!(
+                classify_lane(&s(&["ai:ready", dead]), Some(true), false),
+                (Lane::VetterVerdicts, "ai:ready".to_string()),
+                "{dead}"
+            );
+            assert_eq!(
+                classify_lane(&s(&[dead]), None, false),
+                (Lane::VetLifecycle, "un-vetted".to_string()),
+                "{dead}"
+            );
+        }
         // blocked states next — same PRECEDENCE, but the LANE names whoever moves each (#161):
         // the vetter's state-load clears `ai:blocked-on` when its typed deps merge/close, so it
         // files with the vetter's work; the retired `ai:blocked-infra` residue stays with the
@@ -50104,15 +49664,16 @@ mod fsm_completeness_tests {
             classify_lane(&s(&["ai:blocked-on"]), None, false),
             (Lane::VetLifecycle, "ai:blocked-on".to_string())
         );
-        // …and blocked-on keeps its precedence: it dominates a stale ai:ready label, and a human
-        // decision dominates IT. A swap of either comparison files a PR with the wrong mover.
+        // …and blocked-on keeps its precedence: it dominates a stale ai:ready label. Nothing in
+        // the `human:*` namespace outranks it any more (#133/#230) — a dead string alongside a
+        // modeled state loses to it, exactly as any unrecognised label does.
         assert_eq!(
             classify_lane(&s(&["ai:ready", "ai:blocked-on"]), Some(true), false),
             (Lane::VetLifecycle, "ai:blocked-on".to_string())
         );
         assert_eq!(
             classify_lane(&s(&["ai:blocked-on", "human:needs-work"]), None, false),
-            (Lane::HumanDecisions, "human:needs-work".to_string())
+            (Lane::VetLifecycle, "ai:blocked-on".to_string())
         );
         // ai:ready splits on verdict currency: vetted-at-head stays ready, otherwise -> un-vetted.
         assert_eq!(
@@ -50147,15 +49708,15 @@ mod fsm_completeness_tests {
             (Lane::CloseCandidate, "ai:close-candidate".to_string())
         );
         // …ahead of every remaining ai:* state (the flag PARKS the subject, exactly as it parks a
-        // flagged issue out of the backlog), while a human decision still dominates it — the same
-        // precedence `cc_gate` gives `HumanRuled`, so the two classifiers name one owner.
+        // flagged issue out of the backlog). A dead `human:*` string beside it changes nothing:
+        // the flag machinery still owns the subject.
         assert_eq!(
             classify_lane(&s(&["ai:ready", "ai:close-candidate"]), Some(true), false),
             (Lane::CloseCandidate, "ai:close-candidate".to_string())
         );
         assert_eq!(
             classify_lane(&s(&["ai:close-candidate", "human:needs-work"]), None, false),
-            (Lane::HumanDecisions, "human:needs-work".to_string())
+            (Lane::CloseCandidate, "ai:close-candidate".to_string())
         );
         // label-less: leak if the producer commented, else un-vetted.
         assert_eq!(
@@ -50253,14 +49814,14 @@ mod fsm_completeness_tests {
                 "vet-lifecycle",
                 "ai:blocked-on",
             ),
-            // human decisions (RETIRED residue #133)
+            // The REMOVED PR-side `human:needs-work` (#133/#230) and the DELETED `human:design`
+            // (#219): neither has a lane state of its own any more — both take the same unmodelled
+            // fallthrough #8 takes, from the other namespace.
             (
                 qpr(11, &["human:needs-work"], None, false),
-                "human-decisions",
-                RETIRED_HUMAN_NEEDS_WORK_LABEL,
+                "vet-lifecycle",
+                "un-vetted",
             ),
-            // The DELETED `human:design` (#219): no lane state of its own — the same unmodelled
-            // fallthrough #8 takes, from the other namespace.
             (
                 qpr(12, &["human:design"], None, false),
                 "vet-lifecycle",
@@ -50307,15 +49868,19 @@ mod fsm_completeness_tests {
         // annotations above say where each PR lands; this says WHY the bucket is that size, so
         // deleting a state without retiring its label — or retiring a label the registry still
         // lists — fails here rather than quietly re-annotating itself.
+        // `human:needs-work` is counted here too but is deliberately NOT in that registry: the
+        // PR-side state was removed with its migration (#133/#230) while the string stays LIVE on
+        // issues, where `human-rule-issue needs-work` still writes it. A registry entry would
+        // claim no transition can write it again, which is false for the other subject.
+        let names_no_pr_state = |l: &String| {
+            crate::state_descriptor_tests::DELETED_STATE_LABELS
+                .iter()
+                .any(|(label, _)| label == l)
+                || l == "human:needs-work"
+        };
         let deleted_in_fixture = prs
             .iter()
-            .filter(|p| {
-                p.labels.iter().any(|l| {
-                    crate::state_descriptor_tests::DELETED_STATE_LABELS
-                        .iter()
-                        .any(|(label, _)| label == l)
-                })
-            })
+            .filter(|p| p.labels.iter().any(names_no_pr_state))
             .count();
         assert_eq!(count("vet-lifecycle", "un-vetted"), 2 + deleted_in_fixture);
         assert_eq!(
@@ -50346,7 +49911,6 @@ mod fsm_completeness_tests {
             "producer-blocked",
             "vet-lifecycle",
             "vetter-verdicts",
-            "human-decisions",
             "leak",
         ] {
             assert_eq!(
@@ -50366,12 +49930,10 @@ mod fsm_completeness_tests {
             expect("vet-lifecycle", "ai:blocked-on")
         );
         assert_eq!(count("producer-blocked", "ai:blocked-on"), 0);
-        assert_eq!(
-            count("human-decisions", "human:needs-work"),
-            expect("human-decisions", "human:needs-work")
-        );
-        // The DELETED human:design (#219) emits no lane cell at all — the same treatment #221
-        // gives the deleted `ai:blocked-deploy` two lanes up.
+        // The human-decisions lane is GONE (#133/#230): its one state was the retired PR-side
+        // `human:needs-work` residue, whose migration has run. Neither `human:*` string emits a
+        // lane cell — the same treatment #221 gives the deleted `ai:blocked-deploy` two lanes up.
+        assert_eq!(count("human-decisions", "human:needs-work"), 0);
         assert_eq!(count("human-decisions", "human:design"), 0);
         // The leak bucket emits NO cell (#130 clarification 2): its inventory is the top-level
         // `leaks` array — the one carrying each leak's `reason` — which is exactly what its
@@ -50382,10 +49944,11 @@ mod fsm_completeness_tests {
         assert!(doc.pointer("/leak").is_none(), "not a lane cell");
 
         // the PR list carries {repo, number, url, title}. #1 (never labelled), #2 (ai:ready with
-        // no current verdict), #8 (the deleted `ai:blocked-deploy` string) and #12 (the deleted
-        // `human:design`) sit side by side in the ONE un-vetted bucket, indistinguishable — which
-        // is exactly what makes both deletions benign: the vetter picks each up as ordinary work
-        // and its next verdict strips the dead label.
+        // no current verdict), #8 (the deleted `ai:blocked-deploy` string), #11 (the removed
+        // PR-side `human:needs-work`) and #12 (the deleted `human:design`) sit side by side in the
+        // ONE un-vetted bucket, indistinguishable — which is exactly what makes each removal
+        // benign: the vetter picks every one up as ordinary work and its next verdict strips the
+        // dead label.
         let members: Vec<u64> = doc
             .pointer("/vet-lifecycle/un-vetted/prs")
             .and_then(|v| v.as_array())
@@ -50393,7 +49956,7 @@ mod fsm_completeness_tests {
             .iter()
             .filter_map(|p| p.get("number").and_then(|v| v.as_u64()))
             .collect();
-        assert_eq!(members, vec![1, 2, 8, 12]);
+        assert_eq!(members, vec![1, 2, 8, 11, 12]);
         let arv = doc.pointer("/vet-lifecycle/un-vetted/prs/1").unwrap();
         assert_eq!(arv.get("repo").and_then(|v| v.as_str()), Some("o/r"));
         assert_eq!(
@@ -50460,7 +50023,6 @@ mod state_descriptor_tests {
             label_sets.push(vec![v.to_string()]);
         }
         for l in [
-            RETIRED_HUMAN_NEEDS_WORK_LABEL,
             RETIRED_STATE_LABEL,
             STATE_BLOCKED_ON.key,
             STATE_READY.key,
@@ -50798,54 +50360,6 @@ mod state_descriptor_tests {
         }
     }
 
-    // What an EMPTY lane does, stated rather than discovered. #219 left `human-decisions` holding
-    // exactly one state — the retired `human:needs-work` residue — so when that residue drains the
-    // lane has no cells at all.
-    //
-    // The pinned answer: the lane DISAPPEARS from `lanes` entirely, and no descriptor is emitted
-    // for it. That is correct, not a degradation: `lanes` is the SPARSE occupancy (a cell exists
-    // because a PR is in it), while `stateDescriptors` is the canonical shape — and the only row
-    // this lane still has is residue, which by #130 clarification 1 exists only while occupied. A
-    // lane rendering as an empty box would be the permanent dimmed box that clarification removes.
-    #[test]
-    fn a_lane_whose_only_states_are_residue_disappears_when_it_drains() {
-        // Drained: nothing in any human-decisions state.
-        let drained = doc_for(&[vec![]]);
-        assert!(
-            drained["lanes"].get("human-decisions").is_none(),
-            "a lane with no occupied cell is ABSENT, not an empty object: {}",
-            drained["lanes"]
-        );
-        assert!(
-            drained["stateDescriptors"]
-                .as_array()
-                .expect("stateDescriptors is an array")
-                .iter()
-                .all(|d| d.pointer("/occupancy/lane") != Some(&json!("human-decisions"))),
-            "no human-decisions row may be emitted while the lane is drained"
-        );
-        // …and the lane is not gone from the MACHINE: the residue row is still in the table, so
-        // one straggler brings both the cell and its descriptor back.
-        let occupied = doc_for(&[vec![RETIRED_HUMAN_NEEDS_WORK_LABEL.to_string()]]);
-        assert!(
-            occupied
-                .pointer("/lanes/human-decisions/human:needs-work/count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                > 0,
-            "a straggler must bring the lane back: {}",
-            occupied["lanes"]
-        );
-        assert!(
-            occupied["stateDescriptors"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|d| d["key"] == json!("human:needs-work")),
-            "…and its descriptor with it"
-        );
-    }
-
     // The daily review shows the same states the document does, and no others (#228). Both
     // directions, structurally: a lane row with no section is a state the human never sees, and a
     // section over a non-lane row lists PRs from a cell that does not exist.
@@ -51162,15 +50676,6 @@ mod state_descriptor_tests {
                     "label": "ai:blocked-infra (retired #108)"
                 },
                 {
-                    "key": "human:needs-work",
-                    "owner": "human",
-                    "act": "migrate-needs-work moves it to ai:needs-work",
-                    "kind": "blk",
-                    "histFold": [],
-                    "occupancy": { "lane": "human-decisions" },
-                    "label": "human:needs-work (retired #133)"
-                },
-                {
                     "key": "closeCandidateUnvetted",
                     "owner": "vetter",
                     "act": "vet the flag",
@@ -51270,36 +50775,37 @@ mod state_descriptor_tests {
         // series: `ai:needs-work` draws that past through its folds, so the straggler is visible as a
         // state without the same inventory drawing in two boxes (#133/#135 consolidated both
         // INTO needs-work, the rename shape #130's history paragraph is about).
-        for (gate, key, lane) in [
-            ("humanReject", "human:needs-work", "human-decisions"),
-            ("relink", "ai:relink", "vetter-verdicts"),
-        ] {
-            let mut l = no_lanes.clone();
-            l[lane][key] = json!({"count": 3, "prs": []});
-            let emitted = state_descriptors_json(&drained, &l);
-            let row = emitted
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|d| d["key"] == json!(key))
-                .unwrap_or_else(|| panic!("`{key}` emits while `{gate}` is nonzero"));
-            assert!(
-                row.get("hist").is_none(),
-                "`{key}` was absorbed into ai:needs-work, so it must carry no series of its own: {row}"
-            );
-            let needs_work = emitted
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|d| d["key"] == json!("ai:needs-work"))
-                .expect("the successor is live and always emitted");
-            assert_eq!(needs_work["hist"], json!("needsWork"));
+        // `relink` is the one ABSORBED residue still in the table: `humanReject`'s row went with
+        // the PR-side state it described (#133/#230), but its FOLD KEY stays on `ai:needs-work`,
+        // because the committed samples measured under that spelling are real either way.
+        let (gate, key, lane) = ("relink", "ai:relink", "vetter-verdicts");
+        let mut l = no_lanes.clone();
+        l[lane][key] = json!({"count": 3, "prs": []});
+        let emitted = state_descriptors_json(&drained, &l);
+        let row = emitted
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["key"] == json!(key))
+            .unwrap_or_else(|| panic!("`{key}` emits while `{gate}` is nonzero"));
+        assert!(
+            row.get("hist").is_none(),
+            "`{key}` was absorbed into ai:needs-work, so it must carry no series of its own: {row}"
+        );
+        let needs_work = emitted
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["key"] == json!("ai:needs-work"))
+            .expect("the successor is live and always emitted");
+        assert_eq!(needs_work["hist"], json!("needsWork"));
+        for folded in ["relink", "humanReject", "reject"] {
             assert!(
                 needs_work["histFold"]
                     .as_array()
                     .expect("histFold is an array")
-                    .contains(&json!(gate)),
-                "ai:needs-work must draw `{gate}`'s past, or the series truncates at the rename"
+                    .contains(&json!(folded)),
+                "ai:needs-work must draw `{folded}`'s past, or the series truncates at the rename"
             );
         }
     }
@@ -52336,8 +51842,8 @@ mod human_rule_tests {
     }
 
     // #133's structural invariant, and it REPLACES "the two arrays are the same array". What has to
-    // hold is not that the ruling vocabulary and the human-decisions lane are one constant — after
-    // the consolidation they are deliberately not — but that every label a ruling can WRITE is a
+    // hold is not that the ruling vocabulary and some lane's states are one constant — after the
+    // consolidation they are deliberately not — but that every label a ruling can WRITE is a
     // label `classify_lane` buckets into a real lane. A ruling that landed in `Leak` would be a
     // transition out of the machine.
     #[test]
@@ -52350,25 +51856,21 @@ mod human_rule_tests {
                 "{verb}'s {label} buckets under a different name"
             );
         }
-        // And the retired name still buckets too, so the PRs a pre-#133 run parked stay visible
-        // where they are until `migrate-needs-work` moves them — never silently re-read as un-vetted.
-        assert_eq!(
-            classify_lane(
-                &s(&["ai:ready", RETIRED_HUMAN_NEEDS_WORK_LABEL]),
-                Some(true),
-                false
-            ),
-            (
-                Lane::HumanDecisions,
-                RETIRED_HUMAN_NEEDS_WORK_LABEL.to_string()
-            )
-        );
-        // The DELETED `human:design` (#219) is NOT a lane state: nothing writes it, so a PR
-        // wearing that label classifies by what it otherwise is — un-vetted at the bottom.
-        assert_eq!(
-            classify_lane(&s(&["human:design"]), None, false),
-            (Lane::VetLifecycle, "un-vetted".to_string())
-        );
+        // NEITHER `human:*` string is a lane state now — #219 deleted `human:design` and
+        // #133/#230 removed the retired PR-side `human:needs-work` with its migration — so a PR
+        // wearing one classifies by what it otherwise is, and alone it is un-vetted at the bottom.
+        for dead in ["human:design", "human:needs-work"] {
+            assert_eq!(
+                classify_lane(&s(&[dead]), None, false),
+                (Lane::VetLifecycle, "un-vetted".to_string()),
+                "{dead}"
+            );
+            assert_eq!(
+                classify_lane(&s(&["ai:ready", dead]), Some(true), false),
+                (Lane::VetterVerdicts, "ai:ready".to_string()),
+                "{dead} must not displace a live state"
+            );
+        }
     }
 
     // A ruling outside the vocabulary is a USAGE error (exit 2) that names the vocabulary — the
@@ -54595,8 +54097,10 @@ mod vetter_state_load_tests {
     }
 
     #[test]
-    fn both_forms_of_human_decision_are_sacred_even_at_a_moved_head() {
-        // (a) a human:* LABEL, with no vetter comment at the current head (head moved).
+    fn a_native_review_is_sacred_even_at_a_moved_head() {
+        // No `human:*` LABEL is sacred any more (#133/#230 removed the last one, the retired
+        // PR-side `human:needs-work`), so a PR wearing that string at a moved head is ordinary
+        // vetter work — the decision has to be a form the label never carried.
         let labelled = json!({
             "headRefOid": "newhead",
             "labels": [{"name": "human:needs-work"}, {"name": "ai:ready"}],
@@ -54606,11 +54110,12 @@ mod vetter_state_load_tests {
             "comments": [vetter_comment("oldhead", "ready")],
             "isDraft": false,
         });
-        let (action, _, row) = unvetted_row("o/r", 2, "u", "t", &labelled);
-        assert_eq!(action, VetAction::SkipHuman);
-        assert_eq!(row["humanSacred"], json!(true));
+        assert_eq!(
+            unvetted_row("o/r", 2, "u", "t", &labelled).0,
+            VetAction::Vet
+        );
 
-        // (b) a NATIVE review decision, which no label carries.
+        // The NATIVE review decision, which no label carries and which survives a moved head.
         for decision in ["APPROVED", "CHANGES_REQUESTED"] {
             let native = json!({
                 "headRefOid": "newhead",
@@ -54779,8 +54284,8 @@ mod vetter_state_load_tests {
         for n in 0..36 {
             push(
                 3000 + n,
-                json!([{"name": "human:needs-work"}]),
-                Value::Null,
+                json!([]),
+                json!("CHANGES_REQUESTED"),
                 false,
                 false,
             );
@@ -55494,7 +54999,7 @@ mod mcp_tests {
     #[test]
     fn a_human_decided_pr_refusal_comes_back_as_a_tool_error() {
         // the guard itself, on the JSON the write path reads:
-        let human = json!({"labels": [{"name": "human:needs-work"}], "comments": [], "headRefOid": "h", "reviewDecision": null});
+        let human = json!({"labels": [], "comments": [], "headRefOid": "h", "reviewDecision": "CHANGES_REQUESTED"});
         assert_eq!(
             verdict_plan(&human, "ai:ready", "ready"),
             VerdictPlan::RefuseHuman
@@ -59428,7 +58933,8 @@ mod infra_down_tests {
             classify_lane(&[RETIRED_STATE_LABEL.to_string()], None, false),
             (Lane::ProducerBlocked, RETIRED_STATE_LABEL.to_string())
         );
-        // A human decision still dominates it, as it dominates every other state.
+        // And a dead `human:*` string beside it dominates nothing (#133/#230): the modeled
+        // residue still owns the row.
         assert_eq!(
             classify_lane(
                 &[
@@ -59438,7 +58944,7 @@ mod infra_down_tests {
                 None,
                 false
             ),
-            (Lane::HumanDecisions, "human:needs-work".to_string())
+            (Lane::ProducerBlocked, RETIRED_STATE_LABEL.to_string())
         );
     }
 
@@ -59483,15 +58989,12 @@ mod infra_down_tests {
             );
             assert_eq!(
                 classify_lane(
-                    &[RETIRED_HUMAN_NEEDS_WORK_LABEL.to_string(), dead.to_string()],
+                    &["ai:blocked-on".to_string(), dead.to_string()],
                     None,
                     false
                 ),
-                (
-                    Lane::HumanDecisions,
-                    RETIRED_HUMAN_NEEDS_WORK_LABEL.to_string()
-                ),
-                "{dead} must not dominate a human decision"
+                (Lane::VetLifecycle, "ai:blocked-on".to_string()),
+                "{dead} must not dominate a modeled state"
             );
 
             // 2. It appears in NO lane cell — a PR hand-wearing it resurrects no state.
@@ -59561,11 +59064,6 @@ mod infra_down_tests {
                 Lane::VetLifecycle => (vec!["ai:blocked-on".to_string()], None, false),
                 Lane::VetterVerdicts => (vec!["ai:ready".to_string()], Some(true), false),
                 Lane::ProducerBlocked => (vec![RETIRED_STATE_LABEL.to_string()], None, false),
-                Lane::HumanDecisions => (
-                    vec![RETIRED_HUMAN_NEEDS_WORK_LABEL.to_string()],
-                    None,
-                    false,
-                ),
                 // The leak arm needs BOTH a label set no arm claims and the producer having acted.
                 Lane::Leak => (vec![], None, true),
                 Lane::CloseCandidate => (vec!["ai:close-candidate".to_string()], None, false),
@@ -59615,12 +59113,7 @@ mod infra_down_tests {
         ));
         // Everything that returns ahead of the `ai:ready` branch makes the call dead weight —
         // including the close-candidate hand-off (#211), whose subjects the flag machinery owns.
-        for dominating in [
-            RETIRED_HUMAN_NEEDS_WORK_LABEL,
-            "ai:close-candidate",
-            "ai:blocked-on",
-            RETIRED_STATE_LABEL,
-        ] {
+        for dominating in ["ai:close-candidate", "ai:blocked-on", RETIRED_STATE_LABEL] {
             let labels = vec!["ai:ready".to_string(), dominating.to_string()];
             assert!(
                 !needs_verdict_currency(&labels, false),
@@ -60719,20 +60212,19 @@ mod delegation_111_tests {
         // still wearing it neither blocks the vetter nor hides from the un-vetted queue.
         let residue = pr(&["human:design"], vec![], HEAD);
         assert!(!pr_human_sacred(&residue, HEAD));
-        assert!(!has_human_override(&residue));
-        // The sacred labels park absolutely, whatever the comments say — decidable from labels
-        // alone, which is what lets the vetter's pre-filter skip without a fetch.
-        for label in PR_SACRED_LABELS {
+        // NO `human:*` label parks a PR at all now (#133/#230): the retired `human:needs-work`
+        // was the last one and its migration has run, so a PR wearing either dead string is
+        // ordinary vetter territory decided by the comments and the review, not by the label.
+        for dead in ["human:design", "human:needs-work"] {
             let absolute = pr(
-                &[label],
+                &[dead],
                 vec![trusted(&rework_note_comment(HEAD, "do X"))],
                 OLD,
             );
             assert!(
-                pr_human_sacred(&absolute, OLD),
-                "{label} must park absolutely — its exit is the migration"
+                !pr_human_sacred(&absolute, OLD),
+                "{dead} names no PR state, so it parks nothing"
             );
-            assert!(has_human_override(&absolute));
         }
         // A native human review outranks everything.
         let mut reviewed = pr(&[], vec![trusted(&order)], OLD);
@@ -60768,13 +60260,16 @@ mod delegation_111_tests {
             verdict_plan(&ruled_now, "ai:ready", "ready"),
             VerdictPlan::RefuseHuman
         );
-        // The sacred labels refuse whatever the comments say.
-        for label in PR_SACRED_LABELS {
-            let absolute = pr(&[label], vec![], HEAD);
-            assert_eq!(
-                verdict_plan(&absolute, "ai:ready", "ready"),
-                VerdictPlan::RefuseHuman,
-                "{label}"
+        // No `human:*` LABEL refuses any more (#133/#230): a PR wearing a dead string is recorded
+        // on like any other, and the refusal comes from the ruling or the review instead.
+        for dead in ["human:design", "human:needs-work"] {
+            let absolute = pr(&[dead], vec![], HEAD);
+            assert!(
+                matches!(
+                    verdict_plan(&absolute, "ai:ready", "ready"),
+                    VerdictPlan::Record { .. }
+                ),
+                "{dead}"
             );
         }
         // And a plain PR's plan is the ordinary one-state sweep.
@@ -60820,12 +60315,13 @@ mod delegation_111_tests {
             out.get("humanWorkOrder").is_none(),
             "the delegated-design signal is gone from the row"
         );
-        assert_eq!(
-            out["humanOverride"], false,
-            "the deleted label is no human hold"
+        assert!(
+            out.get("humanOverride").is_none(),
+            "no `human:*` label parks a PR any more, so the row asserts no label-presence read"
         );
-        // The sacred labels park, order or no order.
-        for label in PR_SACRED_LABELS {
+        // A modeled human-gated STATE still parks, order or no order — that is what replaced the
+        // sacred-label park: the state label, not the namespace.
+        for label in ["ai:design", "ai:close-candidate"] {
             let absolute = wl_detail(&[label], vec![order.clone()], HEAD, "SUCCESS");
             assert_eq!(
                 worklist_row("o/r", &absolute)["nextAction"],
