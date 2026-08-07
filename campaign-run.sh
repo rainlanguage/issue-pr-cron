@@ -74,7 +74,7 @@ LOG="$DIR/campaign.log"
 LOCK="$DIR/campaign.lock"
 RUNDIR="$DIR/runs"
 # close/design candidates are GitHub-native now (ai:close-candidate label via
-# `pr-review-report flag-close-candidate`; design = human:design + awaiting-ruling comment).
+# `pr-review-report flag-close-candidate`; design questions = the ai:design label).
 # The local ledgers -- close-candidates.jsonl, design-candidates.jsonl and
 # review-verdicts.jsonl -- are retired. GitHub is the source of truth.
 
