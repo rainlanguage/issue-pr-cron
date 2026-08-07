@@ -135,7 +135,7 @@ export RUN_LENS_LEDGER="$LENSLOG"
 # The audit lens reads whatever the PR ships, and this org's audit evidence is PDF, which the
 # harness renders by shelling out to poppler. A missing renderer does not crash the run: `Read`
 # returns a typed error, the model vets what it can still see, records a verdict, and claude exits
-# 0. That is how #85's run vetted `ready` a PR the previous run had `reject`ed — the dependency
+# 0. That is how #85's run vetted `ready` a PR the previous run had sent back — the dependency
 # moved the verdict. So the check runs here and a miss ENDS the run: no verdict at all beats a
 # verdict from a lens that was blind without saying so.
 _pf="$(pr-review-report preflight)"; _pfrc=$?

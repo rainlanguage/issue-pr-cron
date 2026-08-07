@@ -233,8 +233,9 @@ rule of the document it was handed to.
 The grant is four typed calls plus `Skill` and `Read`, and `Read` applies to the
 `pr_checkout` tree and nothing else. All four typed calls are reads except
 `clone_release`, which disposes of what this command itself created and writes
-no GitHub state. The rulings remain `/reject`, `/design`, `/close-candidate`,
-`/keep-open`, and the merge is the human's, on a PR they named.
+no GitHub state. The rulings remain `/needs-work`, `/design`,
+`/close-candidate`, `/keep-open`, and the merge is the human's, on a PR they
+named.
 
 That list is a **declaration, not a sandbox**: measured on Claude Code 2.1.220,
 a command granting only `Read` still ran a `Bash` call with no permission
