@@ -12,7 +12,7 @@ JSON-RPC frame, a Python filter over the response, and two raw `gh` calls.
 | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/nr [1-3]`                                  | `next_ready` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:ready` PR, and the vetter's verdict checked against its diff, its issue and its source. Writes no GitHub state                                                                             |
 | `/ncc [1-3]`                                 | `next_close_candidate` + `close_candidate_context` + `pr_context` (MCP) — the next `ai:close-candidate` flag, and the producer's reason checked against the issue as filed and the code it claims about. Writes no GitHub state                                                                     |
-| `/nd [1-3]`                                  | `next_design` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:design` PR, and the raised question checked against its issue, its diff and its source: genuine (presented with its option space), already answered, or misrouted. Writes no GitHub state |
+| `/ndd [1-3]`                                 | `next_design` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:design` PR, and the raised question checked against its issue, its diff and its source: genuine (presented with its option space), already answered, or misrouted. Writes no GitHub state |
 | `/nm [1-3]`                                  | `next_leak` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next FSM-conformance leak, and which of three places the defect is in: the PR's state record, the machine's vocabulary, or the classifier. Writes no GitHub state                                    |
 | `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                                                                                                                                                                                       |
 | `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                                                                                                                                                                                        |
@@ -24,7 +24,7 @@ Names collide across plugins; `/human-fsm:close-candidate` disambiguates.
 
 ## The reads and the writes
 
-`/nr`, `/ncc`, `/nd` and `/nm` are the reads that precede a ruling — one per
+`/nr`, `/ncc`, `/ndd` and `/nm` are the reads that precede a ruling — one per
 inbox: the merge queue, the flag queue, the design questions, and the leaks. The
 rest are the rulings. They differ in how they reach the binary, and the
 difference is the point.
@@ -33,7 +33,7 @@ The rulings shell out to a `pr-review-report` subcommand. The reads call **MCP
 tools** — served by the `fsm` server this plugin ships in its own manifest — and
 **no shell at all**. `/nr` is granted `next_ready`, `pr_context`, `pr_checkout`
 and `clone_release`, plus `Skill` and `Read`, which it needs because it puts the
-PR's source on disk and audits it. `/nd` is granted the same shape with
+PR's source on disk and audits it. `/ndd` is granted the same shape with
 `next_design` at its head, because a design question is a claim about code on a
 PR and weighing its options means reading the tree. `/nm` is granted the same
 shape with `next_leak` at its head: locating a leak sometimes turns on what the
