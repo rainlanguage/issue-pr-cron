@@ -20083,13 +20083,26 @@ fn draft_send_back_plan(
     Some(plan)
 }
 
+/// Run a [`draft_send_back_plan`] through `run`, STOPPING at the first call that fails. `true` iff
+/// the whole plan ran.
+///
+/// The short-circuit is the plan's ORDER doing its job, so it is a value a test drives rather than
+/// an `Iterator::all` buried in a network function: a comment posted after a failed label write is
+/// precisely the stranding the order exists to prevent, and "we relied on `all` short-circuiting"
+/// is not a property anything asserts.
+fn run_draft_send_back(plan: &[Vec<String>], mut run: impl FnMut(&[&str]) -> bool) -> bool {
+    plan.iter().all(|call| {
+        let argv: Vec<&str> = call.iter().map(String::as_str).collect();
+        run(&argv)
+    })
+}
+
 /// The draft send-back write itself: ensure the label exists in the repo, then run
-/// [`draft_send_back_plan`] IN ORDER, stopping at the first failure. `true` iff the whole plan ran.
+/// [`draft_send_back_plan`] through [`run_draft_send_back`]. `true` iff the whole plan ran.
 ///
 /// The label-existence call is a warning like [`record_verdict_apply`]'s: a repo that already has
 /// the label needs nothing, and one that does not would otherwise fail the edit for a reason the
-/// caller cannot act on. Stopping at the first failure is what keeps the order meaningful — a
-/// comment posted after a failed label write is the stranding case the plan's order is against.
+/// caller cannot act on.
 fn record_draft_send_back(slug: &str, num: u64, head: &str, labels: &[String]) -> bool {
     let Some(plan) = draft_send_back_plan(slug, num, head, labels) else {
         eprintln!(
@@ -20114,10 +20127,7 @@ fn record_draft_send_back(slug: &str, num: u64, head: &str, labels: &[String]) -
     ]) {
         eprintln!("warning: could not ensure label {target} exists in {slug}");
     }
-    plan.iter().all(|call| {
-        let argv: Vec<&str> = call.iter().map(String::as_str).collect();
-        gh_run(&argv)
-    })
+    run_draft_send_back(&plan, gh_run)
 }
 
 /// The draft SEND-BACK on the vetter's state-load, applied to one already-classified row. It is the
@@ -54237,26 +54247,28 @@ mod vetter_state_load_tests {
     /// this cannot read is an argv gh could not either.
     fn labels_after(edit: &[String], before: &[String]) -> Vec<String> {
         let mut out = before.to_vec();
-        let mut it = edit.iter();
-        while let Some(flag) = it.next() {
-            let arg = || {
-                it.clone()
-                    .next()
-                    .expect("a label flag takes a value")
-                    .clone()
-            };
+        let mut i = 0;
+        // Each flag CONSUMES its value, as an argv parser does. Peeking instead would leave the
+        // label to be read as a flag on the next pass — harmless only while no label is spelled
+        // like one, and a replay that is right by luck proves nothing about the argv it replays.
+        while i < edit.len() {
+            let flag = edit[i].clone();
             match flag.as_str() {
-                "--add-label" => {
-                    let l = arg();
-                    if !out.contains(&l) {
-                        out.push(l);
+                "--add-label" | "--remove-label" => {
+                    let value = edit
+                        .get(i + 1)
+                        .unwrap_or_else(|| panic!("{flag} takes a value"))
+                        .clone();
+                    if flag == "--add-label" {
+                        if !out.contains(&value) {
+                            out.push(value);
+                        }
+                    } else {
+                        out.retain(|x| *x != value);
                     }
+                    i += 2;
                 }
-                "--remove-label" => {
-                    let l = arg();
-                    out.retain(|x| *x != l);
-                }
-                _ => {}
+                _ => i += 1,
             }
         }
         out
@@ -54442,6 +54454,33 @@ mod vetter_state_load_tests {
     #[test]
     fn a_draft_with_no_head_sha_is_not_written_to_at_all() {
         assert!(draft_send_back_plan("o/r", 7, "", &[]).is_none());
+    }
+
+    // The plan's order is only a safety property if the EXECUTOR honours it. A failed label write
+    // must abandon the rest: a currency stamp posted after it would leave a PR reading as vetted at
+    // its head with no state label — the stranding the order exists to prevent, reached by running
+    // the right calls in the right order and simply not stopping.
+    #[test]
+    fn the_write_stops_at_the_first_failure_so_the_stamp_never_outruns_the_label() {
+        let plan = draft_send_back_plan("o/r", 7, "abc123", &[]).expect("head sha");
+        let ran = |ok: bool| {
+            let seen = std::cell::RefCell::new(Vec::new());
+            let whole = run_draft_send_back(&plan, |argv| {
+                seen.borrow_mut().push(argv[1].to_string());
+                ok
+            });
+            (whole, seen.into_inner())
+        };
+        assert_eq!(
+            ran(false),
+            (false, vec!["edit".to_string()]),
+            "the comment must not be posted after a failed label write"
+        );
+        assert_eq!(
+            ran(true),
+            (true, vec!["edit".to_string(), "comment".to_string()]),
+            "a landed label write is followed by the currency stamp, in that order"
+        );
     }
 
     // A state-load must not write to a PR it is merely reporting. Every action but the send-back
