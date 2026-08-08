@@ -51109,12 +51109,14 @@ mod state_descriptor_tests {
     /// #230's continuity gate: renaming the send-back state must not truncate its series.
     ///
     /// `ai:needs-work` is the state `ai:reject` was, under the name that says what it asks for.
-    /// Every rollup sample this state accumulated before the rename was written under a PREVIOUS
-    /// spelling — `reject` for its own history, `humanReject` (#133) and `relink` (#135) for the
-    /// two states consolidated into it — and the newest of those was measured hours before it. So a
-    /// `needsWork` series that failed to fold them would not merely lose old data: it would start
-    /// from zero on the rename date and render the state as though it had just come into
-    /// existence, which is exactly the silent drift #130 built `hist_fold` to prevent.
+    /// Every rollup sample it accumulated BEFORE the rename was written under a previous spelling
+    /// — `reject` for its own history, `humanReject` (#133) and `relink` (#135) for the two states
+    /// consolidated into it — and the newest of those was measured hours before the rename. The
+    /// live key has been rolling up under `needsWork` ever since, so the series is now two spans
+    /// joined at that date. A `needsWork` series that failed to fold the old spellings would not
+    /// merely lose old data: it would start from zero on the rename date and render the state as
+    /// though it had just come into existence, which is exactly the silent drift #130 built
+    /// `hist_fold` to prevent.
     ///
     /// The assertion is STRUCTURAL first — off the descriptor table, which is always present — so
     /// it cannot pass vacuously in the flake build sandbox, where the repo-root read is filtered
@@ -51139,39 +51141,68 @@ mod state_descriptor_tests {
         let Some(history) = repo_root_text("human-queue-history.jsonl") else {
             return; // no SOURCE checked out (the flake build filters it); the structure above holds regardless
         };
-        // Per spelling, the committed rollup lines that measured it on a document where the NEW key
-        // is ABSENT — the span the `needsWork` series can reach ONLY through the fold.
-        let mut folded_span: std::collections::BTreeMap<String, usize> =
+        let mut samples: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        // Ordering two spellings needs no date parsing, but it DOES need the stamps compared in
+        // one format. The committed file carries both spellings of the same zone — `…06Z` and
+        // `…09+00:00` — and `+` sorts below `Z`, so raw string order is decided by the suffix
+        // whenever two stamps share a second. Both are UTC, so the `YYYY-MM-DDTHH:MM:SS` prefix
+        // they agree on is the instant itself, and comparing THAT is chronological by construction.
+        fn instant(ts: &str) -> &str {
+            let cut = "YYYY-MM-DDTHH:MM:SS".len();
+            assert!(
+                ts.len() >= cut && ts.is_char_boundary(cut),
+                "`{ts}` is not an ISO-8601 UTC stamp, so no two rollups can be ordered"
+            );
+            &ts[..cut]
+        }
+        let mut first_seen: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         for line in history.lines().filter(|l| !l.trim().is_empty()) {
             let row: Value = serde_json::from_str(line).expect("every rollup line is JSON");
+            let ts = instant(
+                row.get("ts")
+                    .and_then(|t| t.as_str())
+                    .expect("every rollup line is stamped"),
+            )
+            .to_string();
             let Some(counts) = row.get("counts").and_then(|c| c.as_object()) else {
                 continue;
             };
-            if counts.contains_key("needsWork") {
-                continue;
-            }
             for k in counts.keys() {
-                *folded_span.entry(k.clone()).or_default() += 1;
+                *samples.entry(k.clone()).or_default() += 1;
+                let earliest = first_seen.entry(k.clone()).or_insert_with(|| ts.clone());
+                if ts < *earliest {
+                    earliest.clone_from(&ts);
+                }
             }
         }
 
-        // The fold is LOAD-BEARING, not decorative: each of these spellings was measured on
-        // committed lines the new key does not appear on at all, so a `needsWork` series that
-        // folded nothing would begin at the rename and render a state with no past. Dropping an
-        // entry silently deletes exactly that span from the chart.
-        //
-        // The claim is "the span the fold reaches is non-empty" rather than "the new key has no
-        // committed samples anywhere". The second says the same thing only until the first rollup
-        // after the rename is committed, and a claim that expires with the calendar fires on a date
-        // rather than on a defect. This one is a property of an append-only history: those lines
-        // exist, and no later rollup can un-write them.
+        // The fold is LOAD-BEARING, not decorative, and the assertion for that has to be an
+        // ORDERING rather than a count. The live key accumulates its own samples from the rename
+        // onward, so "the new key has no committed samples at all" was only true until the first
+        // post-rename rollup landed — a premise that expires on a clock, and did. What does not
+        // expire is WHERE each spelling sits on the timeline: every folded spelling was measured,
+        // and measured strictly before the new name's first sample, so the span in front of that
+        // sample is reachable through `hist_fold` and nowhere else. Dropping an entry silently
+        // deletes exactly that span from the chart, which is what #230 forbids.
+        let native_first = first_seen.get("needsWork").cloned();
         for key in STATE_NEEDS_WORK.hist_fold {
             assert!(
-                folded_span.get(*key).copied().unwrap_or(0) > 0,
-                "`ai:needs-work` folds `{key}`, but no committed rollup line measures it on a \
-                 document without `needsWork` — a fold key that reaches no span of its own is a \
-                 claim about history that history does not make"
+                samples.get(*key).copied().unwrap_or(0) > 0,
+                "`ai:needs-work` folds `{key}`, but no committed rollup line ever measured it — a \
+                 fold key naming nothing real is a claim about history that history does not make"
+            );
+            let Some(native_first) = native_first.as_deref() else {
+                continue; // the new name has not been rolled up yet; the fold is the whole series
+            };
+            let folded_first = first_seen[*key].as_str();
+            assert!(
+                folded_first < native_first,
+                "`ai:needs-work` folds `{key}`, whose earliest sample is {folded_first} — not \
+                 before the new name's own earliest, {native_first}. A fold key that does not \
+                 reach back past the rename adds no span, so the series it claims to continue is \
+                 continued by nothing"
             );
         }
     }
@@ -53671,7 +53702,7 @@ mod marketplace_tests {
                 "design",
                 "keep-open",
                 "ncc",
-                "nd",
+                "ndd",
                 "needs-work",
                 "nm",
                 "nr"
@@ -54158,14 +54189,14 @@ mod marketplace_tests {
         );
     }
 
-    // `/nd` is the third sibling (#220), and its grant is pinned for the reason `/nr`'s is: a
+    // `/ndd` is the third sibling (#220), and its grant is pinned for the reason `/nr`'s is: a
     // later edit that drops the checkout, its release, or the lens back out leaves a command whose
     // prose promises a read it has no tool to perform, and the generic sweep would still pass
     // because the remainder is a legal shape again. The lens rides here where `/ncc` refuses it,
     // because a design question is a claim ABOUT CODE on a PR — `pr:<number>` names its subject.
     #[test]
-    fn nd_grants_the_queue_the_pr_the_source_and_the_lens() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/nd.md") else {
+    fn ndd_grants_the_queue_the_pr_the_source_and_the_lens() {
+        let Some(text) = repo_root_text("plugins/human-fsm/commands/ndd.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -54183,8 +54214,8 @@ mod marketplace_tests {
                 ],
                 native: vec!["Skill".to_string(), "Read".to_string()],
             }),
-            "/nd reads the design queue, the PR behind its head, and the SOURCE the question turns \
-             on — and releases the checkout it took"
+            "/ndd reads the design queue, the PR behind its head, and the SOURCE the question \
+             turns on — and releases the checkout it took"
         );
     }
 
