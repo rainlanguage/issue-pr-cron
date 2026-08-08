@@ -42071,16 +42071,24 @@ mod repo_root_tests {
                  items: {classifies:?}"
             );
         }
-        // …and the fetch REACHES that classifier. Naming the classifier alone would leave the
-        // chain open at the far end: an item that classifies correctly and is called by nothing
-        // satisfies the assertion above while the human's inbox classifies nothing at all.
-        let reaches = items_whose_code_contains(&format!("ncc_class{}", "ify("));
-        assert!(
-            reaches.contains(&"next_close_candidate_fetch".to_string()),
-            "`next_close_candidate_fetch` must classify its population through `ncc_classify`, \
-             which is the only caller of `ncc_outcome` and so the only route the gate above is on. \
-             Reaching items: {reaches:?}"
-        );
+        // …and the fetch REACHES that classifier, by BOTH hops. Naming the classifier alone leaves
+        // the chain open at the far end: an item that classifies correctly and is called by
+        // nothing satisfies the assertion above while the human's inbox classifies nothing at all.
+        // Both links rather than one, because a chain is only as pinned as its weakest hop — an
+        // `ncc_classify` that stopped calling `ncc_outcome` and hand-rolled its own gate would
+        // satisfy a single-hop pin while BEING the divergence the pin exists to forbid.
+        for (caller, callee) in [
+            ("next_close_candidate_fetch", format!("ncc_class{}", "ify(")),
+            ("ncc_classify", format!("ncc_outc{}", "ome(")),
+        ] {
+            let reaches = items_whose_code_contains(&callee);
+            assert!(
+                reaches.contains(&caller.to_string()),
+                "`{caller}` must reach `{callee}`: that is the only route the human's \
+                 close-candidate inbox is on, and the `cc_gate` pin above is worth nothing off it. \
+                 Reaching items: {reaches:?}"
+            );
+        }
 
         // The DESIGN lane takes the same shape, and it is pinned here because the scan above
         // CANNOT see it: `next_design_fetch` reaches the org scope through
