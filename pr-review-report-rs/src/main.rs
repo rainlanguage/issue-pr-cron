@@ -19943,6 +19943,25 @@ enum VetAction {
     /// because no reading of the code can change it: the draft flag decides it. See
     /// [`draft_send_back_plan`].
     DraftNeedsWork,
+    /// The PR is a DRAFT already in a MODELED state, and the send-back is WITHHELD. Writing it
+    /// would STRIP that state's label — [`draft_send_back_plan`] leaves exactly one `ai:*` verdict,
+    /// like every other verdict write here — and for a state whose label IS its queue that deletes
+    /// the row out of the queue with nothing behind it but a needs-work comment.
+    /// `ai:close-candidate` is a producer flag a human owes a ruling on, enumerated BY LABEL by
+    /// `next_close_candidate`; `ai:design` is the same shape one queue over.
+    ///
+    /// Withholding starves nothing here, which is what separates it from the `SkipDraft` that
+    /// [`VetAction::DraftNeedsWork`] replaced. That skip left a draft in NO state and in nobody's
+    /// queue; this one leaves a draft in the state it is already in, owned and enumerated. And the
+    /// leak the send-back closes cannot contain these PRs in the first place —
+    /// [`is_leak_candidate`] requires `ai_state_label(..).is_none()`, so a draft carrying a modeled
+    /// state was never in the leak population and never needed sending back. Which labels those are
+    /// is not decided here: see [`draft_send_back_strips_no_state`].
+    ///
+    /// COUNTED rather than named, unlike [`VetAction::DraftNeedsWork`]: nothing is written, and
+    /// every PR here is inventoried by the state its own label puts it in — which is the very
+    /// reason it was withheld.
+    SkipDraftInState,
     SkipVetted,
     SkipOpenThreads,
     /// `ai:blocked-on` with a typed dep still OPEN: the flag holds, the PR is not offered for a
@@ -19966,6 +19985,7 @@ impl VetAction {
             VetAction::Vet => "vet",
             VetAction::SkipHuman => "skip-human-decided",
             VetAction::DraftNeedsWork => "draft-needs-work",
+            VetAction::SkipDraftInState => "skip-draft-in-state",
             VetAction::SkipVetted => "skip-vetted-at-head",
             VetAction::SkipOpenThreads => "skip-open-threads",
             VetAction::SkipBlockedOn => "skip-blocked-on",
@@ -19993,7 +20013,17 @@ impl VetAction {
 ///
 /// It sits under `human_sacred` for that check's own reason: a PR a person has decided is not
 /// dragged back into the machine's queue by any rule, this one included.
-fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAction {
+///
+/// The draft arm is not unconditional, and `labels` is what conditions it: the send-back is a
+/// WRITE, and a write that would destroy a modeled state is withheld as
+/// [`VetAction::SkipDraftInState`]. That rule is [`draft_send_back_strips_no_state`], asked of the
+/// same [`classify_lane`] the FSM classifies everything else with.
+fn vet_action(
+    is_draft: bool,
+    human_sacred: bool,
+    vetted_at_head: bool,
+    labels: &[String],
+) -> VetAction {
     if human_sacred {
         return VetAction::SkipHuman;
     }
@@ -20001,9 +20031,52 @@ fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAc
         return VetAction::SkipVetted;
     }
     if is_draft {
-        return VetAction::DraftNeedsWork;
+        return if draft_send_back_strips_no_state(labels) {
+            VetAction::DraftNeedsWork
+        } else {
+            VetAction::SkipDraftInState
+        };
     }
     VetAction::Vet
+}
+
+/// PURE: may the draft send-back be WRITTEN to a PR wearing these labels — or would its write
+/// destroy a state somebody else owes a move on?
+///
+/// The send-back is a verdict like every other, so it leaves exactly ONE `ai:*` label:
+/// [`draft_send_back_plan`] adds `ai:needs-work` and strips every other `ai:*` label through
+/// [`labels_to_remove`]. Where the PR is in no state that strip destroys nothing — and that is the
+/// entire population the rule exists for, because [`is_leak_candidate`] already requires
+/// `ai_state_label(..).is_none()`: a draft carrying a modeled state was never in the leak bucket,
+/// so the send-back was never needed for it. Where the PR IS in one the strip DELETES it, and for
+/// the states whose label is the queue that is silent: `ai:close-candidate` is a producer flag a
+/// human owes a ruling on, enumerated by label by `next_close_candidate`, so stripping it retracts
+/// the request to destroy that work leaving only a needs-work comment; `ai:design` is the same
+/// shape one queue over, enumerated by label by `next_design`.
+///
+/// So the question is asked about the WRITE rather than about the PR — **every label the plan would
+/// REMOVE must name no state** — and it is asked of [`classify_lane`] rather than of a list of
+/// labels kept beside it, for [`is_leak_candidate`]'s own reason: a hand list drifts the first time
+/// a state is added, and this one would drift SILENTLY, into destroying the new state's rows.
+/// Neither input is a supposition:
+/// - `Some(false)` for the `ai:ready` currency, because it is not a guess: the draft arm sits BELOW
+///   the currency check in [`vet_action`], so a draft that reaches this question is not vetted at
+///   its head, and a stale `ai:ready` is what the classifier itself calls `un-vetted`. That — not
+///   who wrote the label — is why a draft wearing `ai:ready` is still sent back while one wearing
+///   `ai:design` is not: one of the two no longer names a state.
+/// - `false` for `producer_commented`, because it decides only `leak` vs `un-vetted` and a label
+///   modelled as neither names no state either way. That is the #221 reading, unchanged: a DELETED
+///   `ai:*` string is absorbed by the next verdict rather than triaged by a human.
+///
+/// Per LABEL rather than over the whole set, because precedence would otherwise SHADOW a state: a
+/// PR wearing `ai:ready` beside `ai:design` classifies by `ai:ready` alone — off-protocol, but
+/// exactly the hand-state a rule about destroying states must not itself eat.
+fn draft_send_back_strips_no_state(labels: &[String]) -> bool {
+    labels_to_remove(labels, STATE_NEEDS_WORK.key)
+        .iter()
+        .all(|l| {
+            classify_lane(std::slice::from_ref(l), Some(false), false).1 == STATE_UN_VETTED.key
+        })
 }
 
 /// The work order a draft send-back carries. Fixed text rather than model prose, because the rule
@@ -20276,7 +20349,8 @@ fn unvetted_row(
         .unwrap_or(false);
     let ci = classify_ci(detail.get("statusCheckRollup").unwrap_or(&Value::Null));
     let merge = parse_merge(detail.get("mergeable").and_then(|v| v.as_str()));
-    let action = vet_action(is_draft, human_sacred, vetted);
+    let labels = label_names(detail);
+    let action = vet_action(is_draft, human_sacred, vetted, &labels);
     let review_decision = detail
         .get("reviewDecision")
         .and_then(|v| v.as_str())
@@ -20286,7 +20360,7 @@ fn unvetted_row(
         "url": url,
         "title": title,
         "headRefOid": head,
-        "labels": label_names(detail),
+        "labels": labels,
         "reviewDecision": review_decision,
         "humanSacred": human_sacred,
         "vettedAtHead": vetted,
@@ -20359,6 +20433,7 @@ fn unvetted_doc(
     let mut archived: Vec<Value> = Vec::new();
     let mut draft_sent_back: Vec<Value> = Vec::new();
     let (mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize);
+    let mut n_draft_in_state = 0usize;
     for (action, prio, row) in rows {
         match action {
             VetAction::Vet => {
@@ -20384,6 +20459,11 @@ fn unvetted_doc(
                             "sentBack": row.get("sentBack").cloned().unwrap_or(Value::Null),
                         }));
                     }
+                    // COUNTED, not named: the send-back was withheld precisely BECAUSE this PR is
+                    // in a modeled state, and that state's own inventory already names it. A list
+                    // here would be the same PRs a second time, under a key that says nothing the
+                    // label does not.
+                    VetAction::SkipDraftInState => n_draft_in_state += 1,
                     VetAction::SkipHuman => n_human += 1,
                     VetAction::SkipOpenThreads => {
                         n_threads += 1;
@@ -20452,6 +20532,10 @@ fn unvetted_doc(
             // for a skip that no longer occurs: a draft is not withheld from anything, it is
             // verdicted and handed to the producer.
             "draftNeedsWork": n_draft_sent_back,
+            // The drafts the send-back was WITHHELD from: already in a modeled state, and the
+            // write would have stripped it. Its own key, never folded into `draftNeedsWork`
+            // (nothing was written) or `skipVettedAtHead` (nothing was vetted).
+            "skipDraftInState": n_draft_in_state,
             "skipHumanDecided": n_human,
             "skipVettedAtHead": n_vetted,
             "skipOpenThreads": n_threads,
@@ -21540,10 +21624,11 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     }
     let c = &doc["counts"];
     println!(
-        "un-vetted: {} to vet ({} open · {} draft->needs-work · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
+        "un-vetted: {} to vet ({} open · {} draft->needs-work · {} draft-in-state · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
         c["vet"],
         c["open"],
         c["draftNeedsWork"],
+        c["skipDraftInState"],
         c["skipHumanDecided"],
         c["skipVettedAtHead"],
         c["skipOpenThreads"],
@@ -27899,7 +27984,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "unvetted",
             "narrows": "limit",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided and vetted-at-head PRs are already excluded. A DRAFT is not vetted either, but it is not skipped: this call SENDS IT BACK itself, as ai:needs-work with the work order that the producer confirm the PR is not a draft if it intends to merge something, and `draftNeedsWork` names the PRs that happened to (`sentBack: false` = the write did not land). It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided and vetted-at-head PRs are already excluded. A DRAFT is not vetted either, but it is not skipped: this call SENDS IT BACK itself, as ai:needs-work with the work order that the producer confirm the PR is not a draft if it intends to merge something, and `draftNeedsWork` names the PRs that happened to (`sentBack: false` = the write did not land). A draft ALREADY in a modeled ai:* state is left alone instead — the send-back would strip that label, and for ai:close-candidate/ai:design the label IS the human's queue — counted as `skipDraftInState` and inventoried by that state, not here. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -39633,6 +39718,7 @@ mod open_threads_tests {
         for skip in [
             VetAction::SkipHuman,
             VetAction::DraftNeedsWork,
+            VetAction::SkipDraftInState,
             VetAction::SkipVetted,
         ] {
             let called = Cell::new(false);
@@ -54182,21 +54268,37 @@ mod vetter_state_load_tests {
 
     // --- vet_action: the vet-lifecycle transition guard -----------------------------------------
 
+    /// The guard's label argument, for the cases that do not turn on it.
+    const NO_LABELS: &[String] = &[];
+
+    /// One label, as the guard takes them.
+    fn only(label: &str) -> Vec<String> {
+        vec![label.to_string()]
+    }
+
     #[test]
     fn un_vetted_pr_is_vetted() {
-        assert_eq!(vet_action(false, false, false), VetAction::Vet);
+        assert_eq!(vet_action(false, false, false, NO_LABELS), VetAction::Vet);
     }
 
     #[test]
     fn vetted_at_head_is_skipped_and_a_moved_head_re_opens_it() {
-        assert_eq!(vet_action(false, false, true), VetAction::SkipVetted);
+        assert_eq!(
+            vet_action(false, false, true, NO_LABELS),
+            VetAction::SkipVetted
+        );
         // head moved past the last verdict (vetted_at_head false) -> back in the vet queue.
-        assert_eq!(vet_action(false, false, false), VetAction::Vet);
+        assert_eq!(vet_action(false, false, false, NO_LABELS), VetAction::Vet);
     }
 
     #[test]
     fn a_draft_is_sent_back_rather_than_left_in_nobody_s_queue() {
-        assert_eq!(vet_action(true, false, false), VetAction::DraftNeedsWork);
+        // The UNLABELLED draft — `flow#475`, the PR this rule exists for and the whole population
+        // the leak can contain, since `is_leak_candidate` admits no PR carrying an `ai:*` label.
+        assert_eq!(
+            vet_action(true, false, false, NO_LABELS),
+            VetAction::DraftNeedsWork
+        );
     }
 
     // The idempotence of the send-back, at the guard: a draft carrying a current verdict at its
@@ -54205,10 +54307,16 @@ mod vetter_state_load_tests {
     // answer to a question `vetted_at_head` already answers, free to disagree with it.
     #[test]
     fn a_draft_verdicted_at_its_head_is_not_verdicted_again() {
-        assert_eq!(vet_action(true, false, true), VetAction::SkipVetted);
+        assert_eq!(
+            vet_action(true, false, true, NO_LABELS),
+            VetAction::SkipVetted
+        );
         // …and a push that moves the head buys it a fresh send-back, exactly as it buys any other
         // PR a fresh verdict. A draft costs one verdict per head, never one per run.
-        assert_eq!(vet_action(true, false, false), VetAction::DraftNeedsWork);
+        assert_eq!(
+            vet_action(true, false, false, NO_LABELS),
+            VetAction::DraftNeedsWork
+        );
     }
 
     // THE ordering invariant: the human-sacred check resolves BEFORE any head/vetted comparison.
@@ -54217,14 +54325,190 @@ mod vetter_state_load_tests {
     // input combination that produced the violation — and it must still skip.
     #[test]
     fn a_human_decision_survives_a_moved_head() {
-        assert_eq!(vet_action(false, true, false), VetAction::SkipHuman);
-        assert_eq!(vet_action(false, true, true), VetAction::SkipHuman);
+        assert_eq!(
+            vet_action(false, true, false, NO_LABELS),
+            VetAction::SkipHuman
+        );
+        assert_eq!(
+            vet_action(false, true, true, NO_LABELS),
+            VetAction::SkipHuman
+        );
         // …and it dominates the DRAFT rule too, in both currency states. A PR a person has decided
         // is not dragged back into the machine's queue by a rule about the draft flag: that is
         // what "the human check resolves first" has to mean for every arm under it, not just for
         // the head comparison the ordering was written against.
-        assert_eq!(vet_action(true, true, false), VetAction::SkipHuman);
-        assert_eq!(vet_action(true, true, true), VetAction::SkipHuman);
+        assert_eq!(
+            vet_action(true, true, false, NO_LABELS),
+            VetAction::SkipHuman
+        );
+        assert_eq!(
+            vet_action(true, true, true, NO_LABELS),
+            VetAction::SkipHuman
+        );
+    }
+
+    // --- the send-back's own guard: a write that would destroy a state is withheld ---------------
+
+    // THE defect this guard exists for, at the guard. The send-back leaves exactly ONE `ai:*`
+    // verdict, so on a draft already in a modeled state it does not fill a hole — it DELETES that
+    // state. For `ai:close-candidate` and `ai:design` the label IS the queue (`next_close_candidate`
+    // and `next_design` enumerate BY LABEL), so the human's row vanishes leaving only a needs-work
+    // comment: a producer's request to destroy work, or a design question, silently retracted.
+    #[test]
+    fn a_draft_already_in_a_modeled_state_is_not_written_to() {
+        for label in [
+            // A producer flag awaiting a human ruling — enumerated by label.
+            "ai:close-candidate",
+            // A design question awaiting a human answer — enumerated by label.
+            "ai:design",
+            // "blocked on an infra/tooling gap or can't classify (human)" (#108 residue).
+            "ai:blocked-infra",
+            // Retired (#135), and its exit is a human re-recording the verdict.
+            "ai:relink",
+            // Belt and braces: the blocked-on path owns this PR before the send-back is reached,
+            // so this asserts the guard would refuse it even if that path ever stopped doing so.
+            "ai:blocked-on",
+        ] {
+            assert_eq!(
+                vet_action(true, false, false, &only(label)),
+                VetAction::SkipDraftInState,
+                "{label} names a state the send-back must not strip"
+            );
+        }
+    }
+
+    // …and the states it is still RIGHT to write over. Neither is a human's pending decision: one
+    // is the send-back's own target (nothing is stripped at all), and the other is a verdict the
+    // classifier itself has already demoted, because the draft arm sits below the currency check.
+    #[test]
+    fn a_draft_in_no_state_of_its_own_is_still_sent_back() {
+        // A STALE `ai:ready` — and it is stale by construction: `vet_action` reaches the draft arm
+        // only with `vetted_at_head == false`, and `classify_lane` calls that PR `un-vetted`. A
+        // draft is not ready, and the label no longer names a state anybody is waiting in.
+        assert_eq!(
+            vet_action(true, false, false, &only(STATE_READY.key)),
+            VetAction::DraftNeedsWork
+        );
+        // The send-back's OWN target: `labels_to_remove` leaves it, so the write strips nothing and
+        // is only the currency stamp — which is what heals a send-back whose comment failed and
+        // left the PR `NeedsWorkState::Parked`. Withholding here would strand that PR on a human.
+        assert_eq!(
+            vet_action(true, false, false, &only(STATE_NEEDS_WORK.key)),
+            VetAction::DraftNeedsWork
+        );
+    }
+
+    // The guard is DERIVED from `classify_lane`, so it covers every `ai:*` state the machine has —
+    // not the three that happened to be found. Swept over the state table itself: a state added
+    // there is protected with nothing here to update, and a state added WITHOUT a descriptor row
+    // fails this test rather than silently becoming strippable.
+    #[test]
+    fn the_guard_protects_every_ai_state_the_classifier_models() {
+        for d in STATE_DESCRIPTORS {
+            if !d.key.starts_with("ai:") {
+                continue;
+            }
+            // Two rows are writable, each for a reason about the WRITE rather than about the state:
+            // the send-back's own target is never stripped, and `ai:ready` is what the classifier
+            // itself reports as `un-vetted` at this arm's currency.
+            let writable = d.key == STATE_NEEDS_WORK.key || d.key == STATE_READY.key;
+            assert_eq!(
+                draft_send_back_strips_no_state(&only(d.key)),
+                writable,
+                "{} classifies as {:?}",
+                d.key,
+                classify_lane(&only(d.key), Some(false), false)
+            );
+        }
+        // `ai:close-candidate` is the ONE classifier output with no descriptor row — the flag
+        // machinery inventories its subjects, so a row for it would name occupancy living nowhere
+        // (#211/#212). Named here for exactly that reason, not as a hand-listed exception.
+        assert!(!draft_send_back_strips_no_state(&only(
+            "ai:close-candidate"
+        )));
+        // A DELETED `ai:*` string models nothing, so it is absorbed rather than protected — #221's
+        // ruling, unchanged: the next verdict strips the dead label and self-healing beats triage.
+        for deleted in DELETED_LABELS {
+            if deleted.starts_with("ai:") {
+                assert!(
+                    draft_send_back_strips_no_state(&only(deleted)),
+                    "{deleted} is deleted, so it names no state to protect"
+                );
+            }
+        }
+    }
+
+    // THE safety property of the guard: it can never re-open the leak the send-back was added to
+    // close. Withholding REQUIRES an `ai:*` label the write would strip, and a PR carrying any
+    // `ai:*` label is not in the leak population at all — `is_leak_candidate` demands
+    // `ai_state_label(..).is_none()`. So the two sets cannot overlap in either direction: every
+    // draft the guard withholds was already out of the leak bucket, and every draft still in it is
+    // still sent back. Swept over the state table rather than over a chosen example, so a state
+    // added later is checked against this by construction.
+    #[test]
+    fn the_guard_withholds_nothing_the_leak_population_contains() {
+        let mut sets: Vec<Vec<String>> = vec![
+            // The unlabelled draft — the leak population itself (`flow#475`).
+            Vec::new(),
+            // Labels that name no PR state: the write strips neither, so neither can withhold it.
+            vec!["human:keep-open".to_string(), "bug".to_string()],
+            // The one classifier output with no descriptor row (#211/#212).
+            only("ai:close-candidate"),
+        ];
+        sets.extend(
+            STATE_DESCRIPTORS
+                .iter()
+                .filter(|d| d.key.starts_with("ai:"))
+                .map(|d| only(d.key)),
+        );
+        sets.extend(DELETED_LABELS.iter().map(|l| only(l)));
+        for labels in sets {
+            let sent_back = draft_send_back_strips_no_state(&labels);
+            if is_leak_candidate(&labels) {
+                assert!(
+                    sent_back,
+                    "{labels:?} is IN the leak population and must still be sent back"
+                );
+            }
+            if !sent_back {
+                assert!(
+                    !is_leak_candidate(&labels),
+                    "{labels:?} was withheld from the send-back and is still a leak candidate"
+                );
+            }
+        }
+    }
+
+    // Asked PER LABEL, because precedence would otherwise SHADOW the state being destroyed. This
+    // pair is off-protocol (the FSM invariant is at most one `ai:*` label) and it is precisely the
+    // hand-state a rule about destroying states must not itself eat: `classify_lane` answers
+    // `un-vetted` for the SET (the `ai:ready` arm returns first), while the label the write would
+    // actually destroy is the design question.
+    #[test]
+    fn a_shadowed_state_is_still_protected() {
+        let both = vec![STATE_READY.key.to_string(), STATE_DESIGN.key.to_string()];
+        assert_eq!(
+            classify_lane(&both, Some(false), false),
+            (Lane::VetLifecycle, STATE_UN_VETTED.key.to_string()),
+            "the SET classifies as un-vetted — which is why the guard does not ask about the set"
+        );
+        assert_eq!(
+            vet_action(true, false, false, &both),
+            VetAction::SkipDraftInState
+        );
+    }
+
+    // Nothing outside the `ai:` namespace can withhold the send-back: `labels_to_remove` never
+    // touches those labels, so no state of theirs can be destroyed and none is protected here.
+    // (A human DECISION still dominates — that is `human_sacred`, one arm above, not a label rule.)
+    #[test]
+    fn a_non_ai_label_neither_blocks_nor_survives_by_this_guard() {
+        let mixed = vec![
+            "human:keep-open".to_string(),
+            "bug".to_string(),
+            STATE_READY.key.to_string(),
+        ];
+        assert!(draft_send_back_strips_no_state(&mixed));
     }
 
     // --- the draft send-back: the write, its order, and what it composes into --------------------
@@ -54416,10 +54700,18 @@ mod vetter_state_load_tests {
     // never momentarily wearing two. Everything outside the `ai:` namespace is left alone.
     #[test]
     fn the_send_back_leaves_exactly_one_ai_verdict_and_touches_nothing_else() {
-        let before: Vec<String> = ["ai:design", "ai:relink", "human:keep-open", "bug"]
+        // Two `ai:*` labels the guard actually lets through — a STALE verdict and a DELETED string
+        // (#221) — so this describes a write that can happen. A label naming a live state would
+        // never reach the writer at all (`draft_send_back_strips_no_state`), and asserting the
+        // shape of an unreachable write is how a test outlives the behaviour it was written for.
+        let before: Vec<String> = ["ai:ready", "ai:blocked-deploy", "human:keep-open", "bug"]
             .iter()
             .map(|s| (*s).to_string())
             .collect();
+        assert!(
+            draft_send_back_strips_no_state(&before),
+            "the fixture must be a label set the guard admits"
+        );
         let plan = draft_send_back_plan("o/r", 7, "abc123", &before).expect("head sha");
         assert_eq!(plan.len(), 2, "one edit + one comment: {plan:?}");
         let after = labels_after(&plan[0], &before);
@@ -54490,6 +54782,7 @@ mod vetter_state_load_tests {
         for action in [
             VetAction::Vet,
             VetAction::SkipHuman,
+            VetAction::SkipDraftInState,
             VetAction::SkipVetted,
             VetAction::SkipOpenThreads,
             VetAction::SkipBlockedOn,
@@ -54515,7 +54808,9 @@ mod vetter_state_load_tests {
     // path) produced from fresher JSON than the caller holds.
     #[test]
     fn the_write_is_driven_by_the_rows_own_head_and_labels() {
-        let d = draft_detail("abc123", json!([{"name": "ai:design"}]), json!([]));
+        // A stale `ai:ready` — a label the send-back is still right to write over, so the row
+        // reaches the writer at all, and one the writer must SEE so its plan can strip it.
+        let d = draft_detail("abc123", json!([{"name": "ai:ready"}]), json!([]));
         let row = unvetted_row("o/r", 7, "u", "t", &d);
         let seen = std::cell::RefCell::new(None);
         let (_, _, row) = send_back_draft(row, |head, labels| {
@@ -54524,9 +54819,32 @@ mod vetter_state_load_tests {
         });
         assert_eq!(
             seen.into_inner(),
-            Some(("abc123".to_string(), vec!["ai:design".to_string()]))
+            Some(("abc123".to_string(), vec!["ai:ready".to_string()]))
         );
         assert_eq!(row["sentBack"], json!(true));
+    }
+
+    // The guard on the ROW, not just in the pure function: a draft in a modeled state carries its
+    // own action, is never handed to the writer, and KEEPS its label — the human's queue row
+    // survives the state-load that used to delete it.
+    #[test]
+    fn a_draft_in_a_modeled_state_keeps_its_label_and_is_never_written_to() {
+        for label in ["ai:close-candidate", "ai:design", "ai:blocked-infra"] {
+            let d = draft_detail("abc123", json!([{"name": label}]), json!([]));
+            let called = std::cell::Cell::new(false);
+            let (action, _, row) = send_back_draft(unvetted_row("o/r", 7, "u", "t", &d), |_, _| {
+                called.set(true);
+                true
+            });
+            assert!(!called.get(), "{label} must not be written to");
+            assert_eq!(action, VetAction::SkipDraftInState, "{label}");
+            assert_eq!(row["action"], json!("skip-draft-in-state"), "{label}");
+            assert_eq!(row["isDraft"], json!(true), "{label}");
+            // The label — and therefore the human's row in the queue it is enumerated by — is
+            // exactly as it was. Nothing was recorded either, so `sentBack` would be a lie.
+            assert_eq!(row["labels"], json!([label]), "{label}");
+            assert!(row.get("sentBack").is_none(), "{label}");
+        }
     }
 
     // A write that did not land is STATED, never assumed. The PR keeps whatever state it had, and
@@ -54559,6 +54877,42 @@ mod vetter_state_load_tests {
             ])
         );
         assert_eq!(doc["moreDraftNeedsWork"], json!(0));
+    }
+
+    // The withheld draft is counted under its OWN key and named NOWHERE as a write. Folding it into
+    // `draftNeedsWork` would report a send-back that did not happen; folding it into
+    // `skipVettedAtHead` would report a verdict that does not exist. It needs no list of its own:
+    // every PR in it carries a modeled `ai:*` label, so it is already inventoried by the state that
+    // label names — which is the entire reason the send-back was withheld.
+    #[test]
+    fn a_withheld_draft_is_counted_under_its_own_key_and_never_as_a_send_back() {
+        let d = draft_detail("abc123", json!([{"name": "ai:design"}]), json!([]));
+        let withheld = send_back_draft(unvetted_row("o/r", 7, "u1", "t", &d), |_, _| {
+            panic!("no write")
+        });
+        let sent = send_back_draft(
+            unvetted_row(
+                "o/r",
+                8,
+                "u2",
+                "t",
+                &draft_detail("abc123", json!([]), json!([])),
+            ),
+            |_, _| true,
+        );
+        let doc = unvetted_doc(&[withheld, sent], false, None);
+        assert_eq!(doc["counts"]["skipDraftInState"], json!(1));
+        assert_eq!(doc["counts"]["draftNeedsWork"], json!(1));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(0));
+        assert_eq!(doc["counts"]["skipHumanDecided"], json!(0));
+        assert_eq!(doc["counts"]["vet"], json!(0));
+        // Only the PR that was actually WRITTEN to is named as one.
+        assert_eq!(
+            doc["draftNeedsWork"],
+            json!([{"pr": "o/r#8", "url": "u2", "sentBack": true}])
+        );
+        // `open` still counts both: the population the state-load read is the whole population.
+        assert_eq!(doc["counts"]["open"], json!(2));
     }
 
     // A human decision beats the draft rule on the ROW, not just in the guard: no write is
