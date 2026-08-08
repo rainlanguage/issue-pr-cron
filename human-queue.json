@@ -983,8 +983,26 @@
         ]
       },
       "un-vetted": {
-        "count": 23,
+        "count": 26,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 51,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/51",
+            "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 7,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/7",
+            "title": "AddressRegistry: the write-once IAddressRegistryV1 concrete"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 26,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/26",
+            "title": "Address registry: interface, reader lib and cross-network deploy gate"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 104,
@@ -1889,10 +1907,22 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 296,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/296",
+      "title": "Beacon-set deployers: resolve BEACON_INITIAL_OWNER from the address registry so rotating it stops moving the Zoltu address"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 295,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/295",
+      "title": "Authoriser: resolve initial admin from the address registry and deploy via open salt, so the pin stops depending on the deploy EOA"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 25,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/25",
-      "title": "Initial-owner registry: lib + cross-network gate here, concrete in rain.factory.deploy"
+      "title": "Address registry: immutable root, write-once bytes32 names on Zoltu, plus a lib to read it"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -5541,7 +5571,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 23,
+    "unvetted": 26,
     "blockedOn": 17,
     "ready": 0,
     "needsWork": 85,
@@ -5552,15 +5582,15 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 147,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 604,
-    "openIssues": 764
+    "uncoveredIssues": 606,
+    "openIssues": 767
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.0,
-      "medianDays": 102.1,
+      "meanDays": 316.8,
+      "medianDays": 102.2,
       "oldestDays": 1657.7
     }
   }
