@@ -50847,17 +50847,29 @@ mod state_descriptor_tests {
         };
         let mut samples: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
-        // ISO-8601 `Z` stamps sort lexicographically in chronological order, so the earliest
-        // string IS the earliest measurement — no date parsing needed to order two spellings.
+        // Ordering two spellings needs no date parsing, but it DOES need the stamps compared in
+        // one format. The committed file carries both spellings of the same zone — `…06Z` and
+        // `…09+00:00` — and `+` sorts below `Z`, so raw string order is decided by the suffix
+        // whenever two stamps share a second. Both are UTC, so the `YYYY-MM-DDTHH:MM:SS` prefix
+        // they agree on is the instant itself, and comparing THAT is chronological by construction.
+        fn instant(ts: &str) -> &str {
+            let cut = "YYYY-MM-DDTHH:MM:SS".len();
+            assert!(
+                ts.len() >= cut && ts.is_char_boundary(cut),
+                "`{ts}` is not an ISO-8601 UTC stamp, so no two rollups can be ordered"
+            );
+            &ts[..cut]
+        }
         let mut first_seen: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         for line in history.lines().filter(|l| !l.trim().is_empty()) {
             let row: Value = serde_json::from_str(line).expect("every rollup line is JSON");
-            let ts = row
-                .get("ts")
-                .and_then(|t| t.as_str())
-                .expect("every rollup line is stamped")
-                .to_string();
+            let ts = instant(
+                row.get("ts")
+                    .and_then(|t| t.as_str())
+                    .expect("every rollup line is stamped"),
+            )
+            .to_string();
             let Some(counts) = row.get("counts").and_then(|c| c.as_object()) else {
                 continue;
             };
