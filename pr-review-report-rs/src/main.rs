@@ -51013,9 +51013,9 @@ mod state_descriptor_tests {
     /// #230's continuity gate: renaming the send-back state must not truncate its series.
     ///
     /// `ai:needs-work` is the state `ai:reject` was, under the name that says what it asks for.
-    /// Every rollup sample it has ever accumulated was written under a PREVIOUS spelling —
-    /// `reject` for its own history, `humanReject` (#133) and `relink` (#135) for the two states
-    /// consolidated into it — and the newest of them was measured hours before the rename. So a
+    /// Every rollup sample this state accumulated before the rename was written under a PREVIOUS
+    /// spelling — `reject` for its own history, `humanReject` (#133) and `relink` (#135) for the
+    /// two states consolidated into it — and the newest of those was measured hours before it. So a
     /// `needsWork` series that failed to fold them would not merely lose old data: it would start
     /// from zero on the rename date and render the state as though it had just come into
     /// existence, which is exactly the silent drift #130 built `hist_fold` to prevent.
@@ -51043,32 +51043,39 @@ mod state_descriptor_tests {
         let Some(history) = repo_root_text("human-queue-history.jsonl") else {
             return; // no SOURCE checked out (the flake build filters it); the structure above holds regardless
         };
-        let mut samples: std::collections::BTreeMap<String, usize> =
+        // Per spelling, the committed rollup lines that measured it on a document where the NEW key
+        // is ABSENT — the span the `needsWork` series can reach ONLY through the fold.
+        let mut folded_span: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         for line in history.lines().filter(|l| !l.trim().is_empty()) {
             let row: Value = serde_json::from_str(line).expect("every rollup line is JSON");
             let Some(counts) = row.get("counts").and_then(|c| c.as_object()) else {
                 continue;
             };
+            if counts.contains_key("needsWork") {
+                continue;
+            }
             for k in counts.keys() {
-                *samples.entry(k.clone()).or_default() += 1;
+                *folded_span.entry(k.clone()).or_default() += 1;
             }
         }
 
-        // The fold is LOAD-BEARING, not decorative: the new key has no committed samples at all,
-        // so every point the series can draw today comes through `hist_fold`. Dropping an entry
-        // silently deletes that span from the chart.
-        assert_eq!(
-            samples.get("needsWork").copied().unwrap_or(0),
-            0,
-            "`needsWork` is the post-rename spelling, so committed history predates it — if this \
-             fires the history was rewritten, which #230 explicitly forbids"
-        );
+        // The fold is LOAD-BEARING, not decorative: each of these spellings was measured on
+        // committed lines the new key does not appear on at all, so a `needsWork` series that
+        // folded nothing would begin at the rename and render a state with no past. Dropping an
+        // entry silently deletes exactly that span from the chart.
+        //
+        // The claim is "the span the fold reaches is non-empty" rather than "the new key has no
+        // committed samples anywhere". The second says the same thing only until the first rollup
+        // after the rename is committed, and a claim that expires with the calendar fires on a date
+        // rather than on a defect. This one is a property of an append-only history: those lines
+        // exist, and no later rollup can un-write them.
         for key in STATE_NEEDS_WORK.hist_fold {
             assert!(
-                samples.get(*key).copied().unwrap_or(0) > 0,
-                "`ai:needs-work` folds `{key}`, but no committed rollup line ever measured it — a \
-                 fold key naming nothing real is a claim about history that history does not make"
+                folded_span.get(*key).copied().unwrap_or(0) > 0,
+                "`ai:needs-work` folds `{key}`, but no committed rollup line measures it on a \
+                 document without `needsWork` — a fold key that reaches no span of its own is a \
+                 claim about history that history does not make"
             );
         }
     }
