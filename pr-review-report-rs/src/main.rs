@@ -2406,7 +2406,12 @@ mod parallel_queue_tests {
     const INVERSION_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// Block until `ready` says another worker got there first, or [`INVERSION_TIMEOUT`] elapses.
-    fn await_another_worker(ready: impl Fn() -> bool) {
+    ///
+    /// `pub(crate)` because the same inversion is what pins every CALL SITE of [`map_bounded`], not
+    /// just the pool: each state-load's test drives a fetch that finishes out of order and then
+    /// asserts the emitted lists came back in candidate order anyway. One timeout and one wait
+    /// loop, named once — three copies of a five-second bound is three places it can drift.
+    pub(crate) fn await_another_worker(ready: impl Fn() -> bool) {
         let deadline = std::time::Instant::now() + INVERSION_TIMEOUT;
         while !ready() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(1));
@@ -18042,14 +18047,26 @@ fn leak_scan(candidates: &[LeakCandidate]) -> LeakScan {
 /// silently "not a leak" and a queue of them reports as healthy. That branch is only reachable in
 /// production when GitHub fails, so without the seam nothing could exercise it — and a fail-safe no
 /// test can reach is a fail-safe that survives being deleted.
-fn leak_scan_with<F>(candidates: &[LeakCandidate], mut fetch: F) -> LeakScan
+///
+/// THE READS RUN CONCURRENTLY; THE FOLD DOES NOT. [`map_bounded`] hands back one read per candidate
+/// in CANDIDATE order, and the loop below consumes that sequence serially, so `unreadable` is the
+/// same list in the same order the same GitHub state produced one call at a time. Folding in
+/// completion order would reorder the unknowns a human reads without changing a single fact, which
+/// is the kind of difference two runs over identical state must never show.
+///
+/// `Fn + Sync` rather than `FnMut`: the seam is called from several threads at once, so a fetch that
+/// accumulated into captured state would be racing. A test seam that wants to COUNT its calls
+/// reaches for an atomic, which is the same discipline the production read already has (it spawns a
+/// subprocess and owns nothing).
+fn leak_scan_with<F>(candidates: &[LeakCandidate], fetch: F) -> LeakScan
 where
-    F: FnMut(&SubjectRef) -> Option<Value>,
+    F: Fn(&SubjectRef) -> Option<Value> + Sync,
 {
+    let reads = map_bounded(candidates, |c| fetch(&c.subject));
     let mut leaks: Vec<Leak> = Vec::new();
     let mut unreadable: Vec<SubjectRef> = Vec::new();
-    for c in candidates {
-        let Some(j) = fetch(&c.subject) else {
+    for (c, read) in candidates.iter().zip(reads) {
+        let Some(j) = read else {
             unreadable.push(c.subject.clone());
             continue;
         };
@@ -24193,6 +24210,226 @@ fn ncc_population(hits: Vec<Value>, archived: &ArchivedRepos) -> Vec<Value> {
         .collect()
 }
 
+/// The live `gh issue view` behind [`ncc_classify`]. The field set is what [`cc_gate`] and the row
+/// both read off ONE call: the labels and comments the gate decides on, plus the identity and
+/// timestamps the row prints — asking for them here rather than in a second fetch is what keeps the
+/// decision and the row on the same snapshot, and costs one request either way.
+fn ncc_issue_detail(slug: &str, num: u64) -> Option<Value> {
+    gh_json(&[
+        "issue",
+        "view",
+        &num.to_string(),
+        "-R",
+        slug,
+        "--json",
+        "number,title,url,state,createdAt,labels,comments",
+    ])
+}
+
+/// Where ONE flagged subject landed once its `gh issue view` came back. Every arm is a branch the
+/// serial pass used to express as a `continue` plus a counter bump; naming them makes the fetch
+/// phase produce a VALUE, which is what lets the reads run concurrently while the counting stays
+/// serial and in hit order (see [`ncc_apply_outcome`]) — the split [`CandidateOutcome`] makes for
+/// the `ai:ready` queue, in the lane next door.
+enum NccOutcome {
+    /// The hit names no subject this tool can ADDRESS — no `number`, and no url
+    /// [`search_issue_ref`] resolves. Listed under whatever title the hit carries, because a row
+    /// nobody can name is the one a bare count leaves a reader unable to go and look at.
+    Unaddressable { title: String },
+    /// The `gh issue view` failed. Counted and listed, never skipped: a silently dropped row
+    /// shrinks the human's inbox with nothing to explain the gap.
+    FetchFailed { subject: String },
+    /// The read landed and [`cc_gate`] ruled on it.
+    Classified(Box<NccClassified>),
+}
+
+/// One classified flag: [`cc_gate`]'s verdict plus everything a presentable row needs, so the fold
+/// re-reads nothing and cannot reach a different answer than the classification did.
+struct NccClassified {
+    slug: String,
+    num: u64,
+    gate: CcGate,
+    /// The CURRENT producer flag's timestamp — empty where no trusted flag comment exists, which
+    /// is the input [`cc_gate`] reads as [`CcGate::NoFlag`].
+    flag_at: String,
+    flag_body: String,
+    /// The PR-side close verdict, read ONCE: the gate's input, and — where it is the gate's whole
+    /// answer — the presentable row's queue key and body (#211/#212).
+    close_verdict: Option<(String, String)>,
+    detail: Value,
+}
+
+/// PURE given `fetch`: every per-hit gate for the human's close-candidate inbox, in the order the
+/// queue applies them.
+///
+/// `fetch` is a parameter rather than a direct call so the whole chain is unit-testable against
+/// fixtures, the same split [`candidate_outcome`] uses for its two fetchers.
+fn ncc_outcome(
+    hit: &Value,
+    archived: &ArchivedRepos,
+    fetch: impl FnOnce(&str, u64) -> Option<Value>,
+) -> NccOutcome {
+    let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
+    let Some((slug, num)) = search_issue_ref(hit) else {
+        return NccOutcome::Unaddressable {
+            title: title.to_string(),
+        };
+    };
+    // A dropped issue must be VISIBLE: silently skipping one shrinks the human's inbox with
+    // nothing to explain the gap, which is the same defect the vetter's state-load fixed.
+    let Some(detail) = fetch(&slug, num) else {
+        return NccOutcome::FetchFailed {
+            subject: format!("{slug}#{num}"),
+        };
+    };
+    let flag = last_close_candidate_flag(&detail);
+    let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
+    let close_verdict = if subject_is_pr(&detail) {
+        last_pr_close_verdict(&detail)
+    } else {
+        None
+    };
+    let gate = cc_gate(
+        archived.contains(&slug),
+        has_human_ruling(&label_names(&detail)),
+        &flag_at,
+        last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
+        close_verdict.is_some(),
+        human_close_ruled(&detail),
+    );
+    NccOutcome::Classified(Box::new(NccClassified {
+        slug,
+        num,
+        gate,
+        flag_at,
+        flag_body: flag.map(|(_, b)| b).unwrap_or_default(),
+        close_verdict,
+        detail,
+    }))
+}
+
+/// PURE: fold ONE hit's outcome into the running flags, counts and lists.
+///
+/// Called in HIT order over the whole set, for [`apply_outcome`]'s reason: `stranded` and `errors`
+/// are lists a human reads, and `rank_flags`' key is not unique — two flags stamped with the same
+/// timestamp in the same repo would tie, and a stable sort resolves a tie to whichever arrived
+/// first. Folding in completion order would let two runs over identical GitHub state emit different
+/// documents.
+fn ncc_apply_outcome(
+    out: NccOutcome,
+    flags: &mut Vec<PresentableFlag>,
+    counts: &mut FlagQueueCounts,
+    stranded: &mut Vec<Value>,
+    errors: &mut Vec<Value>,
+) {
+    let c = match out {
+        NccOutcome::Unaddressable { title } => {
+            counts.fetch_errors += 1;
+            errors.push(withheld_entry(&title, "unparseable issue ref"));
+            return;
+        }
+        NccOutcome::FetchFailed { subject } => {
+            counts.fetch_errors += 1;
+            errors.push(withheld_entry(
+                &subject,
+                "gh issue view failed — not classified this run",
+            ));
+            return;
+        }
+        NccOutcome::Classified(c) => *c,
+    };
+    // EXHAUSTIVE on purpose: a new gate state must be given its own count rather than folding
+    // silently into an existing one, which is what makes `flagged` provably the sum of its
+    // parts. The listing decision below is the STATE's (`is_stranded`), not a second list of
+    // variants here that could drift from it.
+    match c.gate {
+        CcGate::Presentable => counts.presentable += 1,
+        CcGate::VetterClose => counts.vetter_close += 1,
+        // Counted, never presented: the vetter's state-load executes these (#213), and one
+        // showing here means that completion has not run yet or could not write.
+        CcGate::TornHumanClose => counts.torn_human_close += 1,
+        CcGate::HumanRuled => counts.human_ruled += 1,
+        CcGate::Unvetted => counts.unvetted += 1,
+        CcGate::NoFlag => counts.no_flag += 1,
+        CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
+        // Unreachable here: [`ncc_population`] dropped every archived-repo hit before
+        // classification.
+        CcGate::RepoArchived => {}
+    }
+    if c.gate.is_stranded() {
+        stranded.push(withheld_entry(
+            &format!("{}#{}", c.slug, c.num),
+            c.gate.as_str(),
+        ));
+    }
+    // BOTH human-owned states join the one queue (#212): an upheld flag keyed by the flag it
+    // judged, a PR close verdict keyed by its own timestamp — each the moment the subject
+    // became the human's, so FIFO measures the same limbo across subject types.
+    match c.gate {
+        CcGate::Presentable => flags.push(PresentableFlag {
+            slug: c.slug,
+            num: c.num,
+            flag_at: c.flag_at,
+            flag_body: c.flag_body,
+            detail: c.detail,
+        }),
+        CcGate::VetterClose => {
+            let (at, body) = c
+                .close_verdict
+                .expect("VetterClose is only reachable when the verdict exists");
+            flags.push(PresentableFlag {
+                slug: c.slug,
+                num: c.num,
+                flag_at: at,
+                flag_body: body,
+                detail: c.detail,
+            });
+        }
+        _ => {}
+    }
+}
+
+/// The classified flag population: the human's half of it, the counts, and the two lists a reader
+/// must see even though this call will not act on them. UNRANKED — [`rank_flags`] is the caller's,
+/// so the ORDER and the CLASSIFICATION stay two testable facts.
+struct FlagQueue {
+    flags: Vec<PresentableFlag>,
+    counts: FlagQueueCounts,
+    stranded: Vec<Value>,
+    errors: Vec<Value>,
+}
+
+/// PURE given `fetch`: the whole per-hit phase of the human's close-candidate inbox.
+///
+/// THE READS RUN CONCURRENTLY; THE COUNTING DOES NOT. [`map_bounded`] hands back one outcome per
+/// hit in HIT order and [`ncc_apply_outcome`] folds them serially, so the counts and both lists are
+/// exactly what the same GitHub state produced one `gh issue view` at a time. That separation is
+/// what the document's arithmetic rests on: `flagged` is provably the sum of its parts only if
+/// every hit lands in exactly one bucket, and a fold racing itself can neither be counted nor read.
+fn ncc_classify(
+    hits: &[Value],
+    archived: &ArchivedRepos,
+    fetch: impl Fn(&str, u64) -> Option<Value> + Sync,
+) -> FlagQueue {
+    let mut flags: Vec<PresentableFlag> = Vec::new();
+    let mut counts = FlagQueueCounts {
+        flagged: hits.len(),
+        ..Default::default()
+    };
+    let mut stranded: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
+    let outcomes = map_bounded(hits, |hit| ncc_outcome(hit, archived, &fetch));
+    for out in outcomes {
+        ncc_apply_outcome(out, &mut flags, &mut counts, &mut stranded, &mut errors);
+    }
+    FlagQueue {
+        flags,
+        counts,
+        stranded,
+        errors,
+    }
+}
+
 /// Live `next_close_candidate`: classify the whole flagged set once, rank the human's half of it,
 /// then pay for the covering-PR read only on the rows actually returned.
 fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
@@ -24201,101 +24438,12 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         archived: archived_repos,
     } = flagged_open_subjects()?;
     let found = ncc_population(found, &archived_repos);
-    let mut flags: Vec<PresentableFlag> = Vec::new();
-    let mut counts = FlagQueueCounts {
-        flagged: found.len(),
-        ..Default::default()
-    };
-    let mut stranded: Vec<Value> = Vec::new();
-    let mut errors: Vec<Value> = Vec::new();
-    for hit in &found {
-        let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
-        let Some((slug, num)) = search_issue_ref(hit) else {
-            counts.fetch_errors += 1;
-            errors.push(withheld_entry(title, "unparseable issue ref"));
-            continue;
-        };
-        // A dropped issue must be VISIBLE: silently skipping one shrinks the human's inbox with
-        // nothing to explain the gap, which is the same defect the vetter's state-load fixed.
-        let Some(detail) = gh_json(&[
-            "issue",
-            "view",
-            &num.to_string(),
-            "-R",
-            &slug,
-            "--json",
-            "number,title,url,state,createdAt,labels,comments",
-        ]) else {
-            counts.fetch_errors += 1;
-            errors.push(withheld_entry(
-                &format!("{slug}#{num}"),
-                "gh issue view failed — not classified this run",
-            ));
-            continue;
-        };
-        let flag = last_close_candidate_flag(&detail);
-        let flag_at = flag.as_ref().map(|(a, _)| a.clone()).unwrap_or_default();
-        // The PR-side close verdict, read ONCE: the gate's input, and — where it is the gate's
-        // whole answer — the presentable row's queue key and body (#211/#212).
-        let close_verdict = if subject_is_pr(&detail) {
-            last_pr_close_verdict(&detail)
-        } else {
-            None
-        };
-        let gate = cc_gate(
-            archived_repos.contains(&slug),
-            has_human_ruling(&label_names(&detail)),
-            &flag_at,
-            last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
-            close_verdict.is_some(),
-            human_close_ruled(&detail),
-        );
-        // EXHAUSTIVE on purpose: a new gate state must be given its own count rather than folding
-        // silently into an existing one, which is what makes `flagged` provably the sum of its
-        // parts. The listing decision below is the STATE's (`is_stranded`), not a second list of
-        // variants here that could drift from it.
-        match gate {
-            CcGate::Presentable => counts.presentable += 1,
-            CcGate::VetterClose => counts.vetter_close += 1,
-            // Counted, never presented: the vetter's state-load executes these (#213), and one
-            // showing here means that completion has not run yet or could not write.
-            CcGate::TornHumanClose => counts.torn_human_close += 1,
-            CcGate::HumanRuled => counts.human_ruled += 1,
-            CcGate::Unvetted => counts.unvetted += 1,
-            CcGate::NoFlag => counts.no_flag += 1,
-            CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
-            // Unreachable here: [`ncc_population`] dropped every archived-repo hit before
-            // classification.
-            CcGate::RepoArchived => {}
-        }
-        if gate.is_stranded() {
-            stranded.push(withheld_entry(&format!("{slug}#{num}"), gate.as_str()));
-        }
-        // BOTH human-owned states join the one queue (#212): an upheld flag keyed by the flag it
-        // judged, a PR close verdict keyed by its own timestamp — each the moment the subject
-        // became the human's, so FIFO measures the same limbo across subject types.
-        match gate {
-            CcGate::Presentable => flags.push(PresentableFlag {
-                slug,
-                num,
-                flag_at,
-                flag_body: flag.map(|(_, b)| b).unwrap_or_default(),
-                detail,
-            }),
-            CcGate::VetterClose => {
-                let (at, body) =
-                    close_verdict.expect("VetterClose is only reachable when the verdict exists");
-                flags.push(PresentableFlag {
-                    slug,
-                    num,
-                    flag_at: at,
-                    flag_body: body,
-                    detail,
-                });
-            }
-            _ => {}
-        }
-    }
+    let FlagQueue {
+        mut flags,
+        counts,
+        stranded,
+        errors,
+    } = ncc_classify(&found, &archived_repos, ncc_issue_detail);
     rank_flags(&mut flags);
     let rows: Vec<Value> = next_close_candidate_page(&flags, limit)
         .into_iter()
@@ -24519,6 +24667,214 @@ mod next_close_candidate_tests {
         // erase the vetter's own judgement.
         assert_eq!(cc_stranded_cleared_comment(CcGate::VetterClose, ""), None);
         assert_eq!(CcGate::VetterClose.as_str(), "vetter-close-verdict");
+    }
+
+    // ── the per-hit phase: concurrent reads, serial counting ──────────────────────────────────
+
+    /// One `gh search issues` hit, addressable — the shape [`search_issue_ref`] reads.
+    fn cc_hit(slug: &str, num: u64) -> Value {
+        json!({
+            "url": format!("https://github.com/{slug}/issues/{num}"),
+            "number": num,
+            "repository": {"nameWithOwner": slug},
+            "title": format!("the {slug}#{num} thing does not work"),
+        })
+    }
+
+    /// A flagged issue the vetter UPHELD and no human has ruled on — [`CcGate::Presentable`].
+    fn upheld(at: &str) -> Value {
+        issue(
+            &["ai:close-candidate"],
+            vec![producer(at, "already-fixed"), vetter(at, "uphold", "stale")],
+        )
+    }
+
+    /// The label with NO producer claim behind it — [`CcGate::NoFlag`], which is stranded.
+    fn unclaimed() -> Value {
+        issue(&["ai:close-candidate"], vec![])
+    }
+
+    fn flag_refs(q: &FlagQueue) -> Vec<String> {
+        q.flags
+            .iter()
+            .map(|f| format!("{}#{}", f.slug, f.num))
+            .collect()
+    }
+
+    fn issue_refs(entries: &[Value]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| e["issue"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    /// The hit ref `cc_hit` produces for number `i`.
+    fn cname(i: u64) -> String {
+        format!("o/r#{i}")
+    }
+
+    // THE WHOLE OF #235 FOR THIS LANE, asserted the way the design lane's is: the `gh issue view`
+    // calls fan out, and the flags, the stranded list and the error list all still come back in
+    // HIT order. Both halves matter — a serial loop orders perfectly and pays a round trip per
+    // flag, a completion-order fold is fast and reshuffles two of the three lists a human reads.
+    //
+    // The inversion is deliberate, so the ordering assertions cannot pass by luck AND so a serial
+    // fetch fails the test rather than passing it slowly.
+    #[test]
+    fn the_flag_reads_fan_out_and_every_list_stays_in_hit_order() {
+        use crate::parallel_queue_tests::await_another_worker;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Mutex;
+
+        let n = (QUEUE_FETCH_CONCURRENCY * 2) as u64;
+        let hits: Vec<Value> = (0..n).map(|i| cc_hit("o/r", i)).collect();
+        let completion: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+        let peak = AtomicUsize::new(0);
+        let in_flight = AtomicUsize::new(0);
+        let archived = ArchivedRepos::from_slugs([] as [&str; 0]);
+        let q = ncc_classify(&hits, &archived, |_slug, num| {
+            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            if num == 0 {
+                await_another_worker(|| !completion.lock().unwrap().is_empty());
+            }
+            completion.lock().unwrap().push(num);
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+            match num % 3 {
+                0 => Some(upheld("2026-07-20T09:00:00Z")),
+                1 => Some(unclaimed()),
+                _ => None,
+            }
+        });
+
+        assert_ne!(
+            completion.lock().unwrap().first(),
+            Some(&0),
+            "the inversion did not happen — the ordering assertions below would be vacuous, and a \
+             SERIAL fetch loop is exactly what makes it not happen"
+        );
+        assert!(
+            peak.load(Ordering::SeqCst) > 1,
+            "the reads never overlapped: this is the serial queue #235 is about, peak {}",
+            peak.load(Ordering::SeqCst)
+        );
+
+        assert_eq!(
+            flag_refs(&q),
+            (0..n).filter(|i| i % 3 == 0).map(cname).collect::<Vec<_>>(),
+            "the presentable set is the hit sequence — `rank_flags` is a STABLE sort, so the order \
+             it is handed decides every pair its key cannot separate, and two flags stamped at the \
+             same moment in the same repo are exactly such a pair"
+        );
+        assert_eq!(
+            issue_refs(&q.stranded),
+            (0..n).filter(|i| i % 3 == 1).map(cname).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            issue_refs(&q.errors),
+            (0..n).filter(|i| i % 3 == 2).map(cname).collect::<Vec<_>>()
+        );
+        assert!(
+            q.stranded
+                .iter()
+                .all(|e| e["why"] == CcGate::NoFlag.as_str()),
+            "{:?}",
+            q.stranded
+        );
+    }
+
+    // A FAILED READ IS AN OUTCOME, NEVER A SKIP — and so is a hit nobody can address. Both land in
+    // `errors`, both bump `fetchErrors`, and the two kinds keep their places relative to each
+    // other, which a fold running in completion order would not.
+    #[test]
+    fn a_flag_read_that_failed_is_an_error_row_not_a_missing_one() {
+        let archived = ArchivedRepos::from_slugs([] as [&str; 0]);
+        let hits = vec![
+            cc_hit("o/a", 1),
+            json!({"title": "a hit carrying no ref"}),
+            cc_hit("o/b", 2),
+        ];
+        let q = ncc_classify(&hits, &archived, |slug, _| {
+            (slug != "o/b").then(|| upheld("2026-07-20T09:00:00Z"))
+        });
+        assert_eq!(flag_refs(&q), ["o/a#1"]);
+        assert_eq!(q.counts.fetch_errors, 2);
+        assert_eq!(
+            q.errors,
+            vec![
+                withheld_entry("a hit carrying no ref", "unparseable issue ref"),
+                withheld_entry("o/b#2", "gh issue view failed — not classified this run"),
+            ],
+            "both unread rows are NAMED, in hit order — a count alone leaves a reader unable to go \
+             and look, and a reordered pair is a document two runs over identical state disagree on"
+        );
+        assert!(q.stranded.is_empty(), "{:?}", q.stranded);
+
+        // The whole point, end to end: every read failing is not an empty flag queue, it is three
+        // unread subjects and a count that says so.
+        let none = ncc_classify(&hits, &archived, |_, _| None);
+        assert!(none.flags.is_empty());
+        assert_eq!(none.counts.fetch_errors, hits.len());
+        assert_eq!(none.counts.presentable, 0);
+    }
+
+    // The document's arithmetic holds over the FANNED-OUT pass: every hit lands in exactly one
+    // bucket. A subject lost to the pool, or folded twice, breaks this even where every individual
+    // gate verdict is right.
+    #[test]
+    fn the_flag_counts_partition_the_whole_population_after_the_fan_out() {
+        let at = "2026-07-20T09:00:00Z";
+        let archived = ArchivedRepos::from_slugs([] as [&str; 0]);
+        let hits = vec![
+            cc_hit("o/upheld", 1),
+            cc_hit("o/unclaimed", 2),
+            cc_hit("o/unvetted", 3),
+            cc_hit("o/ruled", 4),
+            cc_hit("o/unread", 5),
+            json!({"title": "a hit carrying no ref"}),
+        ];
+        let q = ncc_classify(&hits, &archived, |slug, _| match slug {
+            "o/upheld" => Some(upheld(at)),
+            "o/unclaimed" => Some(unclaimed()),
+            "o/unvetted" => Some(issue(&["ai:close-candidate"], vec![producer(at, "fixed")])),
+            "o/ruled" => Some(issue(
+                &["ai:close-candidate", "human:keep-open"],
+                vec![producer(at, "fixed")],
+            )),
+            _ => None,
+        });
+        let c = &q.counts;
+        let parts = c.presentable
+            + c.vetter_close
+            + c.torn_human_close
+            + c.unvetted
+            + c.no_flag
+            + c.human_ruled
+            + c.rejected_still_flagged
+            + c.fetch_errors;
+        assert_eq!(c.flagged, hits.len());
+        assert_eq!(
+            c.flagged,
+            parts,
+            "flagged must be provably the sum of its parts: presentable {} + vetterClose {} + \
+             tornHumanClose {} + unvetted {} + noProducerFlag {} + humanRuled {} + \
+             rejectedStillFlagged {} + fetchErrors {}",
+            c.presentable,
+            c.vetter_close,
+            c.torn_human_close,
+            c.unvetted,
+            c.no_flag,
+            c.human_ruled,
+            c.rejected_still_flagged,
+            c.fetch_errors
+        );
+        assert_eq!(
+            (c.presentable, c.no_flag, c.unvetted, c.human_ruled),
+            (1, 1, 1, 1)
+        );
+        assert_eq!(c.fetch_errors, 2);
+        assert_eq!(issue_refs(&q.stranded), ["o/unclaimed#2"]);
+        assert_eq!(flag_refs(&q), ["o/upheld#1"]);
     }
 
     // The torn `human-close` (#213): a recorded close ruling on a still-open subject dominates
@@ -26159,6 +26515,74 @@ mod next_leak_tests {
         );
     }
 
+    // THE SAME PROPERTY AS THE TWO INBOXES, on the one list this scan orders by arrival:
+    // `unreadable` is the CANDIDATE sequence, whatever order the comment reads finish in. `leaks`
+    // is ranked by [`leak_order_key`], so its order is a total order over the data and survives
+    // anything; `unreadable` has no key at all — its only order is the one it was folded in, and a
+    // fold running in completion order would reshuffle the unknown half of a conformance report on
+    // every run while every count stayed identical.
+    //
+    // The inversion is deliberate: candidate 0 does not finish until another has, so the assertion
+    // cannot pass by luck — and a SERIAL scan cannot satisfy it at all, which is what makes this
+    // the discriminating test for the fan-out rather than a restatement of the fail-safe above.
+    #[test]
+    fn the_leak_reads_fan_out_and_the_unknowns_stay_in_candidate_order() {
+        use crate::parallel_queue_tests::await_another_worker;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Mutex;
+
+        // Twice the cap, so the pool cycles rather than running one wave.
+        let n = (QUEUE_FETCH_CONCURRENCY * 2) as u64;
+        let candidates: Vec<LeakCandidate> = (0..n)
+            .map(|i| candidate("o/r", i, &format!("2026-01-{:02}T00:00:00Z", i + 1)))
+            .collect();
+        let completion: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+        let peak = AtomicUsize::new(0);
+        let in_flight = AtomicUsize::new(0);
+        let scan = leak_scan_with(&candidates, |s| {
+            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            if s.number == 0 {
+                await_another_worker(|| !completion.lock().unwrap().is_empty());
+            }
+            completion.lock().unwrap().push(s.number);
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+            // Evens read and leak, odds fail: the two outcomes interleave through the whole run.
+            (s.number % 2 == 0).then(|| producer_comments("🤖 ai:producer rework pushed"))
+        });
+
+        assert_ne!(
+            completion.lock().unwrap().first(),
+            Some(&0),
+            "the inversion did not happen — the ordering assertion below would be vacuous, and a \
+             SERIAL comment read is exactly what makes it not happen"
+        );
+        assert!(
+            peak.load(Ordering::SeqCst) > 1,
+            "the reads never overlapped: this is the serial scan #235 is about, peak {}",
+            peak.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            scan.unreadable.iter().map(|s| s.number).collect::<Vec<_>>(),
+            (0..n).filter(|i| i % 2 == 1).collect::<Vec<_>>(),
+            "a failed read keeps its place in the candidate sequence"
+        );
+        assert_eq!(
+            scan.leaks
+                .iter()
+                .map(|l| l.subject.number)
+                .collect::<Vec<_>>(),
+            (0..n).filter(|i| i % 2 == 0).collect::<Vec<_>>(),
+            "the leaks are the ranked set, oldest first — and the ages ascend with the candidate \
+             index here, so the ranking and the arrival order agree and any reshuffle shows"
+        );
+        assert_eq!(
+            scan.leaks.len() + scan.unreadable.len(),
+            candidates.len(),
+            "every candidate is accounted for exactly once: none lost to the pool, none folded twice"
+        );
+    }
+
     // The page size is a REAL argument with a REAL range, refused rather than clamped — a silently
     // clamped argument leaves the caller believing it asked for something it did not get.
     #[test]
@@ -26949,13 +27373,160 @@ fn nd_population(hits: Vec<Value>, archived: &ArchivedRepos) -> (Vec<Value>, Vec
     withhold_archived(hits, archived, hit_slug)
 }
 
+/// The live `gh pr view` behind [`nd_classify`]. The field set is what [`last_design_question`]
+/// decides on plus what [`next_design_row`] prints, off ONE call: the decision and the row read the
+/// same snapshot, and a second fetch could disagree with the ranking it is explaining.
+fn nd_pr_detail(slug: &str, num: u64) -> Option<Value> {
+    gh_json(&[
+        "pr",
+        "view",
+        &num.to_string(),
+        "-R",
+        slug,
+        "--json",
+        "number,title,url,headRefOid,baseRefName,labels,comments",
+    ])
+}
+
+/// Where ONE `ai:design` candidate landed once its `gh pr view` came back. Naming the arms makes
+/// the fetch phase produce a VALUE, which is what lets the reads run concurrently while the
+/// counting stays serial and in candidate order (see [`nd_apply_outcome`]) — the split
+/// [`CandidateOutcome`] makes for the `ai:ready` queue.
+enum NdOutcome {
+    /// A trusted comment raises a question in force: the human's to answer.
+    Presentable(Box<PresentableDesign>),
+    /// The read landed and NO trusted comment raises a design question. Listed rather than
+    /// dropped, because an excluded row nobody names is a PR owned by nobody.
+    NoQuestion { pr: String },
+    /// The `gh pr view` failed. Counted and listed as a FAILURE, kept apart from the
+    /// classifications: a row that could not be read is un-read, not judged.
+    FetchFailed { pr: String },
+}
+
+/// PURE: classify one candidate from the detail its read produced. `None` is the failed read, and
+/// it is a distinct outcome rather than an absent one — that is the whole of `fetchErrors`.
+fn nd_outcome(slug: &str, num: u64, detail: Option<Value>) -> NdOutcome {
+    let Some(detail) = detail else {
+        return NdOutcome::FetchFailed {
+            pr: format!("{slug}#{num}"),
+        };
+    };
+    match last_design_question(&detail) {
+        Some(question) => NdOutcome::Presentable(Box::new(PresentableDesign {
+            slug: slug.to_string(),
+            num,
+            question,
+            detail,
+        })),
+        None => NdOutcome::NoQuestion {
+            pr: format!("{slug}#{num}"),
+        },
+    }
+}
+
+/// PURE: fold ONE candidate's outcome into the running designs, counts and lists.
+///
+/// Called in CANDIDATE order over the whole set, for [`nd_apply_hit`]'s reason and
+/// [`apply_outcome`]'s: `withheld` and `errors` are lists a human reads in the order the queue
+/// enumerated them, and `design_order_key` is a total order only because it carries the PR ref —
+/// but the SEQUENCE handed to a stable sort is still what decides two rows the key cannot
+/// separate. Folding in completion order would let two runs over identical GitHub state emit
+/// different documents.
+///
+/// EXHAUSTIVE on purpose. A new [`NdOutcome`] arm must be given its own count here rather than
+/// folding into an existing one, which is what keeps `aiDesign` provably the sum of its parts.
+fn nd_apply_outcome(
+    out: NdOutcome,
+    designs: &mut Vec<PresentableDesign>,
+    counts: &mut DesignQueueCounts,
+    withheld: &mut Vec<Value>,
+    errors: &mut Vec<Value>,
+) {
+    match out {
+        NdOutcome::Presentable(d) => {
+            counts.presentable += 1;
+            designs.push(*d);
+        }
+        NdOutcome::NoQuestion { pr } => {
+            counts.no_question += 1;
+            withheld.push(nd_withheld_entry(&pr, ND_WHY_NO_QUESTION));
+        }
+        NdOutcome::FetchFailed { pr } => {
+            counts.fetch_errors += 1;
+            errors.push(nd_withheld_entry(&pr, ND_WHY_FETCH_FAILED));
+        }
+    }
+}
+
+/// The classified `ai:design` population: the human's half of it, the counts, and the two lists a
+/// reader must see even though this call will not act on them. UNRANKED — [`rank_designs`] is the
+/// caller's, so the ORDER and the CLASSIFICATION stay two testable facts.
+struct DesignQueue {
+    designs: Vec<PresentableDesign>,
+    counts: DesignQueueCounts,
+    withheld: Vec<Value>,
+    errors: Vec<Value>,
+}
+
+/// PURE given `fetch`: the whole per-hit phase of the design queue — the search-JSON classification
+/// that costs nothing, then the per-candidate read.
+///
+/// `live` is the rulable population and `frozen` the count an ARCHIVED repo took out of it
+/// ([`nd_population`] splits them), because `raw` must still account for every row the search
+/// returned: a withheld row the counts do not carry is a question the human has no way to learn
+/// exists.
+///
+/// THE READS RUN CONCURRENTLY; THE COUNTING DOES NOT. [`map_bounded`] hands back one outcome per
+/// candidate in CANDIDATE order and [`nd_apply_outcome`] folds them serially, so the counts and
+/// both lists are exactly what the same GitHub state produced one `gh pr view` at a time. The
+/// document asserts `aiDesign` is the sum of its parts, and a fold racing itself can neither be
+/// counted nor read.
+fn nd_classify(
+    live: &[Value],
+    frozen: usize,
+    fetch: impl Fn(&str, u64) -> Option<Value> + Sync,
+) -> DesignQueue {
+    let mut counts = DesignQueueCounts {
+        raw: live.len() + frozen,
+        archived_repo: frozen,
+        ..Default::default()
+    };
+    let mut designs: Vec<PresentableDesign> = Vec::new();
+    let mut withheld: Vec<Value> = Vec::new();
+    let mut errors: Vec<Value> = Vec::new();
+    // Classify from the search JSON, no extra call. EXHAUSTIVE on purpose, as
+    // `ncc_apply_outcome`'s gate match is: a new class must be given its own count and its own
+    // line here rather than folding into an existing one, which is what makes `aiDesign` provably
+    // the sum of its parts.
+    let mut candidates: Vec<(String, u64)> = Vec::new();
+    for hit in live {
+        nd_apply_hit(
+            nd_hit_class(hit),
+            &mut candidates,
+            &mut counts,
+            &mut withheld,
+        );
+    }
+    let outcomes = map_bounded(&candidates, |(slug, num)| {
+        nd_outcome(slug, *num, fetch(slug, *num))
+    });
+    for out in outcomes {
+        nd_apply_outcome(out, &mut designs, &mut counts, &mut withheld, &mut errors);
+    }
+    DesignQueue {
+        designs,
+        counts,
+        withheld,
+        errors,
+    }
+}
+
 /// Live `next_design`: enumerate the whole `ai:design` set once, classify each PR, rank the
 /// human's half of it, and answer with a prefix of the ranked set.
 ///
-/// Serial per-PR fetches, as [`next_close_candidate_fetch`]'s are: the population is small and a
-/// row needs no second paid read. `Err` rather than `exit` for the reason every enumeration here
-/// errs: an MCP tool must answer a failed search with a refusal the caller reads — a
-/// falsely-empty queue is the one lie this surface must never tell.
+/// `Err` rather than `exit` for the reason every enumeration here errs: an MCP tool must answer a
+/// failed search with a refusal the caller reads — a falsely-empty queue is the one lie this
+/// surface must never tell.
 fn next_design_fetch(limit: usize) -> Result<Value, String> {
     let args = design_open_prs_args();
     let argref: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -26965,71 +27536,19 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
     let Some(arr) = val.as_array() else {
         return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
     };
-    // An `ai:design` PR in an ARCHIVED repo can take no ruling at all (#206): withheld BEFORE the
-    // per-PR fetch below, and counted. `nd_population` is where that happens, and it is a named
-    // pure function rather than an inline filter precisely so its deletion fails a test.
+    // An `ai:design` PR in an ARCHIVED repo can take no ruling at all (#206): withheld here,
+    // before `nd_classify` pays a `gh pr view` for it, and counted. `nd_population` is where that
+    // happens, and it is a named pure function rather than an inline filter precisely so its
+    // deletion fails a test.
     let archived_set = archived_repos().map_err(archived_read_error)?;
     let (arr, frozen) = nd_population(arr.clone(), &archived_set);
 
-    let mut counts = DesignQueueCounts {
-        raw: arr.len() + frozen.len(),
-        archived_repo: frozen.len(),
-        ..Default::default()
-    };
-    let mut designs: Vec<PresentableDesign> = Vec::new();
-    let mut withheld: Vec<Value> = Vec::new();
-    let mut errors: Vec<Value> = Vec::new();
-    // Classify from the search JSON, no extra call. EXHAUSTIVE on purpose, as
-    // `next_close_candidate_fetch`'s gate match is: a new class must be given its own count and
-    // its own line here rather than folding into an existing one, which is what makes `aiDesign`
-    // provably the sum of its parts.
-    let mut candidates: Vec<(String, u64)> = Vec::new();
-    for hit in &arr {
-        nd_apply_hit(
-            nd_hit_class(hit),
-            &mut candidates,
-            &mut counts,
-            &mut withheld,
-        );
-    }
-    for (slug, num) in candidates {
-        // A dropped PR must be VISIBLE, for the reason `next_close_candidate` lists its own: a
-        // silently skipped row shrinks the human's inbox with nothing to explain the gap.
-        let Some(detail) = gh_json(&[
-            "pr",
-            "view",
-            &num.to_string(),
-            "-R",
-            &slug,
-            "--json",
-            "number,title,url,headRefOid,baseRefName,labels,comments",
-        ]) else {
-            counts.fetch_errors += 1;
-            errors.push(nd_withheld_entry(
-                &format!("{slug}#{num}"),
-                ND_WHY_FETCH_FAILED,
-            ));
-            continue;
-        };
-        match last_design_question(&detail) {
-            Some(question) => {
-                counts.presentable += 1;
-                designs.push(PresentableDesign {
-                    slug,
-                    num,
-                    question,
-                    detail,
-                });
-            }
-            None => {
-                counts.no_question += 1;
-                withheld.push(nd_withheld_entry(
-                    &format!("{slug}#{num}"),
-                    ND_WHY_NO_QUESTION,
-                ));
-            }
-        }
-    }
+    let DesignQueue {
+        mut designs,
+        counts,
+        withheld,
+        errors,
+    } = nd_classify(&arr, frozen.len(), nd_pr_detail);
     rank_designs(&mut designs);
     let rows: Vec<Value> = next_design_page(&designs, limit)
         .into_iter()
@@ -27544,6 +28063,199 @@ mod next_design_tests {
         );
         assert_eq!(live, vec![unparseable]);
         assert!(frozen.is_empty());
+    }
+
+    // ── the per-candidate phase: concurrent reads, serial counting ────────────────────────────
+
+    use crate::parallel_queue_tests::await_another_worker;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    /// A `gh pr view` snapshot carrying a live design question — the arm that becomes a row.
+    fn asks(at: &str) -> Value {
+        json!({"comments": [producer_design(at, "version slot taken")]})
+    }
+
+    /// A snapshot read fine with nothing raising a question — the `noQuestion` arm.
+    fn silent() -> Value {
+        json!({"comments": []})
+    }
+
+    fn design_refs(q: &DesignQueue) -> Vec<String> {
+        q.designs
+            .iter()
+            .map(|d| format!("{}#{}", d.slug, d.num))
+            .collect()
+    }
+
+    fn entry_refs(entries: &[Value]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| e["pr"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    // THE WHOLE OF #235 FOR THIS LANE: the reads fan out, and every emitted sequence is still the
+    // CANDIDATE sequence. Both halves are asserted at once because neither is worth anything
+    // alone — a serial loop has perfect ordering and takes a round trip per PR, and a fold in
+    // completion order is fast and reorders the human's lists on every run.
+    //
+    // The inversion is DELIBERATE rather than hoped for: candidate 0 does not finish until some
+    // other candidate has, so completion order provably differs from candidate order and the three
+    // ordering assertions below cannot pass by luck. It is also what makes the test discriminate a
+    // serial implementation — with one thread nothing else can finish first, so the wait times out
+    // and the inversion assertion fails.
+    #[test]
+    fn the_design_reads_fan_out_and_every_list_stays_in_candidate_order() {
+        // Twice the cap, so the pool cycles rather than running one wave and the tail past the
+        // first round is covered too.
+        let n = (QUEUE_FETCH_CONCURRENCY * 2) as u64;
+        let hits: Vec<Value> = (0..n).map(|i| hit("o/r", i)).collect();
+        let completion: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+        let peak = AtomicUsize::new(0);
+        let in_flight = AtomicUsize::new(0);
+        let q = nd_classify(&hits, 0, |_slug, num| {
+            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            if num == 0 {
+                await_another_worker(|| !completion.lock().unwrap().is_empty());
+            }
+            completion.lock().unwrap().push(num);
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+            // Thirds, so all three outcomes interleave through the whole run rather than sitting
+            // in one block a wave-shaped bug could still order correctly.
+            match num % 3 {
+                0 => Some(asks("2026-07-01T00:00:00Z")),
+                1 => Some(silent()),
+                _ => None,
+            }
+        });
+
+        assert_ne!(
+            completion.lock().unwrap().first(),
+            Some(&0),
+            "the inversion did not happen — the ordering assertions below would be vacuous, and a \
+             SERIAL fetch loop is exactly what makes it not happen"
+        );
+        assert!(
+            peak.load(Ordering::SeqCst) > 1,
+            "the reads never overlapped: this is the serial queue #235 is about, peak {}",
+            peak.load(Ordering::SeqCst)
+        );
+
+        let want_rows: Vec<String> = (0..n).filter(|i| i % 3 == 0).map(rname).collect();
+        let want_quiet: Vec<String> = (0..n).filter(|i| i % 3 == 1).map(rname).collect();
+        let want_failed: Vec<String> = (0..n).filter(|i| i % 3 == 2).map(rname).collect();
+        assert_eq!(
+            design_refs(&q),
+            want_rows,
+            "the presentable set is the candidate sequence — `rank_designs` is a STABLE sort, so \
+             the order it is handed decides every pair its key cannot separate"
+        );
+        assert_eq!(
+            entry_refs(&q.withheld),
+            want_quiet,
+            "the withheld list is read by a human in the order the queue enumerated it"
+        );
+        assert_eq!(entry_refs(&q.errors), want_failed);
+        assert!(
+            q.withheld.iter().all(|e| e["why"] == ND_WHY_NO_QUESTION),
+            "{:?}",
+            q.withheld
+        );
+        assert!(
+            q.errors.iter().all(|e| e["why"] == ND_WHY_FETCH_FAILED),
+            "{:?}",
+            q.errors
+        );
+    }
+
+    /// The candidate ref `hit` produces for number `i`.
+    fn rname(i: u64) -> String {
+        format!("o/r#{i}")
+    }
+
+    // A FAILED READ IS AN OUTCOME, NEVER A SKIP. Dropping it would leave a shorter queue that
+    // reads as complete — the same lie a falsely-empty search would tell, arriving one layer down
+    // — and the fan-out is where a skip is easiest to write, because the failure and the fold now
+    // happen in different places.
+    #[test]
+    fn a_design_read_that_failed_is_an_error_row_not_a_missing_one() {
+        let hits = vec![hit("o/a", 1), hit("o/b", 2), hit("o/c", 3)];
+        let q = nd_classify(&hits, 0, |slug, _| {
+            (slug != "o/b").then(|| asks("2026-07-01T00:00:00Z"))
+        });
+        assert_eq!(design_refs(&q), ["o/a#1", "o/c#3"]);
+        assert_eq!(q.counts.fetch_errors, 1);
+        assert_eq!(
+            q.errors,
+            vec![nd_withheld_entry("o/b#2", ND_WHY_FETCH_FAILED)],
+            "the unread candidate is NAMED — a count alone leaves a reader unable to go and look"
+        );
+        assert!(q.withheld.is_empty(), "{:?}", q.withheld);
+
+        // The whole point, end to end: every read failing is not an empty design queue, it is
+        // three unread rows and a count that says so.
+        let none = nd_classify(&hits, 0, |_, _| None);
+        assert!(none.designs.is_empty());
+        assert_eq!(none.counts.fetch_errors, 3);
+        assert_eq!(entry_refs(&none.errors), ["o/a#1", "o/b#2", "o/c#3"]);
+        assert_eq!(none.counts.presentable + none.counts.no_question, 0);
+    }
+
+    // The arithmetic the document states holds over the FANNED-OUT pass too: every hit the search
+    // returned lands in exactly one bucket, and the two lists carry exactly the rows the buckets
+    // counted. A candidate lost to the pool, or one folded twice, breaks this even when every
+    // individual classification is right.
+    #[test]
+    fn the_design_counts_partition_the_whole_population_after_the_fan_out() {
+        let draft = json!({
+            "url": "https://github.com/o/d/pull/4",
+            "number": 4,
+            "isDraft": true,
+        });
+        let unaddressable = json!({"title": "a hit carrying no ref"});
+        let hits = vec![
+            hit("o/a", 1),
+            hit("o/b", 2),
+            hit("o/c", 3),
+            draft,
+            unaddressable,
+        ];
+        let frozen = 2;
+        let q = nd_classify(&hits, frozen, |slug, _| match slug {
+            "o/a" => Some(asks("2026-07-01T00:00:00Z")),
+            "o/b" => Some(silent()),
+            _ => None,
+        });
+        let c = &q.counts;
+        let parts = c.draft
+            + c.unaddressable
+            + c.presentable
+            + c.no_question
+            + c.fetch_errors
+            + c.archived_repo;
+        assert_eq!(c.raw, hits.len() + frozen);
+        assert_eq!(
+            c.raw, parts,
+            "aiDesign must be provably the sum of its parts: draft {} + unaddressable {} + \
+             presentable {} + noQuestion {} + fetchErrors {} + archivedRepo {}",
+            c.draft, c.unaddressable, c.presentable, c.no_question, c.fetch_errors, c.archived_repo
+        );
+        assert_eq!((c.draft, c.unaddressable, c.archived_repo), (1, 1, frozen));
+        assert_eq!((c.presentable, c.no_question, c.fetch_errors), (1, 1, 1));
+        assert_eq!(
+            q.withheld.len(),
+            c.draft + c.unaddressable + c.no_question,
+            "every CLASSIFIED withholding is listed, not only counted"
+        );
+        assert_eq!(q.errors.len(), c.fetch_errors);
+        // …and the withheld list keeps the two phases in their order: the search-JSON
+        // classifications first, in hit order, then the read's own.
+        assert_eq!(
+            entry_refs(&q.withheld),
+            ["o/d#4", "a hit carrying no ref", "o/b#2"]
+        );
     }
 
     // ── the hit classifier ────────────────────────────────────────────────────────────────────
@@ -41645,13 +42357,33 @@ mod repo_root_tests {
              `RepoArchived` state becomes unreachable. Reading items: {reads:?}"
         );
         // …and the classifier is where the decision is made, in both of them.
+        // `ncc_outcome` is the human inbox's per-hit classifier — the item `next_close_candidate`
+        // reaches every flagged subject through, and the ONE place its gate decision is made.
         let classifies = items_whose_code_contains(&format!("cc_ga{}", "te("));
-        for item in ["cc_row", "next_close_candidate_fetch"] {
+        for item in ["cc_row", "ncc_outcome"] {
             assert!(
                 classifies.contains(&item.to_string()),
                 "`{item}` must classify through `cc_gate`, or the vetter's close-candidate inbox \
                  and the human's can disagree about which flags are actionable. Classifying \
                  items: {classifies:?}"
+            );
+        }
+        // …and the fetch REACHES that classifier, by BOTH hops. Naming the classifier alone leaves
+        // the chain open at the far end: an item that classifies correctly and is called by
+        // nothing satisfies the assertion above while the human's inbox classifies nothing at all.
+        // Both links rather than one, because a chain is only as pinned as its weakest hop — an
+        // `ncc_classify` that stopped calling `ncc_outcome` and hand-rolled its own gate would
+        // satisfy a single-hop pin while BEING the divergence the pin exists to forbid.
+        for (caller, callee) in [
+            ("next_close_candidate_fetch", format!("ncc_class{}", "ify(")),
+            ("ncc_classify", format!("ncc_outc{}", "ome(")),
+        ] {
+            let reaches = items_whose_code_contains(&callee);
+            assert!(
+                reaches.contains(&caller.to_string()),
+                "`{caller}` must reach `{callee}`: that is the only route the human's \
+                 close-candidate inbox is on, and the `cc_gate` pin above is worth nothing off it. \
+                 Reaching items: {reaches:?}"
             );
         }
 
