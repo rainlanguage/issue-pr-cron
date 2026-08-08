@@ -226,12 +226,6 @@
         "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
       },
       {
-        "repo": "S01-Issuer/st0x.deploy",
-        "number": 150,
-        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/150",
-        "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
-      },
-      {
         "repo": "cyclofinance/cyclo.sol",
         "number": 42,
         "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
@@ -714,6 +708,12 @@
         "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
       },
       {
+        "repo": "S01-Issuer/st0x.deploy",
+        "number": 150,
+        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/150",
+        "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
+      },
+      {
         "repo": "cyclofinance/cyclo.site",
         "number": 369,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
@@ -983,8 +983,14 @@
         ]
       },
       "un-vetted": {
-        "count": 23,
+        "count": 24,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 233,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/233",
+            "title": "The vetter sends producer drafts back to needs-work"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 104,
@@ -1128,7 +1134,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 24,
+        "count": 23,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1251,12 +1257,6 @@
             "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 150,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/150",
-            "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
-          },
-          {
             "repo": "cyclofinance/cyclo.sol",
             "number": 42,
             "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
@@ -1277,7 +1277,7 @@
         ]
       },
       "ai:needs-work": {
-        "count": 80,
+        "count": 81,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1742,6 +1742,12 @@
             "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
           },
           {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 150,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/150",
+            "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
+          },
+          {
             "repo": "cyclofinance/cyclo.site",
             "number": 369,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
@@ -1888,6 +1894,12 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.vats",
+      "number": 332,
+      "url": "https://github.com/rainlanguage/rain.vats/issues/332",
+      "title": "Receipt: expose the manager address internally — external manager() + private getStorageReceipt() force derived contracts into a self-CALL"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 84,
@@ -5529,26 +5541,26 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 23,
+    "unvetted": 24,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 80,
+    "needsWork": 81,
     "relink": 0,
-    "design": 24,
+    "design": 23,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 145,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 602,
-    "openIssues": 762
+    "uncoveredIssues": 603,
+    "openIssues": 764
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.7,
-      "medianDays": 101.9,
+      "meanDays": 317.9,
+      "medianDays": 102.0,
       "oldestDays": 1657.5
     }
   }
