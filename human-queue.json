@@ -708,6 +708,12 @@
         "title": "Add canonicalize(Float) -> Float for byte-equivalence use cases"
       },
       {
+        "repo": "rainlanguage/flow",
+        "number": 475,
+        "url": "https://github.com/rainlanguage/flow/pull/475",
+        "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
+      },
+      {
         "repo": "cyclofinance/cyclo.site",
         "number": 369,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
@@ -1271,7 +1277,7 @@
         ]
       },
       "ai:needs-work": {
-        "count": 79,
+        "count": 80,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1728,6 +1734,12 @@
             "number": 237,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/237",
             "title": "Add canonicalize(Float) -> Float for byte-equivalence use cases"
+          },
+          {
+            "repo": "rainlanguage/flow",
+            "number": 475,
+            "url": "https://github.com/rainlanguage/flow/pull/475",
+            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -5515,28 +5527,19 @@
       "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
-  "leaks": [
-    {
-      "repo": "rainlanguage/flow",
-      "number": 475,
-      "url": "https://github.com/rainlanguage/flow/pull/475",
-      "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows",
-      "reason": "🤖 ai:producer Producer note: 3d merge-update DONE — merged origin/main (6b2dc7e, PR #485 nix-cachix CI adoption) into this branch. One conflict: .github/workflows/manual-sol-artifacts.yaml — kept this PR's rainix reusable-workflow call (rainix-manual-sol-artifacts.yaml@main), which already opens with the same nix-cachix-setup composite main adopted inline, so main's newer CI shape is fully subsumed. No source/test/pointer changes were involved (merge tree-diff vs previous head is empty), so no Flow.pointers.sol regen needed. Local verify: forge soldeer install + full forge test green (55 passed, 0 failed), matching the pre-merge all-green CI baseline. Pushed cea9445; PR shows MERGEABLE.",
-      "createdAt": "2026-06-06T09:54:00Z"
-    }
-  ],
+  "leaks": [],
   "counts": {
     "unvetted": 23,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 79,
+    "needsWork": 80,
     "relink": 0,
     "design": 24,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
-    "leaks": 1,
+    "leaks": 0,
     "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 602,
@@ -5544,9 +5547,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.6,
+      "meanDays": 318.7,
       "medianDays": 101.9,
-      "oldestDays": 1657.4
+      "oldestDays": 1657.5
     }
   }
 }
