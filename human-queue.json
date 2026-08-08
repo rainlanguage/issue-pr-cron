@@ -220,12 +220,6 @@
         "title": "Retry SDK indexing on transient timeout before failing"
       },
       {
-        "repo": "rainlanguage/raindex",
-        "number": 2702,
-        "url": "https://github.com/rainlanguage/raindex/pull/2702",
-        "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
-      },
-      {
         "repo": "cyclofinance/cyclo.sol",
         "number": 42,
         "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
@@ -702,6 +696,12 @@
         "title": "Add canonicalize(Float) -> Float for byte-equivalence use cases"
       },
       {
+        "repo": "rainlanguage/raindex",
+        "number": 2702,
+        "url": "https://github.com/rainlanguage/raindex/pull/2702",
+        "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
+      },
+      {
         "repo": "rainlanguage/flow",
         "number": 475,
         "url": "https://github.com/rainlanguage/flow/pull/475",
@@ -987,9 +987,9 @@
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
-            "number": 233,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/233",
-            "title": "The vetter sends producer drafts back to needs-work"
+            "number": 236,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/236",
+            "title": "Fan the three human state-loads' per-candidate fetches out through map_bounded"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1134,7 +1134,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 23,
+        "count": 22,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1251,12 +1251,6 @@
             "title": "Retry SDK indexing on transient timeout before failing"
           },
           {
-            "repo": "rainlanguage/raindex",
-            "number": 2702,
-            "url": "https://github.com/rainlanguage/raindex/pull/2702",
-            "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
-          },
-          {
             "repo": "cyclofinance/cyclo.sol",
             "number": 42,
             "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
@@ -1277,7 +1271,7 @@
         ]
       },
       "ai:needs-work": {
-        "count": 81,
+        "count": 82,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1734,6 +1728,12 @@
             "number": 237,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/237",
             "title": "Add canonicalize(Float) -> Float for byte-equivalence use cases"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2702,
+            "url": "https://github.com/rainlanguage/raindex/pull/2702",
+            "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
           },
           {
             "repo": "rainlanguage/flow",
@@ -5544,9 +5544,9 @@
     "unvetted": 24,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 81,
+    "needsWork": 82,
     "relink": 0,
-    "design": 23,
+    "design": 22,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
@@ -5559,7 +5559,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.9,
+      "meanDays": 318.0,
       "medianDays": 102.0,
       "oldestDays": 1657.6
     }
