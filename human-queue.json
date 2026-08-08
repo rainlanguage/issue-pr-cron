@@ -191,12 +191,6 @@
       },
       {
         "repo": "rainlanguage/rain.flare",
-        "number": 161,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/161",
-        "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
         "number": 134,
         "url": "https://github.com/rainlanguage/rain.flare/pull/134",
         "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
@@ -586,6 +580,12 @@
         "number": 163,
         "url": "https://github.com/rainlanguage/rain.flare/pull/163",
         "title": "test: add mock unit tests for LibOpSLFRCurrentExchangeRate run() and integrity()"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 161,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/161",
+        "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -1128,7 +1128,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 20,
+        "count": 19,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1216,12 +1216,6 @@
           },
           {
             "repo": "rainlanguage/rain.flare",
-            "number": 161,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/161",
-            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
             "number": 134,
             "url": "https://github.com/rainlanguage/rain.flare/pull/134",
             "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
@@ -1253,7 +1247,7 @@
         ]
       },
       "ai:needs-work": {
-        "count": 84,
+        "count": 85,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1617,6 +1611,12 @@
           },
           {
             "repo": "rainlanguage/rain.flare",
+            "number": 161,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/161",
+            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
             "number": 160,
             "url": "https://github.com/rainlanguage/rain.flare/pull/160",
             "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
@@ -1888,6 +1888,12 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 25,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/25",
+      "title": "Initial-owner registry: lib + cross-network gate here, concrete in rain.factory.deploy"
+    },
     {
       "repo": "rainlanguage/rain.vats",
       "number": 332,
@@ -5538,9 +5544,9 @@
     "unvetted": 23,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 84,
+    "needsWork": 85,
     "relink": 0,
-    "design": 20,
+    "design": 19,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
@@ -5548,14 +5554,14 @@
     "leaks": 0,
     "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 603,
-    "openIssues": 763
+    "uncoveredIssues": 604,
+    "openIssues": 764
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.4,
+      "meanDays": 318.0,
       "medianDays": 102.1,
-      "oldestDays": 1657.6
+      "oldestDays": 1657.7
     }
   }
 }
