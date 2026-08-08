@@ -106,30 +106,6 @@
     ],
     "ai:design": [
       {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 101,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-        "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
-      },
-      {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 100,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-        "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
-      },
-      {
-        "repo": "rainlanguage/rainix",
-        "number": 289,
-        "url": "https://github.com/rainlanguage/rainix/pull/289",
-        "title": "Fail over fork RPC endpoints with an archive-aware preflight"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 55,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/55",
-        "title": "Consolidate pointer codegen to canonical script/Build.sol"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 426,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
@@ -212,12 +188,6 @@
         "number": 2720,
         "url": "https://github.com/rainlanguage/raindex/pull/2720",
         "title": "Retry SDK indexing on transient timeout before failing"
-      },
-      {
-        "repo": "cyclofinance/cyclo.sol",
-        "number": 42,
-        "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
-        "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
       }
     ],
     "ai:needs-work": [
@@ -232,6 +202,18 @@
         "number": 20,
         "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
         "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
+      },
+      {
+        "repo": "rainlanguage/rain.solmem",
+        "number": 101,
+        "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
+        "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
+      },
+      {
+        "repo": "rainlanguage/rain.solmem",
+        "number": 100,
+        "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
+        "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
       },
       {
         "repo": "rainlanguage/rain.factory",
@@ -702,6 +684,12 @@
         "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
       },
       {
+        "repo": "cyclofinance/cyclo.sol",
+        "number": 42,
+        "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
+        "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
+      },
+      {
         "repo": "cyclofinance/cyclo.site",
         "number": 369,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
@@ -1001,7 +989,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 26,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/26",
-            "title": "Address registry: interface, reader lib and cross-network deploy gate"
+            "title": "Address registry: interface, concrete, reader lib and post-deploy cross-network verification"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1146,32 +1134,8 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 19,
+        "count": 14,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-            "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-            "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 289,
-            "url": "https://github.com/rainlanguage/rainix/pull/289",
-            "title": "Fail over fork RPC endpoints with an archive-aware preflight"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 55,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/55",
-            "title": "Consolidate pointer codegen to canonical script/Build.sol"
-          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 426,
@@ -1255,17 +1219,11 @@
             "number": 2720,
             "url": "https://github.com/rainlanguage/raindex/pull/2720",
             "title": "Retry SDK indexing on transient timeout before failing"
-          },
-          {
-            "repo": "cyclofinance/cyclo.sol",
-            "number": 42,
-            "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
-            "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
           }
         ]
       },
       "ai:needs-work": {
-        "count": 85,
+        "count": 88,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1278,6 +1236,18 @@
             "number": 20,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
             "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 101,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
+            "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 100,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
+            "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -1748,6 +1718,12 @@
             "title": "refactor: extract shared rebase-migration skeleton into RebaseMigratable (#94)"
           },
           {
+            "repo": "cyclofinance/cyclo.sol",
+            "number": 42,
+            "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
+            "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
+          },
+          {
             "repo": "cyclofinance/cyclo.site",
             "number": 369,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
@@ -1907,6 +1883,36 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 237,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/237",
+      "title": "Producer cannot correct false body prose: append-only Summary update block, plus the vetter rule that accepts supersession"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 294,
+      "url": "https://github.com/rainlanguage/rainix/issues/294",
+      "title": "Static gate for .t.sol filename convention, once the convention is settled"
+    },
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 85,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/85",
+      "title": "SKILL.md contradicts itself on .t.sol filenames: mirror tree says subject-named, classification rule says contract-named"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 293,
+      "url": "https://github.com/rainlanguage/rainix/issues/293",
+      "title": "rainix-sol-artifacts retries one endpoint ten times, which cannot recover a deterministic failure"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 292,
+      "url": "https://github.com/rainlanguage/rainix/issues/292",
+      "title": "sepolia has no fork-RPC failover and is why main is red"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 296,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/296",
@@ -1917,12 +1923,6 @@
       "number": 295,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/295",
       "title": "Authoriser: resolve initial admin from the address registry and deploy via open salt, so the pin stops depending on the deploy EOA"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 25,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/25",
-      "title": "Address registry: immutable root, write-once bytes32 names on Zoltu, plus a lib to read it"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -5574,24 +5574,24 @@
     "unvetted": 26,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 85,
+    "needsWork": 88,
     "relink": 0,
-    "design": 19,
+    "design": 14,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 147,
+    "totalProducerPrs": 145,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 606,
-    "openIssues": 767
+    "uncoveredIssues": 610,
+    "openIssues": 771
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.8,
+      "meanDays": 315.2,
       "medianDays": 102.2,
-      "oldestDays": 1657.7
+      "oldestDays": 1657.8
     }
   }
 }
