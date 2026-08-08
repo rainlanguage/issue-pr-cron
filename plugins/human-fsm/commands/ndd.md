@@ -237,4 +237,4 @@ state where it is misrouted. Where the lens ran, its findings arrive under the
 scope literal you declared, or you state that there was no lens. Then the
 drafted work order the recommended ruling would carry.
 
-Names collide across plugins; `/human-fsm:nd` disambiguates.
+Names collide across plugins; `/human-fsm:ndd` disambiguates.
