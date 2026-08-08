@@ -224,18 +224,6 @@
         "number": 42,
         "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
         "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
-      },
-      {
-        "repo": "rainlanguage/rain.strategies",
-        "number": 60,
-        "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
-        "title": "v5 for dynamic spread"
-      },
-      {
-        "repo": "rainlanguage/rain.subgraph.docker",
-        "number": 3,
-        "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
-        "title": "2023 12 23 anvil"
       }
     ],
     "ai:needs-work": [
@@ -727,9 +715,21 @@
       },
       {
         "repo": "rainlanguage/rain.strategies",
+        "number": 60,
+        "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
+        "title": "v5 for dynamic spread"
+      },
+      {
+        "repo": "rainlanguage/rain.strategies",
         "number": 20,
         "url": "https://github.com/rainlanguage/rain.strategies/pull/20",
         "title": "2025 03 05 ds"
+      },
+      {
+        "repo": "rainlanguage/rain.subgraph.docker",
+        "number": 3,
+        "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
+        "title": "2023 12 23 anvil"
       }
     ],
     "ai:ready": [
@@ -983,14 +983,8 @@
         ]
       },
       "un-vetted": {
-        "count": 24,
+        "count": 23,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 236,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/236",
-            "title": "Fan the three human state-loads' per-candidate fetches out through map_bounded"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 104,
@@ -1134,7 +1128,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 22,
+        "count": 20,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1255,23 +1249,11 @@
             "number": 42,
             "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
             "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
-          },
-          {
-            "repo": "rainlanguage/rain.strategies",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
-            "title": "v5 for dynamic spread"
-          },
-          {
-            "repo": "rainlanguage/rain.subgraph.docker",
-            "number": 3,
-            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
-            "title": "2023 12 23 anvil"
           }
         ]
       },
       "ai:needs-work": {
-        "count": 82,
+        "count": 84,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1761,9 +1743,21 @@
           },
           {
             "repo": "rainlanguage/rain.strategies",
+            "number": 60,
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
+            "title": "v5 for dynamic spread"
+          },
+          {
+            "repo": "rainlanguage/rain.strategies",
             "number": 20,
             "url": "https://github.com/rainlanguage/rain.strategies/pull/20",
             "title": "2025 03 05 ds"
+          },
+          {
+            "repo": "rainlanguage/rain.subgraph.docker",
+            "number": 3,
+            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
+            "title": "2023 12 23 anvil"
           }
         ]
       }
@@ -5541,26 +5535,26 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 24,
+    "unvetted": 23,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 82,
+    "needsWork": 84,
     "relink": 0,
-    "design": 22,
+    "design": 20,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 145,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 603,
-    "openIssues": 764
+    "openIssues": 763
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.0,
-      "medianDays": 102.0,
+      "meanDays": 318.4,
+      "medianDays": 102.1,
       "oldestDays": 1657.6
     }
   }
