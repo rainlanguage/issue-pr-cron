@@ -136,18 +136,6 @@
         "title": "fix: mask signer row operand to low byte"
       },
       {
-        "repo": "rainlanguage/rain.flare",
-        "number": 134,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/134",
-        "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 112,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/112",
-        "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
-      },
-      {
         "repo": "rainlanguage/raindex",
         "number": 2721,
         "url": "https://github.com/rainlanguage/raindex/pull/2721",
@@ -1134,7 +1122,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 9,
+        "count": 7,
         "prs": [
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1165,18 +1153,6 @@
             "number": 2778,
             "url": "https://github.com/rainlanguage/raindex/pull/2778",
             "title": "fix: mask signer row operand to low byte"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 134,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/134",
-            "title": "docs: add NatSpec to ftsoCurrentPriceUsd"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 112,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/112",
-            "title": "test(registry): pin mutation-coverage gaps in LibFlareContractRegistry"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -3201,6 +3177,12 @@
       "number": 11,
       "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/11",
       "title": "\"Manual sol artifacts\" workflow only supports network 'base' but README implies free network choice"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 75,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/75",
+      "title": "[C-flreth-registry] [LOW] 3 mutation-coverage gap(s) in src/lib/flreth/LibDineroFlrEth.sol, src/lib/registry/LibFlareContractRegistry.sol — tests on amt/flreth-registry"
     },
     {
       "repo": "cyclofinance/cyclo.site",
@@ -5576,21 +5558,21 @@
     "ready": 0,
     "needsWork": 93,
     "relink": 0,
-    "design": 9,
+    "design": 7,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 145,
+    "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 610,
+    "uncoveredIssues": 611,
     "openIssues": 771
   },
   "ages": {
     "openIssues": {
       "meanDays": 315.3,
-      "medianDays": 102.2,
+      "medianDays": 102.3,
       "oldestDays": 1657.8
     }
   }
