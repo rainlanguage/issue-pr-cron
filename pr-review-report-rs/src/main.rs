@@ -19929,7 +19929,20 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
 enum VetAction {
     Vet,
     SkipHuman,
-    SkipDraft,
+    /// The PR is a DRAFT, and the state-load SENDS IT BACK: `ai:needs-work` plus a work order
+    /// asking the producer to confirm the PR is not a draft if it intends to merge something.
+    ///
+    /// Not a skip, and that is the whole point. A draft the vetter merely declined was in nobody's
+    /// queue — no actor could apply a state label to it (the vetter was the only one that writes
+    /// them, and it was the one declining), so an unlabelled draft plus one producer note sat in
+    /// [`Lane::Leak`] for ever, with no defect on the PR for any ruling to fix. Sending it back
+    /// puts it in the producer's queue, and the `ai:*` label that carries it there is also what
+    /// takes it out of the leak population — one mechanism, not two.
+    ///
+    /// The verdict is written by the state-load itself rather than offered to the vetter as work,
+    /// because no reading of the code can change it: the draft flag decides it. See
+    /// [`draft_send_back_plan`].
+    DraftNeedsWork,
     SkipVetted,
     SkipOpenThreads,
     /// `ai:blocked-on` with a typed dep still OPEN: the flag holds, the PR is not offered for a
@@ -19952,7 +19965,7 @@ impl VetAction {
         match self {
             VetAction::Vet => "vet",
             VetAction::SkipHuman => "skip-human-decided",
-            VetAction::SkipDraft => "skip-draft",
+            VetAction::DraftNeedsWork => "draft-needs-work",
             VetAction::SkipVetted => "skip-vetted-at-head",
             VetAction::SkipOpenThreads => "skip-open-threads",
             VetAction::SkipBlockedOn => "skip-blocked-on",
@@ -19971,18 +19984,178 @@ impl VetAction {
 /// head has MOVED is deliberately not sacred — the moved head is the producer executing the
 /// human's own send-back (#133/#219), and re-entering vetting (with the ruling in
 /// `pr_context.humanComments`) is the modeled consumption, not a re-opening of the decision.
+///
+/// The DRAFT arm sits UNDER the currency check, and that placement is what makes the send-back cost
+/// one verdict rather than one per run: a draft already carrying this state-load's own verdict at
+/// its head is vetted-at-head like any other PR, so it skips. It needs no idempotence notion of its
+/// own — a draft that sits for weeks is written to once, and a push that moves its head buys it a
+/// fresh send-back at the new head exactly as it buys any other PR a fresh verdict.
+///
+/// It sits under `human_sacred` for that check's own reason: a PR a person has decided is not
+/// dragged back into the machine's queue by any rule, this one included.
 fn vet_action(is_draft: bool, human_sacred: bool, vetted_at_head: bool) -> VetAction {
     if human_sacred {
         return VetAction::SkipHuman;
     }
-    if is_draft {
-        return VetAction::SkipDraft;
-    }
     if vetted_at_head {
-        VetAction::SkipVetted
-    } else {
-        VetAction::Vet
+        return VetAction::SkipVetted;
     }
+    if is_draft {
+        return VetAction::DraftNeedsWork;
+    }
+    VetAction::Vet
+}
+
+/// The work order a draft send-back carries. Fixed text rather than model prose, because the rule
+/// it records is mechanical: the draft flag decides the verdict, and no reading of the diff can
+/// change the answer. It is what [`needs_work_instruction`] finds on the PR afterwards, so the
+/// producer picks the PR up with a stated move rather than parking it for a human.
+const DRAFT_SEND_BACK_NOTE: &str = "this PR is a DRAFT, and a draft is not vetted: confirm it is \
+     NOT a draft if you intend to merge something — clear the draft flag and hand it off, or keep \
+     shaping it and clear the flag when it is ready. A draft carries no state of its own, so left \
+     as one it sits in nobody's queue.";
+
+/// The `lens` stamp a draft send-back writes: no source was read, and none was needed, because the
+/// verdict is about the draft flag rather than about the code. Stated rather than omitted, because
+/// an ABSENT stamp already means something else — a verdict written before the lens was checkable
+/// at all — and this record must not read as one of those.
+const DRAFT_SEND_BACK_LENS: &str =
+    "no source read — the draft flag decides this verdict, not the diff";
+
+/// PURE: the `gh` calls that send ONE draft back, in the order they must run — or `None` when the
+/// PR has no head sha, which is [`VerdictPlan::NoSha`]'s refusal in this path's own shape: there is
+/// nothing to pin a verdict to, so nothing is written.
+///
+/// **THE ORDER IS THE GUARD**, and it is the mirror image of the blocked-on clearance's
+/// comment-before-label order, for that order's own kind of reason. Here the LABEL is what takes
+/// the PR out of the leak population and the COMMENT is the currency stamp that makes
+/// [`vetted_at_head`] true. Write the stamp first and a failed label write leaves a PR that reads
+/// as vetted at its head while carrying no state label at all — un-labelled, never re-derived,
+/// permanently in the leak bucket, which is the exact outcome this whole rule exists to remove.
+/// Label first inverts every part of that: a failed comment leaves `ai:needs-work` with nothing
+/// trusted behind it, which is [`NeedsWorkState::Parked`] — modeled, visible, and safe — and the
+/// next state-load finds the PR un-vetted at head and re-derives the send-back.
+///
+/// The label edit is omitted when the labels are already exactly right, so that retry costs one
+/// call rather than two. Both halves ride in ONE `gh pr edit`: the target added and every other
+/// `ai:*` label stripped together, so the PR is never momentarily wearing two AI verdicts.
+fn draft_send_back_plan(
+    slug: &str,
+    num: u64,
+    head: &str,
+    labels: &[String],
+) -> Option<Vec<Vec<String>>> {
+    if head.is_empty() {
+        return None;
+    }
+    let target = STATE_NEEDS_WORK.key;
+    let n = num.to_string();
+    let mut plan: Vec<Vec<String>> = Vec::new();
+    let to_remove = labels_to_remove(labels, target);
+    let has_target = labels.iter().any(|l| l == target);
+    if !has_target || !to_remove.is_empty() {
+        let mut edit: Vec<String> = ["pr", "edit", &n, "-R", slug]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        if !has_target {
+            edit.extend(["--add-label".to_string(), target.to_string()]);
+        }
+        for r in &to_remove {
+            edit.extend(["--remove-label".to_string(), r.clone()]);
+        }
+        plan.push(edit);
+    }
+    let body = verdict_comment(
+        head,
+        "needs-work",
+        DRAFT_SEND_BACK_NOTE,
+        None,
+        "",
+        Some(DRAFT_SEND_BACK_LENS),
+    );
+    plan.push(
+        ["pr", "comment", &n, "-R", slug, "--body", &body]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+    );
+    Some(plan)
+}
+
+/// The draft send-back write itself: ensure the label exists in the repo, then run
+/// [`draft_send_back_plan`] IN ORDER, stopping at the first failure. `true` iff the whole plan ran.
+///
+/// The label-existence call is a warning like [`record_verdict_apply`]'s: a repo that already has
+/// the label needs nothing, and one that does not would otherwise fail the edit for a reason the
+/// caller cannot act on. Stopping at the first failure is what keeps the order meaningful — a
+/// comment posted after a failed label write is the stranding case the plan's order is against.
+fn record_draft_send_back(slug: &str, num: u64, head: &str, labels: &[String]) -> bool {
+    let Some(plan) = draft_send_back_plan(slug, num, head, labels) else {
+        eprintln!(
+            "warning: {slug}#{num} is a draft with no head sha — no verdict can be pinned to it, \
+             so nothing was written"
+        );
+        return false;
+    };
+    let target = STATE_NEEDS_WORK.key;
+    let (color, desc) = label_meta(target);
+    if !gh_run(&[
+        "label",
+        "create",
+        target,
+        "-R",
+        slug,
+        "--color",
+        color,
+        "--description",
+        desc,
+        "--force",
+    ]) {
+        eprintln!("warning: could not ensure label {target} exists in {slug}");
+    }
+    plan.iter().all(|call| {
+        let argv: Vec<&str> = call.iter().map(String::as_str).collect();
+        gh_run(&argv)
+    })
+}
+
+/// The draft SEND-BACK on the vetter's state-load, applied to one already-classified row. It is the
+/// impure half of the rule [`vet_action`] states: a draft is not reviewed, it is handed back.
+///
+/// `write` is called ONLY for a [`VetAction::DraftNeedsWork`] row — every other action leaves the
+/// PR untouched, and a state-load must not write to a PR it is merely reporting.
+///
+/// The outcome rides on the row as `sentBack`, because this is the one action under which the
+/// state-load MUTATES a PR: a run that relabels a PR and says nothing is a run whose effects have
+/// to be reconstructed from GitHub. `false` is a write that did not land — the PR keeps whatever
+/// state it had and the next state-load re-derives the send-back, since nothing it needs was
+/// recorded.
+fn send_back_draft(
+    row: (VetAction, u8, Value),
+    write: impl FnOnce(&str, &[String]) -> bool,
+) -> (VetAction, u8, Value) {
+    let (action, prio, mut json) = row;
+    if action != VetAction::DraftNeedsWork {
+        return (action, prio, json);
+    }
+    let head = json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let labels: Vec<String> = json
+        .get("labels")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l.as_str().map(String::from))
+        .collect();
+    let sent = write(&head, &labels);
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert("sentBack".into(), Value::from(sent));
+    }
+    (action, prio, json)
 }
 
 /// The open-threads gate on the VETTER's state-load, applied to one already-classified `unvetted`
@@ -20159,6 +20332,10 @@ fn skipped_digest(row: &Value) -> Value {
 /// PRs withheld for unresolved threads are the only skipped rows carrying per-row information the
 /// vetter can act on (a PR left the queue with no verdict, and `unresolvedThreads` says why). Making
 /// it depend on an optional argument is exactly how that accounting went missing.
+///
+/// `draftNeedsWork` is unconditional for a stronger version of that reason: those rows are PRs this
+/// state-load WROTE to. Everything else here reports; that one acts, and an act reported only under
+/// an optional argument is an act the record can lose.
 fn unvetted_doc(
     rows: &[(VetAction, u8, Value)],
     include_skipped: bool,
@@ -20170,7 +20347,8 @@ fn unvetted_doc(
     let mut blocked_on: Vec<Value> = Vec::new();
     let mut blocked_manual: Vec<Value> = Vec::new();
     let mut archived: Vec<Value> = Vec::new();
-    let (mut n_draft, mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize, 0usize);
+    let mut draft_sent_back: Vec<Value> = Vec::new();
+    let (mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize);
     for (action, prio, row) in rows {
         match action {
             VetAction::Vet => {
@@ -20185,7 +20363,17 @@ fn unvetted_doc(
                 // Exhaustive on purpose: a new `VetAction` must be given its own count rather than
                 // silently folding into `skipVettedAtHead` (which is what a `_` arm did).
                 match other {
-                    VetAction::SkipDraft => n_draft += 1,
+                    // UNCONDITIONAL, like `openThreads` below, and for a reason none of the others
+                    // has: this is the one action under which the state-load WROTE to a PR. A run
+                    // that relabels PRs and lists none of them leaves its own effects to be
+                    // reconstructed from GitHub. `sentBack: false` is a write that did not land.
+                    VetAction::DraftNeedsWork => {
+                        draft_sent_back.push(serde_json::json!({
+                            "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+                            "url": row.get("url").cloned().unwrap_or(Value::Null),
+                            "sentBack": row.get("sentBack").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
                     VetAction::SkipHuman => n_human += 1,
                     VetAction::SkipOpenThreads => {
                         n_threads += 1;
@@ -20241,14 +20429,19 @@ fn unvetted_doc(
     let (open_threads, more_threads) = page(open_threads, limit);
     let (n_blocked, n_blocked_manual) = (blocked_on.len(), blocked_manual.len());
     let n_archived = archived.len();
+    let n_draft_sent_back = draft_sent_back.len();
     let (blocked_on, more_blocked) = page(blocked_on, limit);
     let (blocked_manual, more_blocked_manual) = page(blocked_manual, limit);
     let (archived, more_archived) = page(archived, limit);
+    let (draft_sent_back, more_draft_sent_back) = page(draft_sent_back, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "open": rows.len(),
             "vet": n_vet,
-            "skipDraft": n_draft,
+            // The drafts this call SENT BACK as `ai:needs-work`. Named for what happens rather than
+            // for a skip that no longer occurs: a draft is not withheld from anything, it is
+            // verdicted and handed to the producer.
+            "draftNeedsWork": n_draft_sent_back,
             "skipHumanDecided": n_human,
             "skipVettedAtHead": n_vetted,
             "skipOpenThreads": n_threads,
@@ -20268,6 +20461,8 @@ fn unvetted_doc(
         "moreBlockedOnManualReview": more_blocked_manual,
         "archivedRepo": archived,
         "moreArchivedRepo": more_archived,
+        "draftNeedsWork": draft_sent_back,
+        "moreDraftNeedsWork": more_draft_sent_back,
     });
     if include_skipped {
         let (rows, more_skipped) = page(skipped, limit);
@@ -21106,9 +21301,13 @@ fn record_cc_verdict_apply(
     ))
 }
 
-/// Live `unvetted` state-load: ONE org-wide search + one `gh pr view` per open non-draft PR whose
-/// labels don't already carry a human decision. Errors (rather than returning a falsely-empty set) if
-/// the search fails — an empty vet queue must never be an API failure in disguise.
+/// Live `unvetted` state-load: ONE org-wide search + one `gh pr view` per open PR. Errors (rather
+/// than returning a falsely-empty set) if the search fails — an empty vet queue must never be an
+/// API failure in disguise.
+///
+/// A DRAFT is fetched like every other PR rather than filtered out of the search JSON, and it has to
+/// be: the send-back it now gets is idempotent through [`vetted_at_head`], and the comment that
+/// notion reads lives in the detail. The saved `gh pr view` per draft bought a permanent leak.
 ///
 /// `limit` bounds the returned PAGE, not the work: every open PR is still classified (the counts are
 /// whole-queue), only the listed rows are capped. `None` = unbounded, the CLI shape.
@@ -21276,27 +21475,10 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
             continue;
         };
         let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("");
-        let is_draft = p.get("isDraft").and_then(|d| d.as_bool()).unwrap_or(false);
-        // Cheap pre-filter: a draft is skipped straight from the search JSON, no per-PR fetch.
-        // No `human:*` label parks a PR any more (#133/#230), and the two forms a human decision
-        // does take — a native REVIEW and a ruling comment — are invisible to search, so every
-        // remaining PR is still fetched and re-checked below, human-first.
-        if is_draft {
-            let action = vet_action(is_draft, false, false);
-            rows.push((
-                action,
-                4,
-                serde_json::json!({
-                    "pr": format!("{slug}#{num}"),
-                    "url": url,
-                    "title": title,
-                    "labels": label_names(p),
-                    "isDraft": is_draft,
-                    "action": action.as_str(),
-                }),
-            ));
-            continue;
-        }
+        // NOTHING is classified off the search JSON. No `human:*` label parks a PR any more
+        // (#133/#230), the two forms a human decision does take — a native REVIEW and a ruling
+        // comment — are invisible to search, and the draft send-back's currency check reads the
+        // comment thread, so every open PR is fetched and classified from its detail below.
         let Some(detail) = gh_json(&[
             "pr",
             "view",
@@ -21312,20 +21494,24 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         };
         // #161: an `ai:blocked-on` PR takes the clearance path, not the vet path — see
         // [`blocked_on_state_load_row`]. Checked on the DETAIL labels (fresh), not the search row.
-        if label_names(&detail).iter().any(|l| l == "ai:blocked-on") {
-            rows.push(blocked_on_state_load_row(&slug, num, url, title, &detail)?);
-            continue;
-        }
-        // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
-        // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
-        // An unsplittable slug fails the fetch (fail-closed: not vetted this run), never a dropped PR.
-        rows.push(gate_open_threads(
-            unvetted_row(&slug, num, url, title, &detail),
-            || {
+        let row = if label_names(&detail).iter().any(|l| l == "ai:blocked-on") {
+            blocked_on_state_load_row(&slug, num, url, title, &detail)?
+        } else {
+            // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
+            // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
+            // An unsplittable slug fails the fetch (fail-closed: not vetted this run), never a dropped PR.
+            gate_open_threads(unvetted_row(&slug, num, url, title, &detail), || {
                 let (owner, repo) = slug.split_once('/').ok_or(GhFailure::Malformed)?;
                 unresolved_threads(owner, repo, num)
-            },
-        ));
+            })
+        };
+        // The draft send-back, applied to WHICHEVER path produced the row and reading the head and
+        // labels off the row itself — so a draft the clearance path just re-fetched is sent back on
+        // its post-clearance state, and a draft still HELD by an open dep is not touched at all (the
+        // clearance row's own action owns it, and `ai:blocked-on` is already a modeled state).
+        rows.push(send_back_draft(row, |head, labels| {
+            record_draft_send_back(&slug, num, head, labels)
+        }));
     }
     Ok(unvetted_doc(&rows, include_skipped, limit))
 }
@@ -21344,10 +21530,10 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     }
     let c = &doc["counts"];
     println!(
-        "un-vetted: {} to vet ({} open · {} draft · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
+        "un-vetted: {} to vet ({} open · {} draft->needs-work · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
         c["vet"],
         c["open"],
-        c["skipDraft"],
+        c["draftNeedsWork"],
         c["skipHumanDecided"],
         c["skipVettedAtHead"],
         c["skipOpenThreads"],
@@ -21366,6 +21552,20 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     }
     if doc["more"].as_u64().unwrap_or(0) > 0 {
         println!("  … {} more not on this page", doc["more"]);
+    }
+    // The drafts SENT BACK this run. Printed unconditionally, like the withheld-for-threads rows
+    // below and for the stronger reason: this run WROTE to these PRs, and a write nothing prints is
+    // a change an operator can only find on GitHub.
+    for d in doc["draftNeedsWork"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [draft -> ai:needs-work{}]",
+            d["pr"].as_str().unwrap_or(""),
+            if d["sentBack"] == Value::Bool(true) {
+                ""
+            } else {
+                " · WRITE FAILED, re-derived next run"
+            }
+        );
     }
     // The PRs withheld because a review thread is still open. Printed unconditionally: this is the
     // one skip reason that says a PR left the queue with NO verdict and work is owed on it.
@@ -27689,7 +27889,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "unvetted",
             "narrows": "limit",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided, draft and vetted-at-head PRs are already excluded. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided and vetted-at-head PRs are already excluded. A DRAFT is not vetted either, but it is not skipped: this call SENDS IT BACK itself, as ai:needs-work with the work order that the producer confirm the PR is not a draft if it intends to merge something, and `draftNeedsWork` names the PRs that happened to (`sentBack: false` = the write did not land). It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -39422,7 +39622,7 @@ mod open_threads_tests {
     fn vet_gate_does_not_query_an_already_skipped_row() {
         for skip in [
             VetAction::SkipHuman,
-            VetAction::SkipDraft,
+            VetAction::DraftNeedsWork,
             VetAction::SkipVetted,
         ] {
             let called = Cell::new(false);
@@ -53978,8 +54178,20 @@ mod vetter_state_load_tests {
     }
 
     #[test]
-    fn drafts_are_left_un_vetted() {
-        assert_eq!(vet_action(true, false, false), VetAction::SkipDraft);
+    fn a_draft_is_sent_back_rather_than_left_in_nobody_s_queue() {
+        assert_eq!(vet_action(true, false, false), VetAction::DraftNeedsWork);
+    }
+
+    // The idempotence of the send-back, at the guard: a draft carrying a current verdict at its
+    // head is vetted-at-head like any other PR and is not verdicted a second time. The draft arm
+    // has no currency notion of its own, and that is deliberate — one that did would be a second
+    // answer to a question `vetted_at_head` already answers, free to disagree with it.
+    #[test]
+    fn a_draft_verdicted_at_its_head_is_not_verdicted_again() {
+        assert_eq!(vet_action(true, false, true), VetAction::SkipVetted);
+        // …and a push that moves the head buys it a fresh send-back, exactly as it buys any other
+        // PR a fresh verdict. A draft costs one verdict per head, never one per run.
+        assert_eq!(vet_action(true, false, false), VetAction::DraftNeedsWork);
     }
 
     // THE ordering invariant: the human-sacred check resolves BEFORE any head/vetted comparison.
@@ -53990,7 +54202,336 @@ mod vetter_state_load_tests {
     fn a_human_decision_survives_a_moved_head() {
         assert_eq!(vet_action(false, true, false), VetAction::SkipHuman);
         assert_eq!(vet_action(false, true, true), VetAction::SkipHuman);
+        // …and it dominates the DRAFT rule too, in both currency states. A PR a person has decided
+        // is not dragged back into the machine's queue by a rule about the draft flag: that is
+        // what "the human check resolves first" has to mean for every arm under it, not just for
+        // the head comparison the ordering was written against.
         assert_eq!(vet_action(true, true, false), VetAction::SkipHuman);
+        assert_eq!(vet_action(true, true, true), VetAction::SkipHuman);
+    }
+
+    // --- the draft send-back: the write, its order, and what it composes into --------------------
+
+    /// A draft PR's detail JSON, at `head`, wearing `labels`, with `comments`.
+    fn draft_detail(head: &str, labels: Value, comments: Value) -> Value {
+        json!({
+            "headRefOid": head,
+            "labels": labels,
+            "reviewDecision": null,
+            "mergeable": "MERGEABLE",
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
+            "comments": comments,
+            "isDraft": true,
+        })
+    }
+
+    /// Apply one planned `gh pr edit` the way `gh` would. The composition below is then asserted
+    /// against the labels the PLAN produces rather than against a restatement of them — an argv
+    /// this cannot read is an argv gh could not either.
+    fn labels_after(edit: &[String], before: &[String]) -> Vec<String> {
+        let mut out = before.to_vec();
+        let mut it = edit.iter();
+        while let Some(flag) = it.next() {
+            let arg = || {
+                it.clone()
+                    .next()
+                    .expect("a label flag takes a value")
+                    .clone()
+            };
+            match flag.as_str() {
+                "--add-label" => {
+                    let l = arg();
+                    if !out.contains(&l) {
+                        out.push(l);
+                    }
+                }
+                "--remove-label" => {
+                    let l = arg();
+                    out.retain(|x| *x != l);
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// The comment body a plan posts.
+    fn planned_comment(plan: &[Vec<String>]) -> String {
+        plan.iter()
+            .find(|c| c.get(1).map(String::as_str) == Some("comment"))
+            .and_then(|c| c.last())
+            .expect("every plan posts the verdict comment")
+            .clone()
+    }
+
+    /// A trusted comment carrying `body` — the thread a state-load reads back.
+    fn trusted(body: &str) -> Value {
+        json!([{"author": {"login": TRUSTED_AUTHOR}, "body": body}])
+    }
+
+    #[test]
+    fn a_draft_row_carries_the_send_back_action_and_the_draft_flag() {
+        let d = draft_detail("abc123", json!([]), json!([]));
+        let (action, _, row) = unvetted_row("o/r", 7, "u", "t", &d);
+        assert_eq!(action, VetAction::DraftNeedsWork);
+        assert_eq!(row["isDraft"], json!(true));
+        assert_eq!(row["action"], json!("draft-needs-work"));
+        assert_eq!(row["vettedAtHead"], json!(false));
+    }
+
+    // THE ORDER, and it is the whole safety argument of the write. The label is what takes the PR
+    // out of the leak population; the comment is the currency stamp that stops the next run
+    // repeating the write. Posting the stamp first and then failing the label write would leave a
+    // PR that reads as vetted at its head with no state label at all — un-labelled, never
+    // re-derived, permanently leaked, which is the exact outcome this rule exists to remove.
+    #[test]
+    fn the_send_back_writes_the_label_before_the_currency_stamp() {
+        let plan = draft_send_back_plan("o/r", 475, "abc123", &[]).expect("a head sha is enough");
+        assert_eq!(plan.len(), 2, "one label edit, one comment: {plan:?}");
+        assert_eq!(plan[0][..5], ["pr", "edit", "475", "-R", "o/r"]);
+        assert!(plan[0].contains(&"--add-label".to_string()));
+        assert!(plan[0].contains(&STATE_NEEDS_WORK.key.to_string()));
+        assert_eq!(plan[1][..5], ["pr", "comment", "475", "-R", "o/r"]);
+    }
+
+    // The comment has to be BOTH things at once or the rule does not hold together: the producer's
+    // work order (a trusted needs-work verdict line, which is what `needs_work_state` reads as an
+    // instruction rather than parking the PR on a human) and the currency stamp the next
+    // state-load reads back as this head's verdict.
+    #[test]
+    fn the_send_back_comment_is_the_work_order_and_the_currency_stamp() {
+        let plan = draft_send_back_plan("o/r", 7, "abc123", &[]).expect("a head sha is enough");
+        let body = planned_comment(&plan);
+        assert!(pr_verdict_line(&body, "needs-work"), "{body}");
+        assert!(body.contains("Reviewed abc123: needs-work"), "{body}");
+        assert!(verdict_protocol(&body).is_current(), "{body}");
+        // The work order NAMES the move that clears the state: confirm it is not a draft.
+        assert!(body.contains(DRAFT_SEND_BACK_NOTE), "{body}");
+        // …and the record says the binary read no source, rather than leaving the reader to infer
+        // it from an absent stamp (which already means something else — a pre-lens verdict).
+        assert!(body.contains(DRAFT_SEND_BACK_LENS), "{body}");
+        // The producer reads it as an instruction, not as a park.
+        let d = draft_detail("abc123", json!([{"name": "ai:needs-work"}]), trusted(&body));
+        assert_eq!(
+            needs_work_state(&["ai:needs-work".to_string()], &d),
+            NeedsWorkState::WorkOrder
+        );
+    }
+
+    // The state-load's own write closes its own loop: the body the plan posts is read back by the
+    // next state-load as this head's verdict, so the draft costs ONE verdict however long it sits.
+    // Asserted through the real writer rather than a hand-written body, which would drift from it
+    // at the next protocol bump and quietly stop pinning anything.
+    #[test]
+    fn the_send_back_is_written_once_per_head_and_read_back_as_current() {
+        let plan = draft_send_back_plan("o/r", 7, "abc123", &[]).expect("a head sha is enough");
+        let body = planned_comment(&plan);
+        let labels = labels_after(&plan[0], &[]);
+        let label_json = Value::Array(labels.iter().map(|l| json!({"name": l})).collect());
+
+        let d = draft_detail("abc123", label_json.clone(), trusted(&body));
+        let (action, prio, row) = unvetted_row("o/r", 7, "u", "t", &d);
+        assert_eq!(
+            action,
+            VetAction::SkipVetted,
+            "the draft is not re-verdicted"
+        );
+        assert_eq!(row["vettedAtHead"], json!(true));
+        // …and no write is even attempted for such a row.
+        let called = std::cell::Cell::new(false);
+        let (action, _, row) = send_back_draft((action, prio, row), |_, _| {
+            called.set(true);
+            true
+        });
+        assert!(
+            !called.get(),
+            "a vetted-at-head draft must not be written to"
+        );
+        assert_eq!(action, VetAction::SkipVetted);
+        assert!(row.get("sentBack").is_none());
+
+        // A PUSH moves the head past the verdict, and the draft is sent back again at the NEW head
+        // — the same currency every other PR gets, so the idempotence can never suppress a verdict
+        // the PR is actually owed.
+        let pushed = draft_detail("def456", label_json, trusted(&body));
+        assert_eq!(
+            unvetted_row("o/r", 7, "u", "t", &pushed).0,
+            VetAction::DraftNeedsWork
+        );
+    }
+
+    // THE COMPOSITION this rule exists for, asserted end to end on the labels the plan produces: a
+    // draft the producer has commented on is the leak population itself, and once it has been sent
+    // back the leak arm is not reachable for it at all. This is the property the fix rests on — the
+    // hole closes because the PR carries an `ai:*` label, not because anything reads the note text
+    // — so it is pinned against `is_leak_candidate` and the classifier rather than against a count.
+    #[test]
+    fn a_sent_back_draft_is_no_longer_a_leak_candidate() {
+        // BEFORE: unlabelled, and a producer note that hands nothing off. This is `flow#475`.
+        let before: Vec<String> = Vec::new();
+        let notes = vec!["🤖 ai:producer merge-update DONE".to_string()];
+        assert!(is_leak_candidate(&before));
+        assert_eq!(classify_lane(&before, None, true).0, Lane::Leak);
+        assert!(leak_reason(&notes).is_some());
+
+        // The send-back's label edit, applied as `gh` would apply it.
+        let plan = draft_send_back_plan("o/r", 475, "abc123", &before).expect("head sha");
+        let after = labels_after(&plan[0], &before);
+        assert_eq!(after, vec![STATE_NEEDS_WORK.key.to_string()]);
+
+        // AFTER: the leak arm is unreachable — with the producer's notes UNCHANGED, which is the
+        // point. `leak_reason` still says what it always said; the labels are what moved.
+        assert!(!is_leak_candidate(&after));
+        assert_ne!(classify_lane(&after, None, true).0, Lane::Leak);
+        assert!(leak_reason(&notes).is_some());
+        // …and it landed in the PRODUCER's lane, not merely outside the leak one. A PR taken out
+        // of the leak bucket and put in no queue would be the same starvation one layer down.
+        assert_eq!(classify_lane(&after, None, true).0, Lane::VetterVerdicts);
+        assert_eq!(
+            ai_state_label(&after).as_deref(),
+            Some(STATE_NEEDS_WORK.key)
+        );
+    }
+
+    // Exactly ONE `ai:*` verdict survives the send-back, and it rides in ONE edit so the PR is
+    // never momentarily wearing two. Everything outside the `ai:` namespace is left alone.
+    #[test]
+    fn the_send_back_leaves_exactly_one_ai_verdict_and_touches_nothing_else() {
+        let before: Vec<String> = ["ai:design", "ai:relink", "human:keep-open", "bug"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let plan = draft_send_back_plan("o/r", 7, "abc123", &before).expect("head sha");
+        assert_eq!(plan.len(), 2, "one edit + one comment: {plan:?}");
+        let after = labels_after(&plan[0], &before);
+        assert_eq!(
+            after
+                .iter()
+                .filter(|l| l.starts_with("ai:"))
+                .collect::<Vec<_>>(),
+            vec!["ai:needs-work"]
+        );
+        for kept in ["human:keep-open", "bug"] {
+            assert!(
+                after.contains(&kept.to_string()),
+                "{after:?} dropped {kept}"
+            );
+        }
+    }
+
+    // The retry after a half-landed write costs ONE call, not two: the label is already right, so
+    // only the comment is left to post. Re-adding a label the PR already carries would be a write
+    // whose only effect is a rate-limit budget.
+    #[test]
+    fn a_retry_after_a_failed_comment_re_posts_only_the_comment() {
+        let plan = draft_send_back_plan("o/r", 7, "abc123", &["ai:needs-work".to_string()])
+            .expect("head sha");
+        assert_eq!(plan.len(), 1, "{plan:?}");
+        assert_eq!(plan[0][1], "comment");
+    }
+
+    // No head sha, no write — [`VerdictPlan::NoSha`]'s refusal in this path's shape. A verdict
+    // pinned to nothing could never be read back as current, so it would be re-posted every run.
+    #[test]
+    fn a_draft_with_no_head_sha_is_not_written_to_at_all() {
+        assert!(draft_send_back_plan("o/r", 7, "", &[]).is_none());
+    }
+
+    // A state-load must not write to a PR it is merely reporting. Every action but the send-back
+    // passes through untouched, and none of them costs a write.
+    #[test]
+    fn only_a_draft_row_is_ever_written_to() {
+        for action in [
+            VetAction::Vet,
+            VetAction::SkipHuman,
+            VetAction::SkipVetted,
+            VetAction::SkipOpenThreads,
+            VetAction::SkipBlockedOn,
+            VetAction::SkipBlockedOnManual,
+            VetAction::SkipArchivedRepo,
+        ] {
+            let called = std::cell::Cell::new(false);
+            let (got, _, row) = send_back_draft(
+                (action, 4, json!({"pr": "o/r#1", "action": action.as_str()})),
+                |_, _| {
+                    called.set(true);
+                    true
+                },
+            );
+            assert!(!called.get(), "{action:?} must not be written to");
+            assert_eq!(got, action);
+            assert!(row.get("sentBack").is_none(), "{action:?}");
+        }
+    }
+
+    // The writer is handed the PR's OWN head and labels, off the row — so the send-back is written
+    // against the state the row describes, including a row a re-fetch (the blocked-on clearance
+    // path) produced from fresher JSON than the caller holds.
+    #[test]
+    fn the_write_is_driven_by_the_rows_own_head_and_labels() {
+        let d = draft_detail("abc123", json!([{"name": "ai:design"}]), json!([]));
+        let row = unvetted_row("o/r", 7, "u", "t", &d);
+        let seen = std::cell::RefCell::new(None);
+        let (_, _, row) = send_back_draft(row, |head, labels| {
+            *seen.borrow_mut() = Some((head.to_string(), labels.to_vec()));
+            true
+        });
+        assert_eq!(
+            seen.into_inner(),
+            Some(("abc123".to_string(), vec!["ai:design".to_string()]))
+        );
+        assert_eq!(row["sentBack"], json!(true));
+    }
+
+    // A write that did not land is STATED, never assumed. The PR keeps whatever state it had, and
+    // because nothing it needs was recorded the next state-load re-derives the send-back — but the
+    // run that failed says so rather than reporting a send-back that never happened.
+    #[test]
+    fn a_failed_send_back_is_stated_on_the_row_and_named_in_the_doc() {
+        let d = draft_detail("abc123", json!([]), json!([]));
+        let landed = send_back_draft(unvetted_row("o/r", 7, "u1", "t", &d), |_, _| true);
+        let failed = send_back_draft(unvetted_row("o/r", 8, "u2", "t", &d), |_, _| false);
+        assert_eq!(landed.2["sentBack"], json!(true));
+        assert_eq!(failed.2["sentBack"], json!(false));
+
+        let doc = unvetted_doc(&[landed, failed], false, None);
+        // Counted under its own key: nothing was skipped, and nothing was vetted-at-head.
+        assert_eq!(doc["counts"]["draftNeedsWork"], json!(2));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(0));
+        assert_eq!(doc["counts"]["skipHumanDecided"], json!(0));
+        // Not offered for vetting — the verdict is already recorded, so there is nothing to review.
+        assert_eq!(doc["counts"]["vet"], json!(0));
+        assert_eq!(doc["prs"], json!([]));
+        // …and NAMED unconditionally (`include_skipped` is false here), because these are the rows
+        // this call WROTE to. A run that relabels a PR and lists it nowhere leaves its own effects
+        // to be reconstructed from GitHub.
+        assert_eq!(
+            doc["draftNeedsWork"],
+            json!([
+                {"pr": "o/r#7", "url": "u1", "sentBack": true},
+                {"pr": "o/r#8", "url": "u2", "sentBack": false},
+            ])
+        );
+        assert_eq!(doc["moreDraftNeedsWork"], json!(0));
+    }
+
+    // A human decision beats the draft rule on the ROW, not just in the guard: no write is
+    // attempted at all for a PR a person has decided.
+    #[test]
+    fn a_human_decided_draft_is_never_written_to() {
+        let mut d = draft_detail("abc123", json!([]), json!([]));
+        d["reviewDecision"] = json!("CHANGES_REQUESTED");
+        let called = std::cell::Cell::new(false);
+        let (action, _, row) = send_back_draft(unvetted_row("o/r", 7, "u", "t", &d), |_, _| {
+            called.set(true);
+            true
+        });
+        assert_eq!(action, VetAction::SkipHuman);
+        assert!(
+            !called.get(),
+            "a human-decided draft must not be written to"
+        );
+        assert!(row.get("sentBack").is_none());
     }
 
     // --- vet_priority: closest-to-merge first ---------------------------------------------------
@@ -54148,7 +54689,7 @@ mod vetter_state_load_tests {
         };
         let rows = vec![
             row("o/r#3", VetAction::Vet, 4), // red
-            row("o/r#1", VetAction::SkipDraft, 4),
+            row("o/r#1", VetAction::DraftNeedsWork, 4),
             row("o/r#4", VetAction::Vet, 0), // green + mergeable -> first
             row("o/r#5", VetAction::SkipHuman, 4),
             row("o/r#6", VetAction::SkipVetted, 4),
@@ -54157,7 +54698,7 @@ mod vetter_state_load_tests {
         let doc = unvetted_doc(&rows, false, None);
         assert_eq!(doc["counts"]["open"], json!(6));
         assert_eq!(doc["counts"]["vet"], json!(3));
-        assert_eq!(doc["counts"]["skipDraft"], json!(1));
+        assert_eq!(doc["counts"]["draftNeedsWork"], json!(1));
         assert_eq!(doc["counts"]["skipHumanDecided"], json!(1));
         assert_eq!(doc["counts"]["skipVettedAtHead"], json!(1));
         let order: Vec<&str> = doc["prs"]
