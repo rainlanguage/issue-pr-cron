@@ -27241,9 +27241,10 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
     let Some(arr) = val.as_array() else {
         return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
     };
-    // An `ai:design` PR in an ARCHIVED repo can take no ruling at all (#206): withheld BEFORE the
-    // per-PR fetch below, and counted. `nd_population` is where that happens, and it is a named
-    // pure function rather than an inline filter precisely so its deletion fails a test.
+    // An `ai:design` PR in an ARCHIVED repo can take no ruling at all (#206): withheld here,
+    // before `nd_classify` pays a `gh pr view` for it, and counted. `nd_population` is where that
+    // happens, and it is a named pure function rather than an inline filter precisely so its
+    // deletion fails a test.
     let archived_set = archived_repos().map_err(archived_read_error)?;
     let (arr, frozen) = nd_population(arr.clone(), &archived_set);
 
