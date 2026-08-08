@@ -107,33 +107,9 @@
     "ai:design": [
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 426,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
-        "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 199,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/199",
-        "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
         "number": 412,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
         "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 399,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
-        "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 396,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
-        "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -158,12 +134,6 @@
         "number": 2778,
         "url": "https://github.com/rainlanguage/raindex/pull/2778",
         "title": "fix: mask signer row operand to low byte"
-      },
-      {
-        "repo": "rainlanguage/raindex",
-        "number": 2777,
-        "url": "https://github.com/rainlanguage/raindex/pull/2777",
-        "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -271,6 +241,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 426,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
+        "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 425,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
         "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
@@ -292,6 +268,12 @@
         "number": 263,
         "url": "https://github.com/rainlanguage/rainix/pull/263",
         "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 199,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/199",
+        "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -370,6 +352,18 @@
         "number": 400,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
         "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 399,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
+        "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 396,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
+        "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -550,6 +544,12 @@
         "number": 244,
         "url": "https://github.com/rainlanguage/rain.math.float/pull/244",
         "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2777,
+        "url": "https://github.com/rainlanguage/raindex/pull/2777",
+        "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -1134,37 +1134,13 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 14,
+        "count": 9,
         "prs": [
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 426,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
-            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 199,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/199",
-            "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
-          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 412,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
             "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 399,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
-            "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 396,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
-            "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1189,12 +1165,6 @@
             "number": 2778,
             "url": "https://github.com/rainlanguage/raindex/pull/2778",
             "title": "fix: mask signer row operand to low byte"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2777,
-            "url": "https://github.com/rainlanguage/raindex/pull/2777",
-            "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1223,7 +1193,7 @@
         ]
       },
       "ai:needs-work": {
-        "count": 88,
+        "count": 93,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1305,6 +1275,12 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
+            "number": 426,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
+            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
             "number": 425,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
             "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
@@ -1326,6 +1302,12 @@
             "number": 263,
             "url": "https://github.com/rainlanguage/rainix/pull/263",
             "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 199,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/199",
+            "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1404,6 +1386,18 @@
             "number": 400,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
             "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 399,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
+            "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 396,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
+            "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1584,6 +1578,12 @@
             "number": 244,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/244",
             "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2777,
+            "url": "https://github.com/rainlanguage/raindex/pull/2777",
+            "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -5574,9 +5574,9 @@
     "unvetted": 26,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 88,
+    "needsWork": 93,
     "relink": 0,
-    "design": 14,
+    "design": 9,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
@@ -5589,7 +5589,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.2,
+      "meanDays": 315.3,
       "medianDays": 102.2,
       "oldestDays": 1657.8
     }
