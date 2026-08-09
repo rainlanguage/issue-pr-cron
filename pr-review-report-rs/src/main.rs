@@ -5467,6 +5467,17 @@ struct RunIdentity<'a> {
     model: Option<&'a str>,
 }
 
+/// What a `--force`d run overrode, as the runner observed it.
+///
+/// The kinds and the reasons are PARALLEL: index i of each is one stop. Both empty is the ordinary
+/// forced run — a human started it and nothing was in the way — and is why this is a struct rather
+/// than a non-empty list: the fact being recorded is "a human started this", with the overrides as
+/// detail on top of it, not the other way round.
+struct ForceStamp<'a> {
+    kinds: &'a [String],
+    reasons: &'a [String],
+}
+
 /// Stamp a record with the run's identity.
 ///
 /// Only the fields the caller actually supplied are added, so a bare `run-metrics <trace>` keeps
@@ -5912,8 +5923,21 @@ fn run_metrics_mode(
     preflight_missing: &[String],
     infra_path: Option<&str>,
     skip: Option<(&str, &str)>,
-    forced: Option<(&str, &str)>,
+    forced: Option<ForceStamp>,
 ) -> i32 {
+    // The pairing is positional, so a caller that supplies a different number of each has written a
+    // row where a stop names the wrong line — silently, and only visible on the dashboard weeks
+    // later. Refused here rather than truncated to the shorter of the two.
+    if let Some(f) = &forced {
+        if f.kinds.len() != f.reasons.len() {
+            eprintln!(
+                "error: --forced and --force-reason are paired by position; got {} and {}",
+                f.kinds.len(),
+                f.reasons.len()
+            );
+            return 2;
+        }
+    }
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
@@ -5969,7 +5993,7 @@ fn final_record(
     preflight_missing: &[String],
     infra: &InfraRecord,
     skip: Option<(&str, &str)>,
-    forced: Option<(&str, &str)>,
+    forced: Option<ForceStamp>,
     spend: &SpendRecord,
 ) -> Value {
     let mut doc = serde_json::json!({
@@ -6061,14 +6085,18 @@ fn final_record(
     }
     // The FORCE stamp (#245): the mirror image of the skip stamp above, and present for the same
     // reason. `metrics/runs.jsonl` is where the dashboard's run series comes from, and a run a human
-    // forced past the pace gate is not a tick the schedule produced — drawn as one, it shows budget
-    // being spent on a pace nobody followed. ABSENT, not null, on every scheduled row, so a consumer
-    // keys on the field existing at all and every pre-#245 record stays byte-compatible.
-    // `forceReason` is the gate's own line at the moment of the override, verbatim — including an OK
-    // line, because what makes a row forced is the human who typed `--force`, not the gate's verdict.
-    if let (Some(obj), Some((gate, reason))) = (doc.as_object_mut(), forced) {
-        obj.insert("forced".into(), serde_json::json!(gate));
-        obj.insert("forceReason".into(), serde_json::json!(reason));
+    // started by hand is not a tick the schedule produced — drawn as one, it shows budget being
+    // spent on a pace nobody followed. ABSENT, not null, on every scheduled row, so a consumer keys
+    // on the field existing at all and every pre-#245 record stays byte-compatible.
+    //
+    // ARRAYS, because a forced run can walk past more than one POLICY stop — the kill switch and a
+    // gate pause are both overridable and both get recorded. They are parallel: index i of `forced`
+    // is the stop's kind and index i of `forceReason` is that stop's own line, verbatim. EMPTY is a
+    // real and common state, not a missing one: a force that met no stop still says a human started
+    // the run, which is the first thing the row has to carry.
+    if let (Some(obj), Some(f)) = (doc.as_object_mut(), forced) {
+        obj.insert("forced".into(), serde_json::json!(f.kinds));
+        obj.insert("forceReason".into(), serde_json::json!(f.reasons));
     }
     doc
 }
@@ -34586,17 +34614,23 @@ enum Cmd {
         /// the two arrive together or not at all.
         #[arg(long, requires = "skipped")]
         skip_reason: Option<String>,
-        /// The pre-model gate a human deliberately RAN PAST for this one invocation (`usage-gate`,
-        /// #245). Present means the tick was not paced — somebody typed `--force` at the runner —
-        /// so the row must not be read as one the schedule produced. It is the OPPOSITE of
-        /// `skipped`: a skip is a tick the pipeline chose not to run, a force is one it was told to
-        /// run anyway, and the two can never appear on the same row.
-        #[arg(long, requires = "force_reason", conflicts_with = "skipped")]
-        forced: Option<String>,
-        /// The forced gate's own output line, verbatim, recorded as `forceReason` beside `forced` —
-        /// the two arrive together or not at all.
-        #[arg(long, requires = "forced")]
-        force_reason: Option<String>,
+        /// A human started this run with `--force` (#245). This alone is what makes the row a
+        /// forced one: it is the OPPOSITE of `skipped` — a skip is a tick the pipeline chose not to
+        /// run, a force is one it was told to run anyway — so the two can never share a row.
+        ///
+        /// Passed even when the force met NO stop, which is the ordinary case: what the row has to
+        /// say first is that the schedule did not start this, and that is true whether or not
+        /// anything was in the way.
+        #[arg(long, conflicts_with = "skipped")]
+        forced_run: bool,
+        /// One POLICY stop this run actually walked past (`disabled`, `usage-gate`). Repeatable —
+        /// a single forced run can override both — and paired BY POSITION with `--force-reason`.
+        #[arg(long, requires = "forced_run")]
+        forced: Vec<String>,
+        /// The matching stop's own output line, verbatim, recorded as `forceReason` beside
+        /// `forced`. One per `--forced`, in the same order: they are one fact in two parts.
+        #[arg(long, requires = "forced_run")]
+        force_reason: Vec<String>,
     },
     /// Resolve every external binary the HARNESS needs at read time, plus each capability asked
     /// for. Exit 12 if any is unsatisfied.
@@ -38458,6 +38492,7 @@ fn main() {
             infra,
             skipped,
             skip_reason,
+            forced_run,
             forced,
             force_reason,
         } => run_metrics_mode(
@@ -38471,7 +38506,10 @@ fn main() {
             &preflight_missing,
             infra.as_deref(),
             skipped.as_deref().zip(skip_reason.as_deref()),
-            forced.as_deref().zip(force_reason.as_deref()),
+            forced_run.then(|| ForceStamp {
+                kinds: &forced,
+                reasons: &force_reason,
+            }),
         ),
         Cmd::Preflight { gh_auth, sol_shell } => preflight_mode(gh_auth, sol_shell),
         Cmd::SolToolchain { dir } => sol_toolchain_mode(&dir),
@@ -41919,8 +41957,8 @@ mod startup_split_tests {
 #[cfg(test)]
 mod skip_row_tests {
     use super::{
-        classify_outcome, final_record, InfraRecord, RunIdentity, RunMetrics, SpendRecord,
-        ToolingReport, TraceOutcome, STAGE_FINAL,
+        classify_outcome, final_record, ForceStamp, InfraRecord, RunIdentity, RunMetrics,
+        SpendRecord, ToolingReport, TraceOutcome, STAGE_FINAL,
     };
 
     /// The gate's real ceiling-pause line, verbatim — em-dash, percent signs and all — because the
@@ -42000,13 +42038,17 @@ mod skip_row_tests {
     }
 
     /// The FORCE row (#245), the skip row's mirror image. `metrics/runs.jsonl` is what the
-    /// dashboard draws its run series from, so a run a human forced past the pace gate has to be
+    /// dashboard draws its run series from, so a run a human started by hand has to be
     /// distinguishable from a tick the schedule produced — otherwise the series shows budget spent
-    /// on a pace nobody followed. The gate's line is carried verbatim for the same reason the skip
-    /// row carries it: this row is the only durable copy of what the gate said at the moment of
-    /// the override.
+    /// on a pace nobody followed. Each stop's line is carried verbatim for the same reason the skip
+    /// row carries the gate's: this row is the only durable copy of what that stop said at the
+    /// moment it was overridden.
     #[test]
-    fn a_forced_row_carries_the_gate_it_ran_past_and_that_gates_line_verbatim() {
+    fn a_forced_row_carries_every_stop_it_ran_past_and_each_stops_line_verbatim() {
+        // BOTH policy stops, which is the case a single value could never carry: a run that walked
+        // past the kill switch AND a gate pause is a different fact from one that walked past either.
+        let kinds = ["disabled".to_string(), "usage-gate".to_string()];
+        let reasons = ["DISABLED flag present".to_string(), PAUSE_LINE.to_string()];
         let doc = final_record(
             "/runs/20260731T090001Z.jsonl",
             &RunMetrics::default(),
@@ -42016,13 +42058,17 @@ mod skip_row_tests {
             &[],
             &InfraRecord::default(),
             None,
-            Some(("usage-gate", PAUSE_LINE)),
+            Some(ForceStamp {
+                kinds: &kinds,
+                reasons: &reasons,
+            }),
             &SpendRecord::default(),
         );
-        assert_eq!(doc["forced"], "usage-gate");
+        assert_eq!(doc["forced"], serde_json::json!(["disabled", "usage-gate"]));
         assert_eq!(
-            doc["forceReason"], PAUSE_LINE,
-            "the reason must be verbatim"
+            doc["forceReason"],
+            serde_json::json!(["DISABLED flag present", PAUSE_LINE]),
+            "each stop's own line, verbatim, positionally paired with its kind"
         );
         assert!(
             doc.get("skipped").is_none(),
@@ -42041,6 +42087,8 @@ mod skip_row_tests {
     /// and the one thing a forced run exists for is to be watched honestly.
     #[test]
     fn forcing_does_not_launder_the_outcome() {
+        let kinds = ["usage-gate".to_string()];
+        let reasons = [PAUSE_LINE.to_string()];
         let doc = final_record(
             "/t.jsonl",
             &RunMetrics::default(),
@@ -42050,10 +42098,13 @@ mod skip_row_tests {
             &["pdftoppm".to_string()],
             &InfraRecord::default(),
             None,
-            Some(("usage-gate", PAUSE_LINE)),
+            Some(ForceStamp {
+                kinds: &kinds,
+                reasons: &reasons,
+            }),
             &SpendRecord::default(),
         );
-        assert_eq!(doc["forced"], "usage-gate");
+        assert_eq!(doc["forced"], serde_json::json!(["usage-gate"]));
         assert_eq!(doc["outcome"], "tooling-failure");
         assert_eq!(doc["exitCode"], 12);
         assert_eq!(doc["missingTools"], serde_json::json!(["pdftoppm"]));
@@ -48916,8 +48967,9 @@ mod cli_tests {
                 infra: None,
                 skipped: None,
                 skip_reason: None,
-                forced: None,
-                force_reason: None,
+                forced_run: false,
+                forced: vec![],
+                force_reason: vec![],
             }
         );
         // The form the runners now use in place of the `| jq '. + {…}'` pipe.
@@ -48945,8 +48997,9 @@ mod cli_tests {
                 infra: None,
                 skipped: None,
                 skip_reason: None,
-                forced: None,
-                force_reason: None,
+                forced_run: false,
+                forced: vec![],
+                force_reason: vec![],
             }
         );
         // The abort form: `preflight` found nothing to render with, so the model never started.
@@ -48970,8 +49023,9 @@ mod cli_tests {
                 infra: None,
                 skipped: None,
                 skip_reason: None,
-                forced: None,
-                force_reason: None,
+                forced_run: false,
+                forced: vec![],
+                force_reason: vec![],
             }
         );
         // The SKIP form (#160): the usage-gate paused the tick, the runners record the row with
@@ -49007,8 +49061,9 @@ mod cli_tests {
                     "PAUSE: 91% of the weekly budget used (endpoint) — at/over the 90% ceiling"
                         .to_string()
                 ),
-                forced: None,
-                force_reason: None,
+                forced_run: false,
+                forced: vec![],
+                force_reason: vec![],
             }
         );
         // The two skip flags arrive together or not at all: a gate with no reason would emit a
@@ -49045,6 +49100,11 @@ mod cli_tests {
                 "claude-fable-5",
                 "--exit-code",
                 "0",
+                "--forced-run",
+                "--forced",
+                "disabled",
+                "--force-reason",
+                "DISABLED flag present",
                 "--forced",
                 "usage-gate",
                 "--force-reason",
@@ -49060,19 +49120,51 @@ mod cli_tests {
                 infra: None,
                 skipped: None,
                 skip_reason: None,
-                forced: Some("usage-gate".to_string()),
-                force_reason: Some(
+                forced_run: true,
+                forced: vec!["disabled".to_string(), "usage-gate".to_string()],
+                force_reason: vec![
+                    "DISABLED flag present".to_string(),
                     "PAUSE: 91% of the weekly budget used (endpoint) — at/over the 90% ceiling"
-                        .to_string()
-                ),
+                        .to_string(),
+                ],
             }
         );
-        // Paired at parse for the same reason the skip flags are: a forced row that cannot say what
-        // the gate said is a marker with no evidence behind it.
+        // The ORDINARY forced run: a human started it and nothing was in the way. It still parses,
+        // and still says the schedule did not start it — which is what `--forced-run` carries on
+        // its own. Lose this case and the marker comes to mean "something blocked me" instead of
+        // "a human started me".
+        assert_eq!(
+            parse(&["prr", "run-metrics", "/t.jsonl", "--forced-run"]),
+            Cmd::RunMetrics {
+                trace: "/t.jsonl".to_string(),
+                run_id: None,
+                role: None,
+                model: None,
+                exit_code: None,
+                preflight_missing: vec![],
+                infra: None,
+                skipped: None,
+                skip_reason: None,
+                forced_run: true,
+                forced: vec![],
+                force_reason: vec![],
+            }
+        );
+        // An override with nothing to be an override OF: refused at parse, so a runner edit that
+        // dropped `--forced-run` fails loudly rather than writing a row that reads as scheduled
+        // while naming stops it walked past.
         assert!(
-            Cli::try_parse_from(["prr", "run-metrics", "/t.jsonl", "--forced", "usage-gate"])
-                .is_err(),
-            "--forced without --force-reason must be refused"
+            Cli::try_parse_from([
+                "prr",
+                "run-metrics",
+                "/t.jsonl",
+                "--forced",
+                "usage-gate",
+                "--force-reason",
+                "PAUSE: x"
+            ])
+            .is_err(),
+            "--forced without --forced-run must be refused"
         );
         assert!(
             Cli::try_parse_from([
@@ -49083,7 +49175,7 @@ mod cli_tests {
                 "PAUSE: x"
             ])
             .is_err(),
-            "--force-reason without --forced must be refused"
+            "--force-reason without --forced-run must be refused"
         );
         // SKIPPED and FORCED are opposites — a tick the pipeline declined to run against one it was
         // told to run anyway — so a row can never be both. Refused at parse, where a runner edit
@@ -49097,10 +49189,7 @@ mod cli_tests {
                 "usage-gate",
                 "--skip-reason",
                 "PAUSE: x",
-                "--forced",
-                "usage-gate",
-                "--force-reason",
-                "PAUSE: x"
+                "--forced-run"
             ])
             .is_err(),
             "a row cannot be both skipped and forced"

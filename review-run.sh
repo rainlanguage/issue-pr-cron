@@ -8,7 +8,9 @@
 #   DISABLE:  touch review-DISABLED        (independent of the producer cron's DISABLED)
 #   WATCH:    tail -f review.log
 #   RUN NOW:  ./review-run.sh
-#   FORCE:    ./review-run.sh --force      (one run, past a usage-gate PAUSE, streamed to stdout)
+#   FORCE:    ./review-run.sh --force      (one run, past every POLICY stop — the usage-gate PAUSE
+#                                          and review-DISABLED — streamed to stdout. Never past a
+#                                          CORRECTNESS stop: the lock, or a gate config refusal.)
 # Deployment values come from ./cron.env (PR_ASSIGNEE, optional REVIEW_MODEL/REVIEW_MAXTIME/REVIEW_KEEP_RUNS).
 
 # Packaged as a flake output (`packages.review-run`), so nix builds PATH from the flake's locked
@@ -71,9 +73,7 @@ RUNDIR="$DIR/review-runs"
 
 # --- one-off manual FORCE (#245) ---------------------------------------------------------------
 # Identical in shape and in wording to campaign-run.sh's, because a force that works on the producer
-# and silently does nothing on the vetter is worse than no force at all. `--force` is the only
-# argument this runner takes and it authorises exactly ONE bypass: the weekly-budget pace gate's
-# PAUSE (usage-gate exit 10).
+# and silently does nothing on the vetter is worse than no force at all.
 #
 #   CRON_DIR=<install-dir> nix run git+file://<install-dir>#review-run -- --force
 #
@@ -86,10 +86,29 @@ RUNDIR="$DIR/review-runs"
 # left switched on, where a force in cron.env would silently force every scheduled tick for ever.
 # CRON_FORCE is refused below so that door is shut rather than merely unused.
 #
-# It does NOT bypass the review-DISABLED kill switch (a deliberate human stop), the flock (two
-# vetter runs collide on the same checkouts and the same GitHub state), or a gate config REFUSAL
-# (any non-zero exit that is not 10 — the gate could not read its config, and running past that is
-# running on config nobody validated).
+# What `--force` overrides is ONE PROPERTY, not a list — the list is what got this wrong the first
+# time (#245 shipped a force that refused the kill switch, and the first observation run it was
+# built for printed `SKIP: DISABLED flag present` and did nothing):
+#
+#   --force overrides POLICY stops. It never overrides CORRECTNESS stops.
+#
+# A POLICY stop is the pipeline choosing not to spend right now. The human at the terminal owns that
+# choice and is allowed to make it differently for one run: the usage-gate PAUSE (holding budget
+# back from a tick nobody is watching is exactly right, and exactly wrong for a watched one), and the
+# review-DISABLED kill switch (it exists to stop the CRON; the human typing --force is that switch's own
+# owner deliberately overriding their own stop, which is not what the switch protects against).
+#
+# A CORRECTNESS stop is the run being unable to do its job properly no matter who asked. No argument
+# reaches these:
+#   * the flock — two runs of a role collide on the same clones and the same GitHub state. That is
+#     not a policy choice about spending, it is two processes corrupting each other's work.
+#   * a usage-gate config REFUSAL (any non-zero exit that is not 10) — the gate could not validate
+#     its config, so the tick would run on config nobody checked. Forcing past a ceiling on purpose
+#     and running on unvalidated config are not the same act.
+#
+# Every override is RECORDED: each one appends its kind and the stop's own line to the run's
+# metrics/runs.jsonl row (see the FORCE stamp below), so the dashboard reads what was overridden
+# rather than merely that something was.
 FORCE=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -106,6 +125,14 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# What this run actually OVERRODE, appended to as each policy stop is walked past. Two parallel
+# arrays because a stop's kind and that stop's own line are one fact in two parts, exactly as
+# `skipped`/`skipReason` are — and there can be more than one, since a single forced run can walk
+# past both the kill switch and a gate pause. Empty is a real state and NOT the same as absent: a
+# forced run that met no stop at all still has to say a human started it (see the FORCE stamp).
+FORCED_KINDS=()
+FORCED_REASONS=()
+
 # --- where this run's trail goes ---------------------------------------------------------------
 # A scheduled tick has no terminal, so its trail is appended to $LOG and nowhere else. A FORCED run
 # is being WATCHED — live observability is the whole reason it exists — so the same bytes also
@@ -118,10 +145,20 @@ else
 fi
 
 # --- kill switch (independent of the producer cron) ---
-# NOT bypassed by --force (#245): this file is a deliberate stop with a human behind it, and a force
-# that walked through it would turn the one unambiguous off-switch into a suggestion.
+# A POLICY stop, so --force overrides it (#245 as ruled: "force needs to force"). This file stops
+# the CRON. The human typing --force is the switch's own owner, at a terminal, deliberately
+# overriding their own stop for one run — which is not what the switch protects against, and a
+# force that refused them would be friction and nothing else. A SCHEDULED tick still honours it
+# exactly as it always has, which is the whole reason the file exists.
 if [ -f "$DIR/review-DISABLED" ]; then
-  echo "$(date -u +%FT%TZ) SKIP: review-DISABLED flag present" | _log; exit 0
+  if [ "$FORCE" -eq 1 ]; then
+    echo "$(date -u +%FT%TZ) FORCED past the review-DISABLED kill switch (--force)" | _log
+    FORCED_KINDS+=(disabled)
+    FORCED_REASONS+=("review-DISABLED flag present")
+  else
+    echo "$(date -u +%FT%TZ) SKIP: review-DISABLED flag present" | _log
+    exit 0
+  fi
 fi
 
 # The stale-setting guard, in the posture `usage-gate` already takes toward the retired
@@ -155,6 +192,8 @@ if [ "$_ugrc" -eq 10 ]; then
     # log above, verbatim; the only difference is that this tick does not become a skip row. The
     # force lives INSIDE the exit-10 branch on purpose — a refusal (below) can never reach it.
     echo "$(date -u +%FT%TZ) FORCED past the usage-gate PAUSE (--force): $_ug" | _log
+    FORCED_KINDS+=(usage-gate)
+    FORCED_REASONS+=("$_ug")
   else
     # A paused tick still writes its metrics/runs.jsonl row (#160) — same shape and same reasoning
     # as campaign-run.sh: an empty trace so the record's shape still comes from `run-metrics`, the
@@ -178,13 +217,21 @@ fi
 
 # --- the FORCE stamp every row this run writes carries (#245) ----------------------------------
 # A forced run is not a paced tick, and a runs.jsonl row that cannot say so puts budget on the
-# dashboard's run series against a schedule that was never followed. Built ONCE, here, from the
-# gate's own line — including an OK line, because what makes a row forced is the human who typed
-# `--force`, not what the gate happened to decide. Empty for a scheduled tick, which is what keeps
-# every existing row byte-identical.
+# dashboard's run series against a schedule that was never followed. Built ONCE, here, after the
+# last stop a force can walk past, so it carries what this run ACTUALLY overrode rather than what a
+# force is allowed to override.
+#
+# `--forced-run` is the fact that a human started this, and it is passed whenever `--force` was —
+# INCLUDING when nothing was in the way, which is the ordinary case once the crons are running
+# again. Each `--forced/--force-reason` pair is one stop that was actually walked past. So an empty
+# stamp still says "not scheduled", and a consumer reading the kinds learns exactly which stops
+# yielded. Absent entirely for a scheduled tick, which is what keeps every other row byte-identical.
 FORCED_FLAGS=()
 if [ "$FORCE" -eq 1 ]; then
-  FORCED_FLAGS=(--forced usage-gate --force-reason "$_ug")
+  FORCED_FLAGS=(--forced-run)
+  for _i in "${!FORCED_KINDS[@]}"; do
+    FORCED_FLAGS+=(--forced "${FORCED_KINDS[$_i]}" --force-reason "${FORCED_REASONS[$_i]}")
+  done
 fi
 
 # --- single-run lock (non-blocking) ---

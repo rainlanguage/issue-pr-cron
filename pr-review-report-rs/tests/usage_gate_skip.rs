@@ -414,10 +414,20 @@ fn a_refused_vetter_tick_aborts_loudly_and_writes_no_row() {
 // ---------------------------------------------------------------------------------------------
 // The one-off manual force (#245).
 //
-// The whole design is in what `--force` does and does NOT bypass, so each guarantee gets a test
-// that fails if the bypass widens by one step. Every one of them drives a gate that positively
-// decided to PAUSE — the inert path (gate cannot read usage, prints OK, tick runs) never exercises
-// the force at all.
+// One property decides every test below, and it is a property rather than a list because the list
+// is what got this wrong the first time:
+//
+//   --force overrides POLICY stops. It never overrides CORRECTNESS stops.
+//
+// POLICY — the pipeline choosing not to spend right now, a choice the human at the terminal owns:
+// the usage-gate PAUSE, and the kill switch. Each yields, and each records that it yielded.
+// CORRECTNESS — the run being unable to do its job properly no matter who asked: the flock (two
+// processes corrupting each other's clones and GitHub state) and a gate config REFUSAL (running on
+// config nobody validated). Neither yields to anything.
+//
+// So the tests come in pairs: a policy stop is driven forced AND scheduled, and a correctness stop
+// is driven forced and must still stop. Every one drives a gate that positively decided to PAUSE —
+// the inert path (gate cannot read usage, prints OK, tick runs) never exercises the force at all.
 // ---------------------------------------------------------------------------------------------
 
 /// The feature itself: a forced tick runs past the PAUSE, and the row it leaves says so.
@@ -440,11 +450,13 @@ fn a_forced_run_past_a_pause_runs_marked_and_streamed(role: &'static Role, name:
     );
     let row = f.final_row();
     assert_eq!(
-        row["forced"], "usage-gate",
-        "the row must name the gate the run was forced past"
+        row["forced"],
+        serde_json::json!(["usage-gate"]),
+        "the row names the stop this run walked past, and only that one"
     );
     assert_eq!(
-        row["forceReason"], PAUSE_LINE,
+        row["forceReason"],
+        serde_json::json!([PAUSE_LINE]),
         "the gate's own line, verbatim — this row is the only durable copy of what it said"
     );
     assert!(
@@ -490,6 +502,54 @@ fn a_forced_vetter_run_past_a_pause_runs_marked_and_streamed() {
     a_forced_run_past_a_pause_runs_marked_and_streamed(&VETTER, "vetter-forced");
 }
 
+/// The ORDINARY forced run, once the crons are back: a human starts one to watch it and NOTHING is
+/// in the way. The row still has to say the schedule did not start it — that is the first thing the
+/// marker carries — with an empty override list, because nothing was overridden.
+///
+/// This is the case that decides the marker's shape. Key the marker on "something was overridden"
+/// and this run reads as a paced tick on the dashboard, which is the corruption the field exists to
+/// prevent.
+fn a_forced_run_that_met_no_stop_is_still_marked(role: &'static Role, name: &str) {
+    if !runner_runtime_available() {
+        return;
+    }
+    let Some(f) = Fixture::new(role, name, 0, OK_LINE).map(Fixture::with_model) else {
+        return;
+    };
+    let out = f.tick_forced();
+    assert!(
+        out.status.success(),
+        "the forced run completes: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let row = f.final_row();
+    assert_eq!(
+        row["forced"],
+        serde_json::json!([]),
+        "present and EMPTY: a human started it, and nothing was in the way"
+    );
+    assert_eq!(row["forceReason"], serde_json::json!([]));
+    assert!(
+        row.get("forced").is_some(),
+        "present is the whole point — absent is what a scheduled tick looks like"
+    );
+    // And it is still a watched run.
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("run START"),
+        "a forced run streams whether or not it overrode anything"
+    );
+}
+
+#[test]
+fn a_forced_producer_run_that_met_no_stop_is_still_marked() {
+    a_forced_run_that_met_no_stop_is_still_marked(&PRODUCER, "producer-forced-clear");
+}
+
+#[test]
+fn a_forced_vetter_run_that_met_no_stop_is_still_marked() {
+    a_forced_run_that_met_no_stop_is_still_marked(&VETTER, "vetter-forced-clear");
+}
+
 /// The other side of the same contract, and the reason the marker is worth anything: an ordinary
 /// tick the gate let through is byte-identical to what it always was — no force fields, and not
 /// one byte on stdout, which is what keeps `metrics/runs.jsonl` a record of the SCHEDULE.
@@ -533,7 +593,7 @@ fn an_unforced_vetter_run_is_unmarked_and_silent() {
     an_unforced_run_is_unmarked_and_silent(&VETTER, "vetter-unforced");
 }
 
-/// GUARANTEE 1 — the force reaches exit 10 and nothing else.
+/// CORRECTNESS STOP — a gate config REFUSAL never yields, forced or not.
 ///
 /// A config REFUSAL means the gate could not read its config; forcing past that would run the
 /// pipeline on config nobody validated, which is a different thing entirely from running past a
@@ -569,12 +629,20 @@ fn force_does_not_bypass_a_vetter_gate_refusal() {
     force_does_not_bypass_a_gate_refusal(&VETTER, "vetter-force-refuse");
 }
 
-/// GUARANTEE 2 — the DISABLED kill switch outranks the force.
+/// POLICY STOP — the kill switch yields to `--force`, and says so on the row.
 ///
-/// The file is a deliberate stop with a human behind it. A force that walked through it would turn
-/// the one unambiguous off-switch into a suggestion. The gate is set to PAUSE so that a force which
-/// merely ran the gate early — rather than obeying the switch — would still be caught.
-fn force_does_not_bypass_the_kill_switch(role: &'static Role, name: &str) {
+/// This REVERSES what #245 first shipped, on the user's ruling ("force needs to force") after the
+/// first observation run the feature exists for printed `SKIP: DISABLED flag present` and did
+/// nothing. The file stops the CRON; the human typing `--force` is the switch's own owner
+/// overriding their own stop for one run, which is not what the switch protects against.
+///
+/// Both policy stops are set at once — the switch AND a gate PAUSE — because a force that walked
+/// past one and stalled on the other is the exact half-done state the ruling is about, and because
+/// it is the case only an array-shaped marker can record.
+fn force_overrides_the_kill_switch(role: &'static Role, name: &str) {
+    if !runner_runtime_available() {
+        return;
+    }
     let Some(f) = Fixture::new(role, name, 10, PAUSE_LINE).map(Fixture::with_model) else {
         return;
     };
@@ -582,30 +650,82 @@ fn force_does_not_bypass_the_kill_switch(role: &'static Role, name: &str) {
     let out = f.tick_forced();
     assert!(
         out.status.success(),
+        "the forced run must complete: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let row = f.final_row();
+    assert_eq!(
+        row["forced"],
+        serde_json::json!(["disabled", "usage-gate"]),
+        "both stops it walked past, in the order it met them"
+    );
+    assert_eq!(
+        row["forceReason"][0],
+        serde_json::json!(format!("{} flag present", role.disabled)),
+        "the kill switch's own line, paired with its kind by position"
+    );
+    assert_eq!(
+        row["forceReason"][1],
+        serde_json::json!(PAUSE_LINE),
+        "and the gate's, verbatim"
+    );
+    let log = f.log();
+    assert!(
+        log.contains("FORCED past the") && log.contains(role.disabled),
+        "the override is logged in the same shape the gate override is: {log}"
+    );
+    assert!(!log.contains("SKIP:"), "and nothing skipped: {log}");
+}
+
+#[test]
+fn force_overrides_the_producer_kill_switch() {
+    force_overrides_the_kill_switch(&PRODUCER, "producer-force-disabled");
+}
+
+#[test]
+fn force_overrides_the_vetter_kill_switch() {
+    force_overrides_the_kill_switch(&VETTER, "vetter-force-disabled");
+}
+
+/// …and a SCHEDULED tick still honours it, exactly as it always has.
+///
+/// This is the half that must not regress, and it is what makes the override a HUMAN's override
+/// rather than a hole: the switch's whole job is stopping the cron, and the cron passes no
+/// argument. The gate is set to PAUSE so a runner that had merely reordered its stops — checking
+/// the gate first — would be caught here rather than passing by coincidence.
+fn a_scheduled_tick_still_honours_the_kill_switch(role: &'static Role, name: &str) {
+    let Some(f) = Fixture::new(role, name, 10, PAUSE_LINE).map(Fixture::with_model) else {
+        return;
+    };
+    f.write_install(role.disabled, "");
+    let out = f.tick();
+    assert!(
+        out.status.success(),
         "a disabled runner exits 0: the stop is deliberate, not an error"
     );
     assert!(
         !f.runs_jsonl().exists(),
-        "a disabled runner writes no row at all — forced or not, it never got as far as the gate"
+        "and writes no row at all — not even the gate's skip row, which it never reached"
     );
+    let log = f.log();
     assert!(
-        f.log().contains("SKIP:") && f.log().contains(role.disabled),
-        "the log names the kill switch: {}",
-        f.log()
+        log.contains("SKIP:") && log.contains(role.disabled),
+        "the log names the kill switch: {log}"
     );
+    assert!(!log.contains("FORCED"), "nothing was forced: {log}");
 }
 
 #[test]
-fn force_does_not_bypass_the_producer_kill_switch() {
-    force_does_not_bypass_the_kill_switch(&PRODUCER, "producer-force-disabled");
+fn a_scheduled_producer_tick_still_honours_the_kill_switch() {
+    a_scheduled_tick_still_honours_the_kill_switch(&PRODUCER, "producer-scheduled-disabled");
 }
 
 #[test]
-fn force_does_not_bypass_the_vetter_kill_switch() {
-    force_does_not_bypass_the_kill_switch(&VETTER, "vetter-force-disabled");
+fn a_scheduled_vetter_tick_still_honours_the_kill_switch() {
+    a_scheduled_tick_still_honours_the_kill_switch(&VETTER, "vetter-scheduled-disabled");
 }
 
-/// GUARANTEE 3 — the flock outranks the force.
+/// CORRECTNESS STOP — the flock never yields, forced or not.
 ///
 /// Two runs of one role collide on the same clones and the same GitHub state, so the answer to "I
 /// want to watch a run" is to watch the one already going. This also carries the positive half of
@@ -652,13 +772,17 @@ fn force_does_not_bypass_the_vetter_lock() {
     force_does_not_bypass_the_lock(&VETTER, "vetter-force-lock");
 }
 
-/// GUARANTEE 4 — the force cannot be left switched on.
+/// The force cannot be left switched on.
 ///
 /// `CRON_FORCE` is the obvious wrong guess, and it is the shape that would be dangerous: a variable
 /// in `cron.env` forces EVERY scheduled tick, silently and for ever. So it is REFUSED rather than
 /// ignored — the posture `usage-gate` already takes toward the retired `USAGE_SLACK_PCT` — and
 /// refused whether or not `--force` was also passed, because the point is that the setting must
 /// surface, not that this particular invocation was legitimate.
+///
+/// This is why a variable can never stand in for the argument even now that the kill switch yields:
+/// what the switch yields to is a HUMAN AT A TERMINAL, and a setting in a file is the opposite of
+/// that — it is the absent human, repeating for ever.
 fn a_force_variable_is_refused_however_it_arrives(role: &'static Role, name: &str) {
     let Some(f) = Fixture::new(role, name, 10, PAUSE_LINE).map(Fixture::with_model) else {
         return;
