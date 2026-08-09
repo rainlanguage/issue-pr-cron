@@ -959,14 +959,8 @@
         ]
       },
       "un-vetted": {
-        "count": 28,
+        "count": 27,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 246,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/246",
-            "title": "feat(runners): --force one manual run past the usage-gate pause"
-          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 242,
@@ -1140,39 +1134,52 @@
             "repo": "cyclofinance/cyclo.site",
             "number": 412,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
-            "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+            "title": "fix: drop malformed subgraph rows from AccountStatus transfer history",
+            "bucket": "noQuestion"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 233,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
-            "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
+            "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)",
+            "bucket": "noQuestion"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 166,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
-            "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
+            "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs",
+            "bucket": "noQuestion"
           },
           {
             "repo": "rainlanguage/raindex",
             "number": 2778,
             "url": "https://github.com/rainlanguage/raindex/pull/2778",
-            "title": "fix: mask signer row operand to low byte"
+            "title": "fix: mask signer row operand to low byte",
+            "bucket": "noQuestion"
           },
           {
             "repo": "rainlanguage/raindex",
             "number": 2721,
             "url": "https://github.com/rainlanguage/raindex/pull/2721",
-            "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
+            "title": "fix(webapp): stop double-fetching custom registries in advanced mode",
+            "bucket": "noQuestion"
           },
           {
             "repo": "rainlanguage/raindex",
             "number": 2720,
             "url": "https://github.com/rainlanguage/raindex/pull/2720",
-            "title": "Retry SDK indexing on transient timeout before failing"
+            "title": "Retry SDK indexing on transient timeout before failing",
+            "bucket": "noQuestion"
           }
-        ]
+        ],
+        "breakdown": {
+          "draft": 0,
+          "fetchErrors": 0,
+          "noQuestion": 6,
+          "presentable": 0,
+          "unaddressable": 0
+        }
       },
       "ai:needs-work": {
         "count": 94,
@@ -5577,7 +5584,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 28,
+    "unvetted": 27,
     "blockedOn": 17,
     "ready": 0,
     "needsWork": 94,
@@ -5588,15 +5595,17 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 145,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 613,
-    "openIssues": 775
+    "designPresentable": 0,
+    "designNoQuestion": 6,
+    "openIssues": 774
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.5,
-      "medianDays": 103.1,
+      "meanDays": 314.9,
+      "medianDays": 103.2,
       "oldestDays": 1658.7
     }
   }
